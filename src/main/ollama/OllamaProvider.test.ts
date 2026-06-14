@@ -18,12 +18,14 @@ import {
   isDegenerateOllamaTurn,
   looksLikeDegenerateOllamaStub,
   looksLikeLeakedOllamaToolProtocol,
+  looksLikeOllamaPromptRestatement,
   looksLikeOllamaToolIntent,
   ollamaDegenerateResponseNudgePrompt,
   parseJsonObjectLoose,
   parseOllamaToolRequest,
   sanitizeLooseJsonEscapes,
   parseOllamaMemoryPsOutput,
+  ollamaPreToolContentText,
   resolveOllamaVisibleText,
   shouldEmitOllamaReasoning,
   unwrapOllamaStructuredResponseText,
@@ -361,15 +363,68 @@ describe('parseOllamaToolRequest', () => {
     )
   })
 
-  it('emits reasoning notes except when thinking is the visible answer', () => {
-    // Thinking alongside a tool call → emit.
-    expect(shouldEmitOllamaReasoning({ content: '', thinking: 'planning the edit' }, 1)).toBe(true)
-    // Thinking alongside visible content → emit.
+  it('emits only non-tool-call reasoning notes that are not prompt restatements', () => {
+    // Thinking alongside a tool call is usually planning/prompt echo noise.
+    expect(shouldEmitOllamaReasoning({ content: '', thinking: 'planning the edit' }, 1)).toBe(false)
+    // Thinking alongside visible content can still be surfaced when it is not
+    // just replaying the prompt/harness.
     expect(shouldEmitOllamaReasoning({ content: 'done', thinking: 'reasoning' }, 0)).toBe(true)
     // Thinking promoted to the visible answer (no content, no tool call) → skip.
     expect(shouldEmitOllamaReasoning({ content: '   ', thinking: 'the answer' }, 0)).toBe(false)
+    expect(
+      shouldEmitOllamaReasoning(
+        { content: 'done', thinking: 'We need to respond as Ollama. The user says fix it.' },
+        0
+      )
+    ).toBe(false)
     // No reasoning text → skip.
     expect(shouldEmitOllamaReasoning({ content: 'done', thinking: '   ' }, 0)).toBe(false)
+  })
+
+  it('surfaces clean native pre-tool content without promoting prompt echoes', () => {
+    expect(
+      ollamaPreToolContentText(
+        { content: 'I will inspect the relevant files first.', thinking: 'private plan' },
+        true
+      )
+    ).toBe('I will inspect the relevant files first.')
+    expect(
+      ollamaPreToolContentText(
+        { content: 'Workspace coding task: start by grounding in the repo.', thinking: '' },
+        true
+      )
+    ).toBe('')
+    expect(
+      ollamaPreToolContentText(
+        {
+          content: '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"x"}}}',
+          thinking: ''
+        },
+        true
+      )
+    ).toBe('')
+    expect(
+      ollamaPreToolContentText(
+        { content: 'I will inspect the relevant files first.', thinking: '' },
+        false
+      )
+    ).toBe('')
+  })
+
+  it('detects prompt and harness restatements in Ollama thinking traces', () => {
+    expect(
+      looksLikeOllamaPromptRestatement(
+        'Workspace coding task: start by grounding in the repo. Use todo_write only if needed.'
+      )
+    ).toBe(true)
+    expect(
+      looksLikeOllamaPromptRestatement(
+        'We need to respond as Ollama / GPT-OSS #1. The user asked for weather.'
+      )
+    ).toBe(true)
+    expect(looksLikeOllamaPromptRestatement('I found the matching file and can now patch it.')).toBe(
+      false
+    )
   })
 
   it('detects tool-intent stubs that announce a tool without calling it', () => {

@@ -57,6 +57,44 @@ describe('RemoteThreadProjection', () => {
       expect(snap.totalRows).toBe(10)
       expect(snap.generatedAt).toBe(FIXED)
     })
+
+    it('projects bounded blackboard entries separately from transcript rows', () => {
+      const snap = project({ kind: 'latestN', n: 3 }, MESSAGES, [], {
+        blackboardEntries: [
+          {
+            id: 'b1',
+            chatId: THREAD,
+            roundId: 'round-1',
+            participantId: 'Grok',
+            key: 'risk',
+            value: 'Needs one more verification pass.',
+            category: 'risk',
+            scope: 'session',
+            createdAt: '2026-01-01T00:00:01.000Z'
+          },
+          {
+            id: 'b2',
+            chatId: THREAD,
+            roundId: 'round-1',
+            participantId: 'Codex',
+            key: 'decision',
+            value: 'Keep the iOS panel read-only.',
+            category: 'decision',
+            scope: 'chat',
+            createdAt: '2026-01-01T00:00:02.000Z'
+          }
+        ]
+      })
+
+      expect(snap.rows.map((row) => row.id)).toEqual(['m7', 'm8', 'm9'])
+      expect(snap.blackboardEntries?.map((entry) => entry.id)).toEqual(['b2', 'b1'])
+      expect(snap.blackboardEntries?.[0]).toMatchObject({
+        key: 'decision',
+        category: 'decision',
+        scope: 'chat',
+        participantId: 'Codex'
+      })
+    })
   })
 
   describe('latestN', () => {
@@ -121,6 +159,48 @@ describe('RemoteThreadProjection', () => {
       // Each burst keeps its own single activity rather than coalescing.
       expect(toolRows[0].toolSummary?.activityCount).toBe(1)
       expect(toolRows[1].toolSummary?.activityCount).toBe(1)
+    })
+
+    it('projects ensemble round identity on rows and run summaries', () => {
+      const snap = project(
+        { kind: 'latestN', n: 50 },
+        [
+          msg(1, {
+            id: 'ensemble-a',
+            runId: 'run-a',
+            metadata: { ensembleRoundId: 'round-1' }
+          }),
+          msg(2, {
+            id: 'ensemble-b',
+            runId: 'run-b',
+            metadata: { ensembleRoundId: 'round-1' }
+          })
+        ],
+        [
+          {
+            runId: 'run-a',
+            provider: 'codex',
+            startedAt: FIXED,
+            endedAt: FIXED,
+            status: 'completed',
+            ensembleRoundId: 'round-1'
+          },
+          {
+            runId: 'run-b',
+            provider: 'grok',
+            startedAt: FIXED,
+            endedAt: FIXED,
+            status: 'completed',
+            ensembleRoundId: 'round-1'
+          }
+        ]
+      )
+
+      expect(snap.rows.map((row) => row.ensembleRoundId)).toEqual(['round-1', 'round-1'])
+      expect(snap.runSummaries?.map((run) => run.ensembleRoundId)).toEqual([
+        'round-1',
+        'round-1'
+      ])
     })
   })
 

@@ -1219,11 +1219,30 @@ export function resolveOllamaVisibleText(turn: { content: string; thinking?: str
   return unwrapOllamaStructuredResponseText(turn.thinking || '')
 }
 
+export function looksLikeOllamaPromptRestatement(text: string): boolean {
+  const value = (text || '').trim().toLowerCase()
+  if (!value) return false
+  return (
+    /\bwe need to respond as ollama\b/.test(value) ||
+    /\bthe user (says|said|asked|asks|wants|requested|request is)\b/.test(value) ||
+    /\bworkspace coding task\b/.test(value) ||
+    /\byour task is the user request in the previous message\b/.test(value) ||
+    /\buse todo_write only\b/.test(value) ||
+    /\bsuggested todos\b/.test(value)
+  )
+}
+
 /**
  * Whether a turn's reasoning (`thinking`) channel should be surfaced as a
- * separate streamed reasoning note. True whenever there is reasoning text,
- * EXCEPT when that text is being promoted to the visible answer (no content and
- * no tool call) — emitting it as a note there would duplicate the final reply.
+ * separate streamed reasoning note.
+ *
+ * Ollama's thinking stream is unusually prone to echoing the system/harness
+ * prompt immediately before a tool call ("Workspace coding task...", "the user
+ * says..."). Keep those internal: they remain available to the model for the
+ * next turn, but they are not useful transcript content. If a model emits its
+ * final answer only through `thinking`, `resolveOllamaVisibleText` still
+ * promotes that text to the assistant reply; this helper only controls the
+ * separate activity row.
  */
 export function shouldEmitOllamaReasoning(
   turn: { content: string; thinking?: string },
@@ -1231,8 +1250,22 @@ export function shouldEmitOllamaReasoning(
 ): boolean {
   const reasoningText = (turn.thinking || '').trim()
   if (!reasoningText) return false
+  if (toolRequestCount > 0) return false
   const reasoningIsAnswer = toolRequestCount === 0 && !turn.content.trim()
-  return !reasoningIsAnswer
+  if (reasoningIsAnswer) return false
+  return !looksLikeOllamaPromptRestatement(reasoningText)
+}
+
+export function ollamaPreToolContentText(
+  turn: { content: string; thinking?: string },
+  usingNativeToolCalls: boolean
+): string {
+  if (!usingNativeToolCalls) return ''
+  const content = unwrapOllamaStructuredResponseText(turn.content).trim()
+  if (!content) return ''
+  if (looksLikeOllamaPromptRestatement(content)) return ''
+  if (looksLikeLeakedOllamaToolProtocol(content)) return ''
+  return content
 }
 
 function estimateOllamaContextTokens(input: {
@@ -1588,7 +1621,10 @@ export async function runOllamaProvider(
       // reasoning note so it renders inside the live activity viewport — except
       // when thinking is being promoted to the visible answer (no content + no
       // tool call), where emitting it here would duplicate the final reply.
-      if (shouldEmitOllamaReasoning(turn, toolRequests.length)) {
+      const hasReasoningTrace = turn.thinking.trim().length > 0
+      const reasoningIsVisibleAnswer = toolRequests.length === 0 && !turn.content.trim()
+      const emitVisibleReasoning = shouldEmitOllamaReasoning(turn, toolRequests.length)
+      if (hasReasoningTrace && !reasoningIsVisibleAnswer) {
         const reasoningId = `ollama-thinking-${route.appRunId || 'run'}-${turnIndex}`
         deps.sendAgentCompatLine(
           event.sender,
@@ -1600,7 +1636,8 @@ export async function runOllamaProvider(
             kind: 'think',
             parameters: { title: 'Thinking' },
             provider: 'ollama',
-            server: OLLAMA_LOCAL_TOOL_SERVER
+            server: OLLAMA_LOCAL_TOOL_SERVER,
+            ...(emitVisibleReasoning ? {} : { transcriptVisible: false })
           },
           route
         )
@@ -1614,7 +1651,8 @@ export async function runOllamaProvider(
             status: 'success',
             output: turn.thinking,
             provider: 'ollama',
-            server: OLLAMA_LOCAL_TOOL_SERVER
+            server: OLLAMA_LOCAL_TOOL_SERVER,
+            ...(emitVisibleReasoning ? {} : { transcriptVisible: false })
           },
           route
         )
@@ -1748,6 +1786,21 @@ export async function runOllamaProvider(
       // Echo the assistant's native tool-call turn so the model keeps a coherent
       // transcript across the stateless HTTP loop.
       let goalLifecycleStopContent: string | null = null
+      const preToolContent = ollamaPreToolContentText(turn, usingNativeToolCalls)
+      if (preToolContent) {
+        deps.sendAgentCompatLine(
+          event.sender,
+          'ollama',
+          {
+            type: 'content',
+            text: preToolContent,
+            model,
+            modelLabel,
+            timestamp: new Date().toISOString()
+          },
+          route
+        )
+      }
       if (usingNativeToolCalls) {
         messages.push({
           role: 'assistant',

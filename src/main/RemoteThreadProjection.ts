@@ -29,7 +29,15 @@
  * a row's identity is consistent across desktop and remote.
  */
 
-import type { ChatMessage, ChatRun, DiffFileSummary, ProviderId } from './store/types'
+import type {
+  BlackboardCategory,
+  BlackboardEntry,
+  BlackboardScope,
+  ChatMessage,
+  ChatRun,
+  DiffFileSummary,
+  ProviderId
+} from './store/types'
 
 export type RemoteDisplayCurrency = 'USD' | 'GBP' | 'EUR'
 
@@ -194,6 +202,8 @@ export interface RemoteThreadRow {
   /** === desktop `message.id`, so remote deep-links resolve exactly. */
   id: string
   runId?: string
+  /** Ensemble round this row belongs to, when projected from ensemble metadata. */
+  ensembleRoundId?: string
   role: ChatMessage['role']
   kind: RemoteThreadRowKind
   /** Ensemble identity of the authoring participant — the SAME form the
@@ -229,6 +239,10 @@ export interface RemoteThreadRow {
 
 export interface RemoteRunSummary {
   runId: string
+  /** Ensemble round this participant run belongs to. Used by remote clients
+   * to render one completion card at the round boundary instead of one after
+   * every participant turn. */
+  ensembleRoundId?: string
   provider?: string
   model?: string
   status?: string
@@ -280,6 +294,17 @@ export interface RemoteRunWorkspaceFileChanges {
   preExistingFiles?: number
 }
 
+export interface RemoteBlackboardEntry {
+  id: string
+  key: string
+  value: string
+  category: BlackboardCategory
+  scope: BlackboardScope
+  participantId?: string
+  roundId?: string
+  createdAt?: string
+}
+
 export interface RemoteThreadSnapshot {
   /** appChatId — matches BridgeRunEventSink.extractThreadId. */
   threadId: string
@@ -299,6 +324,9 @@ export interface RemoteThreadSnapshot {
   /** Pinned messages (metadata.pinnedAt), newest first, capped — these may
    * fall OUTSIDE the latestN row window so they ship separately. */
   pinnedRows?: RemoteThreadRow[]
+  /** Ensemble blackboard entries, category-grouped and capped. Future solo/guest
+   * session-memory notes can reuse the same remote panel shape. */
+  blackboardEntries?: RemoteBlackboardEntry[]
   /** Per-run summaries (oldest→newest, capped) — remote clients interleave
    * Task-complete cards after each run's last transcript row. */
   runSummaries?: RemoteRunSummary[]
@@ -308,6 +336,9 @@ export interface RemoteThreadSnapshot {
 export interface RemoteProjectionOptions {
   /** Thread notes (chat.pinnedNotes) — projected onto snapshot.notes. */
   notes?: string
+  /** Structured shared notes. Today this is `chat.ensemble.blackboard`;
+   * later solo/guest chats can populate the same projection field. */
+  blackboardEntries?: BlackboardEntry[]
   threadId: string
   mode: RemoteProjectionMode
   /** Max chars for `preview` / `promptPreview` (default 280). */
@@ -335,6 +366,14 @@ export interface RemoteProjectionOptions {
 
 const DEFAULT_PREVIEW_MAX = 280
 const DEFAULT_MAX_ATTENTION_ROWS = 50
+const REMOTE_BLACKBOARD_MAX_ENTRIES = 24
+const BLACKBOARD_CATEGORY_RANK: Record<BlackboardCategory, number> = {
+  decision: 0,
+  fact: 1,
+  risk: 2,
+  'do-not-repeat': 3,
+  note: 4
+}
 
 /**
  * Collapse whitespace, strip control characters, and clip to `max`.
@@ -368,6 +407,31 @@ export function sanitizePreview(
   const limit = Number.isFinite(max) && max > 0 ? Math.floor(max) : DEFAULT_PREVIEW_MAX
   if (collapsed.length <= limit) return { preview: collapsed, truncated: false }
   return { preview: `${collapsed.slice(0, Math.max(0, limit - 3)).trimEnd()}...`, truncated: true }
+}
+
+function projectBlackboardEntries(entries: BlackboardEntry[] | undefined): RemoteBlackboardEntry[] {
+  if (!Array.isArray(entries) || entries.length === 0) return []
+  return entries
+    .filter((entry) => typeof entry?.key === 'string' && typeof entry.value === 'string')
+    .map((entry) => ({
+      id: entry.id,
+      key: sanitizePreview(entry.key, 120).preview,
+      value: sanitizePreview(entry.value, 900).preview,
+      category: entry.category,
+      scope: entry.scope,
+      ...(entry.participantId
+        ? { participantId: sanitizePreview(entry.participantId, 80).preview }
+        : {}),
+      ...(entry.roundId ? { roundId: entry.roundId } : {}),
+      ...(entry.createdAt ? { createdAt: entry.createdAt } : {})
+    }))
+    .filter((entry) => entry.key && entry.value)
+    .sort((a, b) => {
+      const rank = BLACKBOARD_CATEGORY_RANK[a.category] - BLACKBOARD_CATEGORY_RANK[b.category]
+      if (rank !== 0) return rank
+      return (b.createdAt || '').localeCompare(a.createdAt || '')
+    })
+    .slice(0, REMOTE_BLACKBOARD_MAX_ENTRIES)
 }
 
 /**
@@ -465,7 +529,11 @@ function buildRow(
     timestamp: message.timestamp
   }
   if (typeof message.runId === 'string') row.runId = message.runId
-  const imagePaths = (message.metadata as Record<string, unknown> | undefined)?.imagePaths
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (typeof metadata?.ensembleRoundId === 'string' && metadata.ensembleRoundId.trim()) {
+    row.ensembleRoundId = metadata.ensembleRoundId
+  }
+  const imagePaths = metadata?.imagePaths
   if (Array.isArray(imagePaths) && imagePaths.length > 0) {
     row.imageAttachmentCount = imagePaths.length
   }
@@ -502,6 +570,7 @@ export function summarizeRun(
 ): RemoteRunSummary | undefined {
   if (!run || typeof run.runId !== 'string') return undefined
   const summary: RemoteRunSummary = { runId: run.runId }
+  if (run.ensembleRoundId) summary.ensembleRoundId = run.ensembleRoundId
   if (run.provider) summary.provider = run.provider
   const model = run.actualModel || run.requestedModel
   if (model) summary.model = model
@@ -721,6 +790,7 @@ export function projectRemoteThread(
     .slice(-12)
     .map((run) => summarizeRun(run, opts.costDisplay))
     .filter((entry): entry is RemoteRunSummary => Boolean(entry))
+  const blackboardEntries = projectBlackboardEntries(opts.blackboardEntries)
   const pinnedRows = all
     .filter(
       (message) =>
@@ -758,6 +828,7 @@ export function projectRemoteThread(
     ...(typeof opts.notes === 'string' && opts.notes.trim()
       ? { notes: sanitizePreview(opts.notes, 4000).preview }
       : {}),
+    ...(blackboardEntries.length > 0 ? { blackboardEntries } : {}),
     ...(pinnedRows.length > 0 ? { pinnedRows } : {}),
     ...(runSummaries.length > 0 ? { runSummaries } : {})
   }

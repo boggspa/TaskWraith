@@ -206,6 +206,14 @@ import {
   type RemoteWorkspaceCapability
 } from './RemoteWorkspaceAllowlist'
 import { RemoteBridgeRuntime } from './remote/RemoteBridgeRuntime'
+import {
+  buildRemoteDraftChat,
+  findReusableRemoteDraft,
+  isUnstartedRemoteDraftChat,
+  normalizeRemoteDraftVariant,
+  remoteDraftIdsToDelete,
+  type RemoteDraftTarget
+} from './remote/RemoteDraftChats'
 import { RemoteIdentityStore } from './remote/RemoteIdentityStore'
 import { RemotePairingStore } from './remote/RemotePairingStore'
 import { wsTransportSocketFactory } from './remote/wsTransportSocket'
@@ -266,6 +274,7 @@ import {
 } from './services/ApprovalService'
 import { ChatService } from './services/ChatService'
 import { detectConfiguredProviders } from './ProviderConfiguration'
+import { createDefaultEnsembleConfig } from './EnsembleDefaults'
 import { applyReroutePlanToPayload, resolveProviderDispatch } from './ProviderRunPause'
 import { ComposerService, type ComposerInput } from './services/ComposerService'
 import { DiscordContextService } from './channels/DiscordContextService'
@@ -323,6 +332,7 @@ import {
   type RunEventChannel
 } from './RunEventBus'
 import { AppStore } from './store'
+import { assertSafeChatId } from './ChatPath'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
 import {
   clearStickyAppWatch,
@@ -674,6 +684,7 @@ import { handleScoutBrief, type ScoutBriefConfidence } from './ScoutBrief'
 import { makeBlackboardEntry, upsertBlackboardEntry } from './blackboard/Blackboard'
 import { WorkspaceWriteIntentRegistry, type WriteIntentToken } from './WorkspaceWriteIntentRegistry'
 import { CreativeApprovalGate } from './CreativeApprovalGate'
+import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
 
 let mainWindow: BrowserWindow | null = null
 const workspacePopoutWindows = new Map<string, BrowserWindow>()
@@ -8377,15 +8388,28 @@ function sendAgentCompatLine(
   route?: AgentRunRoute | null
 ) {
   const routed = enrichAgentPayload(provider, payload, route)
+  // Some provider internals are useful for the raw run ledger but too noisy
+  // for the chat transcript. Keep those durable, then stop before renderer /
+  // bridge / ensemble materialization can turn them into visible tool rows.
+  const transcriptVisible = payload?.transcriptVisible !== false
+  const durableKind =
+    !transcriptVisible
+      ? 'provider_raw'
+      : payload?.type === 'tool_use' || payload?.type === 'tool_result'
+        ? 'tool'
+        : 'provider_raw'
   appendDurableRunEventForRoute(
     provider,
     routed,
-    payload?.type === 'tool_use' || payload?.type === 'tool_result' ? 'tool' : 'provider_raw',
+    durableKind,
     'raw',
-    `Provider output${payload?.type ? `: ${payload.type}` : ''}`,
+    !transcriptVisible && payload?.tool_name === 'ollama_thinking'
+      ? 'Ollama thinking trace'
+      : `Provider output${payload?.type ? `: ${payload.type}` : ''}`,
     payload,
     'provider'
   )
+  if (!transcriptVisible) return
   materializeBackgroundSubThreadProviderOutput(provider, routed, payload)
   materializeBridgeRunProviderOutput(provider, routed, payload)
   ensembleOrchestratorRef?.handleProviderOutput(provider, routed, payload)
@@ -15030,6 +15054,7 @@ if (isGeminiMcpBridgeProcess) {
       const costDisplay = remoteCostDisplayOptions()
       const threadSnapshot = projectRemoteThread(chat.messages ?? [], chat.runs ?? [], {
         notes: chat.pinnedNotes,
+        blackboardEntries: chat.ensemble?.blackboard,
         threadId: chat.appChatId,
         mode: { kind: 'latestN', n: clamped },
         previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
@@ -15716,14 +15741,60 @@ if (isGeminiMcpBridgeProcess) {
             pushRemoteThreadSnapshot(chat, workspaceId)
             bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           }
-          if (action.variant === 'global') {
-            const chat = AppStore.createGlobalChat()
-            if (action.title?.trim()) {
-              AppStore.saveChat({ ...chat, title: action.title.trim(), updatedAt: Date.now() })
+          const now = Date.now()
+          const cleanupRemoteDrafts = (keepId: string) => {
+            const staleIds = remoteDraftIdsToDelete(AppStore.getChats(), keepId)
+            for (const staleId of staleIds) {
+              AppStore.deleteChat(staleId)
             }
-            const saved = AppStore.getChat(chat.appChatId) ?? chat
-            finish(saved, action.workspaceId)
-            return { ok: true, threadId: saved.appChatId, chatKind: saved.chatKind }
+            if (staleIds.length > 0) {
+              broadcastThreadList()
+            }
+          }
+          const finishRemoteDraft = (chat: ChatRecord, workspaceId: string) => {
+            cleanupRemoteDrafts(chat.appChatId)
+            finish(chat, workspaceId)
+          }
+          let requestedThreadId: string | undefined
+          if (action.threadId) {
+            try {
+              requestedThreadId = assertSafeChatId(action.threadId, 'Thread id')
+            } catch (err) {
+              return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+            }
+          }
+          const requestedChat = requestedThreadId ? AppStore.getChat(requestedThreadId) : null
+          if (requestedThreadId && requestedChat && !isUnstartedRemoteDraftChat(requestedChat)) {
+            return {
+              ok: false,
+              reason: `Thread "${requestedThreadId}" already exists and is not an unstarted mobile draft.`
+            }
+          }
+          const createOrReuseRemoteDraft = (target: RemoteDraftTarget): ChatRecord => {
+            const reusable =
+              requestedChat ||
+              findReusableRemoteDraft(AppStore.getChats(), target, requestedThreadId)
+            const id = reusable?.appChatId ?? requestedThreadId ?? `ios-${randomUUID()}`
+            const chat = buildRemoteDraftChat({
+              id,
+              target,
+              now,
+              ...(reusable ? { existing: reusable } : {})
+            })
+            AppStore.saveChat(chat)
+            return AppStore.getChat(chat.appChatId) ?? chat
+          }
+          if (action.variant === 'global') {
+            const provider = assertProviderId(
+              action.provider ?? AppStore.getSettings().activeProvider ?? 'claude'
+            )
+            const chat = createOrReuseRemoteDraft({
+              variant: 'global',
+              provider,
+              title: action.title?.trim() || 'New Chat'
+            })
+            finishRemoteDraft(chat, action.workspaceId)
+            return { ok: true, threadId: chat.appChatId, chatKind: chat.chatKind }
           }
           const workspaceRecord = AppStore.getWorkspaces().find((w) => w.id === action.workspaceId)
           if (!workspaceRecord) {
@@ -15734,10 +15805,43 @@ if (isGeminiMcpBridgeProcess) {
               return { ok: false, reason: 'Ensemble mode is disabled on your Mac.' }
             }
             const configuredProviders = await detectConfiguredProviders(AppStore.getSettings())
-            let chat = AppStore.createEnsembleChat(
-              { workspaceId: workspaceRecord.id, workspacePath: workspaceRecord.path },
-              configuredProviders
+            const provider = assertProviderId(
+              action.provider ?? AppStore.getSettings().activeProvider ?? 'gemini'
             )
+            const reusableEnsemble =
+              requestedChat ||
+              findReusableRemoteDraft(
+                AppStore.getChats(),
+                {
+                  variant: 'ensemble',
+                  provider,
+                  title:
+                    action.title?.trim() && action.title.trim() !== 'New Chat'
+                      ? action.title.trim()
+                      : 'New Ensemble',
+                  workspaceId: workspaceRecord.id,
+                  workspacePath: workspaceRecord.path
+                },
+                requestedThreadId
+              )
+            let chat = buildRemoteDraftChat({
+              id: reusableEnsemble?.appChatId ?? requestedThreadId ?? `ios-${randomUUID()}`,
+              target: {
+                variant: 'ensemble',
+                provider,
+                title:
+                  action.title?.trim() && action.title.trim() !== 'New Chat'
+                    ? action.title.trim()
+                    : 'New Ensemble',
+                workspaceId: workspaceRecord.id,
+                workspacePath: workspaceRecord.path,
+                ensemble:
+                  reusableEnsemble?.ensemble ||
+                  createDefaultEnsembleConfig(provider, configuredProviders)
+              },
+              now,
+              ...(reusableEnsemble ? { existing: reusableEnsemble } : {})
+            })
             // Phone-edited roster: replace the default participants in the
             // requested speaking order. Role/instructions default from the
             // Mac's per-provider seeds (the default roster entry for that
@@ -15771,7 +15875,6 @@ if (isGeminiMcpBridgeProcess) {
                   ensemble: { ...chat.ensemble, participants: custom },
                   updatedAt: Date.now()
                 }
-                AppStore.saveChat(chat)
               } catch (err) {
                 return {
                   ok: false,
@@ -15779,29 +15882,22 @@ if (isGeminiMcpBridgeProcess) {
                 }
               }
             }
-            finish(chat, action.workspaceId)
+            AppStore.saveChat(chat)
+            const saved = AppStore.getChat(chat.appChatId) ?? chat
+            finishRemoteDraft(saved, action.workspaceId)
             return { ok: true, threadId: chat.appChatId, chatKind: chat.chatKind }
           }
           const provider = assertProviderId(
             action.provider ?? AppStore.getSettings().activeProvider ?? 'claude'
           )
-          const now = Date.now()
-          const chat: ChatRecord = {
-            appChatId: action.threadId ?? `ios-${randomUUID()}`,
-            scope: 'workspace',
-            chatKind: 'single',
+          const chat = createOrReuseRemoteDraft({
+            variant: normalizeRemoteDraftVariant(action.variant),
             provider,
             title: action.title?.trim() || 'New Chat',
             workspaceId: workspaceRecord.id,
-            workspacePath: workspaceRecord.path,
-            createdAt: now,
-            updatedAt: now,
-            archived: false,
-            messages: [],
-            runs: []
-          }
-          AppStore.saveChat(chat)
-          finish(chat, action.workspaceId)
+            workspacePath: workspaceRecord.path
+          })
+          finishRemoteDraft(chat, action.workspaceId)
           return { ok: true, threadId: chat.appChatId, chatKind: chat.chatKind }
         },
         threadRowExpandFn: async (action) => {
@@ -15823,6 +15919,7 @@ if (isGeminiMcpBridgeProcess) {
           const costDisplay = remoteCostDisplayOptions()
           const snapshot = projectRemoteThread(chat.messages ?? [], chat.runs ?? [], {
             notes: chat.pinnedNotes,
+            blackboardEntries: chat.ensemble?.blackboard,
             threadId: chat.appChatId,
             mode: { kind: 'aroundRow', rowId: action.rowId, radius: 0 },
             previewMaxChars: maxChars,
@@ -16464,15 +16561,40 @@ if (isGeminiMcpBridgeProcess) {
         | Record<string, { name?: string; color?: string; accent?: string; slug?: string }>
         | undefined
       const identity = map?.[chat.appChatId]
-      if (!identity || typeof identity.name !== 'string' || !identity.name) return undefined
-      return {
-        name: identity.name,
-        accent:
-          (typeof identity.accent === 'string' && identity.accent) ||
-          (typeof identity.color === 'string' && identity.color) ||
-          undefined,
-        slug: typeof identity.slug === 'string' ? identity.slug : undefined
+      if (identity && typeof identity.name === 'string' && identity.name) {
+        return {
+          name: identity.name,
+          accent:
+            (typeof identity.accent === 'string' && identity.accent) ||
+            (typeof identity.color === 'string' && identity.color) ||
+            undefined,
+          slug: typeof identity.slug === 'string' ? identity.slug : undefined
+        }
       }
+      if (
+        chat.parentChatRelation === 'subThread' ||
+        (chat.parentChatId && !chat.parentChatRelation)
+      ) {
+        return assignAgentIdentityFromSeed(chat.appChatId)
+      }
+      if (
+        chat.parentChatRelation === 'sideChat' &&
+        chat.sideChatContext?.mode === 'guestParticipant'
+      ) {
+        return assignAgentIdentityFromSeed(`${chat.parentChatId || chat.appChatId}:guest`)
+      }
+      if (
+        chat.parentChatRelation === 'sideChat' &&
+        chat.sideChatContext?.mode === 'singleProvider'
+      ) {
+        const selectedParticipantId = chat.providerMetadata?.sideChatSelectedParticipantId
+        if (typeof selectedParticipantId === 'string' && selectedParticipantId) {
+          return assignAgentIdentityFromSeed(
+            `${chat.parentChatId || chat.appChatId}:${selectedParticipantId}`
+          )
+        }
+      }
+      return undefined
     }
     const canonicalRemoteWorkspaceId = (workspaceId: string | null | undefined): string | null =>
       resolveCanonicalWorkspaceId(workspaceId, AppStore.getWorkspaces(), canonicalPath)
@@ -16568,6 +16690,7 @@ if (isGeminiMcpBridgeProcess) {
         if (chatIndex < REMOTE_THREAD_SNAPSHOT_CAP) {
           const threadSnapshot = projectRemoteThread(chat.messages ?? [], chat.runs ?? [], {
             notes: chat.pinnedNotes,
+            blackboardEntries: chat.ensemble?.blackboard,
             threadId: chat.appChatId,
             mode: { kind: 'latestN', n: 24 },
             previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
@@ -17335,6 +17458,7 @@ if (isGeminiMcpBridgeProcess) {
           workspaceId: string
           path: string
           mode: 'read-only' | 'read-write'
+          capabilities?: RemoteWorkspaceCapability[]
           allowedProviders: string[]
           allowedApprovalModes: string[]
           expiresAt?: number
