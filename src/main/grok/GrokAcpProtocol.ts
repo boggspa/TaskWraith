@@ -300,6 +300,7 @@ export function grokToolKindToService(toolKind: string | null | undefined): Agen
     case 'move':
       return 'fileChanges'
     case 'fetch':
+    case 'search':
       return 'mcpTools'
     case 'execute':
     default:

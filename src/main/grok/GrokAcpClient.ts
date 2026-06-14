@@ -63,11 +63,13 @@ export interface GrokAcpRunOptions {
   ) => AcpPermissionDecision | Promise<AcpPermissionDecision>
   /**
    * Called once when the child exits. `turnComplete` is true when the prompt
-   * reached its stopReason before exit — the caller uses it (not the exit code)
-   * to decide success, since a normal turn ends by SIGINT-killing the stdio
-   * server (a non-zero exit).
+   * reached a terminal stopReason before exit. `terminalStatus` is that raw
+   * stopReason/status, so callers can distinguish a normal end_turn from
+   * PermissionRejected/Cancelled instead of collapsing every completion to
+   * success. The exit code alone is not enough because a normal turn ends by
+   * SIGINT-killing the stdio server.
    */
-  onClose?: (code: number | null, turnComplete: boolean) => void
+  onClose?: (code: number | null, turnComplete: boolean, terminalStatus?: string) => void
   /**
    * G4d — opt-in raw JSON-RPC frame tap (both directions). Used by the gated
    * TASKWRAITH_GROK_DEBUG capture so the live ACP wire shape can be confirmed from
@@ -117,6 +119,7 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
   let sessionId = ''
   let promptSent = false
   let turnComplete = false
+  let terminalStatus: string | undefined
 
   const writeRpc = (id: number | null, method: string, params: unknown): void => {
     const message =
@@ -251,10 +254,12 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
       // Everything else: stream updates / capture completion. We forward
       // content + thinking to the sink, but NOT the ACP `result` — the caller
       // synthesizes the canonical result/exit from onClose (mirrors the
-      // headless path). A result event just signals the turn is done.
+      // headless path). A result event signals the turn is done and carries
+      // the stopReason the caller needs for honest final status.
       for (const event of acpMessageToRunEvents(message)) {
         if (event.type === 'result') {
           turnComplete = true
+          terminalStatus = event.status || terminalStatus
         } else {
           options.onEvent(event)
         }
@@ -274,9 +279,9 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
 
   child.on('error', (err) => {
     options.onEvent({ type: 'provider_warning', text: formatGrokProcessError(err) })
-    options.onClose?.(1, turnComplete)
+    options.onClose?.(1, turnComplete, terminalStatus)
   })
-  child.on('close', (code) => options.onClose?.(code, turnComplete))
+  child.on('close', (code) => options.onClose?.(code, turnComplete, terminalStatus))
 
   return {
     cancel: () => {

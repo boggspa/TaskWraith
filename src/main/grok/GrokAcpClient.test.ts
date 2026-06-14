@@ -54,19 +54,24 @@ const run = (
 ): {
   events: NormalizedGrokRunEvent[]
   closes: (number | null)[]
+  closeInfos: { code: number | null; turnComplete: boolean; terminalStatus?: string }[]
   handle: ReturnType<typeof runGrokAcpTurn>
 } => {
   const events: NormalizedGrokRunEvent[] = []
   const closes: (number | null)[] = []
+  const closeInfos: { code: number | null; turnComplete: boolean; terminalStatus?: string }[] = []
   const handle = runGrokAcpTurn({
     prompt: 'hi',
     cwd: '/tmp/ws',
     spawnProcess: () => child,
     onEvent: (e) => events.push(e),
-    onClose: (c) => closes.push(c),
+    onClose: (code, turnComplete, terminalStatus) => {
+      closes.push(code)
+      closeInfos.push({ code, turnComplete, terminalStatus })
+    },
     ...overrides
   })
-  return { events, closes, handle }
+  return { events, closes, closeInfos, handle }
 }
 
 describe('runGrokAcpTurn', () => {
@@ -123,6 +128,25 @@ describe('runGrokAcpTurn', () => {
     await new Promise((r) => setTimeout(r, 40))
     expect(child.killed).toBe(true)
     expect(closes).toEqual([0])
+  })
+
+  it('passes abnormal ACP terminal status to close-out without forwarding result events', async () => {
+    const child = new FakeAcpChild()
+    const { events, closeInfos } = run(child)
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+
+    child.emit({
+      jsonrpc: '2.0',
+      method: '_x.ai/session/prompt_complete',
+      params: { sessionId: 's-1', stopReason: 'PermissionRejected' }
+    })
+
+    expect(events.some((e) => e.type === 'result')).toBe(false)
+    await new Promise((r) => setTimeout(r, 40))
+    expect(closeInfos).toEqual([
+      { code: 0, turnComplete: true, terminalStatus: 'PermissionRejected' }
+    ])
   })
 
   it('G5b — passes provided mcpServers to session/new', () => {

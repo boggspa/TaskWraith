@@ -106,4 +106,11 @@ export interface CliProviderStreamState {
    * to report an honest result status instead of a misleading 'success'.
    */
   grokStopReason?: string
+  /**
+   * ACP tool failures can make Grok end the turn with a successful prompt
+   * completion but no assistant text. Track that shape so close-out can fail
+   * visibly instead of rendering a blank successful run.
+   */
+  grokToolErrorCount?: number
+  grokLastToolError?: string
 }

@@ -3257,12 +3257,22 @@ function finalizeBridgeRunTranscript(
   const state = bridgeRunTranscripts.get(runId)
   if (!state) return
   if (state.status !== 'running') return // exit event often follows result
-  state.status = status
-  if (status === 'success') state.errorMessage = undefined
-  else if (errorMessage) state.errorMessage = errorMessage
+  const toolFailureWithoutAnswer =
+    status === 'success' &&
+    state.content.trim().length === 0 &&
+    state.activities.some((activity) => activity.status === 'error')
+  const resolvedStatus = toolFailureWithoutAnswer ? 'failed' : status
+  const resolvedErrorMessage =
+    errorMessage ||
+    (toolFailureWithoutAnswer
+      ? 'The provider ended this turn without producing an assistant response after a tool failed or was rejected.'
+      : undefined)
+  state.status = resolvedStatus
+  if (resolvedStatus === 'success') state.errorMessage = undefined
+  else if (resolvedErrorMessage) state.errorMessage = resolvedErrorMessage
   // Chain link 3/3 (see registerBridgeRunTranscript).
   console.log(
-    `[bridge-run] finalized run=${runId} status=${status} chars=${state.content.length}${errorMessage ? ` error="${errorMessage}"` : ''}`
+    `[bridge-run] finalized run=${runId} status=${resolvedStatus} chars=${state.content.length}${resolvedErrorMessage ? ` error="${resolvedErrorMessage}"` : ''}`
   )
   // Run diff before the terminal flush: bridge runs skip the renderer's
   // snapshot bookkeeping, so without this no File-changes card / diff row /
@@ -3512,6 +3522,25 @@ function unwrapBridgeToolResultText(raw: string, depth = 0): string {
   }
 }
 
+function bridgeResultFailed(payload: Record<string, unknown>): boolean {
+  if (payload.is_error === true || payload.subtype === 'error') return true
+  if (typeof payload.error === 'string' && payload.error.trim().length > 0) return true
+  const rawStatus = typeof payload.status === 'string' ? payload.status.trim() : ''
+  const status = rawStatus.toLowerCase().replace(/[\s_-]+/g, '')
+  if (!status) return false
+  if (
+    status === 'success' ||
+    status === 'successwithwarnings' ||
+    status === 'completed' ||
+    status === 'complete' ||
+    status === 'endturn' ||
+    status === 'stop'
+  ) {
+    return false
+  }
+  return status !== 'running'
+}
+
 function materializeBridgeRunProviderOutput(
   provider: ProviderId,
   routed: AgentRunRoute,
@@ -3570,7 +3599,7 @@ function materializeBridgeRunProviderOutput(
   }
   if (payload?.type === 'result') {
     if (payload.stats) state.stats = payload.stats
-    const status = payload.status === 'failed' || payload.subtype === 'error' ? 'failed' : 'success'
+    const status = bridgeResultFailed(payload) ? 'failed' : 'success'
     finalizeBridgeRunTranscript(runId, status)
   }
 }
@@ -5501,6 +5530,10 @@ function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRun
       state
     )
   } else if (evt.type === 'tool_result') {
+    if (evt.toolStatus === 'error') {
+      state.grokToolErrorCount = (state.grokToolErrorCount || 0) + 1
+      if (evt.toolOutput) state.grokLastToolError = evt.toolOutput
+    }
     sendAgentCompatLine(
       state.sender,
       'grok',
@@ -5518,7 +5551,8 @@ function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRun
     // process-close handler synthesizes it), but we DO remember an abnormal
     // stopReason so close-out can report it honestly — Grok exits 0 even when it
     // self-cancels mid-turn before answering/writing.
-    if (evt.status && evt.status !== 'success') state.grokStopReason = evt.status
+    const stopReason = normalizeGrokStopReason(evt.status)
+    if (stopReason !== 'success') state.grokStopReason = stopReason
   } else if (evt.type === 'provider_warning' && evt.text) {
     sendAgentCompatError(state.sender, 'grok', evt.text, state)
   }
@@ -6950,6 +6984,55 @@ function grokScopedBridgeSafeToolRequested(request: {
   return false
 }
 
+function normalizeGrokStopReason(status: string | null | undefined): 'success' | string {
+  const raw = typeof status === 'string' ? status.trim() : ''
+  const normalized = raw.toLowerCase().replace(/[\s_-]+/g, '')
+  if (!normalized || normalized === 'success' || normalized === 'endturn' || normalized === 'stop') {
+    return 'success'
+  }
+  return raw || 'failed'
+}
+
+function grokAcpNetworkReadRequested(request: {
+  toolName?: string
+  toolKind?: string
+  rawToolCall?: unknown
+}): boolean {
+  const raw = request.rawToolCall as { rawInput?: { tool_name?: unknown; name?: unknown } } | undefined
+  const candidates = [
+    request.toolKind,
+    request.toolName,
+    raw?.rawInput?.tool_name,
+    raw?.rawInput?.name
+  ]
+  return candidates.some((candidate) => {
+    if (typeof candidate !== 'string') return false
+    const normalized = candidate.toLowerCase().replace(/[\s:_-]+/g, '')
+    return (
+      normalized === 'fetch' ||
+      normalized === 'search' ||
+      normalized === 'webfetch' ||
+      normalized === 'websearch'
+    )
+  })
+}
+
+function grokNetworkAccessAllowed(state: CliProviderStreamState): boolean {
+  const policy =
+    state.effectivePermissions?.networkAccess ||
+    AppStore.getSettings().agenticServices?.networkAccess ||
+    'allow'
+  return policy !== 'deny'
+}
+
+function grokAcpEmptyToolFailureMessage(state: CliProviderStreamState): string {
+  const rawDetail = state.grokLastToolError?.trim() || ''
+  const detail = rawDetail.length > 500 ? `${rawDetail.slice(0, 497)}...` : rawDetail
+  return `Grok ended this turn without producing an assistant response after a tool failed or was rejected.${
+    detail ? ` Last tool error: ${detail}` : ''
+  }`
+}
+
 async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('grok', payload)
   if (!experimentalGrokProviderEnabled()) {
@@ -7156,7 +7239,11 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       // surface is exactly what this seat was given. Without this, Grok asks to
       // use an taskwraith-grok__<tool> and the read-only deny below cancels the turn.
       if (grokScopedBridgeSafeToolRequested(request)) return 'allow'
-      if (!grokWriteCapable(payload.approvalMode)) return 'deny'
+      const networkRead = grokAcpNetworkReadRequested(request)
+      if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
+      if (!grokWriteCapable(payload.approvalMode)) {
+        return networkRead ? 'allow' : 'deny'
+      }
       const service = grokToolKindToService(request.toolKind)
       const allowed = await requestAgenticServiceApproval(
         event.sender,
@@ -7174,9 +7261,24 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     },
     onEvent: (evt) => applyGrokRunEvent(state, evt),
     onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message),
-    onClose: (code, turnComplete) => {
+    onClose: (code, turnComplete, terminalStatus) => {
       if (!state.completed) {
         state.completed = true
+        const stopReason = normalizeGrokStopReason(terminalStatus)
+        if (stopReason !== 'success') state.grokStopReason = stopReason
+        const emptyAfterToolFailure =
+          turnComplete &&
+          stopReason === 'success' &&
+          state.assistantText.trim().length === 0 &&
+          (state.grokToolErrorCount || 0) > 0
+        const failed = !turnComplete || stopReason !== 'success' || emptyAfterToolFailure
+        if (failed) {
+          const message =
+            stopReason !== 'success'
+              ? `Grok stopped before finishing this turn (stopReason: ${stopReason}). It may not have produced an answer or written files.`
+              : grokAcpEmptyToolFailureMessage(state)
+          sendAgentCompatError(event.sender, 'grok', message, state)
+        }
         // Grok (ACP path too) reports no usage — project tokens + cost so it
         // appears in the composer tally / dashboard, mirroring the headless
         // path's close handler.
@@ -7188,18 +7290,24 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
           'grok',
           {
             type: 'result',
-            status: turnComplete ? 'success' : 'failed',
+            status: failed ? 'failed' : 'success',
             stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
             provider: 'grok',
             providerThreadId: state.providerSessionId || undefined,
+            ...(stopReason !== 'success' ? { stopReason } : {}),
             fallback: false
           },
           state
         )
-        sendAgentCompatExit(event.sender, 'grok', turnComplete ? 0 : (code ?? 1), state)
+        sendAgentCompatExit(event.sender, 'grok', failed ? 1 : (turnComplete ? 0 : (code ?? 1)), state)
       }
       if (cliProviderProcesses.get('grok')) cliProviderProcesses.delete('grok')
-      runManager.finish(route.appRunId!, turnComplete ? 'completed' : 'failed')
+      const finalStopReason = normalizeGrokStopReason(terminalStatus)
+      const finalFailed =
+        !turnComplete ||
+        finalStopReason !== 'success' ||
+        (state.assistantText.trim().length === 0 && (state.grokToolErrorCount || 0) > 0)
+      runManager.finish(route.appRunId!, finalFailed ? 'failed' : 'completed')
     }
   })
 }
@@ -15089,7 +15197,9 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     pushBridgeRunSnapshot = (chat) => {
-      const workspaceId = canonicalRemoteWorkspaceId(chat.workspaceId)
+      const workspaceId =
+        canonicalRemoteWorkspaceId(chat.workspaceId) ??
+        (!chat.workspaceId || chat.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
       if (!workspaceId) return
       pushRemoteThreadSnapshot(chat, workspaceId)
       bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()

@@ -349,6 +349,7 @@ describe('G5 — session/request_permission (client-mediated approvals)', () => 
     expect(grokToolKindToService('delete')).toBe('fileChanges')
     expect(grokToolKindToService('move')).toBe('fileChanges')
     expect(grokToolKindToService('fetch')).toBe('mcpTools')
+    expect(grokToolKindToService('search')).toBe('mcpTools')
     // Unknown / read-ish / empty → shellCommands (the strictest 'ask' bucket),
     // never a free pass.
     expect(grokToolKindToService('read')).toBe('shellCommands')
