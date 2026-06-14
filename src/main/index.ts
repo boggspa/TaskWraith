@@ -15314,6 +15314,132 @@ if (isGeminiMcpBridgeProcess) {
         const workspace = AppStore.getWorkspaces().find((entry) => entry.id === workspaceId)
         return workspace ? workspace.path : null
       }
+      const broadcastRemoteComposerQueueChange = (chat: ChatRecord, workspaceId: string) => {
+        broadcastThreadUpdate(chat.appChatId)
+        pushRemoteThreadSnapshot(chat, workspaceId)
+        bridgeBroadcasterRef?.resetThrottle()
+        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+      }
+      const queueRemoteComposerPrompt = async (action: {
+        workspaceId: string
+        threadId: string
+        provider: string
+        text: string
+        approvalMode?: string
+        model?: string
+        reasoningEffort?: string | null
+        claudeReasoningEffort?: string | null
+        contextTurns?: number
+        extraWorkspaceIds?: string[]
+        imageAttachments?: unknown[]
+      }): Promise<{ ok: boolean; queueId?: string; reason?: string }> => {
+        const chat = AppStore.getChat(action.threadId)
+        if (!chat) return { ok: false, reason: 'Thread not found' }
+        if (chat.ensemble) return { ok: false, reason: 'Use ensemble queueing for Ensemble chats' }
+        if (!chatMatchesRemoteScope(chat, action.workspaceId)) {
+          return { ok: false, reason: 'Thread does not belong to the requested workspace' }
+        }
+        const text = action.text.trim()
+        if (!text) return { ok: false, reason: 'Prompt is empty' }
+        if (action.imageAttachments?.length) {
+          return {
+            ok: false,
+            reason: 'Queued image attachments from paired devices are not supported yet'
+          }
+        }
+        const provider = assertProviderId(action.provider)
+        const scope = chatScope(chat)
+        const workspace =
+          scope === 'global'
+            ? null
+            : AppStore.getWorkspaces().find((entry) => entry.id === action.workspaceId)
+        if (scope !== 'global' && !workspace) {
+          return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
+        }
+        const queueId = `remote-queue-${randomUUID()}`
+        getRunRepository().saveRunQueueJob({
+          id: queueId,
+          runId: queueId,
+          provider,
+          scope,
+          workspaceId: action.workspaceId,
+          workspacePath: workspace?.path,
+          chatId: chat.appChatId,
+          source: 'remote',
+          status: 'queued',
+          promptPreview: text,
+          request: {
+            scope,
+            prompt: text,
+            displayPrompt: text,
+            selectedModelType: action.model || 'default',
+            customModel: '',
+            approvalMode: action.approvalMode || 'default',
+            sessionTrust: false,
+            imageAttachments: [],
+            ...(action.reasoningEffort !== undefined
+              ? { codexReasoningEffort: action.reasoningEffort }
+              : {}),
+            ...(action.claudeReasoningEffort !== undefined
+              ? { claudeReasoningEffort: action.claudeReasoningEffort }
+              : {}),
+            remoteComposer: {
+              workspaceId: action.workspaceId,
+              threadId: action.threadId,
+              provider,
+              text,
+              ...(action.approvalMode ? { approvalMode: action.approvalMode } : {}),
+              ...(action.model ? { model: action.model } : {}),
+              ...(action.reasoningEffort !== undefined
+                ? { reasoningEffort: action.reasoningEffort }
+                : {}),
+              ...(action.claudeReasoningEffort !== undefined
+                ? { claudeReasoningEffort: action.claudeReasoningEffort }
+                : {}),
+              ...(action.contextTurns !== undefined ? { contextTurns: action.contextTurns } : {}),
+              ...(action.extraWorkspaceIds?.length
+                ? { extraWorkspaceIds: action.extraWorkspaceIds }
+                : {})
+            }
+          }
+        })
+        broadcastRemoteComposerQueueChange(chat, action.workspaceId)
+        return { ok: true, queueId }
+      }
+      const updateRemoteComposerQueueItem = async (action: {
+        workspaceId: string
+        threadId: string
+        queueId: string
+        textPrefix?: string
+        op: 'steerNow' | 'remove'
+      }): Promise<{ ok: boolean; reason?: string }> => {
+        const chat = AppStore.getChat(action.threadId)
+        if (!chat) return { ok: false, reason: 'Thread not found' }
+        if (!chatMatchesRemoteScope(chat, action.workspaceId)) {
+          return { ok: false, reason: 'Thread does not belong to the requested workspace' }
+        }
+        const job = AppStore.getRunQueueJob(action.queueId)
+        if (!job || job.chatId !== action.threadId || !job.request?.remoteComposer) {
+          return { ok: false, reason: 'Queued prompt not found' }
+        }
+        if (job.status !== 'queued') {
+          return { ok: false, reason: 'Queued prompt is no longer pending' }
+        }
+        if (
+          action.textPrefix &&
+          !job.request.remoteComposer.text.startsWith(action.textPrefix)
+        ) {
+          return { ok: false, reason: 'Queue changed underneath — refresh and retry' }
+        }
+        if (action.op === 'steerNow') {
+          return { ok: false, reason: 'Queued prompt steering is not wired yet' }
+        }
+        getRunRepository().transitionRunQueueJob(action.queueId, 'cancelled', {
+          statusReason: 'Removed from paired device queue.'
+        })
+        broadcastRemoteComposerQueueChange(chat, action.workspaceId)
+        return { ok: true }
+      }
       return new MainProcessActionExecutor({
         cancelRunFn: async (provider, runId) => {
           return providerAdapters.require(assertProviderId(provider)).cancel(runId)
@@ -16560,6 +16686,8 @@ if (isGeminiMcpBridgeProcess) {
             })
           return { dispatched: true, appRunId: runId }
         },
+        composerQueuePromptFn: queueRemoteComposerPrompt,
+        composerQueueItemFn: updateRemoteComposerQueueItem,
         log: (line) => {
           console.log(line)
         }
