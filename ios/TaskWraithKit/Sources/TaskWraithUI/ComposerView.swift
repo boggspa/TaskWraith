@@ -273,13 +273,7 @@ struct Composer: View {
 
     @ViewBuilder
     private var composerBodyBackground: some View {
-        if TWTheme.composerGlassEnabled {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .overlay(Rectangle().fill(TWTheme.surface2.opacity(0.34)))
-        } else {
-            Rectangle().fill(TWTheme.surface2.opacity(0.72))
-        }
+        Rectangle().fill(composerInputRowFill())
     }
 
     private var sendDisabled: Bool {

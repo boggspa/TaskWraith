@@ -331,33 +331,53 @@ private struct ComposerShellGlassModifier: ViewModifier {
         let rimBottom: Color =
             TWThemeStore.shared.systemTheme.isLight
             ? Color.black.opacity(0.02) : Color.white.opacity(0.02)
-        content
-            .background {
-                Group {
-                    if TWTheme.composerGlassEnabled {
-                        shape
-                            .fill(.ultraThinMaterial)
-                            .overlay(
-                                shape.fill(
-                                    TWTheme.composerBg.opacity(
-                                        TWTheme.composerGlassTintOpacity)))
-                    } else {
-                        shape.fill(TWTheme.composerBg)
-                    }
+        Group {
+            if TWTheme.composerGlassEnabled {
+                if #available(iOS 26.0, macOS 26.0, *) {
+                    content
+                        .background(shape.fill(TWTheme.composerBg.opacity(0.18)))
+                        .glassEffect(.regular, in: shape)
+                } else {
+                    content
+                        .background {
+                            shape
+                                .fill(.ultraThinMaterial)
+                                .overlay(
+                                    shape.fill(
+                                        TWTheme.composerBg.opacity(
+                                            TWTheme.composerGlassTintOpacity)))
+                        }
                 }
+            } else {
+                content
+                    .background(shape.fill(TWTheme.composerBg))
             }
-            .compositingGroup()
-            .mask(shape)
-            .overlay(shape.strokeBorder(TWTheme.border, lineWidth: 1))
-            .overlay(
-                shape.inset(by: 0.5)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [rimTop, rimBottom],
-                            startPoint: .top, endPoint: .bottom),
-                        lineWidth: 1)
-            )
+        }
+        .compositingGroup()
+        .mask(shape)
+        .overlay(shape.strokeBorder(TWTheme.border, lineWidth: 1))
+        .overlay(
+            shape.inset(by: 0.5)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [rimTop, rimBottom],
+                        startPoint: .top, endPoint: .bottom),
+                    lineWidth: 1)
+        )
     }
+}
+
+@MainActor
+private func composerAttachedRowFill() -> AnyShapeStyle {
+    if TWTheme.composerGlassEnabled {
+        return AnyShapeStyle(Color.clear)
+    }
+    return AnyShapeStyle(TWTheme.surface1)
+}
+
+@MainActor
+func composerInputRowFill() -> AnyShapeStyle {
+    AnyShapeStyle(TWTheme.surface2.opacity(TWTheme.composerGlassEnabled ? 0.86 : 0.72))
 }
 
 extension View {
@@ -3181,7 +3201,7 @@ public struct EditableRosterStrip: View {
         }
         .background(
             attached
-                ? AnyShapeStyle(TWTheme.surface1)
+                ? composerAttachedRowFill()
                 : AnyShapeStyle(Color.clear),
             in: UnevenRoundedRectangle(
                 topLeadingRadius: attached && isShellTop ? 16 : 0,
@@ -4155,7 +4175,7 @@ public struct QueuedPromptsStack: View {
             }
         }
         .background(
-            TWTheme.surface1,
+            composerAttachedRowFill(),
             in: UnevenRoundedRectangle(
                 topLeadingRadius: isShellTop ? 16 : 0, bottomLeadingRadius: 0,
                 bottomTrailingRadius: 0, topTrailingRadius: isShellTop ? 16 : 0,
