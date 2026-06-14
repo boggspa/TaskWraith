@@ -15241,6 +15241,8 @@ if (isGeminiMcpBridgeProcess) {
       )
     }
 
+    let scheduleRemoteComposerQueuePumpRef: (() => void) | null = null
+
     const createBridgeActionExecutor = (): MainProcessActionExecutor => {
       // Phase C-late: action executor wires policy-cleared actions to real
       // main-process services. Wired today: `cancelRun`, `approvalReply`,
@@ -15313,6 +15315,115 @@ if (isGeminiMcpBridgeProcess) {
       const bridgeGitWorkspacePath = (workspaceId: string): string | null => {
         const workspace = AppStore.getWorkspaces().find((entry) => entry.id === workspaceId)
         return workspace ? workspace.path : null
+      }
+      let remoteComposerQueuePumpScheduled = false
+      const activeRemoteComposerSessionForChat = (chatId: string) => {
+        const sessions = RUN_MANAGER_PROVIDERS.flatMap((provider) =>
+          runManager.getActiveByProvider(provider)
+        )
+          .filter((session) => session.appChatId === chatId)
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+        return sessions[0]
+      }
+      const remoteComposerChatIsBusy = (chatId: string): boolean => {
+        if (activeRemoteComposerSessionForChat(chatId)) return true
+        return AppStore.getRunQueueJobs({
+          chatId,
+          statuses: ['starting', 'active', 'cancelling']
+        }).some((job) => !job.request?.remoteComposer)
+      }
+      const dispatchRemoteComposerQueueJob = async (
+        job: RunQueueJob,
+        reason: string
+      ): Promise<boolean> => {
+        const remote = job.request?.remoteComposer
+        if (!remote) return false
+        const leased = getRunRepository().leaseQueuedRun({
+          runId: job.runId,
+          provider: job.provider,
+          statusReason: reason
+        })
+        if (!leased) return false
+        const result = await createBridgeActionExecutor().executeComposerPrompt({
+          kind: 'composerPrompt',
+          actionId: `remote-queue-dispatch:${job.runId}:${Date.now()}`,
+          workspaceId: remote.workspaceId,
+          threadId: remote.threadId,
+          provider: remote.provider,
+          text: remote.text,
+          approvalMode: remote.approvalMode,
+          model: remote.model,
+          reasoningEffort: remote.reasoningEffort,
+          claudeReasoningEffort: remote.claudeReasoningEffort,
+          contextTurns: remote.contextTurns,
+          extraWorkspaceIds: remote.extraWorkspaceIds
+        })
+        const appRunId =
+          result.data && typeof result.data === 'object'
+            ? (result.data as { appRunId?: unknown }).appRunId
+            : undefined
+        if (result.executed) {
+          getRunRepository().transitionRunQueueJob(job.runId, 'completed', {
+            statusReason:
+              typeof appRunId === 'string'
+                ? `Dispatched from remote queue as run ${appRunId}.`
+                : 'Dispatched from remote queue.'
+          })
+          return true
+        }
+        getRunRepository().transitionRunQueueJob(job.runId, 'failed', {
+          statusReason: result.message || 'Remote queued prompt failed to dispatch.',
+          lastError: result.message
+        })
+        return false
+      }
+      const pumpRemoteComposerQueue = async () => {
+        remoteComposerQueuePumpScheduled = false
+        const jobs = AppStore.getRunQueueJobs({ statuses: ['queued'] }).filter(
+          (job) => job.request?.remoteComposer
+        )
+        for (const job of jobs) {
+          if (!job.chatId || remoteComposerChatIsBusy(job.chatId)) continue
+          const dispatched = await dispatchRemoteComposerQueueJob(
+            job,
+            'Dequeued by remote composer queue.'
+          )
+          if (dispatched && job.chatId) {
+            const chat = AppStore.getChat(job.chatId)
+            const workspaceId = job.request?.remoteComposer?.workspaceId
+            if (chat && workspaceId) {
+              broadcastRemoteComposerQueueChange(chat, workspaceId)
+            }
+          }
+        }
+      }
+      const scheduleRemoteComposerQueuePump = (delayMs = 0) => {
+        if (remoteComposerQueuePumpScheduled) return
+        remoteComposerQueuePumpScheduled = true
+        setTimeout(() => {
+          void pumpRemoteComposerQueue().catch((err) => {
+            remoteComposerQueuePumpScheduled = false
+            console.warn(
+              '[remote-composer-queue] pump failed:',
+              err instanceof Error ? err.message : String(err)
+            )
+          })
+        }, delayMs).unref?.()
+      }
+      scheduleRemoteComposerQueuePumpRef = () => scheduleRemoteComposerQueuePump()
+      const steerRemoteComposerQueueJob = async (
+        job: RunQueueJob,
+        chat: ChatRecord
+      ): Promise<{ ok: boolean; reason?: string }> => {
+        const active = activeRemoteComposerSessionForChat(chat.appChatId)
+        if (active) {
+          await cancelProviderRun(active.provider, active.runId)
+        }
+        const ok = await dispatchRemoteComposerQueueJob(
+          job,
+          'Promoted from paired device queue via Steer.'
+        )
+        return ok ? { ok: true } : { ok: false, reason: 'Queued prompt could not be steered' }
       }
       const broadcastRemoteComposerQueueChange = (chat: ChatRecord, workspaceId: string) => {
         broadcastThreadUpdate(chat.appChatId)
@@ -15404,6 +15515,7 @@ if (isGeminiMcpBridgeProcess) {
           }
         })
         broadcastRemoteComposerQueueChange(chat, action.workspaceId)
+        scheduleRemoteComposerQueuePump()
         return { ok: true, queueId }
       }
       const updateRemoteComposerQueueItem = async (action: {
@@ -15432,7 +15544,9 @@ if (isGeminiMcpBridgeProcess) {
           return { ok: false, reason: 'Queue changed underneath — refresh and retry' }
         }
         if (action.op === 'steerNow') {
-          return { ok: false, reason: 'Queued prompt steering is not wired yet' }
+          const result = await steerRemoteComposerQueueJob(job, chat)
+          broadcastRemoteComposerQueueChange(chat, action.workspaceId)
+          return result
         }
         getRunRepository().transitionRunQueueJob(action.queueId, 'cancelled', {
           statusReason: 'Removed from paired device queue.'
@@ -16713,6 +16827,7 @@ if (isGeminiMcpBridgeProcess) {
             bridgeBroadcasterRef?.resetThrottle()
             pushRemoteThreadSnapshot(chat, workspaceId)
             bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            scheduleRemoteComposerQueuePumpRef?.()
           }, 900).unref?.()
           return
         }
