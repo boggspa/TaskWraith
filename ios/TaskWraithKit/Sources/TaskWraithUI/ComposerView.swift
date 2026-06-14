@@ -102,7 +102,7 @@ struct Composer: View {
         #endif
     }
     private var canQueueCurrentPrompt: Bool {
-        isRunActive && card.isEnsemble && !isEmpty && !hasImageAttachments
+        isRunActive && newTaskWorkspaceId == nil && !isEmpty && !hasImageAttachments
     }
     private var catalogs: [ProviderModelCatalog] {
         let live = model.providerModels.map {
@@ -473,8 +473,18 @@ struct Composer: View {
 
     private func queueCurrent() {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard card.isEnsemble, !trimmed.isEmpty, !hasImageAttachments else { return }
-        model.queueEnsemblePrompt(card, prompt: trimmed)
+        guard !trimmed.isEmpty, !hasImageAttachments else { return }
+        if card.isEnsemble {
+            model.queueEnsemblePrompt(card, prompt: trimmed)
+        } else {
+            model.queueComposerPrompt(
+                card, prompt: trimmed,
+                approvalMode: isGlobalChat ? "plan" : (approvalMode == "default" ? nil : approvalMode),
+                model: selectedModelId,
+                providerOverride: canChangeProvider ? selectedProvider : nil,
+                reasoningEffort: selectedReasoningEffort,
+                extraWorkspaceIds: extraWorkspaceIds)
+        }
         text = ""
     }
 

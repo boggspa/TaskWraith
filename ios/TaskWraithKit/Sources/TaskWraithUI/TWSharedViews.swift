@@ -4266,6 +4266,95 @@ public struct QueuedPromptsStack: View {
     }
 }
 
+/// Solo-chat queued prompts waiting for the target chat to become idle.
+/// Backed by Mac-side RunQueueJob records so every paired device sees the
+/// same stack.
+public struct QueuedComposerPromptsStack: View {
+    @ObservedObject var model: RemoteSessionModel
+    let card: RemoteTaskCard
+    let prompts: [RemoteTaskCard.QueuedComposerPrompt]
+    let isShellTop: Bool
+    let onEdit: ((String) -> Void)?
+
+    public init(
+        model: RemoteSessionModel, card: RemoteTaskCard,
+        prompts: [RemoteTaskCard.QueuedComposerPrompt], isShellTop: Bool,
+        onEdit: ((String) -> Void)? = nil
+    ) {
+        self.model = model
+        self.card = card
+        self.prompts = prompts
+        self.isShellTop = isShellTop
+        self.onEdit = onEdit
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            ForEach(prompts) { prompt in
+                row(prompt)
+                if prompt.id != prompts.last?.id {
+                    Rectangle().fill(TWTheme.border).frame(height: 0.5)
+                        .padding(.leading, 34)
+                }
+            }
+        }
+        .background(
+            composerAttachedRowFill(),
+            in: UnevenRoundedRectangle(
+                topLeadingRadius: isShellTop ? 16 : 0, bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0, topTrailingRadius: isShellTop ? 16 : 0,
+                style: .continuous
+            )
+        )
+    }
+
+    private func row(_ prompt: RemoteTaskCard.QueuedComposerPrompt) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Image(systemName: "tray.and.arrow.down")
+                .font(.caption2)
+                .foregroundStyle(TWTheme.providerAccent(prompt.provider))
+            Text(prompt.text)
+                .font(.caption)
+                .foregroundStyle(TWTheme.textSecondary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                model.composerQueueItem(card, item: prompt, op: "steerNow")
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.uturn.right")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("Steer")
+                        .font(.caption2.weight(.semibold))
+                }
+                .foregroundStyle(TWTheme.textSecondary)
+            }
+            .buttonStyle(.plain)
+            if let onEdit {
+                Button {
+                    onEdit(prompt.text)
+                    model.composerQueueItem(card, item: prompt, op: "remove")
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textTertiary)
+                }
+                .buttonStyle(.plain)
+            }
+            Button {
+                model.composerQueueItem(card, item: prompt, op: "remove")
+            } label: {
+                Image(systemName: "trash")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textTertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+}
+
 /// Guest participant control for solo composers: + opens the full provider /
 /// model picker; an active guest renders as a green-accent chip
 /// — tap to change provider/model, × to remove. One guest per thread
@@ -4752,11 +4841,21 @@ struct MiniThreadView: View {
 
     private var composerShell: some View {
         VStack(spacing: 0) {
+            if let queued = card.queuedComposerPrompts, !queued.isEmpty {
+                QueuedComposerPromptsStack(
+                    model: model, card: card, prompts: queued,
+                    isShellTop: true
+                ) { queuedText in
+                    draft = queuedText
+                }
+                Rectangle().fill(TWTheme.border).frame(height: 1)
+            }
             Composer(
                 model: model, card: card,
                 runModel: snapshot?.runSummary?.model,
                 runStatus: snapshot?.runSummary?.status,
-                attachedTop: false, attachedBottom: true,
+                attachedTop: !(card.queuedComposerPrompts ?? []).isEmpty,
+                attachedBottom: true,
                 navigateOnSend: false,
                 text: $draft)
             Rectangle().fill(TWTheme.border).frame(height: 1)

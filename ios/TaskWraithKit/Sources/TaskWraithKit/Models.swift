@@ -163,6 +163,17 @@ public struct RemoteTaskCard: Codable, Sendable {
     public let pendingQuestionCount: Int?
     public let activeGoal: RemoteActiveGoal?
     public let capabilities: RemoteTaskCapabilities?
+    public let queuedComposerPrompts: [QueuedComposerPrompt]?
+
+    public struct QueuedComposerPrompt: Codable, Sendable, Identifiable {
+        public let id: String
+        public let runId: String
+        public let provider: String
+        public let text: String
+        public let index: Int?
+        public let createdAt: String?
+        public let enqueuedAt: String?
+    }
 
     public var isEnsemble: Bool { chatKind == "ensemble" }
     public var isGuestSideChat: Bool {
@@ -200,7 +211,8 @@ public struct RemoteTaskCard: Codable, Sendable {
             pendingApprovalCount: nil,
             pendingQuestionCount: nil,
             activeGoal: nil,
-            capabilities: nil)
+            capabilities: nil,
+            queuedComposerPrompts: nil)
     }
 }
 
@@ -756,6 +768,44 @@ public enum BridgeAction {
         }
         if let imageAttachments, !imageAttachments.isEmpty {
             payload["imageAttachments"] = imageAttachments
+        }
+        return encode(payload)
+    }
+
+    public static func composerQueuePrompt(
+        workspaceId: String, threadId: String, provider: String, text: String,
+        approvalMode: String? = nil, model: String? = nil, extraWorkspaceIds: [String]? = nil,
+        reasoningEffort: String? = nil, actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "composerQueuePrompt", "actionId": actionId, "workspaceId": workspaceId,
+            "threadId": threadId, "provider": provider, "text": text,
+        ]
+        if let approvalMode { payload["approvalMode"] = approvalMode }
+        if let model { payload["model"] = model }
+        if let reasoningEffort, !reasoningEffort.isEmpty {
+            if provider.lowercased() == "claude" {
+                payload["claudeReasoningEffort"] = reasoningEffort
+            } else {
+                payload["reasoningEffort"] = reasoningEffort
+            }
+        }
+        if let extraWorkspaceIds, !extraWorkspaceIds.isEmpty {
+            payload["extraWorkspaceIds"] = extraWorkspaceIds
+        }
+        return encode(payload)
+    }
+
+    public static func composerQueueItem(
+        workspaceId: String, threadId: String, queueId: String, textPrefix: String?,
+        op: String, actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "composerQueueItem", "actionId": actionId, "workspaceId": workspaceId,
+            "threadId": threadId, "queueId": queueId, "op": op,
+        ]
+        if let textPrefix, !textPrefix.isEmpty {
+            payload["textPrefix"] = String(textPrefix.prefix(120))
         }
         return encode(payload)
     }

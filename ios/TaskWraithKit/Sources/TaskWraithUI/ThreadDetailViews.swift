@@ -656,6 +656,18 @@ struct ThreadDetailView: View {
                             }
                             Rectangle().fill(TWTheme.border).frame(height: 1)
                         }
+                        if !card.isEnsemble,
+                            let queued = card.queuedComposerPrompts,
+                            !queued.isEmpty
+                        {
+                            QueuedComposerPromptsStack(
+                                model: model, card: card, prompts: queued,
+                                isShellTop: !hasDiff
+                            ) { queuedText in
+                                followUp = queuedText
+                            }
+                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                        }
                         if card.isEnsemble, let wsId = card.workspaceId {
                             // Roster row lives IN the shell, always under the
                             // changes row(s) — desktop composer parity.
@@ -670,7 +682,9 @@ struct ThreadDetailView: View {
                         Composer(
                             model: model, card: card, runModel: snapshot?.runSummary?.model,
                             runStatus: snapshot?.runSummary?.status,
-                            attachedTop: hasDiff || card.isEnsemble, attachedBottom: true,
+                            attachedTop: hasDiff || card.isEnsemble
+                                || !(card.queuedComposerPrompts ?? []).isEmpty,
+                            attachedBottom: true,
                             extraWorkspaceIds: secondaryWorkspaceId.map { [$0] },
                             allowsProviderChange: allowsFirstTurnProviderChange,
                             text: $followUp)

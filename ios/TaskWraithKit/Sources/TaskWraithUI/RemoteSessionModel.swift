@@ -1421,7 +1421,7 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     /// Queue a prompt behind the active ensemble round. Solo chat queueing is
-    /// still desktop-renderer owned; this path uses the bridge-backed
+    /// handled by `queueComposerPrompt`; this path uses the bridge-backed
     /// ensemble FIFO that is already projected to paired devices.
     public func queueEnsemblePrompt(_ card: RemoteTaskCard, prompt: String) {
         guard card.isEnsemble, let ws = card.workspaceId, let thread = card.threadId else { return }
@@ -1432,6 +1432,43 @@ public final class RemoteSessionModel: ObservableObject {
                 workspaceId: ws, threadId: thread, text: trimmed,
                 roundId: ensembleStates[card.id]?.roundId),
             successLabel: "Queued.")
+        scheduleThreadRefresh(thread)
+    }
+
+    /// Queue a solo-chat prompt behind the active run. The Mac owns the
+    /// durable FIFO as RunQueueJob records so every paired client sees the
+    /// same pending stack.
+    public func queueComposerPrompt(
+        _ card: RemoteTaskCard, prompt: String, approvalMode: String? = nil,
+        model: String? = nil, providerOverride: String? = nil,
+        reasoningEffort: String? = nil, extraWorkspaceIds: [String]? = nil
+    ) {
+        guard !card.isEnsemble, let thread = card.threadId else { return }
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        guard let provider = providerOverride ?? card.provider else { return }
+        send(
+            BridgeAction.composerQueuePrompt(
+                workspaceId: ws, threadId: thread, provider: provider, text: trimmed,
+                approvalMode: approvalMode, model: model,
+                extraWorkspaceIds: extraWorkspaceIds,
+                reasoningEffort: reasoningEffort),
+            successLabel: "Queued.")
+        scheduleThreadRefresh(thread)
+    }
+
+    /// Steer-now or remove one queued solo composer prompt.
+    public func composerQueueItem(
+        _ card: RemoteTaskCard, item: RemoteTaskCard.QueuedComposerPrompt, op: String
+    ) {
+        guard let thread = card.threadId else { return }
+        let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        send(
+            BridgeAction.composerQueueItem(
+                workspaceId: ws, threadId: thread, queueId: item.id,
+                textPrefix: String(item.text.prefix(60)), op: op),
+            successLabel: op == "steerNow" ? "Steering…" : "Removed from queue.")
         scheduleThreadRefresh(thread)
     }
 
