@@ -2624,6 +2624,7 @@ public struct TelemetryFooterRail: View {
     var primaryWorkspaceId: String? = nil
     var secondaryWorkspaceId: Binding<String?>? = nil
     @State private var compactTelemetryShowsCost = false
+    @State private var railWidth: CGFloat = 0
 
     public init(
         run: RemoteThreadSnapshot.RunSummary?, workspaceName: String?,
@@ -2703,21 +2704,34 @@ public struct TelemetryFooterRail: View {
             .lineLimit(1)
     }
 
+    private var shouldUseCompactTelemetry: Bool {
+        guard tokenTelemetryText != nil, costTelemetryText != nil else { return false }
+        // iPad split panes keep a regular size class, so compact telemetry
+        // must follow actual rail width rather than device idiom.
+        return railWidth > 0 && railWidth < 620
+    }
+
     @ViewBuilder
-    private var telemetryView: some View {
+    private func telemetryView(compact: Bool) -> some View {
         if let tokens = tokenTelemetryText, let cost = costTelemetryText {
-            ViewThatFits(in: .horizontal) {
-                telemetryLabel("\(tokens) · \(cost)")
-                Button {
-                    compactTelemetryShowsCost.toggle()
-                } label: {
-                    telemetryLabel(compactTelemetryShowsCost ? cost : tokens)
+            let compactButton = Button {
+                compactTelemetryShowsCost.toggle()
+            } label: {
+                telemetryLabel(compactTelemetryShowsCost ? cost : tokens)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                compactTelemetryShowsCost
+                    ? "Estimated cost \(cost). Tap to show tokens."
+                    : "Token estimate \(tokens). Tap to show cost.")
+
+            if compact {
+                compactButton
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    telemetryLabel("\(tokens) · \(cost)")
+                    compactButton
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(
-                    compactTelemetryShowsCost
-                        ? "Estimated cost \(cost). Tap to show tokens."
-                        : "Token estimate \(tokens). Tap to show cost.")
             }
         } else if let tokens = tokenTelemetryText {
             telemetryLabel(tokens)
@@ -2806,12 +2820,32 @@ public struct TelemetryFooterRail: View {
                     }
                 }
                 if tokenTelemetryText != nil || costTelemetryText != nil {
-                    telemetryView
+                    telemetryView(compact: shouldUseCompactTelemetry)
                 }
             }
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: TelemetryFooterRailWidthKey.self,
+                        value: proxy.size.width)
+                }
+            )
         }
+        .onPreferenceChange(TelemetryFooterRailWidthKey.self) { width in
+            guard abs(railWidth - width) > 1 else { return }
+            railWidth = width
+        }
+    }
+}
+
+private struct TelemetryFooterRailWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
