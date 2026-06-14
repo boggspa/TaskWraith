@@ -16777,12 +16777,17 @@ if (isGeminiMcpBridgeProcess) {
       const sortedChats = [...chats].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
       for (const [chatIndex, chat] of sortedChats.entries()) {
         const capabilities = remoteTaskCapabilitiesForWorkspace(chat.workspaceId)
+        const queuedComposerJobs = AppStore.getRunQueueJobs({
+          chatId: chat.appChatId,
+          statuses: ['queued']
+        }).filter((job) => job.request?.remoteComposer)
         const taskCard = buildRemoteTaskCard(chat, {
           generatedAt,
           pendingQuestionCount: questionCounts.get(chat.appChatId) ?? 0,
           pendingApprovalCount: approvalCounts.get(chat.appChatId) ?? 0,
           capabilities,
-          agentIdentity: remoteAgentIdentityForChat(chat)
+          agentIdentity: remoteAgentIdentityForChat(chat),
+          queuedComposerJobs
         })
         maybeNotifyRemoteTaskNeedsAttention(taskCard)
         envelopes.push(

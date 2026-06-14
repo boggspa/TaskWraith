@@ -38,6 +38,14 @@ function makeStubExecutor(
       executed: true,
       message: 'composerPrompt done'
     }),
+    executeComposerQueuePrompt: make('executeComposerQueuePrompt', {
+      executed: true,
+      message: 'composerQueuePrompt done'
+    }),
+    executeComposerQueueItem: make('executeComposerQueueItem', {
+      executed: true,
+      message: 'composerQueueItem done'
+    }),
     executeCreateThread: make('executeCreateThread', {
       executed: true,
       message: 'createThread done'

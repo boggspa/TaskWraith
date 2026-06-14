@@ -480,6 +480,40 @@ describe('decodeBridgeActionPayload', () => {
       expect(payload.kind).toBe('composerPrompt')
     })
 
+    it('decodes composer queue actions', () => {
+      const prompt = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerQueuePrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'run this after the current turn',
+          provider: 'codex',
+          approvalMode: 'plan'
+        })
+      ).payload
+      expect(prompt.kind).toBe('composerQueuePrompt')
+      if (prompt.kind === 'composerQueuePrompt') {
+        expect(prompt.provider).toBe('codex')
+        expect(prompt.approvalMode).toBe('plan')
+      }
+
+      const item = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerQueueItem',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          queueId: 'queue-1',
+          textPrefix: 'run this',
+          op: 'remove'
+        })
+      ).payload
+      expect(item.kind).toBe('composerQueueItem')
+      if (item.kind === 'composerQueueItem') {
+        expect(item.queueId).toBe('queue-1')
+        expect(item.op).toBe('remove')
+      }
+    })
+
     it('treats composerPrompt without provider as unknown', () => {
       const wire = encode({
         kind: 'composerPrompt',
@@ -664,6 +698,20 @@ describe('decodeBridgeActionPayload', () => {
           threadId: 't-1',
           text: 'hi',
           provider: 'gemini'
+        },
+        {
+          kind: 'composerQueuePrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'queue me',
+          provider: 'gemini'
+        },
+        {
+          kind: 'composerQueueItem',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          queueId: 'queue-1',
+          op: 'steerNow'
         },
         {
           kind: 'cancelRun',

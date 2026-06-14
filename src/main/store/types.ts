@@ -2926,6 +2926,7 @@ export type RunQueueJobStatus =
 
 export type RunQueueJobSource =
   | 'manual'
+  | 'remote'
   | 'scheduled'
   | 'retry'
   | 'permission_retry'
@@ -2972,6 +2973,18 @@ export interface RunQueueRequestSnapshot {
   handoffSourceRunId?: string
   guestParentChatId?: string
   guestRole?: string
+  remoteComposer?: {
+    workspaceId: string
+    threadId: string
+    provider: string
+    text: string
+    approvalMode?: string
+    model?: string
+    reasoningEffort?: string | null
+    claudeReasoningEffort?: string | null
+    contextTurns?: number
+    extraWorkspaceIds?: string[]
+  }
 }
 
 export type RunRecoveryProcessAction = 'left_running' | 'not_found' | 'inaccessible' | 'unknown'

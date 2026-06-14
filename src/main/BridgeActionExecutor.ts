@@ -2,6 +2,8 @@ import type {
   BridgeApprovalReplyAction,
   BridgeCancelRunAction,
   BridgeComposerPromptAction,
+  BridgeComposerQueuePromptAction,
+  BridgeComposerQueueItemAction,
   BridgeCreateThreadAction,
   BridgeThreadRowExpandAction,
   BridgeThreadSnapshotRequestAction,
@@ -81,6 +83,12 @@ export interface BridgeActionExecutor {
   executeQuestionReply(action: BridgeQuestionReplyAction): Promise<BridgeActionExecutionResult>
   executeQuestionReject(action: BridgeQuestionRejectAction): Promise<BridgeActionExecutionResult>
   executeComposerPrompt(action: BridgeComposerPromptAction): Promise<BridgeActionExecutionResult>
+  executeComposerQueuePrompt(
+    action: BridgeComposerQueuePromptAction
+  ): Promise<BridgeActionExecutionResult>
+  executeComposerQueueItem(
+    action: BridgeComposerQueueItemAction
+  ): Promise<BridgeActionExecutionResult>
   executeCreateThread(action: BridgeCreateThreadAction): Promise<BridgeActionExecutionResult>
   executeThreadRowExpand(
     action: BridgeThreadRowExpandAction
@@ -179,6 +187,16 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeComposerPromptAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('composerPrompt', action.threadId)
+  }
+  async executeComposerQueuePrompt(
+    action: BridgeComposerQueuePromptAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('composerQueuePrompt', action.threadId)
+  }
+  async executeComposerQueueItem(
+    action: BridgeComposerQueueItemAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('composerQueueItem', action.queueId)
   }
   async executeCreateThread(
     action: BridgeCreateThreadAction
@@ -392,6 +410,15 @@ export interface MainProcessActionExecutorDependencies {
   composerPromptFn?: (action: BridgeComposerPromptAction) => Promise<{
     dispatched: boolean
     appRunId: string | null
+    reason?: string
+  }>
+  composerQueuePromptFn?: (action: BridgeComposerQueuePromptAction) => Promise<{
+    ok: boolean
+    queueId?: string
+    reason?: string
+  }>
+  composerQueueItemFn?: (action: BridgeComposerQueueItemAction) => Promise<{
+    ok: boolean
     reason?: string
   }>
   createThreadFn?: (action: BridgeCreateThreadAction) => Promise<{
@@ -1016,6 +1043,74 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       return {
         executed: false,
         message: `Composer prompt dispatch failed: ${errMessage}`
+      }
+    }
+  }
+
+  async executeComposerQueuePrompt(
+    action: BridgeComposerQueuePromptAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.composerQueuePromptFn) {
+      return notWired('composerQueuePrompt', action.threadId)
+    }
+    this.log(
+      `[BridgeActionExecutor] composerQueuePrompt provider=${action.provider} ws=${action.workspaceId} thread=${action.threadId}`
+    )
+    try {
+      const result = await this.deps.composerQueuePromptFn(action)
+      if (result.ok) {
+        return {
+          executed: true,
+          message: 'Queued on your Mac.',
+          data: {
+            ...(result.queueId ? { queueId: result.queueId } : {}),
+            workspaceId: action.workspaceId,
+            threadId: action.threadId,
+            provider: action.provider
+          }
+        }
+      }
+      return {
+        executed: false,
+        message: result.reason ?? 'Composer prompt could not be queued.'
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] composerQueuePrompt failed: ${errMessage}`)
+      return {
+        executed: false,
+        message: `Composer prompt queue failed: ${errMessage}`
+      }
+    }
+  }
+
+  async executeComposerQueueItem(
+    action: BridgeComposerQueueItemAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.composerQueueItemFn) {
+      return notWired('composerQueueItem', action.queueId)
+    }
+    this.log(
+      `[BridgeActionExecutor] composerQueueItem op=${action.op} queueId=${action.queueId}`
+    )
+    try {
+      const result = await this.deps.composerQueueItemFn(action)
+      return {
+        executed: Boolean(result.ok),
+        message: result.ok ? 'Queued prompt updated.' : result.reason ?? 'Queued prompt update failed.',
+        data: {
+          queueId: action.queueId,
+          workspaceId: action.workspaceId,
+          threadId: action.threadId,
+          op: action.op
+        }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] composerQueueItem failed: ${errMessage}`)
+      return {
+        executed: false,
+        message: `Queued prompt update failed: ${errMessage}`
       }
     }
   }

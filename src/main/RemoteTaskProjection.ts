@@ -11,6 +11,7 @@ import type {
   PromptSurfaceStyle,
   ProviderId,
   RunDiffResult,
+  RunQueueJob,
   ThemeAccentStyle,
   ThemeAppearance,
   ThemeCornerStyle,
@@ -106,6 +107,17 @@ export interface RemoteTaskCard {
   capabilities?: RemoteTaskCapabilities
   diffSummary?: MobileDiffSummary
   ensembleState?: RemoteEnsembleState
+  queuedComposerPrompts?: RemoteQueuedComposerPrompt[]
+}
+
+export interface RemoteQueuedComposerPrompt {
+  id: string
+  runId: string
+  provider: ProviderId
+  text: string
+  index: number
+  createdAt?: string
+  enqueuedAt?: string
 }
 
 export interface RemoteTaskCapabilities {
@@ -342,6 +354,7 @@ export interface BuildRemoteTaskCardOptions {
    * providerMetadata.agentIdentities registry — the same names/accents
    * the desktop renders, never re-derived). */
   agentIdentity?: { name: string; accent?: string; slug?: string }
+  queuedComposerJobs?: RunQueueJob[]
 }
 
 export interface BuildRemoteTaskFeedSnapshotInput {
@@ -616,7 +629,29 @@ export function buildRemoteTaskCard(
   if (diffSummary) card.diffSummary = diffSummary
   const ensembleState = buildRemoteEnsembleState(chat)
   if (ensembleState) card.ensembleState = ensembleState
+  const queuedComposerPrompts = buildRemoteQueuedComposerPrompts(options.queuedComposerJobs)
+  if (queuedComposerPrompts.length > 0) card.queuedComposerPrompts = queuedComposerPrompts
   return card
+}
+
+export function buildRemoteQueuedComposerPrompts(
+  jobs: RunQueueJob[] | undefined
+): RemoteQueuedComposerPrompt[] {
+  if (!jobs?.length) return []
+  return jobs
+    .filter((job) => job.status === 'queued' && job.request?.remoteComposer)
+    .map((job, index) => {
+      const remote = job.request!.remoteComposer!
+      return {
+        id: job.id,
+        runId: job.runId,
+        provider: job.provider,
+        text: sanitizeText(remote.text || job.promptPreview, 4000).preview,
+        index,
+        ...(job.createdAt ? { createdAt: job.createdAt } : {}),
+        ...(job.enqueuedAt ? { enqueuedAt: job.enqueuedAt } : {})
+      }
+    })
 }
 
 export function buildRemoteTaskFeedSnapshot(

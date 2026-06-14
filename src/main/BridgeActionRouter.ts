@@ -502,6 +502,10 @@ export class BridgeActionRouter {
         return this.executor.executeQuestionReject(payload)
       case 'composerPrompt':
         return this.executor.executeComposerPrompt(payload)
+      case 'composerQueuePrompt':
+        return this.executor.executeComposerQueuePrompt(payload)
+      case 'composerQueueItem':
+        return this.executor.executeComposerQueueItem(payload)
       case 'createThread':
         return this.executor.executeCreateThread(payload)
       case 'threadRowExpand':
@@ -954,6 +958,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'questionReply':
       return 'answer'
     case 'composerPrompt':
+    case 'composerQueuePrompt':
     case 'createThread':
       return 'startTurn'
     case 'threadSnapshotRequest':
@@ -991,6 +996,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'ensembleSteer':
     case 'ensembleRosterUpdate':
     case 'ensembleQueueItem':
+    case 'composerQueueItem':
       return 'steer'
     // Thread annotations (notes + message pins): write-class but far less
     // powerful than starting runs — gated under startTurn so the default

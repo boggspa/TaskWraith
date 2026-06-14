@@ -123,6 +123,20 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   extraWorkspaceIds?: string[]
 }
 
+export interface BridgeComposerQueuePromptAction
+  extends Omit<BridgeComposerPromptAction, 'kind'> {
+  kind: 'composerQueuePrompt'
+}
+
+export interface BridgeComposerQueueItemAction extends BridgeActionMetadata {
+  kind: 'composerQueueItem'
+  workspaceId: string
+  threadId: string
+  queueId: string
+  textPrefix?: string
+  op: 'steerNow' | 'remove'
+}
+
 export interface BridgeImageAttachment {
   /** Display name, e.g. "IMG_0123.jpg". */
   name?: string
@@ -479,6 +493,8 @@ export type BridgeActionPayload =
   | BridgeQuestionReplyAction
   | BridgeQuestionRejectAction
   | BridgeComposerPromptAction
+  | BridgeComposerQueuePromptAction
+  | BridgeComposerQueueItemAction
   | BridgeCreateThreadAction
   | BridgeThreadRowExpandAction
   | BridgeThreadSnapshotRequestAction
@@ -597,6 +613,8 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'questionReply':
     case 'questionReject':
     case 'composerPrompt':
+    case 'composerQueuePrompt':
+    case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
     case 'threadSnapshotRequest':
@@ -656,6 +674,8 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'questionReply':
     case 'questionReject':
     case 'composerPrompt':
+    case 'composerQueuePrompt':
+    case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
     case 'threadSnapshotRequest':
@@ -728,6 +748,8 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
 export function payloadIsMutating(payload: BridgeActionPayload): boolean {
   switch (payload.kind) {
     case 'composerPrompt':
+    case 'composerQueuePrompt':
+    case 'composerQueueItem':
     case 'createThread':
     case 'cancelRun':
     case 'questionReply':
@@ -798,6 +820,14 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isComposerPrompt(parsed)
         ? (parsed as unknown as BridgeComposerPromptAction)
         : { kind: 'unknown', rawKind: 'composerPrompt', raw: parsed }
+    case 'composerQueuePrompt':
+      return isComposerPrompt(parsed)
+        ? (parsed as unknown as BridgeComposerQueuePromptAction)
+        : { kind: 'unknown', rawKind: 'composerQueuePrompt', raw: parsed }
+    case 'composerQueueItem':
+      return isComposerQueueItem(parsed)
+        ? (parsed as unknown as BridgeComposerQueueItemAction)
+        : { kind: 'unknown', rawKind: 'composerQueueItem', raw: parsed }
     case 'createThread':
       return isCreateThread(parsed)
         ? (parsed as unknown as BridgeCreateThreadAction)
@@ -1036,6 +1066,19 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
         v.extraWorkspaceIds.every(
           (id) => typeof id === 'string' && id.trim().length > 0
         )))
+  )
+}
+
+function isComposerQueueItem(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    typeof v.threadId === 'string' &&
+    typeof v.queueId === 'string' &&
+    v.queueId.trim().length > 0 &&
+    (v.textPrefix === undefined ||
+      (typeof v.textPrefix === 'string' && v.textPrefix.length <= 120)) &&
+    (v.op === 'steerNow' || v.op === 'remove')
   )
 }
 
