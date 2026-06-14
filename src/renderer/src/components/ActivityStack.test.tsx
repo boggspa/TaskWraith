@@ -213,6 +213,32 @@ function makeReadActivity(overrides: Partial<ToolActivity> = {}): ToolActivity {
   }
 }
 
+describe('ActivityStack live activity viewport', () => {
+  it('wraps settled tool stacks in the viewport when enabled', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={[makeWriteActivity()]} provider="codex" liveActivityViewport />
+    )
+
+    expect(html).toContain('live-activity-viewport')
+    expect(html).toContain('activity-timeline-live-inner')
+    expect(html).toContain('data-active="false"')
+    expect(html).toContain('activity-row')
+  })
+
+  it('keeps the plain timeline when the viewport setting is disabled', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[makeWriteActivity()]}
+        provider="codex"
+        liveActivityViewport={false}
+      />
+    )
+
+    expect(html).not.toContain('live-activity-viewport')
+    expect(html).toContain('activity-row')
+  })
+})
+
 describe('ActivityStack compact tool groups', () => {
   it('uses the full-size tool-family icon in same-family group headers', () => {
     const html = renderToStaticMarkup(

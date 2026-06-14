@@ -1,16 +1,17 @@
 /*
  * 12-live-activity-viewport.css — Cursor-style live activity viewport.
  *
- * A fixed-height, edge-masked region that auto-follows streaming thinking +
- * tool activity. Sits above the settled compact tool summary. Collapsed it
- * shows a soft top/bottom fade and sticks to the live edge; expanded it
- * releases to a freely-scrollable full-height view.
+ * A bounded, edge-masked region that auto-follows streaming thinking + tool
+ * activity. Collapsed it shows soft top/bottom fades when overflow exists and
+ * sticks to the live edge; expanded it releases to a freely-scrollable
+ * full-height view.
  */
 
 .live-activity-viewport {
   position: relative;
   margin: 2px 0 6px;
   padding-left: 10px;
+  --live-activity-edge-fade-size: 52px;
 }
 
 /* Left rail — subtle by default, animated pulse while the run is live. */
@@ -48,12 +49,78 @@
 .live-activity-viewport-scroll {
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   transition: max-height 180ms ease;
 }
 
-/* Collapsed: fixed-height window into the live stream (Cursor-style). */
-.live-activity-viewport.is-collapsed .live-activity-viewport-scroll {
+.live-activity-viewport.is-collapsed.has-fade-top .live-activity-viewport-scroll {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgba(0, 0, 0, 0.18) 10px,
+    rgba(0, 0, 0, 0.72) 32px,
+    #000 var(--live-activity-edge-fade-size),
+    #000 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgba(0, 0, 0, 0.18) 10px,
+    rgba(0, 0, 0, 0.72) 32px,
+    #000 var(--live-activity-edge-fade-size),
+    #000 100%
+  );
+}
+
+.live-activity-viewport.is-collapsed.has-fade-bottom .live-activity-viewport-scroll {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - var(--live-activity-edge-fade-size)),
+    rgba(0, 0, 0, 0.72) calc(100% - 32px),
+    rgba(0, 0, 0, 0.18) calc(100% - 10px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0,
+    #000 calc(100% - var(--live-activity-edge-fade-size)),
+    rgba(0, 0, 0, 0.72) calc(100% - 32px),
+    rgba(0, 0, 0, 0.18) calc(100% - 10px),
+    transparent 100%
+  );
+}
+
+.live-activity-viewport.is-collapsed.has-fade-top.has-fade-bottom
+  .live-activity-viewport-scroll {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgba(0, 0, 0, 0.18) 10px,
+    rgba(0, 0, 0, 0.72) 32px,
+    #000 var(--live-activity-edge-fade-size),
+    #000 calc(100% - var(--live-activity-edge-fade-size)),
+    rgba(0, 0, 0, 0.72) calc(100% - 32px),
+    rgba(0, 0, 0, 0.18) calc(100% - 10px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgba(0, 0, 0, 0.18) 10px,
+    rgba(0, 0, 0, 0.72) 32px,
+    #000 var(--live-activity-edge-fade-size),
+    #000 calc(100% - var(--live-activity-edge-fade-size)),
+    rgba(0, 0, 0, 0.72) calc(100% - 32px),
+    rgba(0, 0, 0, 0.18) calc(100% - 10px),
+    transparent 100%
+  );
+}
+
+/* Collapsed live streams keep a minimum band; settled stacks size to content
+ * until they exceed the viewport cap. */
+.live-activity-viewport.is-collapsed.is-active .live-activity-viewport-scroll {
   min-height: 72px;
 }
 
@@ -63,53 +130,9 @@
 }
 
 .live-activity-viewport-scroll::-webkit-scrollbar {
-  width: 6px;
-}
-
-.live-activity-viewport-scroll::-webkit-scrollbar-thumb {
-  background: var(--border, rgba(127, 127, 127, 0.4));
-  border-radius: 3px;
-}
-
-/*
- * Cursor-style edge fades: fixed overlays on the viewport shell (not the
- * scrolling element) so the gradient stays put while rows stream underneath.
- * Visibility is driven by overflow-aware classes from the component
- * (`has-fade-top` / `has-fade-bottom`).
- */
-.live-activity-viewport.is-collapsed::before,
-.live-activity-viewport.is-collapsed::after {
-  content: '';
-  position: absolute;
-  left: 10px;
-  right: 0;
-  height: 32px;
-  pointer-events: none;
-  z-index: 2;
-  opacity: 0;
-  transition: opacity 140ms ease;
-}
-
-.live-activity-viewport.is-collapsed.has-fade-top::before {
-  top: 0;
-  opacity: 1;
-  background: linear-gradient(
-    to bottom,
-    var(--app-bg, #141414) 0%,
-    color-mix(in srgb, var(--app-bg, #141414) 72%, transparent) 42%,
-    transparent 100%
-  );
-}
-
-.live-activity-viewport.is-collapsed.has-fade-bottom::after {
-  bottom: 22px;
-  opacity: 1;
-  background: linear-gradient(
-    to top,
-    var(--app-bg, #141414) 0%,
-    color-mix(in srgb, var(--app-bg, #141414) 72%, transparent) 42%,
-    transparent 100%
-  );
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 /* Tighter vertical rhythm inside the masked live band. */

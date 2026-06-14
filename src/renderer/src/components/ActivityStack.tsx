@@ -61,10 +61,10 @@ interface ActivityStackProps {
    * tool cards collapse to their inline form and the turn-receipt
    * tape switches to its one-line summary variant. */
   compactDensity?: boolean
-  /** When true (default from `settings.liveActivityViewport`), an in-flight
-   * burst of activity renders inside the Cursor-style {@link LiveActivityViewport}
-   * — a fixed-height, edge-masked, auto-following region — until activity
-   * settles, after which it collapses to the normal compact timeline. */
+  /** When true (default from `settings.liveActivityViewport`), tool activity
+   * renders inside the Cursor-style {@link LiveActivityViewport}: a bounded,
+   * edge-faded region that auto-follows while activity is still live and
+   * remains scrollable after the activity settles. */
   liveActivityViewport?: boolean
   /**
    * 1.0.6-TV2 — optional controlled expansion. When BOTH are provided
@@ -1556,13 +1556,6 @@ function useShimmerStaleTick(activities: readonly ToolActivity[] | undefined): n
   return now
 }
 
-/** Grace period after the last running/pending activity finishes before the
- * live viewport collapses into the settled compact timeline. Keeps the viewport
- * present across the brief gap between one tool finishing and the next starting
- * (or the turn completing), so a multi-step burst reads as one continuous
- * streaming region rather than flickering in and out. */
-const LIVE_VIEWPORT_SETTLE_MS = 1500
-
 export function activitiesHaveLiveWork(activities: readonly ToolActivity[]): boolean {
   return activities.some((a) => a.status === 'running' || a.status === 'pending')
 }
@@ -1573,28 +1566,6 @@ export function liveActivityRevision(activities: readonly ToolActivity[]): strin
   const last = activities[activities.length - 1]
   const tail = last ? `${last.id}:${(last.resultSummary || last.outputPreview || '').length}` : ''
   return `${activities.length}|${tail}`
-}
-
-/** Drives the live-viewport phase: true while a burst is in-flight and for a
- * short settle window afterwards. Returns false immediately when the feature is
- * disabled or there has never been live work in this stack. */
-function useLiveViewportPhase(activities: readonly ToolActivity[], enabled: boolean): boolean {
-  const hasLiveWork = useMemo(() => activitiesHaveLiveWork(activities), [activities])
-  const [streaming, setStreaming] = useState(false)
-  useEffect(() => {
-    if (!enabled) {
-      setStreaming(false)
-      return
-    }
-    if (hasLiveWork) {
-      setStreaming(true)
-      return
-    }
-    if (!streaming) return
-    const timer = window.setTimeout(() => setStreaming(false), LIVE_VIEWPORT_SETTLE_MS)
-    return () => window.clearTimeout(timer)
-  }, [enabled, hasLiveWork, streaming])
-  return enabled && streaming
 }
 
 export function ActivityStack({
@@ -1615,9 +1586,6 @@ export function ActivityStack({
   // re-rendering at a steady 15s cadence while any activity could
   // still be in flight.
   const shimmerNow = useShimmerStaleTick(activities)
-  // Cursor-style live viewport: active while a burst is in flight (+ a short
-  // settle window). Hook is called unconditionally before any early return.
-  const liveViewportActive = useLiveViewportPhase(activities || [], liveActivityViewport)
   // 1.0.4 — ensemble participants are forwarded down to ActivityRow
   // so an `ensemble_yield(target: ...)` activity can render the target
   // as a provider-tinted `@<role>` chip. Memoised against the
@@ -1692,6 +1660,7 @@ export function ActivityStack({
   // (no per-mode split): runs of 2+ consecutive same-family terminal
   // activities fold into one expandable compact group.
   const timelineItems = buildTimelineItems(topLevelActivities)
+  const liveViewportEnabled = Boolean(liveActivityViewport && topLevelActivities.length > 0)
 
   const resolveThreadActivities = (thread: ChildAgentThread): ToolActivity[] => {
     return thread.toolActivityIds
@@ -1759,11 +1728,10 @@ export function ActivityStack({
     )
   })
 
-  // While a burst is in flight, stream the rows inside the masked, auto-
-  // following viewport. The child-agent spawn header stays above it (it's a
-  // navigational header, not streaming detail). Once activity settles the
-  // viewport unmounts and the rows fall back to the normal compact timeline.
-  if (liveViewportActive) {
+  // Keep every tool burst inside the same bounded viewport so provider timing
+  // differences don't change the transcript layout. The child-agent spawn
+  // header stays above it because it is navigational chrome, not stream detail.
+  if (liveViewportEnabled) {
     return (
       <div className="activity-timeline">
         {childThreads.length >= 2 && <ChildAgentSpawnBlock threads={childThreads} />}

@@ -1,15 +1,39 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChatRecord, PinnedMessageSummary } from '../../../main/store/types'
+import type { BlackboardEntry, ChatRecord, PinnedMessageSummary } from '../../../main/store/types'
 import { MarkdownMessage } from './MarkdownMessage'
 
 interface PinnedMessagesPanelProps {
   chat: ChatRecord | null
+  blackboardEntries: BlackboardEntry[]
   messages: PinnedMessageSummary[]
   notes: string
   onNotesChange: (value: string) => void
   onCopyMessage: (messageId: string, content: string) => void
   onJumpToMessage: (messageId: string) => void
   onUnpinMessage: (messageId: string) => void
+}
+
+const BLACKBOARD_CATEGORY_ORDER: BlackboardEntry['category'][] = [
+  'decision',
+  'fact',
+  'risk',
+  'do-not-repeat',
+  'note'
+]
+
+const BLACKBOARD_CATEGORY_LABELS: Record<BlackboardEntry['category'], string> = {
+  decision: 'Decisions',
+  fact: 'Facts',
+  risk: 'Risks',
+  'do-not-repeat': 'Do not repeat',
+  note: 'Notes'
+}
+
+function sortBlackboardEntries(a: BlackboardEntry, b: BlackboardEntry): number {
+  const categoryRank =
+    BLACKBOARD_CATEGORY_ORDER.indexOf(a.category) - BLACKBOARD_CATEGORY_ORDER.indexOf(b.category)
+  if (categoryRank !== 0) return categoryRank
+  return (b.createdAt || '').localeCompare(a.createdAt || '')
 }
 
 function formatPinnedTimestamp(value: number): string {
@@ -83,8 +107,65 @@ function JumpMiniIcon(): React.JSX.Element {
   )
 }
 
+function BlackboardSection({
+  chat,
+  entries
+}: {
+  chat: ChatRecord | null
+  entries: BlackboardEntry[]
+}): React.JSX.Element {
+  const visibleEntries = entries
+    .filter((entry) => entry.key.trim() && entry.value.trim())
+    .sort(sortBlackboardEntries)
+
+  const grouped = BLACKBOARD_CATEGORY_ORDER.map((category) => ({
+    category,
+    entries: visibleEntries.filter((entry) => entry.category === category)
+  })).filter((group) => group.entries.length > 0)
+
+  return (
+    <section className="pinned-blackboard-block" aria-label="Blackboard">
+      <div className="pinned-section-heading">
+        <span>Blackboard</span>
+        {visibleEntries.length > 0 && <small>{visibleEntries.length}</small>}
+      </div>
+      {visibleEntries.length === 0 ? (
+        <div className="right-dock-empty pinned-blackboard-empty">No blackboard entries.</div>
+      ) : (
+        <div className="pinned-blackboard-list">
+          {grouped.map((group) => (
+            <div key={group.category} className="pinned-blackboard-group">
+              <div className="pinned-blackboard-category">
+                {BLACKBOARD_CATEGORY_LABELS[group.category]}
+              </div>
+              {group.entries.map((entry) => (
+                <article
+                  key={entry.id}
+                  className={`pinned-blackboard-entry category-${entry.category}`}
+                >
+                  <div className="pinned-blackboard-entry-meta">
+                    <strong>{entry.key}</strong>
+                    <span>{entry.scope}</span>
+                  </div>
+                  <div className="pinned-blackboard-entry-body">
+                    <MarkdownMessage content={entry.value} chat={chat || undefined} />
+                  </div>
+                  {entry.participantId && (
+                    <div className="pinned-blackboard-author">{entry.participantId}</div>
+                  )}
+                </article>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export function PinnedMessagesPanel({
   chat,
+  blackboardEntries,
   messages,
   notes,
   onNotesChange,
@@ -115,10 +196,12 @@ export function PinnedMessagesPanel({
     <div className="right-dock-pins-panel">
       <header className="right-dock-panel-header pinned-messages-header">
         <div>
-          <span className="right-dock-kicker">Pins</span>
+          <span className="right-dock-kicker">Notes</span>
           <strong>{chat?.title || 'Pinned messages'}</strong>
         </div>
       </header>
+
+      <BlackboardSection chat={chat} entries={blackboardEntries} />
 
       <label className="pinned-notes-block">
         <span>Notes</span>

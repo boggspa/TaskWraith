@@ -15639,6 +15639,10 @@ function App(): React.JSX.Element {
       .filter((message): message is PinnedMessageSummary => Boolean(message))
       .sort((a, b) => b.pinnedAt - a.pinnedAt)
   }, [currentChat?.messages])
+  const currentBlackboardEntries = useMemo(
+    () => currentChat?.ensemble?.blackboard || [],
+    [currentChat?.ensemble?.blackboard]
+  )
   const isTerminalDockAvailable = showGeminiTerminal && currentProvider === 'gemini' && hasWorkspaceContext
   const rightDockTabs = [
     { id: 'run' as const, label: 'Run', available: showCockpit },
@@ -15650,7 +15654,7 @@ function App(): React.JSX.Element {
     { id: 'inspector' as const, label: 'Inspect', available: appearance.showInspector },
     { id: 'files' as const, label: 'Files', available: showFileEditor && hasWorkspaceContext },
     { id: 'media' as const, label: 'Media', available: isChatMediaPanelOpen },
-    { id: 'pins' as const, label: 'Pins', available: isPinnedMessagesPanelOpen },
+    { id: 'pins' as const, label: 'Notes', available: isPinnedMessagesPanelOpen },
     { id: 'terminal' as const, label: 'Term', available: isTerminalDockAvailable }
   ].filter((tab) => tab.available)
   const rightDockVisible = !isChatPopoutWindow && !showSettings && rightDockTabs.length > 0
@@ -15692,7 +15696,7 @@ function App(): React.JSX.Element {
     },
     {
       id: 'pins',
-      label: 'Pins',
+      label: 'Notes',
       icon: <PinnedMessagesIcon />,
       enabled: Boolean(currentChat),
       badge: currentPinnedMessages.length
@@ -17222,8 +17226,12 @@ function App(): React.JSX.Element {
                 setIsPinnedMessagesPanelOpen((open) => !open)
                 setRightDockTab('pins')
               }}
-              title={isPinnedMessagesPanelOpen ? 'Hide pinned messages' : 'Show pinned messages'}
-              aria-label="Toggle pinned messages"
+              title={
+                isPinnedMessagesPanelOpen
+                  ? 'Hide notes and pinned messages'
+                  : 'Show notes and pinned messages'
+              }
+              aria-label="Toggle notes and pinned messages"
               aria-pressed={isPinnedMessagesPanelOpen}
               disabled={!currentChat}
             >
@@ -21249,6 +21257,7 @@ function App(): React.JSX.Element {
                 {activeRightDockTab === 'pins' && isPinnedMessagesPanelOpen && (
                   <PinnedMessagesPanel
                     chat={currentChat}
+                    blackboardEntries={currentBlackboardEntries}
                     messages={currentPinnedMessages}
                     notes={currentChat?.pinnedNotes || ''}
                     onNotesChange={(notes) =>
