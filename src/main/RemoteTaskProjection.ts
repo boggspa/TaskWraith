@@ -773,7 +773,7 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
       ? {
           queuedPrompts: combinedQueuedPrompts(activeRound).map((text, index) => ({
             index,
-            text: sanitizeText(text, 280).preview
+            text: sanitizeText(text, 4000).preview
           }))
         }
       : {}),

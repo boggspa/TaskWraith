@@ -1420,6 +1420,21 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefresh(thread)
     }
 
+    /// Queue a prompt behind the active ensemble round. Solo chat queueing is
+    /// still desktop-renderer owned; this path uses the bridge-backed
+    /// ensemble FIFO that is already projected to paired devices.
+    public func queueEnsemblePrompt(_ card: RemoteTaskCard, prompt: String) {
+        guard card.isEnsemble, let ws = card.workspaceId, let thread = card.threadId else { return }
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        send(
+            BridgeAction.ensembleQueuePrompt(
+                workspaceId: ws, threadId: thread, text: trimmed,
+                roundId: ensembleStates[card.id]?.roundId),
+            successLabel: "Queued.")
+        scheduleThreadRefresh(thread)
+    }
+
     /// Save thread notes (markdown; empty clears).
     public func setThreadNotes(_ card: RemoteTaskCard, notes: String) {
         guard let ws = card.workspaceId, let thread = card.threadId else { return }

@@ -20,6 +20,7 @@ struct Composer: View {
     @ObservedObject var model: RemoteSessionModel
     let card: RemoteTaskCard
     var runModel: String? = nil
+    var runStatus: String? = nil
     /// Shell attachment: a diff header above / telemetry rail below flatten
     /// the touching corners so the three rows read as ONE container
     /// (desktop composer-shell parity).
@@ -87,6 +88,22 @@ struct Composer: View {
     private var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+    private var isRunActive: Bool {
+        (runStatus ?? card.status) == "running"
+    }
+    private var canCancelRun: Bool {
+        isRunActive && card.runId != nil && (card.capabilities?.cancel ?? true)
+    }
+    private var hasImageAttachments: Bool {
+        #if canImport(UIKit)
+            return !attachments.isEmpty
+        #else
+            return false
+        #endif
+    }
+    private var canQueueCurrentPrompt: Bool {
+        isRunActive && card.isEnsemble && !isEmpty && !hasImageAttachments
+    }
     private var catalogs: [ProviderModelCatalog] {
         let live = model.providerModels.map {
             ProviderModelCatalog(provider: $0.key, models: $0.value)
@@ -112,73 +129,124 @@ struct Composer: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             if !card.isEnsemble {
-                HStack(spacing: 6) {
-                    if !catalogs.isEmpty {
-                        ProviderModelPicker(
-                            catalogs: catalogs,
-                            provider: $selectedProvider,
-                            modelId: $selectedModelId,
-                            reasoningEffort: $selectedReasoningEffort,
-                            allowsProviderChange: canChangeProvider)
-                        if !canChangeProvider, card.parentChatId == nil,
-                            newTaskWorkspaceId == nil
-                        {
-                            // Guest participant: + invites, chip shows/changes,
-                            // × removes (desktop guest-picker parity).
-                            GuestParticipantControl(model: model, card: card)
-                        }
-                    } else {
-                        Text(providerName)
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(accent.opacity(0.16), in: Capsule())
-                            .overlay(Capsule().strokeBorder(accent.opacity(0.45)))
-                            .foregroundStyle(accent)
-                        if let runModel {
-                            Text(runModel)
-                                .font(.caption2)
-                                .padding(.horizontal, 8).padding(.vertical, 3)
-                                .background(TWTheme.surface3, in: Capsule())
-                                .foregroundStyle(TWTheme.textSecondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    if isGlobalChat {
-                        // T72 — phone-origin turns in global chats ALWAYS run in
-                        // plan mode (the Mac forces it server-side; this chip just
-                        // tells the truth instead of offering a dead picker).
-                        HStack(spacing: 3) {
-                            Image(systemName: "list.bullet.clipboard")
-                            Text("Plan · no file changes")
-                        }
-                        .font(.caption2)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(TWTheme.surface3, in: Capsule())
-                        .foregroundStyle(TWTheme.textSecondary)
-                    } else {
-                        Menu {
-                            Picker("Approval", selection: $approvalMode) {
-                                Label("Default Approval", systemImage: "checkmark.shield").tag("default")
-                                Label("Plan / Read-only", systemImage: "list.bullet.clipboard").tag(
-                                    "plan")
-                            }
-                        } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: approvalMode == "plan"
-                                    ? "list.bullet.clipboard" : "checkmark.shield")
-                                Text(approvalMode == "plan" ? "Plan" : "Default")
-                            }
-                            .font(.caption2)
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(TWTheme.surface3, in: Capsule())
-                            .foregroundStyle(TWTheme.textSecondary)
-                        }
-                    }
-                    Spacer()
-                }
+                composerControlsRow
+                Rectangle().fill(TWTheme.border).frame(height: 1)
             }
+            composerInputBody
+        }
+        .onAppear {
+            seedProviderSelectionIfNeeded()
+        }
+        .onChange(of: selectedProvider) { _, newValue in
+            providerEcho?.wrappedValue = newValue
+        }
+        .onChange(of: runModel) { _, newValue in
+            // The on-demand snapshot usually lands AFTER the composer
+            // appears — without this the pill stayed on the catalog
+            // default for every existing chat (the Mac inherits the
+            // chat's model server-side regardless; this keeps the pill
+            // honest). User picks are never overwritten.
+            if selectedModelId == nil, let newValue {
+                selectedModelId = newValue
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var composerBodyBackground: some View {
+        Rectangle().fill(composerInputRowFill())
+    }
+
+    private var composerControlsRow: some View {
+        HStack(spacing: 8) {
+            modelPickerControl
+            composerControlSeparator
+            approvalControl
+            if !canChangeProvider, card.parentChatId == nil, newTaskWorkspaceId == nil {
+                composerControlSeparator
+                // Guest participant: + invites, chip shows/changes,
+                // × removes (desktop guest-picker parity).
+                GuestParticipantControl(model: model, card: card)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Rectangle().fill(composerAttachedRowFill()))
+    }
+
+    @ViewBuilder
+    private var modelPickerControl: some View {
+        if !catalogs.isEmpty {
+            ProviderModelPicker(
+                catalogs: catalogs,
+                provider: $selectedProvider,
+                modelId: $selectedModelId,
+                reasoningEffort: $selectedReasoningEffort,
+                allowsProviderChange: canChangeProvider)
+        } else {
+            Text(providerName)
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(accent.opacity(0.16), in: Capsule())
+                .overlay(Capsule().strokeBorder(accent.opacity(0.45)))
+                .foregroundStyle(accent)
+            if let runModel {
+                Text(runModel)
+                    .font(.caption2)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(TWTheme.surface3, in: Capsule())
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var approvalControl: some View {
+        if isGlobalChat {
+            // T72 — phone-origin turns in global chats ALWAYS run in
+            // plan mode (the Mac forces it server-side; this chip just
+            // tells the truth instead of offering a dead picker).
+            HStack(spacing: 3) {
+                Image(systemName: "list.bullet.clipboard")
+                Text("Plan · no file changes")
+            }
+            .font(.caption2)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(TWTheme.surface3, in: Capsule())
+            .foregroundStyle(TWTheme.textSecondary)
+        } else {
+            Menu {
+                Picker("Approval", selection: $approvalMode) {
+                    Label("Default Approval", systemImage: "checkmark.shield").tag("default")
+                    Label("Plan / Read-only", systemImage: "list.bullet.clipboard").tag("plan")
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(
+                        systemName: approvalMode == "plan"
+                            ? "list.bullet.clipboard" : "checkmark.shield")
+                    Text(approvalMode == "plan" ? "Plan" : "Default")
+                }
+                .font(.caption2)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(TWTheme.surface3, in: Capsule())
+                .foregroundStyle(TWTheme.textSecondary)
+            }
+        }
+    }
+
+    private var composerControlSeparator: some View {
+        Rectangle()
+            .fill(TWTheme.border.opacity(0.75))
+            .frame(width: 1, height: 18)
+    }
+
+    private var composerInputBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
             if !mentionCandidates.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -229,8 +297,8 @@ struct Composer: View {
                     }
                 }
             #endif
-            // Input cluster: the composer body supplies the darker material
-            // fill, so this row stays flat like the desktop central panel.
+            // Input cluster: the composer body supplies the darker fill, so
+            // this row stays flat like the desktop central panel.
             HStack(spacing: 8) {
                 #if canImport(UIKit)
                     // Ensembles included: steer now carries attachments.
@@ -239,41 +307,60 @@ struct Composer: View {
                 TextField(placeholder, text: $text, axis: .vertical)
                     .lineLimit(1...2)
                     .foregroundStyle(TWTheme.textPrimary)
-                Button {
-                    sendCurrent()
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(sendDisabled ? TWTheme.textMuted : accent)
+                if canQueueCurrentPrompt {
+                    queueButton
                 }
-                .disabled(sendDisabled)
+                primaryActionButton
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
         }
-        .padding(.horizontal, 12).padding(.vertical, 9)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .background(composerBodyBackground)
-        .onAppear {
-            seedProviderSelectionIfNeeded()
-        }
-        .onChange(of: selectedProvider) { _, newValue in
-            providerEcho?.wrappedValue = newValue
-        }
-        .onChange(of: runModel) { _, newValue in
-            // The on-demand snapshot usually lands AFTER the composer
-            // appears — without this the pill stayed on the catalog
-            // default for every existing chat (the Mac inherits the
-            // chat's model server-side regardless; this keeps the pill
-            // honest). User picks are never overwritten.
-            if selectedModelId == nil, let newValue {
-                selectedModelId = newValue
-            }
-        }
     }
 
-    @ViewBuilder
-    private var composerBodyBackground: some View {
-        Rectangle().fill(composerInputRowFill())
+    private var queueButton: some View {
+        Button {
+            queueCurrent()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "tray.and.arrow.down")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Queue")
+                    .font(.caption2.weight(.semibold))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(TWTheme.statusAttention.opacity(0.14), in: Capsule())
+            .overlay(Capsule().strokeBorder(TWTheme.statusAttention.opacity(0.35)))
+            .foregroundStyle(TWTheme.statusAttention)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var primaryActionButton: some View {
+        Button {
+            if isRunActive {
+                model.cancelRun(card)
+            } else {
+                sendCurrent()
+            }
+        } label: {
+            Image(systemName: isRunActive ? "stop.circle.fill" : "arrow.up.circle.fill")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(primaryActionColor)
+                .frame(width: 38, height: 38)
+                .contentShape(Circle())
+        }
+        .disabled(isRunActive ? !canCancelRun : sendDisabled)
+    }
+
+    private var primaryActionColor: Color {
+        if isRunActive {
+            return canCancelRun ? TWTheme.statusFailed : TWTheme.textMuted
+        }
+        return sendDisabled ? TWTheme.textMuted : accent
     }
 
     private var sendDisabled: Bool {
@@ -381,6 +468,13 @@ struct Composer: View {
                 reasoningEffort: selectedReasoningEffort,
                 navigateOnAck: navigateOnSend)
         #endif
+        text = ""
+    }
+
+    private func queueCurrent() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard card.isEnsemble, !trimmed.isEmpty, !hasImageAttachments else { return }
+        model.queueEnsemblePrompt(card, prompt: trimmed)
         text = ""
     }
 

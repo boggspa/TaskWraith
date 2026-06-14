@@ -368,7 +368,7 @@ private struct ComposerShellGlassModifier: ViewModifier {
 }
 
 @MainActor
-private func composerAttachedRowFill() -> AnyShapeStyle {
+func composerAttachedRowFill() -> AnyShapeStyle {
     if TWTheme.composerGlassEnabled {
         return AnyShapeStyle(Color.clear)
     }
@@ -4153,15 +4153,18 @@ public struct QueuedPromptsStack: View {
     let card: RemoteTaskCard
     let prompts: [RemoteEnsembleState.QueuedPrompt]
     let isShellTop: Bool
+    let onEdit: ((String) -> Void)?
 
     public init(
         model: RemoteSessionModel, card: RemoteTaskCard,
-        prompts: [RemoteEnsembleState.QueuedPrompt], isShellTop: Bool
+        prompts: [RemoteEnsembleState.QueuedPrompt], isShellTop: Bool,
+        onEdit: ((String) -> Void)? = nil
     ) {
         self.model = model
         self.card = card
         self.prompts = prompts
         self.isShellTop = isShellTop
+        self.onEdit = onEdit
     }
 
     public var body: some View {
@@ -4207,6 +4210,18 @@ public struct QueuedPromptsStack: View {
                 .foregroundStyle(TWTheme.textSecondary)
             }
             .buttonStyle(.plain)
+            if let onEdit {
+                Button {
+                    onEdit(prompt.text)
+                    model.ensembleQueueItem(
+                        card, index: prompt.index, text: prompt.text, op: "remove")
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textTertiary)
+                }
+                .buttonStyle(.plain)
+            }
             Button {
                 model.ensembleQueueItem(
                     card, index: prompt.index, text: prompt.text, op: "remove")
@@ -4228,6 +4243,15 @@ public struct QueuedPromptsStack: View {
                         card, index: prompt.index, text: prompt.text, op: "remove")
                 } label: {
                     Label("Remove from queue", systemImage: "trash")
+                }
+                if let onEdit {
+                    Button {
+                        onEdit(prompt.text)
+                        model.ensembleQueueItem(
+                            card, index: prompt.index, text: prompt.text, op: "remove")
+                    } label: {
+                        Label("Edit queued prompt", systemImage: "pencil")
+                    }
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -4731,6 +4755,7 @@ struct MiniThreadView: View {
             Composer(
                 model: model, card: card,
                 runModel: snapshot?.runSummary?.model,
+                runStatus: snapshot?.runSummary?.status,
                 attachedTop: false, attachedBottom: true,
                 navigateOnSend: false,
                 text: $draft)

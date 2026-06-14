@@ -650,7 +650,10 @@ struct ThreadDetailView: View {
                             // shared Mac-side queue, any-device origin.
                             QueuedPromptsStack(
                                 model: model, card: card, prompts: queued,
-                                isShellTop: !hasDiff)
+                                isShellTop: !hasDiff
+                            ) { queuedText in
+                                followUp = queuedText
+                            }
                             Rectangle().fill(TWTheme.border).frame(height: 1)
                         }
                         if card.isEnsemble, let wsId = card.workspaceId {
@@ -666,6 +669,7 @@ struct ThreadDetailView: View {
                         }
                         Composer(
                             model: model, card: card, runModel: snapshot?.runSummary?.model,
+                            runStatus: snapshot?.runSummary?.status,
                             attachedTop: hasDiff || card.isEnsemble, attachedBottom: true,
                             extraWorkspaceIds: secondaryWorkspaceId.map { [$0] },
                             allowsProviderChange: allowsFirstTurnProviderChange,
@@ -781,16 +785,6 @@ struct ThreadDetailView: View {
                     model.inspectorPresented.toggle()
                 } label: {
                     Label("Inspector", systemImage: "sidebar.right")
-                }
-            }
-            if let card, card.status == "running" {
-                ToolbarItem(placement: .primaryAction) {
-                    Button(role: .destructive) {
-                        model.cancelRun(card)
-                    } label: {
-                        Label("Stop", systemImage: "stop.circle")
-                            .foregroundStyle(TWTheme.statusFailed)
-                    }
                 }
             }
         }
