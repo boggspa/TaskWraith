@@ -590,6 +590,16 @@ const ACTIVE_RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
   'active',
   'cancelling'
 ])
+const isRemoteComposerRunQueueJob = (job: RunQueueJob): boolean =>
+  Boolean(job.request?.remoteComposer)
+const isQueuedDesktopRunQueueJob = (job: RunQueueJob): boolean =>
+  job.status === 'queued' && !isRemoteComposerRunQueueJob(job)
+const queuedRunFallbackId = (request: QueuedRunRequest): string =>
+  request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`
+const queuedRunJobSortTime = (job: RunQueueJob): number => {
+  const parsed = Date.parse(job.enqueuedAt || job.createdAt || job.updatedAt || '')
+  return Number.isFinite(parsed) ? parsed : 0
+}
 
 type SidePanelPresentation = 'split' | 'drawer'
 type SideChatTypePickerOption = {
@@ -2898,14 +2908,19 @@ function App(): React.JSX.Element {
   }
 
   const clearQueuedRunsForProvider = (provider: ProviderId, reason: string) => {
-    setQueuedRuns((current) => {
-      const removed = current.filter((request) => request.provider === provider)
-      if (removed.length === 0) return current
-      for (const request of removed) {
-        updateRunQueueJobStatus(request.appRunId, 'cancelled', reason)
-      }
-      return current.filter((request) => request.provider !== provider)
-    })
+    const removedRunIds = new Set(
+      runQueueJobsRef.current
+        .filter((job) => isQueuedDesktopRunQueueJob(job) && job.provider === provider)
+        .map((job) => job.runId || job.id)
+    )
+    for (const runId of removedRunIds) {
+      updateRunQueueJobStatus(runId, 'cancelled', reason)
+    }
+    if (removedRunIds.size > 0) {
+      setQueuedRuns((current) =>
+        current.filter((request) => !request.appRunId || !removedRunIds.has(request.appRunId))
+      )
+    }
   }
 
   const getRouteProvider = (value: unknown, fallback: ProviderId): ProviderId => {
@@ -8216,6 +8231,45 @@ function App(): React.JSX.Element {
     }
   }
 
+  const getQueuedDesktopRunJobs = (sourceJobs: RunQueueJob[] = runQueueJobsRef.current) => {
+    const cachedOrder = new Map<string, number>()
+    queuedRunsRef.current.forEach((request, index) => {
+      if (request.appRunId) cachedOrder.set(request.appRunId, index)
+    })
+    return sourceJobs
+      .filter(isQueuedDesktopRunQueueJob)
+      .slice()
+      .sort((a, b) => {
+        const aOrder = cachedOrder.get(a.runId)
+        const bOrder = cachedOrder.get(b.runId)
+        if (aOrder !== undefined || bOrder !== undefined) {
+          return (aOrder ?? Number.MAX_SAFE_INTEGER) - (bOrder ?? Number.MAX_SAFE_INTEGER)
+        }
+        return queuedRunJobSortTime(a) - queuedRunJobSortTime(b)
+      })
+  }
+
+  const resolveQueuedDesktopRunRequest = (job: RunQueueJob): QueuedRunRequest | null => {
+    if (!isQueuedDesktopRunQueueJob(job)) return null
+    const cached = queuedRunsRef.current.find((request) => request.appRunId === job.runId)
+    if (cached) {
+      const cachedChatId = cached.chatRecord?.appChatId || job.chatId
+      const chatRecord = cachedChatId ? chatByIdRef.current.get(cachedChatId) : cached.chatRecord
+      const workspaceRecord =
+        job.scope === 'global'
+          ? undefined
+          : workspaces.find(
+              (workspace) => workspace.id === job.workspaceId || workspace.path === job.workspacePath
+            ) || cached.workspaceRecord
+      return {
+        ...cached,
+        ...(chatRecord ? { chatRecord } : {}),
+        ...(workspaceRecord ? { workspaceRecord } : {})
+      }
+    }
+    return queuedRunRequestFromJob(job, workspaces, Array.from(chatByIdRef.current.values()))
+  }
+
   const recoveryMessageId = (record: RunRecoveryRecord): string => `recovery-${record.id}`
 
   const recoveryMessageContent = (record: RunRecoveryRecord): string => {
@@ -8321,6 +8375,9 @@ function App(): React.JSX.Element {
       )
     ).filter((chat): chat is ChatRecord => Boolean(chat))
     const recoveredChatList = await applyRecoveryRecordsToChats(recoveryRecords, chatList)
+    for (const chat of recoveredChatList) {
+      chatByIdRef.current.set(chat.appChatId, chat)
+    }
     setRunQueueJobs(jobs)
     const restoredRuns = jobs
       .map((job) => queuedRunRequestFromJob(job, workspaceList, recoveredChatList))
@@ -8454,13 +8511,12 @@ function App(): React.JSX.Element {
       })
       return
     }
-    const duplicateQueuedRun = queuedRuns.some(
-      (queued) =>
-        queued.provider === targetProvider &&
-        queued.chatRecord?.appChatId === targetChatId &&
-        queued.prompt === queuedRequest.prompt &&
-        queued.selectedModelType === queuedRequest.selectedModelType &&
-        queued.overrideModel === queuedRequest.overrideModel
+    const duplicateQueuedRun = getQueuedDesktopRunJobs().some(
+      (job) =>
+        job.provider === targetProvider &&
+        job.chatId === targetChatId &&
+        (job.request?.prompt || job.promptPreview || '') === queuedRequest.prompt &&
+        job.request?.selectedModelType === queuedRequest.selectedModelType
     )
     if (duplicateQueuedRun) {
       updateRunQueueJobStatus(queuedRequest.appRunId, 'cancelled', 'Duplicate queued run ignored.')
@@ -8470,7 +8526,8 @@ function App(): React.JSX.Element {
       })
       return
     }
-    const queuePosition = queuedRuns.length + 1
+    const queuePosition =
+      getQueuedDesktopRunJobs().filter((job) => job.chatId === targetChatId).length + 1
     persistRunQueueJobForRequest(queuedRequest, 'queued', reason)
     setQueuedRuns((prev) => [...prev, queuedRequest])
     appendThreadRawLog(targetChatId, {
@@ -12858,7 +12915,8 @@ function App(): React.JSX.Element {
   }
 
   useEffect(() => {
-    if (queuedRuns.length === 0) return
+    const queuedJobs = getQueuedDesktopRunJobs(runQueueJobs)
+    if (queuedJobs.length === 0) return
 
     // Pure scheduling decision lives in main (Phase B3.3 extraction). The
     // renderer pump still orchestrates the lease + execute side effects, but
@@ -12870,15 +12928,19 @@ function App(): React.JSX.Element {
     // different chat. Parallel-per-chat dispatch matches both Codex's
     // app-server thread model and the user's mental model ("I queued
     // this in chat B; chat A finishing shouldn't be the trigger").
+    const queuedRequests = queuedJobs
+      .map((job) => resolveQueuedDesktopRunRequest(job))
+      .filter((request): request is QueuedRunRequest => Boolean(request))
+    if (queuedRequests.length === 0) return
     const nextIndex = findNextRunnableQueueIndex(
-      queuedRuns,
+      queuedRequests,
       (job) => !isChatBusy(job.chatRecord?.appChatId)
     )
     if (nextIndex < 0) return
 
-    const nextRun = queuedRuns[nextIndex]
-    const remainingRuns = queuedRuns.filter((_, index) => index !== nextIndex)
-    setQueuedRuns(remainingRuns)
+    const nextRun = queuedRequests[nextIndex]
+    const remainingRuns = queuedRequests.filter((_, index) => index !== nextIndex)
+    setQueuedRuns((prev) => prev.filter((request) => request.appRunId !== nextRun.appRunId))
     void window.api
       .leaseRunQueueJob({
         runId: nextRun.appRunId,
@@ -12887,7 +12949,6 @@ function App(): React.JSX.Element {
       })
       .then((leased) => {
         if (!leased) {
-          setQueuedRuns((prev) => [nextRun, ...prev])
           return
         }
         appEventHandlersRef.current.appendThreadRawLog(nextRun.chatRecord?.appChatId, {
@@ -12896,7 +12957,7 @@ function App(): React.JSX.Element {
         })
         void executeRunRef.current({ ...nextRun, appRunId: leased.runId })
       })
-  }, [queuedRuns, runningChatIds, runQueueJobs, currentWorkspace, currentChat])
+  }, [queuedRuns, runningChatIds, runQueueJobs, workspaces, currentWorkspace, currentChat])
 
   useEffect(() => {
     try {
@@ -14847,8 +14908,10 @@ function App(): React.JSX.Element {
   // active chat, projected to the row component's narrow display
   // shape. Two sources merge here:
   //
-  //   1. `queuedRuns` — the renderer-local solo-chat queue. Populated
-  //      when the user sends while a non-ensemble run is busy.
+  //   1. Durable `RunQueueJob` rows — main-owned solo-chat queue
+  //      storage. `queuedRuns` is now only a transient rich-request
+  //      cache/order overlay for jobs queued during this renderer
+  //      session; visibility follows the persisted job status.
   //
   //   2. `chat.ensemble.activeRound.queuedPrompt` — the orchestrator's
   //      single-string queue for ensemble rounds (set when the user
@@ -14864,14 +14927,23 @@ function App(): React.JSX.Element {
     (chat: ChatRecord | null | undefined): QueuedMessageRowEntry[] => {
       if (!chat) return []
       const chatId = chat.appChatId
-      const entries: QueuedMessageRowEntry[] = queuedRuns
-        .filter((request) => request.chatRecord?.appChatId === chatId)
-        .map((request) => ({
-          id: request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`,
-          provider: request.provider,
-          prompt: request.displayPrompt || request.prompt,
-          dmTargetParticipantId: request.dmTargetParticipantId
-        }))
+      const entries: QueuedMessageRowEntry[] = getQueuedDesktopRunJobs(runQueueJobs)
+        .filter((job) => job.chatId === chatId)
+        .map((job) => {
+          const request = resolveQueuedDesktopRunRequest(job)
+          return {
+            id: job.runId || job.id,
+            provider: job.provider,
+            prompt:
+              request?.displayPrompt ||
+              request?.prompt ||
+              job.request?.displayPrompt ||
+              job.request?.prompt ||
+              job.promptPreview ||
+              '',
+            dmTargetParticipantId: request?.dmTargetParticipantId
+          }
+        })
       // Append every ensemble-round queued prompt. The orchestrator
       // now supports a FIFO queue (`activeRound.queuedPrompts`); the
       // legacy `queuedPrompt` field stays in sync with the head for
@@ -14897,7 +14969,7 @@ function App(): React.JSX.Element {
       }
       return entries
     },
-    [queuedRuns]
+    [queuedRuns, runQueueJobs, workspaces]
   )
   const queuedMessagesAboveRowEntries: QueuedMessageRowEntry[] = useMemo(
     () => buildQueuedMessagesAboveRowEntriesForChat(currentChat),
@@ -14953,30 +15025,41 @@ function App(): React.JSX.Element {
         void window.api.saveChat(nextChat)
         return
       }
-      const match = queuedRunsRef.current.find(
-        (request) =>
-          (request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`) === entryId
+      const job = runQueueJobsRef.current.find(
+        (candidate) => isQueuedDesktopRunQueueJob(candidate) && candidate.runId === entryId
       )
-      if (!match) return
-      const targetChatId = match.chatRecord?.appChatId || currentChat?.appChatId
+      const match =
+        (job ? resolveQueuedDesktopRunRequest(job) : null) ||
+        queuedRunsRef.current.find((request) => queuedRunFallbackId(request) === entryId)
+      if (!match && !job) return
+      const targetChatId = match?.chatRecord?.appChatId || job?.chatId || currentChat?.appChatId
       if (targetChatId) {
-        setChatPromptDraft(targetChatId, match.displayPrompt || match.prompt)
+        setChatPromptDraft(
+          targetChatId,
+          match?.displayPrompt ||
+            match?.prompt ||
+            job?.request?.displayPrompt ||
+            job?.request?.prompt ||
+            job?.promptPreview ||
+            ''
+        )
       }
       setQueuedRuns((prev) =>
         prev.filter(
           (request) =>
-            (request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`) !== entryId
+            queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
         )
       )
-      if (match.appRunId) {
+      const runId = job?.runId || match?.appRunId
+      if (runId) {
         void window.api
-          .transitionRunQueueJob(match.appRunId, 'cancelled', {
+          .transitionRunQueueJob(runId, 'cancelled', {
             statusReason: 'Edited; returned to composer for revision.'
           })
           .catch(() => {})
       }
     },
-    [currentChat, setChatPromptDraft]
+    [currentChat, setChatPromptDraft, workspaces]
   )
   // Delete: drop from local queue + transition the persistent job
   // to 'cancelled' so the store-backed listing doesn't resurrect it
@@ -15018,26 +15101,29 @@ function App(): React.JSX.Element {
         void window.api.saveChat(nextChat)
         return
       }
-      const match = queuedRunsRef.current.find(
-        (request) =>
-          (request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`) === entryId
+      const job = runQueueJobsRef.current.find(
+        (candidate) => isQueuedDesktopRunQueueJob(candidate) && candidate.runId === entryId
       )
-      if (!match) return
+      const match =
+        (job ? resolveQueuedDesktopRunRequest(job) : null) ||
+        queuedRunsRef.current.find((request) => queuedRunFallbackId(request) === entryId)
+      if (!match && !job) return
       setQueuedRuns((prev) =>
         prev.filter(
           (request) =>
-            (request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`) !== entryId
+            queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
         )
       )
-      if (match.appRunId) {
+      const runId = job?.runId || match?.appRunId
+      if (runId) {
         void window.api
-          .transitionRunQueueJob(match.appRunId, 'cancelled', {
+          .transitionRunQueueJob(runId, 'cancelled', {
             statusReason: 'Cancelled from the queued-messages above-row.'
           })
           .catch(() => {})
       }
     },
-    [currentChat]
+    [currentChat, workspaces]
   )
   // Steer to a queued item: cancel the chat's active run, then
   // dispatch this queued request immediately. Same gentle handoff
@@ -15092,10 +15178,12 @@ function App(): React.JSX.Element {
         })
         return
       }
-      const match = queuedRunsRef.current.find(
-        (request) =>
-          (request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`) === entryId
+      const job = runQueueJobsRef.current.find(
+        (candidate) => isQueuedDesktopRunQueueJob(candidate) && candidate.runId === entryId
       )
+      const match =
+        (job ? resolveQueuedDesktopRunRequest(job) : null) ||
+        queuedRunsRef.current.find((request) => queuedRunFallbackId(request) === entryId)
       if (!match) return
       const targetChatId = match.chatRecord?.appChatId || currentChat?.appChatId
       // Remove from queue first so the schedule loop doesn't race
@@ -15103,15 +15191,16 @@ function App(): React.JSX.Element {
       setQueuedRuns((prev) =>
         prev.filter(
           (request) =>
-            (request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`) !== entryId
+            queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
         )
       )
       // Cancel current run if one is in flight, then dispatch this
       // request. `handleCancel` handles ensemble vs solo internally.
       const dispatchSteered = (): void => {
-        if (match.appRunId) {
+        const runId = job?.runId || match.appRunId
+        if (runId) {
           void window.api
-            .transitionRunQueueJob(match.appRunId, 'cancelled', {
+            .transitionRunQueueJob(runId, 'cancelled', {
               statusReason: 'Promoted via Steer; running now.'
             })
             .catch(() => {})
@@ -15133,7 +15222,7 @@ function App(): React.JSX.Element {
     // `handleCancel` intentionally remains live from the current render; queued steering only
     // needs this callback to refresh when the target chat changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentChat]
+    [currentChat, workspaces]
   )
   // Local reorder — updates `queuedRuns` array order so the schedule
   // loop dispatches in the new order. Persisting the order across
@@ -15142,8 +15231,7 @@ function App(): React.JSX.Element {
     setQueuedRuns((prev) => {
       const byId = new Map<string, (typeof prev)[number]>()
       for (const request of prev) {
-        const id = request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`
-        byId.set(id, request)
+        byId.set(queuedRunFallbackId(request), request)
       }
       const next: typeof prev = []
       // First: the explicitly-ordered IDs from the drag.
@@ -15158,7 +15246,7 @@ function App(): React.JSX.Element {
       // items for OTHER chats, or items added while the drag was in
       // flight). Preserves their original order.
       for (const entry of prev) {
-        const id = entry.appRunId || `${entry.provider}-${entry.prompt.slice(0, 16)}`
+        const id = queuedRunFallbackId(entry)
         if (byId.has(id)) next.push(entry)
       }
       return next

@@ -17331,10 +17331,12 @@ if (isGeminiMcpBridgeProcess) {
           console.error(`[remote-bridge] NOT starting — ${iosRemoteRuntimeError}`)
           return
         }
+        const bridgeActionExecutor = createBridgeActionExecutor()
+        scheduleRemoteComposerQueuePumpRef?.()
         const transportActionRouter = BridgeActionRouter.fromEnvironment(
           (line) => console.log(line),
           bridgeAllowlist,
-          createBridgeActionExecutor(),
+          bridgeActionExecutor,
           bridgeOwnershipValidator
         )
         const runtime = new RemoteBridgeRuntime({
@@ -17602,12 +17604,14 @@ if (isGeminiMcpBridgeProcess) {
       // end-to-end testing. Phase C4: also consults the workspace allowlist
       // for prepare-start-turn decisions. Phase C-late: dispatches accepted
       // actions through the executor for real effect (cancel run, etc.).
+      const bridgeActionExecutor = createBridgeActionExecutor()
+      scheduleRemoteComposerQueuePumpRef?.()
       const bridgeActionRouter = BridgeActionRouter.fromEnvironment(
         (line) => {
           console.log(line)
         },
         bridgeAllowlist,
-        createBridgeActionExecutor(),
+        bridgeActionExecutor,
         bridgeOwnershipValidator
       )
       const daemon = new BridgeDaemonClient({
