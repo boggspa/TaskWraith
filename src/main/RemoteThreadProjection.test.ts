@@ -442,6 +442,44 @@ describe('RemoteThreadProjection', () => {
       expect(summary?.costText).toBe('<£0.01')
     })
 
+    it('projects provider-rate cost for iOS when no explicit provider cost exists', () => {
+      const summary = buildRunSummary(
+        [
+          {
+            runId: 'run-estimated-cost',
+            provider: 'codex',
+            actualModel: 'gpt-5.5',
+            stats: {
+              input_tokens: 1_000_000,
+              cache_read_input_tokens: 4_000_000,
+              output_tokens: 0
+            }
+          } as unknown as ChatRun
+        ],
+        {
+          currency: 'USD',
+          providerRates: {
+            baseline: {
+              codex: {
+                models: [
+                  {
+                    modelId: 'gpt-5.5',
+                    inputUsdPerMillion: 1.25,
+                    outputUsdPerMillion: 10,
+                    cachedInputUsdPerMillion: 0.125
+                  }
+                ]
+              }
+            }
+          }
+        }
+      )
+
+      expect(summary?.tokensIn).toBe(5_000_000)
+      expect(summary?.totalTokens).toBe(5_000_000)
+      expect(summary?.costText).toBe('~$1.75')
+    })
+
     it('includes runDiffByPath workspace changes when available', () => {
       const summary = buildRunSummary([
         {

@@ -142,6 +142,32 @@ describe('estimateRunCostUsd', () => {
     // one valid count still estimates
     expect(estimateRunCostUsd(RATES, 'codex', 'gpt-5.5', 1_000_000, NaN)).toBeCloseTo(1.25, 6)
   })
+
+  it('prices cache reads at the cached input rate when the input count already includes cache', () => {
+    const rates: RendererProviderRates = {
+      claude: [
+        {
+          modelId: 'claude-opus-4-7',
+          inputUsdPerMillion: 5,
+          outputUsdPerMillion: 25,
+          cachedInputUsdPerMillion: 0.5
+        }
+      ]
+    }
+    const usd = estimateRunCostUsd(
+      rates,
+      'claude',
+      'claude-opus-4-7',
+      5_000_000,
+      0,
+      {
+        cacheReadInputTokens: 4_000_000,
+        inputIncludesCache: true
+      }
+    )
+    // 1M normal input * $5/M + 4M cache read * $0.5/M = $7.
+    expect(usd).toBeCloseTo(7, 6)
+  })
 })
 
 const CLAUDE_RATES: RendererProviderRates = {

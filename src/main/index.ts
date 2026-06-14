@@ -15031,7 +15031,8 @@ if (isGeminiMcpBridgeProcess) {
       return {
         currency: settings.currency ?? 'USD',
         overestimatePercent: Number(settings.currencyOverestimatePercent ?? 0) || 0,
-        fxRatesPerUsd: getCurrentFxRates().rates
+        fxRatesPerUsd: getCurrentFxRates().rates,
+        providerRates: getCurrentProviderRates()
       }
     }
 

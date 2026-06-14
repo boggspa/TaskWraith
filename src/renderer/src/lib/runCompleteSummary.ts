@@ -86,13 +86,22 @@ export const buildEnsembleRoundCostRow = (
     }
     // No explicit cost (subscription / credit seat) — project from tokens.
     const counts = extractUsageCountsFromCandidate(run.stats)
+    const cacheCounts = extractCacheUsageCounts(run.stats)
+    const inputIncludesCache =
+      run.stats?._taskwraith_input_includes_cache === true ||
+      cacheCounts.cacheReadInputTokens > 0 ||
+      cacheCounts.cacheCreationInputTokens > 0
     const model = run.actualModel || run.requestedModel
     estUsd += estimateRunCostUsd(
       rates,
       run.provider,
       model,
       counts.inputTokens,
-      counts.outputTokens
+      counts.outputTokens,
+      {
+        ...cacheCounts,
+        inputIncludesCache
+      }
     )
   }
 
@@ -202,6 +211,34 @@ const readPositiveNumber = (obj: any, paths: Array<string | string[]>): number =
     if (Number.isFinite(value) && value > 0) return value
   }
   return 0
+}
+
+const readPositiveNumberPair = (
+  obj: any,
+  primaryPaths: Array<string | string[]>,
+  secondaryPaths: Array<string | string[]> = []
+): number => readPositiveNumber(obj, primaryPaths) + readPositiveNumber(obj, secondaryPaths)
+
+const extractCacheUsageCounts = (
+  stats: any
+): { cacheReadInputTokens: number; cacheCreationInputTokens: number } => {
+  return {
+    cacheReadInputTokens: readPositiveNumberPair(
+      stats,
+      [
+        ['cacheReadInputTokens'],
+        ['cache_read_input_tokens'],
+        ['input_cache_read'],
+        ['cacheReadTokens']
+      ],
+      [['cached_input_tokens'], ['cachedInputTokens']]
+    ),
+    cacheCreationInputTokens: readPositiveNumber(stats, [
+      ['cacheCreationInputTokens'],
+      ['cache_creation_input_tokens'],
+      ['input_cache_creation']
+    ])
+  }
 }
 
 const OLLAMA_RAM_SAMPLE_PATHS: Array<string | string[]> = [

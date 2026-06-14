@@ -167,7 +167,14 @@ function run(partial: Partial<ChatRun>): ChatRun {
 }
 
 const ESTIMATE_RATES: RendererProviderRates = {
-  codex: [{ modelId: 'gpt-5.5', inputUsdPerMillion: 1.25, outputUsdPerMillion: 10.0 }],
+  codex: [
+    {
+      modelId: 'gpt-5.5',
+      inputUsdPerMillion: 1.25,
+      outputUsdPerMillion: 10.0,
+      cachedInputUsdPerMillion: 0.125
+    }
+  ],
   cursor: []
 }
 
@@ -218,6 +225,25 @@ describe('buildEnsembleRoundCostRow', () => {
     )
     // Real $0.50 + projected $1.25 (1M in * $1.25/M), estimate still badged.
     expect(row?.value).toBe('$0.50 + ~$1.25 est. API-equiv')
+  })
+
+  it('uses cached input rates for cache-read tokens in projected subscription costs', () => {
+    const row = buildEnsembleRoundCostRow(
+      [
+        run({
+          provider: 'codex',
+          actualModel: 'gpt-5.5',
+          stats: {
+            input_tokens: 1_000_000,
+            cache_read_input_tokens: 4_000_000,
+            output_tokens: 0
+          }
+        })
+      ],
+      { currency: 'USD', providerRates: ESTIMATE_RATES }
+    )
+    // 1M normal input * $1.25/M + 4M cache read * $0.125/M = $1.75.
+    expect(row?.value).toBe('~$1.75 est. API-equiv')
   })
 
   it('never estimates a seat that already reported cost_usd', () => {

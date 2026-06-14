@@ -50,6 +50,15 @@ export type RendererProviderRates = Partial<Record<ProviderId, RendererModelRate
 const isFiniteNonNeg = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
 
+export interface RunCostEstimateOptions {
+  /** Input tokens that were served from provider prompt-cache. */
+  cacheReadInputTokens?: number
+  /** Input tokens written into provider prompt-cache; billed as normal input. */
+  cacheCreationInputTokens?: number
+  /** True when `inputTokens` already includes cache read/create tokens. */
+  inputIncludesCache?: boolean
+}
+
 /**
  * Narrow the loosely-typed `providerRates:get` IPC payload into a
  * {@link RendererProviderRates} map. Tolerant of the full
@@ -142,15 +151,25 @@ export function estimateRunCostUsd(
   provider: ProviderId | undefined,
   model: string | undefined,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
+  options: RunCostEstimateOptions = {}
 ): number {
   const rate = resolveModelRate(rates, provider, model)
   if (!rate) return 0
   const inTok = isFiniteNonNeg(inputTokens) ? inputTokens : 0
   const outTok = isFiniteNonNeg(outputTokens) ? outputTokens : 0
-  if (inTok === 0 && outTok === 0) return 0
+  const cacheRead = toNonNeg(options.cacheReadInputTokens)
+  const cacheCreation = toNonNeg(options.cacheCreationInputTokens)
+  const billedInputTok = options.inputIncludesCache
+    ? Math.max(0, inTok - cacheRead - cacheCreation)
+    : inTok
+  if (billedInputTok === 0 && cacheRead === 0 && cacheCreation === 0 && outTok === 0) return 0
+  const cachedInputRate = rate.cachedInputUsdPerMillion ?? rate.inputUsdPerMillion
   const usd =
-    (inTok / 1_000_000) * rate.inputUsdPerMillion + (outTok / 1_000_000) * rate.outputUsdPerMillion
+    (billedInputTok / 1_000_000) * rate.inputUsdPerMillion +
+    (cacheRead / 1_000_000) * cachedInputRate +
+    (cacheCreation / 1_000_000) * rate.inputUsdPerMillion +
+    (outTok / 1_000_000) * rate.outputUsdPerMillion
   return Number.isFinite(usd) && usd > 0 ? usd : 0
 }
 
@@ -194,27 +213,10 @@ export function estimateUsageRecordCostUsd(
   const hasCacheBreakdown = cacheRead > 0 || cacheCreation > 0
   const inputTokens = toNonNeg(record.inputTokens)
 
-  if (!hasCacheBreakdown) {
-    return estimateRunCostUsd(
-      rates,
-      record.provider,
-      record.model,
-      inputTokens,
-      outputTokens
-    )
-  }
-
-  if (inputTokens === 0 && cacheRead === 0 && cacheCreation === 0 && outputTokens === 0) {
-    return 0
-  }
-
-  const cachedInputRate = rate.cachedInputUsdPerMillion ?? rate.inputUsdPerMillion
-  const usd =
-    (inputTokens / 1_000_000) * rate.inputUsdPerMillion +
-    (cacheRead / 1_000_000) * cachedInputRate +
-    (cacheCreation / 1_000_000) * rate.inputUsdPerMillion +
-    (outputTokens / 1_000_000) * rate.outputUsdPerMillion
-  return Number.isFinite(usd) && usd > 0 ? usd : 0
+  return estimateRunCostUsd(rates, record.provider, record.model, inputTokens, outputTokens, {
+    cacheReadInputTokens: hasCacheBreakdown ? cacheRead : 0,
+    cacheCreationInputTokens: hasCacheBreakdown ? cacheCreation : 0
+  })
 }
 
 /**

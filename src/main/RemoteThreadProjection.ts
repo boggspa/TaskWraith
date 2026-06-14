@@ -45,6 +45,8 @@ export interface RemoteCostDisplayOptions {
   currency?: RemoteDisplayCurrency
   overestimatePercent?: number
   fxRatesPerUsd?: Partial<Record<RemoteDisplayCurrency, number>>
+  /** ProviderRateService snapshot or already-unwrapped rate table map. */
+  providerRates?: unknown
 }
 
 /** Bounded preview size for routine iOS snapshot pushes — large enough
@@ -73,6 +75,113 @@ const COST_FLOORS: Record<RemoteDisplayCurrency, { threshold: number; label: str
   USD: { threshold: 0.01, label: '<$0.01' },
   GBP: { threshold: 0.01, label: '<£0.01' },
   EUR: { threshold: 0.01, label: '<€0.01' }
+}
+
+interface RemoteModelRate {
+  modelId: string
+  inputUsdPerMillion: number
+  outputUsdPerMillion: number
+  cachedInputUsdPerMillion?: number
+}
+
+type RemoteProviderRates = Partial<Record<ProviderId, RemoteModelRate[]>>
+
+interface RemoteUsageCounts {
+  inputTokens: number
+  billableInputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+}
+
+const isFiniteNonNegative = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+
+function numberFromStats(source: Record<string, unknown>, key: string): number {
+  const value = source[key]
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.trunc(value)
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0
+  }
+  return 0
+}
+
+function firstNumberFromStats(source: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    const value = numberFromStats(source, key)
+    if (value > 0) return value
+  }
+  return 0
+}
+
+function sumNumberGroups(source: Record<string, unknown>, groups: string[][]): number {
+  return groups.reduce((total, keys) => total + firstNumberFromStats(source, keys), 0)
+}
+
+function normalizeRemoteProviderRates(raw: unknown): RemoteProviderRates {
+  if (!raw || typeof raw !== 'object') return {}
+  const envelope = raw as Record<string, unknown>
+  const tables =
+    envelope.baseline && typeof envelope.baseline === 'object'
+      ? (envelope.baseline as Record<string, unknown>)
+      : envelope
+  const out: RemoteProviderRates = {}
+  for (const [provider, table] of Object.entries(tables)) {
+    const models = Array.isArray(table)
+      ? table
+      : table && typeof table === 'object'
+        ? (table as Record<string, unknown>).models
+        : undefined
+    if (!Array.isArray(models)) continue
+    const entries: RemoteModelRate[] = []
+    for (const model of models) {
+      if (!model || typeof model !== 'object') continue
+      const m = model as Record<string, unknown>
+      if (
+        typeof m.modelId === 'string' &&
+        isFiniteNonNegative(m.inputUsdPerMillion) &&
+        isFiniteNonNegative(m.outputUsdPerMillion)
+      ) {
+        const entry: RemoteModelRate = {
+          modelId: m.modelId,
+          inputUsdPerMillion: m.inputUsdPerMillion,
+          outputUsdPerMillion: m.outputUsdPerMillion
+        }
+        if (
+          isFiniteNonNegative(m.cachedInputUsdPerMillion) &&
+          m.cachedInputUsdPerMillion < m.inputUsdPerMillion
+        ) {
+          entry.cachedInputUsdPerMillion = m.cachedInputUsdPerMillion
+        }
+        entries.push(entry)
+      }
+    }
+    if (entries.length > 0) out[provider as ProviderId] = entries
+  }
+  return out
+}
+
+function resolveRemoteModelRate(
+  rates: RemoteProviderRates,
+  provider: ProviderId | undefined,
+  model: string | undefined
+): RemoteModelRate | null {
+  if (!provider) return null
+  const table = rates[provider]
+  if (!table || table.length === 0) return null
+  const wanted = (model || '').trim().toLowerCase()
+  if (wanted) {
+    const exact = table.find((entry) => entry.modelId.toLowerCase() === wanted)
+    if (exact) return exact
+    const prefix = table.find((entry) => {
+      const id = entry.modelId.toLowerCase()
+      return wanted.startsWith(id) || id.startsWith(wanted)
+    })
+    if (prefix) return prefix
+  }
+  return table[0]
 }
 
 function clampOverestimate(percent: number | undefined): number {
@@ -108,6 +217,77 @@ function formatRemoteCost(usd: number, display?: RemoteCostDisplayOptions): stri
     const symbol = currency === 'USD' ? '$' : currency === 'GBP' ? '£' : '€'
     return `${symbol}${converted.toFixed(2)}`
   }
+}
+
+function extractRemoteUsageCounts(stats: Record<string, unknown>): RemoteUsageCounts {
+  const inputBase = firstNumberFromStats(stats, [
+    'input_tokens',
+    'inputTokens',
+    'prompt_tokens',
+    'promptTokens',
+    'input',
+    'prompt'
+  ])
+  const inputAlreadyIncludesCache = stats._taskwraith_input_includes_cache === true
+  const cacheReadInputTokens = sumNumberGroups(stats, [
+    ['cacheReadInputTokens', 'cache_read_input_tokens', 'input_cache_read', 'cacheReadTokens'],
+    ['cachedInputTokens', 'cached_input_tokens']
+  ])
+  const cacheCreationInputTokens = firstNumberFromStats(stats, [
+    'cacheCreationInputTokens',
+    'cache_creation_input_tokens',
+    'input_cache_creation'
+  ])
+  const audioInputTokens = firstNumberFromStats(stats, ['input_audio_tokens', 'inputAudioTokens'])
+  const outputTokens =
+    firstNumberFromStats(stats, [
+      'output_tokens',
+      'outputTokens',
+      'completion_tokens',
+      'completionTokens',
+      'output'
+    ]) + firstNumberFromStats(stats, ['output_audio_tokens', 'outputAudioTokens'])
+  const inputTokens = inputAlreadyIncludesCache
+    ? inputBase
+    : inputBase + cacheReadInputTokens + cacheCreationInputTokens + audioInputTokens
+  const billableInputTokens = inputAlreadyIncludesCache
+    ? Math.max(0, inputBase - cacheReadInputTokens - cacheCreationInputTokens)
+    : inputBase + audioInputTokens
+  const explicitTotal = firstNumberFromStats(stats, [
+    'total_tokens',
+    'totalTokens',
+    'all_tokens',
+    'total',
+    'tokens'
+  ])
+  const totalTokens = explicitTotal > 0 ? explicitTotal : inputTokens + outputTokens
+
+  return {
+    inputTokens,
+    billableInputTokens,
+    outputTokens,
+    totalTokens,
+    cacheReadInputTokens,
+    cacheCreationInputTokens
+  }
+}
+
+function estimateRemoteRunCostUsd(
+  costDisplay: RemoteCostDisplayOptions | undefined,
+  provider: ProviderId | undefined,
+  model: string | undefined,
+  usage: RemoteUsageCounts
+): number {
+  const rates = normalizeRemoteProviderRates(costDisplay?.providerRates)
+  const rate = resolveRemoteModelRate(rates, provider, model)
+  if (!rate) return 0
+  const cachedInputRate = rate.cachedInputUsdPerMillion ?? rate.inputUsdPerMillion
+  const usd =
+    (usage.billableInputTokens / 1_000_000) * rate.inputUsdPerMillion +
+    (usage.cacheReadInputTokens / 1_000_000) * cachedInputRate +
+    (usage.cacheCreationInputTokens / 1_000_000) * rate.inputUsdPerMillion +
+    (usage.outputTokens / 1_000_000) * rate.outputUsdPerMillion
+  return Number.isFinite(usd) && usd > 0 ? usd : 0
 }
 
 function shortModelLabel(model: string): string {
@@ -596,20 +776,19 @@ export function summarizeRun(
       }
       return undefined
     }
-    const tokensIn = num('inputTokens', 'input_tokens', 'promptTokens', 'prompt_tokens')
-    const tokensOut = num('outputTokens', 'output_tokens', 'completionTokens', 'completion_tokens')
-    if (tokensIn !== undefined) summary.tokensIn = tokensIn
-    if (tokensOut !== undefined) summary.tokensOut = tokensOut
-    const total =
-      num('totalTokens', 'total_tokens', 'tokens') ??
-      (tokensIn !== undefined || tokensOut !== undefined
-        ? (tokensIn ?? 0) + (tokensOut ?? 0)
-        : undefined)
-    if (total !== undefined) summary.totalTokens = total
+    const usage = extractRemoteUsageCounts(stats)
+    if (usage.inputTokens > 0) summary.tokensIn = usage.inputTokens
+    if (usage.outputTokens > 0) summary.tokensOut = usage.outputTokens
+    if (usage.totalTokens > 0) summary.totalTokens = usage.totalTokens
     const cost = num('cost_usd', 'total_cost_usd', 'costUsd', 'totalCostUsd')
-    if (cost !== undefined && cost > 0) {
-      const formatted = formatRemoteCost(cost, costDisplay)
-      if (formatted) summary.costText = formatted
+    const explicitCostUsd = cost !== undefined && cost > 0 ? cost : 0
+    const hasExplicitCost = explicitCostUsd > 0
+    const costUsd = hasExplicitCost
+      ? explicitCostUsd
+      : estimateRemoteRunCostUsd(costDisplay, run.provider, model, usage)
+    if (costUsd > 0) {
+      const formatted = formatRemoteCost(costUsd, costDisplay)
+      if (formatted) summary.costText = hasExplicitCost ? formatted : `~${formatted}`
     }
   }
   const fileChanges = summarizeRunFileChanges(run)
