@@ -113,76 +113,71 @@ struct Composer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                if card.isEnsemble {
-                    Text("Ensemble")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(TWTheme.chroma2.opacity(0.16), in: Capsule())
-                        .overlay(Capsule().strokeBorder(TWTheme.chroma2.opacity(0.45)))
-                        .foregroundStyle(TWTheme.chroma2)
-                } else if !catalogs.isEmpty {
-                    ProviderModelPicker(
-                        catalogs: catalogs,
-                        provider: $selectedProvider,
-                        modelId: $selectedModelId,
-                        reasoningEffort: $selectedReasoningEffort,
-                        allowsProviderChange: canChangeProvider)
-                    if !canChangeProvider, !card.isEnsemble, card.parentChatId == nil,
-                        newTaskWorkspaceId == nil
-                    {
-                        // Guest participant: + invites, chip shows/changes,
-                        // × removes (desktop guest-picker parity).
-                        GuestParticipantControl(model: model, card: card)
-                    }
-                } else {
-                    Text(providerName)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(accent.opacity(0.16), in: Capsule())
-                        .overlay(Capsule().strokeBorder(accent.opacity(0.45)))
-                        .foregroundStyle(accent)
-                    if let runModel {
-                        Text(runModel)
-                            .font(.caption2)
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(TWTheme.surface3, in: Capsule())
-                            .foregroundStyle(TWTheme.textSecondary)
-                            .lineLimit(1)
-                    }
-                }
-                if isGlobalChat {
-                    // T72 — phone-origin turns in global chats ALWAYS run in
-                    // plan mode (the Mac forces it server-side; this chip just
-                    // tells the truth instead of offering a dead picker).
-                    HStack(spacing: 3) {
-                        Image(systemName: "list.bullet.clipboard")
-                        Text("Plan · no file changes")
-                    }
-                    .font(.caption2)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(TWTheme.surface3, in: Capsule())
-                    .foregroundStyle(TWTheme.textSecondary)
-                } else if !card.isEnsemble {
-                    Menu {
-                        Picker("Approval", selection: $approvalMode) {
-                            Label("Default Approval", systemImage: "checkmark.shield").tag("default")
-                            Label("Plan / Read-only", systemImage: "list.bullet.clipboard").tag(
-                                "plan")
+            if !card.isEnsemble {
+                HStack(spacing: 6) {
+                    if !catalogs.isEmpty {
+                        ProviderModelPicker(
+                            catalogs: catalogs,
+                            provider: $selectedProvider,
+                            modelId: $selectedModelId,
+                            reasoningEffort: $selectedReasoningEffort,
+                            allowsProviderChange: canChangeProvider)
+                        if !canChangeProvider, card.parentChatId == nil,
+                            newTaskWorkspaceId == nil
+                        {
+                            // Guest participant: + invites, chip shows/changes,
+                            // × removes (desktop guest-picker parity).
+                            GuestParticipantControl(model: model, card: card)
                         }
-                    } label: {
+                    } else {
+                        Text(providerName)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(accent.opacity(0.16), in: Capsule())
+                            .overlay(Capsule().strokeBorder(accent.opacity(0.45)))
+                            .foregroundStyle(accent)
+                        if let runModel {
+                            Text(runModel)
+                                .font(.caption2)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(TWTheme.surface3, in: Capsule())
+                                .foregroundStyle(TWTheme.textSecondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    if isGlobalChat {
+                        // T72 — phone-origin turns in global chats ALWAYS run in
+                        // plan mode (the Mac forces it server-side; this chip just
+                        // tells the truth instead of offering a dead picker).
                         HStack(spacing: 3) {
-                            Image(systemName: approvalMode == "plan"
-                                ? "list.bullet.clipboard" : "checkmark.shield")
-                            Text(approvalMode == "plan" ? "Plan" : "Default")
+                            Image(systemName: "list.bullet.clipboard")
+                            Text("Plan · no file changes")
                         }
                         .font(.caption2)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(TWTheme.surface3, in: Capsule())
                         .foregroundStyle(TWTheme.textSecondary)
+                    } else {
+                        Menu {
+                            Picker("Approval", selection: $approvalMode) {
+                                Label("Default Approval", systemImage: "checkmark.shield").tag("default")
+                                Label("Plan / Read-only", systemImage: "list.bullet.clipboard").tag(
+                                    "plan")
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: approvalMode == "plan"
+                                    ? "list.bullet.clipboard" : "checkmark.shield")
+                                Text(approvalMode == "plan" ? "Plan" : "Default")
+                            }
+                            .font(.caption2)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(TWTheme.surface3, in: Capsule())
+                            .foregroundStyle(TWTheme.textSecondary)
+                        }
                     }
+                    Spacer()
                 }
-                Spacer()
             }
             if !mentionCandidates.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
