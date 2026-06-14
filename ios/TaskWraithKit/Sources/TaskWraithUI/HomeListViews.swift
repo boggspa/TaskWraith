@@ -88,8 +88,8 @@ struct HomeView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    // ALL chat types open the inline canvas (main pane) —
-                    // the compose sheet is retired.
+                    // ALL chat types create an empty Mac thread first, then
+                    // render through the normal transcript welcome surface.
                     Button("New chat") { openCanvas(.workspace) }
                     Button("New ensemble") { openCanvas(.ensemble) }
                     Button("New global chat") { openCanvas(.global) }
@@ -120,7 +120,7 @@ struct HomeView: View {
             }
         }
         .navigationDestination(item: $canvasMode) { mode in
-            NewChatCanvasView(model: model, mode: mode, initialWorkspaceId: nil)
+            NewChatBootstrapView(model: model, mode: mode, initialWorkspaceId: nil)
         }
         .sheet(isPresented: $showSettings) {
             AppSettingsSheet()

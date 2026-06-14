@@ -238,7 +238,7 @@ struct ConnectedShell: View {
                 } detail: {
                     if let taskId = selectedTaskId, taskId.hasPrefix("new-") {
                         NavigationStack {
-                            NewChatCanvasView(
+                            NewChatBootstrapView(
                                 model: model,
                                 mode: taskId.hasPrefix("new-ensemble")
                                     ? .ensemble

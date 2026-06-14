@@ -16,119 +16,6 @@ import TaskWraithKit
     import UIKit
 #endif
 
-struct ThreadWelcomeCard: View {
-    let card: RemoteTaskCard
-    @ObservedObject var model: RemoteSessionModel
-    var onStarter: ((String) -> Void)? = nil
-
-    /// Desktop welcome-screen starters, verbatim copy.
-    private static let starters: [(title: String, detail: String, prompt: String)] = [
-        (
-            "Map project",
-            "Orient around structure, risk, and best starting point.",
-            "Map this project: outline the structure, key modules, risks, and the best starting point for new work."
-        ),
-        (
-            "Plan a change",
-            "Define target, files, risks, and acceptance checks.",
-            "Help me plan a change: define the target behavior, the files involved, the risks, and acceptance checks."
-        ),
-        (
-            "Make improvement",
-            "Find one small valuable edit and verify it.",
-            "Find one small, valuable improvement in this project, make the edit, and verify it."
-        )
-    ]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                GhostMarkView(size: 30)
-                    .shadow(color: welcomeAccent.opacity(0.5), radius: 10)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(card.title ?? "New chat")
-                        .font(.headline)
-                        .foregroundStyle(TWTheme.textPrimary)
-                    if card.isEnsemble {
-                        Text("Ensemble · participants take turns on your Mac")
-                            .font(.caption)
-                            .foregroundStyle(TWTheme.chroma2)
-                    } else {
-                        Text(
-                            "\(TWTheme.providerLabel(card.provider)) · replies stream from your Mac"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(TWTheme.textSecondary)
-                    }
-                }
-            }
-            Text(
-                card.isEnsemble
-                    ? "Send a prompt below to start a round. Use @ in the desktop app to direct a participant."
-                    : "No messages yet. Send a prompt below — you'll see the transcript update as the agent works."
-            )
-            .font(.footnote)
-            .foregroundStyle(TWTheme.textSecondary)
-            if !card.isEnsemble, let onStarter {
-                VStack(spacing: 8) {
-                    ForEach(Self.starters, id: \.title) { starter in
-                        Button {
-                            onStarter(starter.prompt)
-                        } label: {
-                            HStack(spacing: 11) {
-                                Image(systemName: starterIcon(starter.title))
-                                    .font(.callout.weight(.medium))
-                                    .foregroundStyle(welcomeAccent)
-                                    .frame(width: 30, height: 30)
-                                    .background(
-                                        welcomeAccent.opacity(0.12),
-                                        in: RoundedRectangle(cornerRadius: 8))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(starter.title)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(TWTheme.textPrimary)
-                                    Text(starter.detail)
-                                        .font(.caption)
-                                        .foregroundStyle(TWTheme.textSecondary)
-                                }
-                                Spacer(minLength: 0)
-                                Image(systemName: "arrow.up.left")
-                                    .font(.caption2)
-                                    .foregroundStyle(TWTheme.textMuted)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                            .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 11))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 11).strokeBorder(TWTheme.border)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.top, 4)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [welcomeAccent.opacity(0.16), welcomeAccent.opacity(0.04), .clear],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 16)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16).strokeBorder(welcomeAccent.opacity(0.3))
-        )
-        .padding(.vertical, 4)
-    }
-
-    private var welcomeAccent: Color {
-        card.isEnsemble ? TWTheme.chroma2 : TWTheme.providerAccent(card.provider)
-    }
-}
-
 struct RunSummaryChip: View {
     let run: RemoteThreadSnapshot.RunSummary
 
@@ -148,13 +35,6 @@ struct RunSummaryChip: View {
 /// composer chrome: accent-tinted provider pill + border + send, provider-
 /// addressed placeholder ("Ask Codex anything…"), and a model pill when the
 /// thread's last run reported one.
-
-struct WelcomeStarter: Identifiable {
-    let id: String
-    let label: String
-    let description: String
-    let prompt: String
-}
 
 /// Desktop "Task complete" card — appears after each run's final transcript
 /// row and persists per thread (existing chats AND phone-initiated runs).

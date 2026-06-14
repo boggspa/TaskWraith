@@ -1969,6 +1969,12 @@ public struct ToolActivityCards: View {
     public var body: some View {
         // Inline (satellite) presentation — no container chrome, the calls
         // sit in the transcript flow exactly where they happened.
+        ToolActivityViewport {
+            content
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 5) {
             ForEach(collapsed) { group in
                 row(group.entry, count: group.count)
@@ -2089,6 +2095,92 @@ public struct ToolActivityCards: View {
     }
 }
 
+private struct ToolActivityViewportHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct ToolActivityViewport<Content: View>: View {
+    private let maxHeight: CGFloat
+    private let fadeHeight: CGFloat
+    private let content: Content
+    @State private var contentHeight: CGFloat = 0
+
+    init(
+        maxHeight: CGFloat = 172,
+        fadeHeight: CGFloat = 34,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.maxHeight = maxHeight
+        self.fadeHeight = fadeHeight
+        self.content = content()
+    }
+
+    private var shouldScroll: Bool {
+        contentHeight > maxHeight + 8
+    }
+
+    var body: some View {
+        Group {
+            if shouldScroll {
+                ScrollView(.vertical, showsIndicators: false) {
+                    measuredContent
+                }
+                .frame(height: maxHeight)
+                .mask(edgeFadeMask)
+            } else {
+                measuredContent
+            }
+        }
+        .onPreferenceChange(ToolActivityViewportHeightKey.self) { height in
+            guard abs(contentHeight - height) > 1 else { return }
+            contentHeight = height
+        }
+    }
+
+    private var measuredContent: some View {
+        content
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: ToolActivityViewportHeightKey.self,
+                        value: proxy.size.height)
+                }
+            )
+    }
+
+    private var edgeFadeMask: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black.opacity(0.18), location: 0.18),
+                    .init(color: .black.opacity(0.76), location: 0.68),
+                    .init(color: .black, location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: fadeHeight)
+            Rectangle().fill(Color.black)
+            LinearGradient(
+                stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black.opacity(0.76), location: 0.32),
+                    .init(color: .black.opacity(0.18), location: 0.82),
+                    .init(color: .clear, location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: fadeHeight)
+        }
+    }
+}
+
 // ── Thread inspector — diff + sub-agent tabs ───────────────────────────────
 // iPad: right-hand `.inspector` panel; iPhone: the same view presents as a
 // sheet (system behavior). Tabs: Changes (run diff files) and Agents
@@ -2133,33 +2225,38 @@ public struct ThreadInspector: View {
             }
             .pickerStyle(.segmented)
             .padding(12)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    if tab == 0 {
-                        DiffSummaryPanel(diff: diff, isRunning: isRunning)
-                        // Git workflows need at least the diffReview read
-                        // tier (gitSnapshot); mutations additionally gate
-                        // on fileWrite inside the panel.
-                        if let workspaceId = model.taskCards.first(where: { $0.id == threadId })?
-                            .workspaceId,
-                            model.workspaceCanReviewDiffs(workspaceId)
-                        {
-                            GitWorkflowPanel(model: model, workspaceId: workspaceId)
+            if tab == 3 {
+                SideChatsPanel(
+                    model: model, threadId: threadId,
+                    onOpenThread: onOpenThread)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if tab == 0 {
+                            DiffSummaryPanel(diff: diff, isRunning: isRunning)
+                            // Git workflows need at least the diffReview read
+                            // tier (gitSnapshot); mutations additionally gate
+                            // on fileWrite inside the panel.
+                            if let workspaceId = model.taskCards.first(where: { $0.id == threadId })?
+                                .workspaceId,
+                                model.workspaceCanReviewDiffs(workspaceId)
+                            {
+                                GitWorkflowPanel(model: model, workspaceId: workspaceId)
+                            }
+                        } else if tab == 1 {
+                            SubAgentsPanel(children: children, onOpenThread: onOpenThread)
+                        } else if tab == 4 {
+                            UsagePanel(model: model)
+                        } else {
+                            NotesPanel(model: model, threadId: threadId)
                         }
-                    } else if tab == 1 {
-                        SubAgentsPanel(children: children, onOpenThread: onOpenThread)
-                    } else if tab == 3 {
-                        SideChatsPanel(
-                            model: model, threadId: threadId,
-                            onOpenThread: onOpenThread)
-                    } else if tab == 4 {
-                        UsagePanel(model: model)
-                    } else {
-                        NotesPanel(model: model, threadId: threadId)
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 16)
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 16)
             }
         }
         .background(TWTheme.appBg)
@@ -3477,6 +3574,8 @@ struct NotesPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            BlackboardPanelSection(entries: snapshot?.blackboardEntries ?? [])
+
             Text("Notes")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(TWTheme.textTertiary)
@@ -3560,6 +3659,112 @@ struct NotesPanel: View {
         .onChange(of: snapshot?.notes ?? "") { _, fresh in
             if !notesFocused { notesDraft = fresh }
         }
+    }
+}
+
+private struct BlackboardPanelSection: View {
+    let entries: [RemoteThreadSnapshot.BlackboardEntry]
+
+    private static let categoryOrder = ["decision", "fact", "risk", "do-not-repeat", "note"]
+    private static let categoryLabels: [String: String] = [
+        "decision": "Decisions",
+        "fact": "Facts",
+        "risk": "Risks",
+        "do-not-repeat": "Do not repeat",
+        "note": "Notes",
+    ]
+
+    private var visibleEntries: [RemoteThreadSnapshot.BlackboardEntry] {
+        entries
+            .filter { !$0.key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { lhs, rhs in
+                let lhsRank = Self.categoryOrder.firstIndex(of: lhs.category) ?? Int.max
+                let rhsRank = Self.categoryOrder.firstIndex(of: rhs.category) ?? Int.max
+                if lhsRank != rhsRank { return lhsRank < rhsRank }
+                return (lhs.createdAt ?? "") > (rhs.createdAt ?? "")
+            }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Blackboard")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textTertiary)
+                Spacer(minLength: 8)
+                if !visibleEntries.isEmpty {
+                    Text("\(visibleEntries.count)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(TWTheme.chroma1)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(TWTheme.chroma1.opacity(0.14), in: Capsule())
+                }
+            }
+
+            if visibleEntries.isEmpty {
+                Text("No blackboard entries.")
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textMuted)
+                    .padding(.vertical, 2)
+            } else {
+                ForEach(Self.categoryOrder, id: \.self) { category in
+                    let group = visibleEntries.filter { $0.category == category }
+                    if !group.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(Self.categoryLabels[category] ?? category)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(TWTheme.textMuted)
+                                .textCase(.uppercase)
+                            ForEach(group) { entry in
+                                BlackboardEntryCard(entry: entry)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TWTheme.surface1.opacity(0.62), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
+    }
+}
+
+private struct BlackboardEntryCard: View {
+    let entry: RemoteThreadSnapshot.BlackboardEntry
+
+    private var scopeLabel: String {
+        entry.scope.replacingOccurrences(of: "-", with: " ").uppercased()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(entry.key)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                Text(scopeLabel)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(TWTheme.textMuted)
+            }
+            MarkdownLite(entry.value, baseColor: TWTheme.textPrimary)
+                .font(.caption)
+                .lineLimit(5)
+            if let participant = entry.participantId, !participant.isEmpty {
+                Text(participant)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textMuted)
+                    .lineLimit(1)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TWTheme.surface2.opacity(0.72), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(TWTheme.border.opacity(0.7)))
     }
 }
 
@@ -4094,7 +4299,11 @@ struct SideChatsPanel: View {
                     }
                 }
             } else {
-                listBody
+                ScrollView {
+                    listBody
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.bottom, 16)
+                }
             }
         }
         .onAppear { adoptRequestedSideChat() }
@@ -4291,7 +4500,18 @@ struct MiniThreadView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Header: back to list · identity/title · expand to main pane
+            header
+            transcriptArea
+            composerShell
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task(id: threadId) {
+            model.requestThreadSnapshot(threadId)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
@@ -4320,61 +4540,74 @@ struct MiniThreadView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
 
-            // Transcript (recent window; full history lives in the main pane)
-            let rows = Array((snapshot?.rows ?? []).suffix(30))
-            if rows.isEmpty {
-                // Same trap the main thread view already solved: an
-                // existing side chat WITH history briefly looked like an
-                // empty one while its snapshot was in flight (the .task
-                // below requests it on open). Only a delivered snapshot
-                // with zero total rows is genuinely "no messages".
-                if let snapshot, (snapshot.totalRows ?? 0) == 0 {
-                    Text("No messages yet — say hi below.")
-                        .font(.caption)
-                        .foregroundStyle(TWTheme.textMuted)
-                        .padding(.vertical, 10)
-                } else {
-                    HydrationTicker("Loading side chat from your Mac…")
-                }
+    private var transcriptArea: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                transcriptContent
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var transcriptContent: some View {
+        // Transcript (recent window; full history lives in the main pane)
+        let rows = Array((snapshot?.rows ?? []).suffix(30))
+        if rows.isEmpty {
+            // Same trap the main thread view already solved: an
+            // existing side chat WITH history briefly looked like an
+            // empty one while its snapshot was in flight (the .task
+            // below requests it on open). Only a delivered snapshot
+            // with zero total rows is genuinely "no messages".
+            if let snapshot, (snapshot.totalRows ?? 0) == 0 {
+                Text("No messages yet — say hi below.")
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textMuted)
+                    .padding(.vertical, 10)
             } else {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(rows, id: \.id) { row in
-                        ThreadRowView(
-                            model: model, threadId: threadId,
-                            row: model.resolvedRow(row, threadId: threadId),
-                            threadProvider: card.provider)
-                    }
+                HydrationTicker("Loading side chat from your Mac…")
+            }
+        } else {
+            LazyVStack(alignment: .leading, spacing: 6) {
+                ForEach(rows, id: \.id) { row in
+                    ThreadRowView(
+                        model: model, threadId: threadId,
+                        row: model.resolvedRow(row, threadId: threadId),
+                        threadProvider: card.provider,
+                        agentIdentity: ThreadAgentIdentity(card: card))
                 }
             }
-            if let live = model.streamingTexts[threadId], !live.isEmpty {
-                StreamingRowView(
-                    text: live, provider: card.provider,
-                    model: snapshot?.runSummary?.model)
-            }
+        }
+        if let live = model.streamingTexts[threadId], !live.isEmpty {
+            StreamingRowView(
+                text: live, provider: card.provider,
+                model: snapshot?.runSummary?.model,
+                agentIdentity: ThreadAgentIdentity(card: card))
+        }
+    }
 
-            // The REAL composer shell — identical conventions/tokens.
-            VStack(spacing: 0) {
-                Composer(
-                    model: model, card: card,
-                    runModel: snapshot?.runSummary?.model,
-                    attachedTop: false, attachedBottom: true,
-                    navigateOnSend: false,
-                    text: $draft)
-                Rectangle().fill(TWTheme.border).frame(height: 1)
-                TelemetryFooterRail(
-                    run: snapshot?.runSummary,
-                    workspaceName: model.workspaceName(for: card.workspaceId),
-                    activeGoal: card.activeGoal,
-                    onGoalUpdate: { op, objective, reason in
-                        model.updateGoal(card, op: op, objective: objective, reason: reason)
-                    })
-            }
-            .composerShellGlass()
+    private var composerShell: some View {
+        VStack(spacing: 0) {
+            Composer(
+                model: model, card: card,
+                runModel: snapshot?.runSummary?.model,
+                attachedTop: false, attachedBottom: true,
+                navigateOnSend: false,
+                text: $draft)
+            Rectangle().fill(TWTheme.border).frame(height: 1)
+            TelemetryFooterRail(
+                run: snapshot?.runSummary,
+                workspaceName: model.workspaceName(for: card.workspaceId),
+                activeGoal: card.activeGoal,
+                onGoalUpdate: { op, objective, reason in
+                    model.updateGoal(card, op: op, objective: objective, reason: reason)
+                })
         }
-        .task(id: threadId) {
-            model.requestThreadSnapshot(threadId)
-        }
+        .composerShellGlass()
     }
 }
 

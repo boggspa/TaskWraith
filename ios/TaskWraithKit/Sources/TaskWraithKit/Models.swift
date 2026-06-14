@@ -457,6 +457,7 @@ public struct RemoteEnsembleState: Codable, Sendable {
     }
     public let threadId: String?
     public let taskId: String?
+    public let roundId: String?
     public let status: String?
     public let activeParticipantId: String?
     public let participants: [Participant]?
@@ -536,6 +537,8 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         /// Run that produced this row — lets the live streaming bubble
         /// supersede the in-flight snapshot row without duplication.
         public let runId: String?
+        /// Ensemble round this row belongs to, when present.
+        public let ensembleRoundId: String?
         public let role: String?
         public let kind: String?
         /// Ensemble participant identity, mirroring the desktop transcript
@@ -582,6 +585,8 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
     }
     public struct RunSummary: Codable, Sendable {
         public let runId: String?
+        /// Ensemble round this participant run belongs to, when present.
+        public let ensembleRoundId: String?
         public let provider: String?
         public let model: String?
         public let status: String?
@@ -616,6 +621,16 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             }
         }
     }
+    public struct BlackboardEntry: Codable, Sendable, Identifiable {
+        public let id: String
+        public let key: String
+        public let value: String
+        public let category: String
+        public let scope: String
+        public let participantId: String?
+        public let roundId: String?
+        public let createdAt: String?
+    }
     public let threadId: String?
     public let taskId: String?
     public let workspaceId: String?
@@ -627,6 +642,8 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
     public let notes: String?
     /// Pinned messages — may fall outside the latestN row window.
     public let pinnedRows: [Row]?
+    /// Structured shared notes (currently Ensemble blackboard entries).
+    public let blackboardEntries: [BlackboardEntry]?
     /// Per-run summaries (oldest→newest) — Task-complete card data.
     public let runSummaries: [RunSummary]?
     public let hasMoreAbove: Bool?

@@ -71,6 +71,20 @@ struct ThreadDetailView: View {
         guard let live = model.streamingTexts[taskId], !live.isEmpty else { return nil }
         return model.streamingRunIds[taskId]
     }
+    private var threadAgentIdentity: ThreadAgentIdentity? {
+        ThreadAgentIdentity(card: card)
+    }
+    private var allowsFirstTurnProviderChange: Bool {
+        guard card?.isEnsemble != true, !isRunning else { return false }
+        guard let snapshot else { return false }
+        let rows = snapshot.rows ?? []
+        return rows.isEmpty && (snapshot.totalRows ?? 0) == 0
+    }
+    private var showsEmptyWelcomeCanvas: Bool {
+        guard card != nil, !isRunning else { return false }
+        guard let snapshot else { return false }
+        return (snapshot.rows ?? []).isEmpty && (snapshot.totalRows ?? 0) == 0
+    }
 
     /// While the live block streams a run, hide that run's in-flight
     /// snapshot assistant rows (the stream has fresher text) AND its tool
@@ -92,6 +106,33 @@ struct ThreadDetailView: View {
         }
     }
 
+    /// Render-only grouping for finished snapshot rows. The wire projection
+    /// stays one-message-one-row; this folds only adjacent tool-activity rows
+    /// from the same run/speaker so a tool burst reads as one compact region.
+    private enum TranscriptDisplayItem: Identifiable {
+        case row(RemoteThreadSnapshot.Row)
+        case toolBurst(
+            id: String, rows: [RemoteThreadSnapshot.Row], lastRow: RemoteThreadSnapshot.Row)
+
+        var id: String {
+            switch self {
+            case .row(let row): return row.id
+            case .toolBurst(let id, _, _): return id
+            }
+        }
+
+        var lastRow: RemoteThreadSnapshot.Row {
+            switch self {
+            case .row(let row): return row
+            case .toolBurst(_, _, let lastRow): return lastRow
+            }
+        }
+    }
+
+    private var visibleDisplayItems: [TranscriptDisplayItem] {
+        groupAdjacentToolRows(visibleRows)
+    }
+
     /// One row of the LIVE block: a snapshot tool row or a streamed text
     /// segment, in finished-transcript order.
     private enum LiveElement: Identifiable {
@@ -100,6 +141,20 @@ struct ThreadDetailView: View {
         var id: String {
             switch self {
             case .toolRow(let row): return "live-row-\(row.id)"
+            case .text(let id, _, _): return id
+            }
+        }
+    }
+
+    private enum LiveDisplayElement: Identifiable {
+        case toolRow(RemoteThreadSnapshot.Row)
+        case toolBurst(id: String, rows: [RemoteThreadSnapshot.Row])
+        case text(id: String, content: String, isTail: Bool)
+
+        var id: String {
+            switch self {
+            case .toolRow(let row): return "live-row-\(row.id)"
+            case .toolBurst(let id, _): return "live-burst-\(id)"
             case .text(let id, _, _): return id
             }
         }
@@ -127,6 +182,90 @@ struct ThreadDetailView: View {
             }
         }
     }
+
+    private var liveDisplayElements: [LiveDisplayElement] {
+        var out: [LiveDisplayElement] = []
+        var pending: [RemoteThreadSnapshot.Row] = []
+
+        func flush() {
+            guard !pending.isEmpty else { return }
+            if pending.count == 1 {
+                out.append(.toolRow(pending[0]))
+            } else {
+                out.append(.toolBurst(id: toolBurstId(pending), rows: pending))
+            }
+            pending.removeAll()
+        }
+
+        for element in liveElements {
+            switch element {
+            case .toolRow(let row):
+                if !canGroupToolRow(row) {
+                    flush()
+                    out.append(.toolRow(row))
+                    continue
+                }
+                if let last = pending.last, toolBurstKey(last) != toolBurstKey(row) {
+                    flush()
+                }
+                pending.append(row)
+            case .text(let id, let content, let isTail):
+                flush()
+                out.append(.text(id: id, content: content, isTail: isTail))
+            }
+        }
+        flush()
+        return out
+    }
+
+    private func groupAdjacentToolRows(_ rows: [RemoteThreadSnapshot.Row])
+        -> [TranscriptDisplayItem]
+    {
+        var out: [TranscriptDisplayItem] = []
+        var pending: [RemoteThreadSnapshot.Row] = []
+
+        func flush() {
+            guard !pending.isEmpty else { return }
+            if pending.count == 1 {
+                out.append(.row(pending[0]))
+            } else {
+                out.append(
+                    .toolBurst(
+                        id: toolBurstId(pending), rows: pending, lastRow: pending[pending.count - 1])
+                )
+            }
+            pending.removeAll()
+        }
+
+        for row in rows {
+            guard canGroupToolRow(row) else {
+                flush()
+                out.append(.row(row))
+                continue
+            }
+            if let last = pending.last, toolBurstKey(last) != toolBurstKey(row) {
+                flush()
+            }
+            pending.append(row)
+        }
+        flush()
+        return out
+    }
+
+    private func canGroupToolRow(_ row: RemoteThreadSnapshot.Row) -> Bool {
+        (row.role == "tool" || row.kind == "tool") && (row.toolSummary?.activityCount ?? 0) > 0
+    }
+
+    private func toolBurstKey(_ row: RemoteThreadSnapshot.Row) -> String {
+        let runKey = row.runId ?? "row:\(row.id)"
+        return "\(runKey)|\(row.speaker ?? "")"
+    }
+
+    private func toolBurstId(_ rows: [RemoteThreadSnapshot.Row]) -> String {
+        guard let first = rows.first, let last = rows.last else { return "tool-burst-empty" }
+        return "tool-burst-\(first.id)-\(last.id)-\(rows.count)"
+    }
+
     /// runId → id of that run's LAST visible row (cards anchor there).
     private var runLastRowIds: [String: String] {
         var out: [String: String] = [:]
@@ -136,18 +275,78 @@ struct ThreadDetailView: View {
         return out
     }
 
+    /// ensembleRoundId → id of that round's LAST visible row. Ensemble
+    /// completion cards anchor here so participant runs do not split the
+    /// transcript between speakers.
+    private var ensembleRoundLastRowIds: [String: String] {
+        var out: [String: String] = [:]
+        for row in visibleRows {
+            if let roundId = ensembleRoundId(for: row) { out[roundId] = row.id }
+        }
+        return out
+    }
+
+    private var runSummaries: [RemoteThreadSnapshot.RunSummary] {
+        snapshot?.runSummaries ?? [snapshot?.runSummary].compactMap { $0 }
+    }
+
+    private var runSummaryById: [String: RemoteThreadSnapshot.RunSummary] {
+        var out: [String: RemoteThreadSnapshot.RunSummary] = [:]
+        for summary in runSummaries {
+            if let runId = summary.runId { out[runId] = summary }
+        }
+        return out
+    }
+
+    private func ensembleRoundId(for row: RemoteThreadSnapshot.Row) -> String? {
+        if let roundId = row.ensembleRoundId, !roundId.isEmpty { return roundId }
+        guard let runId = row.runId else { return nil }
+        return runSummaryById[runId]?.ensembleRoundId
+    }
+
+    private func isTerminalRunSummary(_ summary: RemoteThreadSnapshot.RunSummary) -> Bool {
+        let status = summary.status ?? ""
+        return !status.isEmpty && status != "running"
+    }
+
+    private func ensembleRoundIsActive(_ roundId: String) -> Bool {
+        guard let state = model.ensembleStates[taskId], state.roundId == roundId else {
+            return false
+        }
+        let status = state.status ?? ""
+        return !["idle", "completed", "cancelled", "failed", "error"].contains(status)
+    }
+
     /// The terminal summary to show after this row, if it's a run's last row.
     private func runCardSummary(after row: RemoteThreadSnapshot.Row)
         -> RemoteThreadSnapshot.RunSummary?
     {
+        if card?.isEnsemble == true, let roundId = ensembleRoundId(for: row) {
+            guard ensembleRoundLastRowIds[roundId] == row.id else { return nil }
+            guard !ensembleRoundIsActive(roundId) else { return nil }
+            let summaries = runSummaries.filter { $0.ensembleRoundId == roundId }
+            guard !summaries.contains(where: { $0.status == "running" }) else { return nil }
+            return summaries.last(where: isTerminalRunSummary)
+        }
+
         guard let runId = row.runId, runLastRowIds[runId] == row.id else { return nil }
-        guard
-            let summary = (snapshot?.runSummaries ?? [snapshot?.runSummary].compactMap { $0 })
-                .first(where: { $0.runId == runId })
-        else { return nil }
-        let status = summary.status ?? ""
-        guard status != "running", !status.isEmpty else { return nil }
+        guard let summary = runSummaryById[runId] else { return nil }
+        guard isTerminalRunSummary(summary) else { return nil }
         return summary
+    }
+
+    private var unanchoredRunCardSummary: RemoteThreadSnapshot.RunSummary? {
+        guard let run = snapshot?.runSummary, !isRunning else { return nil }
+        if card?.isEnsemble == true, let roundId = run.ensembleRoundId {
+            guard ensembleRoundLastRowIds[roundId] == nil else { return nil }
+            guard !ensembleRoundIsActive(roundId) else { return nil }
+            let summaries = runSummaries.filter { $0.ensembleRoundId == roundId }
+            guard !summaries.contains(where: { $0.status == "running" }) else { return nil }
+            return summaries.last(where: isTerminalRunSummary)
+        }
+        guard runLastRowIds[run.runId ?? ""] == nil else { return nil }
+        guard isTerminalRunSummary(run) else { return nil }
+        return run
     }
 
     private var earlierCount: Int {
@@ -235,17 +434,27 @@ struct ThreadDetailView: View {
                         .foregroundStyle(TWTheme.textTertiary)
                         .listRowBackground(Color.clear)
                 }
-                ForEach(visibleRows) { row in
-                    ThreadRowView(
-                        model: model, threadId: taskId,
-                        row: model.resolvedRow(row, threadId: taskId),
-                        threadProvider: card?.provider)
+                ForEach(visibleDisplayItems) { item in
+                    Group {
+                        switch item {
+                        case .row(let row):
+                            ThreadRowView(
+                                model: model, threadId: taskId,
+                                row: model.resolvedRow(row, threadId: taskId),
+                                threadProvider: card?.provider,
+                                agentIdentity: threadAgentIdentity)
+                        case .toolBurst(_, let rows, _):
+                            ToolBurstRowView(
+                                rows: rows.map { model.resolvedRow($0, threadId: taskId) },
+                                agentIdentity: threadAgentIdentity)
+                        }
+                    }
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                     // Desktop parity: each run's Task-complete card follows
                     // its final transcript row, persisting in the thread.
-                    if let runCard = runCardSummary(after: row) {
+                    if let runCard = runCardSummary(after: item.lastRow) {
                         // Legacy diff lane keyed to ITS OWN run — a stale
                         // envelope from an older run must not decorate a
                         // newer no-edit card. run.fileChanges (per-run, in
@@ -264,22 +473,29 @@ struct ThreadDetailView: View {
                 if liveRunId != nil, !liveElements.isEmpty {
                     StreamingLiveHeader(
                         provider: card?.provider,
-                        model: snapshot?.runSummary?.model)
+                        model: snapshot?.runSummary?.model,
+                        agentIdentity: threadAgentIdentity)
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
-                    ForEach(liveElements) { element in
+                    ForEach(liveDisplayElements) { element in
                         Group {
                             switch element {
+                            case .toolBurst(_, let rows):
+                                ToolBurstRowView(
+                                    rows: rows.map { model.resolvedRow($0, threadId: taskId) },
+                                    agentIdentity: threadAgentIdentity)
                             case .toolRow(let row):
                                 ThreadRowView(
                                     model: model, threadId: taskId,
                                     row: model.resolvedRow(row, threadId: taskId),
-                                    threadProvider: card?.provider)
+                                    threadProvider: card?.provider,
+                                    agentIdentity: threadAgentIdentity)
                             case .text(_, let content, let isTail):
                                 StreamingSegmentRow(
                                     text: content,
                                     isTail: isTail,
+                                    agentIdentity: threadAgentIdentity,
                                     participants: model.ensembleStates[taskId]?.participants
                                         ?? [])
                             }
@@ -289,12 +505,20 @@ struct ThreadDetailView: View {
                         .listRowSeparator(.hidden)
                     }
                 } else if isRunning {
-                    ThinkingRow(provider: thinkingProvider, model: thinkingModel)
+                    ThinkingRow(
+                        provider: thinkingProvider,
+                        model: thinkingModel,
+                        agentIdentity: threadAgentIdentity)
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                 }
-                if (snapshot?.rows ?? []).isEmpty, let card {
+                if showsEmptyWelcomeCanvas, let card {
+                    ThreadEmptyWelcomeCanvas(model: model, card: card, draft: $followUp)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                } else if (snapshot?.rows ?? []).isEmpty, card != nil {
                     if (snapshot?.totalRows ?? 0) > 0 {
                         // History exists on the Mac — the window just hasn't
                         // arrived. A welcome card here masquerades an old
@@ -308,20 +532,12 @@ struct ThreadDetailView: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .padding(.vertical, 10)
-                    } else {
-                        ThreadWelcomeCard(card: card, model: model) { starter in
-                            followUp = starter
-                        }
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
                     }
                 } else if (snapshot?.rows ?? []).isEmpty {
                     Text("No transcript yet.").foregroundStyle(TWTheme.textSecondary)
                         .listRowBackground(Color.clear)
                 }
-                if let run = snapshot?.runSummary, !isRunning,
-                    runLastRowIds[run.runId ?? ""] == nil
-                {
+                if let run = unanchoredRunCardSummary {
                     TaskCompleteCard(
                         run: run,
                         diff: model.diffSummaries[taskId]?.runId == run.runId
@@ -376,7 +592,9 @@ struct ThreadDetailView: View {
             // AnyView stage-break: the shell stack (banner + changes rows +
             // roster row + composer + rail) exceeds xcodebuild's stricter
             // type-check budget when inlined into the List chain.
-            AnyView(composerShellStack)
+            if !showsEmptyWelcomeCanvas {
+                AnyView(composerShellStack)
+            }
         }
     }
 
@@ -450,6 +668,7 @@ struct ThreadDetailView: View {
                             model: model, card: card, runModel: snapshot?.runSummary?.model,
                             attachedTop: hasDiff || card.isEnsemble, attachedBottom: true,
                             extraWorkspaceIds: secondaryWorkspaceId.map { [$0] },
+                            allowsProviderChange: allowsFirstTurnProviderChange,
                             text: $followUp)
                         Rectangle().fill(TWTheme.border).frame(height: 1)
                         TelemetryFooterRail(
@@ -579,6 +798,163 @@ struct ThreadDetailView: View {
     }
 }
 
+struct ThreadEmptyWelcomeCanvas: View {
+    @ObservedObject var model: RemoteSessionModel
+    let card: RemoteTaskCard
+    @Binding var draft: String
+
+    private var isGlobal: Bool { (card.workspaceId ?? "").isEmpty }
+    private var accent: Color {
+        if card.isEnsemble { return TWTheme.chroma2 }
+        if isGlobal { return TWTheme.chroma3 }
+        return TWTheme.providerAccent(card.provider)
+    }
+    private var workspaceName: String {
+        model.workspaceName(for: card.workspaceId) ?? "this workspace"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                Spacer(minLength: 34)
+                hero
+                scopeChips
+                composerBlock
+                    .padding(.horizontal, 4)
+                activityFooter
+                    .padding(.top, 8)
+                Spacer(minLength: 24)
+            }
+            .padding(.horizontal, 18)
+            .frame(maxWidth: 560)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 560)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var hero: some View {
+        VStack(spacing: 10) {
+            MastheadLogoView(size: 46)
+                .shadow(color: accent.opacity(0.45), radius: 18)
+            Group {
+                switch titleParts {
+                case .scoped(let prefix, let name):
+                    Text(prefix)
+                        .foregroundStyle(TWTheme.textSecondary)
+                        + Text(name)
+                        .foregroundStyle(accent)
+                        .fontWeight(.semibold)
+                        + Text(".")
+                        .foregroundStyle(TWTheme.textSecondary)
+                case .plain(let text):
+                    Text(text)
+                        .foregroundStyle(TWTheme.textSecondary)
+                }
+            }
+            .font(.title3)
+            .multilineTextAlignment(.center)
+            Text(blurb)
+                .font(.footnote)
+                .foregroundStyle(TWTheme.textTertiary)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    private enum TitleParts {
+        case scoped(prefix: String, name: String)
+        case plain(String)
+    }
+
+    private var titleParts: TitleParts {
+        if card.isEnsemble {
+            return .scoped(prefix: "New ensemble for ", name: workspaceName)
+        }
+        if isGlobal {
+            return .plain("New global chat.")
+        }
+        return .scoped(prefix: "New chat for ", name: workspaceName)
+    }
+
+    private var blurb: String {
+        if card.isEnsemble {
+            return "Participants take turns on your Mac. Send a prompt to start a round."
+        }
+        if isGlobal {
+            return "Phone turns run in plan mode. Pick a provider and send your first prompt."
+        }
+        return "The run starts on your Mac and streams back here."
+    }
+
+    @ViewBuilder
+    private var scopeChips: some View {
+        if card.isEnsemble || !isGlobal {
+            FlowChips(items: [workspaceName]) { name in
+                Text(name)
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(accent.opacity(0.18), in: Capsule())
+                    .overlay(Capsule().strokeBorder(accent.opacity(0.6)))
+                    .foregroundStyle(accent)
+            }
+        }
+    }
+
+    private var composerBlock: some View {
+        VStack(spacing: 0) {
+            if card.isEnsemble, let workspaceId = card.workspaceId {
+                EditableRosterStrip(
+                    model: model,
+                    threadId: card.id,
+                    workspaceId: workspaceId,
+                    attached: true,
+                    isShellTop: true)
+                Rectangle().fill(TWTheme.border).frame(height: 1)
+            }
+            Composer(
+                model: model,
+                card: card,
+                attachedTop: card.isEnsemble,
+                attachedBottom: true,
+                allowsProviderChange: !card.isEnsemble,
+                text: $draft)
+            Rectangle().fill(TWTheme.border).frame(height: 1)
+            TelemetryFooterRail(
+                run: nil,
+                workspaceName: model.workspaceName(for: card.workspaceId),
+                activeGoal: card.activeGoal,
+                onGoalUpdate: { op, objective, reason in
+                    model.updateGoal(card, op: op, objective: objective, reason: reason)
+                })
+        }
+        .composerShellGlass()
+    }
+
+    private var activityFooter: some View {
+        let scopedCards: [RemoteTaskCard]
+        if let workspaceId = card.workspaceId, !workspaceId.isEmpty {
+            scopedCards = model.taskCards.filter { $0.workspaceId == workspaceId }
+        } else {
+            scopedCards = model.taskCards.filter { ($0.workspaceId ?? "").isEmpty }
+        }
+        return RotatingActivityHeatmap(flavors: [
+            .init(
+                id: "scope",
+                title: isGlobal ? "Global Activity" : "Workspace Activity",
+                caption: isGlobal ? "global chats" : "current workspace",
+                accent: accent,
+                events: twActivityHeatmapEvents(from: scopedCards)),
+            .init(
+                id: "taskwraith",
+                title: "TaskWraith Activity",
+                caption: "all TaskWraith runs",
+                accent: TWTheme.chroma1,
+                events: twActivityHeatmapEvents(from: model.taskCards)),
+        ], rollup: model.usageRollup)
+    }
+}
+
 /// Satellite transcript row — inline label + body, no bubble chrome.
 /// Provider parsed from a speaker label — "Codex · gpt-5.4" / "Gemini /
 /// Researcher (2.5 Flash)" → accent color, mirroring the desktop's
@@ -594,11 +970,93 @@ struct ThreadDetailView: View {
     return TWTheme.providerAccent(head.lowercased())
 }
 
+struct ThreadAgentIdentity: Equatable {
+    let name: String
+    let accentHex: String?
+    let slug: String?
+
+    init?(card: RemoteTaskCard?) {
+        guard let card,
+            card.isSubThread || card.isGuestSideChat || card.isIsolatedSideChat
+                || card.parentChatId != nil
+        else { return nil }
+        let trimmed = (card.agentName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        name = trimmed
+        accentHex = card.agentAccent
+        slug = card.agentSlug
+    }
+
+    @MainActor var accent: Color { twAgentAccentColor(accentHex) }
+}
+
+private struct AgentTranscriptLeadingMark: View {
+    let identity: ThreadAgentIdentity?
+    let fallbackAccent: Color
+    let hidden: Bool
+
+    var body: some View {
+        Group {
+            if hidden {
+                Color.clear.frame(width: 20, height: 20)
+            } else if let identity {
+                AgentIdentityBadge(
+                    name: identity.name,
+                    accentHex: identity.accentHex,
+                    slug: identity.slug,
+                    size: 20
+                )
+                .padding(.top, 1)
+            } else {
+                Circle()
+                    .fill(fallbackAccent)
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 7)
+                    .frame(width: 20, alignment: .leading)
+            }
+        }
+    }
+}
+
+private struct AgentTranscriptRimModifier: ViewModifier {
+    let identity: ThreadAgentIdentity?
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if let identity, enabled {
+            content
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    LinearGradient(
+                        colors: [identity.accent.opacity(0.14), TWTheme.surface1.opacity(0.56)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    in: RoundedRectangle(cornerRadius: 12)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(identity.accent.opacity(0.56), lineWidth: 1.2)
+                )
+        } else {
+            content
+        }
+    }
+}
+
+private extension View {
+    func agentTranscriptRim(_ identity: ThreadAgentIdentity?, enabled: Bool = true) -> some View {
+        modifier(AgentTranscriptRimModifier(identity: identity, enabled: enabled))
+    }
+}
+
 struct ThreadRowView: View {
     @ObservedObject var model: RemoteSessionModel
     let threadId: String
     let row: RemoteThreadSnapshot.Row
     var threadProvider: String? = nil
+    var agentIdentity: ThreadAgentIdentity? = nil
 
     private var isUser: Bool { row.role == "user" }
     private var isTool: Bool { row.role == "tool" || row.kind == "tool" }
@@ -607,14 +1065,10 @@ struct ThreadRowView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            if !isUser {
-                Circle()
-                    .fill(accentColor)
-                    .frame(width: 6, height: 6)
-                    .padding(.top, 7)
-            } else {
-                Color.clear.frame(width: 6, height: 6)
-            }
+            AgentTranscriptLeadingMark(
+                identity: activeAgentIdentity,
+                fallbackAccent: accentColor,
+                hidden: isUser)
             VStack(alignment: .leading, spacing: 4) {
                 Text(label)
                     .font(.caption2.weight(.semibold))
@@ -687,6 +1141,7 @@ struct ThreadRowView: View {
                     .disabled(isExpanding)
                 }
             }
+            .agentTranscriptRim(activeAgentIdentity)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
@@ -710,7 +1165,11 @@ struct ThreadRowView: View {
         return "Delivered \(formatter.string(from: date))"
     }
 
-    private var label: String {
+    private var activeAgentIdentity: ThreadAgentIdentity? {
+        isUser ? nil : agentIdentity
+    }
+
+    private var baseLabel: String {
         if let speaker = row.speaker, !speaker.isEmpty { return speaker }
         switch row.role {
         case "user": return "You"
@@ -722,7 +1181,17 @@ struct ThreadRowView: View {
         }
     }
 
+    private var label: String {
+        guard let identity = activeAgentIdentity else { return baseLabel }
+        if isTool { return "\(identity.name) · Tools" }
+        if row.role == "assistant" { return identity.name }
+        return "\(identity.name) · \(baseLabel)"
+    }
+
     private var accentColor: Color {
+        if let identity = activeAgentIdentity {
+            return identity.accent
+        }
         if row.speaker != nil {
             return providerAccentFromSpeaker(row.speaker, fallback: TWTheme.chroma2)
         }
@@ -734,6 +1203,9 @@ struct ThreadRowView: View {
     }
 
     private var labelColor: Color {
+        if let identity = activeAgentIdentity {
+            return identity.accent
+        }
         if row.speaker != nil {
             return providerAccentFromSpeaker(row.speaker, fallback: TWTheme.chroma2)
         }
@@ -755,6 +1227,111 @@ struct ThreadRowView: View {
     }
 }
 
+struct ToolBurstRowView: View {
+    let rows: [RemoteThreadSnapshot.Row]
+    var agentIdentity: ThreadAgentIdentity? = nil
+
+    private var firstRow: RemoteThreadSnapshot.Row? { rows.first }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            AgentTranscriptLeadingMark(
+                identity: agentIdentity,
+                fallbackAccent: accentColor,
+                hidden: false)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(labelColor)
+                if !entries.isEmpty {
+                    ToolActivityCards(entries: entries, totalCount: totalCount, status: status)
+                } else {
+                    HStack(spacing: 5) {
+                        Image(systemName: "wrench.and.screwdriver")
+                        Text(toolLine(count: totalCount, status: status))
+                        if let status {
+                            Circle().fill(TWTheme.statusColor(status))
+                                .frame(width: 5, height: 5)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textTertiary)
+                }
+            }
+            .agentTranscriptRim(agentIdentity)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 5)
+    }
+
+    private var entries: [RemoteThreadSnapshot.Row.ToolEntry] {
+        rows.flatMap { $0.toolSummary?.tools ?? [] }
+    }
+
+    private var totalCount: Int {
+        rows.reduce(0) { total, row in
+            total + max(0, row.toolSummary?.activityCount ?? row.toolSummary?.tools?.count ?? 0)
+        }
+    }
+
+    private var status: String? {
+        var hasRunning = false
+        var hasError = false
+        var hasSuccess = false
+        var hasMixed = false
+        for row in rows {
+            switch row.toolSummary?.status {
+            case "running": hasRunning = true
+            case "error": hasError = true
+            case "success": hasSuccess = true
+            case "mixed": hasMixed = true
+            default: break
+            }
+        }
+        if hasRunning { return "running" }
+        if hasMixed || (hasError && hasSuccess) { return "mixed" }
+        if hasError { return "error" }
+        if hasSuccess { return "success" }
+        return firstRow?.toolSummary?.status
+    }
+
+    private var label: String {
+        if let agentIdentity {
+            return "\(agentIdentity.name) · Tools"
+        }
+        if let speaker = firstRow?.speaker, !speaker.isEmpty { return speaker }
+        return "Tools"
+    }
+
+    private var accentColor: Color {
+        if let agentIdentity {
+            return agentIdentity.accent
+        }
+        if let speaker = firstRow?.speaker {
+            return providerAccentFromSpeaker(speaker, fallback: TWTheme.chroma2)
+        }
+        return TWTheme.textTertiary
+    }
+
+    private var labelColor: Color {
+        if let agentIdentity {
+            return agentIdentity.accent
+        }
+        if let speaker = firstRow?.speaker {
+            return providerAccentFromSpeaker(speaker, fallback: TWTheme.chroma2)
+        }
+        return TWTheme.textTertiary
+    }
+
+    private func toolLine(count: Int, status: String?) -> String {
+        let noun = "\(count) tool\(count == 1 ? "" : "s")"
+        if let status, !status.isEmpty {
+            return "\(noun) · \(status)"
+        }
+        return noun
+    }
+}
+
 /// Token-level live assistant bubble — grows as bridge.runEvent content
 /// deltas arrive, superseding the in-flight snapshot row until the run
 /// exits and the final snapshot takes over.
@@ -763,20 +1340,21 @@ struct StreamingRowView: View {
     let text: String
     let provider: String?
     var model: String? = nil
+    var agentIdentity: ThreadAgentIdentity? = nil
 
-    private var accent: Color { TWTheme.providerAccent(provider) }
+    private var accent: Color { agentIdentity?.accent ?? TWTheme.providerAccent(provider) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Circle().fill(accent).frame(width: 6, height: 6).padding(.top, 7)
+            AgentTranscriptLeadingMark(
+                identity: agentIdentity,
+                fallbackAccent: accent,
+                hidden: false)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
-                    Text(
-                        model.map { "\(TWTheme.providerLabel(provider)) · \($0)" }
-                            ?? TWTheme.providerLabel(provider)
-                    )
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(accent)
+                    Text(headerLabel)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(accent)
                     StreamingDots(color: accent)
                 }
                 TokenRevealText(
@@ -784,9 +1362,18 @@ struct StreamingRowView: View {
                     font: TWFont.transcript(),
                     color: TWTheme.textPrimary)
             }
+            .agentTranscriptRim(agentIdentity)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
+    }
+
+    private var headerLabel: String {
+        if let agentIdentity {
+            return agentIdentity.name
+        }
+        return model.map { "\(TWTheme.providerLabel(provider)) · \($0)" }
+            ?? TWTheme.providerLabel(provider)
     }
 }
 
@@ -797,24 +1384,46 @@ struct StreamingRowView: View {
 struct StreamingLiveHeader: View {
     let provider: String?
     var model: String? = nil
+    var agentIdentity: ThreadAgentIdentity? = nil
 
-    private var accent: Color { TWTheme.providerAccent(provider) }
+    private var accent: Color { agentIdentity?.accent ?? TWTheme.providerAccent(provider) }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Circle().fill(accent).frame(width: 6, height: 6).padding(.top, 7)
+            AgentTranscriptLeadingMark(
+                identity: agentIdentity,
+                fallbackAccent: accent,
+                hidden: false)
             HStack(spacing: 5) {
-                Text(
-                    model.map { "\(TWTheme.providerLabel(provider)) · \($0)" }
-                        ?? TWTheme.providerLabel(provider)
-                )
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(accent)
+                Text(headerLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(accent)
+                if agentIdentity != nil {
+                    Text(providerModelLabel)
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(1)
+                        .foregroundStyle(TWTheme.textTertiary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(TWTheme.surface3, in: Capsule())
+                }
                 StreamingDots(color: accent)
             }
+            .agentTranscriptRim(agentIdentity)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.top, 5)
+    }
+
+    private var headerLabel: String {
+        agentIdentity?.name
+            ?? model.map { "\(TWTheme.providerLabel(provider)) · \($0)" }
+            ?? TWTheme.providerLabel(provider)
+    }
+
+    private var providerModelLabel: String {
+        model.map { "\(TWTheme.providerLabel(provider)) · \($0)" }
+            ?? TWTheme.providerLabel(provider)
     }
 }
 
@@ -828,6 +1437,7 @@ struct StreamingLiveHeader: View {
 struct StreamingSegmentRow: View {
     let text: String
     let isTail: Bool
+    var agentIdentity: ThreadAgentIdentity? = nil
     var participants: [RemoteEnsembleState.Participant] = []
 
     var body: some View {
@@ -836,7 +1446,10 @@ struct StreamingSegmentRow: View {
             ? StreamingMarkdownSplitter.split(text)
             : (settled: text, tail: "")
         HStack(alignment: .top, spacing: 8) {
-            Color.clear.frame(width: 6, height: 6)
+            AgentTranscriptLeadingMark(
+                identity: nil,
+                fallbackAccent: agentIdentity?.accent ?? TWTheme.textTertiary,
+                hidden: true)
             VStack(alignment: .leading, spacing: 7) {
                 if !parts.settled.isEmpty {
                     MarkdownLite(
@@ -853,6 +1466,7 @@ struct StreamingSegmentRow: View {
                         color: TWTheme.textPrimary)
                 }
             }
+            .agentTranscriptRim(agentIdentity)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
@@ -866,31 +1480,40 @@ struct StreamingSegmentRow: View {
 struct ThinkingRow: View {
     let provider: String?
     var model: String? = nil
+    var agentIdentity: ThreadAgentIdentity? = nil
 
-    private var accent: Color { TWTheme.providerAccent(provider) }
+    private var accent: Color { agentIdentity?.accent ?? TWTheme.providerAccent(provider) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(TWTheme.providerLabel(provider))
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(accent)
-                if let model, !model.isEmpty {
-                    Text(model)
+        HStack(alignment: .top, spacing: 8) {
+            AgentTranscriptLeadingMark(
+                identity: agentIdentity,
+                fallbackAccent: accent,
+                hidden: false)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(agentIdentity?.name ?? TWTheme.providerLabel(provider))
                         .font(.caption2.weight(.semibold))
-                        .lineLimit(1)
-                        .foregroundStyle(TWTheme.textTertiary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(TWTheme.surface3, in: Capsule())
+                        .foregroundStyle(accent)
+                    if let model, !model.isEmpty {
+                        Text(model)
+                            .font(.caption2.weight(.semibold))
+                            .lineLimit(1)
+                            .foregroundStyle(TWTheme.textTertiary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(TWTheme.surface3, in: Capsule())
+                    }
                 }
+                HStack(alignment: .center, spacing: 8) {
+                    ShimmerThinkingText()
+                    StreamingDots(color: TWTheme.textSecondary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
             }
-            HStack(alignment: .center, spacing: 8) {
-                ShimmerThinkingText()
-                StreamingDots(color: TWTheme.textSecondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+            .agentTranscriptRim(agentIdentity)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 5)

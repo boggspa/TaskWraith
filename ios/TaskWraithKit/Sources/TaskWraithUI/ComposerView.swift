@@ -36,6 +36,9 @@ struct Composer: View {
     /// Mirrors the internal provider selection out to hosts that theme
     /// surrounding chrome by provider (the new-chat canvas hero/chips).
     var providerEcho: Binding<String>? = nil
+    /// Existing chats normally keep their provider. Empty transcript welcome
+    /// screens may still choose the first-turn provider before dispatch.
+    var allowsProviderChange: Bool? = nil
     @Binding var text: String
 
     @State private var approvalMode = "default"
@@ -78,6 +81,9 @@ struct Composer: View {
         card.isEnsemble ? TWTheme.chroma2 : TWTheme.providerAccent(selectedProvider)
     }
     private var providerName: String { TWTheme.providerLabel(selectedProvider) }
+    private var canChangeProvider: Bool {
+        allowsProviderChange ?? (newTaskWorkspaceId != nil)
+    }
     private var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -121,8 +127,8 @@ struct Composer: View {
                         provider: $selectedProvider,
                         modelId: $selectedModelId,
                         reasoningEffort: $selectedReasoningEffort,
-                        allowsProviderChange: newTaskWorkspaceId != nil)
-                    if !card.isEnsemble, card.parentChatId == nil,
+                        allowsProviderChange: canChangeProvider)
+                    if !canChangeProvider, !card.isEnsemble, card.parentChatId == nil,
                         newTaskWorkspaceId == nil
                     {
                         // Guest participant: + invites, chip shows/changes,
@@ -371,6 +377,7 @@ struct Composer: View {
                 card, prompt: text,
                 approvalMode: isGlobalChat ? "plan" : (approvalMode == "default" ? nil : approvalMode),
                 model: selectedModelId,
+                providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
                 imageAttachments: encoded.isEmpty ? nil : encoded,
                 extraWorkspaceIds: extraWorkspaceIds,
@@ -381,6 +388,7 @@ struct Composer: View {
                 card, prompt: text,
                 approvalMode: isGlobalChat ? "plan" : (approvalMode == "default" ? nil : approvalMode),
                 model: selectedModelId,
+                providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
                 navigateOnAck: navigateOnSend)
         #endif
@@ -392,18 +400,5 @@ struct Composer: View {
             return "Ask the ensemble. @ to direct a participant…"
         }
         return "Ask \(providerName) anything…"
-    }
-}
-
-// ── Compose (new chat) ─────────────────────────────────────────────────────────
-
-/// SF Symbol for a starter card — shared by the compose sheet and the
-/// in-thread welcome so the two surfaces read as one system.
-func starterIcon(_ key: String) -> String {
-    switch key {
-    case "map", "Map project": return "map"
-    case "plan", "Plan a change": return "list.bullet.clipboard"
-    case "improve", "Make improvement": return "wand.and.stars"
-    default: return "sparkles"
     }
 }

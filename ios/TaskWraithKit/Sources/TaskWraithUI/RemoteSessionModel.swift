@@ -1673,6 +1673,31 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    /// Create an empty chat and navigate to its transcript welcome surface.
+    /// The first prompt is sent from `ThreadDetailView`, so the phone gets the
+    /// same welcome card and full composer as a reopened empty chat.
+    public func createEmptyThread(
+        workspaceId: String, variant: String = "workspace", provider: String? = nil,
+        threadId: String? = nil, title: String = "New Chat", onCreated: ((String?) -> Void)? = nil
+    ) {
+        send(
+            BridgeAction.createThread(
+                workspaceId: workspaceId, variant: variant, threadId: threadId, provider: provider,
+                title: title),
+            timeoutMs: 12_000,
+            successLabel: "Chat created.",
+            navigateOnAck: true
+        ) { [weak self] threadId in
+            guard let self, let threadId else {
+                onCreated?(nil)
+                return
+            }
+            self.rememberThreadWorkspace(threadId, workspaceId: workspaceId)
+            self.scheduleThreadRefresh(threadId)
+            onCreated?(threadId)
+        }
+    }
+
     /// Create an empty ensemble chat, optionally queue the first prompt.
     /// One draft roster entry from the phone's ensemble editor.
     public struct EnsembleDraftParticipant: Sendable {
@@ -1721,7 +1746,13 @@ public final class RemoteSessionModel: ObservableObject {
         send(
             BridgeAction.createThread(workspaceId: "global", variant: "global"),
             timeoutMs: 12_000,
-            successLabel: "Global chat created.")
+            successLabel: "Global chat created.",
+            navigateOnAck: true
+        ) { [weak self] threadId in
+            guard let self, let threadId else { return }
+            self.rememberThreadWorkspace(threadId, workspaceId: "global")
+            self.scheduleThreadRefresh(threadId)
+        }
     }
 
     /// Send a follow-up prompt into an existing thread.
@@ -1731,7 +1762,8 @@ public final class RemoteSessionModel: ObservableObject {
     /// claim navigationTarget and reload the detail pane).
     public func continueTask(
         _ card: RemoteTaskCard, prompt: String, approvalMode: String? = nil,
-        model: String? = nil, reasoningEffort: String? = nil,
+        model: String? = nil, providerOverride: String? = nil,
+        reasoningEffort: String? = nil,
         imageAttachments: [[String: Any]]? = nil,
         extraWorkspaceIds: [String]? = nil,
         navigateOnAck: Bool = true
@@ -1749,7 +1781,7 @@ public final class RemoteSessionModel: ObservableObject {
                 successLabel: "Sent to ensemble.",
                 navigateOnAck: navigateOnAck)
         } else {
-            guard let provider = card.provider else { return }
+            guard let provider = providerOverride ?? card.provider else { return }
             send(
                 BridgeAction.composerPrompt(
                     workspaceId: ws, threadId: thread, provider: provider, text: prompt,
