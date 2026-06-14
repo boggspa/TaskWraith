@@ -50,7 +50,10 @@ import {
   AuditRunRecord,
   ProviderRunReroute
 } from '../main/store/types'
-import type { RemoteWorkspaceEntry } from '../main/RemoteWorkspaceAllowlist'
+import type {
+  RemoteWorkspaceCapability,
+  RemoteWorkspaceEntry
+} from '../main/RemoteWorkspaceAllowlist'
 import type { UpdateStateSnapshot } from '../main/UpdateService'
 import type { LocalServersSnapshot } from '../main/localServers/types'
 import type { NativeCapabilitySnapshot } from '../main/NativeCapabilities'
@@ -597,6 +600,7 @@ declare global {
         workspaceId: string
         path: string
         mode: 'read-only' | 'read-write'
+        capabilities?: RemoteWorkspaceCapability[]
         allowedProviders: string[]
         allowedApprovalModes: string[]
         expiresAt?: number

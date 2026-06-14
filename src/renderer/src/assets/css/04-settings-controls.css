@@ -3887,8 +3887,31 @@ input:disabled, select:disabled, textarea:disabled {
   background: color-mix(in srgb, var(--warning) 12%, transparent);
 }
 
+.remote-workspaces-files-chip.is-enabled {
+  border-color: color-mix(in srgb, var(--success, #4ade80) 34%, transparent);
+  background: color-mix(in srgb, var(--success, #4ade80) 10%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 92%, transparent);
+}
+
+.remote-workspaces-files-chip.is-off {
+  color: color-mix(in srgb, var(--text-secondary) 66%, transparent);
+}
+
 .remote-workspaces-chip.is-empty {
   color: color-mix(in srgb, var(--text-secondary) 58%, transparent);
+}
+
+.remote-workspaces-entry-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.remote-workspaces-enable-files {
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .remote-workspaces-remove {

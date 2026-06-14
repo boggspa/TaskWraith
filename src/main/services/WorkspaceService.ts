@@ -1,5 +1,9 @@
 import { parse } from 'path'
-import type { RemoteWorkspaceEntry } from '../RemoteWorkspaceAllowlist'
+import {
+  capabilitiesForRemoteWorkspaceEntry,
+  isRemoteWorkspaceCapability,
+  type RemoteWorkspaceEntry
+} from '../RemoteWorkspaceAllowlist'
 import type { TrustStatusResult, WorkspaceRecord } from '../store/types'
 
 export type RemoteAllowlistUpsertInput = Omit<RemoteWorkspaceEntry, 'createdAt' | 'updatedAt'>
@@ -100,11 +104,18 @@ export class WorkspaceService {
         'bridge-allowlist-upsert: expiresAt must be a positive number (ms since epoch)'
       )
     }
+    if (
+      entry.capabilities !== undefined &&
+      (!Array.isArray(entry.capabilities) || !entry.capabilities.every(isRemoteWorkspaceCapability))
+    ) {
+      throw new Error('bridge-allowlist-upsert: capabilities must be RemoteWorkspaceCapability[]')
+    }
     const target = this.resolveAllowlistTarget(workspaceId, path)
     return this.deps.allowlist.upsert({
       workspaceId: target.workspaceId,
       path: target.path,
       mode: entry.mode,
+      ...(entry.capabilities !== undefined ? { capabilities: entry.capabilities } : {}),
       allowedProviders: entry.allowedProviders,
       allowedApprovalModes: entry.allowedApprovalModes,
       expiresAt: entry.expiresAt
@@ -164,6 +175,7 @@ export class WorkspaceService {
         workspaceId: target.workspaceId,
         path: target.path,
         mode: entry.mode,
+        capabilities: [...capabilitiesForRemoteWorkspaceEntry(entry)],
         allowedProviders: entry.allowedProviders,
         allowedApprovalModes: entry.allowedApprovalModes,
         expiresAt: entry.expiresAt

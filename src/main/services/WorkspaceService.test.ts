@@ -165,6 +165,28 @@ describe('WorkspaceService', () => {
     })
   })
 
+  it('passes explicit remote allowlist capability grants through', () => {
+    const { deps, allowlist } = makeDeps()
+    const service = new WorkspaceService(deps)
+    service.upsertRemoteAllowlist({
+      workspaceId: 'workspace-1',
+      path: '/repo',
+      mode: 'read-only',
+      capabilities: ['monitor', 'approve'],
+      allowedProviders: ['gemini'],
+      allowedApprovalModes: ['default']
+    })
+    expect(allowlist.upsert).toHaveBeenCalledWith({
+      workspaceId: 'workspace-1',
+      path: '/repo',
+      mode: 'read-only',
+      capabilities: ['monitor', 'approve'],
+      allowedProviders: ['gemini'],
+      allowedApprovalModes: ['default'],
+      expiresAt: undefined
+    })
+  })
+
   it('keeps remote allowlist validation error messages stable', () => {
     const { deps, allowlist } = makeDeps()
     const service = new WorkspaceService(deps)
@@ -177,6 +199,16 @@ describe('WorkspaceService', () => {
         allowedApprovalModes: ['default']
       })
     ).toThrow("bridge-allowlist-upsert: mode must be 'read-only' or 'read-write' (got 'bad')")
+    expect(() =>
+      service.upsertRemoteAllowlist({
+        workspaceId: 'workspace-1',
+        path: '/repo',
+        mode: 'read-only',
+        capabilities: ['not-real' as never],
+        allowedProviders: ['gemini'],
+        allowedApprovalModes: ['default']
+      })
+    ).toThrow('bridge-allowlist-upsert: capabilities must be RemoteWorkspaceCapability[]')
     expect(() =>
       service.upsertRemoteAllowlist({
         workspaceId: 'workspace-1',
@@ -280,6 +312,15 @@ describe('WorkspaceService', () => {
         workspaceId: 'uuid-1',
         path: '/Users/x/Test 1',
         mode: 'read-write',
+        capabilities: [
+          'monitor',
+          'approve',
+          'answer',
+          'cancel',
+          'startTurn',
+          'diffReview',
+          'steer'
+        ],
         allowedProviders: ['gemini', 'claude'],
         allowedApprovalModes: ['default', 'plan'],
         expiresAt: 999

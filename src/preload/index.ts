@@ -473,6 +473,7 @@ const api = {
     workspaceId: string
     path: string
     mode: 'read-only' | 'read-write'
+    capabilities?: string[]
     allowedProviders: string[]
     allowedApprovalModes: string[]
     expiresAt?: number

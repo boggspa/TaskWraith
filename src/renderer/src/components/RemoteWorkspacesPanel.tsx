@@ -32,12 +32,27 @@ interface RemoteWorkspaceEntry {
   workspaceId: string
   path: string
   mode: 'read-only' | 'read-write'
+  capabilities?: RemoteWorkspaceCapability[]
   allowedProviders: string[]
   allowedApprovalModes: string[]
   expiresAt?: number
   createdAt: number
   updatedAt: number
 }
+
+type RemoteWorkspaceCapability =
+  | 'monitor'
+  | 'approve'
+  | 'answer'
+  | 'cancel'
+  | 'startTurn'
+  | 'diffReview'
+  | 'steer'
+  | 'fileBrowse'
+  | 'fileRead'
+  | 'fileWrite'
+  | 'pin'
+  | 'yolo'
 
 // Include every first-class provider in the remote bridge allowlist toggles.
 const PROVIDER_OPTIONS = [
@@ -50,6 +65,21 @@ const PROVIDER_OPTIONS = [
   'ollama'
 ] as const
 const APPROVAL_MODE_OPTIONS = ['default', 'plan'] as const
+const LEGACY_READ_WRITE_CAPABILITIES: RemoteWorkspaceCapability[] = [
+  'monitor',
+  'approve',
+  'answer',
+  'cancel',
+  'startTurn',
+  'diffReview',
+  'steer'
+]
+const READ_ONLY_CAPABILITIES: RemoteWorkspaceCapability[] = ['monitor', 'approve']
+const FILE_CAPABILITIES: RemoteWorkspaceCapability[] = ['fileBrowse', 'fileRead', 'fileWrite']
+const READ_WRITE_CAPABILITIES: RemoteWorkspaceCapability[] = [
+  ...LEGACY_READ_WRITE_CAPABILITIES,
+  ...FILE_CAPABILITIES
+]
 
 export function RemoteWorkspacesPanel(): ReactElement {
   const [entries, setEntries] = useState<RemoteWorkspaceEntry[]>([])
@@ -115,6 +145,18 @@ export function RemoteWorkspacesPanel(): ReactElement {
               <EntryRow
                 key={entry.workspaceId}
                 entry={entry}
+                onEnableFiles={async () => {
+                  await window.api.bridgeAllowlistUpsert({
+                    workspaceId: entry.workspaceId,
+                    path: entry.path,
+                    mode: entry.mode,
+                    capabilities: withFileEditingCapabilities(entry),
+                    allowedProviders: entry.allowedProviders,
+                    allowedApprovalModes: entry.allowedApprovalModes,
+                    expiresAt: entry.expiresAt
+                  })
+                  await refresh()
+                }}
                 onRemove={async () => {
                   await window.api.bridgeAllowlistRemove(entry.workspaceId)
                   await refresh()
@@ -146,13 +188,17 @@ export function RemoteWorkspacesPanel(): ReactElement {
 
 function EntryRow({
   entry,
+  onEnableFiles,
   onRemove
 }: {
   entry: RemoteWorkspaceEntry
+  onEnableFiles: () => void | Promise<void>
   onRemove: () => void | Promise<void>
 }): ReactElement {
   const expiresLabel =
     entry.expiresAt !== undefined ? new Date(entry.expiresAt).toLocaleString() : '—'
+  const filesEnabled = workspaceEntryCanEditFiles(entry)
+  const canEnableFiles = entry.mode === 'read-write' && !filesEnabled
   return (
     <li className="remote-workspaces-entry-card">
       <div className="remote-workspaces-entry-layout">
@@ -163,6 +209,11 @@ function EntryRow({
               className={`remote-workspaces-chip remote-workspaces-mode-chip ${entry.mode === 'read-write' ? 'is-write' : ''}`}
             >
               {entry.mode === 'read-write' ? 'Read-write' : 'Read-only'}
+            </span>
+            <span
+              className={`remote-workspaces-chip remote-workspaces-files-chip ${filesEnabled ? 'is-enabled' : 'is-off'}`}
+            >
+              {filesEnabled ? 'Files enabled' : 'Files off'}
             </span>
           </div>
           <div className="remote-workspaces-path">{entry.path}</div>
@@ -181,16 +232,46 @@ function EntryRow({
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          className="btn btn-sm btn-ghost remote-workspaces-remove"
-          onClick={() => void onRemove()}
-        >
-          Remove
-        </button>
+        <div className="remote-workspaces-entry-actions">
+          {canEnableFiles ? (
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost remote-workspaces-enable-files"
+              onClick={() => void onEnableFiles()}
+              title="Explicitly grant browse, read, and write access for iOS Files mode."
+            >
+              Enable files
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost remote-workspaces-remove"
+            onClick={() => void onRemove()}
+          >
+            Remove
+          </button>
+        </div>
       </div>
     </li>
   )
+}
+
+function capabilitiesForEntry(entry: RemoteWorkspaceEntry): RemoteWorkspaceCapability[] {
+  if (entry.capabilities) return entry.capabilities
+  return entry.mode === 'read-only' ? READ_ONLY_CAPABILITIES : LEGACY_READ_WRITE_CAPABILITIES
+}
+
+function capabilitiesForMode(mode: RemoteWorkspaceEntry['mode']): RemoteWorkspaceCapability[] {
+  return mode === 'read-only' ? READ_ONLY_CAPABILITIES : READ_WRITE_CAPABILITIES
+}
+
+function workspaceEntryCanEditFiles(entry: RemoteWorkspaceEntry): boolean {
+  const capabilities = new Set(capabilitiesForEntry(entry))
+  return FILE_CAPABILITIES.every((capability) => capabilities.has(capability))
+}
+
+function withFileEditingCapabilities(entry: RemoteWorkspaceEntry): RemoteWorkspaceCapability[] {
+  return Array.from(new Set([...capabilitiesForEntry(entry), ...FILE_CAPABILITIES]))
 }
 
 function ChipList({ values, emptyLabel }: { values: string[]; emptyLabel: string }): ReactElement {
@@ -272,6 +353,7 @@ function AddEntryForm({ onAdded }: { onAdded: () => void | Promise<void> }): Rea
         workspaceId: workspaceId.trim(),
         path: path.trim(),
         mode,
+        capabilities: capabilitiesForMode(mode),
         allowedProviders: Array.from(providers),
         allowedApprovalModes: Array.from(approvalModes)
       })
