@@ -885,10 +885,14 @@ public final class RemoteSessionModel: ObservableObject {
                 // Final snapshot supersedes the live bubble; clear shortly
                 // after the refresh lands so the handoff doesn't flash empty.
                 let captured = streamingTexts[threadId]
+                let capturedRunId = streamingRunIds[threadId]
                 Task { [weak self] in
                     try? await Task.sleep(nanoseconds: 900_000_000)
                     await MainActor.run {
-                        guard let self, self.streamingTexts[threadId] == captured else { return }
+                        guard let self,
+                            self.streamingTexts[threadId] == captured,
+                            self.streamingRunIds[threadId] == capturedRunId
+                        else { return }
                         self.streamingTexts[threadId] = nil
                         self.streamingSegments[threadId] = nil
                         self.streamingRunIds[threadId] = nil

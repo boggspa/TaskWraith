@@ -1058,6 +1058,7 @@ public struct TokenRevealText: View {
     let font: Font
     let color: Color
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var revealed = 0
     /// Trails `revealed`: characters between the two are the fade tail.
     /// The pump advances it during idle ticks, so the shimmer SOLIDIFIES
@@ -1076,29 +1077,65 @@ public struct TokenRevealText: View {
         self.color = color
     }
 
+    /// Roughly a line-and-a-half on phone transcript widths. Keep every band
+    /// readable: this is a materialization tail, not placeholder shimmer.
     private static let tailBands: [(length: Int, opacity: Double)] = [
-        (8, 0.30), (8, 0.55), (10, 0.78)
+        (22, 0.62), (24, 0.74), (26, 0.88)
     ]
+    private static let frameDelayNanos: UInt64 = 42_000_000
+    private static let settleStep = 7
+    private static let coldRevealSnapThreshold = 220
 
     public var body: some View {
-        composedText
+        renderedText
             .font(font)
             .fixedSize(horizontal: false, vertical: true)
             .onAppear {
                 goal = target
-                startPumpIfNeeded()
+                if reduceMotion || target.count > Self.coldRevealSnapThreshold {
+                    revealed = target.count
+                    solidified = revealed
+                } else {
+                    startPumpIfNeeded()
+                }
             }
             .onChange(of: target) { _, newValue in
-                // Run reset / shrink → snap; growth → pump catches up.
+                let commonPrefix = Self.commonPrefixCount(goal, newValue)
                 goal = newValue
+                if reduceMotion {
+                    revealed = newValue.count
+                    solidified = revealed
+                    return
+                }
+                // Run reset / shrink / cumulative same-length rewrite → resume
+                // from the shared prefix; ordinary growth keeps its cursor.
+                if commonPrefix < revealed && commonPrefix < newValue.count {
+                    revealed = commonPrefix
+                    solidified = min(solidified, revealed)
+                }
                 if revealed > newValue.count { revealed = newValue.count }
                 if solidified > revealed { solidified = revealed }
                 startPumpIfNeeded()
+            }
+            .onChange(of: reduceMotion) { _, enabled in
+                if enabled {
+                    revealed = target.count
+                    solidified = revealed
+                } else {
+                    startPumpIfNeeded()
+                }
             }
             .onDisappear {
                 pump?.cancel()
                 pump = nil
             }
+    }
+
+    private var renderedText: Text {
+        if reduceMotion {
+            return Text(target).foregroundColor(color)
+        }
+        return composedText
     }
 
     private var composedText: Text {
@@ -1129,26 +1166,43 @@ public struct TokenRevealText: View {
             while !Task.isCancelled {
                 let backlog = goal.count - revealed
                 if backlog > 0 {
-                    // Reveal phase: ~2 chars/tick when nearly caught up,
-                    // geometric catch-up so we never trail a fast model.
-                    revealed += max(2, backlog / 8)
+                    // Reveal phase: transport-paced near the frontier, capped
+                    // catch-up for bursts so the materialization band spans the
+                    // live flow without replaying huge chunks in one tick.
+                    revealed += Self.revealStep(for: backlog)
                     if revealed > goal.count { revealed = goal.count }
                     // Keep the fade tail bounded while tokens flow.
                     let maxTail = Self.tailBands.reduce(0) { $0 + $1.length }
                     if solidified < revealed - maxTail { solidified = revealed - maxTail }
                 } else if solidified < revealed {
                     // Settle phase: no new tokens — melt the tail to solid
-                    // over a few ticks instead of freezing half-faded.
-                    solidified = min(revealed, solidified + 6)
+                    // instead of freezing half-faded.
+                    solidified = min(revealed, solidified + Self.settleStep)
                 } else {
                     break
                 }
-                try? await Task.sleep(nanoseconds: 33_000_000)
+                try? await Task.sleep(nanoseconds: Self.frameDelayNanos)
             }
             pump = nil
             // Goal may have grown while we were finishing — re-arm.
             if revealed < goal.count || solidified < revealed { startPumpIfNeeded() }
         }
+    }
+
+    private static func revealStep(for backlog: Int) -> Int {
+        min(24, max(2, backlog / 10))
+    }
+
+    private static func commonPrefixCount(_ lhs: String, _ rhs: String) -> Int {
+        var count = 0
+        var left = lhs.startIndex
+        var right = rhs.startIndex
+        while left < lhs.endIndex, right < rhs.endIndex, lhs[left] == rhs[right] {
+            count += 1
+            lhs.formIndex(after: &left)
+            rhs.formIndex(after: &right)
+        }
+        return count
     }
 }
 
