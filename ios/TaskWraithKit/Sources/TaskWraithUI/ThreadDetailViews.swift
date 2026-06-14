@@ -802,8 +802,10 @@ struct ThreadEmptyWelcomeCanvas: View {
     @ObservedObject var model: RemoteSessionModel
     let card: RemoteTaskCard
     @Binding var draft: String
+    @State private var draftProvider = ""
 
     private var isGlobal: Bool { (card.workspaceId ?? "").isEmpty }
+    private var canSwitchPrimaryWorkspace: Bool { !isGlobal && !model.workspaces.isEmpty }
     private var accent: Color {
         if card.isEnsemble { return TWTheme.chroma2 }
         if isGlobal { return TWTheme.chroma3 }
@@ -811,6 +813,11 @@ struct ThreadEmptyWelcomeCanvas: View {
     }
     private var workspaceName: String {
         model.workspaceName(for: card.workspaceId) ?? "this workspace"
+    }
+    private var draftVariant: String { card.isEnsemble ? "ensemble" : "workspace" }
+    private var currentDraftProvider: String? {
+        let provider = draftProvider.trimmingCharacters(in: .whitespacesAndNewlines)
+        return provider.isEmpty ? card.provider : provider
     }
 
     var body: some View {
@@ -917,18 +924,36 @@ struct ThreadEmptyWelcomeCanvas: View {
                 card: card,
                 attachedTop: card.isEnsemble,
                 attachedBottom: true,
+                providerEcho: $draftProvider,
                 allowsProviderChange: !card.isEnsemble,
                 text: $draft)
             Rectangle().fill(TWTheme.border).frame(height: 1)
             TelemetryFooterRail(
                 run: nil,
                 workspaceName: model.workspaceName(for: card.workspaceId),
+                workspaceOptions: model.workspaces.map {
+                    (id: $0.id, name: $0.displayName)
+                },
+                primaryWorkspaceId: card.workspaceId,
+                onPrimaryWorkspaceSelect: canSwitchPrimaryWorkspace
+                    ? { workspaceId in switchPrimaryWorkspace(to: workspaceId) } : nil,
                 activeGoal: card.activeGoal,
                 onGoalUpdate: { op, objective, reason in
                     model.updateGoal(card, op: op, objective: objective, reason: reason)
                 })
         }
         .composerShellGlass()
+    }
+
+    private func switchPrimaryWorkspace(to workspaceId: String) {
+        let next = workspaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !next.isEmpty, next != card.workspaceId else { return }
+        model.createEmptyThread(
+            workspaceId: next,
+            variant: draftVariant,
+            provider: currentDraftProvider,
+            threadId: card.threadId ?? card.id,
+            title: card.title ?? "New Chat")
     }
 
     private var activityFooter: some View {

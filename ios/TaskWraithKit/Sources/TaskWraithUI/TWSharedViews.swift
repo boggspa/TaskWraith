@@ -2677,6 +2677,7 @@ public struct TelemetryFooterRail: View {
     var workspaceOptions: [(id: String, name: String)] = []
     var primaryWorkspaceId: String? = nil
     var secondaryWorkspaceId: Binding<String?>? = nil
+    var onPrimaryWorkspaceSelect: ((String) -> Void)? = nil
     @State private var compactTelemetryShowsCost = false
     @State private var railWidth: CGFloat = 0
 
@@ -2685,6 +2686,7 @@ public struct TelemetryFooterRail: View {
         workspaceOptions: [(id: String, name: String)] = [],
         primaryWorkspaceId: String? = nil,
         secondaryWorkspaceId: Binding<String?>? = nil,
+        onPrimaryWorkspaceSelect: ((String) -> Void)? = nil,
         activeGoal: RemoteActiveGoal? = nil,
         onGoalUpdate: ((String, String?, String?) -> Void)? = nil
     ) {
@@ -2695,6 +2697,7 @@ public struct TelemetryFooterRail: View {
         self.workspaceOptions = workspaceOptions
         self.primaryWorkspaceId = primaryWorkspaceId
         self.secondaryWorkspaceId = secondaryWorkspaceId
+        self.onPrimaryWorkspaceSelect = onPrimaryWorkspaceSelect
     }
 
     private var isRunning: Bool { run?.status == "running" }
@@ -2804,6 +2807,85 @@ public struct TelemetryFooterRail: View {
         return "\(value)"
     }
 
+    private func workspaceLabel(
+        _ text: String, showsPicker: Bool = false, emphasized: Bool = false
+    ) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "folder")
+                .font(.system(size: 9))
+            Text(text)
+                .font(.system(size: 11))
+                .lineLimit(1)
+            if showsPicker {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+            }
+        }
+        .foregroundStyle(emphasized ? TWTheme.textSecondary : TWTheme.textTertiary)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var workspaceRailView: some View {
+        if let workspaceName {
+            if let onPrimaryWorkspaceSelect, !workspaceOptions.isEmpty {
+                Menu {
+                    Section("Workspace") {
+                        ForEach(workspaceOptions, id: \.id) { option in
+                            Button {
+                                onPrimaryWorkspaceSelect(option.id)
+                            } label: {
+                                if option.id == primaryWorkspaceId {
+                                    Label(option.name, systemImage: "checkmark")
+                                } else {
+                                    Text(option.name)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    workspaceLabel(workspaceName, showsPicker: true)
+                }
+                Spacer()
+            } else if let binding = secondaryWorkspaceId, !workspaceOptions.isEmpty {
+                // Workspace picker: primary is fixed (the thread's);
+                // picking another adds it as a secondary grant for
+                // subsequent runs (desktop parity).
+                Menu {
+                    Section("Primary") {
+                        Label(workspaceName, systemImage: "checkmark")
+                    }
+                    Section("Also grant access to") {
+                        Button("None") { binding.wrappedValue = nil }
+                        ForEach(
+                            workspaceOptions.filter { $0.id != primaryWorkspaceId },
+                            id: \.id
+                        ) { option in
+                            Button {
+                                binding.wrappedValue =
+                                    binding.wrappedValue == option.id ? nil : option.id
+                            } label: {
+                                if binding.wrappedValue == option.id {
+                                    Label(option.name, systemImage: "checkmark")
+                                } else {
+                                    Text(option.name)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    workspaceLabel(
+                        railWorkspaceLabel, showsPicker: true,
+                        emphasized: secondaryName != nil)
+                }
+                Spacer()
+            } else {
+                workspaceLabel(workspaceName)
+                Spacer()
+            }
+        }
+    }
+
     public var body: some View {
         TimelineView(.periodic(from: .now, by: isRunning ? 1 : 3600)) { context in
             HStack(spacing: 8) {
@@ -2818,61 +2900,7 @@ public struct TelemetryFooterRail: View {
                     GoalRailControl(goal: activeGoal, onUpdate: onGoalUpdate)
                 }
                 Spacer()
-                if let workspaceName {
-                    if let binding = secondaryWorkspaceId, !workspaceOptions.isEmpty {
-                        // Workspace picker: primary is fixed (the thread's);
-                        // picking another adds it as a secondary grant for
-                        // subsequent runs (desktop parity).
-                        Menu {
-                            Section("Primary") {
-                                Label(workspaceName, systemImage: "checkmark")
-                            }
-                            Section("Also grant access to") {
-                                Button("None") { binding.wrappedValue = nil }
-                                ForEach(
-                                    workspaceOptions.filter { $0.id != primaryWorkspaceId },
-                                    id: \.id
-                                ) { option in
-                                    Button {
-                                        binding.wrappedValue =
-                                            binding.wrappedValue == option.id ? nil : option.id
-                                    } label: {
-                                        if binding.wrappedValue == option.id {
-                                            Label(option.name, systemImage: "checkmark")
-                                        } else {
-                                            Text(option.name)
-                                        }
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "folder")
-                                    .font(.system(size: 9))
-                                Text(railWorkspaceLabel)
-                                    .font(.system(size: 11))
-                                    .lineLimit(1)
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 7, weight: .semibold))
-                            }
-                            .foregroundStyle(
-                                secondaryName != nil
-                                    ? TWTheme.textSecondary : TWTheme.textTertiary)
-                            .contentShape(Rectangle())
-                        }
-                        Spacer()
-                    } else {
-                        HStack(spacing: 4) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 9))
-                            Text(workspaceName)
-                                .font(.system(size: 11))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(TWTheme.textTertiary)
-                        Spacer()
-                    }
-                }
+                workspaceRailView
                 if tokenTelemetryText != nil || costTelemetryText != nil {
                     telemetryView(compact: shouldUseCompactTelemetry)
                 }
