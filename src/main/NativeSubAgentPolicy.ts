@@ -1,4 +1,5 @@
 import type { NativeSubAgentRequestPolicy, ProviderId } from './store/types'
+import { taskWraithToolNameForProvider } from './TaskWraithMcpPromptNames'
 
 const NATIVE_SUB_AGENT_TOOL_NAMES = new Set([
   'task',
@@ -68,10 +69,7 @@ export function nativeSubAgentRedirectMessage(args: {
 }): string {
   const prompt = previewNativeSubAgentTask(args.input)
   const sameProvider = args.provider
-  const mcpName =
-    args.provider === 'claude'
-      ? 'mcp__TaskWraith__delegate_to_subthread'
-      : 'TaskWraith__delegate_to_subthread'
+  const mcpName = taskWraithToolNameForProvider(args.provider, 'delegate_to_subthread')
   return [
     'Native sub-agent requests are configured to use TaskWraith sub-threads.',
     `Do not use the provider-native ${args.toolName} tool for this request.`,
@@ -87,10 +85,7 @@ export function nativeSubAgentPromptInstruction(
   provider: ProviderId
 ): string | null {
   const normalized = normalizeNativeSubAgentPolicy(policy)
-  const mcpName =
-    provider === 'claude'
-      ? 'mcp__TaskWraith__delegate_to_subthread'
-      : 'TaskWraith__delegate_to_subthread'
+  const mcpName = taskWraithToolNameForProvider(provider, 'delegate_to_subthread')
   if (normalized === 'provider') {
     return `Native sub-agent requests are set to Provider. You may use provider-native Task/invoke_agent/subagent tools for same-provider work; use ${mcpName} for durable TaskWraith sub-threads and any cross-provider delegation.`
   }

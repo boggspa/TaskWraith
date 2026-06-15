@@ -15,10 +15,13 @@ import type {
   OllamaToolControlTier,
   ProviderId
 } from './store/types'
-import { TASKWRAITH_MCP_TOOL_LIST } from './TaskWraithMcpTools'
 import { truncateOpaqueMarkdown, wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
 import { nativeSubAgentPromptInstruction } from './NativeSubAgentPolicy'
 import { channelInboundReplayText, isChannelInboundMessage } from './ChannelPromptReplay'
+import {
+  taskWraithToolNameForProvider,
+  taskWraithToolNamespaceHint
+} from './TaskWraithMcpPromptNames'
 
 /**
  * Prompt-composition utilities (Phase B3 step 1).
@@ -71,16 +74,7 @@ export function resolveContextBudget(provider: ProviderId, modelId?: string): Co
   return DEFAULT_CONTEXT_BUDGET
 }
 
-const TASKWRAITH_MCP_TOOL_GROUPS =
-  'workspace/file tools: read_file, list_directory, workspace_search, workspace_symbols, open_workspace_file; ' +
-  'edit tools: write_file, replace, apply_patch; ' +
-  'git tools: git_status, git_diff, git_stage, git_commit; ' +
-  'task/test tools: run_task, test_result_summary; ' +
-  'user coordination tools: ask_user_question, goal_read, goal_update, goal_complete, goal_blocked, todo_write; ' +
-  'sub-thread tools: delegate_to_subthread, list_subthreads, read_subthread_result, cancel_subthread; ' +
-  'creative app tools: creative_app_status, creative_app_capabilities, creative_project_snapshot, creative_timeline_validate, creative_timeline_ir, creative_timeline_diff; ' +
-  'browser tools: browser_open, browser_click, browser_screenshot, browser_console; ' +
-  'diagnostic/status tools: approval_status, provider_auth_status, run_timeline, raw_provider_events, create_handoff_card, switch_auth_profile, agent_delegation_role.'
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v2'
 
 /**
  * Shared edit-discipline note appended to every write-capable cloud-provider
@@ -94,6 +88,90 @@ const CLOUD_EDIT_DISCIPLINE_NOTE = [
   'After making code changes, verify them when the project has checks: if run_task exposes a relevant lint/build/test task, run it and summarize the outcome with test_result_summary before declaring the task done. If no such task exists, say so plainly rather than inventing a result.',
   'Never claim tests, builds, or lint passed without actually running them — report real tool output, not a fabricated success.'
 ].join('\n')
+
+const DELEGATION_INTENT_PATTERN =
+  /\b(delegate|delegation|sub-?thread|sub-?agent|side chat|side-chat|review agents?|parallel agents?|agents?)\b/i
+const OPERATIONAL_DELEGATION_PATTERN =
+  /\b(use|create|spawn|delegate|ask|bring|run|review|parallel|continue|resume|follow up|follow-up|status|check|get)\b/i
+const NEGATED_DELEGATION_PATTERN =
+  /\b(do not|don't|dont|without|no)\s+(delegate|delegation|sub-?threads?|sub-?agents?|agents?)\b/i
+
+function promptNeedsDelegationExpansion(prompt: string): boolean {
+  if (NEGATED_DELEGATION_PATTERN.test(prompt)) return false
+  if (!DELEGATION_INTENT_PATTERN.test(prompt)) return false
+  return OPERATIONAL_DELEGATION_PATTERN.test(prompt)
+}
+
+function shouldInjectTaskWraithRuntimePreamble(args: {
+  provider: ProviderId
+  isGlobalRun: boolean
+  approvalMode: string
+  resumeSessionId?: string
+}): boolean {
+  if (args.isGlobalRun || args.approvalMode === 'plan') return false
+  if (args.provider === 'kimi' || args.provider === 'cursor' || args.provider === 'grok') {
+    return true
+  }
+  if (args.provider === 'gemini' || args.provider === 'claude' || args.provider === 'codex') {
+    return !args.resumeSessionId
+  }
+  return false
+}
+
+function exampleDelegationProvider(provider: ProviderId): ProviderId {
+  if (provider === 'gemini') return 'kimi'
+  if (provider === 'claude') return 'gemini'
+  if (provider === 'kimi') return 'claude'
+  if (provider === 'codex') return 'gemini'
+  return 'codex'
+}
+
+function buildTaskWraithRuntimePreamble(args: {
+  provider: ProviderId
+  providerLabel: string
+  finalPrompt: string
+  nativeSubAgentInstruction: string | null
+}): string {
+  const delegateTool = taskWraithToolNameForProvider(args.provider, 'delegate_to_subthread')
+  const searchTool = taskWraithToolNameForProvider(args.provider, 'workspace_search')
+  const patchTool = taskWraithToolNameForProvider(args.provider, 'apply_patch')
+  const statusTool = taskWraithToolNameForProvider(args.provider, 'git_status')
+  const taskTool = taskWraithToolNameForProvider(args.provider, 'run_task')
+  const followupProvider = exampleDelegationProvider(args.provider)
+  const lines = [
+    `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
+    'Use TaskWraith MCP tools for workspace reads/search, edits, git, task/test verification, user questions, diagnostics, and sub-thread control.',
+    `${taskWraithToolNamespaceHint(args.provider)} Key examples: ${searchTool}, ${patchTool}, ${statusTool}, ${taskTool}, ${delegateTool}.`,
+    CLOUD_EDIT_DISCIPLINE_NOTE,
+    `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native Task/invoke_agent/subagent paths for cross-provider work because they cannot reach other TaskWraith providers.`,
+    ...(args.provider === 'codex'
+      ? [
+          'Codex may also surface the same MCP entrypoints as bare tool names, such as delegate_to_subthread.'
+        ]
+      : []),
+    ...(args.provider === 'cursor' || args.provider === 'grok'
+      ? [
+          'Use TaskWraith MCP for edits and shell commands. Native provider write/shell paths are constrained so TaskWraith can apply permission policy, workspace/path checks, and transcript/audit logging.'
+        ]
+      : []),
+    ...(args.nativeSubAgentInstruction ? [args.nativeSubAgentInstruction] : [])
+  ]
+
+  if (promptNeedsDelegationExpansion(args.finalPrompt)) {
+    lines.push(
+      `Spawn example: ${delegateTool}({ provider: '${followupProvider}', prompt: 'Run a focused review and summarize findings.', returnResult: true }).`,
+      'IMPORTANT - RECALL: when following up on a completed or returned sub-thread you already spawned, pass the id from the first tool_result as `subThreadId`. Omitting `subThreadId` always spawns a fresh isolated sub-thread with no memory of prior turns.',
+      `Recall example: ${delegateTool}({ provider: '${followupProvider}', prompt: 'Continue from the previous result and report current status.', subThreadId: '<id-from-prior-result>', returnResult: true }).`,
+      'If recall is rejected or status is unclear, inspect lifecycle with list_subthreads or read_subthread_result before retrying.'
+    )
+  }
+
+  lines.push(
+    'If TaskWraith MCP tools are unavailable, stop and report the exact missing tool names instead of pasting full replacement files for manual application.'
+  )
+
+  return lines.join('\n')
+}
 
 /**
  * Collapse whitespace + truncate. Used per-turn so a single huge historical
@@ -595,163 +673,26 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     applicationLog = `${applicationLog}; active goal injected`
   }
 
-  // (3) Gemini write-tool preamble: workspace runs (non-global) outside plan
-  // mode get a leading instruction so Gemini reaches for the TaskWraith MCP
-  // tools instead of delegating writes to invoke_agent (which loses write
-  // capability). Phase I3.1 additionally surfaces the cross-provider
-  // delegation tool so Gemini doesn't quietly fall back to its built-in
-  // invoke_agent for tasks the user expressed should be handled by Kimi
-  // / Codex / Claude.
-  //
-  // Tier 1 (turn-1 only): Gemini CLI's `--resume` restores the FULL
-  // session including prior message history + our preamble. After the
-  // first turn the agent has the instructions in its retained context;
-  // re-sending wastes ~1.9k tokens per turn (the observed "hi kimi" turn
-  // sent 13.7k tokens for a 6-token greeting). Skip the preamble when a
-  // resumeSessionId is present.
-  if (provider === 'gemini' && !isGlobalRun && approvalMode !== 'plan' && !resumeSessionId) {
-    const geminiWriteToolPreamble = [
-      'TaskWraith runtime note: this Gemini workspace run is write-capable.',
-      `Use the TaskWraith MCP tools directly for workspace reads/search, edits, git, tasks/tests, browser checks, diagnostics, auth/status, handoffs, and sub-thread control. Tool groups: ${TASKWRAITH_MCP_TOOL_GROUPS}`,
-      `Complete TaskWraith tool list: ${TASKWRAITH_MCP_TOOL_LIST}.`,
-      'If Gemini exposes MCP-qualified names, use the `TaskWraith__<tool>` form, e.g. TaskWraith__workspace_search, TaskWraith__apply_patch, TaskWraith__git_status, TaskWraith__run_task, and TaskWraith__delegate_to_subthread.',
-      CLOUD_EDIT_DISCIPLINE_NOTE,
-      'Do not delegate file-modification work to invoke_agent or generalist agents; delegated agents may not inherit TaskWraith write tools.',
-      ...(nativeSubAgentInstruction ? [nativeSubAgentInstruction] : []),
-      'For CROSS-PROVIDER delegation (e.g. asking Kimi or Codex to handle a sub-task), call TaskWraith__delegate_to_subthread({ provider, prompt, returnResult }) — NEVER use your built-in invoke_agent / generalist agent for cross-provider work, those run inside your own process and cannot reach other TaskWraith providers.',
-      "Spawn example: TaskWraith__delegate_to_subthread({ provider: 'kimi', prompt: 'Generate 9 song data tables...', returnResult: true }).",
-      'IMPORTANT — RECALL: when following up on a completed or returned sub-thread you already spawned (status checks, additional turns, multi-step back-and-forth with the same delegated agent), pass the id you got back in the first tool_result as `subThreadId` on the next call. If recall is rejected because the sub-thread is still running or has no resumable session, inspect lifecycle with list_subthreads or read_subthread_result and retry after completion; omitting subThreadId always spawns a fresh sub-thread with zero memory of prior turns.',
-      "Recall example: TaskWraith__delegate_to_subthread({ provider: 'kimi', prompt: 'Did you finish the task I asked earlier? Report status.', subThreadId: '<id-from-prior-result>', returnResult: true }).",
-      'If any of those tools are unavailable, stop and report the exact missing tool names instead of pasting full replacement files for manual application.'
-    ].join('\n')
-    contextualPrompt = `${geminiWriteToolPreamble}\n\n${contextualPrompt}`
-  }
-
-  // (4) Phase I3 (Claude initiator): Claude workspace runs (non-global)
-  // outside plan mode get a parallel preamble pointing the agent at the
-  // TaskWraith MCP server registered by the SDK / CLI layer. Without it
-  // Claude tends to reach for its own Task tool for sub-agent work,
-  // which stays inside Claude's process and cannot reach other TaskWraith
-  // providers.
-  //
-  // Tier 1 (turn-1 only): Claude SDK `resume:` and Claude CLI `--resume`
-  // both restore prior conversation including the original preamble. The
-  // model retains MCP-tool awareness across resumes; skip the preamble
-  // when resuming.
-  if (provider === 'claude' && !isGlobalRun && approvalMode !== 'plan' && !resumeSessionId) {
-    const claudeDelegationPreamble = [
-      'TaskWraith runtime note: this Claude workspace run has access to the TaskWraith MCP server for workspace reads/search, edits, git, tasks/tests, browser checks, diagnostics, auth/status, handoffs, and sub-thread control.',
-      `Tool groups: ${TASKWRAITH_MCP_TOOL_GROUPS}`,
-      `Complete TaskWraith tool list: ${TASKWRAITH_MCP_TOOL_LIST}.`,
-      'Claude may expose tools as `mcp__TaskWraith__<tool>`; examples: mcp__TaskWraith__workspace_search, mcp__TaskWraith__apply_patch, mcp__TaskWraith__git_status, mcp__TaskWraith__run_task, and mcp__TaskWraith__delegate_to_subthread.',
-      CLOUD_EDIT_DISCIPLINE_NOTE,
-      ...(nativeSubAgentInstruction ? [nativeSubAgentInstruction] : []),
-      "For CROSS-PROVIDER delegation (e.g. asking Gemini, Kimi, or Codex to handle a sub-task), call mcp__TaskWraith__delegate_to_subthread({ provider, prompt, returnResult }) — NEVER use Claude's built-in Task tool for cross-provider work, that runs inside Claude's process and cannot reach other TaskWraith providers.",
-      "Spawn example: mcp__TaskWraith__delegate_to_subthread({ provider: 'gemini', prompt: 'Analyze this codebase...', returnResult: true }).",
-      'IMPORTANT — RECALL: when following up on a completed or returned sub-thread you already spawned (status checks, additional turns, multi-step back-and-forth with the same delegated agent), pass the id you got back in the first tool_result as `subThreadId` on the next call. If recall is rejected because the sub-thread is still running or has no resumable session, inspect lifecycle with list_subthreads or read_subthread_result and retry after completion; omitting subThreadId always spawns a fresh sub-thread with zero memory of prior turns.',
-      "Recall example: mcp__TaskWraith__delegate_to_subthread({ provider: 'gemini', prompt: 'Did you finish the analysis I asked earlier? Report status.', subThreadId: '<id-from-prior-result>', returnResult: true }).",
-      'If the TaskWraith MCP tools are unavailable, stop and report the exact missing tool names instead of pasting full replacement files for manual application.'
-    ].join('\n')
-    contextualPrompt = `${claudeDelegationPreamble}\n\n${contextualPrompt}`
-  }
-
-  // (5) Phase I4 (Kimi initiator): Kimi workspace runs (non-global)
-  // outside plan mode get the same delegation preamble — register the
-  // TaskWraith MCP tool list and forbid built-in generalist-agent paths
-  // for cross-provider work. Kimi's MCP host inherits the tools from
-  // `~/.kimi/mcp.json` (installed by `kimi mcp add TaskWraith …`).
-  //
-  // Tier 1 EXCEPTION: Kimi's Wire-protocol `--resume` restores only the
-  // session token, NOT message history (see the conversation-context
-  // logic above where we ALSO replay history for Kimi unconditionally).
-  // We have low confidence the original turn-1 preamble survives the
-  // resume — so we keep injecting it every turn for Kimi. The other
-  // three providers skip on resume; Kimi pays the boilerplate cost
-  // until we either verify the session retains it or switch to direct
-  // Kimi API where a real system-prompt slot exists.
-  if (provider === 'kimi' && !isGlobalRun && approvalMode !== 'plan') {
-    const kimiDelegationPreamble = [
-      'TaskWraith runtime note: this Kimi workspace run has access to the TaskWraith MCP server for workspace reads/search, edits, git, tasks/tests, browser checks, diagnostics, auth/status, handoffs, and sub-thread control.',
-      `Tool groups: ${TASKWRAITH_MCP_TOOL_GROUPS}`,
-      `Complete TaskWraith tool list: ${TASKWRAITH_MCP_TOOL_LIST}.`,
-      'Kimi may expose tools as `TaskWraith__<tool>`; examples: TaskWraith__workspace_search, TaskWraith__apply_patch, TaskWraith__git_status, TaskWraith__run_task, and TaskWraith__delegate_to_subthread.',
-      CLOUD_EDIT_DISCIPLINE_NOTE,
-      ...(nativeSubAgentInstruction ? [nativeSubAgentInstruction] : []),
-      "For CROSS-PROVIDER delegation (e.g. asking Gemini, Claude, or Codex to handle a sub-task), call TaskWraith__delegate_to_subthread({ provider, prompt, returnResult }) — NEVER use any built-in generalist-agent path for cross-provider work, those run inside Kimi's process and cannot reach other TaskWraith providers.",
-      "Spawn example: TaskWraith__delegate_to_subthread({ provider: 'claude', prompt: 'Review this design doc...', returnResult: true }).",
-      'IMPORTANT — RECALL: when following up on a completed or returned sub-thread you already spawned (status checks, additional turns, multi-step back-and-forth with the same delegated agent), pass the id you got back in the first tool_result as `subThreadId` on the next call. If recall is rejected because the sub-thread is still running or has no resumable session, inspect lifecycle with list_subthreads or read_subthread_result and retry after completion; omitting subThreadId always spawns a fresh sub-thread with zero memory of prior turns.',
-      "Recall example: TaskWraith__delegate_to_subthread({ provider: 'claude', prompt: 'Did you finish the review I asked earlier? Report status.', subThreadId: '<id-from-prior-result>', returnResult: true }).",
-      'If the TaskWraith MCP tools are unavailable, stop and report the exact missing tool names instead of pasting full replacement files for manual application.'
-    ].join('\n')
-    contextualPrompt = `${kimiDelegationPreamble}\n\n${contextualPrompt}`
-  }
-
-  // (6) Phase I2 (Codex initiator): Codex workspace runs (non-global)
-  // outside plan mode get a parallel preamble pointing the agent at the
-  // TaskWraith MCP server that the Codex CLI registers at spawn via
-  // `-c mcp_servers.TaskWraith.*` (see `CodexAppServerClient.ts`).
-  //
-  // Without this note Codex agents silently never invoke the MCP tools:
-  // empirically, the bridge subprocess gets spawned by Codex CLI on
-  // every turn for capability discovery but ZERO tools/call entries
-  // appear from Codex-parented bridges in
-  // `~/Library/Logs/TaskWraith/bridge-subprocess.log`. Codex sees the
-  // tools in tools/list but its reasoning never selects them for
-  // cross-provider delegation tasks the way Gemini/Claude/Kimi do
-  // (those three got runtime notes in Phase I3/I4 and immediately
-  // started invoking delegate_to_subthread successfully).
-  //
-  // The fix is prompt-level only — the MCP wiring itself (Phase I2's
-  // `buildCodexTaskWraithMcpArgs` + broker socket + parentProvider
-  // stamp) was already correct, agents just needed to be told the
-  // tools exist and that built-in invoke paths can't reach other
-  // providers.
-  //
-  // Tier 1 (turn-1 only): Codex's `thread/resume` against the app-server
-  // restores the full thread state. Skip the preamble on resume.
-  if (provider === 'codex' && !isGlobalRun && approvalMode !== 'plan' && !resumeSessionId) {
-    const codexDelegationPreamble = [
-      'TaskWraith runtime note: this Codex workspace run has access to the TaskWraith MCP server for workspace reads/search, edits, git, tasks/tests, browser checks, diagnostics, auth/status, handoffs, and sub-thread control.',
-      `Tool groups: ${TASKWRAITH_MCP_TOOL_GROUPS}`,
-      `Complete TaskWraith tool list: ${TASKWRAITH_MCP_TOOL_LIST}.`,
-      'Codex may expose tools as `TaskWraith__<tool>` or as the bare tool name depending on CLI version; examples: TaskWraith__workspace_search, TaskWraith__apply_patch, TaskWraith__git_status, TaskWraith__run_task, and TaskWraith__delegate_to_subthread.',
-      CLOUD_EDIT_DISCIPLINE_NOTE,
-      ...(nativeSubAgentInstruction ? [nativeSubAgentInstruction] : []),
-      "For CROSS-PROVIDER delegation (e.g. asking Gemini, Claude, or Kimi to handle a sub-task), call TaskWraith__delegate_to_subthread({ provider, prompt, returnResult }) — NEVER use Codex's built-in invoke / generalist-agent path for cross-provider work, those run inside Codex's process and cannot reach other TaskWraith providers.",
-      'The tool may also surface as the plain `delegate_to_subthread` name depending on Codex CLI version; either form invokes the same TaskWraith MCP entrypoint.',
-      "Spawn example: TaskWraith__delegate_to_subthread({ provider: 'gemini', prompt: 'Audit this codebase for unused exports...', returnResult: true }).",
-      'IMPORTANT — RECALL: when following up on a completed or returned sub-thread you already spawned (status checks, additional turns, multi-step back-and-forth with the same delegated agent), pass the id you got back in the first tool_result as `subThreadId` on the next call. If recall is rejected because the sub-thread is still running or has no resumable session, inspect lifecycle with list_subthreads or read_subthread_result and retry after completion; omitting subThreadId always spawns a fresh sub-thread with zero memory of prior turns.',
-      "Recall example: TaskWraith__delegate_to_subthread({ provider: 'gemini', prompt: 'Did you finish the audit I asked earlier? Report status.', subThreadId: '<id-from-prior-result>', returnResult: true }).",
-      'If the TaskWraith MCP tools are unavailable, stop and report the exact missing tool names instead of pasting full replacement files for manual application.'
-    ].join('\n')
-    contextualPrompt = `${codexDelegationPreamble}\n\n${contextualPrompt}`
-  }
-
-  // (7) Cursor / Grok parity path: write-capable workspace runs register the
-  // brokered TaskWraith MCP server at launch. Native provider side-effect tools
-  // are constrained by the runtime; the governed path is MCP, whose handlers
-  // apply TaskWraith approvals + workspace/path checks before mutating files or
-  // running commands. Keep injecting this on resumes until we verify both
-  // providers retain the runtime note in their own resumable sessions.
-  if ((provider === 'cursor' || provider === 'grok') && !isGlobalRun && approvalMode !== 'plan') {
-    const label = providerDisplayName(provider)
-    const namespace =
-      provider === 'cursor'
-        ? 'Cursor may expose tools as `taskwraith__<tool>` or under `Mcp(taskwraith:...)`; examples: taskwraith__workspace_search, taskwraith__apply_patch, taskwraith__git_status, taskwraith__run_task, and taskwraith__delegate_to_subthread.'
-        : 'Grok may expose tools as `TaskWraith__<tool>`; examples: TaskWraith__workspace_search, TaskWraith__apply_patch, TaskWraith__git_status, TaskWraith__run_task, and TaskWraith__delegate_to_subthread.'
-    const parityPreamble = [
-      `TaskWraith runtime note: this ${label} workspace run has access to the TaskWraith MCP server for workspace reads/search, edits, git, tasks/tests, browser checks, diagnostics, auth/status, handoffs, and sub-thread control.`,
-      `Tool groups: ${TASKWRAITH_MCP_TOOL_GROUPS}`,
-      `Complete TaskWraith tool list: ${TASKWRAITH_MCP_TOOL_LIST}.`,
-      namespace,
-      'Use the TaskWraith MCP tools for file edits and shell commands. Native provider write/shell paths are constrained here so TaskWraith can apply permission policy, workspace/path checks, and transcript/audit logging.',
-      CLOUD_EDIT_DISCIPLINE_NOTE,
-      ...(nativeSubAgentInstruction ? [nativeSubAgentInstruction] : []),
-      'For CROSS-PROVIDER delegation, call delegate_to_subthread through the TaskWraith MCP server — do not use a provider-native sub-agent path because it cannot reach other TaskWraith providers.',
-      "Spawn example: delegate_to_subthread({ provider: 'codex', prompt: 'Run the focused test suite and summarize failures.', returnResult: true }).",
-      'If the TaskWraith MCP tools are unavailable, stop and report the exact missing tool names instead of planning edits without applying them.'
-    ].join('\n')
-    contextualPrompt = `${parityPreamble}\n\n${contextualPrompt}`
+  // (3) Write-capable cloud/runtime preamble. Keep this compact and invariant:
+  // the full MCP catalog is available through tool metadata, while the prompt
+  // only carries the provider namespace, edit discipline, and cross-provider
+  // delegation guardrails. Gemini/Claude/Codex skip on resumable sessions;
+  // Kimi/Cursor/Grok keep injecting until their session retention is verified.
+  if (
+    shouldInjectTaskWraithRuntimePreamble({
+      provider,
+      isGlobalRun,
+      approvalMode,
+      resumeSessionId
+    })
+  ) {
+    const taskWraithRuntimePreamble = buildTaskWraithRuntimePreamble({
+      provider,
+      providerLabel: providerDisplayName(provider),
+      finalPrompt,
+      nativeSubAgentInstruction
+    })
+    contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
   }
 
   if (provider === 'ollama' && !isGlobalRun) {

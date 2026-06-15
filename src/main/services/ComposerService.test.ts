@@ -158,31 +158,41 @@ describe('ComposerService', () => {
     const payload = compose({ provider: 'gemini' }, {})
     expect(payload.provider).toBe('gemini')
     expect(payload.prompt).toContain(
-      'TaskWraith runtime note: this Gemini workspace run is write-capable.'
+      'TaskWraith runtime note (taskwraith-runtime-v2): this Gemini workspace run has access to the TaskWraith MCP server.'
     )
+    expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
+    expect(payload.prompt).not.toContain('workspace/file tools:')
+    expect(payload.prompt).not.toContain('Spawn example')
+    expect(payload.prompt).not.toContain('RECALL')
     expect(payload.prompt).toContain('Conversation context (last 1 turn(s)):')
     expect(payload.prompt).toContain('User: Previous question')
     expect(payload.prompt).toContain('Current user request:\nDo the thing')
     expect(payload.composer.contextTurnsApplied).toBe(6)
   })
 
-  it('teaches Gemini about cross-provider delegate_to_subthread (Phase I3.1)', () => {
-    // The runtime note must mention delegate_to_subthread + the
-    // cross-provider rule so Gemini doesn't quietly fall back to its
-    // built-in invoke_agent when the user asks for "delegate to Kimi".
+  it('keeps Gemini cross-provider guardrails compact on ordinary prompts', () => {
     const payload = compose({ provider: 'gemini' }, {})
     expect(payload.prompt).toContain('delegate_to_subthread')
     expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
+    expect(payload.prompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
+    expect(payload.prompt).not.toContain("provider: 'kimi'")
+    expect(payload.prompt).not.toContain('Spawn example')
+    expect(payload.prompt).not.toContain('RECALL')
+  })
+
+  it('adds Gemini sub-thread recall guidance only when delegation is requested', () => {
+    const payload = compose(
+      { provider: 'gemini' },
+      { userInput: 'Use two review agents and delegate one pass to Kimi.' }
+    )
+    expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain("provider: 'kimi'")
-    expect(payload.prompt).toContain('NEVER use your built-in invoke_agent')
-    // Recall guidance must be present so follow-up turns continue the
-    // same sub-thread instead of spawning a fresh one with zero memory
-    // (observed bug: Codex/Gemini sending status-check delegations as
-    // brand-new sub-threads, getting "first turn, no prior actions"
-    // responses from sub-agents that legitimately had no history).
+    expect(payload.prompt).toContain('Spawn example')
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
+    expect(payload.prompt).toContain('Omitting `subThreadId` always spawns a fresh')
+    expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
   })
 
   it('keeps Gemini plan-mode resumes and skips duplicated context', () => {
@@ -257,14 +267,18 @@ describe('ComposerService', () => {
     // The runtime note must point Kimi at TaskWraith__delegate_to_subthread
     // so it doesn't reach for a built-in generalist agent when asked to
     // delegate to Gemini / Codex / Claude.
-    const payload = compose({ provider: 'kimi' }, {})
+    const payload = compose(
+      { provider: 'kimi' },
+      { userInput: 'Use a subagent to review this and delegate a pass.' }
+    )
     expect(payload.prompt).toContain('TaskWraith MCP server')
     expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'claude'")
-    expect(payload.prompt).toContain('NEVER use any built-in generalist-agent path')
+    expect(payload.prompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
+    expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
   })
 
   it('omits the Kimi delegation preamble in plan mode (read-only sessions)', () => {
@@ -371,17 +385,21 @@ describe('ComposerService', () => {
     // runtime-note preamble in Phase I3/I4 and immediately started
     // calling delegate_to_subthread; Codex was the only provider
     // missing the preamble.
-    const payload = compose({ provider: 'codex' }, {})
+    const payload = compose(
+      { provider: 'codex' },
+      { userInput: 'Use a parallel review agent and delegate the audit.' }
+    )
     expect(payload.prompt).toContain('TaskWraith MCP server')
     expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'gemini'")
-    expect(payload.prompt).toContain("NEVER use Codex's built-in invoke")
+    expect(payload.prompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
     // Recall guidance — observed bug: Codex spawning a fresh sub-thread
     // on every status check, getting "first turn, no prior actions"
     // back from sub-agents with legitimately no history.
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
+    expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
   })
 
   it('omits the Codex delegation preamble in plan mode (read-only sessions)', () => {
@@ -547,14 +565,18 @@ describe('ComposerService', () => {
     // The runtime note must point Claude at mcp__TaskWraith__delegate_to_subthread
     // so it doesn't reach for its built-in Task tool when asked to
     // delegate to Gemini / Codex / Kimi.
-    const payload = compose({ provider: 'claude' }, {})
+    const payload = compose(
+      { provider: 'claude' },
+      { userInput: 'Use a review agent and delegate one pass to Gemini.' }
+    )
     expect(payload.prompt).toContain('TaskWraith MCP server')
     expect(payload.prompt).toContain('mcp__TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'gemini'")
-    expect(payload.prompt).toContain("NEVER use Claude's built-in Task tool")
+    expect(payload.prompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
+    expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
   })
 
   it('omits the Claude delegation preamble in plan mode (read-only sessions)', () => {

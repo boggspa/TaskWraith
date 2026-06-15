@@ -357,6 +357,73 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain('Native provider write/shell paths are constrained')
   })
 
+  it('keeps write-mode runtime preambles compact across providers', () => {
+    const cases = [
+      ['gemini', 'TaskWraith__delegate_to_subthread'],
+      ['claude', 'mcp__TaskWraith__delegate_to_subthread'],
+      ['kimi', 'TaskWraith__delegate_to_subthread'],
+      ['codex', 'TaskWraith__delegate_to_subthread'],
+      ['cursor', 'taskwraith__delegate_to_subthread'],
+      ['grok', 'TaskWraith__delegate_to_subthread']
+    ] as const
+
+    for (const [provider, delegateTool] of cases) {
+      const result = composeRunPrompt({
+        provider,
+        finalPrompt: 'Make the change.',
+        messages: [],
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: provider
+      })
+
+      expect(result.contextualPrompt).toContain('taskwraith-runtime-v2')
+      expect(result.contextualPrompt).toContain(delegateTool)
+      expect(result.contextualPrompt).toContain('CROSS-PROVIDER delegation')
+      expect(result.contextualPrompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
+      expect(result.contextualPrompt).not.toContain('Complete TaskWraith tool list')
+      expect(result.contextualPrompt).not.toContain('workspace/file tools:')
+      expect(result.contextualPrompt).not.toContain('creative_midi_dispatch')
+      expect(result.contextualPrompt).not.toContain('Spawn example')
+      expect(result.contextualPrompt).not.toContain('RECALL')
+    }
+  })
+
+  it('adds sub-thread recall examples only for operational delegation prompts', () => {
+    const requested = composeRunPrompt({
+      provider: 'codex',
+      finalPrompt: 'Use two review agents and delegate one to Gemini.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex'
+    })
+
+    expect(requested.contextualPrompt).toContain('Spawn example')
+    expect(requested.contextualPrompt).toContain('RECALL')
+    expect(requested.contextualPrompt).toContain('subThreadId')
+    expect(requested.contextualPrompt).toContain('list_subthreads')
+    expect(requested.contextualPrompt).toContain('read_subthread_result')
+
+    const negated = composeRunPrompt({
+      provider: 'codex',
+      finalPrompt: 'Do not delegate this; just explain sub-threads.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Codex'
+    })
+
+    expect(negated.contextualPrompt).not.toContain('Spawn example')
+    expect(negated.contextualPrompt).not.toContain('RECALL')
+  })
+
   it('does not advertise Cursor/Grok write tools in plan mode', () => {
     const result = composeRunPrompt({
       provider: 'cursor',
