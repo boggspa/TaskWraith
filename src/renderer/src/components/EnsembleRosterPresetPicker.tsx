@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { type FormEvent, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { EnsembleConfig } from '../../../main/store/types'
 import {
@@ -18,6 +18,19 @@ export interface EnsembleRosterPresetPickerProps {
   variant?: 'welcome' | 'compact'
 }
 
+type PresetNameDialogState =
+  | {
+      mode: 'save'
+      name: string
+      error: string | null
+    }
+  | {
+      mode: 'rename'
+      preset: EnsembleRosterPreset
+      name: string
+      error: string | null
+    }
+
 export function EnsembleRosterPresetPicker({
   ensemble,
   disabled = false,
@@ -27,8 +40,12 @@ export function EnsembleRosterPresetPicker({
   const [presets, setPresets] = useState<EnsembleRosterPreset[]>(() => listEnsembleRosterPresets())
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
+  const [presetNameDialog, setPresetNameDialog] = useState<PresetNameDialogState | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
+  const presetNameInputRef = useRef<HTMLInputElement | null>(null)
+  const presetNameInputId = useId()
+  const presetNameTitleId = useId()
 
   const refreshPresets = (): void => {
     setPresets(listEnsembleRosterPresets())
@@ -79,20 +96,31 @@ export function EnsembleRosterPresetPicker({
     }
   }, [popoverOpen])
 
+  useEffect(() => {
+    if (!presetNameDialog) return
+    const frame = window.requestAnimationFrame(() => {
+      presetNameInputRef.current?.focus()
+      presetNameInputRef.current?.select()
+    })
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setPresetNameDialog(null)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [presetNameDialog])
+
   const handleSaveCurrent = (): void => {
     if (!ensemble || disabled) return
-    const suggested = 'Ensemble roster'
-    const entered = window.prompt('Name this ensemble roster preset:', suggested)
-    if (!entered) return
-    saveEnsembleRosterPreset(entered, ensemble)
-    refreshPresets()
+    setPopoverOpen(false)
+    setPresetNameDialog({ mode: 'save', name: 'Ensemble roster', error: null })
   }
 
   const handleRename = (preset: EnsembleRosterPreset): void => {
-    const entered = window.prompt('Rename preset:', preset.name)
-    if (!entered || entered.trim() === preset.name) return
-    renameEnsembleRosterPreset(preset.id, entered)
-    refreshPresets()
+    setPopoverOpen(false)
+    setPresetNameDialog({ mode: 'rename', preset, name: preset.name, error: null })
   }
 
   const handleDelete = (preset: EnsembleRosterPreset): void => {
@@ -105,6 +133,40 @@ export function EnsembleRosterPresetPicker({
   const inlinePresets = presets.slice(0, ENSEMBLE_ROSTER_PRESET_INLINE_LIMIT)
   const overflowPresets = presets.slice(ENSEMBLE_ROSTER_PRESET_INLINE_LIMIT)
   const canSave = Boolean(ensemble) && !disabled
+
+  const handlePresetNameSubmit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    if (!presetNameDialog) return
+    const trimmed = presetNameDialog.name.trim()
+    if (!trimmed) {
+      setPresetNameDialog({ ...presetNameDialog, error: 'Enter a preset name.' })
+      return
+    }
+    try {
+      if (presetNameDialog.mode === 'save') {
+        if (!ensemble) return
+        saveEnsembleRosterPreset(trimmed, ensemble)
+      } else {
+        if (trimmed === presetNameDialog.preset.name.trim()) {
+          setPresetNameDialog(null)
+          return
+        }
+        renameEnsembleRosterPreset(presetNameDialog.preset.id, trimmed)
+      }
+      refreshPresets()
+      setPresetNameDialog(null)
+    } catch (error) {
+      console.error('[EnsembleRosterPresetPicker] failed to save preset', error)
+      setPresetNameDialog({
+        ...presetNameDialog,
+        error: error instanceof Error ? error.message : 'Could not save this preset.'
+      })
+    }
+  }
+
+  const updatePresetName = (name: string): void => {
+    setPresetNameDialog((current) => (current ? { ...current, name, error: null } : current))
+  }
 
   const rootClassName =
     variant === 'compact'
@@ -207,6 +269,70 @@ export function EnsembleRosterPresetPicker({
                 ))
               )}
             </div>
+          </div>,
+          document.body
+        )}
+      {presetNameDialog &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="ensemble-roster-preset-dialog-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setPresetNameDialog(null)
+            }}
+          >
+            <form
+              className="ensemble-roster-preset-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={presetNameTitleId}
+              onSubmit={handlePresetNameSubmit}
+            >
+              <div className="ensemble-roster-preset-dialog-header">
+                <h2 id={presetNameTitleId}>
+                  {presetNameDialog.mode === 'save' ? 'Save roster preset' : 'Rename roster preset'}
+                </h2>
+                <button
+                  type="button"
+                  className="ensemble-roster-preset-dialog-close"
+                  onClick={() => setPresetNameDialog(null)}
+                  aria-label="Close roster preset dialog"
+                >
+                  ×
+                </button>
+              </div>
+              <label className="ensemble-roster-preset-dialog-label" htmlFor={presetNameInputId}>
+                Preset name
+              </label>
+              <input
+                ref={presetNameInputRef}
+                id={presetNameInputId}
+                className="ensemble-roster-preset-dialog-input"
+                value={presetNameDialog.name}
+                onChange={(event) => updatePresetName(event.target.value)}
+                maxLength={80}
+              />
+              {presetNameDialog.error && (
+                <div className="ensemble-roster-preset-dialog-error" role="alert">
+                  {presetNameDialog.error}
+                </div>
+              )}
+              <div className="ensemble-roster-preset-dialog-actions">
+                <button
+                  type="button"
+                  className="ensemble-roster-preset-dialog-button"
+                  onClick={() => setPresetNameDialog(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="ensemble-roster-preset-dialog-button ensemble-roster-preset-dialog-button-primary"
+                >
+                  {presetNameDialog.mode === 'save' ? 'Save preset' : 'Rename'}
+                </button>
+              </div>
+            </form>
           </div>,
           document.body
         )}
