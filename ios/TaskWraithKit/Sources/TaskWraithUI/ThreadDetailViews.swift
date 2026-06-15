@@ -972,17 +972,34 @@ struct ThreadDetailView: View {
     }
 
     private func scrollTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
-        if animated {
-            withAnimation(.easeOut(duration: 0.2)) {
-                proxy.scrollTo("transcript-bottom", anchor: .bottom)
+        // Defer the scroll to a later main-actor turn so the List's backing
+        // UICollectionView has COMMITTED the latest item set before we scroll.
+        // Callers fire from `.onChange`/a token-reveal callback that run INSIDE
+        // SwiftUI's coalesced update flush (Update.dispatchActions); scrolling
+        // synchronously there asks UIKit to scroll to an item whose index path
+        // isn't valid yet. When a slow link (cellular) batches the live-stream →
+        // run-summary swap into a single update, UICollectionView raises
+        // NSInternalInconsistencyException from
+        // `_validateScrollingTargetIndexPath:` → SIGABRT (the cellular-only crash
+        // at the "Task complete" transition). The "transcript-bottom" anchor is
+        // unconditional, so once the update commits the target is always valid.
+        // `Task { @MainActor }` + `Task.yield()` is the proven, Swift-6-clean
+        // deferral already used for the settle pass (stays on the main actor, so
+        // capturing the non-Sendable `proxy` is fine).
+        Task { @MainActor in
+            await Task.yield()
+            guard autoFollow else { return }
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                }
+            } else {
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                }
             }
-            return
-        }
-
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            proxy.scrollTo("transcript-bottom", anchor: .bottom)
         }
     }
 
