@@ -31,7 +31,7 @@ public enum TWTheme {
     }
 
     /// Frosted composer shell — disabled when the user has Reduce Transparency on.
-    public static var composerGlassEnabled: Bool {
+    @MainActor public static var composerGlassEnabled: Bool {
         #if canImport(UIKit)
             return !UIAccessibility.isReduceTransparencyEnabled
         #else

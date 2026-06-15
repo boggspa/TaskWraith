@@ -214,23 +214,33 @@ public final class RemoteSessionModel: ObservableObject {
     /// APNs token waiting for an established session (tokens can arrive
     /// before the transport connects on cold launch).
     private var pendingApnsToken: (hex: String, env: String)? = nil
-    private var apnsTokenSent = false
+    private var apnsTokenRegistrationInFlight = false
 
     /// Called by the app delegate when iOS delivers the device token.
     public func handleApnsToken(_ hex: String, env: String) {
         pendingApnsToken = (hex, env)
-        apnsTokenSent = false
+        apnsTokenRegistrationInFlight = false
         if case .connected = phase {
             sendApnsToken(hex, env: env)
         }
     }
 
     private func sendApnsToken(_ hex: String, env: String) {
-        guard !apnsTokenSent else { return }
-        apnsTokenSent = true
+        guard !apnsTokenRegistrationInFlight else { return }
+        apnsTokenRegistrationInFlight = true
         send(
             BridgeAction.registerApnsToken(deviceToken: hex, env: env),
-            successLabel: "Notifications ready.")
+            successLabel: "Notifications ready.",
+            navigateOnAck: false,
+            onAck: { [weak self] accepted in
+                guard let self else { return }
+                self.apnsTokenRegistrationInFlight = false
+                if accepted {
+                    self.pendingApnsToken = nil
+                } else {
+                    self.pendingApnsToken = (hex, env)
+                }
+            })
     }
 
     public func handleRemoteWake(reason _: String) async -> Bool {
@@ -271,6 +281,9 @@ public final class RemoteSessionModel: ObservableObject {
     /// AFTER pairing, so the permission prompt has context. Registration
     /// re-runs every launch (tokens rotate).
     private func requestPushAuthorizationIfNeeded() {
+        #if !DEBUG && !TASKWRAITH_ENABLE_APNS_REGISTRATION
+            return
+        #else
         #if canImport(UIKit)
             UNUserNotificationCenter.current().getNotificationSettings { settings in
                 switch settings.authorizationStatus {
@@ -291,6 +304,7 @@ public final class RemoteSessionModel: ObservableObject {
                     break
                 }
             }
+        #endif
         #endif
     }
     /// Side-chat child that should open inside the inspector instead of
@@ -801,7 +815,7 @@ public final class RemoteSessionModel: ObservableObject {
         navigationTarget = nil
         visibleThreadId = nil
         pendingApnsToken = nil
-        apnsTokenSent = false
+        apnsTokenRegistrationInFlight = false
         lastActionMessage = nil
     }
 
@@ -2099,7 +2113,8 @@ public final class RemoteSessionModel: ObservableObject {
         _ params: [String: Any], timeoutMs: Int = 12_000, successLabel: String = "Sent.",
         navigateToThreadId: String? = nil,
         navigateOnAck: Bool = true,
-        onThreadCreated: ((String?) -> Void)? = nil
+        onThreadCreated: ((String?) -> Void)? = nil,
+        onAck: ((Bool) -> Void)? = nil
     ) {
         guard let client else { return }
         Task {
@@ -2115,11 +2130,15 @@ public final class RemoteSessionModel: ObservableObject {
                     if accepted {
                         onThreadCreated?(threadId)
                     }
+                    onAck?(accepted)
                     self.lastActionMessage = Self.interpretAck(
                         ack, successLabel: successLabel)
                 }
             } catch {
-                await MainActor.run { self.lastActionMessage = String(describing: error) }
+                await MainActor.run {
+                    onAck?(false)
+                    self.lastActionMessage = String(describing: error)
+                }
             }
         }
     }

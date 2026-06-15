@@ -420,15 +420,16 @@ struct Composer: View {
         /// which carries text alone, so showing the picker there silently
         /// dropped images.
         private var photosButton: some View {
-            PhotosPicker(
+            let attachmentLimitReached = attachments.count >= 2
+            let iconColor = attachmentLimitReached ? TWTheme.textMuted : TWTheme.textSecondary
+            return PhotosPicker(
                 selection: $pickedItems, maxSelectionCount: 2, matching: .images
             ) {
                 Image(systemName: "photo.badge.plus")
                     .font(.body)
-                    .foregroundStyle(
-                        attachments.count >= 2 ? TWTheme.textMuted : TWTheme.textSecondary)
+                    .foregroundStyle(iconColor)
             }
-            .disabled(attachments.count >= 2)
+            .disabled(attachmentLimitReached)
             .onChange(of: pickedItems) { _, items in
                 guard !items.isEmpty else { return }
                 Task {

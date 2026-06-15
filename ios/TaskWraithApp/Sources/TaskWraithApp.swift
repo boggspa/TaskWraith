@@ -31,8 +31,13 @@ struct TaskWraithApp: App {
 /// ships it to the Mac as a registerApnsToken action. Tokens rotate — iOS
 /// re-delivers on every registerForRemoteNotifications() call, and the model
 /// re-registers on each launch once authorized.
+@MainActor
 final class PushAppDelegate: NSObject, UIApplicationDelegate {
-    weak var model: RemoteSessionModel?
+    weak var model: RemoteSessionModel? {
+        didSet { drainPendingBridgeEvents() }
+    }
+    private var pendingApnsToken: (hex: String, env: String)?
+    private var pendingRemoteWakeCompletions: [(UIBackgroundFetchResult) -> Void] = []
 
     func application(
         _ application: UIApplication,
@@ -45,7 +50,11 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
             let env = "production"
         #endif
         Task { @MainActor in
-            self.model?.handleApnsToken(hex, env: env)
+            guard let model = self.model else {
+                self.pendingApnsToken = (hex, env)
+                return
+            }
+            model.handleApnsToken(hex, env: env)
         }
     }
 
@@ -63,11 +72,29 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
     ) {
         Task { @MainActor in
             guard let model = self.model else {
-                completionHandler(.noData)
+                self.pendingRemoteWakeCompletions.append(completionHandler)
                 return
             }
             let connected = await model.handleRemoteWake(reason: "remote-notification")
             completionHandler(connected ? .newData : .failed)
+        }
+    }
+
+    @MainActor
+    private func drainPendingBridgeEvents() {
+        guard let model else { return }
+        if let token = pendingApnsToken {
+            pendingApnsToken = nil
+            model.handleApnsToken(token.hex, env: token.env)
+        }
+        guard !pendingRemoteWakeCompletions.isEmpty else { return }
+        let completions = pendingRemoteWakeCompletions
+        pendingRemoteWakeCompletions.removeAll()
+        for completion in completions {
+            Task { @MainActor in
+                let connected = await model.handleRemoteWake(reason: "remote-notification")
+                completion(connected ? .newData : .failed)
+            }
         }
     }
 }
