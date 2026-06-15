@@ -38,6 +38,32 @@ describe('WorkspaceFileEditorService', () => {
     expect(result.truncated).toBe(false)
   })
 
+  it('lists one directory level and searches paths without returning contents', async () => {
+    const workspace = await makeWorkspace()
+    await mkdir(join(workspace, 'src/components'), { recursive: true })
+    await mkdir(join(workspace, 'node_modules/pkg'), { recursive: true })
+    await writeFile(join(workspace, 'src/App.tsx'), '<App />\n')
+    await writeFile(join(workspace, 'src/components/Button.tsx'), '<button />\n')
+    await writeFile(join(workspace, 'node_modules/pkg/index.js'), 'ignored\n')
+
+    const root = await listWorkspaceFiles(workspace, { path: '', limit: 20 })
+    expect(root.entries.map((entry) => entry.path)).toEqual(['src'])
+    expect(root.entries[0]).toMatchObject({ isDirectory: true, hasChildren: true, depth: 0 })
+    expect(root.truncated).toBe(false)
+
+    const src = await listWorkspaceFiles(workspace, { path: 'src', limit: 20 })
+    expect(src.entries.map((entry) => entry.path)).toEqual(['src/components', 'src/App.tsx'])
+    expect(src.entries.find((entry) => entry.path === 'src/App.tsx')).toMatchObject({
+      isDirectory: false,
+      sizeBytes: 8,
+      depth: 1
+    })
+
+    const search = await listWorkspaceFiles(workspace, { query: 'button', limit: 20 })
+    expect(search.entries.map((entry) => entry.path)).toEqual(['src/components/Button.tsx'])
+    expect(search.entries[0]).not.toHaveProperty('content')
+  })
+
   it('reads UTF-8 text with etag metadata and rejects traversal/binary files', async () => {
     const workspace = await makeWorkspace()
     const outside = await makeWorkspace()

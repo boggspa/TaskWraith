@@ -57,9 +57,28 @@ final class MobileFileEditorState: ObservableObject {
         case clearSelection
     }
 
+    struct DirectoryListing {
+        var entries: [WorkspaceFileEntry] = []
+        var isLoaded = false
+        var isLoading = false
+        var truncated = false
+        var error: String?
+    }
+
+    struct VisibleEntry: Identifiable {
+        let entry: WorkspaceFileEntry
+        let depth: Int
+        var id: String { entry.path }
+    }
+
     @Published var selectedWorkspaceId: String?
-    @Published var entries: [WorkspaceFileEntry] = []
+    @Published var directoriesByPath: [String: DirectoryListing] = [:]
+    @Published var expandedDirectories: Set<String> = []
     @Published var filter = ""
+    @Published var searchResults: [WorkspaceFileEntry] = []
+    @Published var searchLoading = false
+    @Published var searchTruncated = false
+    @Published var searchError: String?
     @Published var selectedPath: String?
     @Published var content = ""
     @Published var savedContent = ""
@@ -70,16 +89,31 @@ final class MobileFileEditorState: ObservableObject {
     @Published var pendingAction: PendingAction?
     @Published var showDirtyDialog = false
 
+    private var searchTask: Task<Void, Never>?
+    private var searchGeneration = 0
+
     var isDirty: Bool { content != savedContent }
 
     var selectedName: String {
         selectedPath?.split(separator: "/").last.map(String.init) ?? "Editor"
     }
 
-    var filteredEntries: [WorkspaceFileEntry] {
-        let needle = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return entries }
-        return entries.filter { $0.path.lowercased().contains(needle) }
+    var searchIsActive: Bool {
+        !filter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var navigatorIsLoading: Bool {
+        searchLoading || directoriesByPath.values.contains(where: \.isLoading)
+    }
+
+    var visibleEntries: [VisibleEntry] {
+        var rows: [VisibleEntry] = []
+        appendVisibleRows(parentPath: "", depth: 0, rows: &rows)
+        return rows
+    }
+
+    var hasTruncatedDirectory: Bool {
+        directoriesByPath.values.contains(where: \.truncated)
     }
 
     func activate(model: RemoteSessionModel, preferredWorkspaceId: String?) {
@@ -93,23 +127,48 @@ final class MobileFileEditorState: ObservableObject {
         if selectedWorkspaceId != workspaceId {
             selectedWorkspaceId = workspaceId
             clearEditor()
+            clearNavigator()
         }
         Task { await reload(model: model) }
     }
 
     func reload(model: RemoteSessionModel) async {
         guard let workspaceId = selectedWorkspaceId else { return }
-        isLoading = true
+        clearNavigator()
         status = "Loading files..."
+        await loadDirectory("", model: model, force: true)
+        let rootCount = directoriesByPath[""]?.entries.count ?? 0
+        if directoriesByPath[""]?.error == nil {
+            status = "\(rootCount) \(rootCount == 1 ? "item" : "items")"
+        }
+        truncated = directoriesByPath[""]?.truncated ?? false
+        _ = workspaceId
+    }
+
+    func loadDirectory(_ path: String, model: RemoteSessionModel, force: Bool = false) async {
+        guard let workspaceId = selectedWorkspaceId else { return }
+        let key = Self.normalizedDirectoryPath(path)
+        if !force, directoriesByPath[key]?.isLoaded == true { return }
+        var listing = directoriesByPath[key] ?? DirectoryListing()
+        listing.isLoading = true
+        listing.error = nil
+        directoriesByPath[key] = listing
         do {
-            let result = try await model.listWorkspaceFiles(workspaceId: workspaceId)
-            entries = result.entries
-            truncated = result.truncated
-            status = "\(result.entries.count) \(result.entries.count == 1 ? "item" : "items")"
+            let result = try await model.listWorkspaceFiles(
+                workspaceId: workspaceId, path: key, limit: 240)
+            directoriesByPath[key] = DirectoryListing(
+                entries: result.entries, isLoaded: true, isLoading: false,
+                truncated: result.truncated, error: nil)
+            if key.isEmpty {
+                truncated = result.truncated
+                status = "\(result.entries.count) \(result.entries.count == 1 ? "item" : "items")"
+            }
         } catch {
+            directoriesByPath[key] = DirectoryListing(
+                entries: [], isLoaded: true, isLoading: false, truncated: false,
+                error: error.localizedDescription)
             status = error.localizedDescription
         }
-        isLoading = false
     }
 
     func requestWorkspace(_ workspaceId: String, model: RemoteSessionModel) {
@@ -121,17 +180,50 @@ final class MobileFileEditorState: ObservableObject {
         }
         selectedWorkspaceId = workspaceId
         clearEditor()
+        clearNavigator()
         Task { await reload(model: model) }
     }
 
     func requestEntry(_ entry: WorkspaceFileEntry, model: RemoteSessionModel) {
-        guard !entry.isDirectory else { return }
+        if entry.isDirectory {
+            toggleDirectory(entry, model: model)
+            return
+        }
         if isDirty {
             pendingAction = .select(entry)
             showDirtyDialog = true
             return
         }
         Task { await open(entry, model: model) }
+    }
+
+    func toggleDirectory(_ entry: WorkspaceFileEntry, model: RemoteSessionModel) {
+        let wasSearching = searchIsActive
+        if wasSearching {
+            filter = ""
+            clearSearch()
+        }
+        expandAncestors(for: entry.path)
+        if expandedDirectories.contains(entry.path), !wasSearching {
+            expandedDirectories.remove(entry.path)
+            return
+        }
+        expandedDirectories.insert(entry.path)
+        Task { await loadDirectory(entry.path, model: model) }
+    }
+
+    func scheduleSearch(model: RemoteSessionModel) {
+        let query = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchTask?.cancel()
+        guard !query.isEmpty else {
+            clearSearch()
+            return
+        }
+        searchTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 280_000_000)
+            guard !Task.isCancelled else { return }
+            await runSearch(query, model: model)
+        }
     }
 
     func requestClose() -> Bool {
@@ -187,7 +279,10 @@ final class MobileFileEditorState: ObservableObject {
             savedContent = file.content
             self.baseEtag = file.etag
             status = "Saved \(file.path) · \(Self.formatBytes(file.sizeBytes))"
-            await reload(model: model)
+            await refreshParentDirectory(for: file.path, model: model)
+            if searchIsActive {
+                await runSearch(filter.trimmingCharacters(in: .whitespacesAndNewlines), model: model)
+            }
             isLoading = false
             return true
         } catch {
@@ -227,6 +322,7 @@ final class MobileFileEditorState: ObservableObject {
         case .workspace(let workspaceId):
             selectedWorkspaceId = workspaceId
             clearEditor()
+            clearNavigator()
             Task { await reload(model: model) }
         case .close:
             onClose()
@@ -244,6 +340,89 @@ final class MobileFileEditorState: ObservableObject {
         baseEtag = nil
         pendingAction = nil
         showDirtyDialog = false
+    }
+
+    private func clearNavigator() {
+        searchTask?.cancel()
+        searchTask = nil
+        searchGeneration += 1
+        directoriesByPath = [:]
+        expandedDirectories = []
+        filter = ""
+        searchResults = []
+        searchLoading = false
+        searchTruncated = false
+        searchError = nil
+        truncated = false
+    }
+
+    private func clearSearch() {
+        searchTask?.cancel()
+        searchTask = nil
+        searchGeneration += 1
+        searchResults = []
+        searchLoading = false
+        searchTruncated = false
+        searchError = nil
+    }
+
+    private func runSearch(_ query: String, model: RemoteSessionModel) async {
+        guard let workspaceId = selectedWorkspaceId, !query.isEmpty else { return }
+        searchGeneration += 1
+        let generation = searchGeneration
+        searchLoading = true
+        searchError = nil
+        do {
+            let result = try await model.listWorkspaceFiles(
+                workspaceId: workspaceId, query: query, limit: 160)
+            guard generation == searchGeneration,
+                filter.trimmingCharacters(in: .whitespacesAndNewlines) == query
+            else { return }
+            searchResults = result.entries
+            searchTruncated = result.truncated
+            status = "\(result.entries.count) \(result.entries.count == 1 ? "match" : "matches")"
+        } catch {
+            guard generation == searchGeneration else { return }
+            searchResults = []
+            searchTruncated = false
+            searchError = error.localizedDescription
+            status = error.localizedDescription
+        }
+        if generation == searchGeneration {
+            searchLoading = false
+        }
+    }
+
+    private func appendVisibleRows(parentPath: String, depth: Int, rows: inout [VisibleEntry]) {
+        guard let listing = directoriesByPath[parentPath] else { return }
+        for entry in listing.entries {
+            rows.append(VisibleEntry(entry: entry, depth: depth))
+            if entry.isDirectory, expandedDirectories.contains(entry.path) {
+                appendVisibleRows(parentPath: entry.path, depth: depth + 1, rows: &rows)
+            }
+        }
+    }
+
+    private func expandAncestors(for path: String) {
+        let parts = path.split(separator: "/").map(String.init)
+        guard parts.count > 1 else { return }
+        for index in 1..<parts.count {
+            expandedDirectories.insert(parts.prefix(index).joined(separator: "/"))
+        }
+    }
+
+    private func refreshParentDirectory(for path: String, model: RemoteSessionModel) async {
+        await loadDirectory(Self.parentDirectory(of: path), model: model, force: true)
+    }
+
+    private static func parentDirectory(of path: String) -> String {
+        let parts = path.split(separator: "/").map(String.init)
+        guard parts.count > 1 else { return "" }
+        return parts.dropLast().joined(separator: "/")
+    }
+
+    private static func normalizedDirectoryPath(_ path: String) -> String {
+        path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     static func formatBytes(_ value: Int?) -> String {
@@ -268,7 +447,7 @@ struct FilesModeSplitView: View {
                         Button { Task { await state.reload(model: model) } } label: {
                             Label("Refresh", systemImage: "arrow.clockwise")
                         }
-                        .disabled(state.selectedWorkspaceId == nil || state.isLoading)
+                        .disabled(state.selectedWorkspaceId == nil || state.navigatorIsLoading)
                     }
                 }
         } detail: {
@@ -304,7 +483,7 @@ struct FilesModeCompactView: View {
                             Button { Task { await state.reload(model: model) } } label: {
                                 Label("Refresh", systemImage: "arrow.clockwise")
                             }
-                            .disabled(state.selectedWorkspaceId == nil || state.isLoading)
+                            .disabled(state.selectedWorkspaceId == nil || state.navigatorIsLoading)
                         }
                     }
             } else {
@@ -341,27 +520,56 @@ private struct FileNavigatorPane: View {
             }
 
             Section {
-                TextField("Filter files", text: $state.filter)
+                TextField("Search files", text: $state.filter)
                     .disableAutocorrection(true)
+                    .onChange(of: state.filter) { _, _ in
+                        state.scheduleSearch(model: model)
+                    }
             }
 
             Section {
-                if state.filteredEntries.isEmpty {
-                    Text(state.isLoading ? "Loading files..." : state.status)
+                if state.searchIsActive {
+                    if state.searchResults.isEmpty {
+                        Text(state.searchLoading ? "Searching files..." : state.searchError ?? "No matches")
+                            .foregroundStyle(TWTheme.textMuted)
+                    } else {
+                        ForEach(state.searchResults) { entry in
+                            Button {
+                                state.requestEntry(entry, model: model)
+                            } label: {
+                                FileEntryRow(
+                                    entry: entry, selected: state.selectedPath == entry.path,
+                                    depth: entry.depth,
+                                    isExpanded: entry.isDirectory
+                                        && state.expandedDirectories.contains(entry.path),
+                                    isLoading: false)
+                            }
+                        }
+                    }
+                } else if state.visibleEntries.isEmpty {
+                    Text(state.navigatorIsLoading ? "Loading files..." : state.status)
                         .foregroundStyle(TWTheme.textMuted)
                 } else {
-                    ForEach(state.filteredEntries) { entry in
+                    ForEach(state.visibleEntries) { row in
+                        let entry = row.entry
                         Button {
                             state.requestEntry(entry, model: model)
                         } label: {
-                            FileEntryRow(entry: entry, selected: state.selectedPath == entry.path)
+                            FileEntryRow(
+                                entry: entry, selected: state.selectedPath == entry.path,
+                                depth: row.depth,
+                                isExpanded: entry.isDirectory
+                                    && state.expandedDirectories.contains(entry.path),
+                                isLoading: state.directoriesByPath[entry.path]?.isLoading == true)
                         }
-                        .disabled(entry.isDirectory || state.isLoading)
+                        .disabled(state.isLoading)
                     }
                 }
             } footer: {
-                if state.truncated {
-                    Text("File list truncated. Use the filter to narrow results.")
+                if state.searchIsActive, state.searchTruncated {
+                    Text("Search truncated. Refine the query to narrow results.")
+                } else if state.hasTruncatedDirectory || state.truncated {
+                    Text("Folder listing truncated. Use search or expand a narrower folder.")
                 }
             }
         }
@@ -373,9 +581,20 @@ private struct FileNavigatorPane: View {
 private struct FileEntryRow: View {
     let entry: WorkspaceFileEntry
     let selected: Bool
+    let depth: Int
+    let isExpanded: Bool
+    let isLoading: Bool
 
     var body: some View {
         HStack(spacing: 8) {
+            if entry.isDirectory {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textMuted)
+                    .frame(width: 10)
+            } else {
+                Color.clear.frame(width: 10)
+            }
             Image(systemName: entry.isDirectory ? "folder" : iconName(for: entry.path))
                 .foregroundStyle(entry.isDirectory ? TWTheme.chroma2 : TWTheme.chroma1)
                 .frame(width: 18)
@@ -384,13 +603,21 @@ private struct FileEntryRow: View {
                 .font(.callout)
                 .foregroundStyle(selected ? TWTheme.textPrimary : TWTheme.textSecondary)
             Spacer(minLength: 8)
-            if !entry.isDirectory {
+            if isLoading {
+                ProgressView()
+                    .scaleEffect(0.7)
+                    .frame(width: 14, height: 14)
+            } else if !entry.isDirectory {
                 Text(MobileFileEditorState.formatBytes(entry.sizeBytes))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(TWTheme.textMuted)
+            } else if entry.hasChildren == false {
+                Text("empty")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
             }
         }
-        .padding(.leading, CGFloat(entry.depth) * 12)
+        .padding(.leading, CGFloat(depth) * 12)
     }
 
     private func iconName(for path: String) -> String {

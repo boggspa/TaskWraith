@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs'
+import type { Dirent } from 'fs'
 import { basename, dirname, join, resolve } from 'path'
 import { createHash, randomBytes } from 'crypto'
 import {
@@ -19,6 +20,15 @@ import type {
 export interface WorkspaceFileListResult {
   entries: WorkspaceFileEntry[]
   truncated: boolean
+}
+
+export interface WorkspaceFileListOptions {
+  /** Directory path relative to the workspace. Empty / omitted means root. */
+  path?: string
+  /** Optional server-side path search. When present, `path` is ignored. */
+  query?: string
+  /** Returned entry cap. Legacy flat lists keep MAX_EDITOR_FILES. */
+  limit?: number
 }
 
 export type RecordWorkspaceEditorChangeFn = (
@@ -56,7 +66,25 @@ export class WorkspaceFileEditorError extends Error {
   }
 }
 
-export async function listWorkspaceFiles(workspacePath: string): Promise<WorkspaceFileListResult> {
+const DIRECTORY_LIST_LIMIT_MAX = 500
+const DIRECTORY_LIST_LIMIT_DEFAULT = 240
+const SEARCH_LIST_LIMIT_DEFAULT = 160
+
+export async function listWorkspaceFiles(
+  workspacePath: string,
+  options: WorkspaceFileListOptions = {}
+): Promise<WorkspaceFileListResult> {
+  const query = options.query?.trim()
+  if (query) {
+    return searchWorkspaceFiles(workspacePath, query, options.limit)
+  }
+  if (options.path !== undefined || options.limit !== undefined) {
+    return listWorkspaceDirectory(workspacePath, options.path ?? '', options.limit)
+  }
+  return listWorkspaceFilesFlat(workspacePath)
+}
+
+async function listWorkspaceFilesFlat(workspacePath: string): Promise<WorkspaceFileListResult> {
   const workspaceRoot = resolve(workspacePath)
   const entries: WorkspaceFileEntry[] = []
   let truncated = false
@@ -111,7 +139,8 @@ export async function listWorkspaceFiles(workspacePath: string): Promise<Workspa
         name: dirent.name,
         isDirectory: dirent.isDirectory(),
         sizeBytes,
-        depth
+        depth,
+        hasChildren: dirent.isDirectory() ? await directoryHasVisibleChildren(fullPath) : undefined
       })
 
       if (dirent.isDirectory()) {
@@ -122,6 +151,195 @@ export async function listWorkspaceFiles(workspacePath: string): Promise<Workspa
 
   await walk(workspaceRoot, 0)
   return { entries, truncated }
+}
+
+async function listWorkspaceDirectory(
+  workspacePath: string,
+  dirPath: string,
+  limit = DIRECTORY_LIST_LIMIT_DEFAULT
+): Promise<WorkspaceFileListResult> {
+  const workspaceRoot = resolve(workspacePath)
+  const maxEntries = clampListLimit(limit)
+  const targetPath = await resolveReadableDirectory(workspaceRoot, dirPath, true)
+  const parentDepth = depthForRelativePath(toWorkspaceRelativePath(workspaceRoot, targetPath))
+  const entries: WorkspaceFileEntry[] = []
+  let truncated = false
+
+  let dirEntries
+  try {
+    dirEntries = await fs.readdir(targetPath, { withFileTypes: true })
+  } catch {
+    return { entries, truncated: false }
+  }
+
+  dirEntries.sort(sortDirents)
+
+  for (const dirent of dirEntries) {
+    if (entries.length >= maxEntries) {
+      truncated = true
+      break
+    }
+    if (shouldSkipDirent(dirent)) continue
+
+    const fullPath = join(targetPath, dirent.name)
+    const relPath = toWorkspaceRelativePath(workspaceRoot, fullPath)
+    const isDirectory = dirent.isDirectory()
+    let sizeBytes: number | undefined
+
+    if (!isDirectory) {
+      try {
+        const stat = await fs.stat(fullPath)
+        if (!stat.isFile()) continue
+        sizeBytes = stat.size
+      } catch {
+        continue
+      }
+    }
+
+    entries.push({
+      path: relPath,
+      name: dirent.name,
+      isDirectory,
+      sizeBytes,
+      depth: parentDepth,
+      hasChildren: isDirectory ? await directoryHasVisibleChildren(fullPath) : undefined
+    })
+  }
+
+  return { entries, truncated }
+}
+
+async function searchWorkspaceFiles(
+  workspacePath: string,
+  query: string,
+  limit = SEARCH_LIST_LIMIT_DEFAULT
+): Promise<WorkspaceFileListResult> {
+  const workspaceRoot = resolve(workspacePath)
+  const maxEntries = clampListLimit(limit)
+  const needle = query.toLowerCase()
+  const entries: WorkspaceFileEntry[] = []
+  let truncated = false
+
+  async function walk(dirPath: string, depth: number): Promise<void> {
+    if (entries.length >= maxEntries) {
+      truncated = true
+      return
+    }
+    if (depth > MAX_EDITOR_DEPTH) {
+      truncated = true
+      return
+    }
+
+    let dirEntries
+    try {
+      dirEntries = await fs.readdir(dirPath, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    dirEntries.sort(sortDirents)
+
+    for (const dirent of dirEntries) {
+      if (entries.length >= maxEntries) {
+        truncated = true
+        break
+      }
+      if (shouldSkipDirent(dirent)) continue
+
+      const fullPath = join(dirPath, dirent.name)
+      const relPath = toWorkspaceRelativePath(workspaceRoot, fullPath)
+      const isDirectory = dirent.isDirectory()
+      const matches = relPath.toLowerCase().includes(needle)
+      let sizeBytes: number | undefined
+
+      if (!isDirectory) {
+        try {
+          const stat = await fs.stat(fullPath)
+          if (!stat.isFile()) continue
+          sizeBytes = stat.size
+        } catch {
+          continue
+        }
+      }
+
+      if (matches) {
+        entries.push({
+          path: relPath,
+          name: dirent.name,
+          isDirectory,
+          sizeBytes,
+          depth,
+          hasChildren: isDirectory ? await directoryHasVisibleChildren(fullPath) : undefined
+        })
+      }
+
+      if (isDirectory) {
+        await walk(fullPath, depth + 1)
+      }
+    }
+  }
+
+  await walk(workspaceRoot, 0)
+  return { entries, truncated }
+}
+
+function clampListLimit(limit: number | undefined): number {
+  if (!Number.isFinite(limit) || !Number.isInteger(limit)) return DIRECTORY_LIST_LIMIT_DEFAULT
+  return Math.min(DIRECTORY_LIST_LIMIT_MAX, Math.max(1, limit))
+}
+
+function sortDirents(a: Dirent, b: Dirent): number {
+  if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
+  return a.name.localeCompare(b.name)
+}
+
+function shouldSkipDirent(dirent: Dirent): boolean {
+  if (dirent.name.startsWith('.') && dirent.name !== '.env') return true
+  if (dirent.isDirectory() && SKIP_EDITOR_DIRS.has(dirent.name)) return true
+  if (dirent.isSymbolicLink()) return true
+  return false
+}
+
+async function directoryHasVisibleChildren(dirPath: string): Promise<boolean> {
+  try {
+    const children = await fs.readdir(dirPath, { withFileTypes: true })
+    return children.some((child) => !shouldSkipDirent(child))
+  } catch {
+    return false
+  }
+}
+
+function depthForRelativePath(relativePath: string): number {
+  if (!relativePath || relativePath === '.') return 0
+  return relativePath.split('/').filter(Boolean).length
+}
+
+async function resolveReadableDirectory(
+  workspaceRoot: string,
+  dirPath: string,
+  allowRoot = false
+): Promise<string> {
+  const trimmed = dirPath.trim()
+  const targetPath = trimmed ? resolveWorkspaceChild(workspaceRoot, trimmed) : workspaceRoot
+  const lstat = await fs.lstat(targetPath)
+  if (lstat.isSymbolicLink()) {
+    throw new WorkspaceFileEditorError(
+      'symlink_unsupported',
+      'Symbolic links cannot be browsed from the file editor.'
+    )
+  }
+  if (!lstat.isDirectory()) {
+    throw new WorkspaceFileEditorError('directory_selected', 'Selected item is not a directory.')
+  }
+  if (!allowRoot && targetPath === workspaceRoot) {
+    throw new WorkspaceFileEditorError('path_outside_workspace', 'Path is outside the workspace.')
+  }
+  const realWorkspace = await fs.realpath(workspaceRoot)
+  const realTarget = await fs.realpath(targetPath)
+  if (!isPathInsideWorkspace(realWorkspace, realTarget)) {
+    throw new WorkspaceFileEditorError('path_outside_workspace', 'Path is outside the workspace.')
+  }
+  return targetPath
 }
 
 export async function readWorkspaceFile(

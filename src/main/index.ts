@@ -16314,7 +16314,11 @@ if (isGeminiMcpBridgeProcess) {
               reason: `Workspace id "${action.workspaceId}" is not registered`
             }
           }
-          const result = await listWorkspaceFilesForEditor(workspace.path)
+          const result = await listWorkspaceFilesForEditor(workspace.path, {
+            path: action.path,
+            query: action.query,
+            limit: action.limit
+          })
           return {
             ok: true,
             entries: result.entries as unknown as Record<string, unknown>[],

@@ -294,6 +294,7 @@ public struct WorkspaceFileEntry: Codable, Sendable, Identifiable, Hashable {
     public let isDirectory: Bool
     public let sizeBytes: Int?
     public let depth: Int
+    public let hasChildren: Bool?
     public var id: String { path }
 }
 
@@ -1044,13 +1045,17 @@ public enum BridgeAction {
     }
 
     public static func workspaceFileList(
-        workspaceId: String,
+        workspaceId: String, path: String? = nil, query: String? = nil, limit: Int? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
-        encode([
+        var payload: [String: Any] = [
             "kind": "workspaceFileList", "actionId": actionId,
             "workspaceId": workspaceId,
-        ])
+        ]
+        if let path { payload["path"] = path }
+        if let query { payload["query"] = query }
+        if let limit { payload["limit"] = limit }
+        return encode(payload)
     }
 
     public static func workspaceFileRead(

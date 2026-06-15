@@ -3270,6 +3270,7 @@ export interface WorkspaceFileEntry {
   isDirectory: boolean
   sizeBytes?: number
   depth: number
+  hasChildren?: boolean
 }
 
 export interface WorkspaceFileReadResult {

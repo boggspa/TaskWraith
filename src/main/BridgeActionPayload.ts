@@ -171,6 +171,12 @@ export interface BridgeThreadRowExpandAction extends BridgeActionMetadata {
 export interface BridgeWorkspaceFileListAction extends BridgeActionMetadata {
   kind: 'workspaceFileList'
   workspaceId: string
+  /** Directory path relative to the workspace. Empty / omitted = root. */
+  path?: string
+  /** Optional bounded server-side path search. Does not read file contents. */
+  query?: string
+  /** Entry cap for directory/search responses; executor clamps defensively. */
+  limit?: number
 }
 
 export interface BridgeWorkspaceFileReadAction extends BridgeActionMetadata {
@@ -1131,7 +1137,16 @@ function isThreadSnapshotRequest(v: Record<string, unknown>): boolean {
 }
 
 function isWorkspaceFileList(v: Record<string, unknown>): boolean {
-  return hasValidActionMetadata(v) && typeof v.workspaceId === 'string'
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    (v.path === undefined ||
+      (typeof v.path === 'string' && v.path.length <= BRIDGE_WORKSPACE_FILE_PATH_MAX_CHARS)) &&
+    (v.query === undefined ||
+      (typeof v.query === 'string' && v.query.length <= BRIDGE_WORKSPACE_FILE_PATH_MAX_CHARS)) &&
+    (v.limit === undefined ||
+      (typeof v.limit === 'number' && Number.isInteger(v.limit) && v.limit > 0))
+  )
 }
 
 function isWorkspaceDiff(v: Record<string, unknown>): boolean {

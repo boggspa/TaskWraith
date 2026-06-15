@@ -1232,11 +1232,14 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
-    public func listWorkspaceFiles(workspaceId: String) async throws -> (
+    public func listWorkspaceFiles(
+        workspaceId: String, path: String? = nil, query: String? = nil, limit: Int? = nil
+    ) async throws -> (
         entries: [WorkspaceFileEntry], truncated: Bool
     ) {
         let ack = try await requestFileAction(
-            BridgeAction.workspaceFileList(workspaceId: workspaceId))
+            BridgeAction.workspaceFileList(
+                workspaceId: workspaceId, path: path, query: query, limit: limit))
         return (ack.data?.entries ?? [], ack.data?.truncated ?? false)
     }
 

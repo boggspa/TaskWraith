@@ -242,9 +242,21 @@ describe('decodeBridgeActionPayload', () => {
 
     it('decodes workspace file actions with correct mutability', () => {
       const list = decodeBridgeActionPayload(
-        encode({ kind: 'workspaceFileList', actionId: 'files-list', workspaceId: 'ws-1' })
+        encode({
+          kind: 'workspaceFileList',
+          actionId: 'files-list',
+          workspaceId: 'ws-1',
+          path: 'src',
+          query: 'app',
+          limit: 120
+        })
       ).payload
       expect(list.kind).toBe('workspaceFileList')
+      if (list.kind === 'workspaceFileList') {
+        expect(list.path).toBe('src')
+        expect(list.query).toBe('app')
+        expect(list.limit).toBe(120)
+      }
       expect(workspaceIdFromPayload(list)).toBe('ws-1')
       expect(payloadRequiresWorkspaceGating(list)).toBe(true)
       expect(payloadIsMutating(list)).toBe(false)
