@@ -7,6 +7,7 @@ import {
 } from '../lib/AgentInvocationPresentation'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
+import { LiveActivityViewport } from './LiveActivityViewport'
 import { MarkdownMessage } from './MarkdownMessage'
 import { MessageActionsChip } from './MessageActionsChip'
 import { subThreadReturnBody } from './SubThreadReturnCardModel'
@@ -22,6 +23,8 @@ interface SubThreadReturnCardProps {
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   pinned?: boolean
   copied?: boolean
+  resultExpanded?: boolean
+  onResultExpandedChange?: (expanded: boolean) => void
 }
 
 function textValue(value: unknown): string | undefined {
@@ -38,7 +41,9 @@ export function SubThreadReturnCard({
   onTogglePinMessage,
   onOpenSideChatFromMessage,
   pinned = false,
-  copied = false
+  copied = false,
+  resultExpanded,
+  onResultExpandedChange
 }: SubThreadReturnCardProps) {
   const metadata = message.metadata || {}
   const provider = metadata.subThreadProvider
@@ -117,7 +122,21 @@ export function SubThreadReturnCard({
         )}
       </header>
       <div className="subthread-return-body">
-        <MarkdownMessage content={body} chat={chat} />
+        <LiveActivityViewport
+          className="subthread-return-viewport"
+          revision={`${message.id}:${body.length}`}
+          collapsedMaxHeight={220}
+          expanded={resultExpanded}
+          onExpandedChange={onResultExpandedChange}
+          label="Sub-thread result"
+          expandLabel="Expand result"
+          collapseLabel="Collapse result"
+          jumpLabel="Jump to latest result"
+        >
+          <div className="subthread-return-body-inner">
+            <MarkdownMessage content={body} chat={chat} />
+          </div>
+        </LiveActivityViewport>
       </div>
       {onCopyMessage && (
         <MessageActionsChip

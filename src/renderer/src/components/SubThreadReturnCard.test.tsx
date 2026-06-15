@@ -53,10 +53,26 @@ describe('SubThreadReturnCard', () => {
     expect(html).toContain('TaskWraith Sub-thread')
     expect(html).toContain('Codex')
     expect(html).toContain('Build agent')
+    expect(html).toContain('live-activity-viewport')
+    expect(html).toContain('subthread-return-viewport')
+    expect(html).toContain('Expand result')
     expect(html).toContain('<strong>Done</strong>')
     expect(html).toContain('Open beside')
     expect(html).toContain('Open drawer')
     expect(html).toContain('Open sub-thread')
+  })
+
+  it('renders the return viewport with controlled expanded copy', () => {
+    const html = renderToStaticMarkup(
+      <SubThreadReturnCard
+        message={subThreadMessage()}
+        resultExpanded
+        onResultExpandedChange={() => {}}
+      />
+    )
+
+    expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain('Collapse result')
   })
 
   it('renders transcript message actions when handlers are provided', () => {

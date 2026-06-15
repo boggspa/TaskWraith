@@ -8,6 +8,7 @@ import {
 
 interface LiveActivityViewportProps {
   children: ReactNode
+  className?: string
   /**
    * Changes whenever new streaming activity/reasoning arrives. The viewport
    * re-pins to the bottom on each change while it is collapsed and following.
@@ -20,10 +21,16 @@ interface LiveActivityViewportProps {
   collapsedMaxHeight?: number
   /** Start expanded (rare — used in tests / future per-user preference). */
   defaultExpanded?: boolean
+  /** Optional controlled expansion state for callers that need height keyed externally. */
+  expanded?: boolean
+  onExpandedChange?: (expanded: boolean) => void
   /** Respect the user's reduced-motion preference for the jump animation. */
   reduceMotion?: boolean
   /** Accessible label for the region. */
   label?: string
+  expandLabel?: string
+  collapseLabel?: string
+  jumpLabel?: string
 }
 
 /**
@@ -35,18 +42,36 @@ interface LiveActivityViewportProps {
  */
 export function LiveActivityViewport({
   children,
+  className,
   revision,
   active = false,
   collapsedMaxHeight = 168,
   defaultExpanded = false,
+  expanded: controlledExpanded,
+  onExpandedChange,
   reduceMotion = false,
-  label = 'Live activity'
+  label = 'Live activity',
+  expandLabel = 'Expand activity',
+  collapseLabel = 'Collapse activity',
+  jumpLabel = 'Jump to latest'
 }: LiveActivityViewportProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const [expanded, setExpanded] = useState(defaultExpanded)
+  const [localExpanded, setLocalExpanded] = useState(defaultExpanded)
+  const expanded = controlledExpanded ?? localExpanded
   const [following, setFollowing] = useState(true)
   const [fadeTop, setFadeTop] = useState(false)
   const [fadeBottom, setFadeBottom] = useState(false)
+
+  const setExpandedState = useCallback(
+    (next: boolean | ((current: boolean) => boolean)) => {
+      const resolved = typeof next === 'function' ? next(expanded) : next
+      if (controlledExpanded === undefined) {
+        setLocalExpanded(resolved)
+      }
+      onExpandedChange?.(resolved)
+    },
+    [controlledExpanded, expanded, onExpandedChange]
+  )
 
   const refreshEdgeFades = useCallback(() => {
     const el = scrollRef.current
@@ -108,7 +133,7 @@ export function LiveActivityViewport({
         active ? ' is-active' : ''
       }${following ? ' is-following' : ''}${fadeTop ? ' has-fade-top' : ''}${
         fadeBottom ? ' has-fade-bottom' : ''
-      }`}
+      }${className ? ` ${className}` : ''}`}
       data-following={following ? 'true' : 'false'}
       data-active={active ? 'true' : 'false'}
     >
@@ -129,7 +154,7 @@ export function LiveActivityViewport({
           type="button"
           className="live-activity-viewport-jump"
           onClick={jumpToLatest}
-          aria-label="Jump to latest activity"
+          aria-label={jumpLabel}
         >
           <svg
             width="11"
@@ -144,7 +169,7 @@ export function LiveActivityViewport({
           >
             <polyline points="3,5 6,8 9,5" />
           </svg>
-          Jump to latest
+          {jumpLabel}
         </button>
       )}
       <div className="live-activity-viewport-controls">
@@ -152,9 +177,9 @@ export function LiveActivityViewport({
           type="button"
           className="live-activity-viewport-toggle"
           aria-expanded={expanded}
-          onClick={() => setExpanded((current) => !current)}
+          onClick={() => setExpandedState((current) => !current)}
         >
-          {expanded ? 'Collapse activity' : 'Expand activity'}
+          {expanded ? collapseLabel : expandLabel}
           <svg
             className={`live-activity-viewport-toggle-chevron${expanded ? ' is-open' : ''}`}
             width="11"

@@ -3890,6 +3890,25 @@
   color: var(--text-primary);
 }
 
+.subthread-return-viewport {
+  margin: 0;
+  padding-left: 12px;
+  --live-activity-edge-fade-size: 44px;
+}
+
+.subthread-return-viewport .live-activity-viewport-rail {
+  background: color-mix(in srgb, var(--agent-rim, var(--accent)) 48%, transparent);
+}
+
+.subthread-return-viewport .live-activity-viewport-scroll {
+  padding-right: 2px;
+}
+
+.subthread-return-body-inner {
+  min-width: 0;
+  color: var(--text-primary);
+}
+
 /* Phase I3.2 — inline delegation card rendered in the parent transcript
  * when a sub-thread is spawned via TaskWraith__delegate_to_subthread. */
 .subthread-delegation-card {
