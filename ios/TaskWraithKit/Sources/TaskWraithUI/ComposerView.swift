@@ -85,6 +85,25 @@ struct Composer: View {
     private var canChangeProvider: Bool {
         allowsProviderChange ?? (newTaskWorkspaceId != nil)
     }
+    private var cardSelectedModelId: String? {
+        guard let selected = nonEmpty(card.selectedModelType), selected != "default" else {
+            return nil
+        }
+        if selected == "custom" {
+            return nonEmpty(card.customModel)
+        }
+        return selected
+    }
+    private var cardReasoningEffort: String? {
+        let provider = (card.provider ?? selectedProvider).lowercased()
+        if provider == "claude" {
+            return nonEmpty(card.claudeReasoningEffort)
+        }
+        if provider == "codex" {
+            return nonEmpty(card.codexReasoningEffort)
+        }
+        return nil
+    }
     private var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -383,9 +402,17 @@ struct Composer: View {
     private func seedProviderSelectionIfNeeded() {
         guard !didSeedProviderSelection else { return }
         selectedProvider = card.provider ?? selectedProvider
-        selectedModelId = runModel
+        selectedModelId = cardSelectedModelId ?? runModel
+        selectedReasoningEffort = cardReasoningEffort
         providerEcho?.wrappedValue = selectedProvider
         didSeedProviderSelection = true
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !trimmed.isEmpty
+        else { return nil }
+        return trimmed
     }
 
     #if canImport(UIKit)

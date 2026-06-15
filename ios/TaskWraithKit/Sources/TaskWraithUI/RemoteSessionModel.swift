@@ -164,6 +164,10 @@ public final class RemoteSessionModel: ObservableObject {
     /// Live run id per streaming thread — lets the view hide the in-flight
     /// snapshot row the bubble supersedes.
     @Published public private(set) var streamingRunIds: [String: String] = [:]
+    /// Provider currently producing each live stream. This comes from the
+    /// bridge.runEvent envelope and updates before the next snapshot/ensemble
+    /// state pull, so live headers do not briefly show the previous speaker.
+    @Published public private(set) var streamingProviders: [String: String] = [:]
     /// Last Codex item id appended to each thread's live bubble — an item
     /// transition gets a paragraph break so bursts don't jam ("…ops.The
     /// first shell…"). Not published: render state derives from the text.
@@ -172,6 +176,9 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var ensembleStates: [String: RemoteEnsembleState] = [:]
     /// Latest run diff summary per thread (inspector diff tab + changes row).
     @Published public private(set) var diffSummaries: [String: MobileDiffSummary] = [:]
+    /// Git status snapshots keyed by workspace id. Composer rows use this for
+    /// branch/upstream/worktree parity with the desktop native composer.
+    @Published public private(set) var gitSnapshots: [String: GitWorkspaceSnapshot] = [:]
     @Published public private(set) var lastActionMessage: String?
     /// Set after createThread succeeds — HomeView navigates to the new chat.
     @Published public var navigationTarget: String?
@@ -704,11 +711,14 @@ public final class RemoteSessionModel: ObservableObject {
         threadSnapshots = [:]
         streamingTexts = [:]
         streamingSegments = [:]
+        streamingRunIds = [:]
+        streamingProviders = [:]
         streamingItemIds = [:]
         providerModels = [:]
         projectionHydrated = false
         usageRollup = nil
         modelUsage = nil
+        gitSnapshots = [:]
         navigationTarget = nil
         visibleThreadId = nil
         pendingApnsToken = nil
@@ -870,6 +880,7 @@ public final class RemoteSessionModel: ObservableObject {
             struct Wire: Codable {
                 let threadId: String?
                 let channel: String?
+                let provider: String?
                 let payload: WirePayload?
             }
             guard let wire = try? JSONDecoder().decode(Wire.self, from: params),
@@ -879,7 +890,9 @@ public final class RemoteSessionModel: ObservableObject {
             // routed provider events; append content deltas as they arrive so
             // text grows per-token instead of per-snapshot hunk.
             if wire.channel == "agent-output", let data = wire.payload?.data {
-                appendStreamingDeltas(threadId: threadId, runId: wire.payload?.appRunId, data: data)
+                appendStreamingDeltas(
+                    threadId: threadId, runId: wire.payload?.appRunId,
+                    provider: wire.provider, data: data)
             }
             if wire.channel == "agent-exit" || wire.channel == "gemini-exit" {
                 // Final snapshot supersedes the live bubble; clear shortly
@@ -896,6 +909,7 @@ public final class RemoteSessionModel: ObservableObject {
                         self.streamingTexts[threadId] = nil
                         self.streamingSegments[threadId] = nil
                         self.streamingRunIds[threadId] = nil
+                        self.streamingProviders[threadId] = nil
                         self.streamingItemIds[threadId] = nil
                     }
                 }
@@ -912,13 +926,21 @@ public final class RemoteSessionModel: ObservableObject {
     /// line is `JSON.stringify(routed)` — provider events flat-merged with
     /// routing fields; raw Gemini CLI chunks arrive as multi-line fragments,
     /// so split + tolerate partial lines.
-    private func appendStreamingDeltas(threadId: String, runId: String?, data: String) {
+    private func appendStreamingDeltas(
+        threadId: String, runId: String?, provider: String?, data: String
+    ) {
+        if let provider, !provider.isEmpty {
+            streamingProviders[threadId] = provider
+        }
         // A new run on the same thread starts a fresh bubble — without this
         // a follow-up turn would append to the previous answer's text.
         if let runId, let current = streamingRunIds[threadId], current != runId {
             streamingSegments[threadId] = [""]
             streamingTexts[threadId] = ""
             streamingRunIds[threadId] = runId
+            if let provider, !provider.isEmpty {
+                streamingProviders[threadId] = provider
+            }
             streamingItemIds[threadId] = nil
         }
         var segments = streamingSegments[threadId] ?? [streamingTexts[threadId] ?? ""]
@@ -1135,6 +1157,11 @@ public final class RemoteSessionModel: ObservableObject {
         return workspaces.first(where: { $0.id == workspaceId })?.displayName
     }
 
+    public func workspaceId(forPath path: String?) -> String? {
+        guard let path, !path.isEmpty else { return nil }
+        return workspaces.first(where: { $0.path == path })?.id
+    }
+
     public var fileEditableWorkspaces: [WorkspaceSummary] {
         workspaces.filter { workspaceCanEditFiles($0.id) }
     }
@@ -1175,6 +1202,17 @@ public final class RemoteSessionModel: ObservableObject {
 
     public func requestDiffMode(workspaceId: String? = nil) {
         diffModeRequest = DiffModeRequest(workspaceId: workspaceId)
+    }
+
+    public func refreshGitSnapshotCache(workspaceId: String?) async {
+        guard let workspaceId, !workspaceId.isEmpty, workspaceCanReviewDiffs(workspaceId)
+        else { return }
+        do {
+            let snapshot = try await fetchGitSnapshot(workspaceId: workspaceId)
+            gitSnapshots[workspaceId] = snapshot
+        } catch {
+            gitSnapshots.removeValue(forKey: workspaceId)
+        }
     }
 
     public enum RemoteFileActionError: LocalizedError {
@@ -1238,6 +1276,7 @@ public final class RemoteSessionModel: ObservableObject {
         let ack = try await requestFileAction(
             BridgeAction.gitSnapshot(workspaceId: workspaceId), timeoutMs: 16_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
+        gitSnapshots[workspaceId] = git
         return git
     }
 
@@ -1245,6 +1284,7 @@ public final class RemoteSessionModel: ObservableObject {
         let ack = try await requestFileAction(
             BridgeAction.gitStageAll(workspaceId: workspaceId), timeoutMs: 20_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
+        gitSnapshots[workspaceId] = git
         return git
     }
 
@@ -1257,6 +1297,7 @@ public final class RemoteSessionModel: ObservableObject {
             BridgeAction.gitCommit(workspaceId: workspaceId, message: message, stageAll: stageAll),
             timeoutMs: 30_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
+        gitSnapshots[workspaceId] = git
         return git
     }
 
@@ -1269,6 +1310,7 @@ public final class RemoteSessionModel: ObservableObject {
             BridgeAction.gitPush(workspaceId: workspaceId, setUpstream: setUpstream),
             timeoutMs: 60_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
+        gitSnapshots[workspaceId] = git
         return git
     }
 
