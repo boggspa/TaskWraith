@@ -17,6 +17,15 @@ struct RelayCandidatesTests {
         #expect(ordered == ["ws://192.168.0.147:8787", "wss://mac.tailnet.ts.net"])
     }
 
+    @Test("can prefer remote doors before LAN doors on cellular")
+    func remoteFirst() {
+        let ordered = RelayCandidates.ordered(
+            from: ["ws://192.168.0.147:8787", "wss://mac.tailnet.ts.net"],
+            fallback: "wss://mac.tailnet.ts.net",
+            preferRemoteFirst: true)
+        #expect(ordered == ["wss://mac.tailnet.ts.net", "ws://192.168.0.147:8787"])
+    }
+
     @Test("falls back to the single legacy URL when the list is absent or empty")
     func fallback() {
         #expect(

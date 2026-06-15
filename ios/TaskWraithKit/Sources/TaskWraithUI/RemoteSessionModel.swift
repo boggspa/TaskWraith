@@ -312,9 +312,11 @@ public final class RemoteSessionModel: ObservableObject {
     // new route (the tunnel, a Wi-Fi join) appears.
 
     private var autoReconnectTask: Task<Void, Never>?
+    private var socketHealthTask: Task<Void, Never>?
     private var autoReconnectAttempt = 0
     private var pathMonitor: NWPathMonitor?
     private var lastPathSignature = ""
+    private var trustedReconnectAttempt: Int?
 
     private func startPathMonitor() {
         guard pathMonitor == nil else { return }
@@ -338,6 +340,9 @@ public final class RemoteSessionModel: ObservableObject {
                 else { return }
                 switch self.phase {
                 case .error, .idle:
+                    self.autoReconnectAttempt = 0
+                    self.reconnectTrusted()
+                case .connecting where self.trustedReconnectAttempt == self.connectAttempt:
                     self.autoReconnectAttempt = 0
                     self.reconnectTrusted()
                 default:
@@ -371,6 +376,18 @@ public final class RemoteSessionModel: ObservableObject {
         autoReconnectTask?.cancel()
         autoReconnectTask = nil
         if resetAttempts { autoReconnectAttempt = 0 }
+    }
+
+    private func cancelSocketHealthCheck() {
+        socketHealthTask?.cancel()
+        socketHealthTask = nil
+    }
+
+    private func preferRemoteRelayFirst() -> Bool {
+        guard let path = pathMonitor?.currentPath, path.status == .satisfied else { return false }
+        if path.usesInterfaceType(.cellular) { return true }
+        return path.isExpensive && !path.usesInterfaceType(.wifi)
+            && !path.usesInterfaceType(.wiredEthernet)
     }
 
     /// Re-attempt the identity load (e.g. after the user unlocked the
@@ -487,8 +504,11 @@ public final class RemoteSessionModel: ObservableObject {
         // not fatal — a ws:// LAN door is invalid from cellular while the
         // wss door right after it works fine.
         let candidates = RelayCandidates.ordered(
-            from: bootstrap.relayUrls, fallback: bootstrap.relayUrl)
+            from: bootstrap.relayUrls, fallback: bootstrap.relayUrl,
+            preferRemoteFirst: preferRemoteRelayFirst())
+        cancelSocketHealthCheck()
         teardown()
+        trustedReconnectAttempt = nil
         macDisplayName = bootstrap.macDisplayName
         pinnedMacIdentityB64 = bootstrap.macIdentityPubKey
         lastRelayUrls = bootstrap.relayUrls
@@ -578,11 +598,12 @@ public final class RemoteSessionModel: ObservableObject {
         // A fresh walk supersedes any queued auto-retry (attempt count keeps
         // growing so the backoff curve survives across walks).
         cancelAutoReconnect(resetAttempts: false)
-        // T70 — walk every door the pairing record knows (LAN first, then
-        // the wss front door). The same record reconnects from home Wi-Fi
-        // (instant LAN hit) and cellular (LAN fails fast, wss connects).
+        // T70 — walk every door the pairing record knows. Wi-Fi stays LAN
+        // first; cellular/expensive paths try the WSS front door first.
         let candidates = RelayCandidates.ordered(
-            from: record.relayUrls, fallback: record.relayUrl)
+            from: record.relayUrls, fallback: record.relayUrl,
+            preferRemoteFirst: preferRemoteRelayFirst())
+        cancelSocketHealthCheck()
         teardown()
         macDisplayName = record.macDisplayName
         pinnedMacIdentityB64 = record.macIdentityPubKey
@@ -591,59 +612,56 @@ public final class RemoteSessionModel: ObservableObject {
         phase = .connecting
         connectAttempt += 1
         let attempt = connectAttempt
+        trustedReconnectAttempt = attempt
         Task {
-            // Outer retries cover the Mac's parked listener cycling its
-            // relay socket (idle reap → backoff rebind); the inner walk
-            // covers which DOOR is reachable from here.
             var lastFailure: String? = nil
             var sawAtsSkip = false
-            for retry in 0..<2 {
-                if retry > 0 { try? await Task.sleep(nanoseconds: 2_500_000_000) }
-                for candidate in candidates {
-                    guard self.connectAttempt == attempt else { return }
-                    if let problem = Self.cleartextRelayProblem(candidate) {
-                        // A LAN ws:// door is simply invalid off-network —
-                        // skip it and let the wss door take the dial.
-                        sawAtsSkip = true
-                        if lastFailure == nil { lastFailure = problem }
-                        continue
-                    }
-                    // Fresh client per attempt — same cross-talk isolation
-                    // as the pairing walk (a dead door's late events and
-                    // stale established-timeout waiters must never touch
-                    // the live attempt).
-                    self.teardown()
-                    self.phase = .connecting
-                    let client: RelayTransportClient
-                    do {
-                        client = try RelayTransportClient(identitySeed: self.identitySeed)
-                    } catch {
-                        lastFailure = TransportErrorCopy.friendlyMessage(
-                            for: error, relayUrl: candidate)
-                        continue
-                    }
-                    self.client = client
-                    self.consumeEvents(of: client)
-                    do {
-                        let budgetMs = RelayCandidates.dialTimeoutMs(for: candidate)
-                        try await client.resolveAndScan(
-                            relayUrl: candidate,
-                            macIdentityPubKey: record.macIdentityPubKey,
-                            timeoutMs: budgetMs)
-                        try await client.connectAndWaitEstablished(timeoutMs: budgetMs)
-                        self.relayUrl = candidate
-                        // Refresh the record so the v1 field tracks the
-                        // door that actually works from here.
-                        self.persistCurrentPairing()
-                        return
-                    } catch {
-                        lastFailure = TransportErrorCopy.friendlyMessage(
-                            for: error, relayUrl: candidate)
-                    }
+            for candidate in candidates {
+                guard self.connectAttempt == attempt else { return }
+                if let problem = Self.cleartextRelayProblem(candidate) {
+                    // A LAN ws:// door is simply invalid off-network —
+                    // skip it and let the wss door take the dial.
+                    sawAtsSkip = true
+                    if lastFailure == nil { lastFailure = problem }
+                    continue
+                }
+                // Fresh client per attempt — same cross-talk isolation
+                // as the pairing walk (a dead door's late events and
+                // stale established-timeout waiters must never touch
+                // the live attempt).
+                self.teardown()
+                self.phase = .connecting
+                let client: RelayTransportClient
+                do {
+                    client = try RelayTransportClient(identitySeed: self.identitySeed)
+                } catch {
+                    lastFailure = TransportErrorCopy.friendlyMessage(
+                        for: error, relayUrl: candidate)
+                    continue
+                }
+                self.client = client
+                self.consumeEvents(of: client)
+                do {
+                    let budgetMs = RelayCandidates.dialTimeoutMs(for: candidate)
+                    try await client.resolveAndScan(
+                        relayUrl: candidate,
+                        macIdentityPubKey: record.macIdentityPubKey,
+                        timeoutMs: budgetMs)
+                    try await client.connectAndWaitEstablished(timeoutMs: budgetMs)
+                    self.relayUrl = candidate
+                    self.trustedReconnectAttempt = nil
+                    // Refresh the record so the v1 field tracks the
+                    // door that actually works from here.
+                    self.persistCurrentPairing()
+                    return
+                } catch {
+                    lastFailure = TransportErrorCopy.friendlyMessage(
+                        for: error, relayUrl: candidate)
                 }
             }
             guard self.connectAttempt == attempt else { return }
             self.teardown()
+            self.trustedReconnectAttempt = nil
             var detail =
                 lastFailure
                 ?? "Couldn't reach \(record.macDisplayName) — is TaskWraith running on your Mac?"
@@ -674,13 +692,15 @@ public final class RemoteSessionModel: ObservableObject {
         reconnectTrusted()
     }
 
-    /// Foreground resume: iOS kills sockets in the background, so returning
-    /// to the app with a stored pairing retries unless already connected or
-    /// mid-handshake.
+    /// Foreground resume: iOS can leave a killed background socket looking
+    /// connected until URLSession times out, so prove connected sockets with
+    /// a short WebSocket ping and reconnect quickly on failure.
     public func reconnectIfStale() {
         guard hasStoredPairing else { return }
         switch phase {
-        case .connected, .connecting, .awaitingMacConfirm:
+        case .connected:
+            verifyConnectedSocket()
+        case .connecting, .awaitingMacConfirm:
             return
         case .idle, .error:
             autoReconnectAttempt = 0
@@ -688,8 +708,32 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    private func verifyConnectedSocket() {
+        guard socketHealthTask == nil else { return }
+        guard let client else {
+            autoReconnectAttempt = 0
+            reconnectTrusted()
+            return
+        }
+        let attempt = connectAttempt
+        socketHealthTask = Task { [weak self] in
+            let alive = await client.checkSocketAlive()
+            await MainActor.run {
+                guard let self else { return }
+                self.socketHealthTask = nil
+                guard self.connectAttempt == attempt else { return }
+                guard case .connected = self.phase else { return }
+                guard !alive else { return }
+                self.autoReconnectAttempt = 0
+                self.reconnectTrusted()
+            }
+        }
+    }
+
     public func disconnect() {
         cancelAutoReconnect(resetAttempts: true)
+        cancelSocketHealthCheck()
+        trustedReconnectAttempt = nil
         teardown()
         phase = .idle
         taskCards = []

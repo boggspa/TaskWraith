@@ -12,6 +12,22 @@
 import Foundation
 import CryptoKit
 
+private final class PingContinuationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+
+    func resume(_ continuation: CheckedContinuation<Bool, Never>, returning value: Bool) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        lock.unlock()
+        continuation.resume(returning: value)
+    }
+}
+
 public enum TransportEvent: Sendable {
     case confirmCode(String)
     case established
@@ -239,6 +255,20 @@ public actor RelayTransportClient {
         wsTask?.cancel(with: .normalClosure, reason: nil)
         wsTask = nil
         eventContinuation.yield(.closed)
+    }
+
+    public func checkSocketAlive(timeoutMs: Int = 2_500) async -> Bool {
+        guard let task = wsTask else { return false }
+        let gate = PingContinuationGate()
+        return await withCheckedContinuation { continuation in
+            task.sendPing { error in
+                gate.resume(continuation, returning: error == nil)
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
+                gate.resume(continuation, returning: false)
+            }
+        }
     }
 
     // ── App messages ────────────────────────────────────────────────────────────
