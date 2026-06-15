@@ -55,6 +55,21 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
     ) {
         print("[tw] APNs registration failed: \(error.localizedDescription)")
     }
+
+    func application(
+        _: UIApplication,
+        didReceiveRemoteNotification _: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        Task { @MainActor in
+            guard let model = self.model else {
+                completionHandler(.noData)
+                return
+            }
+            let connected = await model.handleRemoteWake(reason: "remote-notification")
+            completionHandler(connected ? .newData : .failed)
+        }
+    }
 }
 
 /// Keychain-backed identity seed (32-byte Ed25519 raw representation), generated

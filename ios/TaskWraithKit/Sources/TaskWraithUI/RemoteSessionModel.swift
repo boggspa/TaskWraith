@@ -233,6 +233,40 @@ public final class RemoteSessionModel: ObservableObject {
             successLabel: "Notifications ready.")
     }
 
+    public func handleRemoteWake(reason _: String) async -> Bool {
+        guard hasStoredPairing else { return false }
+        switch phase {
+        case .connected:
+            if let client {
+                let attempt = connectAttempt
+                let alive = await client.checkSocketAlive()
+                guard connectAttempt == attempt else {
+                    return await waitForRemoteWakeConnection(timeoutMs: 10_000)
+                }
+                if alive { return true }
+            }
+            autoReconnectAttempt = 0
+            reconnectTrusted()
+        case .connecting, .awaitingMacConfirm:
+            break
+        case .idle, .error:
+            autoReconnectAttempt = 0
+            reconnectTrusted()
+        }
+        return await waitForRemoteWakeConnection(timeoutMs: 10_000)
+    }
+
+    private func waitForRemoteWakeConnection(timeoutMs: Int) async -> Bool {
+        var waitedMs = 0
+        while waitedMs < timeoutMs {
+            if case .connected = phase { return true }
+            guard !Task.isCancelled else { return false }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            waitedMs += 250
+        }
+        return false
+    }
+
     /// One-time (per authorization state) UNUserNotificationCenter ask —
     /// AFTER pairing, so the permission prompt has context. Registration
     /// re-runs every launch (tokens rotate).
