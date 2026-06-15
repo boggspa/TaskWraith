@@ -504,6 +504,10 @@ lifecycle modifiers landed.)
   welcome surface for every chat type — hero (mode accents: provider /
   chroma2 ensemble / chroma3 global), workspace chips, composer area,
   rotating heatmap below.
+  (Superseded post-v0.41: NewChatBootstrapView now creates the empty Mac
+  thread first and renders the shared ThreadEmptyWelcomeCanvas — one welcome
+  surface for new AND reopened-empty chats; the standalone NewChatCanvasView
+  was removed.)
 - Ensemble mode embeds a canvas-native CREATION roster editor
   (provider/model menus, up/down/remove/add, speaking-order caption;
   untouched roster sends nil so Mac defaults apply) + prompt field +

@@ -201,40 +201,6 @@ public struct RemoteTaskCard: Codable, Sendable {
     public var isIsolatedSideChat: Bool {
         parentChatRelation == "sideChat" && sideChatMode != "guestParticipant"
     }
-
-    /// Placeholder card for the inline new-chat canvas composer.
-    public static func newChatDraft(
-        workspaceId: String?, provider: String = "claude"
-    ) -> RemoteTaskCard {
-        RemoteTaskCard(
-            id: "new-chat-draft",
-            title: nil,
-            status: nil,
-            provider: provider,
-            selectedModelType: nil,
-            customModel: nil,
-            codexReasoningEffort: nil,
-            claudeReasoningEffort: nil,
-            workspaceId: workspaceId,
-            threadId: nil,
-            parentChatId: nil,
-            createdAt: nil,
-            updatedAt: nil,
-            parentChatRelation: nil,
-            pinned: nil,
-            agentName: nil,
-            agentAccent: nil,
-            agentSlug: nil,
-            sideChatMode: nil,
-            chatKind: "single",
-            runId: nil,
-            pendingApprovalCount: nil,
-            pendingQuestionCount: nil,
-            activeGoal: nil,
-            capabilities: nil,
-            additionalWorkspaces: nil,
-            queuedComposerPrompts: nil)
-    }
 }
 
 public struct RemoteActiveGoal: Codable, Sendable, Hashable {
