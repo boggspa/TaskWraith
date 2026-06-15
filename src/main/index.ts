@@ -209,6 +209,7 @@ import {
 } from './RemoteWorkspaceAllowlist'
 import { RemoteBridgeRuntime } from './remote/RemoteBridgeRuntime'
 import {
+  abandonedRemoteDraftIdsToDelete,
   buildRemoteDraftChat,
   findReusableRemoteDraft,
   isUnstartedRemoteDraftChat,
@@ -17477,6 +17478,22 @@ if (isGeminiMcpBridgeProcess) {
             setTimeout(() => {
               const broadcaster = bridgeBroadcasterRef
               if (!broadcaster) return
+              // Reap abandoned remote drafts (welcome-card drafts the user
+              // opened then backed out of — INCLUDING goal/pin/note-dirtied ones
+              // that the create-time reap's strict predicate skips) before we
+              // re-seed, so the rehydrate snapshot ships a clean list. Age-gated,
+              // so it can never touch a draft being composed right now.
+              const ABANDONED_DRAFT_TTL_MS = 24 * 60 * 60 * 1000
+              const reaped = abandonedRemoteDraftIdsToDelete(
+                AppStore.getChats(),
+                Date.now(),
+                ABANDONED_DRAFT_TTL_MS
+              )
+              for (const staleId of reaped) AppStore.deleteChat(staleId)
+              if (reaped.length > 0) {
+                console.log(`[remote-bridge] reaped ${reaped.length} abandoned remote draft(s)`)
+                broadcastThreadList()
+              }
               broadcaster.resetThrottle()
               broadcaster.broadcastSnapshot()
               console.log('[remote-bridge] post-establish rehydrate snapshot sent')

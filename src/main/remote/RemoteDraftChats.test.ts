@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRecord } from '../store/types'
+import type { ActiveGoal, ChatRecord } from '../store/types'
 import {
+  abandonedRemoteDraftIdsToDelete,
   buildRemoteDraftChat,
   findReusableRemoteDraft,
+  isContentlessRemoteDraftChat,
   isUnstartedRemoteDraftChat,
   remoteDraftIdsToDelete
 } from './RemoteDraftChats'
@@ -161,5 +163,67 @@ describe('RemoteDraftChats', () => {
 
     expect(remoteDraftIdsToDelete([keep, stale, chat({ appChatId: 'desktop-empty' })], 'ios-keep'))
       .toEqual(['ios-stale'])
+  })
+})
+
+describe('RemoteDraftChats — contentless drafts + abandoned sweep', () => {
+  const goal: ActiveGoal = {
+    id: 'g1',
+    objective: 'steer it',
+    status: 'active',
+    mode: 'taskwraith_steered',
+    provider: 'codex',
+    createdAt: new Date(NOW).toISOString(),
+    updatedAt: new Date(NOW).toISOString()
+  }
+
+  function draft(extra: Partial<ChatRecord> = {}, now = NOW): ChatRecord {
+    return {
+      ...buildRemoteDraftChat({
+        id: 'ios-draft',
+        now,
+        target: {
+          variant: 'workspace',
+          provider: 'codex',
+          workspaceId: 'ws-1',
+          workspacePath: '/repo'
+        }
+      }),
+      ...extra
+    }
+  }
+
+  it('classifies a goal/pin/note-dirtied unstarted draft as contentless (strict predicate does not)', () => {
+    for (const dirty of [{ activeGoal: goal }, { pinned: true }, { pinnedNotes: 'later' }]) {
+      const dirtied = draft(dirty)
+      // Strict predicate protects it (so the create-time reap + ownership guard
+      // never nuke a real pinned chat) — which is exactly why it would otherwise
+      // strand the abandoned draft forever.
+      expect(isUnstartedRemoteDraftChat(dirtied)).toBe(false)
+      // Loose predicate still sees a contentless draft → reapable / hideable.
+      expect(isContentlessRemoteDraftChat(dirtied)).toBe(true)
+    }
+  })
+
+  it('does not classify real chats, side-chats, or started drafts as contentless', () => {
+    expect(isContentlessRemoteDraftChat(chat({ appChatId: 'desktop-empty' }))).toBe(false)
+    expect(isContentlessRemoteDraftChat(draft({ parentChatId: 'parent' }))).toBe(false)
+    expect(
+      isContentlessRemoteDraftChat(
+        draft({
+          messages: [
+            { id: 'm1', role: 'user', content: 'hi', timestamp: new Date(NOW).toISOString() }
+          ]
+        })
+      )
+    ).toBe(false)
+  })
+
+  it('sweeps only contentless drafts older than the TTL (incl. goal-dirtied), never fresh ones or real chats', () => {
+    const TTL = 24 * 60 * 60 * 1000
+    const fresh = { ...draft({ activeGoal: goal }, NOW), appChatId: 'ios-fresh' }
+    const old = { ...draft({ activeGoal: goal }, NOW - TTL - 1000), appChatId: 'ios-old' }
+    const real = chat({ appChatId: 'desktop-empty', createdAt: NOW - TTL - 1000 })
+    expect(abandonedRemoteDraftIdsToDelete([fresh, old, real], NOW, TTL)).toEqual(['ios-old'])
   })
 })

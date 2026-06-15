@@ -144,3 +144,55 @@ export function remoteDraftIdsToDelete(chats: ChatRecord[], keepId: string): str
     .filter((chat) => chat.appChatId !== keepId && isUnstartedRemoteDraftChat(chat))
     .map((chat) => chat.appChatId)
 }
+
+/**
+ * Looser sibling of {@link isUnstartedRemoteDraftChat} for DISPLAY hiding and the
+ * TTL abandoned-draft sweep. Same "no real conversation" bar — remote-draft
+ * metadata (or a legacy `ios-` shell), zero messages, zero runs, not archived,
+ * not a side-chat, no scheduled wakeup — but it deliberately does NOT exclude a
+ * draft that merely picked up an `activeGoal` / `pinned` / `pinnedNotes` from the
+ * welcome card's always-visible rails BEFORE the first turn. Those are exactly
+ * the drafts the strict predicate strands forever (it treats goal/pin/note as
+ * "real chat, never reap"). `isUnstartedRemoteDraftChat` stays strict because it
+ * also guards the create-time reap and the ownership/relocation check, where
+ * nuking a pinned real chat would be wrong; this predicate is only ever paired
+ * with an age gate (sweep) or used to hide a contentless row (display).
+ */
+export function isContentlessRemoteDraftChat(
+  chat: ChatRecord | null | undefined
+): boolean {
+  // Plain boolean, NOT a `chat is ChatRecord` guard like its strict sibling: it
+  // is used NEGATED in `.filter(c => !isContentlessRemoteDraftChat(c))` on the
+  // renderer side, and a negated type predicate makes TS infer the filtered
+  // array as `never[]` (Exclude<ChatRecord, ChatRecord>). All callers already
+  // hold a ChatRecord, so the narrowing bought nothing anyway.
+  if (!chat || chat.archived) return false
+  if (!readRemoteDraftMetadata(chat) && !isLegacyIosDraft(chat)) return false
+  if ((chat.messages || []).length > 0 || (chat.runs || []).length > 0) return false
+  if (chat.parentChatId || chat.parentChatRelation || chat.sideChatContext) return false
+  if (chat.soloWakeups && Object.keys(chat.soloWakeups).length > 0) return false
+  return true
+}
+
+/**
+ * Ids of contentless drafts older than `ttlMs`, aged by draft-metadata
+ * `createdAt` (which survives reuse/relocation; falls back to the record's own
+ * `createdAt`). The create-time reap only fires on the NEXT `createThread` and
+ * its strict predicate skips goal/pin-dirtied drafts, so this is the safety net:
+ * an age-gated sweep run on phone (re)connect that collects abandoned drafts —
+ * including goal/pin-dirtied ones — without touching a draft being composed
+ * right now (its `createdAt` is seconds old, far under any sane TTL).
+ */
+export function abandonedRemoteDraftIdsToDelete(
+  chats: ChatRecord[],
+  now: number,
+  ttlMs: number
+): string[] {
+  return chats
+    .filter((chat) => {
+      if (!isContentlessRemoteDraftChat(chat)) return false
+      const createdAt = readRemoteDraftMetadata(chat)?.createdAt ?? chat.createdAt ?? now
+      return now - createdAt >= ttlMs
+    })
+    .map((chat) => chat.appChatId)
+}
