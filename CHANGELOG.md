@@ -4,6 +4,33 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.5.3 - 2026-06-16
+
+### Fixed
+- **iOS Stop button.** Stop now targets the live run the moment streaming starts
+  (rather than the throttled projection), and works on global chats and
+  experimental providers — the desktop honors the cancel for those paths too.
+- **iOS composer state.** Opening an existing thread re-syncs the composer's
+  model / provider / reasoning picker to that thread instead of leaking the
+  previously open thread's selection, and the new-chat welcome screen now follows
+  the chosen provider's theme as you change it.
+- **iOS new-chat workspace + global handling.** New chats can switch their
+  workspace before the first message (the desktop relocates the still-empty
+  draft), and global chats are classified by an authoritative scope check so the
+  plan-mode pin and read-only treatment stay correct.
+- **Stray draft cleanup.** Opening "New Chat" on iPhone and backing out no longer
+  leaves a phantom "New Chat" row in the desktop sidebar or the phone list —
+  unstarted drafts are hidden from chat lists and reaped on reconnect, including
+  ones that had picked up a goal or pin.
+- **iOS transcript crash.** Hardened the run-completion transcript scroll on
+  iPhone to avoid a UICollectionView abort seen over cellular.
+
+### Changed
+- **App Store export compliance.** The iOS companion declares standard, exempt
+  encryption (`ITSAppUsesNonExemptEncryption = NO`) per App Store Connect's
+  questionnaire result, and TestFlight export entitlements are verified in the
+  archive path.
+
 ## 1.5.2 - 2026-06-15
 
 ### Added
