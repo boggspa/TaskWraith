@@ -204,6 +204,7 @@ import {
   RemoteWorkspaceAllowlist,
   capabilitiesForRemoteWorkspaceEntry,
   GLOBAL_REMOTE_SCOPE,
+  GLOBAL_REMOTE_SCOPE_CAPABILITIES,
   type RemoteWorkspaceCapability
 } from './RemoteWorkspaceAllowlist'
 import { RemoteBridgeRuntime } from './remote/RemoteBridgeRuntime'
@@ -15582,7 +15583,17 @@ if (isGeminiMcpBridgeProcess) {
       }
       return new MainProcessActionExecutor({
         cancelRunFn: async (provider, runId) => {
-          return providerAdapters.require(assertProviderId(provider)).cancel(runId)
+          // Unpark any approval/question the run is blocked on, mirroring the
+          // desktop cancel-agent-run handler, so a parked run is fully torn down
+          // (not just its process).
+          if (runId) cancelPendingAgentQuestionsForRun(runId, 'run-cancelled')
+          // Call cancelProviderRun directly instead of
+          // providerAdapters.require(assertProviderId(provider)) — assertProviderId
+          // THROWS for experimental providers (grok/cursor without the flag),
+          // which would reject a legitimate cancel before it ran. cancelProviderRun
+          // locates the run by runId and only uses the provider string for
+          // gemini/codex-specific cleanup, so a lenient cast is safe here.
+          return cancelProviderRun(provider as ProviderId, runId)
         },
 	        respondApprovalFn: async (requestId, action, options) => {
 	          return approvalService?.resolve(requestId, action, options) ?? false
@@ -16925,12 +16936,22 @@ if (isGeminiMcpBridgeProcess) {
         cancelWakeup: false,
         queuePrompt: false
       }
-      if (!workspaceId) return empty
-      const decision = bridgeAllowlist.evaluate({ workspaceId, capability: 'monitor' })
-      if (!decision.allowed) return empty
-      const capabilities = new Set<RemoteWorkspaceCapability>(
-        capabilitiesForRemoteWorkspaceEntry(decision.entry)
-      )
+      // Global / workspace-less conversational chat: no file/diff/admin caps,
+      // but the user can monitor + cancel their own phone-origin run. Mirror the
+      // action router's GLOBAL_REMOTE_SCOPE_CAPABILITIES so the card's `cancel`
+      // cap — which gates the phone's Stop button — matches what the router will
+      // actually honor for a global chat (previously this returned all-false, so
+      // Stop was permanently disabled on global chats).
+      let capabilities: Set<RemoteWorkspaceCapability>
+      if (!workspaceId) {
+        capabilities = new Set<RemoteWorkspaceCapability>(GLOBAL_REMOTE_SCOPE_CAPABILITIES)
+      } else {
+        const decision = bridgeAllowlist.evaluate({ workspaceId, capability: 'monitor' })
+        if (!decision.allowed) return empty
+        capabilities = new Set<RemoteWorkspaceCapability>(
+          capabilitiesForRemoteWorkspaceEntry(decision.entry)
+        )
+      }
       return {
         monitor: capabilities.has('monitor'),
         approve: capabilities.has('approve'),
