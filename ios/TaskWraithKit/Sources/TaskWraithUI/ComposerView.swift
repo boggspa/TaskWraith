@@ -106,11 +106,33 @@ struct Composer: View {
     private var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+    /// Run id of a live stream for this thread, if one is in flight. The
+    /// Mac-pushed `card.runId` is snapshot-throttled and lags the un-throttled
+    /// stream, so we fall back to this so Stop is targetable the moment tokens
+    /// start arriving.
+    private var liveStreamRunId: String? {
+        guard let live = model.streamingTexts[card.id], !live.isEmpty else { return nil }
+        return model.streamingRunIds[card.id]
+    }
+    /// The run id to cancel: the throttled card field if present, else the live
+    /// stream's run id. Mirrors the gate in `RemoteSessionModel.cancelRun`.
+    private var effectiveRunId: String? {
+        card.runId ?? liveStreamRunId
+    }
     private var isRunActive: Bool {
-        (runStatus ?? card.status) == "running"
+        let status = runStatus ?? card.status
+        // A run parked on an approval/question is still live + cancellable —
+        // `deriveTaskStatus` reports those states instead of "running". And a
+        // live stream means a run is in flight even before the throttled card
+        // projection flips to "running" (and during the ~900ms it lingers after
+        // exit, where cancelling an already-finished run is a safe no-op).
+        if status == "running" || status == "awaitingApproval" || status == "awaitingQuestion" {
+            return true
+        }
+        return liveStreamRunId != nil
     }
     private var canCancelRun: Bool {
-        isRunActive && card.runId != nil && (card.capabilities?.cancel ?? true)
+        isRunActive && effectiveRunId != nil && (card.capabilities?.cancel ?? true)
     }
     private var hasImageAttachments: Bool {
         #if canImport(UIKit)

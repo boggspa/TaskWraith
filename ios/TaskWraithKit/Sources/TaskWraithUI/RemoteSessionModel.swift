@@ -1959,12 +1959,17 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     public func cancelRun(_ card: RemoteTaskCard) {
-        guard let provider = card.provider, let runId = card.runId, let ws = card.workspaceId,
-            let thread = card.threadId
-        else { return }
+        // Fall back to the live stream's run id — the throttled `card.runId`
+        // lags the un-throttled stream, so an early Stop tap must still target
+        // the in-flight run. Global chats have no workspaceId; the Mac targets a
+        // run by id (ownership is checked against chat.runs, not the workspace),
+        // so send an empty workspace rather than dropping the cancel entirely.
+        let runId = card.runId ?? streamingRunIds[card.id]
+        guard let provider = card.provider, let runId, let thread = card.threadId else { return }
         send(
             BridgeAction.cancelRun(
-                provider: provider, runId: runId, workspaceId: ws, threadId: thread))
+                provider: provider, runId: runId,
+                workspaceId: card.workspaceId ?? "", threadId: thread))
     }
 
     /// Start a NEW task: create the Mac chat first, then send the initial
