@@ -1461,6 +1461,144 @@ public struct RotatingActivityHeatmap: View {
     }
 }
 
+/// Vertically stacked welcome-style heatmaps for surfaces that have enough
+/// scrolling room to show each 90-day projection at once.
+struct ActivityHeatmapStack: View {
+    struct Entry: Identifiable {
+        let flavor: RotatingActivityHeatmap.Flavor
+        let rollup: UsageRollupMessage.Rollup?
+        var id: String { flavor.id }
+
+        init(flavor: RotatingActivityHeatmap.Flavor, rollup: UsageRollupMessage.Rollup? = nil) {
+            self.flavor = flavor
+            self.rollup = rollup
+        }
+    }
+
+    let entries: [Entry]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(entries) { entry in
+                ActivityHeatmapStackCard(entry: entry)
+            }
+        }
+    }
+}
+
+private struct ActivityHeatmapStackCard: View {
+    let entry: ActivityHeatmapStack.Entry
+    @State private var providerFilter: String? = nil
+
+    private var flavor: RotatingActivityHeatmap.Flavor { entry.flavor }
+
+    private var filteredEvents: [ActivityHeatmapEvent] {
+        guard let providerFilter else { return flavor.events }
+        return flavor.events.filter { $0.provider?.lowercased() == providerFilter }
+    }
+
+    private var filterProviders: [String] {
+        let fromEvents = Set(flavor.events.compactMap { $0.provider?.lowercased() })
+        let fromRollup = Set((entry.rollup?.providers ?? []).map { $0.provider.lowercased() })
+        return fromEvents.union(fromRollup)
+            .sorted { TWTheme.providerLabel($0) < TWTheme.providerLabel($1) }
+    }
+
+    private var chipBuckets: UsageRollupMessage.Buckets? {
+        guard let rollup = entry.rollup else { return nil }
+        guard let providerFilter else { return rollup.totals }
+        guard
+            let provider = rollup.providers.first(where: {
+                $0.provider.lowercased() == providerFilter
+            })
+        else { return UsageRollupMessage.Buckets(h24: 0, d7: 0, d90: 0) }
+        return UsageRollupMessage.Buckets(h24: provider.h24, d7: provider.d7, d90: provider.d90)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(flavor.title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textTertiary)
+                Spacer()
+                Text(flavor.caption)
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+            }
+            if !filterProviders.isEmpty || entry.rollup != nil {
+                filterAndChipsRow
+            }
+            if flavor.weekly {
+                WeeklyRhythmHeatmap(dates: filteredEvents.map(\.date), accent: flavor.accent)
+            } else {
+                ActivityHeatmap(events: filteredEvents, accent: flavor.accent)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var filterAndChipsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                filterPill(label: "All", value: nil)
+                ForEach(filterProviders, id: \.self) { provider in
+                    filterPill(label: TWTheme.providerLabel(provider), value: provider)
+                }
+                if let buckets = chipBuckets {
+                    Spacer(minLength: 10)
+                    tokenChip("24h", buckets.h24)
+                    tokenChip("7D", buckets.d7)
+                    tokenChip("90D", buckets.d90)
+                }
+            }
+        }
+    }
+
+    private func filterPill(label: String, value: String?) -> some View {
+        Button {
+            providerFilter = value
+        } label: {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    providerFilter == value ? TWTheme.surface3 : Color.clear,
+                    in: Capsule()
+                )
+                .foregroundStyle(
+                    providerFilter == value ? TWTheme.textPrimary : TWTheme.textTertiary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func tokenChip(_ label: String, _ value: Int) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .foregroundStyle(TWTheme.textMuted)
+            Text(compactTokens(value))
+                .foregroundStyle(TWTheme.textPrimary)
+                .fontWeight(.semibold)
+        }
+        .font(.caption2.monospacedDigit())
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(TWTheme.surface3.opacity(0.7), in: Capsule())
+    }
+
+    private func compactTokens(_ value: Int) -> String {
+        if value >= 1_000_000_000 {
+            return String(format: "%.2fB", Double(value) / 1_000_000_000)
+        }
+        if value >= 1_000_000 {
+            return String(format: "%.0fM", Double(value) / 1_000_000)
+        }
+        if value >= 1_000 { return String(format: "%.0fk", Double(value) / 1_000) }
+        return "\(value)"
+    }
+}
+
 /// Hour-of-day × weekday rhythm grid (the third desktop flavor).
 public struct WeeklyRhythmHeatmap: View {
     let dates: [Date]
@@ -2367,7 +2505,7 @@ public struct ThreadInspector: View {
                                 GitWorkflowPanel(model: model, workspaceId: workspaceId)
                             }
                         } else if tab == 4 {
-                            UsagePanel(model: model)
+                            UsagePanel(model: model, threadId: threadId)
                         } else {
                             NotesPanel(model: model, threadId: threadId)
                         }
@@ -5235,6 +5373,7 @@ private struct MiniThreadComposerHeightKey: PreferenceKey {
 /// TTL-cached snapshots).
 struct UsagePanel: View {
     @ObservedObject var model: RemoteSessionModel
+    let threadId: String?
 
     private static let providerOrder = ["gemini", "codex", "claude", "kimi", "cursor", "grok"]
 
@@ -5253,6 +5392,42 @@ struct UsagePanel: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return "as of \(formatter.string(from: date))"
+    }
+
+    private var inspectedCard: RemoteTaskCard? {
+        guard let threadId, !threadId.isEmpty else { return nil }
+        return model.taskCards.first { $0.id == threadId || $0.threadId == threadId }
+    }
+
+    private var workspaceActivityCards: [RemoteTaskCard] {
+        guard let workspaceId = inspectedCard?.workspaceId, !workspaceId.isEmpty else {
+            return model.taskCards.filter { ($0.workspaceId ?? "").isEmpty }
+        }
+        return model.taskCards.filter { $0.workspaceId == workspaceId }
+    }
+
+    private var activityHeatmapEntries: [ActivityHeatmapStack.Entry] {
+        let workspaceEvents = twActivityHeatmapEvents(from: workspaceActivityCards)
+        let taskWraithEvents = twActivityHeatmapEvents(from: model.taskCards)
+        let externalEvents: [ActivityHeatmapEvent] = []
+        return [
+            .init(
+                flavor: .init(
+                    id: "taskwraith", title: "TaskWraith Activity",
+                    caption: "all TaskWraith runs", accent: TWTheme.chroma3,
+                    events: taskWraithEvents)),
+            .init(
+                flavor: .init(
+                    id: "workspace", title: "Workspace Activity",
+                    caption: "current workspace", accent: TWTheme.chroma1,
+                    events: workspaceEvents)),
+            .init(
+                flavor: .init(
+                    id: "external", title: "External Activity",
+                    caption: "external usage", accent: TWTheme.providerAccent("cursor"),
+                    events: externalEvents),
+                rollup: model.usageRollup),
+        ]
     }
 
     var body: some View {
@@ -5286,23 +5461,7 @@ struct UsagePanel: View {
                 }
             }
 
-            // Activity footer (desktop panel parity)
-            VStack(alignment: .leading, spacing: 6) {
-                RotatingActivityHeatmap(
-                    flavors: [
-                        .init(
-                            id: "all", title: "Activity",
-                            caption: "from synced chats", accent: TWTheme.chroma1,
-                            events: twActivityHeatmapEvents(from: model.taskCards)),
-                        .init(
-                            id: "rhythm", title: "Weekly Rhythm",
-                            caption: "hour × weekday", accent: TWTheme.chroma2,
-                            dates: twActivityHeatmapEvents(from: model.taskCards).map(\.date),
-                            weekly: true),
-                    ],
-                    rollup: model.usageRollup
-                )
-            }
+            ActivityHeatmapStack(entries: activityHeatmapEntries)
             .padding(.top, 6)
         }
     }
