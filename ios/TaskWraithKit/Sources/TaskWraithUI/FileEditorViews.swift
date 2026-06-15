@@ -156,12 +156,13 @@ final class MobileFileEditorState: ObservableObject {
         do {
             let result = try await model.listWorkspaceFiles(
                 workspaceId: workspaceId, path: key, limit: 240)
+            let entries = Self.immediateChildren(from: result.entries, of: key)
             directoriesByPath[key] = DirectoryListing(
-                entries: result.entries, isLoaded: true, isLoading: false,
+                entries: entries, isLoaded: true, isLoading: false,
                 truncated: result.truncated, error: nil)
             if key.isEmpty {
                 truncated = result.truncated
-                status = "\(result.entries.count) \(result.entries.count == 1 ? "item" : "items")"
+                status = "\(entries.count) \(entries.count == 1 ? "item" : "items")"
             }
         } catch {
             directoriesByPath[key] = DirectoryListing(
@@ -378,9 +379,10 @@ final class MobileFileEditorState: ObservableObject {
             guard generation == searchGeneration,
                 filter.trimmingCharacters(in: .whitespacesAndNewlines) == query
             else { return }
-            searchResults = result.entries
+            let entries = Self.searchMatches(from: result.entries, query: query)
+            searchResults = entries
             searchTruncated = result.truncated
-            status = "\(result.entries.count) \(result.entries.count == 1 ? "match" : "matches")"
+            status = "\(entries.count) \(entries.count == 1 ? "match" : "matches")"
         } catch {
             guard generation == searchGeneration else { return }
             searchResults = []
@@ -394,11 +396,23 @@ final class MobileFileEditorState: ObservableObject {
     }
 
     private func appendVisibleRows(parentPath: String, depth: Int, rows: inout [VisibleEntry]) {
+        var visited: Set<String> = []
+        appendVisibleRows(parentPath: parentPath, depth: depth, rows: &rows, visited: &visited)
+    }
+
+    private func appendVisibleRows(
+        parentPath: String, depth: Int, rows: inout [VisibleEntry], visited: inout Set<String>
+    ) {
+        guard !visited.contains(parentPath) else { return }
+        visited.insert(parentPath)
+        defer { visited.remove(parentPath) }
         guard let listing = directoriesByPath[parentPath] else { return }
         for entry in listing.entries {
+            guard entry.path != parentPath else { continue }
             rows.append(VisibleEntry(entry: entry, depth: depth))
             if entry.isDirectory, expandedDirectories.contains(entry.path) {
-                appendVisibleRows(parentPath: entry.path, depth: depth + 1, rows: &rows)
+                appendVisibleRows(
+                    parentPath: entry.path, depth: depth + 1, rows: &rows, visited: &visited)
             }
         }
     }
@@ -423,6 +437,27 @@ final class MobileFileEditorState: ObservableObject {
 
     private static func normalizedDirectoryPath(_ path: String) -> String {
         path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    private static func immediateChildren(
+        from entries: [WorkspaceFileEntry], of directoryPath: String
+    ) -> [WorkspaceFileEntry] {
+        let directory = normalizedDirectoryPath(directoryPath)
+        return entries.filter { entry in
+            let entryPath = normalizedDirectoryPath(entry.path)
+            guard !entryPath.isEmpty, entryPath != directory else { return false }
+            return parentDirectory(of: entryPath) == directory
+        }
+    }
+
+    private static func searchMatches(
+        from entries: [WorkspaceFileEntry], query: String
+    ) -> [WorkspaceFileEntry] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return [] }
+        return entries.filter { entry in
+            entry.path.lowercased().contains(needle) || entry.name.lowercased().contains(needle)
+        }
     }
 
     static func formatBytes(_ value: Int?) -> String {
