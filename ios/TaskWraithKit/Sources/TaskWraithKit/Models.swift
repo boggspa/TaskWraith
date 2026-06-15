@@ -192,6 +192,16 @@ public struct RemoteTaskCard: Codable, Sendable {
     }
 
     public var isEnsemble: Bool { chatKind == "ensemble" }
+    /// Scope-global chats carry no workspace. The Mac strips / null-collapses the
+    /// workspaceId for scope:'global' (its canonical signal isn't on the card
+    /// wire), so absence ⇒ global. Also treat a literal "global" sentinel as
+    /// global, so a future Mac change that stamped it can't silently demote a
+    /// global chat into a workspace chat — the welcome card / composer / sidebar
+    /// classify off THIS, not off a bare `(workspaceId ?? "").isEmpty`.
+    public var isGlobalScope: Bool {
+        let id = (workspaceId ?? "").trimmingCharacters(in: .whitespaces)
+        return id.isEmpty || id == "global"
+    }
     public var isGuestSideChat: Bool {
         parentChatRelation == "sideChat" && sideChatMode == "guestParticipant"
     }

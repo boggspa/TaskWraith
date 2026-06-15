@@ -322,7 +322,7 @@ struct HomeView: View {
         // ── Global Chats — scope-global chats passed through READ-ONLY
         //    (no workspace ⇒ no write capabilities; view-only on iOS). ─────
         let globalCards = model.taskCards.filter {
-            $0.parentChatId == nil && ($0.workspaceId ?? "").isEmpty
+            $0.parentChatId == nil && $0.isGlobalScope
         }
         if !globalCards.isEmpty {
             Section {

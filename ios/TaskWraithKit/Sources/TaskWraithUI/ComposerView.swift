@@ -46,7 +46,7 @@ struct Composer: View {
     /// Scope-global chat — every phone-origin turn is clamped to plan mode
     /// (no file mutation) by the Mac; the composer pins the picker to match.
     private var isGlobalChat: Bool {
-        (card.workspaceId ?? "").isEmpty && newTaskWorkspaceId == nil
+        card.isGlobalScope && newTaskWorkspaceId == nil
     }
     @State private var selectedProvider: String = "claude"
     @State private var selectedModelId: String?

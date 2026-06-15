@@ -1072,7 +1072,7 @@ struct ThreadEmptyWelcomeCanvas: View {
     @Binding var draft: String
     @State private var draftProvider = ""
 
-    private var isGlobal: Bool { (card.workspaceId ?? "").isEmpty }
+    private var isGlobal: Bool { card.isGlobalScope }
     private var canSwitchPrimaryWorkspace: Bool { !isGlobal && !model.workspaces.isEmpty }
     private var accent: Color {
         if card.isEnsemble { return TWTheme.chroma2 }
