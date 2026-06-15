@@ -15145,21 +15145,26 @@ if (isGeminiMcpBridgeProcess) {
       }
     }
 
-    const pushRemoteThreadSnapshot = (
+    const buildRemoteThreadSnapshotPayload = (
       chat: ChatRecord,
       workspaceId: string,
       limit = 40,
       beforeRowId?: string
-    ): boolean => {
+    ):
+      | {
+          canonical: string
+          generatedAt: string
+          payload: Record<string, unknown>
+          runId?: string
+        }
+      | null => {
       // Scope-global chats (no workspace) ride the reserved 'global' scope
       // — without this mapping their snapshot pushes silently no-oped and
       // the phone sat on the hydration ticker forever.
       const canonical =
         canonicalRemoteWorkspaceId(chat.workspaceId) ??
         (!chat.workspaceId || chat.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
-      if (!canonical || canonical !== workspaceId) return false
-      const broadcaster = bridgeBroadcasterRef
-      if (!broadcaster) return false
+      if (!canonical || canonical !== workspaceId) return null
       const clamped = Math.max(1, Math.min(100, Math.floor(limit)))
       const generatedAt = new Date().toISOString()
       const costDisplay = remoteCostDisplayOptions()
@@ -15181,21 +15186,39 @@ if (isGeminiMcpBridgeProcess) {
             : undefined
         )
       })
+      return {
+        canonical,
+        generatedAt,
+        payload: {
+          ...threadSnapshot,
+          taskId: chat.appChatId,
+          workspaceId: canonical,
+          provider: chat.provider
+        } as unknown as Record<string, unknown>,
+        runId: threadSnapshot.runSummary?.runId
+      }
+    }
+
+    const pushRemoteThreadSnapshot = (
+      chat: ChatRecord,
+      workspaceId: string,
+      limit = 40,
+      beforeRowId?: string
+    ): boolean => {
+      const projected = buildRemoteThreadSnapshotPayload(chat, workspaceId, limit, beforeRowId)
+      if (!projected) return false
+      const broadcaster = bridgeBroadcasterRef
+      if (!broadcaster) return false
       broadcaster.broadcastRemoteProjection(
         buildRemoteProjectionEnvelope({
           kind: 'threadSnapshot',
-          payload: {
-            ...threadSnapshot,
-            taskId: chat.appChatId,
-            workspaceId: canonical,
-            provider: chat.provider
-          },
-          generatedAt,
-          workspaceId: canonical,
+          payload: projected.payload,
+          generatedAt: projected.generatedAt,
+          workspaceId: projected.canonical,
           workspacePath: chat.workspacePath,
           threadId: chat.appChatId,
-          runId: threadSnapshot.runSummary?.runId,
-          envelopeId: `remote-thread:${chat.appChatId}:push:${generatedAt}`
+          runId: projected.runId,
+          envelopeId: `remote-thread:${chat.appChatId}:push:${projected.generatedAt}`
         })
       )
       return true
@@ -16306,17 +16329,28 @@ if (isGeminiMcpBridgeProcess) {
           if (!chatMatchesRemoteScope(chat, action.workspaceId)) {
             return { ok: false, reason: 'Thread does not belong to the requested workspace' }
           }
-          if (
-            !pushRemoteThreadSnapshot(
-              chat,
-              action.workspaceId,
-              action.limit ?? 40,
-              action.beforeRowId
-            )
-          ) {
-            return { ok: false, reason: 'No connected device to push the snapshot to' }
+          const projected = buildRemoteThreadSnapshotPayload(
+            chat,
+            action.workspaceId,
+            action.limit ?? 40,
+            action.beforeRowId
+          )
+          if (!projected) {
+            return { ok: false, reason: 'Thread does not belong to the requested workspace' }
           }
-          return { ok: true }
+          bridgeBroadcasterRef?.broadcastRemoteProjection(
+            buildRemoteProjectionEnvelope({
+              kind: 'threadSnapshot',
+              payload: projected.payload,
+              generatedAt: projected.generatedAt,
+              workspaceId: projected.canonical,
+              workspacePath: chat.workspacePath,
+              threadId: chat.appChatId,
+              runId: projected.runId,
+              envelopeId: `remote-thread:${chat.appChatId}:request:${projected.generatedAt}`
+            })
+          )
+          return { ok: true, thread: projected.payload }
         },
         workspaceFileListFn: async (action) => {
           const workspace = AppStore.getWorkspaces().find((entry) => entry.id === action.workspaceId)

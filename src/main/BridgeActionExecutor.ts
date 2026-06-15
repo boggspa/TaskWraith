@@ -435,12 +435,12 @@ export interface MainProcessActionExecutorDependencies {
   /** Callback the executor uses to register an iOS device's APNs token.
    * The caller in main/index.ts forwards to `BridgeApnsTokenStore.upsert`.
    * Returns true on success, false (with a reason) on validation failure. */
-  /** Callback that projects a bounded transcript window for one thread
-   * and pushes it to the paired device as a single threadSnapshot
-   * envelope (`bridge.broadcastRemoteProjection`). The ack only reports
-   * ok/reason — the snapshot itself travels on the broadcast channel. */
+  /** Callback that projects a bounded transcript window for one thread.
+   * The snapshot is returned in the ack and may also be pushed on the
+   * broadcast channel for older clients. */
   threadSnapshotRequestFn?: (action: BridgeThreadSnapshotRequestAction) => Promise<{
     ok: boolean
+    thread?: Record<string, unknown>
     reason?: string
   }>
   workspaceFileListFn?: (action: BridgeWorkspaceFileListAction) => Promise<{
@@ -677,7 +677,11 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
     try {
       const result = await this.deps.threadSnapshotRequestFn(action)
       return result.ok
-        ? { executed: true, message: `Thread snapshot pushed for ${action.threadId}` }
+        ? {
+            executed: true,
+            message: `Thread snapshot loaded for ${action.threadId}`,
+            data: result.thread ? { thread: result.thread, threadId: action.threadId } : undefined
+          }
         : {
             executed: false,
             message: `Thread snapshot unavailable${result.reason ? `: ${result.reason}` : ''}`

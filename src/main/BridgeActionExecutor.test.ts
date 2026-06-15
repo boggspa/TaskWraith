@@ -14,6 +14,7 @@ import type {
   BridgeQuestionReplyAction,
   BridgeRegisterApnsTokenAction,
   BridgeSetYoloModeAction,
+  BridgeThreadSnapshotRequestAction,
   BridgeWorkspaceFileListAction,
   BridgeWorkspaceFileReadAction,
   BridgeWorkspaceFileWriteAction,
@@ -115,6 +116,13 @@ const sample = {
     workspaceId: 'ws-1',
     enabled: true
   } satisfies BridgeSetYoloModeAction,
+  threadSnapshotRequest: {
+    kind: 'threadSnapshotRequest',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    limit: 40,
+    beforeRowId: 'm7'
+  } satisfies BridgeThreadSnapshotRequestAction,
   goalUpdate: {
     kind: 'goalUpdate',
     workspaceId: 'ws-1',
@@ -241,6 +249,38 @@ describe('NoopActionExecutor', () => {
 })
 
 describe('MainProcessActionExecutor workspace file actions', () => {
+  it('returns thread snapshots in the ack payload', async () => {
+    const threadSnapshotRequestFn = vi.fn().mockResolvedValue({
+      ok: true,
+      thread: {
+        threadId: 't-1',
+        taskId: 't-1',
+        rows: [{ id: 'm4', role: 'assistant', preview: 'older' }],
+        windowStartIndex: 4,
+        hasMoreAbove: true
+      }
+    })
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      threadSnapshotRequestFn
+    })
+
+    await expect(
+      executor.executeThreadSnapshotRequest(sample.threadSnapshotRequest)
+    ).resolves.toMatchObject({
+      executed: true,
+      data: {
+        threadId: 't-1',
+        thread: {
+          threadId: 't-1',
+          rows: [{ id: 'm4' }],
+          windowStartIndex: 4
+        }
+      }
+    })
+    expect(threadSnapshotRequestFn).toHaveBeenCalledWith(sample.threadSnapshotRequest)
+  })
+
   it('returns list/read/write data from wired callbacks', async () => {
     const executor = new MainProcessActionExecutor({
       cancelRunFn: vi.fn(),

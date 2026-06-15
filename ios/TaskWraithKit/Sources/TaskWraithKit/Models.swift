@@ -273,6 +273,7 @@ public struct BridgeActionAckData: Codable, Sendable {
     public let chatKind: String?
     public let rowId: String?
     public let row: RemoteThreadSnapshot.Row?
+    public let thread: RemoteThreadSnapshot?
     public let entries: [WorkspaceFileEntry]?
     public let truncated: Bool?
     public let file: WorkspaceFileReadResult?
@@ -1052,10 +1053,6 @@ public enum BridgeAction {
         return encode(payload)
     }
 
-    /// Request a bounded transcript window for one thread. Read-only
-    /// (capability `monitor`); the snapshot arrives as a single
-    /// `bridge.broadcastRemoteProjection` threadSnapshot envelope, the ack
-    /// only reports ok/denied.
     /// Fetch a longer preview for one clipped transcript row.
     public static func threadRowExpand(
         workspaceId: String, threadId: String, rowId: String, maxChars: Int = 32000,
@@ -1068,6 +1065,9 @@ public enum BridgeAction {
         ])
     }
 
+    /// Request a bounded transcript window for one thread. Read-only
+    /// (capability `monitor`); the snapshot is returned in the ACK payload
+    /// and may also arrive as a broadcast projection.
     public static func threadSnapshotRequest(
         workspaceId: String, threadId: String, limit: Int = 40, beforeRowId: String? = nil,
         actionId: String = UUID().uuidString

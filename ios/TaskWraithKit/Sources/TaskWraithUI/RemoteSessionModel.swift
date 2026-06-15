@@ -1666,19 +1666,26 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     public func requestThreadSnapshot(_ threadId: String, limit: Int = 40, beforeRowId: String? = nil) {
-        guard let client else { return }
         guard let workspaceId = remoteScopeForThread(threadId)
         else { return }
         let params = BridgeAction.threadSnapshotRequest(
             workspaceId: workspaceId, threadId: threadId, limit: limit, beforeRowId: beforeRowId)
-        Task { _ = try? await client.request("bridge.requestActionAck", params: params) }
+        Task {
+            do {
+                let actionAck = try await self.requestFileAction(params)
+                if let thread = actionAck.data?.thread {
+                    self.mergeThreadSnapshot(thread, key: thread.taskId ?? thread.threadId ?? threadId)
+                }
+            } catch {
+                self.lastActionMessage = String(describing: error)
+            }
+        }
     }
 
     public func requestPreviousThreadRows(_ threadId: String, limit: Int = 40) {
         guard !loadingPreviousThreadRows.contains(threadId),
             let firstRowId = threadSnapshots[threadId]?.rows?.first?.id
         else { return }
-        guard let client else { return }
         guard let workspaceId = remoteScopeForThread(threadId)
         else { return }
         loadingPreviousThreadRows.insert(threadId)
@@ -1686,12 +1693,14 @@ public final class RemoteSessionModel: ObservableObject {
             workspaceId: workspaceId, threadId: threadId, limit: limit, beforeRowId: firstRowId)
         Task {
             do {
-                _ = try await client.request(
-                    "bridge.requestActionAck", params: params, timeoutMs: 12_000)
+                let actionAck = try await self.requestFileAction(params)
+                if let thread = actionAck.data?.thread {
+                    self.mergeThreadSnapshot(thread, key: thread.taskId ?? thread.threadId ?? threadId)
+                }
             } catch {
-                await MainActor.run { self.lastActionMessage = String(describing: error) }
+                self.lastActionMessage = String(describing: error)
             }
-            await MainActor.run { self.loadingPreviousThreadRows.remove(threadId) }
+            self.loadingPreviousThreadRows.remove(threadId)
         }
     }
 
