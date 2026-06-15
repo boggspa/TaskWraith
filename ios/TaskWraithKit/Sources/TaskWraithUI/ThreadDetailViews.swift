@@ -8,6 +8,7 @@
 // advanced affordances will live. Pure SwiftUI so `swift build` compile-checks
 // on macOS; QR camera scanning is the one `#if os(iOS)` extra.
 
+import Foundation
 import SwiftUI
 import TaskWraithKit
 
@@ -24,8 +25,10 @@ struct ThreadDetailView: View {
     /// moment the user drags, re-enabled by the jump-to-latest pill.
     @State private var autoFollow = true
     @State private var keyboardVisible = false
-    /// Secondary workspace granted to subsequent runs (rail picker).
-    @State private var secondaryWorkspaceId: String? = nil
+    /// Secondary workspace granted to subsequent runs (rail picker), keyed by
+    /// thread so navigation away and back does not drop an unsent choice.
+    @SceneStorage("taskwraith.secondaryWorkspaceSelections")
+    private var secondaryWorkspaceSelectionStore = "{}"
 
     private var card: RemoteTaskCard? { model.taskCards.first { $0.id == taskId } }
     private var snapshot: RemoteThreadSnapshot? { model.threadSnapshots[taskId] }
@@ -63,6 +66,51 @@ struct ThreadDetailView: View {
         if liveProvider == thinkingProvider { return thinkingModel }
         if snapshot?.runSummary?.provider == liveProvider { return snapshot?.runSummary?.model }
         return nil
+    }
+
+    private var secondaryWorkspaceSelections: [String: String] {
+        get {
+            guard let data = secondaryWorkspaceSelectionStore.data(using: .utf8),
+                let selections = try? JSONDecoder().decode([String: String].self, from: data)
+            else {
+                return [:]
+            }
+            return selections
+        }
+        nonmutating set {
+            guard let data = try? JSONEncoder().encode(newValue),
+                let encoded = String(data: data, encoding: .utf8)
+            else {
+                return
+            }
+            secondaryWorkspaceSelectionStore = encoded
+        }
+    }
+
+    private var secondaryWorkspaceId: String? {
+        get {
+            guard let selectedId = secondaryWorkspaceSelections[taskId], !selectedId.isEmpty else {
+                return nil
+            }
+            if selectedId == card?.workspaceId { return nil }
+            return selectedId
+        }
+        nonmutating set {
+            var selections = secondaryWorkspaceSelections
+            let trimmedId = newValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmedId, !trimmedId.isEmpty {
+                selections[taskId] = trimmedId
+            } else {
+                selections.removeValue(forKey: taskId)
+            }
+            secondaryWorkspaceSelections = selections
+        }
+    }
+
+    private var secondaryWorkspaceBinding: Binding<String?> {
+        Binding(
+            get: { secondaryWorkspaceId },
+            set: { secondaryWorkspaceId = $0 })
     }
 
     private struct ComposerAdditionalWorkspaceRow: Identifiable {
@@ -770,7 +818,7 @@ struct ThreadDetailView: View {
                                     },
                                     canWrite: model.workspaceCanEditFiles(workspaceId),
                                     onRemove: workspaceId == secondaryWorkspaceId
-                                        ? { secondaryWorkspaceId = nil } : nil
+                                        ? { secondaryWorkspaceBinding.wrappedValue = nil } : nil
                                 ) { openComposerDiff(workspaceId: workspaceId) }
                                 Rectangle().fill(TWTheme.border).frame(height: 1)
                             }
@@ -798,7 +846,7 @@ struct ThreadDetailView: View {
                                 workspaceName: model.workspaceName(for: secondaryWorkspaceId),
                                 gitSnapshot: secondaryGitSnapshot,
                                 canWrite: model.workspaceCanEditFiles(secondaryWorkspaceId),
-                                onRemove: { self.secondaryWorkspaceId = nil }
+                                onRemove: { secondaryWorkspaceBinding.wrappedValue = nil }
                             ) { openComposerDiff(workspaceId: secondaryWorkspaceId) }
                             Rectangle().fill(TWTheme.border).frame(height: 1)
                         }
@@ -856,7 +904,7 @@ struct ThreadDetailView: View {
                                 (id: $0.id, name: $0.displayName)
                             },
                             primaryWorkspaceId: card.workspaceId,
-                            secondaryWorkspaceId: $secondaryWorkspaceId,
+                            secondaryWorkspaceId: secondaryWorkspaceBinding,
                             activeGoal: card.activeGoal,
                             onGoalUpdate: { op, objective, reason in
                                 model.updateGoal(card, op: op, objective: objective, reason: reason)
