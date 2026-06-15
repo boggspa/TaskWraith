@@ -51,7 +51,6 @@ struct Composer: View {
     @State private var selectedProvider: String = "claude"
     @State private var selectedModelId: String?
     @State private var selectedReasoningEffort: String?
-    @State private var didSeedProviderSelection = false
     #if canImport(UIKit)
         @State private var pickedItems: [PhotosPickerItem] = []
         @State private var attachments: [(name: String, image: UIImage)] = []
@@ -155,20 +154,30 @@ struct Composer: View {
             }
             composerInputBody
         }
-        .onAppear {
-            seedProviderSelectionIfNeeded()
+        // Re-bind the picker to the LOADED thread on first appear AND on every
+        // thread switch. SwiftUI reuses this Composer instance across threads on
+        // iPhone (the compact nav destination has no per-thread `.id`), so a
+        // one-shot seed would leak thread A's model/reasoning into thread B.
+        .onChange(of: card.id, initial: true) {
+            resyncPickerToThread()
         }
         .onChange(of: selectedProvider) { _, newValue in
             providerEcho?.wrappedValue = newValue
         }
         .onChange(of: runModel) { _, newValue in
-            // The on-demand snapshot usually lands AFTER the composer
-            // appears — without this the pill stayed on the catalog
-            // default for every existing chat (the Mac inherits the
-            // chat's model server-side regardless; this keeps the pill
-            // honest). User picks are never overwritten.
+            // The on-demand snapshot usually lands AFTER the composer appears
+            // (same thread, so the resync above does not re-fire). Backfill the
+            // pill with the thread's actual run model when we don't yet have a
+            // selection. User picks are never overwritten.
             if selectedModelId == nil, let newValue {
                 selectedModelId = newValue
+            }
+        }
+        .onChange(of: cardReasoningEffort) { _, newValue in
+            // Same late-snapshot backfill for reasoning effort, which otherwise
+            // has no recovery path once the per-thread resync has run.
+            if selectedReasoningEffort == nil, let newValue {
+                selectedReasoningEffort = newValue
             }
         }
     }
@@ -399,13 +408,42 @@ struct Composer: View {
         text = String(text[..<at]) + candidate.insertText + " "
     }
 
-    private func seedProviderSelectionIfNeeded() {
-        guard !didSeedProviderSelection else { return }
+    /// True when `modelId` is a real model for `provider` in the live catalog.
+    /// When the catalog hasn't arrived yet we can't disprove validity, so we
+    /// treat it as valid rather than dropping a legitimate saved selection
+    /// during the catalog-load window.
+    private func isModelValidForProvider(_ modelId: String, provider: String) -> Bool {
+        let key = provider.lowercased()
+        guard let models = model.providerModels[key] ?? model.providerModels[provider],
+            !models.isEmpty
+        else { return true }
+        return models.contains { $0.id == modelId }
+    }
+
+    /// The model the picker should show for the loaded thread, mirroring the
+    /// desktop precedence (App.tsx `getChatComposerSelection`): the thread's
+    /// saved pick only when it's a valid model for this provider (custom models
+    /// are always honored), else the thread's actual last-run model, else nil
+    /// (→ catalog default). A stale / cross-provider `selectedModelType` no
+    /// longer masks the model the thread actually ran with.
+    private func resolvedThreadModelId() -> String? {
+        let provider = card.provider ?? selectedProvider
+        if nonEmpty(card.selectedModelType) == "custom" {
+            return nonEmpty(card.customModel) ?? runModel
+        }
+        if let saved = cardSelectedModelId, isModelValidForProvider(saved, provider: provider) {
+            return saved
+        }
+        return runModel
+    }
+
+    /// Re-bind the picker state to the currently loaded thread. Idempotent and
+    /// safe to run on first appear and on every thread change.
+    private func resyncPickerToThread() {
         selectedProvider = card.provider ?? selectedProvider
-        selectedModelId = cardSelectedModelId ?? runModel
+        selectedModelId = resolvedThreadModelId()
         selectedReasoningEffort = cardReasoningEffort
         providerEcho?.wrappedValue = selectedProvider
-        didSeedProviderSelection = true
     }
 
     private func nonEmpty(_ value: String?) -> String? {
