@@ -1,5 +1,5 @@
 export const IOS_REMOTE_ENABLED =
-  typeof __IOS_REMOTE_TRUE__ !== 'undefined' ? __IOS_REMOTE_TRUE__ : false
+  typeof __IOS_REMOTE_TRUE__ !== 'undefined' ? __IOS_REMOTE_TRUE__ : true
 
 export const CHANNELS_GATEWAY_ENABLED =
   typeof __CHANNELS_GATEWAY_ENABLED__ !== 'undefined'

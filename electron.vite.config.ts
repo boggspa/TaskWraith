@@ -7,9 +7,15 @@ export default defineConfig(({ mode }) => {
   // Load `.env` (gitignored) so build-time secrets stay out of source/git. The
   // empty-prefix arg loads non-`VITE_`-prefixed keys too.
   const env = loadEnv(mode, process.cwd(), '')
-  const iosRemoteEnabled = process.env.IOS_REMOTE_TRUE === '1' || env.IOS_REMOTE_TRUE === '1'
+  // iOS remote is no longer hidden behind a positive build flag. Keep
+  // IOS_REMOTE_TRUE=0/false as an emergency force-off override for local builds.
+  const iosRemoteOverride = String(process.env.IOS_REMOTE_TRUE ?? env.IOS_REMOTE_TRUE ?? '')
+    .trim()
+    .toLowerCase()
+  const iosRemoteEnabled = iosRemoteOverride !== '0' && iosRemoteOverride !== 'false'
+  const channelGatewayEnabled =
+    process.env.IOS_CHANNELS_TRUE === '1' || env.IOS_CHANNELS_TRUE === '1'
   const debugBuild = process.env.TASKWRAITH_DEBUG_BUILD === '1' || env.TASKWRAITH_DEBUG_BUILD === '1'
-  const channelGatewayEnabled = mode === 'development' || debugBuild
   // Gemini Google-login refresh needs the maintainer's OAuth client secret.
   // It must NEVER bake into a distributed (production/notarized) build — a
   // security review found the literal baked into the 1.4.9 app.asar. Bake it

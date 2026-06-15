@@ -5,6 +5,11 @@ agents against developer workspaces. It provides a macOS-focused Electron UI for
 provider CLIs and SDK-backed workflows while keeping execution, history, and
 workspace state on the user's machine.
 
+> **iOS companion status:** TaskWraith for iPhone/iPad is pending
+> TestFlight/App Store review. Until then, the iOS companion is provisionally
+> available from this repository for testers who can sign and provision the app
+> with their own Apple Developer team.
+
 <table>
   <tr>
     <td align="center" valign="top" width="33%">

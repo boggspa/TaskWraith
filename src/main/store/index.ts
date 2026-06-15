@@ -451,6 +451,7 @@ const defaultSettings: AppSettings = {
   geminiMcpBridgeLastStatus: undefined,
   approvalModeElevationAcknowledgements: {},
   bridgeDaemonEnabled: true,
+  iosRemoteEnabled: true,
   messageBridgeEnabled: false,
   messageBridgePollIntervalMs: 30_000,
   codexSandboxFallback: 'ask_rerun',

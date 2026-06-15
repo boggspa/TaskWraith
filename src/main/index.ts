@@ -17226,12 +17226,11 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     // T1/T2 of the iOS transport rebuild: the WebSocket-relay + E2EE runtime.
-    // Dark by default — constructed ONLY when IOS_REMOTE_TRUE=1 and a relay
-    // URL are present, so the shipping build keeps the pairing IPC stubs'
-    // behavior (handlers below return the "not available" error) and
-    // `bridgeBroadcaster` stays null (mutation hooks no-op). The runtime owns
-    // its own BridgeActionRouter instance with the SAME policy spine
-    // (allowlist + audit + executor) the daemon path used.
+    // Available by default for pre-TestFlight/App-Store device provisioning;
+    // users can still disable it in Settings → Devices or with
+    // IOS_REMOTE_TRUE=0/false for local force-off builds. The runtime owns its
+    // own BridgeActionRouter instance with the SAME policy spine (allowlist +
+    // audit + executor) the daemon path used.
     // Mutable: the embedded-relay path assigns it asynchronously once the
     // relay binds. The pairing IPC handlers + will-quit read it at call time.
     let iosRemoteRuntime: RemoteBridgeRuntime | null = null
@@ -18220,17 +18219,16 @@ if (isGeminiMcpBridgeProcess) {
         if (!iosRemoteRuntime) {
           return {
             ok: false,
-            error: 'Remote iOS pairing is off — enable it in Settings → Devices (or set IOS_REMOTE_TRUE=1), then restart.'
+            error: 'Remote iOS pairing is off — enable it in Settings → Devices, then restart.'
           }
         }
         return iosRemoteRuntime.finalizePairing(pairingSessionID, Boolean(userConfirmed))
       }
     )
 
-    // Remote iOS pairing rides the taskwraith-e2ee-v1 relay transport. Gated
-    // dark (IOS_REMOTE_TRUE=1 + TASKWRAITH_RELAY_URL) — without the gate the
-    // handlers keep the stub behavior so older renderer surfaces fail
-    // gracefully. Response shape is locked to PairingPage:
+    // Remote iOS pairing rides the taskwraith-e2ee-v1 relay transport. The
+    // bridge is available by default; force-off builds keep the stub behavior
+    // so renderer surfaces fail gracefully. Response shape is locked to PairingPage:
     // `{ ok, bootstrap: { pairingSessionID, bootstrapPayload } }`.
     ipcMain.handle(
       'bridge-begin-pairing',
@@ -18320,7 +18318,7 @@ if (isGeminiMcpBridgeProcess) {
       if (!iosRemoteRuntime) {
         return {
           ok: false,
-          error: 'Remote iOS pairing is off — enable it in Settings → Devices (or set IOS_REMOTE_TRUE=1), then restart.'
+          error: 'Remote iOS pairing is off — enable it in Settings → Devices, then restart.'
         }
       }
       const target = iosRemoteRuntime

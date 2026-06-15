@@ -67,8 +67,8 @@ cleartext `ws://` to a LAN/Tailscale relay. Checklist:
 
 1. Start a relay: `cd relay && node --import tsx src/server.ts` (or any host the
    phone can reach — Tailscale works well).
-2. Launch TaskWraith on the Mac with the transport enabled:
-   `IOS_REMOTE_TRUE=1 TASKWRAITH_RELAY_URL=ws://<relay-host>:8787 npm run dev`
+2. Launch TaskWraith on the Mac. The iOS remote bridge is enabled by default:
+   `TASKWRAITH_RELAY_URL=ws://<relay-host>:8787 npm run dev`
 3. Open **Remote pairing** on the Mac. It shows a QR + a copyable pairing-code
    JSON, and a 6-digit confirm code once the phone connects.
 4. In the app, paste the pairing-code JSON and tap **Pair**. Compare the 6-digit
