@@ -31,7 +31,8 @@ import type {
   UserBubbleColor,
   VisualEffectStyle,
   WorkspaceRecord,
-  PinnedMessageGroup
+  PinnedMessageGroup,
+  UsageRecord
 } from '../../../main/store/types'
 import { resolveGeminiRuntimeStatus } from '../lib/GeminiRuntimeStatus'
 import { humaniseModelId } from '../lib/modelDisplayName'
@@ -86,6 +87,9 @@ import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { UpdateStatusPane } from './UpdateStatusPane'
 import { ModelUsageCard } from './ModelUsageCard'
 import { ModelUsageSettingsTable } from './ModelUsageSettingsTable'
+import { TokenUsageChart } from './TokenUsageChart'
+import { UsageHeatmap } from './UsageHeatmap'
+import { WorkspaceActivityHeatmap } from './WorkspaceActivityHeatmap'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
@@ -320,6 +324,7 @@ interface SettingsPanelProps {
    * headline-tiles strip above it. Optional so test mounts can omit.
    */
   usageSummary?: ModelUsageAggregate[]
+  usageRecords?: UsageRecord[]
   pinnedMessageGroups?: PinnedMessageGroup[]
   onOpenPinnedMessage?: (chatId: string, messageId: string) => void
   /**
@@ -1690,6 +1695,7 @@ export function SettingsPanel({
   onRemoveWorkspace,
   onTogglePinWorkspace,
   usageSummary = [],
+  usageRecords = [],
   pinnedMessageGroups = [],
   onOpenPinnedMessage
 }: SettingsPanelProps): React.JSX.Element {
@@ -6065,6 +6071,50 @@ export function SettingsPanel({
                     </span>
                   </div>
                 )}
+
+                <section
+                  className="settings-model-usage-activity-stack"
+                  aria-label="90-day activity and token usage"
+                >
+                  <div className="settings-model-usage-activity-header">
+                    <span>90-day activity</span>
+                    <span>Workspace · TaskWraith · External</span>
+                  </div>
+                  <div className="settings-model-usage-activity-list">
+                    {currentWorkspace?.path && (
+                      <WorkspaceActivityHeatmap
+                        workspacePath={currentWorkspace.path}
+                        dayCount={90}
+                        className="usage-heatmap--settings-activity"
+                      />
+                    )}
+                    <UsageHeatmap
+                      dayCount={90}
+                      title="TaskWraith Activity"
+                      showProviderFilter
+                      className="usage-heatmap--settings-activity"
+                    />
+                    <UsageHeatmap
+                      dayCount={90}
+                      usageSource="external"
+                      title="External Activity"
+                      showProviderFilter
+                      className="usage-heatmap--settings-activity"
+                    />
+                    <TokenUsageChart
+                      title="TaskWraith Tokens"
+                      records={usageRecords}
+                      dayCount={90}
+                      className="token-usage-chart--settings"
+                    />
+                    <TokenUsageChart
+                      title="External Tokens"
+                      source="external"
+                      dayCount={90}
+                      className="token-usage-chart--settings"
+                    />
+                  </div>
+                </section>
               </div>
             )
           })()}

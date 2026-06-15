@@ -193,6 +193,7 @@ import { decideApprovalElevation } from './lib/approvalElevation'
 import { UsageHeatmap } from './components/UsageHeatmap'
 import { WorkspaceActivityHeatmap } from './components/WorkspaceActivityHeatmap'
 import { WelcomeHeatmaps, type WelcomeHeatmapSlot } from './components/WelcomeHeatmaps'
+import { TokenUsageChart } from './components/TokenUsageChart'
 import { useAppearance } from './hooks/useAppearance'
 import { usePanelPresence } from './hooks/usePanelPresence'
 import { useExternalPathRepoMetadata } from './hooks/useExternalPathRepoMetadata'
@@ -15684,8 +15685,7 @@ function App(): React.JSX.Element {
       : ''
   const shouldShowWelcomeStandaloneHeatmaps =
     Boolean(welcomeWorkspaceActivityPath) ||
-    (shouldShowWelcomeUsageDashboard &&
-      (welcomeTaskWraithHeatmapEnabled || welcomeExternalHeatmapEnabled))
+    shouldShowWelcomeUsageDashboard
   // Welcome standalone activity panels now always use the uncluttered cycle
   // presentation. Older stored `welcomeHeatmapPrefs.layout` values are ignored
   // so a legacy "stacked" setting cannot crowd the new-chat screen.
@@ -15729,6 +15729,32 @@ function App(): React.JSX.Element {
           title="External Activity"
           showProviderFilter
           className="usage-heatmap--welcome-standalone"
+        />
+      )
+    })
+  }
+  if (shouldShowWelcomeUsageDashboard) {
+    welcomeHeatmapSlots.push({
+      key: 'taskwraith-tokens',
+      node: (
+        <TokenUsageChart
+          title="TaskWraith Tokens"
+          records={usageRecords}
+          dayCount={90}
+          refreshKey={welcomeHeatmapRefreshKey}
+          className="token-usage-chart--welcome"
+        />
+      )
+    })
+    welcomeHeatmapSlots.push({
+      key: 'external-tokens',
+      node: (
+        <TokenUsageChart
+          title="External Tokens"
+          source="external"
+          dayCount={90}
+          refreshKey={welcomeHeatmapRefreshKey}
+          className="token-usage-chart--welcome"
         />
       )
     })
@@ -16972,6 +16998,7 @@ function App(): React.JSX.Element {
               }}
               onTogglePinWorkspace={handleTogglePinWorkspace}
               usageSummary={usageSummary}
+              usageRecords={usageRecords}
               pinnedMessageGroups={settingsPinnedMessageGroups}
               onOpenPinnedMessage={(chatId, messageId) =>
                 void handleOpenPinnedMessageFromSettings(chatId, messageId)

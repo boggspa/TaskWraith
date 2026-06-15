@@ -571,6 +571,47 @@
   border-radius: 14px;
 }
 
+.settings-model-usage-activity-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.settings-model-usage-activity-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 650;
+}
+
+.settings-model-usage-activity-header span:last-child {
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 560;
+}
+
+.settings-model-usage-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.usage-heatmap--settings-activity {
+  margin-top: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.usage-heatmap--settings-activity .usage-heatmap-grid {
+  min-height: 92px;
+}
+
 .settings-pinned-messages,
 .settings-pinned-workspace-list,
 .settings-pinned-chat-list,
@@ -974,7 +1015,8 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .settings-model-comparisons-header,
-  .settings-provider-telemetry-header {
+  .settings-provider-telemetry-header,
+  .settings-model-usage-activity-header {
     align-items: flex-start;
     flex-direction: column;
   }
