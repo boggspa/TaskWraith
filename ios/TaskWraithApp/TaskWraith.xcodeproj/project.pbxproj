@@ -15,10 +15,10 @@
 
 /* Begin PBXFileReference section */
 		2F7552D09A7EE4DFE7C62B6F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		3370BF58F95DC204BE950651 /* TaskWraith.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TaskWraith.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3370BF58F95DC204BE950651 /* TaskWraith.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TaskWraith.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		37C10FF27BC422B0B9C03EBE /* TaskWraithApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithApp.swift; sourceTree = "<group>"; };
 		5829A7D0E9EA0BDA0DEB9BE3 /* TaskWraithKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TaskWraithKit; path = ../TaskWraithKit; sourceTree = SOURCE_ROOT; };
-		793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -159,6 +159,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8CZML8FK2D;
 				INFOPLIST_FILE = Generated/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -299,6 +300,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8CZML8FK2D;
 				INFOPLIST_FILE = Generated/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
