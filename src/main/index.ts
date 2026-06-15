@@ -16550,8 +16550,9 @@ if (isGeminiMcpBridgeProcess) {
           // run path, so a duck-typed shim is sufficient.
           const fakeEvent = { sender } as unknown as Electron.IpcMainInvokeEvent
           const provider = assertProviderId(action.provider)
-          // Secondary-workspace grants: each extra id must be a registered,
-          // ALLOWLISTED workspace (the router only gates the primary).
+          // Secondary-workspace grants become write-capable external path
+          // grants, so each extra id must pass the same fine-grained write
+          // policy the router applies to primary workspace mutations.
           const extraWorkspacePaths: string[] = []
           for (const extraId of action.extraWorkspaceIds ?? []) {
             const extra = AppStore.getWorkspaces().find((w) => w.id === extraId)
@@ -16562,11 +16563,17 @@ if (isGeminiMcpBridgeProcess) {
                 reason: `Secondary workspace id "${extraId}" is not registered`
               }
             }
-            if (!remoteWorkspaceIsVisible(extra.id)) {
+            const extraDecision = bridgeAllowlist.evaluate({
+              workspaceId: extra.id,
+              provider,
+              approvalMode: action.approvalMode,
+              capability: 'fileWrite'
+            })
+            if (!extraDecision.allowed) {
               return {
                 dispatched: false,
                 appRunId: null,
-                reason: `Secondary workspace "${extra.displayName}" is not allowlisted for this device`
+                reason: `Secondary workspace "${extra.displayName}" is not write-allowlisted for this device: ${extraDecision.reason}`
               }
             }
             if (extra.path !== workspaceRecord?.path) extraWorkspacePaths.push(extra.path)
