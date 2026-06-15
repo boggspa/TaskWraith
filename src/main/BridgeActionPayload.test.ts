@@ -222,13 +222,15 @@ describe('decodeBridgeActionPayload', () => {
         actionId: 'a-snap-1',
         workspaceId: 'ws-1',
         threadId: 't-1',
-        limit: 40
+        limit: 40,
+        beforeRowId: 'm7'
       })
       const { payload } = decodeBridgeActionPayload(wire)
       expect(payload.kind).toBe('threadSnapshotRequest')
       if (payload.kind === 'threadSnapshotRequest') {
         expect(payload.threadId).toBe('t-1')
         expect(payload.limit).toBe(40)
+        expect(payload.beforeRowId).toBe('m7')
       }
       expect(workspaceIdFromPayload(payload)).toBe('ws-1')
       expect(payloadRequiresWorkspaceGating(payload)).toBe(true)

@@ -697,7 +697,41 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
     public let blackboardEntries: [BlackboardEntry]?
     /// Per-run summaries (oldest→newest) — Task-complete card data.
     public let runSummaries: [RunSummary]?
+    public let windowStartIndex: Int?
     public let hasMoreAbove: Bool?
+    public let hasMoreBelow: Bool?
+
+    public init(
+        threadId: String? = nil,
+        taskId: String? = nil,
+        workspaceId: String? = nil,
+        provider: String? = nil,
+        rows: [Row]? = nil,
+        totalRows: Int? = nil,
+        runSummary: RunSummary? = nil,
+        notes: String? = nil,
+        pinnedRows: [Row]? = nil,
+        blackboardEntries: [BlackboardEntry]? = nil,
+        runSummaries: [RunSummary]? = nil,
+        windowStartIndex: Int? = nil,
+        hasMoreAbove: Bool? = nil,
+        hasMoreBelow: Bool? = nil
+    ) {
+        self.threadId = threadId
+        self.taskId = taskId
+        self.workspaceId = workspaceId
+        self.provider = provider
+        self.rows = rows
+        self.totalRows = totalRows
+        self.runSummary = runSummary
+        self.notes = notes
+        self.pinnedRows = pinnedRows
+        self.blackboardEntries = blackboardEntries
+        self.runSummaries = runSummaries
+        self.windowStartIndex = windowStartIndex
+        self.hasMoreAbove = hasMoreAbove
+        self.hasMoreBelow = hasMoreBelow
+    }
 }
 
 // ── Actions (iPhone → Mac) ────────────────────────────────────────────────────
@@ -1035,13 +1069,15 @@ public enum BridgeAction {
     }
 
     public static func threadSnapshotRequest(
-        workspaceId: String, threadId: String, limit: Int = 40,
+        workspaceId: String, threadId: String, limit: Int = 40, beforeRowId: String? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
-        encode([
+        var payload: [String: Any] = [
             "kind": "threadSnapshotRequest", "actionId": actionId,
             "workspaceId": workspaceId, "threadId": threadId, "limit": limit,
-        ])
+        ]
+        if let beforeRowId { payload["beforeRowId"] = beforeRowId }
+        return encode(payload)
     }
 
     public static func workspaceFileList(

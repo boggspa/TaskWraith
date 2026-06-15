@@ -187,7 +187,8 @@ import {
   REMOTE_IOS_PREVIEW_MAX,
   REMOTE_IOS_ROW_EXPAND_MAX,
   remoteSpeakerForMessage,
-  type RemoteCostDisplayOptions
+  type RemoteCostDisplayOptions,
+  type RemoteProjectionMode
 } from './RemoteThreadProjection'
 import { ensembleSpeakerForMessage } from './EnsemblePrompt'
 import { extractThreadId } from './BridgeRunEventSink'
@@ -15147,7 +15148,8 @@ if (isGeminiMcpBridgeProcess) {
     const pushRemoteThreadSnapshot = (
       chat: ChatRecord,
       workspaceId: string,
-      limit = 40
+      limit = 40,
+      beforeRowId?: string
     ): boolean => {
       // Scope-global chats (no workspace) ride the reserved 'global' scope
       // — without this mapping their snapshot pushes silently no-oped and
@@ -15161,11 +15163,14 @@ if (isGeminiMcpBridgeProcess) {
       const clamped = Math.max(1, Math.min(100, Math.floor(limit)))
       const generatedAt = new Date().toISOString()
       const costDisplay = remoteCostDisplayOptions()
+      const mode: RemoteProjectionMode = beforeRowId
+        ? { kind: 'beforeRow', rowId: beforeRowId, n: clamped }
+        : { kind: 'latestN', n: clamped }
       const threadSnapshot = projectRemoteThread(chat.messages ?? [], chat.runs ?? [], {
         notes: chat.pinnedNotes,
         blackboardEntries: chat.ensemble?.blackboard,
         threadId: chat.appChatId,
-        mode: { kind: 'latestN', n: clamped },
+        mode,
         previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
         generatedAt,
         costDisplay,
@@ -16301,7 +16306,14 @@ if (isGeminiMcpBridgeProcess) {
           if (!chatMatchesRemoteScope(chat, action.workspaceId)) {
             return { ok: false, reason: 'Thread does not belong to the requested workspace' }
           }
-          if (!pushRemoteThreadSnapshot(chat, action.workspaceId, action.limit ?? 40)) {
+          if (
+            !pushRemoteThreadSnapshot(
+              chat,
+              action.workspaceId,
+              action.limit ?? 40,
+              action.beforeRowId
+            )
+          ) {
             return { ok: false, reason: 'No connected device to push the snapshot to' }
           }
           return { ok: true }

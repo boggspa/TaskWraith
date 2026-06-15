@@ -186,6 +186,7 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var rowExpansions: [String: [String: RemoteThreadSnapshot.Row]] =
         [:]
     @Published public private(set) var expandingRows: Set<String> = []
+    @Published public private(set) var loadingPreviousThreadRows: Set<String> = []
 
     /// True when a previous pairing is on disk — drives the "Reconnect to
     /// your Mac" affordance and launch-time auto-resume.
@@ -1035,7 +1036,7 @@ public final class RemoteSessionModel: ObservableObject {
             if let thread = envelope.decodePayload(RemoteThreadSnapshot.self),
                 let key = thread.taskId ?? thread.threadId
             {
-                threadSnapshots[key] = thread
+                mergeThreadSnapshot(thread, key: key)
             }
         case "ensembleState":
             if let state = envelope.decodePayload(RemoteEnsembleState.self),
@@ -1063,6 +1064,95 @@ public final class RemoteSessionModel: ObservableObject {
             }
         default:
             break
+        }
+    }
+
+    private func mergeThreadSnapshot(_ incoming: RemoteThreadSnapshot, key: String) {
+        guard let current = threadSnapshots[key] else {
+            threadSnapshots[key] = incoming
+            return
+        }
+
+        let incomingRows = incoming.rows ?? []
+        let currentRows = current.rows ?? []
+        if incomingRows.isEmpty {
+            return
+        }
+        guard !currentRows.isEmpty else {
+            threadSnapshots[key] = mergedSnapshot(
+                base: incoming, fallback: current, rows: incomingRows,
+                windowStartIndex: windowStart(for: incoming),
+                totalRows: bestTotalRows(incoming, current))
+            return
+        }
+
+        let incomingStart = windowStart(for: incoming)
+        let currentStart = windowStart(for: current)
+        var rowsById: [String: (index: Int, row: RemoteThreadSnapshot.Row)] = [:]
+
+        for (offset, row) in currentRows.enumerated() {
+            rowsById[row.id] = (currentStart + offset, row)
+        }
+        for (offset, row) in incomingRows.enumerated() {
+            rowsById[row.id] = (incomingStart + offset, row)
+        }
+
+        let orderedPairs = rowsById.values.sorted { lhs, rhs in
+            if lhs.index == rhs.index { return lhs.row.id < rhs.row.id }
+            return lhs.index < rhs.index
+        }
+        let rows = orderedPairs.map(\.row)
+        let start = orderedPairs.map(\.index).min() ?? min(incomingStart, currentStart)
+        let totalRows = bestTotalRows(incoming, current)
+        threadSnapshots[key] = mergedSnapshot(
+            base: incoming, fallback: current, rows: rows, windowStartIndex: start,
+            totalRows: totalRows)
+    }
+
+    private func mergedSnapshot(
+        base: RemoteThreadSnapshot,
+        fallback: RemoteThreadSnapshot,
+        rows: [RemoteThreadSnapshot.Row],
+        windowStartIndex: Int,
+        totalRows: Int?
+    ) -> RemoteThreadSnapshot {
+        let end = windowStartIndex + rows.count
+        let hasMoreBelow: Bool?
+        if let totalRows {
+            hasMoreBelow = end < totalRows
+        } else {
+            hasMoreBelow = base.hasMoreBelow ?? fallback.hasMoreBelow
+        }
+        return RemoteThreadSnapshot(
+            threadId: base.threadId ?? fallback.threadId,
+            taskId: base.taskId ?? fallback.taskId,
+            workspaceId: base.workspaceId ?? fallback.workspaceId,
+            provider: base.provider ?? fallback.provider,
+            rows: rows,
+            totalRows: totalRows ?? base.totalRows ?? fallback.totalRows,
+            runSummary: base.runSummary ?? fallback.runSummary,
+            notes: base.notes ?? fallback.notes,
+            pinnedRows: base.pinnedRows ?? fallback.pinnedRows,
+            blackboardEntries: base.blackboardEntries ?? fallback.blackboardEntries,
+            runSummaries: base.runSummaries ?? fallback.runSummaries,
+            windowStartIndex: windowStartIndex,
+            hasMoreAbove: windowStartIndex > 0,
+            hasMoreBelow: hasMoreBelow)
+    }
+
+    private func windowStart(for snapshot: RemoteThreadSnapshot) -> Int {
+        if let value = snapshot.windowStartIndex { return max(0, value) }
+        let total = snapshot.totalRows ?? 0
+        let count = snapshot.rows?.count ?? 0
+        return max(0, total - count)
+    }
+
+    private func bestTotalRows(_ lhs: RemoteThreadSnapshot, _ rhs: RemoteThreadSnapshot) -> Int? {
+        switch (lhs.totalRows, rhs.totalRows) {
+        case (.some(let a), .some(let b)): return max(a, b)
+        case (.some(let a), .none): return a
+        case (.none, .some(let b)): return b
+        case (.none, .none): return nil
         }
     }
 
@@ -1575,13 +1665,34 @@ public final class RemoteSessionModel: ObservableObject {
         threadWorkspaceHints[threadId] = workspaceId
     }
 
-    public func requestThreadSnapshot(_ threadId: String) {
+    public func requestThreadSnapshot(_ threadId: String, limit: Int = 40, beforeRowId: String? = nil) {
         guard let client else { return }
         guard let workspaceId = remoteScopeForThread(threadId)
         else { return }
         let params = BridgeAction.threadSnapshotRequest(
-            workspaceId: workspaceId, threadId: threadId)
+            workspaceId: workspaceId, threadId: threadId, limit: limit, beforeRowId: beforeRowId)
         Task { _ = try? await client.request("bridge.requestActionAck", params: params) }
+    }
+
+    public func requestPreviousThreadRows(_ threadId: String, limit: Int = 40) {
+        guard !loadingPreviousThreadRows.contains(threadId),
+            let firstRowId = threadSnapshots[threadId]?.rows?.first?.id
+        else { return }
+        guard let client else { return }
+        guard let workspaceId = remoteScopeForThread(threadId)
+        else { return }
+        loadingPreviousThreadRows.insert(threadId)
+        let params = BridgeAction.threadSnapshotRequest(
+            workspaceId: workspaceId, threadId: threadId, limit: limit, beforeRowId: firstRowId)
+        Task {
+            do {
+                _ = try await client.request(
+                    "bridge.requestActionAck", params: params, timeoutMs: 12_000)
+            } catch {
+                await MainActor.run { self.lastActionMessage = String(describing: error) }
+            }
+            await MainActor.run { self.loadingPreviousThreadRows.remove(threadId) }
+        }
     }
 
     private func applySnapshot(_ snapshot: RemoteProjectionSnapshot) {
@@ -1644,7 +1755,7 @@ public final class RemoteSessionModel: ObservableObject {
         // Merge — don't wipe on-demand snapshots for threads outside the
         // recent-N window when a full periodic snapshot lands.
         for (key, snapshot) in snapshots {
-            threadSnapshots[key] = snapshot
+            mergeThreadSnapshot(snapshot, key: key)
         }
         for (key, state) in ensembleSnapshots {
             ensembleStates[key] = state

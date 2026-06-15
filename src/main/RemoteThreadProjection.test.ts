@@ -318,6 +318,24 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('beforeRow', () => {
+    it('returns the bounded window immediately before the anchor row', () => {
+      const snap = project({ kind: 'beforeRow', rowId: 'm7', n: 3 })
+      expect(snap.rows.map((r) => r.id)).toEqual(['m4', 'm5', 'm6'])
+      expect(snap.windowStartIndex).toBe(4)
+      expect(snap.hasMoreAbove).toBe(true)
+      expect(snap.hasMoreBelow).toBe(true)
+    })
+
+    it('clamps at the top of the transcript', () => {
+      const snap = project({ kind: 'beforeRow', rowId: 'm2', n: 10 })
+      expect(snap.rows.map((r) => r.id)).toEqual(['m0', 'm1'])
+      expect(snap.windowStartIndex).toBe(0)
+      expect(snap.hasMoreAbove).toBe(false)
+      expect(snap.hasMoreBelow).toBe(true)
+    })
+  })
+
   describe('attention', () => {
     const withAttention: ChatMessage[] = [
       msg(0),

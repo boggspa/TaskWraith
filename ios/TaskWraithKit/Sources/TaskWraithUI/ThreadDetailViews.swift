@@ -359,6 +359,9 @@ struct ThreadDetailView: View {
 
     private var earlierCount: Int {
         guard let snapshot, snapshot.hasMoreAbove == true else { return 0 }
+        if let windowStartIndex = snapshot.windowStartIndex {
+            return max(0, windowStartIndex)
+        }
         return max(0, (snapshot.totalRows ?? 0) - (snapshot.rows?.count ?? 0))
     }
 
@@ -437,7 +440,17 @@ struct ThreadDetailView: View {
         List {
             Section {
                 if earlierCount > 0 {
-                    Label("\(earlierCount) previous messages on your Mac", systemImage: "chevron.up")
+                    Button {
+                        model.requestPreviousThreadRows(taskId)
+                    } label: {
+                        Label(
+                            model.loadingPreviousThreadRows.contains(taskId)
+                                ? "Loading previous messages..."
+                                : "\(earlierCount) previous messages on your Mac",
+                            systemImage: "chevron.up")
+                    }
+                        .buttonStyle(.plain)
+                        .disabled(model.loadingPreviousThreadRows.contains(taskId))
                         .font(.caption)
                         .foregroundStyle(TWTheme.textTertiary)
                         .listRowBackground(Color.clear)

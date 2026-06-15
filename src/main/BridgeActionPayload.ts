@@ -59,6 +59,7 @@ export interface BridgeActionMetadata {
 
 const BRIDGE_QUESTION_ANSWER_MAX_CHARS = 8000
 const BRIDGE_QUESTION_REJECT_MESSAGE_MAX_CHARS = 1000
+const BRIDGE_THREAD_ROW_ID_MAX_CHARS = 4096
 const BRIDGE_WORKSPACE_FILE_PATH_MAX_CHARS = 4096
 const BRIDGE_WORKSPACE_FILE_WRITE_MAX_CHARS = 1_600_000
 const BRIDGE_GOAL_OBJECTIVE_MAX_CHARS = 4000
@@ -154,6 +155,8 @@ export interface BridgeThreadSnapshotRequestAction extends BridgeActionMetadata 
   threadId: string
   /** Requested row-window size; the executor clamps to 1–100 (default 40). */
   limit?: number
+  /** Fetch rows immediately before this desktop message id. */
+  beforeRowId?: string
 }
 
 /** Expand one clipped transcript row to (near) full text. Read-only —
@@ -1131,6 +1134,9 @@ function isThreadSnapshotRequest(v: Record<string, unknown>): boolean {
     hasValidActionMetadata(v) &&
     typeof v.workspaceId === 'string' &&
     typeof v.threadId === 'string' &&
+    (v.beforeRowId === undefined ||
+      (typeof v.beforeRowId === 'string' &&
+        v.beforeRowId.length <= BRIDGE_THREAD_ROW_ID_MAX_CHARS)) &&
     (v.limit === undefined ||
       (typeof v.limit === 'number' && Number.isInteger(v.limit) && v.limit > 0))
   )

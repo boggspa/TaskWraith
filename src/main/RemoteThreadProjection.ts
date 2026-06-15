@@ -18,7 +18,8 @@
  *     remote deep-link / "jump to row" resolves to the exact desktop
  *     row (the desktop side brings it in-window via TV4 `scrollToRow`).
  *   - Bounded: `latestN` caps to `n`, `aroundRow` to `2·radius+1`,
- *     `attention` to `maxAttentionRows`, `summaryOnly` to 0 rows.
+ *     `beforeRow` to `n`, `attention` to `maxAttentionRows`, `summaryOnly`
+ *     to 0 rows.
  *   - Additive: this never replaces raw-event forwarding; the bridge
  *     emits a snapshot alongside the existing per-pair event fan-out.
  *
@@ -352,6 +353,7 @@ export function remoteSpeakerForMessage(
 
 export type RemoteProjectionMode =
   | { kind: 'latestN'; n: number }
+  | { kind: 'beforeRow'; rowId: string; n: number }
   | { kind: 'aroundRow'; rowId: string; radius: number }
   | { kind: 'attention' }
   | { kind: 'summaryOnly' }
@@ -1166,6 +1168,31 @@ export function projectRemoteThread(
     }
     const start = clampIndex(targetIndex - radius, 0, totalRows)
     const end = clampIndex(targetIndex + radius + 1, start, totalRows)
+    const slice = all.slice(start, end)
+    return {
+      ...base,
+      rows: slice.map((m) => toRow(m, attentionFor(m))),
+      windowStartIndex: start,
+      hasMoreAbove: start > 0,
+      hasMoreBelow: end < totalRows
+    }
+  }
+
+  if (opts.mode.kind === 'beforeRow') {
+    const { rowId, n: rawN } = opts.mode
+    const n = clampIndex(rawN, 0, totalRows)
+    const targetIndex = all.findIndex((m) => m.id === rowId)
+    if (targetIndex < 0) {
+      return {
+        ...base,
+        rows: [],
+        windowStartIndex: totalRows,
+        hasMoreAbove: totalRows > 0,
+        hasMoreBelow: false
+      }
+    }
+    const start = clampIndex(targetIndex - n, 0, totalRows)
+    const end = clampIndex(targetIndex, start, totalRows)
     const slice = all.slice(start, end)
     return {
       ...base,
