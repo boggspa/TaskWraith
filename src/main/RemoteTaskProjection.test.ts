@@ -186,6 +186,92 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('projects provider model metadata for remote composer seeding', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        provider: 'codex',
+        parentChatId: 'parent-1',
+        parentChatRelation: 'sideChat',
+        sideChatContext: {
+          createdAt: NOW,
+          mode: 'singleProvider',
+          lifecycleState: 'active',
+          transcriptVisibility: 'none'
+        },
+        providerMetadata: {
+          selectedModelType: 'gpt-5.5',
+          customModel: '',
+          codexReasoningEffort: 'xhigh',
+          claudeReasoningEffort: 'off'
+        }
+      })
+    )
+
+    expect(card).toMatchObject({
+      provider: 'codex',
+      parentChatRelation: 'sideChat',
+      sideChatMode: 'singleProvider',
+      selectedModelType: 'gpt-5.5',
+      codexReasoningEffort: 'xhigh',
+      claudeReasoningEffort: 'off'
+    })
+    expect(card.customModel).toBeUndefined()
+  })
+
+  it('projects child-thread relation metadata used by the iOS Agents tab', () => {
+    const guest = buildRemoteTaskCard(
+      chat({
+        appChatId: 'guest-1',
+        parentChatId: 'parent-1',
+        parentChatRelation: 'sideChat',
+        sideChatContext: {
+          createdAt: NOW,
+          mode: 'guestParticipant',
+          lifecycleState: 'active',
+          transcriptVisibility: 'none'
+        }
+      })
+    )
+    const sideChat = buildRemoteTaskCard(
+      chat({
+        appChatId: 'side-1',
+        parentChatId: 'parent-1',
+        parentChatRelation: 'sideChat',
+        sideChatContext: {
+          createdAt: NOW,
+          mode: 'singleProvider',
+          lifecycleState: 'active',
+          transcriptVisibility: 'none'
+        }
+      })
+    )
+    const subThread = buildRemoteTaskCard(
+      chat({
+        appChatId: 'sub-1',
+        parentChatId: 'parent-1',
+        parentChatRelation: 'subThread'
+      })
+    )
+
+    expect(guest).toMatchObject({
+      id: 'guest-1',
+      parentChatId: 'parent-1',
+      parentChatRelation: 'sideChat',
+      sideChatMode: 'guestParticipant'
+    })
+    expect(sideChat).toMatchObject({
+      id: 'side-1',
+      parentChatId: 'parent-1',
+      parentChatRelation: 'sideChat',
+      sideChatMode: 'singleProvider'
+    })
+    expect(subThread).toMatchObject({
+      id: 'sub-1',
+      parentChatId: 'parent-1',
+      parentChatRelation: 'subThread'
+    })
+  })
+
   it('summarises RunDiffResult arrays and runDiffByPath workspace changes', () => {
     const summary = buildMobileDiffSummary(
       run({
@@ -202,7 +288,8 @@ describe('RemoteTaskProjection', () => {
         runDiffByPath: {
           '/other': [file('extra.ts', 'created', 2, 0), file('edit.ts', 'modified', 1, 1)]
         }
-      })
+      }),
+      { workspaceId: 'workspace-1' }
     )
 
     expect(summary).toMatchObject({
@@ -219,6 +306,7 @@ describe('RemoteTaskProjection', () => {
       '/repo',
       '/other'
     ])
+    expect(summary?.workspaces[0]?.workspaceId).toBe('workspace-1')
   })
 
   it('projects active ensemble state compactly', () => {

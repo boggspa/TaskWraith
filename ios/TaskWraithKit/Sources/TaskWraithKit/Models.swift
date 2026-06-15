@@ -141,6 +141,10 @@ public struct RemoteTaskCard: Codable, Sendable {
     public let title: String?
     public let status: String?
     public let provider: String?
+    public let selectedModelType: String?
+    public let customModel: String?
+    public let codexReasoningEffort: String?
+    public let claudeReasoningEffort: String?
     public let workspaceId: String?
     public let threadId: String?
     /// Present for sub-threads / isolated side chats — nested under the
@@ -195,6 +199,10 @@ public struct RemoteTaskCard: Codable, Sendable {
             title: nil,
             status: nil,
             provider: provider,
+            selectedModelType: nil,
+            customModel: nil,
+            codexReasoningEffort: nil,
+            claudeReasoningEffort: nil,
             workspaceId: workspaceId,
             threadId: nil,
             parentChatId: nil,
@@ -535,6 +543,7 @@ public struct MobileDiffSummary: Codable, Sendable {
     public let workspaces: [WorkspaceBreakdown]?
 
     public struct WorkspaceBreakdown: Codable, Sendable, Identifiable {
+        public let workspaceId: String?
         public let workspacePath: String
         public let filesChanged: Int?
         public let additions: Int?
@@ -594,6 +603,35 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             }
         }
         public let toolSummary: ToolSummary?
+        /// Structured ensemble participant reachability summary. Older Mac
+        /// builds only send `preview`, so renderers must treat this as
+        /// optional.
+        public struct ParticipantHealth: Codable, Sendable {
+            public let okCount: Int?
+            public let totalCount: Int?
+            public let entries: [Entry]?
+
+            public struct Entry: Codable, Sendable, Identifiable {
+                public let participantId: String?
+                public let provider: String?
+                public let role: String?
+                public let status: String?
+                public let reason: String?
+                public let underlyingCode: String?
+                public var id: String {
+                    participantId ?? "\(provider ?? "provider")-\(role ?? "role")"
+                }
+            }
+        }
+        public let participantHealth: ParticipantHealth?
+        /// Structured metadata for returned TaskWraith sub-thread output. The
+        /// row `preview` carries the extracted child-agent body.
+        public struct SubThreadReturn: Codable, Sendable {
+            public let subThreadId: String?
+            public let provider: String?
+            public let title: String?
+        }
+        public let subThreadReturn: SubThreadReturn?
     }
     public struct RunSummary: Codable, Sendable {
         public let runId: String?

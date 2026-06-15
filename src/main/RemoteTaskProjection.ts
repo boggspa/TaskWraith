@@ -91,6 +91,12 @@ export interface RemoteTaskCard {
   workspaceId: string | null
   workspacePath?: string
   provider: ProviderId
+  /** Provider metadata needed for remote composers to resume the same model
+   * selection before a side chat has any run summary. */
+  selectedModelType?: string
+  customModel?: string
+  codexReasoningEffort?: string
+  claudeReasoningEffort?: string
   title: string
   status: RemoteTaskStatus
   createdAt?: string
@@ -604,6 +610,19 @@ export function buildRemoteTaskCard(
     pendingApprovalCount,
     pendingQuestionCount
   }
+  const providerMetadata = chat.providerMetadata || {}
+  if (isString(providerMetadata.selectedModelType)) {
+    card.selectedModelType = providerMetadata.selectedModelType
+  }
+  if (isString(providerMetadata.customModel)) {
+    card.customModel = providerMetadata.customModel
+  }
+  if (isString(providerMetadata.codexReasoningEffort)) {
+    card.codexReasoningEffort = providerMetadata.codexReasoningEffort
+  }
+  if (isString(providerMetadata.claudeReasoningEffort)) {
+    card.claudeReasoningEffort = providerMetadata.claudeReasoningEffort
+  }
   const createdAt = msToIso(chat.createdAt)
   if (createdAt) card.createdAt = createdAt
   const updatedAt = msToIso(chat.updatedAt)
@@ -737,7 +756,9 @@ export function buildMobileDiffSummary(
   } = {}
 ): MobileDiffSummary | undefined {
   const workspaceSummaries: MobileDiffWorkspaceSummary[] = []
-  const runDiffWorkspace = run.runDiff ? workspaceSummaryFromRunDiff(run.runDiff, run) : undefined
+  const runDiffWorkspace = run.runDiff
+    ? workspaceSummaryFromRunDiff(run.runDiff, run, context.workspaceId ?? undefined)
+    : undefined
   if (runDiffWorkspace) {
     workspaceSummaries.push(runDiffWorkspace)
   }
@@ -899,7 +920,8 @@ function countByThread(threadIds: string[]): Map<string, number> {
 
 function workspaceSummaryFromRunDiff(
   runDiff: RunDiffResult,
-  run: ChatRun
+  run: ChatRun,
+  workspaceId?: string | null
 ): MobileDiffWorkspaceSummary {
   const workspacePath =
     runDiff.postSnapshot?.workspacePath ||
@@ -914,7 +936,7 @@ function workspaceSummaryFromRunDiff(
       deleted: runDiff.deletedFiles,
       preExisting: runDiff.preExistingFiles
     },
-    undefined
+    workspaceId ?? undefined
   )
 }
 

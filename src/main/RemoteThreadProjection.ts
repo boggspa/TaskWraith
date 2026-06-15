@@ -378,6 +378,27 @@ export interface RemoteToolEntry {
   detail?: string
 }
 
+export interface RemoteParticipantHealthEntry {
+  participantId: string
+  provider: ProviderId
+  role: string
+  status: 'ok' | 'unreachable'
+  reason?: string
+  underlyingCode?: string
+}
+
+export interface RemoteParticipantHealthSummary {
+  okCount: number
+  totalCount: number
+  entries: RemoteParticipantHealthEntry[]
+}
+
+export interface RemoteSubThreadReturnSummary {
+  subThreadId?: string
+  provider?: ProviderId
+  title?: string
+}
+
 export interface RemoteThreadRow {
   /** === desktop `message.id`, so remote deep-links resolve exactly. */
   id: string
@@ -409,6 +430,10 @@ export interface RemoteThreadRow {
      * result line. Capped at 12 entries; activityCount stays the truth. */
     tools?: RemoteToolEntry[]
   }
+  /** Structured ensemble pre-flight participant reachability summary. */
+  participantHealth?: RemoteParticipantHealthSummary
+  /** Structured metadata for returned TaskWraith sub-thread output. */
+  subThreadReturn?: RemoteSubThreadReturnSummary
   /** Present for rows that need the user — drives the remote action UI. */
   attention?: {
     kind: RemoteAttentionKind
@@ -694,12 +719,92 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
   return { activityCount: activities.length, status, tools }
 }
 
+function stringField(value: unknown, max = 160): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  return sanitizePreview(trimmed, max).preview
+}
+
+function providerField(value: unknown): ProviderId | undefined {
+  if (typeof value !== 'string') return undefined
+  const candidate = value.trim().toLowerCase()
+  return candidate in PROVIDER_LABELS ? (candidate as ProviderId) : undefined
+}
+
+function buildParticipantHealth(
+  message: ChatMessage
+): RemoteThreadRow['participantHealth'] | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (metadata?.kind !== 'ensembleParticipantHealth') return undefined
+  const rawEntries = Array.isArray(metadata.entries) ? metadata.entries : []
+  const entries: RemoteParticipantHealthEntry[] = rawEntries.flatMap((raw, index) => {
+    if (!raw || typeof raw !== 'object') return []
+    const entry = raw as Record<string, unknown>
+    const provider = providerField(entry.provider)
+    if (!provider) return []
+    const status = entry.status === 'ok' ? 'ok' : 'unreachable'
+    const participantId =
+      stringField(entry.participantId, 80) ?? `${provider}-${stringField(entry.role, 80) ?? index}`
+    const healthEntry: RemoteParticipantHealthEntry = {
+      participantId,
+      provider,
+      role: stringField(entry.role, 80) ?? PROVIDER_LABELS[provider],
+      status
+    }
+    const reason = stringField(entry.reason, 220)
+    if (reason) healthEntry.reason = reason
+    const underlyingCode = stringField(entry.underlyingCode, 80)
+    if (underlyingCode) healthEntry.underlyingCode = underlyingCode
+    return [healthEntry]
+  })
+  if (entries.length === 0) return undefined
+  const okCount =
+    typeof metadata.okCount === 'number' && Number.isFinite(metadata.okCount)
+      ? Math.max(0, Math.trunc(metadata.okCount))
+      : entries.filter((entry) => entry.status === 'ok').length
+  const totalCount =
+    typeof metadata.totalCount === 'number' && Number.isFinite(metadata.totalCount)
+      ? Math.max(entries.length, Math.trunc(metadata.totalCount))
+      : entries.length
+  return {
+    okCount: Math.min(okCount, totalCount),
+    totalCount,
+    entries
+  }
+}
+
+function subThreadReturnBody(content: string): string {
+  const tagged = content.match(/<subthread_result(?:\s[^>]*)?>\n?([\s\S]*?)\n?<\/subthread_result>/)
+  if (tagged) return tagged[1].trim()
+  const lines = content.split(/\r?\n/)
+  if (!lines[0]?.startsWith('↩ Result from ')) return content
+  const bodyStart = lines[1]?.trim() === '' ? 2 : 1
+  return lines.slice(bodyStart).join('\n').trimStart()
+}
+
+function buildSubThreadReturn(
+  message: ChatMessage
+): { summary: RemoteSubThreadReturnSummary; body: string } | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (metadata?.kind !== 'subThreadReturn') return undefined
+  const summary: RemoteSubThreadReturnSummary = {}
+  const subThreadId = stringField(metadata.subThreadId, 120)
+  if (subThreadId) summary.subThreadId = subThreadId
+  const provider = providerField(metadata.subThreadProvider)
+  if (provider) summary.provider = provider
+  const title = stringField(metadata.subThreadTitle, 160)
+  if (title) summary.title = title
+  return { summary, body: subThreadReturnBody(message.content || '') }
+}
+
 function buildRow(
   message: ChatMessage,
   previewMax: number,
   attentionKind: RemoteAttentionKind | null
 ): RemoteThreadRow {
-  const { preview, truncated } = sanitizePreview(message.content, previewMax)
+  const subThreadReturn = buildSubThreadReturn(message)
+  const { preview, truncated } = sanitizePreview(subThreadReturn?.body ?? message.content, previewMax)
   const row: RemoteThreadRow = {
     id: message.id,
     role: message.role,
@@ -719,6 +824,9 @@ function buildRow(
   }
   const toolSummary = buildToolSummary(message)
   if (toolSummary) row.toolSummary = toolSummary
+  const participantHealth = buildParticipantHealth(message)
+  if (participantHealth) row.participantHealth = participantHealth
+  if (subThreadReturn) row.subThreadReturn = subThreadReturn.summary
   if (attentionKind) {
     row.attention = {
       kind: attentionKind,
