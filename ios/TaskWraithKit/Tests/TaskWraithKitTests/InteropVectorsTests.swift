@@ -21,6 +21,17 @@ private func fromHex(_ s: String) -> Data {
     return data
 }
 private func fill(_ byte: UInt8, _ count: Int = 32) -> Data { Data(repeating: byte, count: count) }
+private func captureCipherError(_ operation: () throws -> Void) -> TWCipher.CipherError? {
+    do {
+        try operation()
+        #expect(Bool(false))
+    } catch let error as TWCipher.CipherError {
+        return error
+    } catch {
+        #expect(Bool(false))
+    }
+    return nil
+}
 
 private let sessionId = "vector-session"
 private let macEph = try! TWKeys.ephemeral(fromSeed: fill(0x11))
@@ -96,6 +107,129 @@ struct InteropVectorsTests {
         let opened = try TWCipher.open(
             key: key, direction: .macToIphone, sessionId: sessionId, seq: 0, frame: sealed)
         #expect(opened == plaintext)
+    }
+
+    @Test("AES-GCM nonce vectors cover both directions and wire sequence bounds")
+    func nonceVectors() throws {
+        #expect(hex(try TWCipher.buildNonce(.macToIphone, 0)) == "000000010000000000000000")
+        #expect(hex(try TWCipher.buildNonce(.iphoneToMac, 5)) == "000000020000000000000005")
+        #expect(hex(try TWCipher.buildNonce(.macToIphone, TWCipher.maxWireSequence))
+            == "00000001001fffffffffffff")
+        #expect(captureCipherError {
+            _ = try TWCipher.buildNonce(.iphoneToMac, TWCipher.maxWireSequence + 1)
+        } == .invalidSequence)
+    }
+
+    @Test("cipher rejects invalid sequence values without trapping")
+    func invalidSequenceRejected() throws {
+        let key = SymmetricKey(
+            data: fromHex("c328ecb05aed3e0c14dc8b25c0f2a4abf4300495c6a158f586d0833bd0b30a0c"))
+        let frame = SealedFrame(
+            nonce: Data(repeating: 0, count: 12), ct: Data(), tag: Data(repeating: 0, count: 16))
+
+        #expect(captureCipherError {
+            _ = try TWCipher.buildNonce(.iphoneToMac, -1)
+        } == .invalidSequence)
+        #expect(captureCipherError {
+            _ = try TWCipher.buildAad(sessionId, -1)
+        } == .invalidSequence)
+        #expect(captureCipherError {
+            _ = try TWCipher.seal(
+                key: key, direction: .iphoneToMac, sessionId: sessionId, seq: -1,
+                plaintext: Data())
+        } == .invalidSequence)
+        #expect(captureCipherError {
+            _ = try TWCipher.open(
+                key: key, direction: .iphoneToMac, sessionId: sessionId, seq: -1, frame: frame)
+        } == .invalidSequence)
+    }
+
+    @Test("cipher enforces AES-256 keys")
+    func rejectsNonAes256Keys() throws {
+        let key128 = SymmetricKey(data: Data(repeating: 0x11, count: 16))
+        let key192 = SymmetricKey(data: Data(repeating: 0x22, count: 24))
+        let frame = SealedFrame(
+            nonce: try TWCipher.buildNonce(.macToIphone, 0), ct: Data(),
+            tag: Data(repeating: 0, count: 16))
+
+        #expect(captureCipherError {
+            _ = try TWCipher.seal(
+                key: key128, direction: .macToIphone, sessionId: sessionId, seq: 0,
+                plaintext: Data())
+        } == .invalidKeySize)
+        #expect(captureCipherError {
+            _ = try TWCipher.seal(
+                key: key192, direction: .macToIphone, sessionId: sessionId, seq: 0,
+                plaintext: Data())
+        } == .invalidKeySize)
+        #expect(captureCipherError {
+            _ = try TWCipher.open(
+                key: key128, direction: .macToIphone, sessionId: sessionId, seq: 0, frame: frame)
+        } == .invalidKeySize)
+        #expect(captureCipherError {
+            _ = try TWCipher.open(
+                key: key192, direction: .macToIphone, sessionId: sessionId, seq: 0, frame: frame)
+        } == .invalidKeySize)
+    }
+
+    @Test("open maps authentication failures to openFailed")
+    func openFailedMapping() throws {
+        let key = SymmetricKey(
+            data: fromHex("c328ecb05aed3e0c14dc8b25c0f2a4abf4300495c6a158f586d0833bd0b30a0c"))
+        let wrongKey = SymmetricKey(data: Data(repeating: 0x55, count: 32))
+        let plaintext = Data(#"{"msgId":1,"method":"bridge.runEvent","params":{"n":42}}"#.utf8)
+        let sealed = try TWCipher.seal(
+            key: key, direction: .macToIphone, sessionId: sessionId, seq: 0, plaintext: plaintext)
+
+        var tamperedCt = sealed.ct
+        tamperedCt[tamperedCt.startIndex] ^= 0x01
+        #expect(captureCipherError {
+            _ = try TWCipher.open(
+                key: key, direction: .macToIphone, sessionId: sessionId, seq: 0,
+                frame: SealedFrame(nonce: sealed.nonce, ct: tamperedCt, tag: sealed.tag))
+        } == .openFailed)
+
+        #expect(captureCipherError {
+            _ = try TWCipher.open(
+                key: key, direction: .macToIphone, sessionId: "wrong-session", seq: 0,
+                frame: sealed)
+        } == .openFailed)
+        #expect(captureCipherError {
+            _ = try TWCipher.open(
+                key: wrongKey, direction: .macToIphone, sessionId: sessionId, seq: 0,
+                frame: sealed)
+        } == .openFailed)
+    }
+
+    @Test("open preserves local validation errors")
+    func openLocalValidationErrors() throws {
+        let key = SymmetricKey(
+            data: fromHex("c328ecb05aed3e0c14dc8b25c0f2a4abf4300495c6a158f586d0833bd0b30a0c"))
+        let plaintext = Data(#"{"msgId":1,"method":"bridge.runEvent","params":{"n":42}}"#.utf8)
+        let sealed = try TWCipher.seal(
+            key: key, direction: .macToIphone, sessionId: sessionId, seq: 0, plaintext: plaintext)
+
+        #expect(captureCipherError {
+            _ = try TWCipher.open(
+                key: key, direction: .macToIphone, sessionId: sessionId, seq: 0,
+                frame: SealedFrame(
+                    nonce: try TWCipher.buildNonce(.macToIphone, 1), ct: sealed.ct,
+                    tag: sealed.tag))
+        } == .nonceMismatch)
+        #expect(captureCipherError {
+            _ = try TWCipher.open(
+                key: key, direction: .macToIphone, sessionId: sessionId, seq: 0,
+                frame: SealedFrame(
+                    nonce: sealed.nonce, ct: sealed.ct, tag: Data(sealed.tag.dropLast())))
+        } == .badTagLength)
+
+        var longTag = sealed.tag
+        longTag.append(0)
+        #expect(captureCipherError {
+            _ = try TWCipher.open(
+                key: key, direction: .macToIphone, sessionId: sessionId, seq: 0,
+                frame: SealedFrame(nonce: sealed.nonce, ct: sealed.ct, tag: longTag))
+        } == .badTagLength)
     }
 
     @Test("Ed25519 cross-verification: a Node signature verifies under CryptoKit")
