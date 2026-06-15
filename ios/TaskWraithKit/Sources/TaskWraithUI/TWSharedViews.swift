@@ -1077,6 +1077,7 @@ public struct TokenRevealText: View {
     let target: String
     let font: Font
     let color: Color
+    let onRevealFrame: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var revealed = 0
@@ -1091,10 +1092,11 @@ public struct TokenRevealText: View {
     /// reads route through SwiftUI's storage and stay current.
     @State private var goal = ""
 
-    public init(target: String, font: Font, color: Color) {
+    public init(target: String, font: Font, color: Color, onRevealFrame: (() -> Void)? = nil) {
         self.target = target
         self.font = font
         self.color = color
+        self.onRevealFrame = onRevealFrame
     }
 
     /// Roughly a line-and-a-half on phone transcript widths. Keep every band
@@ -1115,6 +1117,7 @@ public struct TokenRevealText: View {
                 if reduceMotion || target.count > Self.coldRevealSnapThreshold {
                     revealed = target.count
                     solidified = revealed
+                    onRevealFrame?()
                 } else {
                     startPumpIfNeeded()
                 }
@@ -1125,6 +1128,7 @@ public struct TokenRevealText: View {
                 if reduceMotion {
                     revealed = newValue.count
                     solidified = revealed
+                    onRevealFrame?()
                     return
                 }
                 // Run reset / shrink / cumulative same-length rewrite → resume
@@ -1141,6 +1145,7 @@ public struct TokenRevealText: View {
                 if enabled {
                     revealed = target.count
                     solidified = revealed
+                    onRevealFrame?()
                 } else {
                     startPumpIfNeeded()
                 }
@@ -1201,6 +1206,7 @@ public struct TokenRevealText: View {
                 } else {
                     break
                 }
+                onRevealFrame?()
                 try? await Task.sleep(nanoseconds: Self.frameDelayNanos)
             }
             pump = nil
@@ -2177,19 +2183,26 @@ private struct ToolActivityViewportHeightKey: PreferenceKey {
     }
 }
 
-private struct ToolActivityViewport<Content: View>: View {
+struct ToolActivityViewport<Content: View>: View {
     private let maxHeight: CGFloat
     private let fadeHeight: CGFloat
+    private let expandLabel: String?
+    private let collapseLabel: String?
     private let content: Content
     @State private var contentHeight: CGFloat = 0
+    @State private var expanded = false
 
     init(
         maxHeight: CGFloat = 172,
         fadeHeight: CGFloat = 34,
+        expandLabel: String? = nil,
+        collapseLabel: String? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.maxHeight = maxHeight
         self.fadeHeight = fadeHeight
+        self.expandLabel = expandLabel
+        self.collapseLabel = collapseLabel
         self.content = content()
     }
 
@@ -2198,20 +2211,46 @@ private struct ToolActivityViewport<Content: View>: View {
     }
 
     var body: some View {
-        Group {
-            if shouldScroll {
-                ScrollView(.vertical, showsIndicators: false) {
-                    measuredContent
+        VStack(alignment: .trailing, spacing: 4) {
+            viewport
+            if shouldScroll, let expandLabel {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        expanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(expanded ? (collapseLabel ?? "Collapse") : expandLabel)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.bold))
+                            .rotationEffect(.degrees(expanded ? 180 : 0))
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(TWTheme.surface3, in: Capsule())
                 }
-                .frame(height: maxHeight)
-                .mask(edgeFadeMask)
-            } else {
-                measuredContent
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? (collapseLabel ?? "Collapse") : expandLabel)
             }
         }
         .onPreferenceChange(ToolActivityViewportHeightKey.self) { height in
             guard abs(contentHeight - height) > 1 else { return }
             contentHeight = height
+        }
+    }
+
+    @ViewBuilder
+    private var viewport: some View {
+        if shouldScroll && !expanded {
+            ScrollView(.vertical, showsIndicators: false) {
+                measuredContent
+            }
+            .frame(height: maxHeight)
+            .mask(edgeFadeMask)
+        } else {
+            measuredContent
         }
     }
 
@@ -2306,6 +2345,13 @@ public struct ThreadInspector: View {
                     .padding(.horizontal, 12)
                     .padding(.bottom, 16)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if tab == 1 {
+                SubAgentsPanel(
+                    model: model, children: children,
+                    onOpenThread: onOpenThread)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
@@ -2320,8 +2366,6 @@ public struct ThreadInspector: View {
                             {
                                 GitWorkflowPanel(model: model, workspaceId: workspaceId)
                             }
-                        } else if tab == 1 {
-                            SubAgentsPanel(children: children, onOpenThread: onOpenThread)
                         } else if tab == 4 {
                             UsagePanel(model: model)
                         } else {
@@ -2473,16 +2517,61 @@ struct DiffSummaryPanel: View {
 }
 
 struct SubAgentsPanel: View {
+    @ObservedObject var model: RemoteSessionModel
     let children: [RemoteTaskCard]
     var onOpenThread: ((String) -> Void)? = nil
+    @State private var pendingOpen: RemoteTaskCard?
+    @State private var inlineThreadId: String?
 
     var body: some View {
+        Group {
+            if let inlineThreadId {
+                if let child = children.first(where: { $0.id == inlineThreadId }) {
+                    MiniThreadView(
+                        model: model, card: child,
+                        onBack: { self.inlineThreadId = nil },
+                        onExpand: { onOpenThread?(child.id) })
+                } else {
+                    SideChatOpeningView {
+                        self.inlineThreadId = nil
+                    }
+                    .task(id: inlineThreadId) {
+                        model.requestThreadSnapshot(inlineThreadId)
+                    }
+                }
+            } else {
+                ScrollView {
+                    content
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.bottom, 16)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .confirmationDialog(
+            pendingOpenTitle, isPresented: openDialogPresented,
+            titleVisibility: .visible
+        ) {
+            if let pendingOpen {
+                Button("Open in Main") {
+                    onOpenThread?(pendingOpen.id)
+                }
+                Button("Open in Side Chat") {
+                    openInline(pendingOpen)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if children.isEmpty {
             VStack(spacing: 8) {
                 Image(systemName: "person.2.circle")
                     .font(.title2)
                     .foregroundStyle(TWTheme.textTertiary)
-                Text("No sub-agents or side chats delegated from this thread.")
+                Text("No guests, sub-agents or side chats delegated from this thread.")
                     .font(.footnote)
                     .foregroundStyle(TWTheme.textSecondary)
                     .multilineTextAlignment(.center)
@@ -2492,87 +2581,109 @@ struct SubAgentsPanel: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(children, id: \.id) { child in
-                    Button {
-                        onOpenThread?(child.id)
-                    } label: {
-                        let identityAccent =
-                            child.agentName != nil
-                            ? twAgentAccentColor(child.agentAccent)
-                            : TWTheme.providerAccent(child.provider)
-                        HStack(alignment: .top, spacing: 8) {
-                            if let agentName = child.agentName {
-                                AgentIdentityBadge(
-                                    name: agentName,
-                                    accentHex: child.agentAccent,
-                                    slug: child.agentSlug)
-                                    .padding(.top, 1)
-                            } else {
-                                Image(systemName: relationIcon(child))
-                                    .font(.caption)
-                                    .foregroundStyle(TWTheme.providerAccent(child.provider))
-                                    .frame(width: 16)
-                                    .padding(.top, 2)
-                            }
-                            VStack(alignment: .leading, spacing: 2) {
-                                if let agentName = child.agentName {
-                                    Text(agentName)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(identityAccent)
-                                        .lineLimit(1)
-                                }
-                                Text(child.title ?? child.id)
-                                    .font(
-                                        child.agentName != nil
-                                            ? .caption : .subheadline
-                                    )
-                                    .foregroundStyle(
-                                        child.agentName != nil
-                                            ? TWTheme.textSecondary : TWTheme.textPrimary
-                                    )
-                                    .lineLimit(2)
-                                HStack(spacing: 6) {
-                                    Text(TWTheme.providerLabel(child.provider))
-                                        .font(.caption2.weight(.medium))
-                                        .foregroundStyle(TWTheme.providerAccent(child.provider))
-                                    Text(relationLabel(child))
-                                        .font(.caption2)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 1)
-                                        .background(TWTheme.surface3, in: Capsule())
-                                        .foregroundStyle(TWTheme.textTertiary)
-                                    if let status = child.status {
-                                        HStack(spacing: 3) {
-                                            Circle()
-                                                .fill(TWTheme.statusColor(status))
-                                                .frame(width: 5, height: 5)
-                                            Text(status)
-                                                .font(.caption2)
-                                                .foregroundStyle(TWTheme.statusColor(status))
-                                        }
-                                    }
-                                }
-                            }
-                            Spacer(minLength: 0)
-                            Image(systemName: "chevron.right")
-                                .font(.caption2)
-                                .foregroundStyle(TWTheme.textMuted)
-                        }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
-                        .overlay(
-                            // Desktop invocation-card parity: the agent's
-                            // accent hue outlines its card.
-                            RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder(
-                                    identityAccent.opacity(
-                                        child.agentName != nil ? 0.55 : 0.0))
-                        )
-                    }
-                    .buttonStyle(.plain)
+                    childButton(child)
                 }
             }
         }
+    }
+
+    private var pendingOpenTitle: String {
+        guard let pendingOpen else { return "Open chat" }
+        return "Open \(pendingOpen.title ?? pendingOpen.agentName ?? relationLabel(pendingOpen))"
+    }
+
+    private var openDialogPresented: Binding<Bool> {
+        Binding(
+            get: { pendingOpen != nil },
+            set: { isPresented in
+                if !isPresented { pendingOpen = nil }
+            })
+    }
+
+    private func childButton(_ child: RemoteTaskCard) -> some View {
+        Button {
+            pendingOpen = child
+        } label: {
+            childRow(child)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func childRow(_ child: RemoteTaskCard) -> some View {
+        let identityAccent =
+            child.agentName != nil
+            ? twAgentAccentColor(child.agentAccent)
+            : TWTheme.providerAccent(child.provider)
+        return HStack(alignment: .top, spacing: 8) {
+            if let agentName = child.agentName {
+                AgentIdentityBadge(
+                    name: agentName,
+                    accentHex: child.agentAccent,
+                    slug: child.agentSlug)
+                    .padding(.top, 1)
+            } else {
+                Image(systemName: relationIcon(child))
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.providerAccent(child.provider))
+                    .frame(width: 16)
+                    .padding(.top, 2)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                if let agentName = child.agentName {
+                    Text(agentName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(identityAccent)
+                        .lineLimit(1)
+                }
+                Text(child.title ?? child.id)
+                    .font(child.agentName != nil ? .caption : .subheadline)
+                    .foregroundStyle(
+                        child.agentName != nil ? TWTheme.textSecondary : TWTheme.textPrimary
+                    )
+                    .lineLimit(2)
+                HStack(spacing: 6) {
+                    Text(TWTheme.providerLabel(child.provider))
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(TWTheme.providerAccent(child.provider))
+                    Text(relationLabel(child))
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(TWTheme.surface3, in: Capsule())
+                        .foregroundStyle(TWTheme.textTertiary)
+                    if let status = child.status {
+                        HStack(spacing: 3) {
+                            Circle()
+                                .fill(TWTheme.statusColor(status))
+                                .frame(width: 5, height: 5)
+                            Text(status)
+                                .font(.caption2)
+                                .foregroundStyle(TWTheme.statusColor(status))
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+                .foregroundStyle(TWTheme.textMuted)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            // Desktop invocation-card parity: the agent's accent hue outlines its card.
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(identityAccent.opacity(child.agentName != nil ? 0.55 : 0.0))
+        )
+    }
+
+    private func openInline(_ child: RemoteTaskCard) {
+        if let workspaceId = child.workspaceId {
+            model.rememberThreadWorkspace(child.id, workspaceId: workspaceId)
+        }
+        model.requestThreadSnapshot(child.id)
+        inlineThreadId = child.id
     }
 
     private func relationLabel(_ card: RemoteTaskCard) -> String {
@@ -2638,49 +2749,54 @@ public struct ChangesAboveRow: View {
 
 // ── Composer shell rows (desktop three-decker parity) ──────────────────────
 
-/// Attached diff header — top corners rounded, flat bottom edge merging
-/// into the composer body. The desktop's "branch · N files changed +X −Y ·
-/// Review changes" bar, minus git metadata the bridge doesn't ship yet.
+/// Attached diff/git header — top corners rounded, flat bottom edge merging
+/// into the composer body. Mirrors the desktop native composer order:
+/// workspace/branch, sync state, files changed, +/- diff, action.
 public struct ChangesAttachedRow: View {
-    let diff: MobileDiffSummary
+    let diff: MobileDiffSummary?
+    let workspaceName: String?
+    let gitSnapshot: GitWorkspaceSnapshot?
     let action: () -> Void
 
-    public init(diff: MobileDiffSummary, action: @escaping () -> Void) {
+    public init(
+        diff: MobileDiffSummary?, workspaceName: String? = nil,
+        gitSnapshot: GitWorkspaceSnapshot? = nil, action: @escaping () -> Void
+    ) {
         self.diff = diff
+        self.workspaceName = workspaceName
+        self.gitSnapshot = gitSnapshot
         self.action = action
     }
 
     public var body: some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: "arrow.triangle.branch")
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textTertiary)
-                Text("\(diff.filesChanged ?? diff.files?.count ?? 0) file\((diff.filesChanged ?? diff.files?.count ?? 0) == 1 ? "" : "s") changed")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(TWTheme.textPrimary)
-                if let additions = diff.additions, additions > 0 {
-                    Text("+\(additions)")
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(TWTheme.statusSuccess)
-                }
-                if let deletions = diff.deletions, deletions > 0 {
-                    Text("−\(deletions)")
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(TWTheme.statusFailed)
-                }
-                Spacer()
-                Text("Review changes")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(TWTheme.textSecondary)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(TWTheme.surface3, in: Capsule())
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-        }
-        .buttonStyle(.plain)
+        ComposerGitAttachedRowContent(
+            workspaceName: workspaceName,
+            fallbackName: nil,
+            filesChanged: filesChanged,
+            additions: additions,
+            deletions: deletions,
+            gitSnapshot: gitSnapshot,
+            actionLabel: actionLabel,
+            action: action
+        )
+    }
+
+    private var filesChanged: Int {
+        gitSnapshot?.counts?.changed ?? diff?.filesChanged ?? diff?.files?.count ?? 0
+    }
+
+    private var additions: Int {
+        gitSnapshot?.lineStats?.additions ?? diff?.additions ?? 0
+    }
+
+    private var deletions: Int {
+        gitSnapshot?.lineStats?.deletions ?? diff?.deletions ?? 0
+    }
+
+    private var actionLabel: String {
+        if filesChanged > 0 { return "Review changes" }
+        if (gitSnapshot?.ahead ?? 0) > 0 { return "Push" }
+        return "Create PR"
     }
 }
 
@@ -3168,8 +3284,6 @@ public struct EditableRosterStrip: View {
 
     @ViewBuilder
     private var chipRun: some View {
-        // The + sits at the END of the chip run (not pinned to the
-        // screen edge), and the whole run centers when it fits.
         HStack(spacing: 6) {
             if let queued = state?.queuedPromptCount, queued > 0 {
                 QueuedPromptsChip(count: queued)
@@ -3190,14 +3304,25 @@ public struct EditableRosterStrip: View {
                     )
             }
             addMenu
+                .padding(.leading, draft.isEmpty ? 0 : 3)
         }
         .padding(.vertical, attached ? 6 : 2)
-        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     public var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            AnyView(chipRun)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                chipRun
+                    .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                chipRun
+                    .fixedSize(horizontal: true, vertical: false)
+            }
         }
         .background(
             attached
@@ -4071,56 +4196,203 @@ public struct ConnectionBanner: View {
 /// Per-workspace attached changes row (multi-grant runs): workspace name
 /// tail + its own diff stats. First row keeps the rounded top corners.
 public struct WorkspaceChangesAttachedRow: View {
-    let breakdown: MobileDiffSummary.WorkspaceBreakdown
-    let isFirst: Bool
+    let breakdown: MobileDiffSummary.WorkspaceBreakdown?
+    let workspaceName: String?
+    let gitSnapshot: GitWorkspaceSnapshot?
+    let canWrite: Bool
+    let onRemove: (() -> Void)?
     let action: () -> Void
 
     public init(
-        breakdown: MobileDiffSummary.WorkspaceBreakdown, isFirst: Bool,
-        action: @escaping () -> Void
+        breakdown: MobileDiffSummary.WorkspaceBreakdown?, workspaceName: String? = nil,
+        gitSnapshot: GitWorkspaceSnapshot? = nil, canWrite: Bool = false,
+        onRemove: (() -> Void)? = nil, action: @escaping () -> Void
     ) {
         self.breakdown = breakdown
-        self.isFirst = isFirst
+        self.workspaceName = workspaceName
+        self.gitSnapshot = gitSnapshot
+        self.canWrite = canWrite
+        self.onRemove = onRemove
         self.action = action
     }
 
     private var nameTail: String {
-        breakdown.workspacePath.split(separator: "/").last.map(String.init)
-            ?? breakdown.workspacePath
+        if let workspaceName, !workspaceName.isEmpty { return workspaceName }
+        let path = breakdown?.workspacePath ?? ""
+        return path.split(separator: "/").last.map(String.init) ?? path
     }
 
     public var body: some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: "folder")
+        ComposerGitAttachedRowContent(
+            workspaceName: nameTail,
+            fallbackName: nil,
+            filesChanged: filesChanged,
+            additions: additions,
+            deletions: deletions,
+            gitSnapshot: gitSnapshot,
+            actionLabel: actionLabel,
+            canWrite: onRemove == nil ? nil : canWrite,
+            onRemove: onRemove,
+            action: action
+        )
+    }
+
+    private var filesChanged: Int {
+        gitSnapshot?.counts?.changed ?? breakdown?.filesChanged ?? 0
+    }
+
+    private var additions: Int {
+        gitSnapshot?.lineStats?.additions ?? breakdown?.additions ?? 0
+    }
+
+    private var deletions: Int {
+        gitSnapshot?.lineStats?.deletions ?? breakdown?.deletions ?? 0
+    }
+
+    private var actionLabel: String {
+        if filesChanged > 0 { return "Review changes" }
+        if (gitSnapshot?.ahead ?? 0) > 0 { return "Push" }
+        return "Create PR"
+    }
+}
+
+private struct ComposerGitAttachedRowContent: View {
+    let workspaceName: String?
+    let fallbackName: String?
+    let filesChanged: Int
+    let additions: Int
+    let deletions: Int
+    let gitSnapshot: GitWorkspaceSnapshot?
+    let actionLabel: String
+    var canWrite: Bool? = nil
+    var onRemove: (() -> Void)? = nil
+    let action: () -> Void
+
+    private let minimumActionRowWidth: CGFloat = 520
+
+    private var displayName: String {
+        let name = workspaceName ?? fallbackName ?? "Workspace"
+        return name.isEmpty ? "Workspace" : name
+    }
+
+    private var branchName: String? {
+        if gitSnapshot?.detached == true { return "detached HEAD" }
+        return gitSnapshot?.branch
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            gitRow(showsAction: true)
+                .frame(minWidth: minimumActionRowWidth, maxWidth: .infinity)
+
+            gitRow(showsAction: false)
+        }
+    }
+
+    private func gitRow(showsAction: Bool) -> some View {
+        HStack(spacing: 7) {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.triangle.branch")
                     .font(.caption2)
                     .foregroundStyle(TWTheme.textTertiary)
-                Text(nameTail)
-                    .font(.caption.weight(.semibold))
+                Text(displayName)
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(TWTheme.textPrimary)
                     .lineLimit(1)
-                Text("\(breakdown.filesChanged ?? 0) file\((breakdown.filesChanged ?? 0) == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textSecondary)
-                if let additions = breakdown.additions, additions > 0 {
-                    Text("+\(additions)")
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(TWTheme.statusSuccess)
+                    .truncationMode(.tail)
+                if let branchName, !branchName.isEmpty {
+                    Text("·")
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textMuted)
+                    Text(branchName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TWTheme.providerAccent("gemini"))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
-                if let deletions = breakdown.deletions, deletions > 0 {
-                    Text("−\(deletions)")
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(TWTheme.statusFailed)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundStyle(TWTheme.textMuted)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .frame(minWidth: 0, alignment: .leading)
+            syncLabel
+            Spacer(minLength: 8)
+            Text("\(filesChanged) file\(filesChanged == 1 ? "" : "s") changed")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TWTheme.textPrimary)
+                .fixedSize()
+            if additions > 0 {
+                Text("+\(additions)")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(TWTheme.statusSuccess)
+                    .fixedSize()
+            }
+            if deletions > 0 {
+                Text("−\(deletions)")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(TWTheme.statusFailed)
+                    .fixedSize()
+            }
+            Spacer(minLength: 8)
+            if showsAction {
+                actionButton
+            }
+            if let canWrite {
+                Image(systemName: canWrite ? "pencil" : "lock")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(canWrite ? TWTheme.chroma1 : TWTheme.textTertiary)
+                    .frame(width: 18, height: 18)
+                    .accessibilityLabel(canWrite ? "Write access" : "Read-only access")
+            }
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(TWTheme.textTertiary)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove workspace")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private var actionButton: some View {
+        Button(action: action) {
+            Text(actionLabel)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(TWTheme.textSecondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(TWTheme.surface3, in: Capsule())
         }
         .buttonStyle(.plain)
+        .layoutPriority(2)
+    }
+
+    @ViewBuilder
+    private var syncLabel: some View {
+        if let gitSnapshot, gitSnapshot.detached != true, gitSnapshot.branch != nil {
+            if gitSnapshot.upstream == nil {
+                Text("no upstream")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.statusAttention)
+                    .fixedSize()
+            } else {
+                let ahead = gitSnapshot.ahead ?? 0
+                let behind = gitSnapshot.behind ?? 0
+                if ahead > 0 || behind > 0 {
+                    HStack(spacing: 4) {
+                        if ahead > 0 { Text("↑\(ahead)") }
+                        if behind > 0 { Text("↓\(behind)") }
+                    }
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(TWTheme.statusAttention)
+                    .fixedSize()
+                }
+            }
+        }
     }
 }
 
@@ -4513,6 +4785,7 @@ struct SideChatsPanel: View {
     @State private var createProvider = "codex"
     @State private var createModelId: String?
     @State private var createReasoningEffort: String?
+    @State private var pendingOpen: RemoteTaskCard?
 
     private var card: RemoteTaskCard? { model.taskCards.first { $0.id == threadId } }
 
@@ -4554,6 +4827,20 @@ struct SideChatsPanel: View {
                         .padding(.bottom, 16)
                 }
             }
+        }
+        .confirmationDialog(
+            pendingOpenTitle, isPresented: openDialogPresented,
+            titleVisibility: .visible
+        ) {
+            if let pendingOpen {
+                Button("Open in Main") {
+                    onOpenThread?(pendingOpen.id)
+                }
+                Button("Open in Side Chat") {
+                    openInline(pendingOpen)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
         .onAppear { adoptRequestedSideChat() }
         .onChange(of: model.inspectorSideChatTarget) { _, _ in
@@ -4619,7 +4906,7 @@ struct SideChatsPanel: View {
             } else {
                 ForEach(sideChats, id: \.id) { sideChat in
                     Button {
-                        selectedSideChatId = sideChat.id
+                        pendingOpen = sideChat
                     } label: {
                         HStack(alignment: .top, spacing: 8) {
                             if let agentName = sideChat.agentName {
@@ -4674,6 +4961,27 @@ struct SideChatsPanel: View {
         }
         .onAppear { seedCreateSelection() }
         .onChange(of: card?.provider ?? "") { _, _ in seedCreateSelection() }
+    }
+
+    private var pendingOpenTitle: String {
+        guard let pendingOpen else { return "Open chat" }
+        return "Open \(pendingOpen.title ?? pendingOpen.agentName ?? "side chat")"
+    }
+
+    private var openDialogPresented: Binding<Bool> {
+        Binding(
+            get: { pendingOpen != nil },
+            set: { isPresented in
+                if !isPresented { pendingOpen = nil }
+            })
+    }
+
+    private func openInline(_ child: RemoteTaskCard) {
+        if let workspaceId = child.workspaceId {
+            model.rememberThreadWorkspace(child.id, workspaceId: workspaceId)
+        }
+        model.requestThreadSnapshot(child.id)
+        selectedSideChatId = child.id
     }
 
     private func seedCreateSelection() {
@@ -4743,17 +5051,23 @@ struct MiniThreadView: View {
     var onBack: () -> Void
     var onExpand: () -> Void
     @State private var draft = ""
+    @State private var composerOverlayHeight: CGFloat = 150
 
     private var threadId: String { card.id }
     private var snapshot: RemoteThreadSnapshot? { model.threadSnapshots[threadId] }
+    private var transcriptBottomInset: CGFloat { composerOverlayHeight + 12 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
-            transcriptArea
-            composerShell
+            transcriptStage
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onPreferenceChange(MiniThreadComposerHeightKey.self) { height in
+            guard height > 0 else { return }
+            guard abs(composerOverlayHeight - height) > 1 else { return }
+            composerOverlayHeight = height
+        }
         .task(id: threadId) {
             model.requestThreadSnapshot(threadId)
         }
@@ -4792,14 +5106,50 @@ struct MiniThreadView: View {
         }
     }
 
+    private var transcriptStage: some View {
+        ZStack(alignment: .bottom) {
+            transcriptArea
+            composerOverlay
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
     private var transcriptArea: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 transcriptContent
+                Color.clear
+                    .frame(height: transcriptBottomInset)
+                    .accessibilityHidden(true)
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var composerOverlay: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [
+                    TWTheme.appBg.opacity(0),
+                    TWTheme.appBg.opacity(0.92),
+                    TWTheme.appBg
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 18)
+            .allowsHitTesting(false)
+            composerShell
+        }
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: MiniThreadComposerHeightKey.self,
+                    value: proxy.size.height)
+            }
+        )
+        .shadow(color: .black.opacity(0.28), radius: 10, y: -2)
     }
 
     @ViewBuilder
@@ -4868,6 +5218,14 @@ struct MiniThreadView: View {
                 })
         }
         .composerShellGlass()
+    }
+}
+
+private struct MiniThreadComposerHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 

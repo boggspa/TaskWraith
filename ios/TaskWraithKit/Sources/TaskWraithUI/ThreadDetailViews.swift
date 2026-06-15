@@ -56,6 +56,14 @@ struct ThreadDetailView: View {
         }
         return model
     }
+    private var liveProvider: String? {
+        model.streamingProviders[taskId] ?? thinkingProvider
+    }
+    private var liveModel: String? {
+        if liveProvider == thinkingProvider { return thinkingModel }
+        if snapshot?.runSummary?.provider == liveProvider { return snapshot?.runSummary?.model }
+        return nil
+    }
     private var isRunning: Bool {
         // The thread snapshot's runSummary refreshes un-throttled on every
         // flush — trust it over the (snapshot-throttled) task card when
@@ -472,34 +480,14 @@ struct ThreadDetailView: View {
                 }
                 if liveRunId != nil, !liveElements.isEmpty {
                     StreamingLiveHeader(
-                        provider: card?.provider,
-                        model: snapshot?.runSummary?.model,
+                        provider: liveProvider,
+                        model: liveModel,
                         agentIdentity: threadAgentIdentity)
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
-                    ForEach(liveDisplayElements) { element in
-                        Group {
-                            switch element {
-                            case .toolBurst(_, let rows):
-                                ToolBurstRowView(
-                                    rows: rows.map { model.resolvedRow($0, threadId: taskId) },
-                                    agentIdentity: threadAgentIdentity)
-                            case .toolRow(let row):
-                                ThreadRowView(
-                                    model: model, threadId: taskId,
-                                    row: model.resolvedRow(row, threadId: taskId),
-                                    threadProvider: card?.provider,
-                                    agentIdentity: threadAgentIdentity)
-                            case .text(_, let content, let isTail):
-                                StreamingSegmentRow(
-                                    text: content,
-                                    isTail: isTail,
-                                    agentIdentity: threadAgentIdentity,
-                                    participants: model.ensembleStates[taskId]?.participants
-                                        ?? [])
-                            }
-                        }
+                    ForEach(liveDisplayElements, id: \.id) { element in
+                        liveDisplayElementRow(element, proxy: proxy)
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
@@ -549,6 +537,9 @@ struct ThreadDetailView: View {
                 Color.clear
                     .frame(height: 1)
                     .id("transcript-bottom")
+                    .onAppear {
+                        autoFollow = true
+                    }
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             }
@@ -598,6 +589,34 @@ struct ThreadDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private func liveDisplayElementRow(_ element: LiveDisplayElement, proxy: ScrollViewProxy)
+        -> some View
+    {
+        switch element {
+        case .toolBurst(_, let rows):
+            ToolBurstRowView(
+                rows: rows.map { model.resolvedRow($0, threadId: taskId) },
+                agentIdentity: threadAgentIdentity)
+        case .toolRow(let row):
+            ThreadRowView(
+                model: model, threadId: taskId,
+                row: model.resolvedRow(row, threadId: taskId),
+                threadProvider: card?.provider,
+                agentIdentity: threadAgentIdentity)
+        case .text(_, let content, let isTail):
+            StreamingSegmentRow(
+                text: content,
+                isTail: isTail,
+                agentIdentity: threadAgentIdentity,
+                participants: model.ensembleStates[taskId]?.participants ?? [],
+                onRevealFrame: {
+                    guard autoFollow else { return }
+                    scrollTranscriptToBottom(proxy, animated: false)
+                })
+        }
+    }
+
     private func floatingTranscriptPill(systemName: String) -> some View {
         Image(systemName: systemName)
             .font(.system(size: 15, weight: .bold))
@@ -621,26 +640,64 @@ struct ThreadDetailView: View {
                     // clamps phone-origin turns to plan mode (no file
                     // mutation), and the composer pins its picker to match.
                     let diff = model.diffSummaries[taskId]
-                    let hasDiff = (diff?.filesChanged ?? diff?.files?.count ?? 0) > 0
+                    let primaryWorkspaceId = card.workspaceId
+                    let primaryGitSnapshot = primaryWorkspaceId.flatMap { model.gitSnapshots[$0] }
+                    let secondaryGitSnapshot = secondaryWorkspaceId.flatMap {
+                        model.gitSnapshots[$0]
+                    }
+                    let workspaceBreakdown = diff?.workspaces ?? []
+                    let hasWorkspaceBreakdown = workspaceBreakdown.count > 1
+                    let changedFileCount = diff?.filesChanged ?? diff?.files?.count ?? 0
+                    let hasDiff = changedFileCount > 0
+                    let renderedWorkspaceIds = Set(
+                        workspaceBreakdown.compactMap {
+                            $0.workspaceId ?? model.workspaceId(forPath: $0.workspacePath)
+                        })
+                    let hasStandaloneSecondaryWorkspace =
+                        secondaryWorkspaceId.map { !renderedWorkspaceIds.contains($0) } ?? false
+                    let hasAttachedRows =
+                        hasWorkspaceBreakdown || hasDiff || primaryGitSnapshot != nil
+                        || hasStandaloneSecondaryWorkspace
                     // Desktop composer-shell parity: attached diff header
                     // (rounded top), composer body, telemetry rail
                     // (rounded bottom) — one bordered container.
                     VStack(spacing: 0) {
-                        if hasDiff, let diff {
-                            if let breakdown = diff.workspaces, breakdown.count > 1 {
-                                // One attached row per granted workspace
-                                // (primary + secondary), desktop-style.
-                                ForEach(breakdown) { workspace in
-                                    WorkspaceChangesAttachedRow(
-                                        breakdown: workspace,
-                                        isFirst: workspace.id == breakdown.first?.id
-                                    ) { model.inspectorPresented = true }
-                                    Rectangle().fill(TWTheme.border).frame(height: 1)
-                                }
-                            } else {
-                                ChangesAttachedRow(diff: diff) { model.inspectorPresented = true }
+                        if hasWorkspaceBreakdown {
+                            // One attached row per granted workspace
+                            // (primary + secondary), desktop-style.
+                            ForEach(workspaceBreakdown) { workspace in
+                                let workspaceId =
+                                    workspace.workspaceId
+                                    ?? model.workspaceId(forPath: workspace.workspacePath)
+                                WorkspaceChangesAttachedRow(
+                                    breakdown: workspace,
+                                    workspaceName: model.workspaceName(for: workspaceId),
+                                    gitSnapshot: workspaceId.flatMap {
+                                        model.gitSnapshots[$0]
+                                    },
+                                    canWrite: model.workspaceCanEditFiles(workspaceId),
+                                    onRemove: workspaceId == secondaryWorkspaceId
+                                        ? { secondaryWorkspaceId = nil } : nil
+                                ) { openComposerDiff(workspaceId: workspaceId) }
                                 Rectangle().fill(TWTheme.border).frame(height: 1)
                             }
+                        } else if hasDiff || primaryGitSnapshot != nil {
+                            ChangesAttachedRow(
+                                diff: diff,
+                                workspaceName: model.workspaceName(for: primaryWorkspaceId),
+                                gitSnapshot: primaryGitSnapshot
+                            ) { openComposerDiff(workspaceId: primaryWorkspaceId) }
+                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                        }
+                        if hasStandaloneSecondaryWorkspace, let secondaryWorkspaceId {
+                            WorkspaceChangesAttachedRow(
+                                breakdown: nil,
+                                workspaceName: model.workspaceName(for: secondaryWorkspaceId),
+                                gitSnapshot: secondaryGitSnapshot,
+                                canWrite: model.workspaceCanEditFiles(secondaryWorkspaceId),
+                                onRemove: { self.secondaryWorkspaceId = nil }
+                            ) { openComposerDiff(workspaceId: secondaryWorkspaceId) }
+                            Rectangle().fill(TWTheme.border).frame(height: 1)
                         }
                         if card.isEnsemble,
                             let queued = model.ensembleStates[taskId]?.queuedPrompts,
@@ -650,7 +707,7 @@ struct ThreadDetailView: View {
                             // shared Mac-side queue, any-device origin.
                             QueuedPromptsStack(
                                 model: model, card: card, prompts: queued,
-                                isShellTop: !hasDiff
+                                isShellTop: !hasAttachedRows
                             ) { queuedText in
                                 followUp = queuedText
                             }
@@ -662,7 +719,7 @@ struct ThreadDetailView: View {
                         {
                             QueuedComposerPromptsStack(
                                 model: model, card: card, prompts: queued,
-                                isShellTop: !hasDiff
+                                isShellTop: !hasAttachedRows
                             ) { queuedText in
                                 followUp = queuedText
                             }
@@ -674,7 +731,7 @@ struct ThreadDetailView: View {
                             EditableRosterStrip(
                                 model: model, threadId: taskId, workspaceId: wsId,
                                 attached: true,
-                                isShellTop: !hasDiff
+                                isShellTop: !hasAttachedRows
                                     && (model.ensembleStates[taskId]?.queuedPrompts ?? [])
                                         .isEmpty)
                             Rectangle().fill(TWTheme.border).frame(height: 1)
@@ -682,7 +739,7 @@ struct ThreadDetailView: View {
                         Composer(
                             model: model, card: card, runModel: snapshot?.runSummary?.model,
                             runStatus: snapshot?.runSummary?.status,
-                            attachedTop: hasDiff || card.isEnsemble
+                            attachedTop: hasAttachedRows || card.isEnsemble
                                 || !(card.queuedComposerPrompts ?? []).isEmpty,
                             attachedBottom: true,
                             extraWorkspaceIds: secondaryWorkspaceId.map { [$0] },
@@ -703,10 +760,24 @@ struct ThreadDetailView: View {
                             })
                     }
                     .composerShellGlass()
+                    .task(id: primaryWorkspaceId) {
+                        await model.refreshGitSnapshotCache(workspaceId: primaryWorkspaceId)
+                    }
+                    .task(id: secondaryWorkspaceId) {
+                        await model.refreshGitSnapshotCache(workspaceId: secondaryWorkspaceId)
+                    }
                     .padding(.horizontal, 10).padding(.bottom, 6)
                 }
             }
             .background(Color.clear)
+    }
+
+    private func openComposerDiff(workspaceId: String?) {
+        if model.workspaceCanReviewDiffs(workspaceId) {
+            model.requestDiffMode(workspaceId: workspaceId)
+        } else {
+            model.inspectorPresented = true
+        }
     }
 
     private func navigationChrome(_ base: AnyView, proxy: ScrollViewProxy) -> some View {
@@ -724,7 +795,7 @@ struct ThreadDetailView: View {
             model.requestThreadSnapshot(taskId)
             autoFollow = true
             try? await Task.sleep(nanoseconds: 350_000_000)
-            proxy.scrollTo("transcript-bottom", anchor: .bottom)
+            scrollTranscriptToBottom(proxy, animated: false)
         }
         .onDisappear {
             if model.visibleThreadId == taskId { model.visibleThreadId = nil }
@@ -735,13 +806,11 @@ struct ThreadDetailView: View {
         base
         .onChange(of: snapshot?.rows?.count ?? 0) { _, _ in
             guard autoFollow else { return }
-            withAnimation(.easeOut(duration: 0.2)) {
-                proxy.scrollTo("transcript-bottom", anchor: .bottom)
-            }
+            pinTranscriptToBottomAfterLayout(proxy, animated: true)
         }
         .onChange(of: model.streamingTexts[taskId] ?? "") { _, _ in
             guard autoFollow else { return }
-            proxy.scrollTo("transcript-bottom", anchor: .bottom)
+            pinTranscriptToBottomAfterLayout(proxy, animated: false)
         }
         .simultaneousGesture(
             DragGesture(minimumDistance: 14).onChanged { value in
@@ -750,6 +819,30 @@ struct ThreadDetailView: View {
             }
         )
         
+    }
+
+    private func scrollTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        if animated {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo("transcript-bottom", anchor: .bottom)
+            }
+            return
+        }
+
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo("transcript-bottom", anchor: .bottom)
+        }
+    }
+
+    private func pinTranscriptToBottomAfterLayout(_ proxy: ScrollViewProxy, animated: Bool) {
+        scrollTranscriptToBottom(proxy, animated: animated)
+        Task { @MainActor in
+            await Task.yield()
+            guard autoFollow else { return }
+            scrollTranscriptToBottom(proxy, animated: false)
+        }
     }
 
     private func keyboardChrome(_ base: AnyView) -> some View {
@@ -1084,6 +1177,197 @@ private extension View {
     }
 }
 
+struct ParticipantHealthSummaryCard: View {
+    let summary: RemoteThreadSnapshot.Row.ParticipantHealth
+
+    private var entries: [RemoteThreadSnapshot.Row.ParticipantHealth.Entry] {
+        summary.entries ?? []
+    }
+    private var okCount: Int {
+        summary.okCount ?? entries.filter { $0.status?.lowercased() == "ok" }.count
+    }
+    private var totalCount: Int {
+        max(summary.totalCount ?? entries.count, entries.count)
+    }
+    private var allReachable: Bool {
+        totalCount > 0 && okCount >= totalCount
+    }
+    private var accent: Color {
+        allReachable ? TWTheme.statusColor("success") : TWTheme.statusColor("failed")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: allReachable ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(accent)
+                    .frame(width: 20, height: 20)
+                    .background(accent.opacity(0.14), in: Circle())
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(allReachable ? "Participants reachable" : "Participant health")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TWTheme.textPrimary)
+                    Text("\(okCount)/\(totalCount) ready")
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textTertiary)
+                }
+                Spacer(minLength: 8)
+            }
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 124), spacing: 6, alignment: .leading)],
+                alignment: .leading,
+                spacing: 6
+            ) {
+                ForEach(entries) { entry in
+                    participantChip(entry)
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            LinearGradient(
+                colors: [accent.opacity(0.12), TWTheme.surface1.opacity(0.78)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(accent.opacity(allReachable ? 0.38 : 0.62), lineWidth: 1)
+        )
+    }
+
+    private func participantChip(_ entry: RemoteThreadSnapshot.Row.ParticipantHealth.Entry)
+        -> some View
+    {
+        let status = entry.status?.lowercased()
+        let reachable = status == "ok"
+        let provider = entry.provider
+        let providerAccent = TWTheme.providerAccent(provider)
+        let chipAccent = reachable ? providerAccent : TWTheme.statusColor("failed")
+        let role = entry.role?.isEmpty == false ? entry.role ?? "Participant" : "Participant"
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(chipAccent)
+                    .frame(width: 6, height: 6)
+                Text(role)
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                    .foregroundStyle(TWTheme.textPrimary)
+                Spacer(minLength: 4)
+                Text(TWTheme.providerLabel(provider))
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                    .foregroundStyle(providerAccent)
+            }
+            if !reachable, let reason = entry.reason, !reason.isEmpty {
+                Text(reason)
+                    .font(.caption2)
+                    .lineLimit(2)
+                    .foregroundStyle(TWTheme.textTertiary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            chipAccent.opacity(reachable ? 0.12 : 0.16),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(chipAccent.opacity(reachable ? 0.24 : 0.42), lineWidth: 1)
+        )
+    }
+}
+
+struct SubThreadReturnSummaryCard: View {
+    let summary: RemoteThreadSnapshot.Row.SubThreadReturn
+    let resultText: String
+    let participants: [RemoteEnsembleState.Participant]
+
+    private var provider: String { summary.provider ?? "unknown" }
+    private var title: String {
+        let value = summary.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? "Untitled sub-thread" : value
+    }
+    private var accent: Color { TWTheme.providerAccent(provider) }
+    private var displayBody: String {
+        let value = resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? "No returned output." : value
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            header
+            ToolActivityViewport(
+                maxHeight: 220,
+                fadeHeight: 36,
+                expandLabel: "Expand result",
+                collapseLabel: "Collapse result"
+            ) {
+                MarkdownLite(
+                    displayBody,
+                    participants: participants,
+                    baseColor: TWTheme.textPrimary
+                )
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(10)
+        .background(
+            LinearGradient(
+                colors: [accent.opacity(0.13), TWTheme.surface1.opacity(0.76)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(accent.opacity(0.54), lineWidth: 1.2)
+        )
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .center, spacing: 6) {
+                Image(systemName: "arrow.turn.up.left")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(accent)
+                Text("Invocation result from")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .lineLimit(1)
+                Text("TaskWraith Sub-thread")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(TWTheme.surface3, in: Capsule())
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(TWTheme.providerLabel(provider))
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(accent)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(accent.opacity(0.14), in: Capsule())
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+    }
+}
+
 struct ThreadRowView: View {
     @ObservedObject var model: RemoteSessionModel
     let threadId: String
@@ -1093,20 +1377,57 @@ struct ThreadRowView: View {
 
     private var isUser: Bool { row.role == "user" }
     private var isTool: Bool { row.role == "tool" || row.kind == "tool" }
-    private var showExpand: Bool { row.truncated == true }
+    private var showExpand: Bool { row.truncated == true && !hasParticipantHealthCard }
     private var isExpanding: Bool { model.expandingRows.contains(row.id) }
+    private var hasParticipantHealthCard: Bool {
+        !(row.participantHealth?.entries?.isEmpty ?? true)
+    }
+    private var hasSubThreadReturnCard: Bool { row.subThreadReturn != nil }
+    private var ensembleParticipants: [RemoteEnsembleState.Participant] {
+        model.ensembleStates[threadId]?.participants ?? []
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             AgentTranscriptLeadingMark(
                 identity: activeAgentIdentity,
                 fallbackAccent: accentColor,
-                hidden: isUser)
+                hidden: isUser || hasParticipantHealthCard)
             VStack(alignment: .leading, spacing: 4) {
-                Text(label)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(labelColor)
-                if let tools = row.toolSummary, let count = tools.activityCount, count > 0 {
+                if !hasParticipantHealthCard && !hasSubThreadReturnCard {
+                    Text(label)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(labelColor)
+                }
+                if let health = row.participantHealth,
+                    let entries = health.entries, !entries.isEmpty
+                {
+                    ParticipantHealthSummaryCard(summary: health)
+                } else if let subThreadReturn = row.subThreadReturn {
+                    SubThreadReturnSummaryCard(
+                        summary: subThreadReturn,
+                        resultText: row.preview ?? "",
+                        participants: ensembleParticipants
+                    )
+                    .contextMenu {
+                        Section(deliveredCaption ?? "") {
+                            Button {
+                                #if canImport(UIKit)
+                                    UIPasteboard.general.string = row.preview ?? ""
+                                #endif
+                            } label: {
+                                Label("Copy result", systemImage: "doc.on.doc")
+                            }
+                            if let card = model.taskCards.first(where: { $0.id == threadId }) {
+                                Button {
+                                    model.toggleMessagePin(card, messageId: row.id, pinned: true)
+                                } label: {
+                                    Label("Pin result", systemImage: "pin")
+                                }
+                            }
+                        }
+                    }
+                } else if let tools = row.toolSummary, let count = tools.activityCount, count > 0 {
                     if let entries = tools.tools, !entries.isEmpty {
                         ToolActivityCards(
                             entries: entries, totalCount: count, status: tools.status)
@@ -1131,10 +1452,12 @@ struct ThreadRowView: View {
                     .font(.caption)
                     .foregroundStyle(TWTheme.textTertiary)
                 }
-                if let preview = row.preview, !preview.isEmpty {
+                if !hasParticipantHealthCard && !hasSubThreadReturnCard,
+                    let preview = row.preview, !preview.isEmpty
+                {
                     MarkdownLite(
                         preview,
-                        participants: model.ensembleStates[threadId]?.participants ?? [],
+                        participants: ensembleParticipants,
                         baseColor: bodyColor
                     )
                     .textSelection(.enabled)
@@ -1472,6 +1795,7 @@ struct StreamingSegmentRow: View {
     let isTail: Bool
     var agentIdentity: ThreadAgentIdentity? = nil
     var participants: [RemoteEnsembleState.Participant] = []
+    var onRevealFrame: (() -> Void)? = nil
 
     var body: some View {
         let parts =
@@ -1496,7 +1820,8 @@ struct StreamingSegmentRow: View {
                     TokenRevealText(
                         target: parts.tail,
                         font: TWFont.transcript(),
-                        color: TWTheme.textPrimary)
+                        color: TWTheme.textPrimary,
+                        onRevealFrame: onRevealFrame)
                 }
             }
             .agentTranscriptRim(agentIdentity)
