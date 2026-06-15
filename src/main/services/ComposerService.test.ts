@@ -167,6 +167,10 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('Conversation context (last 1 turn(s)):')
     expect(payload.prompt).toContain('User: Previous question')
     expect(payload.prompt).toContain('Current user request:\nDo the thing')
+    expect(payload.composer.providerMetadataPatch).toMatchObject({
+      taskWraithRuntimePreambleVersion: 'taskwraith-runtime-v2',
+      taskWraithRuntimePreambleProvider: 'gemini'
+    })
     expect(payload.composer.contextTurnsApplied).toBe(6)
   })
 
@@ -523,12 +527,19 @@ describe('ComposerService', () => {
       { selectedModelType: 'gpt-5.5' }
     )
     expect(payload.prompt).not.toContain('Conversation context')
-    expect(payload.composer.providerMetadataPatch).toBeUndefined()
+    expect(payload.composer.providerMetadataPatch).not.toHaveProperty('codexModelContextAppliedKeys')
   })
 
   it('builds Claude payloads without generic context and includes Claude reasoning/fast settings', () => {
     const payload = compose(
-      { provider: 'claude', linkedProviderSessionId: 'claude-thread-1' },
+      {
+        provider: 'claude',
+        linkedProviderSessionId: 'claude-thread-1',
+        providerMetadata: {
+          taskWraithRuntimePreambleVersion: 'taskwraith-runtime-v2',
+          taskWraithRuntimePreambleProvider: 'claude'
+        }
+      },
       {
         selectedModelType: 'claude-sonnet-4-6',
         claudeReasoningEffort: 'medium',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
   buildConversationContextBlock,
   buildGuestParticipantPresenceContextBlock,
   buildGuestParticipantReplyContextBlock,
@@ -380,6 +381,8 @@ describe('composeRunPrompt sub-thread returns', () => {
       })
 
       expect(result.contextualPrompt).toContain('taskwraith-runtime-v2')
+      expect(result.runtimePreambleVersion).toBe(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
+      expect(result.runtimePreambleProvider).toBe(provider)
       expect(result.contextualPrompt).toContain(delegateTool)
       expect(result.contextualPrompt).toContain('CROSS-PROVIDER delegation')
       expect(result.contextualPrompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
@@ -422,6 +425,56 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(negated.contextualPrompt).not.toContain('Spawn example')
     expect(negated.contextualPrompt).not.toContain('RECALL')
+  })
+
+  it('uses the persisted preamble version to avoid or force resume reinjection', () => {
+    const current = composeRunPrompt({
+      provider: 'codex',
+      finalPrompt: 'Continue.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      resumeSessionId: 'codex-thread-1',
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'codex',
+      providerLabel: 'Codex'
+    })
+    expect(current.contextualPrompt).not.toContain('TaskWraith runtime note')
+    expect(current.runtimePreambleVersion).toBeUndefined()
+
+    const stale = composeRunPrompt({
+      provider: 'codex',
+      finalPrompt: 'Continue.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      resumeSessionId: 'codex-thread-1',
+      runtimePreambleVersion: 'taskwraith-runtime-v1',
+      runtimePreambleProvider: 'codex',
+      providerLabel: 'Codex'
+    })
+    expect(stale.contextualPrompt).toContain('TaskWraith runtime note')
+    expect(stale.runtimePreambleVersion).toBe(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
+
+    const wrongProvider = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'Continue.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      resumeSessionId: 'claude-thread-1',
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'codex',
+      providerLabel: 'Claude'
+    })
+    expect(wrongProvider.contextualPrompt).toContain('mcp__TaskWraith__delegate_to_subthread')
+    expect(wrongProvider.runtimePreambleProvider).toBe('claude')
   })
 
   it('does not advertise Cursor/Grok write tools in plan mode', () => {

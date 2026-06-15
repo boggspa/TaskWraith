@@ -107,13 +107,19 @@ function shouldInjectTaskWraithRuntimePreamble(args: {
   isGlobalRun: boolean
   approvalMode: string
   resumeSessionId?: string
+  runtimePreambleVersion?: string | null
+  runtimePreambleProvider?: string | null
 }): boolean {
   if (args.isGlobalRun || args.approvalMode === 'plan') return false
   if (args.provider === 'kimi' || args.provider === 'cursor' || args.provider === 'grok') {
     return true
   }
   if (args.provider === 'gemini' || args.provider === 'claude' || args.provider === 'codex') {
-    return !args.resumeSessionId
+    if (!args.resumeSessionId) return true
+    return (
+      args.runtimePreambleVersion !== TASKWRAITH_RUNTIME_PREAMBLE_VERSION ||
+      args.runtimePreambleProvider !== args.provider
+    )
   }
   return false
 }
@@ -475,6 +481,10 @@ export interface ComposeRunPromptInput {
   isGlobalRun: boolean
   /** Resolved approval mode for the run ('default' | 'plan' | etc.). */
   approvalMode: string
+  /** Version of the TaskWraith runtime preamble already known to this provider session. */
+  runtimePreambleVersion?: string | null
+  /** Provider whose runtime preamble version was last persisted for this chat. */
+  runtimePreambleProvider?: string | null
   /** Provider display label used in the application-log message. */
   providerLabel: string
   /** User preference for provider-native sub-agent requests. */
@@ -503,6 +513,9 @@ export interface ComposeRunPromptResult {
   /** Set when the UI should show a one-shot notice — the caller maps this to
    * its toast/notice state. */
   uiNoticeMessage?: string
+  /** Set when this run injected the runtime preamble and the caller should persist it. */
+  runtimePreambleVersion?: string
+  runtimePreambleProvider?: ProviderId
 }
 
 /** Compose the final prompt for an outgoing run according to provider rules.
@@ -521,6 +534,8 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     codexHandoffsApplied,
     isGlobalRun,
     approvalMode,
+    runtimePreambleVersion,
+    runtimePreambleProvider,
     providerLabel,
     nativeSubAgentRequests,
     ollamaToolControlTier,
@@ -678,12 +693,15 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   // only carries the provider namespace, edit discipline, and cross-provider
   // delegation guardrails. Gemini/Claude/Codex skip on resumable sessions;
   // Kimi/Cursor/Grok keep injecting until their session retention is verified.
+  let runtimePreambleInjected = false
   if (
     shouldInjectTaskWraithRuntimePreamble({
       provider,
       isGlobalRun,
       approvalMode,
-      resumeSessionId
+      resumeSessionId,
+      runtimePreambleVersion,
+      runtimePreambleProvider
     })
   ) {
     const taskWraithRuntimePreamble = buildTaskWraithRuntimePreamble({
@@ -693,6 +711,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
       nativeSubAgentInstruction
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
+    runtimePreambleInjected = true
   }
 
   if (provider === 'ollama' && !isGlobalRun) {
@@ -721,7 +740,13 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     contextTurnsApplied,
     applicationLog,
     codexHandoffApplied,
-    uiNoticeMessage
+    uiNoticeMessage,
+    ...(runtimePreambleInjected
+      ? {
+          runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+          runtimePreambleProvider: provider
+        }
+      : {})
   }
 }
 

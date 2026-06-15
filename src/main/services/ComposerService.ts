@@ -188,6 +188,8 @@ export class ComposerService {
       codexHandoffsApplied,
       isGlobalRun: scope === 'global',
       approvalMode,
+      runtimePreambleVersion: metadataString(chat, 'taskWraithRuntimePreambleVersion'),
+      runtimePreambleProvider: metadataString(chat, 'taskWraithRuntimePreambleProvider'),
       providerLabel: getProviderLabel(provider),
       nativeSubAgentRequests: settings.nativeSubAgentRequests,
       guestParticipant: chat.guestParticipant,
@@ -205,6 +207,12 @@ export class ComposerService {
 
     const providerMetadataPatchData = {
       ...buildProviderMetadataPatch(composed, codexHandoffsApplied),
+      ...(composed.runtimePreambleVersion
+        ? {
+            taskWraithRuntimePreambleVersion: composed.runtimePreambleVersion,
+            taskWraithRuntimePreambleProvider: composed.runtimePreambleProvider || provider
+          }
+        : {}),
       ...(provider === 'gemini' ? { geminiAuthProfileId } : {})
     }
     const providerMetadataPatch =
