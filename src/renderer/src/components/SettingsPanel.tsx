@@ -3160,31 +3160,8 @@ export function SettingsPanel({
                 <label className="settings-label">Welcome activity heatmaps</label>
                 <p className="settings-hint">
                   Toggle the standalone 90-day heatmaps shown underneath the composer on new chat
-                  welcome screens. Sidebar activity stays unchanged.
-                </p>
-                <span className="settings-field-label">Layout</span>
-                <div className="settings-option-list settings-option-list-inline">
-                  {(['stacked', 'single'] as const).map((opt) => {
-                    const current = welcomeHeatmapPrefs?.layout === 'single' ? 'single' : 'stacked'
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        className={`btn btn-sm ${current === opt ? '' : 'btn-ghost'}`}
-                        onClick={() =>
-                          onChange({
-                            welcomeHeatmapPrefs: { ...(welcomeHeatmapPrefs || {}), layout: opt }
-                          })
-                        }
-                      >
-                        {opt === 'single' ? 'Single (cycle)' : 'Stacked'}
-                      </button>
-                    )
-                  })}
-                </div>
-                <p className="settings-hint">
-                  Stacked shows every enabled heatmap at once; Single shows one at a time, cycling
-                  every 90 seconds through the enabled heatmaps.
+                  welcome screens. The welcome screen cycles through enabled panels one at a time;
+                  sidebar activity stays unchanged.
                 </p>
                 <ul className="settings-dashboard-stats-list">
                   {[

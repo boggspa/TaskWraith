@@ -15686,12 +15686,9 @@ function App(): React.JSX.Element {
     Boolean(welcomeWorkspaceActivityPath) ||
     (shouldShowWelcomeUsageDashboard &&
       (welcomeTaskWraithHeatmapEnabled || welcomeExternalHeatmapEnabled))
-  // 1.0.72 — welcome heatmap layout (stacked = all stacked; single = one at a
-  // time auto-cycling every 90s) + whole-dashboard show/hide. The slots below
-  // are the renderable heatmaps in display order; WelcomeHeatmaps handles the
-  // stacked-vs-cycling presentation.
-  const welcomeHeatmapLayout: 'single' | 'stacked' =
-    settings?.welcomeHeatmapPrefs?.layout === 'single' ? 'single' : 'stacked'
+  // Welcome standalone activity panels now always use the uncluttered cycle
+  // presentation. Older stored `welcomeHeatmapPrefs.layout` values are ignored
+  // so a legacy "stacked" setting cannot crowd the new-chat screen.
   const welcomeDashboardCardEnabled = settings?.dashboardStatPrefs?.dashboardEnabled !== false
   const welcomeHeatmapSlots: WelcomeHeatmapSlot[] = []
   if (welcomeWorkspaceActivityPath) {
@@ -15825,7 +15822,6 @@ function App(): React.JSX.Element {
     currentChat?.appChatId,
     usageInitialized,
     welcomeDashboardFitActive,
-    welcomeHeatmapLayout,
     welcomeHeatmapSlots.length,
     welcomeUsageTab
   ])
@@ -20905,7 +20901,7 @@ function App(): React.JSX.Element {
               </div>
             )}
             {shouldShowWelcomeStandaloneHeatmaps && (
-              <WelcomeHeatmaps slots={welcomeHeatmapSlots} layout={welcomeHeatmapLayout} />
+              <WelcomeHeatmaps slots={welcomeHeatmapSlots} layout="single" />
             )}
           </div>
             </div>
