@@ -529,6 +529,85 @@ describe('RemoteThreadProjection', () => {
       })
     })
 
+    it('falls back to successful write tool summaries when run diff is not available', () => {
+      const messages = [
+        msg(1, {
+          id: 'run-tools',
+          role: 'tool',
+          runId: 'run-tools',
+          toolActivities: [
+            activity({
+              id: 'write',
+              toolName: 'write_file',
+              displayName: 'Write file',
+              category: 'write',
+              diffSummary: {
+                source: 'content',
+                confidence: 'estimated',
+                additions: 6,
+                files: [{ path: 'notes/new.md', status: 'created', additions: 6 }]
+              }
+            }),
+            activity({
+              id: 'replace',
+              toolName: 'replace',
+              displayName: 'Replace',
+              category: 'write',
+              filePath: 'src/app.ts',
+              diffSummary: {
+                source: 'string_replace',
+                confidence: 'estimated',
+                additions: 3,
+                deletions: 1
+              }
+            }),
+            activity({
+              id: 'denied',
+              toolName: 'delete_file',
+              displayName: 'Delete file',
+              category: 'write',
+              status: 'error',
+              filePath: 'should-not-count.ts',
+              diffSummary: {
+                source: 'unknown',
+                confidence: 'unknown',
+                deletions: 10
+              }
+            })
+          ]
+        })
+      ]
+      const runs = [
+        {
+          runId: 'run-tools',
+          status: 'success',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          endedAt: '2026-01-01T00:00:03.000Z'
+        } as unknown as ChatRun
+      ]
+
+      const summary = buildRunSummary(runs, undefined, messages)
+      expect(summary?.fileChanges).toEqual({
+        filesChanged: 2,
+        additions: 9,
+        deletions: 1,
+        createdFiles: 1,
+        modifiedFiles: 1,
+        deletedFiles: 0,
+        files: [
+          { path: 'notes/new.md', status: 'created', additions: 6 },
+          { path: 'src/app.ts', status: 'modified', additions: 3, deletions: 1 }
+        ]
+      })
+
+      const snap = project({ kind: 'latestN', n: 10 }, messages, runs)
+      expect(snap.runSummary?.fileChanges?.filesChanged).toBe(2)
+      expect(snap.runSummaries?.[0]?.fileChanges?.files?.map((file) => file.path)).toEqual([
+        'notes/new.md',
+        'src/app.ts'
+      ])
+    })
+
     it('formats run cost with the remote display currency options', () => {
       const summary = buildRunSummary(
         [

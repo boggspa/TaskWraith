@@ -18805,6 +18805,22 @@ if (isGeminiMcpBridgeProcess) {
       broadcastChatPopoutUpdate(chat)
       maybeScheduleCodexNativeGoalSync(previous, chat, 'renderer-save-chat')
       broadcastThreadUpdate(chat?.appChatId)
+      const latestRun = chat.runs?.[chat.runs.length - 1]
+      const previousRun = previous?.runs?.find((run) => run.runId === latestRun?.runId)
+      const runHasDiff = (run: ChatRun | undefined): boolean =>
+        Boolean(
+          run?.runDiff ||
+            (run?.runDiffByPath && Object.keys(run.runDiffByPath).length > 0)
+        )
+      if (latestRun?.endedAt && runHasDiff(latestRun) && !runHasDiff(previousRun)) {
+        const workspaceId =
+          canonicalRemoteWorkspaceId(chat.workspaceId) ??
+          (!chat.workspaceId || chat.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
+        if (workspaceId) {
+          bridgeBroadcasterRef?.resetThrottle()
+          pushRemoteThreadSnapshot(chat, workspaceId)
+        }
+      }
     })
     ipcMain.handle('delete-chat', (_, chatId: string) => {
       chatService.deleteChat(chatId)

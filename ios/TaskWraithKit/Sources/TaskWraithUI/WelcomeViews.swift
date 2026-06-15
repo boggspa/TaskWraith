@@ -79,6 +79,7 @@ struct TaskCompleteCard: View {
     private var totalFilesChanged: Int {
         run.fileChanges?.filesChanged ?? diff?.filesChanged ?? fileRows.count
     }
+    private var hasFileChangeSummary: Bool { run.fileChanges != nil || diff != nil }
 
     private var title: String { failed ? "Run failed" : "Task complete" }
 
@@ -156,7 +157,7 @@ struct TaskCompleteCard: View {
             .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
 
-            if !fileRows.isEmpty {
+            if hasFileChangeSummary {
                 VStack(spacing: 0) {
                     HStack {
                         Text("File changes")
@@ -176,44 +177,57 @@ struct TaskCompleteCard: View {
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    ForEach(fileRows.prefix(8)) { file in
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(
-                                    file.status == "created" || file.status == "untracked"
-                                        ? TWTheme.statusSuccess
-                                        : file.status == "deleted"
-                                            ? TWTheme.statusFailed : TWTheme.chroma1
-                                )
-                                .frame(width: 5, height: 5)
-                            Text(file.path)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(TWTheme.textSecondary)
-                                .lineLimit(1)
-                                .truncationMode(.head)
-                            Spacer(minLength: 4)
-                            if let additions = file.additions, additions > 0 {
-                                Text("+\(additions)")
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(TWTheme.statusSuccess)
+                    if fileRows.isEmpty {
+                        Text(
+                            totalFilesChanged > 0
+                                ? "\(totalFilesChanged) file\(totalFilesChanged == 1 ? "" : "s") changed."
+                                : "No file changes detected."
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                    } else {
+                        ForEach(fileRows.prefix(8)) { file in
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(
+                                        file.status == "created" || file.status == "untracked"
+                                            ? TWTheme.statusSuccess
+                                            : file.status == "deleted"
+                                                ? TWTheme.statusFailed : TWTheme.chroma1
+                                    )
+                                    .frame(width: 5, height: 5)
+                                Text(file.path)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(TWTheme.textSecondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.head)
+                                Spacer(minLength: 4)
+                                if let additions = file.additions, additions > 0 {
+                                    Text("+\(additions)")
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(TWTheme.statusSuccess)
+                                }
+                                if let deletions = file.deletions, deletions > 0 {
+                                    Text("−\(deletions)")
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(TWTheme.statusFailed)
+                                }
                             }
-                            if let deletions = file.deletions, deletions > 0 {
-                                Text("−\(deletions)")
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(TWTheme.statusFailed)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                        }
+                        if totalFilesChanged > min(8, fileRows.count) {
+                            Text("+\(totalFilesChanged - min(8, fileRows.count)) more files changed")
+                                .font(.caption2)
+                                .foregroundStyle(TWTheme.textMuted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.bottom, 6)
                             }
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                    }
-                    if totalFilesChanged > min(8, fileRows.count) {
-                        Text("+\(totalFilesChanged - min(8, fileRows.count)) more files changed")
-                            .font(.caption2)
-                            .foregroundStyle(TWTheme.textMuted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 10)
-                            .padding(.bottom, 6)
-                    }
                 }
                 .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))

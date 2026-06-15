@@ -36,8 +36,10 @@ import type {
   BlackboardScope,
   ChatMessage,
   ChatRun,
+  DiffFileStatus,
   DiffFileSummary,
-  ProviderId
+  ProviderId,
+  ToolActivity
 } from './store/types'
 
 export type RemoteDisplayCurrency = 'USD' | 'GBP' | 'EUR'
@@ -847,16 +849,18 @@ function parseTime(value?: string): number {
 /** Best-effort run summary from the most recent run. */
 export function buildRunSummary(
   runs: ChatRun[] | undefined,
-  costDisplay?: RemoteCostDisplayOptions
+  costDisplay?: RemoteCostDisplayOptions,
+  messages?: ChatMessage[]
 ): RemoteRunSummary | undefined {
   if (!Array.isArray(runs) || runs.length === 0) return undefined
-  return summarizeRun(runs[runs.length - 1], costDisplay)
+  return summarizeRun(runs[runs.length - 1], costDisplay, messages)
 }
 
 /** Per-run projection — powers the per-run Task-complete cards. */
 export function summarizeRun(
   run: ChatRun | undefined,
-  costDisplay?: RemoteCostDisplayOptions
+  costDisplay?: RemoteCostDisplayOptions,
+  messages?: ChatMessage[]
 ): RemoteRunSummary | undefined {
   if (!run || typeof run.runId !== 'string') return undefined
   const summary: RemoteRunSummary = { runId: run.runId }
@@ -901,12 +905,15 @@ export function summarizeRun(
       if (formatted) summary.costText = hasExplicitCost ? formatted : `~${formatted}`
     }
   }
-  const fileChanges = summarizeRunFileChanges(run)
+  const fileChanges = summarizeRunFileChanges(run, messages)
   if (fileChanges) summary.fileChanges = fileChanges
   return summary
 }
 
-function summarizeRunFileChanges(run: ChatRun): RemoteRunSummary['fileChanges'] | undefined {
+function summarizeRunFileChanges(
+  run: ChatRun,
+  messages?: ChatMessage[]
+): RemoteRunSummary['fileChanges'] | undefined {
   const workspaces: RemoteRunWorkspaceFileChanges[] = []
   const changedFiles: DiffFileSummary[] = []
   const primaryPath = primaryRunDiffWorkspacePath(run)
@@ -957,7 +964,7 @@ function summarizeRunFileChanges(run: ChatRun): RemoteRunSummary['fileChanges'] 
   const legacy = run.runDiff as
     | { filesChanged?: number; additions?: number; deletions?: number; files?: unknown[] }
     | undefined
-  if (!legacy) return undefined
+  if (!legacy) return summarizeRunToolFileChanges(run, messages)
   const filesChanged =
     typeof legacy.filesChanged === 'number'
       ? legacy.filesChanged
@@ -969,6 +976,177 @@ function summarizeRunFileChanges(run: ChatRun): RemoteRunSummary['fileChanges'] 
     additions: typeof legacy.additions === 'number' ? legacy.additions : 0,
     deletions: typeof legacy.deletions === 'number' ? legacy.deletions : 0
   }
+}
+
+const TOOL_FILE_STATUS_PRIORITY: Record<DiffFileStatus, number> = {
+  created: 3,
+  deleted: 2,
+  renamed: 1,
+  modified: 0,
+  untracked: 0,
+  binary: 0,
+  too_large: 0,
+  hidden_sensitive: 0,
+  noise: 0
+}
+
+function normalizeToolFileStatus(
+  raw: string | undefined,
+  fallback: DiffFileStatus
+): DiffFileStatus {
+  const value = (raw || '').toLowerCase()
+  if (value === 'add' || value === 'create' || value === 'created' || value === 'new') {
+    return 'created'
+  }
+  if (value === 'delete' || value === 'deleted' || value === 'remove' || value === 'removed') {
+    return 'deleted'
+  }
+  if (value === 'rename' || value === 'renamed') return 'renamed'
+  if (
+    value === 'modify' ||
+    value === 'modified' ||
+    value === 'edit' ||
+    value === 'update' ||
+    value === 'updated' ||
+    value === 'unknown'
+  ) {
+    return 'modified'
+  }
+  return value in TOOL_FILE_STATUS_PRIORITY ? (value as DiffFileStatus) : fallback
+}
+
+function toolNameFallbackStatus(toolName: string | undefined): DiffFileStatus {
+  const value = (toolName || '').toLowerCase()
+  if (value.includes('delete') || value.includes('remove')) return 'deleted'
+  if (value.includes('create') || value === 'write_file' || value.endsWith('__write_file')) {
+    return 'created'
+  }
+  return 'modified'
+}
+
+function toolStringField(record: Record<string, unknown> | undefined, keys: string[]): string {
+  if (!record) return ''
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function normalizeToolPath(path: string): string {
+  return path.trim().replace(/\\/g, '/')
+}
+
+function mergeOptionalCount(lhs: number | undefined, rhs: number | undefined): number | undefined {
+  if (rhs === undefined) return lhs
+  if (lhs === undefined) return rhs
+  return lhs + rhs
+}
+
+function mergeToolStatus(lhs: DiffFileStatus | undefined, rhs: DiffFileStatus): DiffFileStatus {
+  if (!lhs) return rhs
+  return (TOOL_FILE_STATUS_PRIORITY[rhs] ?? 0) > (TOOL_FILE_STATUS_PRIORITY[lhs] ?? 0)
+    ? rhs
+    : lhs
+}
+
+function addToolFileChange(
+  changes: Map<string, DiffFileSummary>,
+  input: {
+    path: string
+    status: DiffFileStatus
+    additions?: number
+    deletions?: number
+  }
+): void {
+  const path = normalizeToolPath(input.path)
+  if (!path) return
+  const existing = changes.get(path)
+  changes.set(path, {
+    path,
+    status: mergeToolStatus(existing?.status, input.status),
+    additions: mergeOptionalCount(existing?.additions, input.additions),
+    deletions: mergeOptionalCount(existing?.deletions, input.deletions),
+    previewKind: 'none'
+  })
+}
+
+function summarizeRunToolFileChanges(
+  run: ChatRun,
+  messages?: ChatMessage[]
+): RemoteRunSummary['fileChanges'] | undefined {
+  if (!run.runId || !Array.isArray(messages) || messages.length === 0) return undefined
+  const changes = new Map<string, DiffFileSummary>()
+
+  for (const message of messages) {
+    if (message.runId !== run.runId) continue
+    for (const activity of message.toolActivities ?? []) {
+      addActivityFileChanges(changes, activity)
+    }
+  }
+
+  const files = Array.from(changes.values()).filter((file) => file.status !== 'noise')
+  if (files.length === 0) return undefined
+  return {
+    filesChanged: files.length,
+    additions: sumDiffFiles(files, 'additions'),
+    deletions: sumDiffFiles(files, 'deletions'),
+    createdFiles: files.filter((file) => file.status === 'created' || file.status === 'untracked')
+      .length,
+    modifiedFiles: files.filter(
+      (file) => file.status !== 'created' && file.status !== 'untracked' && file.status !== 'deleted'
+    ).length,
+    deletedFiles: files.filter((file) => file.status === 'deleted').length,
+    files: boundRunChangedFiles(files)
+  }
+}
+
+function addActivityFileChanges(
+  changes: Map<string, DiffFileSummary>,
+  activity: ToolActivity
+): void {
+  if (!activity || activity.status === 'error') return
+  const fallbackStatus = toolNameFallbackStatus(activity.toolName)
+  const fallbackPath =
+    activity.filePath ||
+    activity.affectedFilePath ||
+    toolStringField(activity.parameters, [
+      'file_path',
+      'filePath',
+      'path',
+      'target',
+      'target_file',
+      'target_file_path'
+    ])
+
+  const files = activity.diffSummary?.files
+  if (Array.isArray(files) && files.length > 0) {
+    for (const file of files) {
+      const path = typeof file.path === 'string' && file.path.trim() ? file.path : fallbackPath
+      if (!path) continue
+      addToolFileChange(changes, {
+        path,
+        status: normalizeToolFileStatus(file.status, fallbackStatus),
+        additions: typeof file.additions === 'number' ? file.additions : undefined,
+        deletions: typeof file.deletions === 'number' ? file.deletions : undefined
+      })
+    }
+    return
+  }
+
+  if (!fallbackPath || (activity.category !== 'write' && !activity.diffSummary)) return
+  addToolFileChange(changes, {
+    path: fallbackPath,
+    status: fallbackStatus,
+    additions:
+      typeof activity.diffSummary?.additions === 'number'
+        ? activity.diffSummary.additions
+        : undefined,
+    deletions:
+      typeof activity.diffSummary?.deletions === 'number'
+        ? activity.diffSummary.deletions
+        : undefined
+  })
 }
 
 function isRunDiffResult(value: ChatRun['runDiff']): value is NonNullable<ChatRun['runDiff']> {
@@ -1074,10 +1252,10 @@ export function projectRemoteThread(
   const totalRows = all.length
   const previewMax = opts.previewMaxChars ?? DEFAULT_PREVIEW_MAX
   const generatedAt = opts.generatedAt ?? new Date().toISOString()
-  const runSummary = buildRunSummary(runs, opts.costDisplay)
+  const runSummary = buildRunSummary(runs, opts.costDisplay, all)
   const runSummaries = (runs ?? [])
     .slice(-12)
-    .map((run) => summarizeRun(run, opts.costDisplay))
+    .map((run) => summarizeRun(run, opts.costDisplay, all))
     .filter((entry): entry is RemoteRunSummary => Boolean(entry))
   const blackboardEntries = projectBlackboardEntries(opts.blackboardEntries)
   const pinnedRows = all
