@@ -64,6 +64,73 @@ struct ThreadDetailView: View {
         if snapshot?.runSummary?.provider == liveProvider { return snapshot?.runSummary?.model }
         return nil
     }
+
+    private struct ComposerAdditionalWorkspaceRow: Identifiable {
+        let projected: RemoteTaskCard.AdditionalWorkspace
+        let workspaceId: String?
+        let displayName: String
+
+        var id: String { projected.id }
+        var canDispatchAsExtraWorkspace: Bool {
+            workspaceId != nil && projected.access?.lowercased() == "write"
+        }
+        var showsWriteAccess: Bool {
+            projected.access?.lowercased() == "write"
+        }
+    }
+
+    private func additionalWorkspaceRows(
+        for card: RemoteTaskCard
+    ) -> [ComposerAdditionalWorkspaceRow] {
+        (card.additionalWorkspaces ?? []).map { workspace in
+            let workspaceId = model.workspaceId(forPath: workspace.path)
+            let displayName =
+                model.workspaceName(for: workspaceId)
+                ?? workspace.path.split(separator: "/").last.map(String.init)
+                ?? workspace.path
+            return ComposerAdditionalWorkspaceRow(
+                projected: workspace,
+                workspaceId: workspaceId,
+                displayName: displayName)
+        }
+    }
+
+    private func extraWorkspaceIdsForSend(card: RemoteTaskCard) -> [String]? {
+        var ids: [String] = []
+        for row in additionalWorkspaceRows(for: card) {
+            guard row.canDispatchAsExtraWorkspace,
+                let workspaceId = row.workspaceId,
+                model.workspaceCanEditFiles(workspaceId)
+            else {
+                continue
+            }
+            if workspaceId != card.workspaceId, !ids.contains(workspaceId) {
+                ids.append(workspaceId)
+            }
+        }
+        if let secondaryWorkspaceId,
+            model.workspaceCanEditFiles(secondaryWorkspaceId),
+            secondaryWorkspaceId != card.workspaceId,
+            !ids.contains(secondaryWorkspaceId)
+        {
+            ids.append(secondaryWorkspaceId)
+        }
+        return ids.isEmpty ? nil : Array(ids.prefix(2))
+    }
+
+    private func composerGitWorkspaceIds(card: RemoteTaskCard) -> [String] {
+        var ids: [String] = []
+        func append(_ id: String?) {
+            guard let id, !id.isEmpty, !ids.contains(id) else { return }
+            ids.append(id)
+        }
+        append(card.workspaceId)
+        for row in additionalWorkspaceRows(for: card) {
+            append(row.workspaceId)
+        }
+        append(secondaryWorkspaceId)
+        return ids
+    }
     private var isRunning: Bool {
         // The thread snapshot's runSummary refreshes un-throttled on every
         // flush — trust it over the (snapshot-throttled) task card when
@@ -658,6 +725,9 @@ struct ThreadDetailView: View {
                     let secondaryGitSnapshot = secondaryWorkspaceId.flatMap {
                         model.gitSnapshots[$0]
                     }
+                    let projectedAdditionalRows = additionalWorkspaceRows(for: card).filter {
+                        $0.workspaceId != nil
+                    }
                     let workspaceBreakdown = diff?.workspaces ?? []
                     let hasWorkspaceBreakdown = workspaceBreakdown.count > 1
                     let changedFileCount = diff?.filesChanged ?? diff?.files?.count ?? 0
@@ -666,11 +736,21 @@ struct ThreadDetailView: View {
                         workspaceBreakdown.compactMap {
                             $0.workspaceId ?? model.workspaceId(forPath: $0.workspacePath)
                         })
+                    let visibleAdditionalRows = projectedAdditionalRows.filter { row in
+                        guard let workspaceId = row.workspaceId else { return false }
+                        return workspaceId != primaryWorkspaceId
+                            && !renderedWorkspaceIds.contains(workspaceId)
+                    }
+                    let visibleAdditionalWorkspaceIds = Set(
+                        visibleAdditionalRows.compactMap { $0.workspaceId })
                     let hasStandaloneSecondaryWorkspace =
-                        secondaryWorkspaceId.map { !renderedWorkspaceIds.contains($0) } ?? false
+                        secondaryWorkspaceId.map {
+                            !renderedWorkspaceIds.contains($0)
+                                && !visibleAdditionalWorkspaceIds.contains($0)
+                        } ?? false
                     let hasAttachedRows =
                         hasWorkspaceBreakdown || hasDiff || primaryGitSnapshot != nil
-                        || hasStandaloneSecondaryWorkspace
+                        || !visibleAdditionalRows.isEmpty || hasStandaloneSecondaryWorkspace
                     // Desktop composer-shell parity: attached diff header
                     // (rounded top), composer body, telemetry rail
                     // (rounded bottom) — one bordered container.
@@ -700,6 +780,16 @@ struct ThreadDetailView: View {
                                 workspaceName: model.workspaceName(for: primaryWorkspaceId),
                                 gitSnapshot: primaryGitSnapshot
                             ) { openComposerDiff(workspaceId: primaryWorkspaceId) }
+                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                        }
+                        ForEach(visibleAdditionalRows) { row in
+                            WorkspaceChangesAttachedRow(
+                                breakdown: nil,
+                                workspaceName: row.displayName,
+                                gitSnapshot: row.workspaceId.flatMap { model.gitSnapshots[$0] },
+                                canWrite: row.showsWriteAccess,
+                                onRemove: nil
+                            ) { openComposerDiff(workspaceId: row.workspaceId) }
                             Rectangle().fill(TWTheme.border).frame(height: 1)
                         }
                         if hasStandaloneSecondaryWorkspace, let secondaryWorkspaceId {
@@ -755,7 +845,7 @@ struct ThreadDetailView: View {
                             attachedTop: hasAttachedRows || card.isEnsemble
                                 || !(card.queuedComposerPrompts ?? []).isEmpty,
                             attachedBottom: true,
-                            extraWorkspaceIds: secondaryWorkspaceId.map { [$0] },
+                            extraWorkspaceIds: extraWorkspaceIdsForSend(card: card),
                             allowsProviderChange: allowsFirstTurnProviderChange,
                             text: $followUp)
                         Rectangle().fill(TWTheme.border).frame(height: 1)
@@ -773,11 +863,10 @@ struct ThreadDetailView: View {
                             })
                     }
                     .composerShellGlass()
-                    .task(id: primaryWorkspaceId) {
-                        await model.refreshGitSnapshotCache(workspaceId: primaryWorkspaceId)
-                    }
-                    .task(id: secondaryWorkspaceId) {
-                        await model.refreshGitSnapshotCache(workspaceId: secondaryWorkspaceId)
+                    .task(id: composerGitWorkspaceIds(card: card).joined(separator: "\n")) {
+                        for workspaceId in composerGitWorkspaceIds(card: card) {
+                            await model.refreshGitSnapshotCache(workspaceId: workspaceId)
+                        }
                     }
                     .padding(.horizontal, 10).padding(.bottom, 6)
                 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRecord, ChatRun, DiffFileSummary } from './store/types'
+import type { ChatRecord, ChatRun, DiffFileSummary, ExternalPathGrant } from './store/types'
 import {
   buildMobileDiffSummary,
   buildMobileQuestionCard,
@@ -57,6 +57,19 @@ function run(overrides: Partial<ChatRun> = {}): ChatRun {
     provider: 'codex',
     startedAt: '2026-05-30T11:59:00.000Z',
     status: 'running',
+    ...overrides
+  }
+}
+
+function externalGrant(overrides: Partial<ExternalPathGrant> = {}): ExternalPathGrant {
+  return {
+    id: 'grant-1',
+    provider: 'codex',
+    path: '/other',
+    kind: 'directory',
+    access: 'read',
+    duration: 'thisThread',
+    createdAt: ISO,
     ...overrides
   }
 }
@@ -216,6 +229,69 @@ describe('RemoteTaskProjection', () => {
       claudeReasoningEffort: 'off'
     })
     expect(card.customModel).toBeUndefined()
+  })
+
+  it('projects sanitized additional workspace rows from external path grants', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        providerMetadata: {
+          externalPathGrants: [
+            externalGrant({
+              id: 'grant-primary',
+              provider: 'codex',
+              path: '/repo',
+              access: 'write',
+              securityScopedBookmark: 'secret-bookmark',
+              signature: 'secret-signature'
+            }),
+            externalGrant({
+              id: 'grant-read',
+              provider: 'codex',
+              path: '/other',
+              access: 'read',
+              order: 3,
+              securityScopedBookmark: 'secret-bookmark',
+              signature: 'secret-signature'
+            }),
+            externalGrant({
+              id: 'grant-write',
+              provider: 'gemini',
+              path: '/other',
+              access: 'write',
+              order: 2
+            }),
+            externalGrant({
+              id: 'grant-doc',
+              provider: 'claude',
+              path: '/docs/brief.md',
+              kind: 'file',
+              access: 'read',
+              order: 1
+            })
+          ]
+        }
+      })
+    )
+
+    expect(card.additionalWorkspaces).toEqual([
+      {
+        id: '/docs/brief.md',
+        path: '/docs/brief.md',
+        kind: 'file',
+        access: 'read',
+        providers: ['claude'],
+        order: 1
+      },
+      {
+        id: '/other',
+        path: '/other',
+        kind: 'directory',
+        access: 'write',
+        providers: ['codex', 'gemini'],
+        order: 2
+      }
+    ])
+    expect(JSON.stringify(card.additionalWorkspaces)).not.toContain('secret')
   })
 
   it('projects child-thread relation metadata used by the iOS Agents tab', () => {

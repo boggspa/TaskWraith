@@ -8,6 +8,7 @@ import type {
   DiffFileSummary,
   EnsembleConfig,
   EnsembleRoundParticipantState,
+  ExternalPathGrant,
   PromptSurfaceStyle,
   ProviderId,
   RunDiffResult,
@@ -17,6 +18,7 @@ import type {
   ThemeCornerStyle,
   VisualEffectStyle
 } from './store/types'
+import { collectExternalPathGrantsFromMetadata } from './store/ExternalPathGrants'
 
 export type RemoteProjectionKind =
   | 'taskCard'
@@ -112,8 +114,18 @@ export interface RemoteTaskCard {
   activeGoal?: RemoteActiveGoal
   capabilities?: RemoteTaskCapabilities
   diffSummary?: MobileDiffSummary
+  additionalWorkspaces?: RemoteAdditionalWorkspace[]
   ensembleState?: RemoteEnsembleState
   queuedComposerPrompts?: RemoteQueuedComposerPrompt[]
+}
+
+export interface RemoteAdditionalWorkspace {
+  id: string
+  path: string
+  kind: 'file' | 'directory'
+  access: 'read' | 'write'
+  providers: ProviderId[]
+  order?: number
 }
 
 export interface RemoteQueuedComposerPrompt {
@@ -581,6 +593,60 @@ function projectActiveGoal(goal?: ActiveGoal): RemoteActiveGoal | undefined {
   }
 }
 
+function buildRemoteAdditionalWorkspaces(chat: ChatRecord): RemoteAdditionalWorkspace[] {
+  if (!chat.workspacePath) return []
+  const grants = collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+  if (grants.length === 0) return []
+
+  const byPath = new Map<
+    string,
+    {
+      path: string
+      kind: ExternalPathGrant['kind']
+      access: ExternalPathGrant['access']
+      providers: ProviderId[]
+      order?: number
+    }
+  >()
+  for (const grant of grants) {
+    if (!grant.path || grant.path === chat.workspacePath) continue
+    const existing = byPath.get(grant.path)
+    if (existing) {
+      if (grant.access === 'write') existing.access = 'write'
+      if (grant.kind === 'directory') existing.kind = 'directory'
+      if (!existing.providers.includes(grant.provider)) existing.providers.push(grant.provider)
+      if (typeof grant.order === 'number') {
+        existing.order =
+          typeof existing.order === 'number' ? Math.min(existing.order, grant.order) : grant.order
+      }
+      continue
+    }
+    byPath.set(grant.path, {
+      path: grant.path,
+      kind: grant.kind === 'directory' ? 'directory' : 'file',
+      access: grant.access === 'write' ? 'write' : 'read',
+      providers: [grant.provider],
+      ...(typeof grant.order === 'number' ? { order: grant.order } : {})
+    })
+  }
+
+  return [...byPath.values()]
+    .sort((a, b) => {
+      const aOrder = typeof a.order === 'number' ? a.order : Number.MAX_SAFE_INTEGER
+      const bOrder = typeof b.order === 'number' ? b.order : Number.MAX_SAFE_INTEGER
+      if (aOrder !== bOrder) return aOrder - bOrder
+      return a.path < b.path ? -1 : a.path > b.path ? 1 : 0
+    })
+    .map((workspace) => ({
+      id: workspace.path,
+      path: workspace.path,
+      kind: workspace.kind,
+      access: workspace.access,
+      providers: workspace.providers,
+      ...(typeof workspace.order === 'number' ? { order: workspace.order } : {})
+    }))
+}
+
 export function buildRemoteTaskCard(
   chat: ChatRecord,
   options: BuildRemoteTaskCardOptions = {}
@@ -646,6 +712,8 @@ export function buildRemoteTaskCard(
       })
     : undefined
   if (diffSummary) card.diffSummary = diffSummary
+  const additionalWorkspaces = buildRemoteAdditionalWorkspaces(chat)
+  if (additionalWorkspaces.length > 0) card.additionalWorkspaces = additionalWorkspaces
   const ensembleState = buildRemoteEnsembleState(chat)
   if (ensembleState) card.ensembleState = ensembleState
   const queuedComposerPrompts = buildRemoteQueuedComposerPrompts(options.queuedComposerJobs)

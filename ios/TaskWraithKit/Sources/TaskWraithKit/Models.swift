@@ -167,7 +167,19 @@ public struct RemoteTaskCard: Codable, Sendable {
     public let pendingQuestionCount: Int?
     public let activeGoal: RemoteActiveGoal?
     public let capabilities: RemoteTaskCapabilities?
+    public let additionalWorkspaces: [AdditionalWorkspace]?
     public let queuedComposerPrompts: [QueuedComposerPrompt]?
+
+    public struct AdditionalWorkspace: Codable, Sendable, Identifiable, Hashable {
+        public let id: String
+        public let path: String
+        /// file | directory
+        public let kind: String?
+        /// read | write
+        public let access: String?
+        public let providers: [String]?
+        public let order: Int?
+    }
 
     public struct QueuedComposerPrompt: Codable, Sendable, Identifiable {
         public let id: String
@@ -220,6 +232,7 @@ public struct RemoteTaskCard: Codable, Sendable {
             pendingQuestionCount: nil,
             activeGoal: nil,
             capabilities: nil,
+            additionalWorkspaces: nil,
             queuedComposerPrompts: nil)
     }
 }
