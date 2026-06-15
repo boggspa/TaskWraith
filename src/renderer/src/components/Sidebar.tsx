@@ -28,6 +28,7 @@ import type {
   ToolIconAccent
 } from '../../../main/store/types'
 import { selectRecentChats } from '../lib/recentChatsList'
+import { isContentlessRemoteDraftChat } from '../../../main/remote/RemoteDraftChats'
 import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 import { ActiveRunsSection } from './ActiveRunsSection'
 import { LocalServersSection } from './LocalServersSection'
@@ -1453,7 +1454,11 @@ export function Sidebar({
       }
     }
   )
-  const topLevelChats = chats.filter((chat) => !isLinkedChildChat(chat))
+  // Unstarted iOS welcome-card drafts (0 messages/runs) are real chat records on
+  // the Mac but must never surface as chats in the sidebar — the phone keeps one
+  // only so its in-progress welcome screen resolves; the Mac never owns it.
+  const displayChats = chats.filter((chat) => !isContentlessRemoteDraftChat(chat))
+  const topLevelChats = displayChats.filter((chat) => !isLinkedChildChat(chat))
   const regularChats = topLevelChats.filter((chat) => chat.chatKind !== 'ensemble')
   const ensembleChats = ensembleModeEnabled
     ? topLevelChats.filter((chat) => chat.chatKind === 'ensemble' && !chat.archived)
@@ -1483,7 +1488,7 @@ export function Sidebar({
   const visibleGlobalChats = isSidebarSearchActive
     ? globalChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
     : globalChats
-  const totalChatCount = chats.filter((chat) => !chat.archived).length
+  const totalChatCount = displayChats.filter((chat) => !chat.archived).length
   const workspaceWorkflowIds = new Set(workspaces.map((workspace) => workspace.id))
   const scopedWorkflows = workflows
     .filter((workflow) => workspaceWorkflowIds.has(workflow.workspaceId))

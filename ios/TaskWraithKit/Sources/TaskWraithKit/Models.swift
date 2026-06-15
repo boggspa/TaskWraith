@@ -162,6 +162,10 @@ public struct RemoteTaskCard: Codable, Sendable {
     public let agentSlug: String?
     public let sideChatMode: String?
     public let chatKind: String?
+    /// Unstarted welcome-card draft (0 messages/runs). Kept in the card set so
+    /// the in-progress welcome screen resolves, but filtered out of list
+    /// sections (HomeListViews) — it isn't a real chat yet.
+    public let isDraft: Bool?
     public let runId: String?
     public let pendingApprovalCount: Int?
     public let pendingQuestionCount: Int?

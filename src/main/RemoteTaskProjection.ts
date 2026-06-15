@@ -19,6 +19,7 @@ import type {
   VisualEffectStyle
 } from './store/types'
 import { collectExternalPathGrantsFromMetadata } from './store/ExternalPathGrants'
+import { isContentlessRemoteDraftChat } from './remote/RemoteDraftChats'
 
 export type RemoteProjectionKind =
   | 'taskCard'
@@ -90,6 +91,10 @@ export interface RemoteTaskCard {
   sideChatMode?: string
   /** `ensemble` chats need `ensembleQueuePrompt` on remote send paths. */
   chatKind?: 'single' | 'ensemble'
+  /** Unstarted iOS welcome-card draft (0 messages/runs). Remote clients keep
+   * the card so an in-progress welcome screen still resolves, but hide it from
+   * chat LISTS — it isn't a real conversation yet. */
+  isDraft?: boolean
   workspaceId: string | null
   workspacePath?: string
   provider: ProviderId
@@ -667,6 +672,7 @@ export function buildRemoteTaskCard(
     ...(chat.parentChatRelation ? { parentChatRelation: chat.parentChatRelation } : {}),
     ...(chat.sideChatContext?.mode ? { sideChatMode: chat.sideChatContext.mode } : {}),
     ...(chat.chatKind ? { chatKind: chat.chatKind } : {}),
+    ...(isContentlessRemoteDraftChat(chat) ? { isDraft: true } : {}),
     workspaceId: chat.workspaceId && chat.workspaceId.length > 0 ? chat.workspaceId : null,
     provider: chat.provider ?? 'gemini',
     title: chat.title || 'Untitled chat',

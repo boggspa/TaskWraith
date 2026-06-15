@@ -47,8 +47,14 @@ struct HomeView: View {
 
     /// Top-level threads per workspace; sub-threads/side chats nest under
     /// their parent like the desktop sidebar.
+    /// Top-level cards minus unstarted welcome-card drafts. The active draft
+    /// stays in `model.taskCards` so its in-progress welcome screen still
+    /// resolves, but it must never appear as a real chat row in any list section.
+    private var listedCards: [RemoteTaskCard] {
+        model.taskCards.filter { !($0.isDraft ?? false) }
+    }
     private var cardsByWorkspace: [String: [RemoteTaskCard]] {
-        Dictionary(grouping: model.taskCards.filter { $0.parentChatId == nil }) {
+        Dictionary(grouping: listedCards.filter { $0.parentChatId == nil }) {
             $0.workspaceId ?? ""
         }
     }
@@ -59,7 +65,7 @@ struct HomeView: View {
     }
     private var orphanCards: [RemoteTaskCard] {
         let known = Set(model.workspaces.map(\.workspaceId))
-        return model.taskCards.filter {
+        return listedCards.filter {
             $0.parentChatId == nil && !known.contains($0.workspaceId ?? "")
         }
     }
@@ -207,7 +213,7 @@ struct HomeView: View {
             }
         }
 
-        let pinnedCards = model.taskCards.filter { $0.pinned == true }
+        let pinnedCards = listedCards.filter { $0.pinned == true }
         if !pinnedCards.isEmpty {
             Section {
                 if !collapsedSections.contains("pinned") {
@@ -223,7 +229,7 @@ struct HomeView: View {
                 ) { toggleSection("pinned") }
             }
         }
-        let recentCards = model.taskCards
+        let recentCards = listedCards
             .filter { $0.parentChatId == nil }
             .sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
             .prefix(4)
@@ -245,7 +251,7 @@ struct HomeView: View {
         // ── Ensembles — every ensemble in one place (desktop parity).
         //    They ALSO stay listed inside their workspace folders below;
         //    this is the cross-cutting view, like Pinned/Recents. ─────────
-        let ensembleCards = model.taskCards.filter { $0.isEnsemble && $0.parentChatId == nil }
+        let ensembleCards = listedCards.filter { $0.isEnsemble && $0.parentChatId == nil }
         if !ensembleCards.isEmpty {
             Section {
                 if !collapsedSections.contains("ensembles") {
@@ -321,7 +327,7 @@ struct HomeView: View {
 
         // ── Global Chats — scope-global chats passed through READ-ONLY
         //    (no workspace ⇒ no write capabilities; view-only on iOS). ─────
-        let globalCards = model.taskCards.filter {
+        let globalCards = listedCards.filter {
             $0.parentChatId == nil && $0.isGlobalScope
         }
         if !globalCards.isEmpty {
