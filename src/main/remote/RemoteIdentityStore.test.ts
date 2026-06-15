@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { RemoteIdentityStore, type IdentitySafeStorage } from './RemoteIdentityStore'
@@ -56,7 +56,6 @@ describe('RemoteIdentityStore', () => {
     // tampering. Corruption must surface, not self-heal into a stranger.
     const path = tempPath()
     new RemoteIdentityStore(path, fakeSafeStorage).load()
-    const { writeFileSync } = require('fs') as typeof import('fs')
     writeFileSync(path, 'not json')
     expect(() => new RemoteIdentityStore(path, fakeSafeStorage).load()).toThrow(
       /can't be read|Refusing to silently replace/

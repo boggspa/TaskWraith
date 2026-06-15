@@ -998,14 +998,12 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'ensembleQueueItem':
     case 'composerQueueItem':
       return 'steer'
-    // Thread annotations (notes + message pins): write-class but far less
-    // powerful than starting runs — gated under startTurn so the default
+    // Thread annotations, guests, and side-chat management are write-class but
+    // less powerful than file writes. Gate them under startTurn so the default
     // read-write entry covers them.
     case 'setThreadNotes':
     case 'goalUpdate':
     case 'toggleMessagePin':
-    // Guest + side-chat management creates/configures threads — same
-    // write class as starting turns.
     case 'setGuestParticipant':
     case 'removeGuestParticipant':
     case 'createSideChat':

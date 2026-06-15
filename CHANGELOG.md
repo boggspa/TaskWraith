@@ -4,6 +4,46 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.5.2 - 2026-06-15
+
+### Added
+- **iOS companion TestFlight path.** The companion now has a release archive
+  script, app lifecycle readiness coverage, lifted remote-pairing flags, APNs
+  wake/reconnect hardening, and foreground/background reconnect fixes for paired
+  iPhone and iPad sessions.
+- **Remote composer parity.** iOS receives projected secondary workspace rows,
+  richer mobile thread metadata, queue prompt projection/pumping, inspector
+  affordances, and compact telemetry when the available rail is narrow.
+- **Remote file and transcript parity.** iOS can lazily browse workspace files,
+  load older transcript chunks, receive transcript chunks in ACK responses, and
+  show run file changes in task-complete summaries.
+- **Usage activity depth.** Model Usage gained stacked and 90-day activity
+  heatmaps so provider activity history is easier to scan.
+
+### Changed
+- **Runtime prompt compaction.** The TaskWraith runtime preamble is more compact
+  and carries an explicit persisted version so future prompt upgrades can be
+  reasoned about and migrated deliberately.
+- **iOS material polish.** Remote welcome, inspector, status banners, composer
+  shell rows, run controls, streaming tails, and activity panels now track the
+  desktop visual model more closely.
+- **Desktop transcript polish.** Returned sub-thread cards, Diff/guest state,
+  roster preset saving, composer shell themes, notes dock, activity viewport
+  masks, and run-summary copy labelling were tightened.
+
+### Fixed
+- **Remote security and allowlists.** Explicit workspace capabilities now persist,
+  secondary workspace writes require write allowlist coverage, APNs attention
+  payloads are sanitized, stale bridge state is cleaned up, and workspace file
+  list envelopes are capped more narrowly.
+- **iOS E2EE and lifecycle safety.** Cipher validation rejects invalid sequence
+  and key inputs predictably, and wake/reconnect paths avoid stale or slow bridge
+  state after notification-driven launches.
+- **Provider and cost projections.** Cache-aware cost estimates now propagate to
+  iOS, Grok empty ACP tool failures surface correctly, welcome activity panels
+  keep cycling, and iOS preserves composer model/workspace state across empty
+  drafts.
+
 ## 1.5.1 - 2026-06-13
 
 ### Added

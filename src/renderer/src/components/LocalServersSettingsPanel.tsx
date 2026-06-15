@@ -86,7 +86,7 @@ export function LocalServersSettingsPanel(): JSX.Element {
         <span>
           <strong>Stop agent-spawned servers when TaskWraith quits</strong>
           <span className="settings-local-servers-toggle-hint">
-            Tidies up the servers TaskWraith's agents started. Off by default.
+            Tidies up the servers TaskWraith&apos;s agents started. Off by default.
           </span>
         </span>
       </label>

@@ -104,7 +104,7 @@ describe('budget', () => {
     expect(budgetExhausted(b)).toBe(false)
     b = recordSpend(b, { agents: 2, tokens: 100 })
     expect(budgetExhausted(b)).toBe(true) // agents hit
-    let t = recordSpend(makeBudget(10, 500), { agents: 1, tokens: 500 })
+    const t = recordSpend(makeBudget(10, 500), { agents: 1, tokens: 500 })
     expect(budgetExhausted(t)).toBe(true) // tokens hit
   })
 

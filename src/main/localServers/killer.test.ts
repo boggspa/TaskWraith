@@ -43,7 +43,7 @@ describe('escalateKill', () => {
   })
 
   it('treats an un-signalable (already-gone) process as success', async () => {
-    let alive = false
+    const alive = false
     const ctrl: KillController = {
       signal: () => {
         throw new Error('ESRCH')
@@ -53,6 +53,5 @@ describe('escalateKill', () => {
     const result = await escalateKill(ctrl, { wait: immediateWait })
     expect(result.ok).toBe(true)
     expect(result.escalated).toBe(false)
-    void alive
   })
 })

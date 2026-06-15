@@ -409,8 +409,8 @@ export class RemoteBridgeRuntime {
     onEstablished?: () => void
   }): RemoteTransportClient {
     const knownPubKey = overrides.iphoneIdentityPubKey
-    let client!: RemoteTransportClient
-    client = new RemoteTransportClient({
+    const clientRef: { current?: RemoteTransportClient } = {}
+    const client = new RemoteTransportClient({
       identityKeyPair: this.opts.identity,
       socketFactory: this.opts.socketFactory,
       pinnedPeerIdentityRaw: overrides.pinnedPeerIdentityRaw,
@@ -419,7 +419,7 @@ export class RemoteBridgeRuntime {
         const pubKey =
           knownPubKey ??
           (() => {
-            const raw = client.trustedPeerIdentityRaw()
+            const raw = clientRef.current?.trustedPeerIdentityRaw()
             return raw ? b64.encode(raw) : null
           })()
         void this.handleInbound(pubKey, method, params)
@@ -433,6 +433,7 @@ export class RemoteBridgeRuntime {
         ),
       log: this.opts.log
     })
+    clientRef.current = client
     return client
   }
 

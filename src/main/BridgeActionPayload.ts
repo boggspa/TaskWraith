@@ -780,14 +780,10 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'togglePinChat':
     case 'togglePinWorkspace':
     case 'workspaceFileWrite':
-    // Git mutations write repo state (index, history, remote) and must
-    // carry the same replay protections as file writes.
     case 'gitStageAll':
     case 'gitCommit':
     case 'gitPush':
     case 'githubCreatePr':
-    // registerApnsToken mutates the token store; classify mutating so it
-    // inherits the actionId + expiry replay guard (security review LOW).
     case 'registerApnsToken':
       return true
     case 'approvalReply':

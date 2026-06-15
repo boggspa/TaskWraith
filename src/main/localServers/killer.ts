@@ -6,6 +6,8 @@
  * controller.
  */
 
+import { spawnSync } from 'child_process'
+
 export interface KillController {
   /** Send a signal; throw if it cannot be delivered (e.g. no such process). */
   signal(sig: 'SIGTERM' | 'SIGKILL'): void
@@ -81,9 +83,6 @@ export function createUnixKillController(pid: number, pgid?: number): KillContro
 export function createWindowsKillController(pid: number): KillController {
   return {
     signal: (sig) => {
-      // Lazily required so the unix path never loads child_process semantics it
-      // doesn't need; this file is main-process only.
-      const { spawnSync } = require('child_process') as typeof import('child_process')
       const args = ['/PID', String(pid), '/T']
       if (sig === 'SIGKILL') args.push('/F')
       const result = spawnSync('taskkill', args, { windowsHide: true })

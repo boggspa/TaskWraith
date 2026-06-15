@@ -10,6 +10,7 @@
  */
 
 import {
+  createPrivateKey,
   createPublicKey,
   diffieHellman,
   generateKeyPairSync,
@@ -98,7 +99,6 @@ export function exportPrivateKeyDer(privateKey: KeyObject): Buffer {
   return privateKey.export({ type: 'pkcs8', format: 'der' }) as Buffer
 }
 export function importEd25519PrivateKeyDer(der: Buffer): KeyObject {
-  const { createPrivateKey } = require('crypto') as typeof import('crypto')
   return createPrivateKey({ key: der, format: 'der', type: 'pkcs8' })
 }
 

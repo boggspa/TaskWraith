@@ -576,7 +576,7 @@ function attachmentPreview(message: { attachments?: DiscordContextAttachmentSumm
 
 function normalizeDiscordContent(value: unknown): string {
   if (typeof value !== 'string') return ''
-  return value.replace(/\r\n/g, '\n').replace(/\u0000/g, '').trim()
+  return value.replace(/\r\n/g, '\n').split(String.fromCharCode(0)).join('').trim()
 }
 
 function truncateForPreview(value: unknown): string {

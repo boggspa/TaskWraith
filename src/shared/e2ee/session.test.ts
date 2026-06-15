@@ -23,10 +23,7 @@ function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
   const macErrors: Error[] = []
   let queue: Array<() => Promise<void>> = []
 
-  let mac: E2eeSession
-  let iphone: E2eeSession
-
-  mac = new E2eeSession({
+  const mac: E2eeSession = new E2eeSession({
     role: 'mac',
     sessionId: 'sess-1',
     identityKeyPair: macIdentity,
@@ -41,6 +38,7 @@ function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
     onError: (e) => macErrors.push(e),
     trustPeer: opts?.trustPeer === false ? () => false : () => true
   })
+  let iphone: E2eeSession
   iphone = new E2eeSession({
     role: 'iphone',
     sessionId: 'sess-1',

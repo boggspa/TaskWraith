@@ -407,7 +407,7 @@ function IosRemoteBridgeSection(): React.JSX.Element {
         <span>
           External relay server URL
           <small>
-            Optional. Leave blank for this Mac's built-in relay. Use wss:// only for a
+            Optional. Leave blank for this Mac&apos;s built-in relay. Use wss:// only for a
             separate hosted relay.
           </small>
         </span>

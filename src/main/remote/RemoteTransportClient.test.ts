@@ -20,6 +20,8 @@ function harness(opts: { pinPeer?: boolean } = {}) {
   const iphoneCodes: string[] = []
   const established: string[] = []
   let clientHandlers: TransportSocketHandlers | null = null
+  // Assigned after the Mac client exists so the fake socket can close over it.
+  // eslint-disable-next-line prefer-const
   let iphone: E2eeSession
 
   const socketFactory: TransportSocketFactory = (_url, _headers, handlers) => {
