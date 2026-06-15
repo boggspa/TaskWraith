@@ -518,6 +518,50 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
     }
   })
 
+  it('strips path-like workspace ids from approval alerts', () => {
+    const { dir, path } = writeTestAuthKey()
+    try {
+      const bodyWrites: string[] = []
+      const mockConnect = (_authority: string) =>
+        ({
+          closed: false,
+          destroyed: false,
+          on: () => {},
+          request: () => ({
+            on: () => {},
+            setEncoding: () => {},
+            write: (body: string) => {
+              bodyWrites.push(body)
+            },
+            end: () => {}
+          }),
+          close: () => {}
+        }) as never
+      const pusher = new Http2ApnsPusher({
+        authKeyPath: path,
+        keyId: 'KEYID00000',
+        teamId: 'TEAM00ABCD',
+        bundleId: 'com.example.app',
+        connect: mockConnect
+      })
+      void pusher.pushApprovalToToken('a', 'sandbox', {
+        pairID: 'p',
+        workspaceId: '/Users/dev/private-project',
+        threadId: 't',
+        toolCallId: 'tc',
+        summary: 'PRIVATE_APPROVAL_BODY'
+      })
+      return Promise.resolve().then(() => {
+        const body = JSON.parse(bodyWrites[0])
+        const serialized = JSON.stringify(body)
+        expect(body.workspaceId).toBeUndefined()
+        expectNoForbiddenPushContent(serialized)
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('sends remote attention alerts with routing identifiers only', () => {
     const { dir, path } = writeTestAuthKey()
     try {
@@ -588,6 +632,50 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
     }
   })
 
+  it('strips path-like workspace ids from remote attention alerts', () => {
+    const { dir, path } = writeTestAuthKey()
+    try {
+      const bodyWrites: string[] = []
+      const mockConnect = (_authority: string) =>
+        ({
+          closed: false,
+          destroyed: false,
+          on: () => {},
+          request: () => ({
+            on: () => {},
+            setEncoding: () => {},
+            write: (body: string) => {
+              bodyWrites.push(body)
+            },
+            end: () => {}
+          }),
+          close: () => {}
+        }) as never
+      const pusher = new Http2ApnsPusher({
+        authKeyPath: path,
+        keyId: 'KEYID00000',
+        teamId: 'TEAM00ABCD',
+        bundleId: 'com.example.app',
+        connect: mockConnect
+      })
+      void pusher.pushRemoteAttentionToToken('a', 'sandbox', {
+        pairID: 'p',
+        reason: 'approval',
+        workspaceId: '/Users/dev/private-project',
+        threadId: 't',
+        approvalId: 'a-1'
+      })
+      return Promise.resolve().then(() => {
+        const body = JSON.parse(bodyWrites[0])
+        const serialized = JSON.stringify(body)
+        expect(body.workspaceId).toBeUndefined()
+        expectNoForbiddenPushContent(serialized)
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('sends silent wake/resume pushes with routing identifiers only', () => {
     const { dir, path } = writeTestAuthKey()
     try {
@@ -651,6 +739,48 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
         expect(body.commandText).toBeUndefined()
         expect(body.filePath).toBeUndefined()
         expect(body.diffHunks).toBeUndefined()
+        expectNoForbiddenPushContent(serialized)
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('strips path-like workspace ids from silent wake pushes', () => {
+    const { dir, path } = writeTestAuthKey()
+    try {
+      const bodyWrites: string[] = []
+      const mockConnect = (_authority: string) =>
+        ({
+          closed: false,
+          destroyed: false,
+          on: () => {},
+          request: () => ({
+            on: () => {},
+            setEncoding: () => {},
+            write: (body: string) => {
+              bodyWrites.push(body)
+            },
+            end: () => {}
+          }),
+          close: () => {}
+        }) as never
+      const pusher = new Http2ApnsPusher({
+        authKeyPath: path,
+        keyId: 'KEYID00000',
+        teamId: 'TEAM00ABCD',
+        bundleId: 'com.example.app',
+        connect: mockConnect
+      })
+      void pusher.pushSilentToToken('a', 'sandbox', {
+        reason: 'resume',
+        workspaceId: '/Users/dev/private-project',
+        threadId: 't'
+      })
+      return Promise.resolve().then(() => {
+        const body = JSON.parse(bodyWrites[0])
+        const serialized = JSON.stringify(body)
+        expect(body.workspaceId).toBeUndefined()
         expectNoForbiddenPushContent(serialized)
       })
     } finally {

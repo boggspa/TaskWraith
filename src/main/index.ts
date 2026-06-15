@@ -1371,7 +1371,7 @@ function userIsAtDesktop(): boolean {
  * once the service is initialized; no-op until then. */
 function notifyPairedDevicesOfApproval(args: {
   approvalId: string
-  workspaceId: string
+  workspaceId: string | null
   threadId: string
   summary: string
 }): void {
@@ -1392,20 +1392,18 @@ function notifyPairedDevicesOfApproval(args: {
 }
 
 /**
- * Resolve a workspace path to its store-managed `WorkspaceRecord.id`,
- * falling back to a stable derivation (the canonical path itself) when
- * the workspace isn't registered. The iOS app uses the id for routing,
- * but a push notification is still useful even when the workspace is
- * outside the curated allowlist — better to send "tap to approve" with
- * a less-precise destination than to drop the push entirely.
+ * Resolve a workspace path to its store-managed opaque `WorkspaceRecord.id`.
+ * APNs payloads must never contain local filesystem paths, so unregistered
+ * workspace paths deliberately omit the workspace id instead of falling back
+ * to the path.
  */
-function workspaceIdForApprovalPush(workspacePath: string | undefined): string {
+function workspaceIdForApprovalPush(workspacePath: string | undefined): string | null {
   if (!workspacePath) return 'global'
   try {
     const record = findRegisteredWorkspace(workspacePath)
-    return record?.id ?? workspacePath
+    return record?.id ?? null
   } catch {
-    return workspacePath
+    return null
   }
 }
 

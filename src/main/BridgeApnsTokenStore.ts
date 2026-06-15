@@ -12,8 +12,8 @@ import type { BridgeApnsEnv } from './BridgeApnsPusher'
  *   - The token is shipped to the desktop via a new daemon RPC
  *     (`bridge.registerApnsToken`) that lands when the iOS app exists.
  *   - The desktop persists it here, keyed by `pairID`, alongside the
- *     environment (production vs sandbox) so a TestFlight build doesn't
- *     accidentally try to push via production APNs.
+ *     environment (production vs sandbox) so DEBUG/device builds use
+ *     sandbox APNs while TestFlight/App Store builds use production APNs.
  *
  * Storage shape (JSON v1):
  *   { version: 1, tokens: [{ pairID, deviceToken, env, updatedAt }] }

@@ -12,8 +12,8 @@ import { Http2ApnsPusher } from './Http2ApnsPusher'
  *   4. Mac's approval flow checks: is there a paired iOS device, and is
  *      the user away from the desktop? If yes:
  *      `apnsPusher.pushApprovalNeeded(pairID, { threadId, toolCallId, ... })`
- *   5. APNs delivers a silent push (to wake the iPhone bridge client) and a
- *      regular push (lock-screen "Approval needed" with deep-link).
+ *   5. APNs delivers privacy-safe routing metadata only. The iPhone fetches
+ *      user-visible approval details over the E2EE bridge after wake/reconnect.
  *   6. iPhone reconnects to the bridge, sees the pending approval, user
  *      decides. The decision flows back through the existing
  *      `bridge.requestActionAck` round-trip (kind: 'approvalReply').
@@ -42,8 +42,8 @@ export type BridgeApnsEnv = 'production' | 'sandbox'
 export interface BridgeApprovalPushPayload {
   /** The pairing identifier of the target iPhone. */
   pairID: string
-  /** Workspace the approval is for. The iOS UI uses this for navigation. */
-  workspaceId: string
+  /** Opaque workspace id only. Never send a local filesystem path via APNs. */
+  workspaceId?: string | null
   /** Thread the agent is running on. */
   threadId: string
   /** The pending tool-call id; iOS will use this to match against
@@ -130,7 +130,7 @@ export class NoopApnsPusher implements BridgeApnsPusher {
 
   async pushApprovalNeeded(payload: BridgeApprovalPushPayload): Promise<BridgeApnsPushResult> {
     this.log(
-      `[BridgeApnsPusher noop] would push approval pairID=${payload.pairID} ws=${payload.workspaceId} thread=${payload.threadId} tool=${payload.toolCallId} — APNs not yet configured`
+      `[BridgeApnsPusher noop] would push approval pairID=${payload.pairID} ws=${payload.workspaceId ?? 'global'} thread=${payload.threadId} tool=${payload.toolCallId} — APNs not yet configured`
     )
     return { delivered: false, apnsId: '', reason: 'noop' }
   }

@@ -340,22 +340,24 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
   }
 
   private buildApprovalApsBody(payload: BridgeApprovalPushPayload): string {
-    return JSON.stringify({
-      aps: {
-        alert: {
-          title: 'TaskWraith needs attention',
-          body: 'Open TaskWraith to respond.'
+    return JSON.stringify(
+      stripNullish({
+        aps: {
+          alert: {
+            title: 'TaskWraith needs attention',
+            body: 'Open TaskWraith to respond.'
+          },
+          sound: 'default',
+          'mutable-content': 1
         },
-        sound: 'default',
-        'mutable-content': 1
-      },
-      // Routing identifiers only. Do not put command text, paths, diffs,
-      // summaries, or deep-link paths into APNs payloads.
-      pairID: payload.pairID,
-      workspaceId: payload.workspaceId,
-      threadId: payload.threadId,
-      toolCallId: payload.toolCallId
-    })
+        // Routing identifiers only. Do not put command text, paths, diffs,
+        // summaries, or deep-link paths into APNs payloads.
+        pairID: payload.pairID,
+        workspaceId: privacySafeWorkspaceId(payload.workspaceId),
+        threadId: payload.threadId,
+        toolCallId: payload.toolCallId
+      })
+    )
   }
 
   private buildSilentApsBody(payload?: Omit<BridgeRemoteAttentionPushPayload, 'pairID'>): string {
@@ -363,7 +365,7 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
       stripNullish({
         aps: { 'content-available': 1 },
         reason: payload?.reason,
-        workspaceId: payload?.workspaceId,
+        workspaceId: privacySafeWorkspaceId(payload?.workspaceId),
         threadId: payload?.threadId,
         runId: payload?.runId,
         approvalId: payload?.approvalId,
@@ -389,7 +391,7 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
         },
         pairID: payload.pairID,
         reason: payload.reason,
-        workspaceId: payload.workspaceId,
+        workspaceId: privacySafeWorkspaceId(payload.workspaceId),
         threadId: payload.threadId,
         runId: payload.runId,
         approvalId: payload.approvalId,
@@ -463,6 +465,15 @@ function stripNullish<T extends Record<string, unknown>>(value: T): Record<strin
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== null)
   )
+}
+
+function privacySafeWorkspaceId(workspaceId: string | null | undefined): string | null | undefined {
+  if (workspaceId === null || workspaceId === undefined) return workspaceId
+  const trimmed = workspaceId.trim()
+  if (!trimmed || /[/\\]/.test(trimmed) || trimmed.startsWith('~') || /^[A-Za-z]:/.test(trimmed)) {
+    return null
+  }
+  return trimmed
 }
 
 function base64url(buf: Buffer): string {

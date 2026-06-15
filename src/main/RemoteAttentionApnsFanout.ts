@@ -16,6 +16,11 @@ type Pushable = {
     env: 'production' | 'sandbox',
     payload: BridgeRemoteAttentionPushPayload
   ) => Promise<BridgeApnsPushResult>
+  pushSilentToToken?: (
+    deviceTokenHex: string,
+    env: 'production' | 'sandbox',
+    payload?: Omit<BridgeRemoteAttentionPushPayload, 'pairID'>
+  ) => Promise<BridgeApnsPushResult>
 }
 
 const DEFAULT_COALESCE_MS = 30_000
@@ -64,9 +69,28 @@ export class RemoteAttentionApnsFanout {
             entry.env,
             payload
           )
+          if (payload.reason === 'approval' && typeof pusher.pushSilentToToken === 'function') {
+            try {
+              const wakeResult = await pusher.pushSilentToToken(
+                entry.deviceToken,
+                entry.env,
+                withoutPairID(payload)
+              )
+              if (!wakeResult.delivered && isDeadTokenReason(wakeResult.reason)) {
+                this.log(
+                  `[APNs] pruning dead token for pairID=${entry.pairID}: ${wakeResult.reason}`
+                )
+                tokenStore.remove(entry.pairID)
+              }
+            } catch (err) {
+              this.log(
+                `[APNs] silent approval wake threw for pairID=${entry.pairID}: ${err instanceof Error ? err.message : String(err)}`
+              )
+            }
+          }
           if (!result.delivered) {
             const reason = result.reason ?? ''
-            if (/^Unregistered$|^BadDeviceToken$/i.test(reason)) {
+            if (isDeadTokenReason(reason)) {
               this.log(`[APNs] pruning dead token for pairID=${entry.pairID}: ${reason}`)
               tokenStore.remove(entry.pairID)
             } else if (reason && reason !== 'noop') {
@@ -85,6 +109,10 @@ export class RemoteAttentionApnsFanout {
   }
 }
 
+function isDeadTokenReason(reason: string | undefined): boolean {
+  return /^Unregistered$|^BadDeviceToken$/i.test(reason ?? '')
+}
+
 function coalesceKey(
   pairID: string,
   input: Omit<BridgeRemoteAttentionPushPayload, 'pairID'>
@@ -99,7 +127,7 @@ function sanitizePayload(
   return {
     pairID,
     reason: input.reason,
-    workspaceId: input.workspaceId,
+    workspaceId: privacySafeWorkspaceId(input.workspaceId),
     threadId: input.threadId,
     runId: input.runId,
     approvalId: input.approvalId,
@@ -109,4 +137,20 @@ function sanitizePayload(
     projectionKind: input.projectionKind,
     generatedAt: input.generatedAt
   }
+}
+
+function withoutPairID(
+  payload: BridgeRemoteAttentionPushPayload
+): Omit<BridgeRemoteAttentionPushPayload, 'pairID'> {
+  const { pairID: _pairID, ...rest } = payload
+  return rest
+}
+
+function privacySafeWorkspaceId(workspaceId: string | null | undefined): string | null | undefined {
+  if (workspaceId === null || workspaceId === undefined) return workspaceId
+  const trimmed = workspaceId.trim()
+  if (!trimmed || /[/\\]/.test(trimmed) || trimmed.startsWith('~') || /^[A-Za-z]:/.test(trimmed)) {
+    return null
+  }
+  return trimmed
 }

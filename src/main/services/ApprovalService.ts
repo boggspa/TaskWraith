@@ -231,7 +231,7 @@ export interface ApprovalServiceDeps {
   /** Idle detector — when true, suppresses wake-push (user is here). */
   isUserAtDesktop: () => boolean
   /** Workspace path → workspace id mapping. */
-  workspaceIdForPath: (workspacePath: string | undefined) => string
+  workspaceIdForPath: (workspacePath: string | undefined) => string | null
   /** Bridge-only run-event publisher for Live Activity approval counts. */
   publishApprovalRunEvent: (event: ApprovalRunEvent) => void
   /** Settings lookup for the user-tunable timeout policy. */
@@ -561,7 +561,7 @@ export class ApprovalService {
    * paths, diffs, prompts, or approval summaries. */
   notifyPairedDevices(args: {
     approvalId: string
-    workspaceId: string
+    workspaceId: string | null
     threadId: string
     summary: string
   }): void {
@@ -574,8 +574,8 @@ export class ApprovalService {
     })
   }
 
-  /** Workspace path → id (or 'global' / canonical path fallback). */
-  workspaceIdForPush(workspacePath: string | undefined): string {
+  /** Workspace path → opaque id, or null when no privacy-safe id exists. */
+  workspaceIdForPush(workspacePath: string | undefined): string | null {
     return this.deps.workspaceIdForPath(workspacePath)
   }
 
@@ -908,9 +908,8 @@ export class ApprovalService {
       const session = this.deps.runManager.get(context.appRunId)
       const appRunId = session?.runId ?? context.appRunId
       const appChatId = session?.appChatId ?? context.appChatId
-      const workspaceId = this.deps.workspaceIdForPath(
-        context.workspacePath ?? session?.workspacePath
-      )
+      const workspaceId =
+        this.deps.workspaceIdForPath(context.workspacePath ?? session?.workspacePath) ?? 'global'
       const threadId = appChatId ?? context.threadId ?? appRunId ?? approvalId
       const event: ApprovalRunEvent = {
         type,

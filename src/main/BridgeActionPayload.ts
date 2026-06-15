@@ -297,9 +297,9 @@ export interface BridgeRegisterApnsTokenAction extends BridgeActionMetadata {
   /** Apple-issued push token (hex string). Rotates routinely per OS
    * behavior; iOS re-registers on each new token. */
   deviceToken: string
-  /** Targeted APNs gateway. `sandbox` for TestFlight / dev builds,
-   * `production` for App Store builds. The desktop uses this to pick
-   * the right gateway when sending pushes. */
+  /** Targeted APNs gateway. `sandbox` for DEBUG/device builds,
+   * `production` for TestFlight/App Store builds. The desktop uses this
+   * to pick the right gateway when sending pushes. */
   env: 'production' | 'sandbox'
 }
 
