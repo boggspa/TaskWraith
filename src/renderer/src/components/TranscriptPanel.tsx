@@ -125,6 +125,15 @@ type TranscriptPanelProps = {
    * legacy ensembles without per-participant model data.
    */
   thinkingModelBadge?: string | null
+  /**
+   * Guest participant in-flight indicator. Guest runs happen in a linked
+   * child chat, so the parent transcript needs its own pending row or the
+   * user sees the main run summary before the guest reply lands.
+   */
+  guestThinkingProviderLabel?: string | null
+  guestThinkingProvider?: ProviderId | null
+  guestThinkingProviderClass?: string | null
+  guestThinkingModelBadge?: string | null
   displayFileChangeSummaries: DiffFileSummary[]
   fileChangeSummaryText: string
   fileChangeShouldShowStats: boolean
@@ -678,6 +687,10 @@ export const TranscriptPanel = memo(
     thinkingProvider,
     thinkingProviderClass,
     thinkingModelBadge,
+    guestThinkingProviderLabel,
+    guestThinkingProvider,
+    guestThinkingProviderClass,
+    guestThinkingModelBadge,
     displayFileChangeSummaries,
     fileChangeSummaryText,
     fileChangeShouldShowStats,
@@ -814,6 +827,17 @@ export const TranscriptPanel = memo(
         return map
       })
     }, [])
+    const [expandedSubThreadResults, setExpandedSubThreadResults] = useState<Set<string>>(
+      new Set()
+    )
+    const setSubThreadResultExpanded = useCallback((rowId: string, expanded: boolean) => {
+      setExpandedSubThreadResults((prev) => {
+        const next = new Set(prev)
+        if (expanded) next.add(rowId)
+        else next.delete(rowId)
+        return next
+      })
+    }, [])
     // Row ids whose tool stack has something open — the measurementKey
     // geometry bit, so collapsed vs expanded rows cache distinct heights.
     const expandedRowIds = useMemo(() => {
@@ -821,8 +845,11 @@ export const TranscriptPanel = memo(
       for (const [rowId, set] of activityExpansionByRow) {
         if (set.size > 0) ids.add(rowId)
       }
+      for (const rowId of expandedSubThreadResults) {
+        ids.add(rowId)
+      }
       return ids
-    }, [activityExpansionByRow])
+    }, [activityExpansionByRow, expandedSubThreadResults])
 
     // 1.0.6-TV1 — windowing. `virtualize` defaults to the global flag;
     // tests pass it explicitly. When off, `useTranscriptVirtualization`
@@ -1022,6 +1049,10 @@ export const TranscriptPanel = memo(
                         onOpenSideChatFromMessage={onOpenSideChatFromMessage}
                         pinned={isPinned}
                         copied={copiedId === msg.id}
+                        resultExpanded={expandedSubThreadResults.has(msg.id)}
+                        onResultExpandedChange={(expanded) =>
+                          setSubThreadResultExpanded(msg.id, expanded)
+                        }
                       />
                     )}
                   </div>
@@ -1408,6 +1439,32 @@ export const TranscriptPanel = memo(
               <ThinkingIndicator />
             </div>
           )}
+          {guestThinkingProviderLabel && (
+            <div
+              key="guest-thinking-indicator"
+              className="message-group guest-participant-thinking-message"
+            >
+              <div
+                className={`message-meta${
+                  guestThinkingProviderClass || guestThinkingProvider
+                    ? ` provider-${guestThinkingProviderClass || guestThinkingProvider}`
+                    : ''
+                }`}
+              >
+                <span className="message-meta-label">{guestThinkingProviderLabel}</span>
+                {guestThinkingModelBadge && (
+                  <span
+                    className="message-meta-model-badge"
+                    title={`Model: ${guestThinkingModelBadge}`}
+                    aria-label={`Model ${guestThinkingModelBadge}`}
+                  >
+                    {guestThinkingModelBadge}
+                  </span>
+                )}
+              </div>
+              <ThinkingIndicator />
+            </div>
+          )}
           {showFallbackUX && (
             <div className="fallback-card">
               <p>
@@ -1613,6 +1670,10 @@ export const TranscriptPanel = memo(
     previous.thinkingProvider === next.thinkingProvider &&
     previous.thinkingProviderClass === next.thinkingProviderClass &&
     previous.thinkingModelBadge === next.thinkingModelBadge &&
+    previous.guestThinkingProviderLabel === next.guestThinkingProviderLabel &&
+    previous.guestThinkingProvider === next.guestThinkingProvider &&
+    previous.guestThinkingProviderClass === next.guestThinkingProviderClass &&
+    previous.guestThinkingModelBadge === next.guestThinkingModelBadge &&
     previous.displayFileChangeSummaries === next.displayFileChangeSummaries &&
     previous.fileChangeSummaryText === next.fileChangeSummaryText &&
     previous.fileChangeShouldShowStats === next.fileChangeShouldShowStats &&

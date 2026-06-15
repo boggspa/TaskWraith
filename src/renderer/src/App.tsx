@@ -590,6 +590,12 @@ const ACTIVE_RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
   'active',
   'cancelling'
 ])
+const GUEST_PENDING_RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
+  'queued',
+  'starting',
+  'active',
+  'cancelling'
+])
 const isRemoteComposerRunQueueJob = (job: RunQueueJob): boolean =>
   Boolean(job.request?.remoteComposer)
 const isQueuedDesktopRunQueueJob = (job: RunQueueJob): boolean =>
@@ -672,7 +678,10 @@ function formatGuestParentContextMessage(
       GUEST_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
     )}`
   }
-  if (message.role === 'system' && message.metadata?.kind === 'subThreadReturn') {
+  if (
+    (message.role === 'system' || message.role === 'tool') &&
+    message.metadata?.kind === 'subThreadReturn'
+  ) {
     return `Returned sub-thread context: ${truncateGuestContextText(
       content,
       GUEST_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
@@ -726,7 +735,10 @@ function formatSideChatParentContextMessage(
       SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
     )}`
   }
-  if (message.role === 'system' && message.metadata?.kind === 'subThreadReturn') {
+  if (
+    (message.role === 'system' || message.role === 'tool') &&
+    message.metadata?.kind === 'subThreadReturn'
+  ) {
     return `Returned sub-thread: ${truncateGuestContextText(
       content,
       SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
@@ -1219,6 +1231,9 @@ function App(): React.JSX.Element {
   // the timeout case the prior run survives so deltas are legitimate).
   const steerSuppressionChatIdsRef = useRef<Set<string>>(new Set())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
+  const [guestDispatchPendingParentChatIds, setGuestDispatchPendingParentChatIds] = useState<
+    Set<string>
+  >(() => new Set())
   const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfile[]>([])
   const [selectedRuntimeProfileByChatId, setSelectedRuntimeProfileByChatId] = useState<
     Record<string, string>
@@ -8074,6 +8089,24 @@ function App(): React.JSX.Element {
       ? { type: 'changes', summaries: runDiff }
       : diff
 
+  const markGuestDispatchPending = useCallback((parentChatId: string): void => {
+    setGuestDispatchPendingParentChatIds((previous) => {
+      if (previous.has(parentChatId)) return previous
+      const next = new Set(previous)
+      next.add(parentChatId)
+      return next
+    })
+  }, [])
+
+  const clearGuestDispatchPending = useCallback((parentChatId: string): void => {
+    setGuestDispatchPendingParentChatIds((previous) => {
+      if (!previous.has(parentChatId)) return previous
+      const next = new Set(previous)
+      next.delete(parentChatId)
+      return next
+    })
+  }, [])
+
   const getRunQueueSource = (request: QueuedRunRequest): RunQueueJobSource => {
     if (request.scheduledTaskId) return 'scheduled'
     if (request.codexNativeReview) return 'review'
@@ -9546,6 +9579,9 @@ function App(): React.JSX.Element {
                 })
               }
             }
+            if (request.guestParentChatId) {
+              clearGuestDispatchPending(request.guestParentChatId)
+            }
 
             const runDurationMs = Math.max(
               0,
@@ -9810,6 +9846,7 @@ function App(): React.JSX.Element {
       parentRequest.guestParentChatId ||
       parentRequest.dmTargetParticipantId
     ) {
+      if (parentChat?.appChatId) clearGuestDispatchPending(parentChat.appChatId)
       return
     }
 
@@ -9823,6 +9860,7 @@ function App(): React.JSX.Element {
       guestChat.parentChatRelation !== 'sideChat' ||
       guestChat.sideChatContext?.mode !== 'guestParticipant'
     ) {
+      clearGuestDispatchPending(parentChat.appChatId)
       return
     }
     applyHydratedChat(guestChat)
@@ -10034,6 +10072,7 @@ function App(): React.JSX.Element {
       guestAddressTarget !== 'parent'
 
     if (guestAddressTarget === 'guest') {
+      if (parentChat?.appChatId) markGuestDispatchPending(parentChat.appChatId)
       appendGuestAddressedUserMessage(request)
       void dispatchGuestParticipantRun(request)
       clearComposerAttachmentsForSubmittedRequest(request)
@@ -10048,7 +10087,10 @@ function App(): React.JSX.Element {
 
     if (isChatBusy(request.chatRecord?.appChatId || currentChat?.appChatId)) {
       queueRunRequest(request)
-      if (shouldDispatchGuest) void dispatchGuestParticipantRun(request)
+      if (shouldDispatchGuest) {
+        if (parentChat?.appChatId) markGuestDispatchPending(parentChat.appChatId)
+        void dispatchGuestParticipantRun(request)
+      }
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
         setChatPromptDraft(
@@ -10060,7 +10102,10 @@ function App(): React.JSX.Element {
     }
 
     void executeRun(request)
-    if (shouldDispatchGuest) void dispatchGuestParticipantRun(request)
+    if (shouldDispatchGuest) {
+      if (parentChat?.appChatId) markGuestDispatchPending(parentChat.appChatId)
+      void dispatchGuestParticipantRun(request)
+    }
   }
 
   const createSideChatFromCurrentChat = async (
@@ -14414,20 +14459,6 @@ function App(): React.JSX.Element {
   const threadTokenTallyTooltip = ensembleTallyBreakdown
     ? `${contextLabel}\n\n${ensembleTallyBreakdown}`
     : contextLabel
-  // Git-grounded workspace diff stats for the above-bar "N files changed +A −B"
-  // pill. Sourced from the live primaryGitSnapshot (counts.changed + numstat
-  // lineStats) rather than accumulating tool-activity diffSummary across the
-  // whole transcript — so it reflects the CURRENT working tree and drops to 0
-  // the moment the user commits (Codex/Claude-style), instead of growing
-  // run-over-run. Zeros before the snapshot lands or for a non-repo workspace.
-  const workspaceDiffStats = useMemo(
-    () => ({
-      filesChanged: primaryGitSnapshot?.counts?.changed ?? 0,
-      additions: primaryGitSnapshot?.lineStats?.additions ?? 0,
-      deletions: primaryGitSnapshot?.lineStats?.deletions ?? 0
-    }),
-    [primaryGitSnapshot]
-  )
   // P4 — the per-grant and per-path TRANSCRIPT diff accumulators that used to
   // live here (externalPathDiffStatsByGrant / externalPathLiveDiffByPath) were
   // removed: the additional-workspace rows now read git-grounded diff from
@@ -14522,17 +14553,51 @@ function App(): React.JSX.Element {
       (currentChat && getSideChatMode(currentChat) === 'guestParticipant')
   )
   const currentGuestParticipantChatId = currentGuestParticipant?.childChatId || null
-  const hasCurrentGuestActiveRunQueueJob = Boolean(
+  const hasCurrentGuestPendingRunQueueJob = Boolean(
     currentGuestParticipantChatId &&
       runQueueJobs.some(
         (job) =>
-          job.chatId === currentGuestParticipantChatId && ACTIVE_RUN_QUEUE_STATUSES.has(job.status)
+          job.chatId === currentGuestParticipantChatId &&
+          GUEST_PENDING_RUN_QUEUE_STATUSES.has(job.status)
       )
   )
-  const isCurrentGuestParticipantRunning = Boolean(
-    currentGuestParticipantChatId &&
-      (runningChatIds.has(currentGuestParticipantChatId) || hasCurrentGuestActiveRunQueueJob)
+  const isCurrentGuestDispatchPending = Boolean(
+    currentChat?.appChatId && guestDispatchPendingParentChatIds.has(currentChat.appChatId)
   )
+  const isCurrentGuestParticipantRunning = Boolean(
+    currentGuestParticipant &&
+      (isCurrentGuestDispatchPending ||
+        (currentGuestParticipantChatId &&
+          (runningChatIds.has(currentGuestParticipantChatId) || hasCurrentGuestPendingRunQueueJob)))
+  )
+  useEffect(() => {
+    if (guestDispatchPendingParentChatIds.size === 0) return
+    setGuestDispatchPendingParentChatIds((previous) => {
+      if (previous.size === 0) return previous
+      const chatById = new Map(chats.map((chat) => [chat.appChatId, chat]))
+      let changed = false
+      const next = new Set(previous)
+      for (const parentChatId of previous) {
+        const parent = chatById.get(parentChatId)
+        const childChatId = parent?.guestParticipant?.childChatId
+        if (!childChatId) {
+          next.delete(parentChatId)
+          changed = true
+          continue
+        }
+        const childHasPendingRun =
+          runningChatIds.has(childChatId) ||
+          runQueueJobs.some(
+            (job) => job.chatId === childChatId && GUEST_PENDING_RUN_QUEUE_STATUSES.has(job.status)
+          )
+        if (childHasPendingRun) {
+          next.delete(parentChatId)
+          changed = true
+        }
+      }
+      return changed ? next : previous
+    })
+  }, [chats, guestDispatchPendingParentChatIds, runQueueJobs, runningChatIds])
   const currentComposerMentionParticipants = useMemo<EnsembleParticipant[]>(() => {
     if (isCurrentEnsembleChat) return currentChat?.ensemble?.participants || []
     if (!currentChat || !currentGuestParticipant) return []
@@ -14716,6 +14781,42 @@ function App(): React.JSX.Element {
     ]
     guestComposerSelectedReasoning = guestKimiThinking ? 'on' : 'off'
   }
+  const guestThinkingModelId =
+    currentGuestParticipant?.selectedModelType === 'custom'
+      ? currentGuestParticipant.customModel
+      : guestComposerSelectedModel
+  const guestThinkingBaseModelName =
+    currentGuestParticipant && guestThinkingModelId
+      ? shortModelName(guestComposerProvider, '', guestThinkingModelId)
+      : null
+  const guestThinkingReasoningSuffix = guestThinkingBaseModelName
+    ? reasoningDisplayLabel({
+        provider: guestComposerProvider,
+        composerStyle: 'default',
+        modelId: guestThinkingModelId,
+        modelLabel: '',
+        codexReasoningEffort:
+          guestComposerProvider === 'codex' ? guestCodexReasoning : undefined,
+        claudeReasoningEffort:
+          guestComposerProvider === 'claude' ? guestClaudeReasoning : undefined,
+        kimiThinkingEnabled:
+          guestComposerProvider === 'kimi' ? guestKimiThinking : undefined
+      })
+    : ''
+  const guestThinkingOllamaBrand =
+    currentGuestParticipant && guestComposerProvider === 'ollama' && guestThinkingModelId
+      ? resolveOllamaDisplayBrand(
+          guestThinkingModelId,
+          humaniseModelId('ollama', guestThinkingModelId)
+        )
+      : null
+  const guestThinkingModelBadge = guestThinkingOllamaBrand?.modelLabel
+    ? guestThinkingOllamaBrand.modelLabel
+    : guestThinkingBaseModelName
+      ? guestThinkingReasoningSuffix
+        ? `${guestThinkingBaseModelName} ${guestThinkingReasoningSuffix}`
+        : guestThinkingBaseModelName
+      : null
   const guestFastModeCapableModelIds = (() => {
     if (guestComposerProvider === 'codex') {
       return new Set(
@@ -15477,6 +15578,37 @@ function App(): React.JSX.Element {
     : createdChangeCount + modifiedChangeCount
   const fileChangeDisplayDels = fileChangeHasLineStats ? fileChangeDels : deletedChangeCount
   const fileChangeShouldShowStats = fileChangeHasLineStats || displayFileChangeSummaries.length > 0
+  // Git-grounded workspace diff stats for the native composer row. Repos use
+  // the live working-tree snapshot, so a clean tree correctly shows zero even
+  // if the last run edited files. Non-repo workspaces fall back to raw run
+  // diff summaries because there is no commit-aware worktree to query.
+  const workspaceDiffStats = useMemo(() => {
+    if (primaryGitSnapshot) {
+      return {
+        filesChanged: primaryGitSnapshot.counts?.changed ?? 0,
+        additions: primaryGitSnapshot.lineStats?.additions ?? 0,
+        deletions: primaryGitSnapshot.lineStats?.deletions ?? 0
+      }
+    }
+    if (currentWorkspace?.isGitRepo !== false) {
+      return {
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0
+      }
+    }
+    return {
+      filesChanged: displayFileChangeSummaries.length,
+      additions: fileChangeDisplayAdds,
+      deletions: fileChangeDisplayDels
+    }
+  }, [
+    displayFileChangeSummaries.length,
+    fileChangeDisplayAdds,
+    fileChangeDisplayDels,
+    currentWorkspace?.isGitRepo,
+    primaryGitSnapshot
+  ])
   const transcriptMessages = currentChat?.messages || EMPTY_CHAT_MESSAGES
   // Welcome-surface gate. Extracted into `lib/welcomeState` so the
   // predicate is independently unit-tested (see `welcomeState.test.ts`).
@@ -17518,6 +17650,26 @@ function App(): React.JSX.Element {
                 thinkingProvider={thinkingProvider}
                 thinkingProviderClass={thinkingProviderClass}
                 thinkingModelBadge={thinkingModelBadge}
+                guestThinkingProviderLabel={
+                  currentGuestParticipant && isCurrentGuestParticipantRunning
+                    ? `Guest · ${guestThinkingOllamaBrand?.providerLabel || getProviderLabel(guestComposerProvider)}`
+                    : null
+                }
+                guestThinkingProvider={
+                  currentGuestParticipant && isCurrentGuestParticipantRunning
+                    ? guestComposerProvider
+                    : null
+                }
+                guestThinkingProviderClass={
+                  currentGuestParticipant && isCurrentGuestParticipantRunning
+                    ? guestThinkingOllamaBrand?.providerClass || guestComposerProvider
+                    : null
+                }
+                guestThinkingModelBadge={
+                  currentGuestParticipant && isCurrentGuestParticipantRunning
+                    ? guestThinkingModelBadge
+                    : null
+                }
                 displayFileChangeSummaries={displayFileChangeSummaries}
                 fileChangeSummaryText={fileChangeSummaryText}
                 fileChangeShouldShowStats={fileChangeShouldShowStats}
