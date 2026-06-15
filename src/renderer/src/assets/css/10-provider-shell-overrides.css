@@ -488,6 +488,10 @@
  * text, the mention overlay, and inline controls stay readable. */
 [data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-area,
 [data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-surface,
+[data-theme="alabaster"][data-composer-style="codex"] .composer-above-bar-stack,
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact,
 [data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-above-bar,
 [data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .ensemble-above-row,
 [data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .queued-messages-above-row,
@@ -542,6 +546,9 @@
 }
 
 [data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+  .composer-above-bar-stack:has(.ensemble-above-row)
+  > .ensemble-roster-preset-picker.is-compact,
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
   :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   background: linear-gradient(180deg, #1b1b20 0%, #151519 100%) !important;
   border-color: rgba(255, 255, 255, 0.12) !important;
@@ -555,6 +562,9 @@
  * shell, which stays theme-immune. */
 [data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-area,
 [data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-surface,
+[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact,
 [data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-above-bar,
 [data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .ensemble-above-row,
 [data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .queued-messages-above-row,
@@ -614,6 +624,9 @@
 }
 
 [data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact,
+[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"])
   :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   background: linear-gradient(180deg, #ffffff 0%, #f4f3ef 100%) !important;
   border-color: rgba(18, 21, 27, 0.14) !important;
@@ -628,15 +641,14 @@
 }
 
 /* Gemini/Kimi provider shells should keep their own provider chrome in
- * both extreme app themes. Late light/glass rules otherwise make the
- * two upper rows look like TaskWraith native rows while the textarea keeps
- * the provider shell. */
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"] .composer-area,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"] .composer-surface,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"] .composer-above-bar,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"] .ensemble-above-row,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"] .queued-messages-above-row,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"] .composer-create-pr-row {
+ * Obsidian. Alabaster is reconciled back onto light tokens later in this
+ * shard so it does not inherit the dark extreme-theme shell. */
+[data-theme="obsidian"][data-composer-style="gemini"] .composer-area,
+[data-theme="obsidian"][data-composer-style="gemini"] .composer-surface,
+[data-theme="obsidian"][data-composer-style="gemini"] .composer-above-bar,
+[data-theme="obsidian"][data-composer-style="gemini"] .ensemble-above-row,
+[data-theme="obsidian"][data-composer-style="gemini"] .queued-messages-above-row,
+[data-theme="obsidian"][data-composer-style="gemini"] .composer-create-pr-row {
   --text-primary: rgba(246, 249, 255, 0.94);
   --text-secondary: rgba(246, 249, 255, 0.72);
   --text-muted: rgba(246, 249, 255, 0.46);
@@ -648,7 +660,7 @@
   color-scheme: dark;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"]
+[data-theme="obsidian"][data-composer-style="gemini"]
   :is(.composer-surface, .composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   background:
     radial-gradient(circle at 12% 0%, rgba(90, 140, 255, 0.18), transparent 38%),
@@ -658,71 +670,47 @@
   color: rgba(246, 249, 255, 0.9) !important;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"]
+[data-theme="obsidian"][data-composer-style="gemini"]
   :is(.composer-textarea, .composer-textarea-highlight, .composer-textarea-highlight-content) {
   color: rgba(246, 249, 255, 0.94) !important;
   caret-color: rgba(246, 249, 255, 0.96);
   -webkit-text-fill-color: rgba(246, 249, 255, 0.94) !important;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"] .composer-textarea::placeholder {
+[data-theme="obsidian"][data-composer-style="gemini"] .composer-textarea::placeholder {
   color: rgba(246, 249, 255, 0.42) !important;
   -webkit-text-fill-color: rgba(246, 249, 255, 0.42) !important;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"]
+[data-theme="obsidian"][data-composer-style="gemini"]
   :is(.composer-combined-picker-trigger, .composer-combined-picker-trigger-primary, .composer-combined-picker-trigger-suffix, [data-composer-control], .composer-ensemble-mode-button, .composer-image-picker-btn, .composer-thread-token-tally, .composer-telemetry-row) {
   color: rgba(246, 249, 255, 0.84) !important;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"]
+[data-theme="obsidian"][data-composer-style="gemini"]
   .composer-ensemble-mode-button.is-active {
   background: rgba(90, 140, 255, 0.24) !important;
   color: #ffffff !important;
 }
 
-/* 1.0.6-CS3 — Gemini CAPSULE in the alabaster/obsidian app themes. The
+/* 1.0.6-CS3 — Gemini CAPSULE in the obsidian app theme. The
  * capsule pill (`.composer-textarea-wrap`, dark navy via the default
  * `--gemini-capsule-*` tokens) replaces the old surface rect, so the
  * surface must go transparent here too — beat the `!important` navy
  * fill that the rule above paints onto `.composer-surface`. */
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"] .composer-surface,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="gemini"] .composer-surface:focus-within {
+[data-theme="obsidian"][data-composer-style="gemini"] .composer-surface,
+[data-theme="obsidian"][data-composer-style="gemini"] .composer-surface:focus-within {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
 }
 
-/* 1.0.6-CS3 follow-up — ALABASTER ONLY: white-on-white satellite row.
- * The Gemini capsule rework moved the satellite controls (the bottom
- * row + meta strip) OUT of the dark navy capsule onto the light cream
- * Alabaster app background. The block far above paints ALL Gemini-
- * composer text near-white with `!important` — correct inside the navy
- * capsule and for Obsidian's dark app bg, but invisible on Alabaster's
- * cream. So (a) re-darken the satellite containers + their contents to
- * Alabaster's charcoal, then (b) re-lighten the [+] and model pill,
- * which are lifted INTO the navy capsule (they sit on dark navy, not the
- * cream bg). The send button is deliberately NOT re-lit: it's a white
- * circle with a dark arrow, so (a)'s charcoal arrow reads fine on it —
- * forcing it light would make the arrow invisible on white.
- * Obsidian (dark app) is deliberately untouched. */
-[data-theme="alabaster"][data-composer-style="gemini"] :is(.composer-inline-pickers, .composer-telemetry-row),
-[data-theme="alabaster"][data-composer-style="gemini"] :is(.composer-inline-pickers, .composer-telemetry-row) * {
-  color: rgba(18, 21, 27, 0.82) !important;
-  -webkit-text-fill-color: rgba(18, 21, 27, 0.82) !important;
-}
-[data-theme="alabaster"][data-composer-style="gemini"] :is([data-composer-control="attach"], [data-composer-control="model"]),
-[data-theme="alabaster"][data-composer-style="gemini"] :is([data-composer-control="attach"], [data-composer-control="model"]) * {
-  color: rgba(246, 249, 255, 0.92) !important;
-  -webkit-text-fill-color: rgba(246, 249, 255, 0.92) !important;
-}
-
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"] .composer-area,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"] .composer-surface,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"] .composer-above-bar,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"] .ensemble-above-row,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"] .queued-messages-above-row,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"] .composer-create-pr-row {
+[data-theme="obsidian"][data-composer-style="kimi"] .composer-area,
+[data-theme="obsidian"][data-composer-style="kimi"] .composer-surface,
+[data-theme="obsidian"][data-composer-style="kimi"] .composer-above-bar,
+[data-theme="obsidian"][data-composer-style="kimi"] .ensemble-above-row,
+[data-theme="obsidian"][data-composer-style="kimi"] .queued-messages-above-row,
+[data-theme="obsidian"][data-composer-style="kimi"] .composer-create-pr-row {
   --text-primary: rgba(246, 246, 246, 0.94);
   --text-secondary: rgba(246, 246, 246, 0.72);
   --text-muted: rgba(246, 246, 246, 0.46);
@@ -734,7 +722,7 @@
   color-scheme: dark;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"]
+[data-theme="obsidian"][data-composer-style="kimi"]
   :is(.composer-surface, .composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   background: linear-gradient(180deg, rgba(35, 35, 35, 0.98), rgba(22, 22, 22, 0.98)) !important;
   border-color: rgba(255, 255, 255, 0.13) !important;
@@ -742,24 +730,24 @@
   color: rgba(246, 246, 246, 0.9) !important;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"]
+[data-theme="obsidian"][data-composer-style="kimi"]
   :is(.composer-textarea, .composer-textarea-highlight, .composer-textarea-highlight-content) {
   color: rgba(246, 246, 246, 0.94) !important;
   caret-color: rgba(246, 246, 246, 0.96);
   -webkit-text-fill-color: rgba(246, 246, 246, 0.94) !important;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"] .composer-textarea::placeholder {
+[data-theme="obsidian"][data-composer-style="kimi"] .composer-textarea::placeholder {
   color: rgba(246, 246, 246, 0.42) !important;
   -webkit-text-fill-color: rgba(246, 246, 246, 0.42) !important;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"]
+[data-theme="obsidian"][data-composer-style="kimi"]
   :is(.composer-combined-picker-trigger, .composer-combined-picker-trigger-primary, .composer-combined-picker-trigger-suffix, [data-composer-control], .composer-ensemble-mode-button, .composer-image-picker-btn, .composer-thread-token-tally, .composer-telemetry-row) {
   color: rgba(246, 246, 246, 0.84) !important;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"]
+[data-theme="obsidian"][data-composer-style="kimi"]
   .composer-ensemble-mode-button.is-active {
   background: rgba(169, 189, 85, 0.7) !important;
   color: #0a0a0c !important;
@@ -878,10 +866,10 @@
   color: rgba(18, 21, 27, 0.72) !important;
 }
 
-/* Kimi keeps the Kimi solid-gray shell on extreme app themes. The
- * previous compatibility pass used a translucent gradient, which let
- * Gemini-like system ambience bleed through the upper rows. */
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"]
+/* Kimi keeps the Kimi solid-gray shell on Obsidian. The previous
+ * compatibility pass used a translucent gradient, which let Gemini-like
+ * system ambience bleed through the upper rows. */
+[data-theme="obsidian"][data-composer-style="kimi"]
   :is(.composer-surface, .composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   background: #1f2023 !important;
   background-image: none !important;
@@ -891,15 +879,15 @@
   -webkit-backdrop-filter: none !important;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"]
+[data-theme="obsidian"][data-composer-style="kimi"]
   :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row)::before,
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"]
+[data-theme="obsidian"][data-composer-style="kimi"]
   :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row)::after {
   display: none !important;
   background: none !important;
 }
 
-:is([data-theme="alabaster"], [data-theme="obsidian"])[data-composer-style="kimi"]
+[data-theme="obsidian"][data-composer-style="kimi"]
   .composer-surface {
   background: #202124 !important;
 }
@@ -908,14 +896,29 @@
  * and Kimi solid-shell enforcement. */
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar-stack:has(.ensemble-above-row) {
-  background: transparent !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-  /* EW79 — see the obsidian twin above: kill the 14px tab padding
-   * that turns into a page-coloured gap once the tab is
-   * transparent, so the ensemble row sits flush against the
-   * composer surface. */
+  background: linear-gradient(180deg, #1b1b20 0%, #151519 100%) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22) !important;
+  /* Keep the dark Codex stack as one joined instrument in Alabaster;
+   * only remove the old tucked-tab bottom padding so the participant
+   * row still sits flush against the composer surface. */
   padding-bottom: 0;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar-stack:has(.ensemble-above-row)
+  > :is(
+    .composer-above-bar,
+    .composer-above-bar-secondary,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  ) {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgba(255, 255, 255, 0.88) !important;
+  opacity: 1;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]
@@ -927,10 +930,106 @@
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar-stack:has(.ensemble-above-row)
   > *:not(:first-child) {
-  border-top-color: rgba(18, 21, 27, 0.12) !important;
+  border-top-color: rgba(255, 255, 255, 0.12) !important;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+/* Alabaster + Codex keeps the above rows dark, so undo the base
+ * Alabaster light-theme text fixes that still target nested branch/file
+ * elements directly. Keep the semantic git accents explicit below. */
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  :is(
+    .composer-above-bar-branch,
+    .composer-above-bar-branch svg,
+    .composer-above-bar-files,
+    .composer-above-bar-stats,
+    .composer-above-bar-secondary-access,
+    .composer-above-bar-secondary-access-icon,
+    .composer-above-bar-secondary-revoke
+  ) {
+  color: rgba(255, 255, 255, 0.84) !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-files
+  strong {
+  color: rgba(255, 255, 255, 0.94) !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-secondary-branch {
+  color: rgba(255, 255, 255, 0.68) !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-secondary-branch.git-tone-main {
+  color: #6f9dff !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-secondary-branch.git-tone-feature {
+  color: #a78bfa !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-secondary-branch.git-tone-fix,
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .git-status-push.git-status-unpublished,
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .git-status-ahead {
+  color: #f0c674 !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-secondary-branch.git-tone-release,
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-diff-add {
+  color: #6ddfa8 !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .git-status-behind {
+  color: #6f9dff !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-diff-del {
+  color: #f08080 !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-action:not(.is-success):not(.is-error) {
+  color: rgba(255, 255, 255, 0.86) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+[data-theme="alabaster"][data-composer-style="codex"]
+  .composer-above-bar
+  .composer-above-bar-action:hover:not(:disabled):not(.is-success):not(.is-error) {
+  color: rgba(255, 255, 255, 0.96) !important;
+  border-color: rgba(255, 255, 255, 0.26) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+[data-theme="alabaster"]:is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"]
+  )
   .run-complete-card {
   color: rgba(18, 21, 27, 0.78) !important;
   background: rgba(255, 254, 250, 0.9) !important;
@@ -938,7 +1037,12 @@
   box-shadow: 0 18px 44px rgba(18, 21, 27, 0.12) !important;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="alabaster"]:is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"]
+  )
   .run-complete-card
   :is(
     .run-complete-metadata strong,
@@ -949,7 +1053,12 @@
   color: rgba(18, 21, 27, 0.94) !important;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="alabaster"]:is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"]
+  )
   .run-complete-card
   :is(
     .run-complete-metadata span,
@@ -962,18 +1071,33 @@
   color: rgba(44, 48, 58, 0.72) !important;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="alabaster"]:is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"]
+  )
   :is(.run-complete-summary-card, .file-change-summary-card) {
   background: rgba(255, 255, 252, 0.58) !important;
   border-color: rgba(18, 21, 27, 0.12) !important;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="alabaster"]:is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"]
+  )
   :is(.run-complete-summary-grid, .file-change-summary-header, .file-change-summary-item) {
   border-color: rgba(18, 21, 27, 0.1) !important;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="alabaster"]:is(
+    [data-composer-style="codex"],
+    [data-composer-style="claude"],
+    [data-composer-style="gemini"],
+    [data-composer-style="kimi"]
+  )
   .run-copy-btn {
   color: rgba(18, 21, 27, 0.74) !important;
   background: rgba(255, 255, 255, 0.58) !important;
@@ -987,7 +1111,8 @@
     .composer-above-bar,
     .ensemble-above-row,
     .queued-messages-above-row,
-    .composer-create-pr-row
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
   ) {
   background: #212121 !important;
   background-image: none !important;
@@ -995,17 +1120,31 @@
 
 [data-theme="dark"][data-composer-style="codex"]
   .app-transcript
-  :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row)::before,
+  :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::before,
 [data-theme="dark"][data-composer-style="codex"]
   .app-transcript
-  :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row)::after {
+  :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::after {
   display: none !important;
   background: none !important;
   background-image: none !important;
   box-shadow: none !important;
 }
 
-[data-composer-style="kimi"]
+[data-composer-style="kimi"]:where(
+    :not(:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]))
+  )
   .app-transcript.chat-kind-ensemble
   :is(.composer-surface, .composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   color: rgba(235, 237, 242, 0.88) !important;
@@ -1017,10 +1156,14 @@
   backdrop-filter: none !important;
 }
 
-[data-composer-style="kimi"]
+[data-composer-style="kimi"]:where(
+    :not(:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]))
+  )
   .app-transcript.chat-kind-ensemble
   :is(.composer-surface, .composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row)::before,
-[data-composer-style="kimi"]
+[data-composer-style="kimi"]:where(
+    :not(:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]))
+  )
   .app-transcript.chat-kind-ensemble
   :is(.composer-surface, .composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row)::after {
   display: none !important;
@@ -1030,13 +1173,19 @@
   box-shadow: none !important;
 }
 
-[data-composer-style="kimi"] .app-transcript.chat-kind-ensemble .composer-surface {
+[data-composer-style="kimi"]:where(
+    :not(:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]))
+  )
+  .app-transcript.chat-kind-ensemble
+  .composer-surface {
   background: #202124 !important;
   background-image: none !important;
   border-color: rgba(255, 255, 255, 0.14) !important;
 }
 
-[data-composer-style="kimi"]
+[data-composer-style="kimi"]:where(
+    :not(:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]))
+  )
   .app-transcript.chat-kind-ensemble
   :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   background: #1f2023 !important;
@@ -2841,6 +2990,78 @@
   background-image: none !important;
 }
 
+/* Alabaster's transcript is a theme-level cream reading slab. Keep it
+ * independent from provider interface shells, pane-opacity overrides, and
+ * the optional sky/fx reveal that light/citrus/mist/sage use. */
+:root[data-theme="alabaster"] {
+  --main-pane-opacity-override-bg: #f4f3ef;
+  --transcript-sky-reveal-solid: color-mix(
+    in srgb,
+    #f4f3ef var(--main-pane-opacity-100, 100%),
+    transparent
+  );
+}
+
+:root[data-theme="alabaster"] .app-transcript,
+:root[data-theme="alabaster"][data-appearance] .app-transcript,
+:root[data-theme="alabaster"][data-fx-enabled="true"] .app-transcript,
+:root[data-theme="alabaster"][data-fx-enabled="true"] .app-transcript.welcome-mode,
+:root[data-theme="alabaster"][data-main-pane-opacity-override="true"] .app-transcript,
+:root[data-theme="alabaster"][data-main-pane-opacity-override="true"]:not([data-fx-enabled="true"])
+  .app-transcript,
+:root[data-theme="alabaster"][data-main-pane-opacity-override="true"][data-fx-enabled="true"]
+  .app-transcript {
+  background: var(--transcript-sky-reveal-solid) !important;
+  background-color: var(--transcript-sky-reveal-solid) !important;
+  background-image: none !important;
+  background-blend-mode: normal !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Gemini/Kimi interface shells normally own user-bubble material in their
+ * dark native themes. On Alabaster the transcript stays theme-owned, so the
+ * user's bubble and text should match the neutral Alabaster surface unless
+ * the explicit user-bubble colour picker is active. */
+:root[data-theme="alabaster"]:is([data-interface-style="gemini"], [data-interface-style="kimi"])
+  .message-bubble.user {
+  background: var(--unified-soft-surface-bg, var(--surface-2)) !important;
+  border-color: var(--unified-soft-surface-border, var(--surface-border)) !important;
+  color: var(--text-primary) !important;
+}
+
+:root[data-theme="alabaster"]:is([data-interface-style="gemini"], [data-interface-style="kimi"])
+  .message-bubble.user
+  .user-message-content {
+  color: inherit !important;
+}
+
+:root[data-theme="alabaster"]:is([data-interface-style="gemini"], [data-interface-style="kimi"])
+  .message-meta.user-meta {
+  color: var(--text-muted) !important;
+}
+
+:root[data-theme="alabaster"][data-user-bubble-color]:not([data-user-bubble-color="system"]):is(
+    [data-interface-style="gemini"],
+    [data-interface-style="kimi"]
+  )
+  .message-bubble.user {
+  background: color-mix(in srgb, var(--user-bubble-base) 30%, var(--app-bg-elevated)) !important;
+  border-color: color-mix(
+    in srgb,
+    var(--user-bubble-base) 48%,
+    var(--unified-soft-surface-border, var(--surface-border))
+  ) !important;
+}
+
+:root[data-theme="alabaster"][data-user-bubble-color]:not([data-user-bubble-color="system"]):is(
+    [data-interface-style="gemini"],
+    [data-interface-style="kimi"]
+  )
+  .message-meta.user-meta {
+  color: var(--user-bubble-base) !important;
+}
+
 [data-sidebar-opacity-override="true"] .app-sidebar {
   background: color-mix(in srgb, var(--sidebar-opacity-override-bg) var(--sidebar-opacity-100), transparent) !important;
   background-image: none !important;
@@ -2870,6 +3091,245 @@
 
 [data-main-pane-opacity-override="true"] .app-transcript::after {
   opacity: var(--main-pane-opacity-factor) !important;
+}
+
+/* Light theme composer/system-theme reconciliation.
+ *
+ * These are deliberately late and narrow. Gemini/Kimi interface styles set
+ * dark transcript opacity bases in this shard; in light mode that made the
+ * transcript follow the selected composer shell instead of the system theme.
+ * Kimi's detached composer rows also kept their dark shell containers while
+ * their contents had already flipped to light-mode tokens. Modular's branch
+ * chip is the one light-mode micro-card that should read as satellite text,
+ * not as a white pill. */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]):is(
+    [data-interface-style="gemini"],
+    [data-interface-style="kimi"]
+  ) {
+  --main-pane-opacity-override-bg: var(--content-bg);
+  --unified-soft-surface-bg: var(--surface-2);
+  --unified-soft-surface-border: var(--surface-border);
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]):is(
+    [data-interface-style="gemini"],
+    [data-interface-style="kimi"]
+  )
+  .app-transcript {
+  background: color-mix(
+    in srgb,
+    var(--content-bg, var(--surface-1)) var(--main-pane-opacity-100),
+    transparent
+  );
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
+  :is(
+    .composer-surface,
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row
+  ),
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
+  .app-transcript.chat-kind-ensemble
+  :is(
+    .composer-surface,
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row
+  ) {
+  background: var(--unified-soft-surface-bg) !important;
+  border-color: var(--unified-soft-surface-border) !important;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08) !important;
+  color: var(--text-primary) !important;
+  color-scheme: light;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"] .composer-surface:focus-within {
+  border-color: color-mix(in srgb, #84a33b 42%, var(--unified-soft-surface-border)) !important;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.10),
+    0 0 0 3px color-mix(in srgb, #84a33b 12%, transparent) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
+  :is(
+    [data-composer-control="provider"],
+    [data-composer-control="workspace"],
+    [data-composer-control="ensemble-mode"] .composer-picker-label
+  ) {
+  background: color-mix(in srgb, #84a33b 12%, var(--surface-1)) !important;
+  border-color: color-mix(in srgb, #84a33b 28%, var(--unified-soft-surface-border)) !important;
+  color: #34410f !important;
+  -webkit-text-fill-color: #34410f !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
+  :is([data-composer-control="provider"], [data-composer-control="workspace"]):hover,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
+  [data-composer-control="ensemble-mode"]
+  .composer-picker-label:hover {
+  background: color-mix(in srgb, #84a33b 18%, var(--surface-1)) !important;
+  border-color: color-mix(in srgb, #84a33b 38%, var(--unified-soft-surface-border)) !important;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="kimi"]
+  :is(
+    [data-composer-control="provider"],
+    [data-composer-control="workspace"],
+    [data-composer-control="ensemble-mode"] .composer-picker-label
+  )
+  :is(.composer-provider-button-label, .composer-workspace-button-label, .composer-control-icon, svg) {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}
+
+/* Alabaster is a light extreme theme. Keep Obsidian's dark provider
+ * chrome, but bring Gemini/Kimi back onto Alabaster's cream tokens. */
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-area {
+  --text-primary: rgba(18, 21, 27, 0.92);
+  --text-secondary: rgba(18, 21, 27, 0.62);
+  --text-muted: rgba(18, 21, 27, 0.32);
+  --surface-text: rgba(18, 21, 27, 0.92);
+  --surface-text-muted: rgba(18, 21, 27, 0.55);
+  --panel-border: rgba(18, 21, 27, 0.12);
+  --composer-border: rgba(18, 21, 27, 0.12);
+  color: rgba(18, 21, 27, 0.9) !important;
+  color-scheme: light;
+}
+
+[data-theme="alabaster"][data-composer-style="gemini"] {
+  --gemini-capsule-fill: linear-gradient(180deg, #ffffff 0%, #eef3ff 100%);
+  --gemini-capsule-border: color-mix(in srgb, #5a8cff 30%, var(--surface-border));
+  --gemini-capsule-border-focus: color-mix(in srgb, #5a8cff 60%, transparent);
+  --gemini-capsule-shadow: 0 4px 18px rgba(20, 40, 90, 0.10);
+  --gemini-capsule-shadow-focus:
+    0 4px 22px rgba(20, 40, 90, 0.14),
+    0 0 0 4px color-mix(in srgb, #5a8cff 14%, transparent);
+}
+
+[data-theme="alabaster"][data-composer-style="gemini"] .composer-surface,
+[data-theme="alabaster"][data-composer-style="gemini"] .composer-surface:focus-within {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color-scheme: light;
+}
+
+[data-theme="alabaster"][data-composer-style="gemini"]
+  :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row
+  ),
+[data-theme="alabaster"][data-composer-style="gemini"]
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact {
+  background: var(--surface-2) !important;
+  border-color: color-mix(in srgb, #5a8cff 32%, var(--surface-border)) !important;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08) !important;
+  color: var(--surface-text) !important;
+  color-scheme: light;
+}
+
+[data-theme="alabaster"][data-composer-style="kimi"]
+  :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row
+  ),
+[data-theme="alabaster"][data-composer-style="kimi"]
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact {
+  background: var(--surface-2) !important;
+  border-color: color-mix(in srgb, #a9bd55 32%, var(--surface-border)) !important;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08) !important;
+  color: var(--surface-text) !important;
+  color-scheme: light;
+}
+
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  :is(.composer-textarea, .composer-textarea-highlight, .composer-textarea-highlight-content) {
+  color: rgba(18, 21, 27, 0.92) !important;
+  caret-color: rgba(18, 21, 27, 0.92) !important;
+  -webkit-text-fill-color: rgba(18, 21, 27, 0.92) !important;
+}
+
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-textarea::placeholder {
+  color: rgba(18, 21, 27, 0.42) !important;
+  -webkit-text-fill-color: rgba(18, 21, 27, 0.42) !important;
+}
+
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  :is(
+    .composer-combined-picker-trigger,
+    .composer-combined-picker-trigger-primary,
+    .composer-combined-picker-trigger-suffix,
+    [data-composer-control],
+    .composer-ensemble-mode-button,
+    .composer-image-picker-btn,
+    .composer-thread-token-tally,
+    .composer-telemetry-row
+  ) {
+  color: rgba(18, 21, 27, 0.74) !important;
+  -webkit-text-fill-color: rgba(18, 21, 27, 0.74) !important;
+}
+
+[data-theme="alabaster"][data-composer-style="gemini"]
+  :is([data-composer-control="model"], [data-composer-control="provider"], [data-composer-control="workspace"]),
+[data-theme="alabaster"][data-composer-style="gemini"]
+  [data-composer-control="ensemble-mode"] {
+  background: color-mix(in srgb, #5a8cff 10%, #ffffff) !important;
+  border-color: color-mix(in srgb, #5a8cff 24%, var(--surface-border)) !important;
+  color: #23345f !important;
+  -webkit-text-fill-color: #23345f !important;
+}
+
+[data-theme="alabaster"][data-composer-style="kimi"]
+  :is([data-composer-control="model"], [data-composer-control="provider"], [data-composer-control="workspace"]),
+[data-theme="alabaster"][data-composer-style="kimi"]
+  [data-composer-control="ensemble-mode"] {
+  background: color-mix(in srgb, #84a33b 10%, #ffffff) !important;
+  border-color: color-mix(in srgb, #84a33b 26%, var(--surface-border)) !important;
+  color: #34410f !important;
+  -webkit-text-fill-color: #34410f !important;
+}
+
+[data-theme="alabaster"][data-composer-style="gemini"]
+  [data-composer-control="ensemble-mode"]
+  .composer-ensemble-mode-button.is-active {
+  background: color-mix(in srgb, #5a8cff 18%, #ffffff) !important;
+  color: #23345f !important;
+  -webkit-text-fill-color: #23345f !important;
+}
+
+[data-theme="alabaster"][data-composer-style="kimi"]
+  [data-composer-control="ensemble-mode"]
+  .composer-ensemble-mode-button.is-active {
+  background: color-mix(in srgb, #a9bd55 70%, transparent) !important;
+  color: #0a0a0c !important;
+  -webkit-text-fill-color: #0a0a0c !important;
+}
+
+[data-theme="alabaster"][data-composer-style="kimi"] .composer-action-btn.run-btn:not(:disabled) {
+  background: color-mix(in srgb, #84a33b 18%, #ffffff) !important;
+  color: #34410f !important;
+}
+
+[data-theme="light"][data-composer-style="modular"]
+  .composer-above-bar
+  .composer-above-bar-branch {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: color-mix(in srgb, var(--text-primary) 84%, transparent) !important;
 }
 
 /* Native default merged instrument — beat every late shard (05 aura,
@@ -2938,4 +3398,97 @@
   background: none !important;
   box-shadow: none !important;
   opacity: 0 !important;
+}
+
+/* Codex/Grok workspace rows — use the same three-zone alignment for
+ * primary and secondary workspace metadata. The center zone is only the
+ * files-changed + diff group; left/right zones absorb the spacer. */
+:is([data-composer-style="codex"], [data-composer-style="grok"])
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+}
+
+:is([data-composer-style="codex"], [data-composer-style="grok"])
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  > .composer-above-bar-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-inline: 0 !important;
+}
+
+:is([data-composer-style="codex"], [data-composer-style="grok"])
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  > .composer-above-bar-pill--git {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: stretch;
+  justify-content: flex-start;
+  order: 0 !important;
+}
+
+:is([data-composer-style="codex"], [data-composer-style="grok"])
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  > .composer-above-bar-pill--git
+  .composer-above-bar-branch {
+  min-width: 0;
+  overflow: hidden;
+}
+
+:is([data-composer-style="codex"], [data-composer-style="grok"])
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  > .composer-above-bar-pill--git
+  .composer-above-bar-branch
+  > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:is([data-composer-style="codex"], [data-composer-style="grok"])
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  > :is(.composer-above-bar-pill--changes, .composer-above-bar-center-cluster) {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline: 0 !important;
+  order: 0 !important;
+  white-space: nowrap;
+}
+
+:is([data-composer-style="codex"], [data-composer-style="grok"])
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  > .composer-above-bar-pill--action {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: stretch;
+  justify-content: flex-end;
+  order: 0 !important;
+}
+
+:is([data-composer-style="codex"], [data-composer-style="grok"])
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  .composer-above-bar-trailing-cluster,
+:is([data-composer-style="codex"], [data-composer-style="grok"])
+  .composer-above-bar-stack
+  > .composer-above-bar.style-unified
+  .composer-diff-action-menu-wrap {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
 }

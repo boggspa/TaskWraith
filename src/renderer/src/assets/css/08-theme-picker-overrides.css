@@ -8691,6 +8691,44 @@
 }
 [data-composer-style="default"]
   .composer-above-bar:not(.composer-above-bar-secondary)
+  .composer-above-bar-branch {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(42%, 28rem);
+}
+[data-composer-style="default"]
+  .composer-above-bar:not(.composer-above-bar-secondary)
+  .composer-above-bar-branch
+  > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-composer-style="default"]
+  .composer-above-bar:not(.composer-above-bar-secondary)
+  :is(.git-status-merge, .git-status-push, .git-status-ci) {
+  flex: 0 0 auto;
+}
+[data-composer-style="default"]
+  .composer-above-bar:not(.composer-above-bar-secondary)
+  .composer-above-bar-files-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  white-space: nowrap;
+}
+[data-composer-style="default"]
+  .composer-above-bar:not(.composer-above-bar-secondary)
+  .composer-above-bar-files-cluster
+  :is(.composer-above-bar-files, .composer-above-bar-stats) {
+  margin-left: 0;
+  margin-right: 0;
+}
+[data-composer-style="default"]
+  .composer-above-bar:not(.composer-above-bar-secondary)
   .composer-diff-action-menu-wrap {
   order: 80;
   margin-left: auto;
@@ -9046,13 +9084,13 @@
 }
 
 /* Light-mode sky reveal — only the top sky band fades; the rest of the
- * transcript pane stays a solid reading surface. */
+ * transcript pane stays a solid reading surface. Alabaster opts out: its
+ * theme contract is an opaque cream transcript slab. */
 :root[data-fx-enabled="true"]:is(
     [data-theme="light"],
     [data-theme="citrus"],
     [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
+    [data-theme="sage"]
   )
   .app-transcript {
   --transcript-sky-reveal-solid: color-mix(
@@ -9075,8 +9113,7 @@
     [data-theme="light"],
     [data-theme="citrus"],
     [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
+    [data-theme="sage"]
   )
   .app-transcript.welcome-mode {
   --transcript-sky-reveal-top: rgba(255, 255, 255, 0);

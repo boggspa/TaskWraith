@@ -1221,11 +1221,21 @@
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
   color: var(--surface-text);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .ensemble-above-row {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact {
   background: var(--surface-2);
   border-color: color-mix(in srgb, var(--surface-border) 86%, transparent);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
   color: var(--surface-text);
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+  .composer-above-bar-stack
+  > .ensemble-roster-preset-picker.is-compact
+  .ensemble-roster-preset-picker-chip {
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  border-color: color-mix(in srgb, currentColor 14%, transparent);
 }
 /* Codex unified container (when ensemble) in light mode: white
  * `--surface-2` base to match the composer-surface + Create-PR row
@@ -1303,7 +1313,8 @@
  * visible chrome (matches the dark-mode unified treatment). */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > .composer-above-bar,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > .ensemble-above-row,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > .queued-messages-above-row {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > .queued-messages-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > .ensemble-roster-preset-picker.is-compact {
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -2884,6 +2895,12 @@
   .app-transcript.chat-kind-ensemble
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
-  > :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row) {
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  ) {
   border-color: transparent !important;
 }
