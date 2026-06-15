@@ -76,16 +76,40 @@ cleartext `ws://` to a LAN/Tailscale relay. Checklist:
 
 ## Not yet wired (intentional scaffold gaps)
 
-- **QR camera scan** — paste-the-code works today; the AVFoundation scanner is an
-  iOS-only (`#if os(iOS)`) addition on top of the same `pair(fromBootstrapJSON:)`
-  entry point.
 - **Incremental run-event rendering** — the feed renders the projection snapshot;
   live `bridge.runEvent` streaming into a transcript view is a follow-up.
-- **APNs registration + silent-push wake** — the Mac + relay support trusted
-  reconnect (`reconnectTrusted()`); registering the device's APNs token and
-  waking on push is the remaining hook.
+
+## TestFlight / App Store archive path
+
+The generated Xcode project has a shared `TaskWraith` scheme and a Release
+archive configuration. Use the scripts so versioning, entitlements, and export
+options stay reproducible:
+
+```sh
+cd ios/TaskWraithApp
+./scripts/bump-build.sh              # or ./scripts/bump-build.sh 42
+TASKWRAITH_APPLE_TEAM_ID=ABCDE12345 ./scripts/archive-testflight.sh
+```
+
+Before upload:
+
+1. Confirm the archived entitlement prints `aps-environment = production`.
+2. Complete the App Store Connect export-compliance questionnaire. This project
+   conservatively sets `ITSAppUsesNonExemptEncryption=true` because the app
+   implements app-level E2EE with CryptoKit.
+3. Read `AppStorePrivacyNotes.md` and make the App Store privacy answers match
+   the selected distribution model.
+
+Remote notifications are intentionally disabled by default in Release builds.
+The current Mac-side APNs sender is a local-admin/development feature that
+requires an APNs auth key for the companion bundle; that is not suitable for a
+consumer TestFlight/App Store review flow. Re-enable Release APNs registration
+only after a developer-controlled push service exists, or for an explicitly
+internal/local-admin distribution by compiling with
+`TASKWRAITH_ENABLE_APNS_REGISTRATION`.
 
 ## Security
 
 The E2EE core is security-sensitive. Recommend an independent crypto review of
-`TaskWraithKit` (and the shared `src/shared/e2ee`) before any TestFlight build.
+`TaskWraithKit` (and the shared `src/shared/e2ee`) before a public App Store
+submission.

@@ -29,6 +29,12 @@ targets:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: TaskWraith
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Conservative export-compliance stance: the companion implements
+        # app-level E2EE with CryptoKit. Keep this true unless release/legal
+        # explicitly classifies the build as exempt in App Store Connect.
+        ITSAppUsesNonExemptEncryption: true
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UILaunchScreen: {}
@@ -59,9 +65,9 @@ targets:
     entitlements:
       path: TaskWraith.entitlements
       properties:
-        # Flips to `production` automatically when signed for TestFlight /
-        # App Store; dev/device builds use the sandbox APNs gateway.
-        aps-environment: development
+        # Debug/device builds use sandbox APNs. Release archives embed
+        # production so TestFlight/App Store builds can receive pushes.
+        aps-environment: "$(APS_ENVIRONMENT)"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion
@@ -73,3 +79,37 @@ targets:
         SWIFT_VERSION: "6.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
+      configs:
+        Debug:
+          APS_ENVIRONMENT: development
+        Release:
+          APS_ENVIRONMENT: production
+  TaskWraithUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: TaskWraith
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.uitests
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "6.0"
+schemes:
+  TaskWraith:
+    build:
+      targets:
+        TaskWraith: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+    test:
+      config: Debug
+      targets:
+        - TaskWraithUITests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
