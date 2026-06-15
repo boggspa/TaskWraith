@@ -31,10 +31,15 @@ targets:
         CFBundleDisplayName: TaskWraith
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        # Conservative export-compliance stance: the companion implements
-        # app-level E2EE with CryptoKit. Keep this true unless release/legal
-        # explicitly classifies the build as exempt in App Store Connect.
-        ITSAppUsesNonExemptEncryption: true
+        # Export compliance: the companion implements app-level E2EE with
+        # standard CryptoKit algorithms (AES-256-GCM, Curve25519, HKDF-SHA-256)
+        # and no proprietary crypto. App Store Connect's encryption questionnaire
+        # (standard algorithms, not distributed in France) returned "no
+        # documentation required", so this is NO — which skips the per-build
+        # encryption questions. France is excluded in App Store Connect →
+        # Availability; the US BIS 5D992.c mass-market self-classification report
+        # is tracked separately as a release checklist item (not an Apple gate).
+        ITSAppUsesNonExemptEncryption: false
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UILaunchScreen: {}
