@@ -284,7 +284,9 @@ async function searchWorkspaceFiles(
 }
 
 function clampListLimit(limit: number | undefined): number {
-  if (!Number.isFinite(limit) || !Number.isInteger(limit)) return DIRECTORY_LIST_LIMIT_DEFAULT
+  if (typeof limit !== 'number' || !Number.isFinite(limit) || !Number.isInteger(limit)) {
+    return DIRECTORY_LIST_LIMIT_DEFAULT
+  }
   return Math.min(DIRECTORY_LIST_LIMIT_MAX, Math.max(1, limit))
 }
 
