@@ -1077,7 +1077,13 @@ struct ThreadEmptyWelcomeCanvas: View {
     private var accent: Color {
         if card.isEnsemble { return TWTheme.chroma2 }
         if isGlobal { return TWTheme.chroma3 }
-        return TWTheme.providerAccent(card.provider)
+        // Follow the LIVE composer provider (echoed into `draftProvider` via the
+        // composer's `providerEcho`), not the thread's frozen `card.provider`, so
+        // the hero glow / title / scope chip / heatmap recolor the instant the
+        // user changes provider in the composer — mirroring the composer pill.
+        // `currentDraftProvider` falls back to `card.provider` until the first
+        // echo lands, so provider-stamped threads never flash.
+        return TWTheme.providerAccent(currentDraftProvider)
     }
     private var workspaceName: String {
         model.workspaceName(for: card.workspaceId) ?? "this workspace"
