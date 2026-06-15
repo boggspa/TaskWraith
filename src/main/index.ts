@@ -17315,7 +17315,22 @@ if (isGeminiMcpBridgeProcess) {
           if (!chat) return { allowed: false, reason: 'Unknown thread for this workspace' }
           const chatWs = canonicalRemoteWorkspaceId(chat.workspaceId) ?? chat.workspaceId
           if (chat.scope !== 'global' && chatWs && chatWs !== canonicalWs) {
-            return { allowed: false, reason: 'Thread does not belong to the presented workspace' }
+            // `createThread` is the one action whose purpose can be to RELOCATE
+            // an unstarted draft into another workspace — the iOS new-chat
+            // welcome card's workspace switcher re-mints the same threadId under
+            // a new workspaceId. Allow only that case; every other action (and
+            // any thread that has already started) still requires the thread to
+            // live in the presented workspace. The target workspace is
+            // independently allowlist-gated before ownership runs, so this does
+            // not widen the trust boundary.
+            const isDraftRelocation =
+              check.actionKind === 'createThread' && isUnstartedRemoteDraftChat(chat)
+            if (!isDraftRelocation) {
+              return {
+                allowed: false,
+                reason: 'Thread does not belong to the presented workspace'
+              }
+            }
           }
           if (check.runId) {
             const runs = chat.runs ?? []
