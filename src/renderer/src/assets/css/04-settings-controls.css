@@ -4449,6 +4449,14 @@ input:disabled, select:disabled, textarea:disabled {
   gap: var(--space-sm);
 }
 
+.run-complete-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-left: auto;
+}
+
 .run-complete-metadata {
   display: flex;
   flex-direction: column;
@@ -4475,7 +4483,9 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .run-copy-btn {
-  padding-inline: 8px;
+  justify-content: center;
+  min-width: 48px;
+  padding-inline: 10px;
 }
 
 .run-complete-summary-card {

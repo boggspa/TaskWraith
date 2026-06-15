@@ -54,7 +54,7 @@ import { MessageActionsChip } from './MessageActionsChip'
 import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } from './ChatMediaPanel'
 import { FileTypeIcon } from './FileTypeIcon'
 import { RunCard } from './RunCard'
-import { CopyResponseIcon, ThinkingIndicator } from './AppChromeSymbols'
+import { ThinkingIndicator } from './AppChromeSymbols'
 
 type TranscriptPanelProps = {
   scrollRef: React.RefObject<HTMLDivElement | null>
@@ -1503,47 +1503,45 @@ export const TranscriptPanel = memo(
                   </span>
                   {runCompleteNotice.exitCode === 0 && <span>Awaiting your next prompt.</span>}
                 </div>
-                {(() => {
-                  const latestAssistantMessage = [...messages]
-                    .reverse()
-                    .find((m) => m.role === 'assistant')
-                  const latestCopyId = latestAssistantMessage
-                    ? `run-complete-copy-${latestAssistantMessage.id}`
-                    : null
-                  const isCopied = latestCopyId !== null && copiedId === latestCopyId
-                  return (
-                    <button
-                      className={`btn btn-sm btn-ghost run-copy-btn${isCopied ? ' is-copied' : ''}`}
-                      onClick={() => {
-                        if (latestAssistantMessage?.content && latestCopyId) {
-                          copy(latestCopyId, latestAssistantMessage.content)
+                <div className="run-complete-actions">
+                  {(() => {
+                    const latestAssistantMessage = [...messages]
+                      .reverse()
+                      .find((m) => m.role === 'assistant')
+                    const latestCopyId = latestAssistantMessage
+                      ? `run-complete-copy-${latestAssistantMessage.id}`
+                      : null
+                    const isCopied = latestCopyId !== null && copiedId === latestCopyId
+                    return (
+                      <button
+                        className={`btn btn-sm btn-ghost run-copy-btn${isCopied ? ' is-copied' : ''}`}
+                        onClick={() => {
+                          if (latestAssistantMessage?.content && latestCopyId) {
+                            copy(latestCopyId, latestAssistantMessage.content)
+                          }
+                        }}
+                        disabled={!latestAssistantMessage?.content}
+                        title={isCopied ? 'Copied' : 'Copy latest assistant response'}
+                        aria-label={
+                          isCopied ? 'Latest response copied' : 'Copy latest assistant response'
                         }
-                      }}
-                      disabled={!latestAssistantMessage?.content}
-                      title={isCopied ? 'Copied' : 'Copy latest assistant response'}
-                      aria-label={
-                        isCopied ? 'Latest response copied' : 'Copy latest assistant response'
-                      }
+                      >
+                        {isCopied ? 'Copied' : 'Copy'}
+                      </button>
+                    )
+                  })()}
+                  {currentRun?.runId && onOpenSideChatFromRun && (
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      type="button"
+                      onClick={() => onOpenSideChatFromRun(currentRun.runId)}
+                      title="Open side chat seeded from this run result"
+                      aria-label="Open side chat from run result"
                     >
-                      {isCopied ? (
-                        <span className="run-copy-btn-label">Copied</span>
-                      ) : (
-                        <CopyResponseIcon />
-                      )}
+                      Side chat
                     </button>
-                  )
-                })()}
-                {currentRun?.runId && onOpenSideChatFromRun && (
-                  <button
-                    className="btn btn-sm btn-ghost"
-                    type="button"
-                    onClick={() => onOpenSideChatFromRun(currentRun.runId)}
-                    title="Open side chat seeded from this run result"
-                    aria-label="Open side chat from run result"
-                  >
-                    Side chat
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
               {runCompleteSummaryRows.length > 0 && (
                 <div className="run-complete-summary-card">
