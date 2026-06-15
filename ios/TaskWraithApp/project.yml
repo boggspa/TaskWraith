@@ -96,6 +96,18 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.uitests
         CODE_SIGN_STYLE: Automatic
         SWIFT_VERSION: "6.0"
+  TaskWraithUnitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: UnitTests
+    dependencies:
+      - target: TaskWraith
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.tests
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "6.0"
 schemes:
   TaskWraith:
     build:
@@ -108,6 +120,7 @@ schemes:
     test:
       config: Debug
       targets:
+        - TaskWraithUnitTests
         - TaskWraithUITests
     profile:
       config: Release

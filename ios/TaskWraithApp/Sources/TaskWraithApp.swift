@@ -13,16 +13,13 @@ import TaskWraithUI
 @main
 struct TaskWraithApp: App {
     // SwiftUI has no native hook for the APNs token callbacks — the adaptor
-    // bridges them. Token registration itself is requested by the session
-    // model AFTER pairing succeeds (no cold-launch permission prompt).
+    // owns the session model so background APNs launches can reconnect even
+    // before SwiftUI gets an onAppear.
     @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var pushDelegate
-    @StateObject private var model = RemoteSessionModel(
-        identityStore: KeychainIdentitySeedStore(account: "remote-identity-seed"))
 
     var body: some Scene {
         WindowGroup {
-            RootView(model: model)
-                .onAppear { pushDelegate.model = model }
+            RootView(model: pushDelegate.model)
         }
     }
 }
@@ -33,11 +30,13 @@ struct TaskWraithApp: App {
 /// re-registers on each launch once authorized.
 @MainActor
 final class PushAppDelegate: NSObject, UIApplicationDelegate {
-    weak var model: RemoteSessionModel? {
-        didSet { drainPendingBridgeEvents() }
+    let model: RemoteSessionModel
+
+    override init() {
+        self.model = RemoteSessionModel(
+            identityStore: KeychainIdentitySeedStore(account: "remote-identity-seed"))
+        super.init()
     }
-    private var pendingApnsToken: (hex: String, env: String)?
-    private var pendingRemoteWakeCompletions: [(UIBackgroundFetchResult) -> Void] = []
 
     func application(
         _ application: UIApplication,
@@ -49,13 +48,7 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
         #else
             let env = "production"
         #endif
-        Task { @MainActor in
-            guard let model = self.model else {
-                self.pendingApnsToken = (hex, env)
-                return
-            }
-            model.handleApnsToken(hex, env: env)
-        }
+        model.handleApnsToken(hex, env: env)
     }
 
     func application(
@@ -71,30 +64,8 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
         Task { @MainActor in
-            guard let model = self.model else {
-                self.pendingRemoteWakeCompletions.append(completionHandler)
-                return
-            }
             let connected = await model.handleRemoteWake(reason: "remote-notification")
             completionHandler(connected ? .newData : .failed)
-        }
-    }
-
-    @MainActor
-    private func drainPendingBridgeEvents() {
-        guard let model else { return }
-        if let token = pendingApnsToken {
-            pendingApnsToken = nil
-            model.handleApnsToken(token.hex, env: token.env)
-        }
-        guard !pendingRemoteWakeCompletions.isEmpty else { return }
-        let completions = pendingRemoteWakeCompletions
-        pendingRemoteWakeCompletions.removeAll()
-        for completion in completions {
-            Task { @MainActor in
-                let connected = await model.handleRemoteWake(reason: "remote-notification")
-                completion(connected ? .newData : .failed)
-            }
         }
     }
 }
@@ -111,6 +82,12 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
 struct KeychainIdentitySeedStore: IdentitySeedStore {
     let service = "com.taskwraith.companion"
     let account: String
+    private let keychain: any KeychainSeedAccessing
+
+    init(account: String, keychain: any KeychainSeedAccessing = SystemKeychainSeedAccess()) {
+        self.account = account
+        self.keychain = keychain
+    }
 
     func loadOrCreateSeed() throws -> Data {
         let query: [String: Any] = [
@@ -121,7 +98,7 @@ struct KeychainIdentitySeedStore: IdentitySeedStore {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        let status = keychain.copyMatching(query as CFDictionary, &item)
         switch status {
         case errSecSuccess:
             guard let data = item as? Data, data.count == 32 else {
@@ -149,6 +126,21 @@ struct KeychainIdentitySeedStore: IdentitySeedStore {
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
-        return SecItemAdd(add as CFDictionary, nil)
+        return keychain.add(add as CFDictionary, nil)
+    }
+}
+
+protocol KeychainSeedAccessing: Sendable {
+    func copyMatching(_ query: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+    func add(_ query: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+}
+
+struct SystemKeychainSeedAccess: KeychainSeedAccessing {
+    func copyMatching(_ query: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus {
+        SecItemCopyMatching(query, result)
+    }
+
+    func add(_ query: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus {
+        SecItemAdd(query, result)
     }
 }

@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		12299021B552490B2C1C4F17 /* TaskWraithApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C10FF27BC422B0B9C03EBE /* TaskWraithApp.swift */; };
 		54644332E7359BDF2EBA0662 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */; };
+		9F4932E7183327339A41AF84 /* TaskWraithAppLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8738F17EF74CF59C08107065 /* TaskWraithAppLifecycleTests.swift */; };
 		A4DCD2CE78DEEEB16D3B82C8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2F7552D09A7EE4DFE7C62B6F /* Assets.xcassets */; };
 		BB498271F052F45C5816493E /* TaskWraithLaunchUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AC061527DD5E03FB2CB5FB6 /* TaskWraithLaunchUITests.swift */; };
 		CE7101A9804142C180B58774 /* TaskWraithUI in Frameworks */ = {isa = PBXBuildFile; productRef = AF7441603810B23EE879F5FE /* TaskWraithUI */; };
@@ -16,6 +17,13 @@
 
 /* Begin PBXContainerItemProxy section */
 		7425C7A0E21A2F2D57E48521 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7EDAC42A25DE2C23EFE5B551 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 903E69D509196DD2813843C7;
+			remoteInfo = TaskWraith;
+		};
+		951C0BB54D64F46125A5DFDD /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7EDAC42A25DE2C23EFE5B551 /* Project object */;
 			proxyType = 1;
@@ -31,6 +39,8 @@
 		3AC061527DD5E03FB2CB5FB6 /* TaskWraithLaunchUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithLaunchUITests.swift; sourceTree = "<group>"; };
 		5829A7D0E9EA0BDA0DEB9BE3 /* TaskWraithKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TaskWraithKit; path = ../TaskWraithKit; sourceTree = SOURCE_ROOT; };
 		793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		8738F17EF74CF59C08107065 /* TaskWraithAppLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithAppLifecycleTests.swift; sourceTree = "<group>"; };
+		A12FB9A2BBEAC31DB7D439FE /* TaskWraithUnitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TaskWraithUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F52EAA275EC223F7FEF2C488 /* TaskWraithUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TaskWraithUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -62,6 +72,14 @@
 			path = UITests;
 			sourceTree = "<group>";
 		};
+		C426F51569084718B9807C1D /* UnitTests */ = {
+			isa = PBXGroup;
+			children = (
+				8738F17EF74CF59C08107065 /* TaskWraithAppLifecycleTests.swift */,
+			);
+			path = UnitTests;
+			sourceTree = "<group>";
+		};
 		D89E7A6E5D7925DE3A63DCC8 = {
 			isa = PBXGroup;
 			children = (
@@ -70,6 +88,7 @@
 				9CCA702279B1520D4D4FA69B /* Packages */,
 				E5A6165A2A67DB975B626F53 /* Sources */,
 				C279D506DC9E5BEE0A688F02 /* UITests */,
+				C426F51569084718B9807C1D /* UnitTests */,
 				ED8B6943A8048572BE4B3966 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -87,6 +106,7 @@
 			children = (
 				3370BF58F95DC204BE950651 /* TaskWraith.app */,
 				F52EAA275EC223F7FEF2C488 /* TaskWraithUITests.xctest */,
+				A12FB9A2BBEAC31DB7D439FE /* TaskWraithUnitTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -94,6 +114,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		69F7039FFA76556A86EA4F61 /* TaskWraithUnitTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CECB631C2B76D5B789B6213E /* Build configuration list for PBXNativeTarget "TaskWraithUnitTests" */;
+			buildPhases = (
+				26610E19E70762FF57FDC750 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				665408EC263C14BB05E3EA01 /* PBXTargetDependency */,
+			);
+			name = TaskWraithUnitTests;
+			packageProductDependencies = (
+			);
+			productName = TaskWraithUnitTests;
+			productReference = A12FB9A2BBEAC31DB7D439FE /* TaskWraithUnitTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		7C137810DC96E5EBA0FC4C3A /* TaskWraithUITests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = DE5DA8BC44E59F0A2F4A65EC /* Build configuration list for PBXNativeTarget "TaskWraithUITests" */;
@@ -141,6 +179,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					69F7039FFA76556A86EA4F61 = {
+						ProvisioningStyle = Automatic;
+					};
 					7C137810DC96E5EBA0FC4C3A = {
 						ProvisioningStyle = Automatic;
 						TestTargetID = 903E69D509196DD2813843C7;
@@ -169,6 +210,7 @@
 			targets = (
 				903E69D509196DD2813843C7 /* TaskWraith */,
 				7C137810DC96E5EBA0FC4C3A /* TaskWraithUITests */,
+				69F7039FFA76556A86EA4F61 /* TaskWraithUnitTests */,
 			);
 		};
 /* End PBXProject section */
@@ -186,6 +228,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		26610E19E70762FF57FDC750 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9F4932E7183327339A41AF84 /* TaskWraithAppLifecycleTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		988AFDB68A5E29AE2CBF2DF7 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -205,6 +255,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		665408EC263C14BB05E3EA01 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 903E69D509196DD2813843C7 /* TaskWraith */;
+			targetProxy = 951C0BB54D64F46125A5DFDD /* PBXContainerItemProxy */;
+		};
 		E4AE49283F799B02AC3A4761 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 903E69D509196DD2813843C7 /* TaskWraith */;
@@ -213,6 +268,24 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		2F3CAC1B6602AB6E34507DA4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.taskwraith.companion.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TaskWraith.app/TaskWraith";
+			};
+			name = Release;
+		};
 		61E371FA2717D7817EE18E05 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -372,6 +445,24 @@
 			};
 			name = Debug;
 		};
+		B7480EF057732F4FF6AA7779 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.taskwraith.companion.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TaskWraith.app/TaskWraith";
+			};
+			name = Debug;
+		};
 		BA9A4434796613C2994D21AB /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -429,6 +520,15 @@
 			buildConfigurations = (
 				8D43BBF181F48514217AD077 /* Debug */,
 				BA9A4434796613C2994D21AB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CECB631C2B76D5B789B6213E /* Build configuration list for PBXNativeTarget "TaskWraithUnitTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B7480EF057732F4FF6AA7779 /* Debug */,
+				2F3CAC1B6602AB6E34507DA4 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

@@ -215,32 +215,49 @@ public final class RemoteSessionModel: ObservableObject {
     /// before the transport connects on cold launch).
     private var pendingApnsToken: (hex: String, env: String)? = nil
     private var apnsTokenRegistrationInFlight = false
+    private var apnsTokenRetryTask: Task<Void, Never>? = nil
 
     /// Called by the app delegate when iOS delivers the device token.
     public func handleApnsToken(_ hex: String, env: String) {
         pendingApnsToken = (hex, env)
-        apnsTokenRegistrationInFlight = false
-        if case .connected = phase {
-            sendApnsToken(hex, env: env)
-        }
+        sendPendingApnsTokenIfReady()
     }
 
-    private func sendApnsToken(_ hex: String, env: String) {
+    private func sendPendingApnsTokenIfReady() {
+        guard case .connected = phase, client != nil, let token = pendingApnsToken else { return }
         guard !apnsTokenRegistrationInFlight else { return }
+        apnsTokenRetryTask?.cancel()
+        apnsTokenRetryTask = nil
         apnsTokenRegistrationInFlight = true
         send(
-            BridgeAction.registerApnsToken(deviceToken: hex, env: env),
+            BridgeAction.registerApnsToken(deviceToken: token.hex, env: token.env),
             successLabel: "Notifications ready.",
             navigateOnAck: false,
             onAck: { [weak self] accepted in
                 guard let self else { return }
                 self.apnsTokenRegistrationInFlight = false
-                if accepted {
+                if accepted, self.pendingApnsToken?.hex == token.hex,
+                    self.pendingApnsToken?.env == token.env
+                {
                     self.pendingApnsToken = nil
+                    return
+                }
+                if self.pendingApnsToken?.hex != token.hex || self.pendingApnsToken?.env != token.env {
+                    self.sendPendingApnsTokenIfReady()
                 } else {
-                    self.pendingApnsToken = (hex, env)
+                    self.scheduleApnsTokenRetry()
                 }
             })
+    }
+
+    private func scheduleApnsTokenRetry() {
+        guard pendingApnsToken != nil else { return }
+        apnsTokenRetryTask?.cancel()
+        apnsTokenRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.sendPendingApnsTokenIfReady() }
+        }
     }
 
     public func handleRemoteWake(reason _: String) async -> Bool {
@@ -816,6 +833,8 @@ public final class RemoteSessionModel: ObservableObject {
         visibleThreadId = nil
         pendingApnsToken = nil
         apnsTokenRegistrationInFlight = false
+        apnsTokenRetryTask?.cancel()
+        apnsTokenRetryTask = nil
         lastActionMessage = nil
     }
 
@@ -893,9 +912,7 @@ public final class RemoteSessionModel: ObservableObject {
                         // launch), then register; the token callback ships it
                         // up via handleApnsToken.
                         self.requestPushAuthorizationIfNeeded()
-                        if let token = self.pendingApnsToken {
-                            self.sendApnsToken(token.hex, env: token.env)
-                        }
+                        self.sendPendingApnsTokenIfReady()
                     }
                 case .message(let method, let params):
                     await self.handle(method: method, params: params)

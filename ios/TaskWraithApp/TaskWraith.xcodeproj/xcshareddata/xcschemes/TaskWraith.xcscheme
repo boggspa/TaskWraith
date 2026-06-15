@@ -44,6 +44,17 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "69F7039FFA76556A86EA4F61"
+               BuildableName = "TaskWraithUnitTests.xctest"
+               BlueprintName = "TaskWraithUnitTests"
+               ReferencedContainer = "container:TaskWraith.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "7C137810DC96E5EBA0FC4C3A"
                BuildableName = "TaskWraithUITests.xctest"
                BlueprintName = "TaskWraithUITests"
