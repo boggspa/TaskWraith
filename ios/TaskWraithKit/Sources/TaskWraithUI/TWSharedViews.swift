@@ -4260,8 +4260,8 @@ public struct StatusBanner: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(severity.fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+        .modifier(TWBannerGlassBackground(severity: severity, shape: .rounded(radius: 12)))
+        .shadow(color: severity.fill.opacity(0.32), radius: 10, y: 3)
         .padding(.horizontal, 10)
         .transition(.move(edge: .bottom).combined(with: .opacity))
         .task(id: message) {
@@ -4271,6 +4271,67 @@ public struct StatusBanner: View {
                 try? await Task.sleep(nanoseconds: 3_500_000_000)
                 onDismiss()
             }
+        }
+    }
+}
+
+private struct TWBannerGlassBackground: ViewModifier {
+    enum ShapeKind {
+        case rounded(radius: CGFloat)
+        case capsule
+    }
+
+    let severity: TWBannerSeverity
+    let shape: ShapeKind
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch shape {
+        case .rounded(let radius):
+            let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+            bannerBackground(content: content, shape: shape)
+        case .capsule:
+            bannerBackground(content: content, shape: Capsule())
+        }
+    }
+
+    @ViewBuilder
+    private func bannerBackground<S: InsettableShape>(content: Content, shape: S) -> some View {
+        let hue = severity.fill
+        let tint = LinearGradient(
+            colors: [
+                hue.opacity(0.82),
+                hue.opacity(0.62),
+                hue.opacity(0.42)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        let rim = LinearGradient(
+            colors: [
+                Color.white.opacity(0.40),
+                hue.opacity(0.90),
+                hue.opacity(0.48),
+                Color.white.opacity(0.12)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+
+        if #available(iOS 26.0, macOS 26.0, *) {
+            content
+                .background(shape.fill(hue.opacity(0.30)))
+                .glassEffect(.regular, in: shape)
+                .background(shape.fill(tint))
+                .overlay(shape.strokeBorder(rim, lineWidth: 1))
+        } else {
+            content
+                .background {
+                    shape
+                        .fill(.ultraThinMaterial)
+                        .overlay(shape.fill(tint))
+                }
+                .overlay(shape.strokeBorder(rim, lineWidth: 1))
         }
     }
 }
@@ -4316,18 +4377,17 @@ public struct ConnectionBanner: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            {
-                if case .reconnecting = state {
-                    return TWBannerSeverity.warning.fill
-                }
-                return TWBannerSeverity.error.fill
-            }(),
-            in: Capsule()
-        )
+        .modifier(TWBannerGlassBackground(severity: bannerSeverity, shape: .capsule))
         .padding(.horizontal, 12)
-        .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
+        .shadow(color: bannerSeverity.fill.opacity(0.34), radius: 10, y: 3)
         .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private var bannerSeverity: TWBannerSeverity {
+        if case .reconnecting = state {
+            return .warning
+        }
+        return .error
     }
 }
 
