@@ -161,6 +161,29 @@ describe('taskwraith-relay round-trip', () => {
     expect(mac.readyState).toBe(WebSocket.OPEN)
   })
 
+  it('does not create an empty room for a per-IP rejected connection', async () => {
+    relay = await createRelayServer({ maxConnectionsPerIp: 1 })
+    const first = new WebSocket(`ws://127.0.0.1:${relay.port}/v1/session/sess-a`, {
+      headers: { 'x-taskwraith-role': 'mac' }
+    })
+    openSockets.push(first)
+    await new Promise<void>((resolve, reject) => {
+      first.on('open', () => resolve())
+      first.on('error', reject)
+    })
+    expect(relay.roomCount()).toBe(1)
+
+    const rejected = new WebSocket(`ws://127.0.0.1:${relay.port}/v1/session/sess-b`, {
+      headers: { 'x-taskwraith-role': 'iphone' }
+    })
+    openSockets.push(rejected)
+    const closed = deferred<number>()
+    rejected.on('close', (code) => closed.resolve(code))
+
+    expect(await closed.promise).toBe(4004)
+    expect(relay.roomCount()).toBe(1)
+  })
+
   it('closes a connection with a bad role header', async () => {
     relay = await createRelayServer({})
     const url = `ws://127.0.0.1:${relay.port}/v1/session/${SESSION_ID}`

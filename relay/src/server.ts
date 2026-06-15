@@ -110,6 +110,11 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
     const sessionId = match[1]
     const remoteIp =
       (req.socket && req.socket.remoteAddress) || String(req.headers['x-forwarded-for'] || '?')
+    const ipCount = connectionsPerIp.get(remoteIp) ?? 0
+    if (ipCount >= maxConnectionsPerIp) {
+      ws.close(4004, 'too many connections')
+      return
+    }
     let room = rooms.get(sessionId)
     if (!room) {
       if (rooms.size >= maxRooms) {
@@ -118,11 +123,6 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
       }
       room = { lastActivity: Date.now() }
       rooms.set(sessionId, room)
-    }
-    const ipCount = connectionsPerIp.get(remoteIp) ?? 0
-    if (ipCount >= maxConnectionsPerIp) {
-      ws.close(4004, 'too many connections')
-      return
     }
     connectionsPerIp.set(remoteIp, ipCount + 1)
     const incumbent = room[role]

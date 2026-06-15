@@ -234,6 +234,9 @@ export class RemoteBridgeRuntime {
     if (!iphoneIdentityPubKey) {
       this.opts.pairingStore?.clear()
       this.teardownAllEstablished()
+      if (!this.pending) {
+        this.teardownBroadcaster()
+      }
       return
     }
     this.opts.pairingStore?.remove(iphoneIdentityPubKey)

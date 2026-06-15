@@ -479,11 +479,15 @@ describe('RemoteBridgeRuntime trusted reconnect (T5)', () => {
     h.runtime.finalizePairing(bootstrap.pairingSessionID, true)
     await settle()
     expect(memory.list()).toHaveLength(1)
+    expect(h.broadcasterChanges).toEqual([true])
+    expect(h.getSink()).not.toBeNull()
 
     h.runtime.unpair()
     expect(memory.list()).toEqual([])
     expect(h.runtime.isEstablished).toBe(false)
     expect(h.runtime.hasPersistedPairing).toBe(false)
+    expect(h.broadcasterChanges).toEqual([true, false])
+    expect(h.getSink()).toBeNull()
   })
 
   it('listPairedDevices reports persisted metadata and live connection state', async () => {
