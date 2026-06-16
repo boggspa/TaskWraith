@@ -4988,8 +4988,12 @@ struct SideChatsPanel: View {
     private var card: RemoteTaskCard? { model.taskCards.first { $0.id == threadId } }
 
     private var sideChats: [RemoteTaskCard] {
+        // Isolated side chats only — a guest participant (sideChatMode
+        // "guestParticipant") is a MAIN-transcript peer whose replies mirror
+        // inline, not an isolated sidecar, so it belongs to the composer guest
+        // control, not this tab.
         model.taskCards.filter {
-            $0.parentChatId == threadId && $0.parentChatRelation == "sideChat"
+            $0.parentChatId == threadId && $0.isIsolatedSideChat
         }
     }
 
@@ -5195,7 +5199,7 @@ struct SideChatsPanel: View {
     private func selectedSideChatCard(_ id: String) -> RemoteTaskCard? {
         guard id != threadId else { return nil }
         return model.taskCards.first {
-            $0.id == id && $0.parentChatId == threadId && $0.parentChatRelation == "sideChat"
+            $0.id == id && $0.parentChatId == threadId && $0.isIsolatedSideChat
         }
     }
 
