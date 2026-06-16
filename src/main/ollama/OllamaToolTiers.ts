@@ -1,3 +1,5 @@
+import os from 'os'
+import { join, resolve } from 'path'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
 import type { AppSettings, OllamaToolControlTier } from '../store/types'
 
@@ -92,14 +94,39 @@ export function ollamaToolNamesForTier(
   return [...OLLAMA_READ_TOOL_NAMES]
 }
 
+/**
+ * Canonicalize a workspace path for provider-parity grant comparison. Mirrors the
+ * main-process `canonicalPath` (expand a leading `~`, then `resolve`) so a grant
+ * recorded from the renderer's raw `currentWorkspace.path` still matches the
+ * canonicalized path used on the run/execution side. Without this, a trailing
+ * slash, a leading `~`, or a `.`/`..` segment silently fails the lookup and Tier 4
+ * (provider parity) collapses to read-only with no indication to the user.
+ */
+export function canonicalizeOllamaWorkspacePath(value?: string | null): string {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const expanded =
+    raw === '~' ? os.homedir() : raw.startsWith('~/') ? join(os.homedir(), raw.slice(2)) : raw
+  return resolve(expanded)
+}
+
 export function ollamaProviderParityWorkspaceGranted(
   settings: Pick<AppSettings, 'ollamaProviderParityWorkspaceGrants'>,
   workspacePath?: string | null
 ): boolean {
-  const path = String(workspacePath || '').trim()
-  if (!path) return false
+  const target = canonicalizeOllamaWorkspacePath(workspacePath)
+  if (!target) return false
   const grants = settings.ollamaProviderParityWorkspaceGrants || {}
-  return typeof grants[path] === 'string' && grants[path].trim().length > 0
+  // Compare canonical forms on BOTH sides. Grants were historically keyed by the
+  // renderer's raw workspace path, while callers (e.g. the execution gate) now look
+  // up with a canonicalized path — an exact-string match silently misses on any
+  // path-form difference, which is the dominant "I granted parity but it still
+  // won't edit" failure.
+  for (const [key, grantedAt] of Object.entries(grants)) {
+    if (typeof grantedAt !== 'string' || grantedAt.trim().length === 0) continue
+    if (canonicalizeOllamaWorkspacePath(key) === target) return true
+  }
+  return false
 }
 
 export function effectiveOllamaToolControlTier(
