@@ -548,9 +548,9 @@ import {
   grokReadOnlyMcpAdvertiseEnabled
 } from './grokGate'
 import {
-  buildGrokCliArgs,
   grokWriteCapable,
-  applyGrokPromptPreamble,
+  buildGrokProviderCliArgs,
+  buildGrokProviderPrompt,
   GROK_READ_ONLY_DENY_RULES
 } from './grok/GrokCliArgs'
 import { grokToolKindToService } from './grok/GrokAcpProtocol'
@@ -559,7 +559,7 @@ import {
   experimentalCursorProviderEnabled,
   cursorDebugEnabled
 } from './cursorGate'
-import { buildCursorCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
+import { buildCursorProviderCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
 import { cursorEventToRunEvents, type NormalizedCursorRunEvent } from './cursor/CursorStreamJson'
 import { applyCursorWriteModeConfig } from './cursor/CursorWorkspaceConfig'
 import {
@@ -6807,16 +6807,8 @@ async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   // the review surface, mirroring Claude/Codex). Never --always-approve.
   // G6 — pass the prior session id so follow-up turns resume the same Grok
   // session (captured from the previous turn's terminal event).
-  const args = buildGrokCliArgs({
-    // Steer the turn by approval mode: a read-only turn answers directly instead
-    // of attempting a denied tool; a write-capable turn (incl. 'default') is
-    // nudged to use the Write/Edit tools — shell isn't auto-approved on this
-    // headless path — and to adapt rather than dead-end if a tool is refused.
-    // Both prevent the silent hard-cancel (stopReason: Cancelled, 0 output).
-    prompt: applyGrokPromptPreamble(
-      payload.prompt,
-      grokWriteCapable(payload.approvalMode)
-    ),
+  const args = buildGrokProviderCliArgs({
+    prompt: payload.prompt,
     workspace: payload.workspace!,
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
@@ -6937,15 +6929,15 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       cursorTaskWraithMcpActive = false
     }
   }
-  const args = buildCursorCliArgs({
+  const args = buildCursorProviderCliArgs({
     prompt: payload.prompt,
     workspace: payload.workspace!,
     model: payload.model,
     providerSessionId: payload.providerSessionId,
     // Honor the chat's approval mode only when the containment config is in
     // place; otherwise force read-only.
-    approvalMode: cursorTaskWraithMcpActive ? payload.approvalMode : 'plan',
-    webBridgeActive: cursorTaskWraithMcpActive
+    approvalMode: payload.approvalMode,
+    taskWraithMcpActive: cursorTaskWraithMcpActive
   })
   runCliProviderProcess(event, 'cursor', resolved.binaryPath, args, payload, {
     fallback: false,
@@ -7204,7 +7196,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     // session/new (no Grok-side resume threads through here), so the steer must
     // ride each turn's prompt; there's no prior turn for Grok to remember it
     // from, hence no redundant re-injection to avoid.
-    prompt: applyGrokPromptPreamble(payload.prompt, !grokReadOnlySeat),
+    prompt: buildGrokProviderPrompt(payload.prompt, payload.approvalMode),
     cwd: payload.workspace!,
     mcpServers: grokMcpServers,
     spawnProcess: () => {

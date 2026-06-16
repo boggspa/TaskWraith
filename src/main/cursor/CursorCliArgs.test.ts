@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildCursorCliArgs, cursorWriteCapable } from './CursorCliArgs'
+import { buildCursorCliArgs, buildCursorProviderCliArgs, cursorWriteCapable } from './CursorCliArgs'
 
 describe('cursorWriteCapable', () => {
   it('is read-only for plan / empty / unset', () => {
@@ -42,6 +42,32 @@ describe('buildCursorCliArgs', () => {
 
     expect(args[args.length - 1]).toBe(discordPrompt)
     expect(args[args.length - 1]).toContain('External Discord channel snapshot context')
+  })
+
+  it('provider wrapper preserves Discord context while forcing read-only without MCP containment', () => {
+    const args = buildCursorProviderCliArgs({
+      ...base,
+      prompt: discordPrompt,
+      approvalMode: 'default',
+      taskWraithMcpActive: false
+    })
+
+    expect(args).toContain('plan')
+    expect(args[args.length - 1]).toBe(discordPrompt)
+    expect(args[args.length - 1]).toContain('<discord_messages')
+  })
+
+  it('provider wrapper preserves Discord context with MCP containment active', () => {
+    const args = buildCursorProviderCliArgs({
+      ...base,
+      prompt: discordPrompt,
+      approvalMode: 'default',
+      taskWraithMcpActive: true
+    })
+
+    expect(args).not.toContain('plan')
+    expect(args).toContain('--approve-mcps')
+    expect(args[args.length - 1]).toBe(discordPrompt)
   })
 
   it('read-only mode passes --mode plan', () => {

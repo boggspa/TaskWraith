@@ -116,6 +116,13 @@ export function applyGrokPromptPreamble(prompt: string, writeCapable: boolean): 
   return `${GROK_WRITE_MODE_PROMPT_PREAMBLE}\n\n${prompt}`
 }
 
+export function buildGrokProviderPrompt(
+  prompt: string,
+  approvalMode: string | null | undefined
+): string {
+  return applyGrokPromptPreamble(prompt, grokWriteCapable(approvalMode))
+}
+
 export interface BuildGrokCliArgsInput {
   prompt: string
   workspace: string
@@ -179,4 +186,11 @@ export function buildGrokCliArgs(input: BuildGrokCliArgsInput): string[] {
     args.push('--effort', effort)
   }
   return args
+}
+
+export function buildGrokProviderCliArgs(input: BuildGrokCliArgsInput): string[] {
+  return buildGrokCliArgs({
+    ...input,
+    prompt: buildGrokProviderPrompt(input.prompt, input.approvalMode)
+  })
 }

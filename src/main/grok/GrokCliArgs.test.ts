@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildGrokCliArgs,
+  buildGrokProviderCliArgs,
+  buildGrokProviderPrompt,
   normalizeGrokEffortFlag,
   grokWriteCapable,
   applyGrokReadOnlyPromptPreamble,
@@ -118,6 +120,19 @@ describe('buildGrokCliArgs', () => {
 
     expect(args[args.indexOf('-p') + 1]).toBe(discordPrompt)
     expect(args[args.indexOf('-p') + 1]).toContain('External Discord channel snapshot context')
+  })
+
+  it('provider wrapper prepends Grok steering while preserving Discord context', () => {
+    const args = buildGrokProviderCliArgs({
+      ...base,
+      prompt: discordPrompt,
+      approvalMode: 'default'
+    })
+    const prompt = args[args.indexOf('-p') + 1]
+
+    expect(prompt.startsWith(GROK_WRITE_MODE_PROMPT_PREAMBLE)).toBe(true)
+    expect(prompt.endsWith(discordPrompt)).toBe(true)
+    expect(prompt).toContain('<discord_messages')
   })
 
   it('maps reasoning effort onto --effort only for documented levels', () => {
@@ -264,6 +279,14 @@ describe('applyGrokPromptPreamble', () => {
     expect(out.startsWith(GROK_WRITE_MODE_PROMPT_PREAMBLE)).toBe(true)
     expect(out.endsWith(discordPrompt)).toBe(true)
     expect(out).toContain('External Discord channel snapshot context')
+  })
+
+  it('provider ACP prompt helper preserves Discord context after steering', () => {
+    const out = buildGrokProviderPrompt(discordPrompt, 'plan')
+
+    expect(out.startsWith(GROK_READ_ONLY_PROMPT_PREAMBLE)).toBe(true)
+    expect(out.endsWith(discordPrompt)).toBe(true)
+    expect(out).toContain('<discord_messages')
   })
 })
 

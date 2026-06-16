@@ -41,6 +41,10 @@ export interface BuildCursorCliArgsInput {
   webBridgeActive?: boolean
 }
 
+export interface BuildCursorProviderCliArgsInput extends BuildCursorCliArgsInput {
+  taskWraithMcpActive?: boolean
+}
+
 /** True only for the canonical Composer 2.5 ids (composer-2.5 / -fast). Any
  *  other value (CLI-default sentinel, a leaked id from another provider's
  *  picker) is dropped so Cursor falls back to its account default rather than
@@ -83,4 +87,12 @@ export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
   // Prompt is the trailing positional.
   args.push(input.prompt)
   return args
+}
+
+export function buildCursorProviderCliArgs(input: BuildCursorProviderCliArgsInput): string[] {
+  return buildCursorCliArgs({
+    ...input,
+    approvalMode: input.taskWraithMcpActive ? input.approvalMode : 'plan',
+    webBridgeActive: Boolean(input.taskWraithMcpActive)
+  })
 }
