@@ -32,6 +32,11 @@ export interface DiscordContextTargets {
   accountId: string
   guilds: DiscordContextTargetGuild[]
   reason?: string
+  setup?: {
+    missing: Array<'botToken' | 'guildIds'>
+    configFilePath?: string
+    checkedConfigFilePaths?: string[]
+  }
 }
 
 export interface DiscordContextAttachmentSummary {
@@ -85,6 +90,8 @@ interface DiscordContextServiceOptions {
   guildIds?: string[]
   accountId?: string
   apiBaseUrl?: string
+  setupConfigFilePath?: string
+  checkedConfigFilePaths?: string[]
 }
 
 interface DiscordApiGuild {
@@ -134,12 +141,18 @@ export class DiscordContextService {
   private readonly guildIds: string[]
   private readonly accountId: string
   private readonly apiBaseUrl: string
+  private readonly setupConfigFilePath?: string
+  private readonly checkedConfigFilePaths: string[]
 
   constructor(options: DiscordContextServiceOptions = {}) {
     this.botToken = options.botToken?.trim() || ''
     this.guildIds = (options.guildIds || []).map((id) => id.trim()).filter(Boolean)
     this.accountId = options.accountId?.trim() || 'discord-bot'
     this.apiBaseUrl = (options.apiBaseUrl || DEFAULT_DISCORD_API_BASE_URL).replace(/\/+$/, '')
+    this.setupConfigFilePath = options.setupConfigFilePath?.trim() || undefined
+    this.checkedConfigFilePaths = (options.checkedConfigFilePaths || [])
+      .map((path) => path.trim())
+      .filter(Boolean)
   }
 
   isConfigured(): boolean {
@@ -152,8 +165,18 @@ export class DiscordContextService {
         configured: false,
         accountId: this.accountId,
         guilds: [],
+        reason: 'Discord needs a bot token before TaskWraith can read channels.',
+        setup: this.buildSetupMetadata(['botToken'])
+      }
+    }
+    if (this.guildIds.length === 0) {
+      return {
+        configured: false,
+        accountId: this.accountId,
+        guilds: [],
         reason:
-          'Set TASKWRAITH_DISCORD_BOT_TOKEN to enable Discord context reads. Optional: TASKWRAITH_DISCORD_GUILD_IDS can restrict the picker.'
+          'Discord is connected, but no servers are selected. Add at least one Discord server ID, then restart TaskWraith.',
+        setup: this.buildSetupMetadata(['guildIds'])
       }
     }
 
@@ -241,11 +264,26 @@ export class DiscordContextService {
   }
 
   private async listGuilds(): Promise<DiscordApiGuild[]> {
-    if (this.guildIds.length > 0) {
-      return this.guildIds.map((id) => ({ id, name: id }))
+    const guilds: DiscordApiGuild[] = []
+    for (const id of this.guildIds) {
+      try {
+        const guild = await this.requestJson<DiscordApiGuild>(`/guilds/${encodeURIComponent(id)}`)
+        guilds.push({ id, name: guild?.name || id })
+      } catch {
+        guilds.push({ id, name: id })
+      }
     }
-    const guilds = await this.requestJson<DiscordApiGuild[]>('/users/@me/guilds')
-    return Array.isArray(guilds) ? guilds : []
+    return guilds
+  }
+
+  private buildSetupMetadata(missing: Array<'botToken' | 'guildIds'>): DiscordContextTargets['setup'] {
+    return {
+      missing,
+      ...(this.setupConfigFilePath ? { configFilePath: this.setupConfigFilePath } : {}),
+      ...(this.checkedConfigFilePaths.length > 0
+        ? { checkedConfigFilePaths: this.checkedConfigFilePaths }
+        : {})
+    }
   }
 
   private async resolveChannel(selection: DiscordContextSelection): Promise<DiscordApiChannel> {

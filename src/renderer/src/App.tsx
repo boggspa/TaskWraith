@@ -8928,6 +8928,8 @@ function App(): React.JSX.Element {
       const geminiResumeSkippedReason = composerMetadata.geminiResumeSkippedReason
       const contextTurnsForRun = composerMetadata.contextTurnsApplied
       const contextualPrompt = composedPayload.prompt
+      const usagePromptText =
+        discordContextReads.length > 0 ? displayFinalPrompt : contextualPrompt
       const contextApplicationLog = composerMetadata.applicationLog
 
       activeScheduledTaskIdRef.current = request.scheduledTaskId || null
@@ -9625,7 +9627,7 @@ function App(): React.JSX.Element {
                     resetText: mergedReset.resetText,
                     durationMs: entryDurationMs ?? runDurationMs,
                     ...(effectiveRunProvider === 'ollama' ? ollamaMemoryUsageFields(event.stats) : {}),
-                    promptText: contextualPrompt,
+                    promptText: usagePromptText,
                     responseText:
                       updated.messages[updated.messages.length - 1]?.role === 'assistant'
                         ? updated.messages[updated.messages.length - 1].content

@@ -17,7 +17,73 @@ describe('DiscordContextService', () => {
 
     expect(targets.configured).toBe(false)
     expect(targets.guilds).toEqual([])
-    expect(targets.reason).toContain('TASKWRAITH_DISCORD_BOT_TOKEN')
+    expect(targets.reason).toContain('bot token')
+    expect(targets.setup?.missing).toEqual(['botToken'])
+  })
+
+  it('requires explicit guild ids for target listing instead of probing user guilds', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const service = new DiscordContextService({ botToken: 'bot-token' })
+
+    const targets = await service.listTargets()
+
+    expect(targets.configured).toBe(false)
+    expect(targets.guilds).toEqual([])
+    expect(targets.reason).toContain('no servers are selected')
+    expect(targets.setup?.missing).toEqual(['guildIds'])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('lists configured guild ids through bot-accessible guild channel routes', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith('/guilds/456789012345678901')) {
+        return jsonResponse({ id: '456789012345678901', name: 'Task Team' })
+      }
+      if (url.endsWith('/guilds/456789012345678901/channels')) {
+        return jsonResponse([
+          {
+            id: '123456789012345678',
+            guild_id: '456789012345678901',
+            name: 'build-help',
+            type: 0
+          },
+          {
+            id: '999999999999999999',
+            guild_id: '456789012345678901',
+            name: 'voice',
+            type: 2
+          }
+        ])
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const service = new DiscordContextService({
+      botToken: 'bot-token',
+      guildIds: ['456789012345678901'],
+      apiBaseUrl: 'https://discord.test/api'
+    })
+
+    const targets = await service.listTargets()
+
+    expect(targets.configured).toBe(true)
+    expect(targets.guilds).toHaveLength(1)
+    expect(targets.guilds[0]).toMatchObject({
+      id: '456789012345678901',
+      name: 'Task Team',
+      channels: [
+        {
+          id: '123456789012345678',
+          name: 'build-help',
+          guildId: '456789012345678901',
+          guildName: 'Task Team'
+        }
+      ]
+    })
+    expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain(
+      'https://discord.test/api/users/@me/guilds'
+    )
   })
 
   it('reads recent channel messages newest-to-oldest from Discord and normalizes oldest-first', async () => {

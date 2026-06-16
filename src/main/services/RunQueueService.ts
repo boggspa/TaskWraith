@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { experimentalCursorProviderEnabled } from '../cursorGate'
 import { experimentalGrokProviderEnabled } from '../grokGate'
+import { normalizeDiscordContextSelection } from '../channels/DiscordContextService'
 import type { RunQueueJobInput } from '../RunQueue'
 import type { RunSession } from '../RunManager'
 import type {
@@ -195,6 +196,9 @@ export class RunQueueService {
       ? (value.externalPathGrants as ExternalPathGrant[])
       : []
     const externalPathGrants = this.deps.normalizeExternalPathGrants(rawExternalPathGrants)
+    const discordContextSelection = isRecord(value.discordContextSelection)
+      ? normalizeDiscordContextSelection(value.discordContextSelection)
+      : undefined
     if (
       rawExternalPathGrants.length &&
       externalPathGrants.length !== rawExternalPathGrants.length
@@ -210,6 +214,7 @@ export class RunQueueService {
       approvalMode: optionalString(value.approvalMode) || 'default',
       sessionTrust: Boolean(value.sessionTrust),
       imageAttachments,
+      ...(discordContextSelection ? { discordContextSelection } : {}),
       externalPathGrants: externalPathGrants.length ? externalPathGrants : undefined,
       geminiWorktree: sanitizeWorkspaceGeminiWorktree(value.geminiWorktree),
       codexNativeReview: Boolean(value.codexNativeReview) || undefined,

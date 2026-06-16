@@ -154,6 +154,13 @@ describe('RunQueueService', () => {
       request: {
         prompt: 'Ship it',
         imageAttachments: [{ id: 'img-1', path: '/tmp/a.png', name: 'a.png' }],
+        discordContextSelection: {
+          guildId: '456789012345678901',
+          guildName: 'Task Team',
+          channelId: '123456789012345678',
+          channelName: 'build-help',
+          limit: 50
+        },
         externalPathGrants: [grant],
         geminiWorktree: { enabled: true, name: 'feature' }
       }
@@ -178,6 +185,13 @@ describe('RunQueueService', () => {
           approvalMode: 'default',
           sessionTrust: false,
           imageAttachments: [{ id: 'img-1', path: '/tmp/a.png', name: 'a.png' }],
+          discordContextSelection: {
+            guildId: '456789012345678901',
+            guildName: 'Task Team',
+            channelId: '123456789012345678',
+            channelName: 'build-help',
+            limit: 50
+          },
           externalPathGrants: [grant],
           geminiWorktree: { enabled: true, name: 'feature' }
         })

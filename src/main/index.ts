@@ -281,6 +281,7 @@ import { createDefaultEnsembleConfig } from './EnsembleDefaults'
 import { applyReroutePlanToPayload, resolveProviderDispatch } from './ProviderRunPause'
 import { ComposerService, type ComposerInput } from './services/ComposerService'
 import { DiscordContextService } from './channels/DiscordContextService'
+import { resolveDiscordContextConfig } from './channels/DiscordContextConfig'
 import { EnsembleOrchestrator, type ParticipantProbeResult } from './services/EnsembleOrchestrator'
 import { WakeupTimerService, classifyWakeupRecovery } from './WakeupTimerService'
 import { SoloChatWakeupService } from './SoloChatWakeupService'
@@ -18096,13 +18097,16 @@ if (isGeminiMcpBridgeProcess) {
       appStore: AppStore,
       getSettings: () => AppStore.getSettings()
     })
+    const discordContextConfig = resolveDiscordContextConfig({
+      userDataPath: app.getPath('userData'),
+      cwdEnvPath: is.dev ? resolve(process.cwd(), '.env') : undefined
+    })
     const discordContextService = new DiscordContextService({
-      botToken: process.env.TASKWRAITH_DISCORD_BOT_TOKEN,
-      guildIds: (process.env.TASKWRAITH_DISCORD_GUILD_IDS || '')
-        .split(',')
-        .map((value) => value.trim())
-        .filter(Boolean),
-      accountId: process.env.TASKWRAITH_DISCORD_ACCOUNT_ID || 'discord-bot'
+      botToken: discordContextConfig.botToken,
+      guildIds: discordContextConfig.guildIds,
+      accountId: discordContextConfig.accountId,
+      setupConfigFilePath: discordContextConfig.suggestedConfigFilePath,
+      checkedConfigFilePaths: discordContextConfig.checkedConfigFilePaths
     })
     const chatService = new ChatService({
       appStore: AppStore,

@@ -53,6 +53,8 @@ export function DiscordContextPicker({
   }, [query, targets?.guilds])
 
   const selectedChannel = channels.find((channel) => channel.id === selectedChannelId)
+  const configured = Boolean(targets?.configured)
+  const setupPath = targets?.setup?.configFilePath
 
   if (!open) return null
 
@@ -90,6 +92,14 @@ export function DiscordContextPicker({
             <div className="discord-context-picker-empty">
               <strong>Discord is not configured</strong>
               <span>{targets.reason}</span>
+              {setupPath ? (
+                <span>
+                  Add the Discord bot token and server IDs to <code>{setupPath}</code>, then restart
+                  TaskWraith.
+                </span>
+              ) : (
+                <span>Add the Discord bot token and server IDs, then restart TaskWraith.</span>
+              )}
             </div>
           ) : (
             <>
@@ -144,25 +154,27 @@ export function DiscordContextPicker({
 
         <footer className="discord-context-picker-footer">
           <button type="button" className="discord-context-picker-secondary" onClick={onRefresh}>
-            Refresh
+            {configured ? 'Refresh' : 'Check again'}
           </button>
-          <button
-            type="button"
-            className="discord-context-picker-primary"
-            disabled={!selectedChannel}
-            onClick={() => {
-              if (!selectedChannel) return
-              onSelect({
-                guildId: selectedChannel.guildId,
-                guildName: selectedChannel.guildName,
-                channelId: selectedChannel.id,
-                channelName: selectedChannel.name,
-                limit
-              })
-            }}
-          >
-            Add context
-          </button>
+          {configured ? (
+            <button
+              type="button"
+              className="discord-context-picker-primary"
+              disabled={!selectedChannel}
+              onClick={() => {
+                if (!selectedChannel) return
+                onSelect({
+                  guildId: selectedChannel.guildId,
+                  guildName: selectedChannel.guildName,
+                  channelId: selectedChannel.id,
+                  channelName: selectedChannel.name,
+                  limit
+                })
+              }}
+            >
+              Add context
+            </button>
+          ) : null}
         </footer>
       </section>
     </div>

@@ -459,6 +459,21 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('get-handoff-cards', [{ provider: 'claude' }])).not.toThrow()
   })
 
+  it('validates Discord context IPC channels', () => {
+    expect(() => validateIpcArgs('discord-context:list-targets', [])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('discord-context:read-channel', [
+        {
+          guildId: '456789012345678901',
+          channelId: '123456789012345678',
+          limit: 25
+        }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('discord-context:read-channel', [])).toThrow(/object/)
+    expect(() => validateIpcArgs('discord-context:read-channel', ['bad'])).toThrow(/object/)
+  })
+
   it('validates main-owned run queue transition APIs', () => {
     expect(() =>
       validateIpcArgs('request-run-queue-job', [
