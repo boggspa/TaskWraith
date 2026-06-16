@@ -71,6 +71,7 @@ export type SettingsPanelUpdate = {
   autoResumeParentOnSubThreadCompletion?: boolean
   geminiMcpBridgeEnabled?: boolean
   codexSandboxFallback?: CodexSandboxFallbackMode
+  autoUpdateEnabled?: boolean
   updateChannel?: ProductUpdateChannel
   approvalTimeouts?: AppSettings['approvalTimeouts']
 }

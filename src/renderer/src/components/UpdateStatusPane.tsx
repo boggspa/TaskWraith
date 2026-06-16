@@ -17,7 +17,11 @@ import { useUpdateStatus } from '../hooks/useUpdateStatus'
  * reshape the Settings layout later.
  */
 
-export function UpdateStatusPane(): React.JSX.Element {
+export function UpdateStatusPane({
+  autoUpdateEnabled = true
+}: {
+  autoUpdateEnabled?: boolean
+}): React.JSX.Element {
   const { snapshot: snap, busy, checkForUpdates, downloadUpdate, installUpdateNow } =
     useUpdateStatus()
 
@@ -101,10 +105,18 @@ export function UpdateStatusPane(): React.JSX.Element {
 
       {!snap.enabled && (
         <p className="settings-hint update-status-disabled-hint">
-          Auto-updates are disabled. They activate automatically in packaged builds when the update
-          channel is set to <strong>Stable</strong> or
-          <strong> Nightly</strong> (currently <strong>{snap.channel}</strong>). Override with{' '}
-          <code>TASKWRAITH_AUTO_UPDATE=on</code> for testing against a local feed.
+          {autoUpdateEnabled
+            ? 'Auto-updates are disabled by the current channel, development build, or TASKWRAITH_AUTO_UPDATE setting. They activate automatically in packaged builds when the update channel is set to '
+            : 'Auto-updates are disabled because Enable Auto-Update is off. Turn it back on to resume automatic checks for '}
+          <strong>Stable</strong> or
+          <strong> Nightly</strong> (currently <strong>{snap.channel}</strong>).
+          {autoUpdateEnabled && (
+            <>
+              {' '}
+              Override with <code>TASKWRAITH_AUTO_UPDATE=on</code> for testing against a local
+              feed.
+            </>
+          )}
         </p>
       )}
     </div>

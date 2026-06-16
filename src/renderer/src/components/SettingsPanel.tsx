@@ -175,6 +175,7 @@ interface SettingsPanelProps {
   funFxEnabled: boolean
   funFxMode: AppSettings['funFxMode']
   advancedFx: AppSettings['advancedFx']
+  autoUpdateEnabled: boolean
   updateChannel: ProductUpdateChannel
   approvalTimeouts: AppSettings['approvalTimeouts']
   productOperationsStatus: ProductOperationsStatus | null
@@ -291,6 +292,7 @@ interface SettingsPanelProps {
     funFxEnabled?: boolean
     funFxMode?: AppSettings['funFxMode']
     advancedFx?: AppSettings['advancedFx']
+    autoUpdateEnabled?: boolean
     updateChannel?: ProductUpdateChannel
     approvalTimeouts?: AppSettings['approvalTimeouts']
   }) => void
@@ -1648,6 +1650,7 @@ export function SettingsPanel({
   funFxEnabled,
   funFxMode,
   advancedFx,
+  autoUpdateEnabled,
   updateChannel,
   approvalTimeouts,
   productOperationsStatus,
@@ -5606,6 +5609,14 @@ export function SettingsPanel({
                   Product operations
                 </h4>
                 <label className="settings-service-row">
+                  <span>Enable Auto-Update</span>
+                  <input
+                    type="checkbox"
+                    checked={autoUpdateEnabled}
+                    onChange={(e) => onChange({ autoUpdateEnabled: e.target.checked })}
+                  />
+                </label>
+                <label className="settings-service-row">
                   <span>Update channel</span>
                   <select
                     className="settings-select"
@@ -5648,7 +5659,7 @@ export function SettingsPanel({
             SettingsPanel doesn't need to plumb the snapshot through —
             it reads it via the api binding on mount + listens for live
             updates. */}
-                <UpdateStatusPane />
+                <UpdateStatusPane autoUpdateEnabled={autoUpdateEnabled} />
 
                 <p className="settings-hint">
                   {productOperationsStatus

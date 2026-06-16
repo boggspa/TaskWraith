@@ -1329,6 +1329,7 @@ function App(): React.JSX.Element {
   )
   const [codexSandboxFallback, setCodexSandboxFallback] =
     useState<CodexSandboxFallbackMode>('ask_rerun')
+  const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(true)
   const [updateChannel, setUpdateChannel] = useState<ProductUpdateChannel>('stable')
   const [approvalTimeouts, setApprovalTimeouts] = useState<AppSettings['approvalTimeouts']>({
     enabled: true,
@@ -3619,6 +3620,7 @@ function App(): React.JSX.Element {
     setGeminiMcpBridgeEnabledState(Boolean(s.geminiMcpBridgeEnabled))
     setGeminiMcpBridgeStatus(s.geminiMcpBridgeLastStatus || null)
     setCodexSandboxFallback(s.codexSandboxFallback || 'ask_rerun')
+    setAutoUpdateEnabled(typeof s.autoUpdateEnabled === 'boolean' ? s.autoUpdateEnabled : true)
     setUpdateChannel(s.updateChannel || 'stable')
     if (s.approvalTimeouts) {
       setApprovalTimeouts(s.approvalTimeouts)
@@ -4105,6 +4107,11 @@ function App(): React.JSX.Element {
     if (next.codexSandboxFallback !== undefined) {
       setCodexSandboxFallback(next.codexSandboxFallback)
       settingsPatch.codexSandboxFallback = next.codexSandboxFallback
+    }
+    if (next.autoUpdateEnabled !== undefined) {
+      const enabled = Boolean(next.autoUpdateEnabled)
+      setAutoUpdateEnabled(enabled)
+      settingsPatch.autoUpdateEnabled = enabled
     }
     if (next.updateChannel !== undefined) {
       setUpdateChannel(next.updateChannel)
@@ -16985,6 +16992,7 @@ function App(): React.JSX.Element {
               funFxEnabled={appearance.funFxEnabled}
               funFxMode={appearance.funFxMode}
               advancedFx={appearance.advancedFx}
+              autoUpdateEnabled={autoUpdateEnabled}
               updateChannel={updateChannel}
               approvalTimeouts={approvalTimeouts}
               productOperationsStatus={productOperationsStatus}

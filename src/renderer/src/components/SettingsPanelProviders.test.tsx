@@ -59,6 +59,7 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
       dataViz: false,
       intensity: 'subtle'
     },
+    autoUpdateEnabled: true,
     updateChannel: 'stable',
     approvalTimeouts: {
       enabled: true,
@@ -104,5 +105,28 @@ describe('SettingsPanel provider cards', () => {
     )
     expect(html).not.toContain('TASKWRAITH_DISABLE_CURSOR')
     expect(html).not.toContain('TASKWRAITH_DISABLE_GROK')
+  })
+
+  it('renders the General auto-update checkbox enabled by default', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior' })} />
+    )
+
+    expect(html).toContain('Enable Auto-Update')
+    expect(html).toMatch(
+      /<label class="settings-service-row"><span>Enable Auto-Update<\/span><input type="checkbox" checked=""/
+    )
+  })
+
+  it('renders the General auto-update checkbox unchecked when disabled', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({ activeTab: 'behavior', autoUpdateEnabled: false })}
+      />
+    )
+
+    expect(html).toMatch(
+      /<label class="settings-service-row"><span>Enable Auto-Update<\/span><input type="checkbox"\/?>/
+    )
   })
 })
