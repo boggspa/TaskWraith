@@ -37,7 +37,7 @@ after the release owner accepts the distribution model.
 
 The companion implements app-level E2EE using CryptoKit primitives
 AES-256-GCM, HKDF, and Curve25519. The project sets
-`ITSAppUsesNonExemptEncryption=true` conservatively. Before TestFlight upload,
-complete the App Store Connect export-compliance questionnaire for this build
-and record the classification in the release notes. Do not flip this key to
-`false` without an explicit release/legal decision.
+`ITSAppUsesNonExemptEncryption=false`: these are standard algorithms that
+qualify for the export-compliance exemption (decision recorded 2026-06-16).
+Still complete the App Store Connect export-compliance questionnaire for each
+build and record the classification in the release notes.

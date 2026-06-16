@@ -95,8 +95,8 @@ Before upload:
 
 1. Confirm the archived entitlement prints `aps-environment = production`.
 2. Complete the App Store Connect export-compliance questionnaire. This project
-   conservatively sets `ITSAppUsesNonExemptEncryption=true` because the app
-   implements app-level E2EE with CryptoKit.
+   sets `ITSAppUsesNonExemptEncryption=false`: the app's CryptoKit E2EE uses
+   standard algorithms that qualify for the export-compliance exemption.
 3. Read `AppStorePrivacyNotes.md` and make the App Store privacy answers match
    the selected distribution model.
 

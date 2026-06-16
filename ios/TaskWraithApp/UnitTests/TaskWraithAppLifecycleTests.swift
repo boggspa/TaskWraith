@@ -53,9 +53,12 @@ final class TaskWraithAppLifecycleTests: XCTestCase {
             appBundle.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String])
         XCTAssertTrue(backgroundModes.contains("remote-notification"))
 
+        // The app qualifies for the export-compliance exemption, so the
+        // manifest declares ITSAppUsesNonExemptEncryption = false (see
+        // project.yml). Assert the shipped value rather than the inverse.
         let encryptionFlag = try XCTUnwrap(
             appBundle.object(forInfoDictionaryKey: "ITSAppUsesNonExemptEncryption") as? Bool)
-        XCTAssertTrue(encryptionFlag)
+        XCTAssertFalse(encryptionFlag)
     }
 }
 
