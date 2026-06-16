@@ -63,9 +63,24 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification _: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
+        // Hold a background-task assertion across the async reconnect/handshake.
+        // Without it iOS can suspend us mid-flight so the completion handler
+        // never fires — which the OS counts as a hung wake and penalises with
+        // fewer future background launches. End it idempotently on every path.
+        var bgTask: UIBackgroundTaskIdentifier = .invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "remote-wake") {
+            if bgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTask)
+                bgTask = .invalid
+            }
+        }
         Task { @MainActor in
             let connected = await model.handleRemoteWake(reason: "remote-notification")
             completionHandler(connected ? .newData : .failed)
+            if bgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTask)
+                bgTask = .invalid
+            }
         }
     }
 }

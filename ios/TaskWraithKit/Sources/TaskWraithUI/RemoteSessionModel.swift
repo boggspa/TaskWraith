@@ -302,9 +302,12 @@ public final class RemoteSessionModel: ObservableObject {
     /// AFTER pairing, so the permission prompt has context. Registration
     /// re-runs every launch (tokens rotate).
     private func requestPushAuthorizationIfNeeded() {
-        #if !DEBUG && !TASKWRAITH_ENABLE_APNS_REGISTRATION
-            return
-        #else
+        // Registration is runtime-gated below by the notification authorization
+        // status and is only reached after a successful pairing — so it is safe
+        // (and necessary) in Release/TestFlight too. The previous
+        // `#if !DEBUG && !TASKWRAITH_ENABLE_APNS_REGISTRATION return` wrapper
+        // compiled this out of every shipped build, leaving no device token to
+        // push to; the flag was never defined in the Xcode project.
         #if canImport(UIKit)
             UNUserNotificationCenter.current().getNotificationSettings { settings in
                 switch settings.authorizationStatus {
@@ -325,7 +328,6 @@ public final class RemoteSessionModel: ObservableObject {
                     break
                 }
             }
-        #endif
         #endif
     }
     /// Side-chat child that should open inside the inspector instead of
