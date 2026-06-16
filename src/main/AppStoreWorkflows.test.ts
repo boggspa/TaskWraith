@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { AppStore } from './store'
-import type { WorkflowDefinition } from './store/types'
+import type { WorkflowDefinition, WorkflowRunTemplate } from './store/types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-workflows-test-${process.pid}`)
 
@@ -13,17 +13,26 @@ vi.mock('electron', () => ({
 
 const plannedFor = '2026-06-07T20:00:00.000Z'
 const intervalMs = 15 * 60_000
+type WorkflowInput = Parameters<typeof AppStore.saveWorkflowDefinition>[0]
 
 function workflowInput(
-  overrides: Partial<
-    Omit<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>
-  > &
+  overrides: Partial<Omit<WorkflowInput, 'template'>> & { template?: Partial<WorkflowRunTemplate> } &
     Partial<Pick<WorkflowDefinition, 'history' | 'failureStreak'>> = {}
-) {
+): WorkflowInput {
+  const {
+    template: templateOverridesRaw,
+    workspaceId: overrideWorkspaceId,
+    workspacePath: overrideWorkspacePath,
+    ...restOverrides
+  } = overrides
+  const workspaceId = overrideWorkspaceId || 'ws-1'
+  const workspacePath = overrideWorkspacePath || '/repo'
+  const templateOverrides = templateOverridesRaw || {}
+  const chatId = templateOverrides.chatId || AppStore.createChat(workspaceId, workspacePath).appChatId
   return {
     name: 'Audit loop',
-    workspaceId: 'ws-1',
-    workspacePath: '/repo',
+    workspaceId,
+    workspacePath,
     enabled: true,
     trigger: {
       kind: 'interval' as const,
@@ -32,16 +41,17 @@ function workflowInput(
       timezone: 'Europe/London'
     },
     template: {
-      workspaceId: 'ws-1',
-      workspacePath: '/repo',
-      chatId: 'chat-1',
+      workspaceId,
+      workspacePath,
+      chatId,
       provider: 'codex' as const,
       prompt: 'Review the current diff.',
       selectedModelType: 'cli-default',
       customModel: '',
       approvalMode: 'default',
       sessionTrust: false,
-      imageAttachments: []
+      imageAttachments: [],
+      ...templateOverrides
     },
     missedRunPolicy: 'coalesce' as const,
     concurrencyPolicy: 'skip' as const,
@@ -50,7 +60,7 @@ function workflowInput(
       maxConsecutiveFailures: 3
     },
     nextRunAt: plannedFor,
-    ...overrides
+    ...restOverrides
   }
 }
 
@@ -133,5 +143,61 @@ describe('AppStore workflows', () => {
       status: 'completed',
       completedAt: '2026-06-07T20:01:00.000Z'
     })
+  })
+
+  it('materializes a workflow immediately for Run now', () => {
+    const saved = AppStore.saveWorkflowDefinition(
+      workflowInput({
+        trigger: { kind: 'manual' },
+        nextRunAt: undefined
+      })
+    )
+
+    const task = AppStore.materializeWorkflowNow(saved.id, Date.parse(plannedFor))
+
+    expect(task).toMatchObject({
+      workspaceId: 'ws-1',
+      provider: 'codex',
+      status: 'due',
+      workflowId: saved.id,
+      workflowOccurrenceAt: plannedFor
+    })
+    const workflow = AppStore.getWorkflowDefinition(saved.id)
+    expect(workflow?.activeExecutionId).toBe(task?.workflowExecutionId)
+    expect(workflow?.lastStatus).toBe('queued')
+    expect(workflow?.history[0]?.scheduledTaskId).toBe(task?.id)
+  })
+
+  it('rejects workflows whose target chat belongs to another workspace', () => {
+    const otherChat = AppStore.createChat('ws-2', '/other')
+    const input = workflowInput()
+    input.template = {
+      ...input.template,
+      chatId: otherChat.appChatId
+    }
+
+    expect(() => AppStore.saveWorkflowDefinition(input)).toThrow('selected workspace')
+  })
+
+  it('rejects non-workspace external path grants in workflow templates', () => {
+    const input = workflowInput()
+    input.template = {
+      ...input.template,
+      externalPathGrants: [
+        {
+          id: 'grant-1',
+          provider: 'codex',
+          workspaceId: 'ws-1',
+          chatId: input.template.chatId,
+          path: '/tmp/secret.txt',
+          kind: 'file',
+          access: 'read',
+          duration: 'thisThread',
+          createdAt: '2026-06-07T19:00:00.000Z'
+        }
+      ]
+    }
+
+    expect(() => AppStore.saveWorkflowDefinition(input)).toThrow('workspace-scoped')
   })
 })

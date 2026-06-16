@@ -188,6 +188,7 @@ import {
 } from './lib/ComposerSlashCommands'
 import { ComposerSlashMenu } from './components/ComposerSlashMenu'
 import { CreativeActionApprovalModal } from './components/CreativeActionApprovalModal'
+import { WorkflowCreator, type WorkflowCreatorSubmitInput } from './components/WorkflowCreator'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
 import { decideApprovalElevation } from './lib/approvalElevation'
 import { UsageHeatmap } from './components/UsageHeatmap'
@@ -1593,6 +1594,7 @@ function App(): React.JSX.Element {
    * prompt so the user clicks Send to launch (avoids re-implementing
    * the full send-message payload composition here). */
   const [showWorkSessionSheet, setShowWorkSessionSheet] = useState(false)
+  const [workflowCreatorOpen, setWorkflowCreatorOpen] = useState(false)
   // App version for the BugReportSheet's auto-captured row, fetched once on
   // mount; "unknown" until the IPC resolves so the UI never flashes empty. See
   // useAppVersion.
@@ -7831,7 +7833,10 @@ function App(): React.JSX.Element {
 
     if (typeof window.api.onWorkflowDefinitionsChanged === 'function') {
       window.api.onWorkflowDefinitionsChanged((workflows) => {
-        setWorkflowDefinitions(workflows)
+        const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
+        setWorkflowDefinitions(
+          workspaceId ? workflows.filter((workflow) => workflow.workspaceId === workspaceId) : workflows
+        )
       })
     }
 
@@ -11152,7 +11157,9 @@ function App(): React.JSX.Element {
       approvalMode: request.approvalMode,
       sessionTrust: request.sessionTrust,
       imageAttachments: request.imageAttachments,
-      externalPathGrants: request.externalPathGrants,
+      externalPathGrants: request.externalPathGrants?.filter(
+        (grant) => grant.duration === 'workspace'
+      ),
       geminiWorktree: request.geminiWorktree,
       codexReasoningEffort: request.codexReasoningEffort,
       codexServiceTier: request.codexServiceTier,
@@ -11221,55 +11228,64 @@ function App(): React.JSX.Element {
     }
   }
 
-  const handleCreateWorkflowFromComposer = async () => {
-    if (!currentWorkspace || !currentChat) {
-      setRawLogs((prev) => [
-        ...prev,
-        { type: 'info', content: 'Open a workspace chat before creating a workflow.' }
-      ])
-      return
+  const currentWorkflowTargetChat =
+    currentWorkspace &&
+    currentChat &&
+    !currentChat.archived &&
+    getChatScope(currentChat) !== 'global' &&
+    currentChat.workspaceId === currentWorkspace.id
+      ? currentChat
+      : null
+
+  const handleOpenWorkflowCreator = () => {
+    setWorkflowCreatorOpen(true)
+  }
+
+  const handleCreateWorkflow = async (input: WorkflowCreatorSubmitInput) => {
+    if (!currentWorkspace) {
+      throw new Error('Open a workspace before creating a workflow.')
     }
-    const request = buildRunRequest()
-    if (!request.prompt.trim()) {
-      setRawLogs((prev) => [...prev, { type: 'info', content: 'Add a prompt before creating a workflow.' }])
-      return
+    let workflowChat = currentWorkflowTargetChat
+    if (!workflowChat) {
+      workflowChat = await window.api.createChat(currentWorkspace.id, currentWorkspace.path)
+      const provider = getChatProvider(workflowChat)
+      chatByIdRef.current.set(workflowChat.appChatId, workflowChat)
+      currentChatIdRef.current = workflowChat.appChatId
+      setActiveSidebarChatId(workflowChat.appChatId)
+      setChats((prev) => mergeChatRecord(prev, workflowChat!))
+      setCurrentChat(workflowChat)
+      applyChatComposerSelection(workflowChat, provider)
     }
-    const defaultName = request.prompt.replace(/\s+/g, ' ').trim().slice(0, 48) || 'Workflow'
-    const name = window.prompt('Workflow name', defaultName)
-    if (!name?.trim()) return
-    const intervalText = window.prompt('Run every how many minutes?', '60')
-    if (!intervalText) return
-    const intervalMinutes = Number(intervalText)
-    if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
-      setRawLogs((prev) => [...prev, { type: 'info', content: 'Workflow interval is invalid.' }])
-      return
-    }
-    const intervalMs = Math.max(60_000, Math.round(intervalMinutes * 60_000))
+    const request = buildRunRequest(undefined, undefined, {
+      chat: workflowChat,
+      prompt: input.prompt,
+      imageAttachments:
+        workflowChat.appChatId === currentComposerChatId ? imageAttachments : []
+    })
     const saved = await window.api.saveWorkflowDefinition({
-      name: name.trim(),
+      name: input.name,
       workspaceId: currentWorkspace.id,
       workspacePath: currentWorkspace.path,
-      enabled: true,
-      trigger: {
-        kind: 'interval',
-        intervalMs,
-        startAt: new Date(Date.now() + intervalMs).toISOString(),
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'
-      },
-      template: buildWorkflowTemplateFromRequest(request, currentChat, currentWorkspace),
-      missedRunPolicy: 'coalesce',
+      enabled: input.enabled,
+      trigger: input.trigger,
+      template: buildWorkflowTemplateFromRequest(request, workflowChat, currentWorkspace),
+      missedRunPolicy: 'skip',
       concurrencyPolicy: 'skip',
       limits: {
-        maxRunsPerDay: 24,
+        maxRunsPerDay: input.maxRunsPerDay,
         maxConsecutiveFailures: 3
       }
     })
     await refreshWorkflowState(currentWorkspace.id)
+    setWorkflowCreatorOpen(false)
     setRawLogs((prev) => [
       ...prev,
       {
         type: 'info',
-        content: `Workflow "${saved.name}" will run every ${Math.round(intervalMs / 60_000)} minutes.`
+        content:
+          saved.trigger.kind === 'interval'
+            ? `Workflow "${saved.name}" will run every ${Math.round((saved.trigger.intervalMs || 60_000) / 60_000)} minutes.`
+            : `Workflow "${saved.name}" was created for manual runs.`
       }
     ])
   }
@@ -16839,7 +16855,7 @@ function App(): React.JSX.Element {
                 onToggleArchiveChat={handleToggleArchiveChat}
                 onDeleteChat={handleDeleteChat}
                 onRenameChat={handleRenameChat}
-                onCreateWorkflow={handleCreateWorkflowFromComposer}
+                onCreateWorkflow={handleOpenWorkflowCreator}
                 onRunWorkflowNow={handleRunWorkflowNow}
                 onToggleWorkflowEnabled={handleToggleWorkflowEnabled}
                 onEditWorkflowInterval={handleEditWorkflowInterval}
@@ -21780,6 +21796,15 @@ function App(): React.JSX.Element {
         onRefresh={refreshDiscordContextTargets}
         onSelect={handleSelectDiscordContext}
         onClose={() => setDiscordContextPickerOpen(false)}
+      />
+      <WorkflowCreator
+        open={!isChatPopoutWindow && workflowCreatorOpen}
+        workspace={currentWorkspace}
+        targetChat={currentWorkflowTargetChat}
+        initialPrompt={prompt}
+        localHistoryEnabled={settings?.storeLocalChatHistory !== false}
+        onSubmit={handleCreateWorkflow}
+        onCancel={() => setWorkflowCreatorOpen(false)}
       />
       {/* 1.0.4-AK2 — Work Session setup sheet. z-index 9130 sits
           above BugReportSheet (9120) since opening a Work Session

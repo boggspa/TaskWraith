@@ -119,6 +119,7 @@ function renderSidebar(
     activeChatId?: string | null
     ensembleModeEnabled?: boolean
     workflows?: WorkflowDefinition[]
+    onCreateWorkflow?: () => void
   } = {}
 ) {
   const workspace = makeWorkspace()
@@ -141,6 +142,7 @@ function renderSidebar(
       ensembleModeEnabled={options.ensembleModeEnabled}
       onSelectChat={() => {}}
       onOpenSettings={() => {}}
+      onCreateWorkflow={options.onCreateWorkflow}
     />
   )
 }
@@ -189,6 +191,17 @@ describe('Sidebar active chat override', () => {
 })
 
 describe('Sidebar workflows', () => {
+  it('renders an enabled quick-create button beside the Workflows header', () => {
+    stubSidebarStorage({})
+
+    const html = renderSidebar([], { onCreateWorkflow: () => {} })
+
+    expect(html).toContain('sidebar-workflows-section')
+    expect(html).toContain('sidebar-workflow-create')
+    expect(html).toContain('aria-label="Create workflow from composer"')
+    expect(html).not.toContain('sidebar-workflow-create" disabled=""')
+  })
+
   it('renders workflow cadence and status in the Workflows section', () => {
     stubSidebarStorage({
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workflows')

@@ -315,6 +315,11 @@ function scheduledTaskStatusToWorkflowStatus(
   return null
 }
 
+function sameWorkflowPath(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false
+  return path.resolve(a) === path.resolve(b)
+}
+
 /** Defensive shape-guard for a persisted audit run. Arrays default to empty
  * and the budget/coverage substructures are tolerated-missing so records
  * written by an older build still decode. Returns null only when the record
@@ -2028,6 +2033,45 @@ export class AppStore {
     return this.getWorkflowDefinitions().find((workflow) => workflow.id === id) || null
   }
 
+  private static workflowDefinitionInvalidReason(workflow: WorkflowDefinition): string | null {
+    if (workflow.trigger.kind === 'cron') {
+      return 'Cron workflow triggers are not supported yet.'
+    }
+    if (workflow.concurrencyPolicy === 'enqueue') {
+      return 'Workflow enqueue concurrency is not supported yet.'
+    }
+    const unsafeGrant = workflow.template.externalPathGrants?.find(
+      (grant) => grant.duration !== 'workspace'
+    )
+    if (unsafeGrant) {
+      return 'Workflow external path grants must be workspace-scoped.'
+    }
+    const chat = this.getChat(workflow.template.chatId)
+    if (!chat) {
+      return 'Workflow chat could not be loaded.'
+    }
+    if (chat.archived) {
+      return 'Workflow chat is archived.'
+    }
+    if (chat.scope === 'global' || !chat.workspaceId || !chat.workspacePath) {
+      return 'Workflow chat must belong to a workspace.'
+    }
+    if (
+      chat.workspaceId !== workflow.workspaceId ||
+      chat.workspaceId !== workflow.template.workspaceId ||
+      !sameWorkflowPath(chat.workspacePath, workflow.workspacePath) ||
+      !sameWorkflowPath(chat.workspacePath, workflow.template.workspacePath)
+    ) {
+      return 'Workflow chat does not belong to the selected workspace.'
+    }
+    return null
+  }
+
+  private static assertWorkflowDefinitionCanRun(workflow: WorkflowDefinition): void {
+    const reason = this.workflowDefinitionInvalidReason(workflow)
+    if (reason) throw new Error(reason)
+  }
+
   static saveWorkflowDefinition(
     workflow: Omit<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'> &
       Partial<Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>>
@@ -2049,6 +2093,7 @@ export class AppStore {
     if (!normalized) {
       throw new Error('Workflow definition is invalid.')
     }
+    this.assertWorkflowDefinitionCanRun(normalized)
     if (!normalized.enabled) {
       normalized.nextRunAt = undefined
     } else if (!normalized.nextRunAt) {
@@ -2082,6 +2127,7 @@ export class AppStore {
     }
     const normalized = normalizeWorkflowDefinitionRecord(merged, nowMs)
     if (!normalized) return null
+    this.assertWorkflowDefinitionCanRun(normalized)
     if (normalized.enabled) {
       if ('trigger' in partial || 'enabled' in partial) {
         normalized.nextRunAt = resolveNextWorkflowRunAt(normalized.trigger, nowMs, nowMs)
@@ -2279,6 +2325,28 @@ export class AppStore {
     manual = false
   ): ScheduledTask | null {
     const nowIso = new Date(nowMs).toISOString()
+    const invalidReason = this.workflowDefinitionInvalidReason(workflow)
+    if (invalidReason) {
+      const execution: WorkflowExecutionRecord = {
+        id: randomUUID(),
+        workflowId: workflow.id,
+        plannedFor,
+        status: 'failed',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        completedAt: nowIso,
+        error: invalidReason
+      }
+      workflow.history = [...workflow.history, execution].slice(-WORKFLOW_HISTORY_LIMIT)
+      workflow.activeExecutionId = undefined
+      workflow.lastStatus = 'failed'
+      workflow.lastError = invalidReason
+      workflow.failureStreak += 1
+      workflow.enabled = false
+      workflow.nextRunAt = undefined
+      workflow.updatedAt = nowIso
+      return null
+    }
     const activeExecution = workflow.activeExecutionId
       ? workflow.history.find((execution) => execution.id === workflow.activeExecutionId)
       : null

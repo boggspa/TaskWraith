@@ -1435,6 +1435,168 @@
   padding-top: 6px;
 }
 
+/* ── WorkflowCreator modal ───────────────────────────────────────────── */
+.workflow-creator-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9125;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.46);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.workflow-creator {
+  width: min(680px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--panel-bg, rgba(20, 24, 30, 0.96));
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.36);
+}
+
+.workflow-creator-header,
+.workflow-creator-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workflow-creator-header h2 {
+  margin: 0;
+  font-size: 1.06em;
+  font-weight: 600;
+}
+
+.workflow-creator-header p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.workflow-creator-close {
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.workflow-creator-close:hover,
+.workflow-creator-close:focus-visible {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.workflow-creator-body {
+  display: grid;
+  gap: 14px;
+}
+
+.workflow-creator-target {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent, #5a8cff) 28%, transparent);
+  background: color-mix(in srgb, var(--accent, #5a8cff) 10%, transparent);
+}
+
+.workflow-creator-target.is-blocked {
+  border-color: color-mix(in srgb, var(--danger, #ef4444) 30%, transparent);
+  background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent);
+}
+
+.workflow-creator-target span,
+.workflow-creator-field > span {
+  color: var(--text-tertiary);
+  font-size: 0.76em;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.workflow-creator-target strong {
+  color: var(--text-primary);
+  font-size: 0.95em;
+}
+
+.workflow-creator-target small {
+  color: var(--text-secondary);
+}
+
+.workflow-creator-field {
+  display: grid;
+  gap: 6px;
+}
+
+.workflow-creator-field input,
+.workflow-creator-field textarea {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-primary);
+  padding: 9px 10px;
+  font: inherit;
+  outline: none;
+}
+
+.workflow-creator-field textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.workflow-creator-field input:focus,
+.workflow-creator-field textarea:focus {
+  border-color: color-mix(in srgb, var(--accent, #5a8cff) 50%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #5a8cff) 16%, transparent);
+}
+
+.workflow-creator-inline-field {
+  max-width: 220px;
+}
+
+.workflow-creator-segmented {
+  display: inline-flex;
+  width: fit-content;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.workflow-creator-segmented button {
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.workflow-creator-segmented button.is-active {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent, #5a8cff) 18%, transparent);
+}
+
+.workflow-creator-error {
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent);
+}
+
 /* ── FirstLaunchSheet ──────────────────────────────────────────────────
  * Onboarding overlay that auto-shows on first launch. Sits at z-index
  * 9100 — above SubThreadCreator (9000) so it always wins the focus
