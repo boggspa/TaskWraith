@@ -325,6 +325,7 @@ import {
   mergeProviderUsage
 } from './ProviderRunStats'
 import { getExternalUsageCached, buildExternalUsageRollup, prewarmExternalUsageCache } from './ExternalProviderActivity'
+import { buildDailyTokenSeries } from './DailyTokenSeries'
 import {
   canonicalizeExternalPathGrantMetadata,
   coalesceExternalPathGrants,
@@ -18932,9 +18933,16 @@ if (isGeminiMcpBridgeProcess) {
     )
     const broadcastUsageRollupToRemote = (): void => {
       void getExternalUsageCached()
-        .then((records) => {
+        .then((externalRecords) => {
+          const now = Date.now()
+          // 90-day daily token series for the Inspector bar charts (Issue 4):
+          // External (from the cached external scan) + TaskWraith (internal API
+          // usage). Same builder, same day-bucketing as the desktop chart.
+          const taskwraithRecords = AppStore.getUsage()
           bridgeBroadcasterRef?.broadcastUsageRollup({
-            rollup: buildExternalUsageRollup(records)
+            rollup: buildExternalUsageRollup(externalRecords, now),
+            taskwraithDaily: buildDailyTokenSeries(taskwraithRecords, now),
+            externalDaily: buildDailyTokenSeries(externalRecords, now)
           })
         })
         .catch(() => {})
