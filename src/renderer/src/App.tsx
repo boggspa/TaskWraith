@@ -387,6 +387,10 @@ import {
 import { buildRunDiffByPath } from './lib/RunWorkspaceDiff'
 import { shouldRunUsageRefresh } from './lib/usageRefresh'
 import { shouldRenderWelcome } from './lib/welcomeState'
+import {
+  shouldRebindCurrentChatOnWorkspaceSelect,
+  type WorkspaceSelectIntent
+} from './lib/workspaceSelection'
 import { buildWelcomeCopy } from './lib/welcomeCopy'
 import type {
   DiscordContextReadMetadata,
@@ -4604,7 +4608,15 @@ function App(): React.JSX.Element {
     }
   }
 
-  const handleSelectExistingWorkspace = async (ws: WorkspaceRecord) => {
+  const handleSelectExistingWorkspace = async (
+    ws: WorkspaceRecord,
+    options?: { intent?: WorkspaceSelectIntent }
+  ) => {
+    // 'switch' (default) is an intentional change of the current chat's
+    // workspace from the composer / welcome picker; 'navigate' is a sidebar
+    // rail / Settings click that must open a fresh draft instead of
+    // relocating the current chat. See shouldRebindCurrentChatOnWorkspaceSelect.
+    const intent: WorkspaceSelectIntent = options?.intent ?? 'switch'
     const geminiSessionApi = window.api as any
     if (
       persistentSessionActiveRef.current &&
@@ -4619,20 +4631,26 @@ function App(): React.JSX.Element {
     setCurrentWorkspace(ws)
     currentWorkspaceIdRef.current = ws.id
 
-    // 1.0.5-EW41 — When the current chat is an Ensemble, rebind it
-    // in place to the new workspace instead of falling through to
-    // the "find empty chat or create new single-provider chat"
-    // path below. Pre-EW41 a user mid-Ensemble who switched
-    // workspaces (composer workspace switcher → Add new workspace
-    // or pick another) was dropped onto a fresh Gemini single-
-    // provider welcome screen — losing their entire curated panel
-    // and transcript. The helper preserves participants + ensemble
-    // config + history; subsequent rounds dispatch against the new
-    // workspace path. The helper returns null when the rebind is a
-    // no-op (chat is already on this workspace) — we then short-
-    // circuit without churning state, since the user effectively
-    // re-selected their current workspace from the popover.
-    if (isCurrentEnsembleChat && currentChat) {
+    // 1.0.5-EW41 — When the current chat is an Ensemble *and* this is an
+    // intentional 'switch' (composer / welcome picker), rebind it in place
+    // to the new workspace instead of falling through to the "find empty
+    // chat or create new single-provider chat" path below. Pre-EW41 a user
+    // mid-Ensemble who switched workspaces (composer workspace switcher →
+    // Add new workspace or pick another) was dropped onto a fresh Gemini
+    // single-provider welcome screen — losing their entire curated panel
+    // and transcript. The helper preserves participants + ensemble config +
+    // history; subsequent rounds dispatch against the new workspace path.
+    // The helper returns null when the rebind is a no-op (chat is already
+    // on this workspace) — we then short-circuit without churning state,
+    // since the user effectively re-selected their current workspace from
+    // the popover. A 'navigate' selection (sidebar rail / Settings list)
+    // deliberately skips this branch and opens a fresh draft instead, so a
+    // stray click never relocates an in-progress chat onto another
+    // workspace (see shouldRebindCurrentChatOnWorkspaceSelect).
+    if (
+      currentChat &&
+      shouldRebindCurrentChatOnWorkspaceSelect({ intent, isCurrentEnsembleChat })
+    ) {
       const rebound = rebindEnsembleChatToWorkspace(currentChat, ws)
       if (rebound) {
         const chatWithLedger = withSessionActivityLedger(currentChat, rebound)
