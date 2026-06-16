@@ -4756,6 +4756,18 @@ function App(): React.JSX.Element {
     })
   }
 
+  // Sidebar rail / Settings → Workspaces selection. A 'navigate' selection
+  // opens a fresh New Chat draft scoped to the workspace and never relocates
+  // the current chat in place — only the composer / welcome picker (which call
+  // handleSelectExistingWorkspace directly) keep that intentional-switch
+  // power. This fixes the dangerous bug where clicking a workspace in the
+  // sidebar silently moved an in-progress chat (esp. an Ensemble) onto another
+  // workspace. The fall-through still reuses an existing empty draft for the
+  // workspace before creating one, so this does not reintroduce the historical
+  // "hundreds of chats" proliferation.
+  const handleNavigateToWorkspace = (ws: WorkspaceRecord): Promise<void> =>
+    handleSelectExistingWorkspace(ws, { intent: 'navigate' })
+
   const handleSelectWelcomeWorkspace = async (ws: WorkspaceRecord) => {
     const rebound = rebindWelcomeEnsembleChatToWorkspace(currentChat, ws, isWelcomeChat)
     if (!rebound) {
@@ -16855,7 +16867,7 @@ function App(): React.JSX.Element {
                 showOnboardingHint={showOnboardingHint}
                 onDismissOnboardingHint={handleDismissOnboardingHint}
                 workspaceAddPointerActive={workspaceAddPointerActive}
-                onSelectWorkspace={handleSelectExistingWorkspace}
+                onSelectWorkspace={handleNavigateToWorkspace}
                 onRemoveWorkspace={handleRemoveWorkspace}
                 onSelectWorkspaceDialog={handleSelectWorkspace}
                 onNewChat={handleNewChat}
@@ -17064,7 +17076,7 @@ function App(): React.JSX.Element {
               onClose={() => setShowSettings(false)}
               workspaces={workspaces}
               currentWorkspace={currentWorkspace}
-              onSelectWorkspace={handleSelectExistingWorkspace}
+              onSelectWorkspace={handleNavigateToWorkspace}
               onSelectWorkspaceDialog={handleSelectWorkspace}
               onRemoveWorkspace={(workspaceId) => {
                 // SettingsPanel's Workspaces tab passes a bare id; the
