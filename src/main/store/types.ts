@@ -1,3 +1,5 @@
+import type { TodoItem } from '../TodoList'
+
 export type AppearanceMode = 'solid' | 'soft_glass' | 'native_glass'
 export type VisualEffectStyle = 'auto' | 'liquid_glass' | 'thin_material' | 'classic'
 export type ThemeAppearance =
@@ -2084,6 +2086,11 @@ export interface ChatRecord {
   providerMetadata?: Record<string, unknown>
   linkedGeminiSessionId?: string
   activeGoal?: ActiveGoal
+  /** Per-lane agent ToDo / plan checklists — a persisted sibling of activeGoal.
+   * Lane key = ensemble participantId, or TODO_SOLO_LANE for solo/guest. Written
+   * by the todo_write MCP tool (+ ingested provider-native plans) and broadcast
+   * to renderer + iOS via the chat-updated path. */
+  chatTodos?: Record<string, TodoItem[]>
   ensemble?: EnsembleConfig
   guestParticipant?: GuestParticipantConfig
   /**

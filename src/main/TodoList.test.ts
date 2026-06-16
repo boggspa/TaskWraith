@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyLaneTodoWrite,
   applyTodoWrite,
   computeMergedTodosByActivityId,
   computeMergedTodosFromActivities,
@@ -8,6 +9,7 @@ import {
   mergeTodoLists,
   parseTodoItemsFromActivity,
   summarizeTodoProgress,
+  TODO_SOLO_LANE,
   validateTodoWriteArgs
 } from './TodoList'
 
@@ -55,6 +57,57 @@ describe('TodoList', () => {
       false
     )
     expect(next).toEqual([{ id: 'new', content: 'New', status: 'pending' }])
+  })
+
+  it('keeps lanes isolated and falls back to the solo lane', () => {
+    // Two ensemble participants writing to the same chat must NOT collide.
+    const afterA = applyLaneTodoWrite(
+      undefined,
+      'kimi',
+      [{ id: '1', content: 'A1', status: 'pending' }],
+      false
+    )
+    const afterB = applyLaneTodoWrite(
+      afterA,
+      'codex',
+      [{ id: '1', content: 'B1', status: 'pending' }],
+      false
+    )
+    expect(afterB.kimi).toEqual([{ id: '1', content: 'A1', status: 'pending' }])
+    expect(afterB.codex).toEqual([{ id: '1', content: 'B1', status: 'pending' }])
+    // Empty lane id collapses to the solo lane, preserving sibling lanes.
+    const solo = applyLaneTodoWrite(afterB, '', [{ id: '1', content: 'S', status: 'pending' }], false)
+    expect(solo[TODO_SOLO_LANE]).toEqual([{ id: '1', content: 'S', status: 'pending' }])
+    expect(solo.kimi).toEqual([{ id: '1', content: 'A1', status: 'pending' }])
+  })
+
+  it('merges within a lane without touching siblings', () => {
+    const base = applyLaneTodoWrite(
+      undefined,
+      'kimi',
+      [
+        { id: '1', content: 'Step 1', status: 'pending' },
+        { id: '2', content: 'Step 2', status: 'pending' }
+      ],
+      false
+    )
+    const withCodex = applyLaneTodoWrite(
+      base,
+      'codex',
+      [{ id: '1', content: 'C', status: 'pending' }],
+      false
+    )
+    const merged = applyLaneTodoWrite(
+      withCodex,
+      'kimi',
+      [{ id: '2', content: 'Step 2', status: 'completed' }],
+      true
+    )
+    expect(merged.kimi.map((t) => [t.id, t.status])).toEqual([
+      ['1', 'pending'],
+      ['2', 'completed']
+    ])
+    expect(merged.codex).toEqual([{ id: '1', content: 'C', status: 'pending' }])
   })
 
   it('tracks merged todos per activity id', () => {

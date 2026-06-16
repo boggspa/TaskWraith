@@ -12,6 +12,9 @@ export interface TodoItem {
   status: TodoStatus
 }
 
+/** Lane key for solo + guest chats; ensemble lanes use the participantId. */
+export const TODO_SOLO_LANE = '__solo__'
+
 const TODO_TOOL_NAMES = new Set([
   'todo_write',
   'todowrite',
@@ -148,6 +151,22 @@ export function applyTodoWrite(
 ): TodoItem[] {
   if (merge) return mergeTodoLists(prior, batch)
   return [...batch]
+}
+
+/**
+ * Apply a todo_write batch to ONE lane of a per-lane map, returning the next
+ * map. The lane key separates concurrent ensemble participants writing to the
+ * same chat; solo/guest collapse to TODO_SOLO_LANE. Pure.
+ */
+export function applyLaneTodoWrite(
+  priorByLane: Readonly<Record<string, TodoItem[]>> | undefined,
+  laneId: string,
+  batch: readonly TodoItem[],
+  merge: boolean
+): Record<string, TodoItem[]> {
+  const lane = laneId || TODO_SOLO_LANE
+  const prior = priorByLane?.[lane] ?? []
+  return { ...(priorByLane ?? {}), [lane]: applyTodoWrite(prior, batch, merge) }
 }
 
 export function computeMergedTodosByActivityId(

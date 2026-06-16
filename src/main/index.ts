@@ -654,8 +654,7 @@ import {
   isCodexNativeGoalUnsupportedError
 } from './CodexNativeGoal'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
-import { validateTodoWriteArgs } from './TodoList'
-import { handleChatTodoWrite } from './TodoWriteRegistry'
+import { applyLaneTodoWrite, TODO_SOLO_LANE, validateTodoWriteArgs } from './TodoList'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
 import {
   MCP_AUTO_ALLOWED_TOOLS,
@@ -13248,16 +13247,43 @@ async function executeGeminiMcpTool(
         text = mcpJson({ ok: false, error: validated.error })
       } else {
         const chatId = String(context.appChatId || '').trim()
-        const todos =
-          chatId.length > 0
-            ? handleChatTodoWrite(chatId, validated.todos, validated.merge)
-            : validated.todos
-        text = mcpJson({
-          ok: true,
-          tool: 'todo_write',
-          merge: validated.merge,
-          todos
-        })
+        // Re-read the chat (clobber-safe under the concurrent last-write-wins
+        // model) and persist the plan per-LANE — so concurrent ensemble
+        // participants don't collide on one shared list. Lane = participantId
+        // (ensemble) or TODO_SOLO_LANE (solo/guest). Persisting to ChatRecord
+        // (vs the old in-memory registry) survives restart/reconnect and
+        // broadcasts to the renderer AND iOS via the chat-updated path.
+        const freshChat = chatId ? AppStore.getChat(chatId) : null
+        if (!chatId || !freshChat) {
+          text = mcpJson({
+            ok: true,
+            tool: 'todo_write',
+            merge: validated.merge,
+            todos: validated.todos
+          })
+        } else {
+          const laneId =
+            ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || TODO_SOLO_LANE
+          const nextByLane = applyLaneTodoWrite(
+            freshChat.chatTodos,
+            laneId,
+            validated.todos,
+            validated.merge
+          )
+          const updatedChat: ChatRecord = {
+            ...freshChat,
+            chatTodos: nextByLane,
+            updatedAt: Date.now()
+          }
+          saveAndBroadcastChat(updatedChat)
+          text = mcpJson({
+            ok: true,
+            tool: 'todo_write',
+            merge: validated.merge,
+            lane: laneId,
+            todos: nextByLane[laneId]
+          })
+        }
       }
     } else if (toolName === 'ask_user_question') {
       // QMOD (1.0.3) — pause the agent on a modal question and resume
