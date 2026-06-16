@@ -1,5 +1,3 @@
-import os from 'os'
-import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 import type { AppSettings } from '../store/types'
 import {
@@ -23,9 +21,11 @@ describe('canonicalizeOllamaWorkspacePath', () => {
     expect(canonicalizeOllamaWorkspacePath('/tmp/proj/sub/..')).toBe('/tmp/proj')
   })
 
-  it('expands a leading ~', () => {
-    expect(canonicalizeOllamaWorkspacePath('~')).toBe(os.homedir())
-    expect(canonicalizeOllamaWorkspacePath('~/code/app')).toBe(join(os.homedir(), 'code/app'))
+  it('collapses duplicate slashes and leaves ~ untouched (pure / browser-safe)', () => {
+    expect(canonicalizeOllamaWorkspacePath('/tmp//proj///sub')).toBe('/tmp/proj/sub')
+    // ~ is a literal segment here — node-side callers expand it before lookup.
+    expect(canonicalizeOllamaWorkspacePath('~/code/app')).toBe('~/code/app')
+    expect(canonicalizeOllamaWorkspacePath('/')).toBe('/')
   })
 
   it('returns empty string for blank input', () => {
@@ -53,10 +53,10 @@ describe('ollamaProviderParityWorkspaceGranted', () => {
     expect(ollamaProviderParityWorkspaceGranted(settings, '/tmp/granted/')).toBe(true)
   })
 
-  it('matches across ~ expansion vs absolute home path', () => {
-    const abs = join(os.homedir(), 'code/app')
-    const settings = settingsWith('provider_parity', { [abs]: '2026-01-01T00:00:00Z' })
-    expect(ollamaProviderParityWorkspaceGranted(settings, '~/code/app')).toBe(true)
+  it('matches across . / .. segments between key and lookup', () => {
+    const settings = settingsWith('provider_parity', { '/tmp/granted': '2026-01-01T00:00:00Z' })
+    expect(ollamaProviderParityWorkspaceGranted(settings, '/tmp/sub/../granted')).toBe(true)
+    expect(ollamaProviderParityWorkspaceGranted(settings, '/tmp/./granted/')).toBe(true)
   })
 
   it('ignores grants with empty timestamps', () => {

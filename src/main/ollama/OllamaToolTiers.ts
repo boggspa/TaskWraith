@@ -1,5 +1,3 @@
-import os from 'os'
-import { join, resolve } from 'path'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
 import type { AppSettings, OllamaToolControlTier } from '../store/types'
 
@@ -95,19 +93,37 @@ export function ollamaToolNamesForTier(
 }
 
 /**
- * Canonicalize a workspace path for provider-parity grant comparison. Mirrors the
- * main-process `canonicalPath` (expand a leading `~`, then `resolve`) so a grant
+ * Canonicalize a workspace path for provider-parity grant comparison so a grant
  * recorded from the renderer's raw `currentWorkspace.path` still matches the
- * canonicalized path used on the run/execution side. Without this, a trailing
- * slash, a leading `~`, or a `.`/`..` segment silently fails the lookup and Tier 4
- * (provider parity) collapses to read-only with no indication to the user.
+ * (often node-canonicalized) lookup path used on the run/execution side — a
+ * trailing slash or a `.`/`..`/`//` segment must not silently fail the lookup
+ * and collapse Tier 4 to read-only.
+ *
+ * MUST stay PURE (no `os`/`path` node builtins): this module is pulled into the
+ * RENDERER bundle transitively via ProviderCapabilities, and node builtins are
+ * externalized in the browser build (a node import here blanks the renderer).
+ * `~` is intentionally NOT expanded — workspace paths from the folder picker are
+ * absolute, and the node execution gate still expands `~` on its own lookup arg.
  */
 export function canonicalizeOllamaWorkspacePath(value?: string | null): string {
   const raw = String(value || '').trim()
   if (!raw) return ''
-  const expanded =
-    raw === '~' ? os.homedir() : raw.startsWith('~/') ? join(os.homedir(), raw.slice(2)) : raw
-  return resolve(expanded)
+  const isAbsolute = raw.startsWith('/')
+  const segments: string[] = []
+  for (const segment of raw.split('/')) {
+    if (segment === '' || segment === '.') continue
+    if (segment === '..') {
+      if (segments.length > 0 && segments[segments.length - 1] !== '..') {
+        segments.pop()
+      } else if (!isAbsolute) {
+        segments.push('..')
+      }
+      continue
+    }
+    segments.push(segment)
+  }
+  const joined = segments.join('/')
+  return isAbsolute ? `/${joined}` : joined
 }
 
 export function ollamaProviderParityWorkspaceGranted(
