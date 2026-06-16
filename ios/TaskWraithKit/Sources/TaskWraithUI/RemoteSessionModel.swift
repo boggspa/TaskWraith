@@ -136,6 +136,13 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var taskCards: [RemoteTaskCard] = []
     @Published public private(set) var approvals: [MobileApprovalCard] = []
     @Published public private(set) var questions: [MobileQuestionCard] = []
+    /// Ids the user just acted on locally — suppressed from re-display until the
+    /// Mac's projection confirms resolution (drops them). Without this the
+    /// modal lingered after Accept: the card is only cleared by the next
+    /// authoritative snapshot, and a snapshot already in flight when the user
+    /// taps would otherwise flash the resolved card straight back.
+    private var repliedApprovalToolCallIds: Set<String> = []
+    private var repliedQuestionIds: Set<String> = []
     /// Allowlist-visible workspaces (the compose surface). Empty until the Mac
     /// has at least one entry in Settings → Devices → workspace access.
     @Published public private(set) var workspaces: [WorkspaceSummary] = []
@@ -813,6 +820,8 @@ public final class RemoteSessionModel: ObservableObject {
         taskCards = []
         approvals = []
         questions = []
+        repliedApprovalToolCallIds = []
+        repliedQuestionIds = []
     }
 
     /// Drop the stored pairing entirely (the Mac keeps its pin until the user
@@ -1289,8 +1298,12 @@ public final class RemoteSessionModel: ObservableObject {
         guard let id = card.resolvedId else { return }
         if let status = card.status, status != "pending" {
             questions.removeAll { $0.resolvedId == id }
+            repliedQuestionIds.remove(id)
             return
         }
+        // Honor an optimistic dismissal: a pending delta for a question the user
+        // just answered (reply still in flight) must not flash it back.
+        if repliedQuestionIds.contains(id) { return }
         if let index = questions.firstIndex(where: { $0.resolvedId == id }) {
             questions[index] = card
         } else {
@@ -1911,8 +1924,22 @@ public final class RemoteSessionModel: ObservableObject {
         // an empty settling snapshot does NOT (the grace timer or the Mac's
         // delayed re-seed resolves it instead).
         if !tasks.isEmpty { projectionHydrated = true }
-        approvals = approvalCards
-        questions = questionCards
+        // Reconcile the optimistic-dismissal sets: keep suppressing only cards
+        // the Mac STILL lists as pending (a reply in flight); once it drops a
+        // card (resolution confirmed) the id leaves the set, and a card no
+        // longer suppressed re-appears (e.g. a reply the Mac rejected).
+        let incomingApprovalIds = Set(approvalCards.compactMap { $0.toolCallId })
+        repliedApprovalToolCallIds.formIntersection(incomingApprovalIds)
+        approvals = approvalCards.filter { card in
+            guard let tid = card.toolCallId else { return true }
+            return !repliedApprovalToolCallIds.contains(tid)
+        }
+        let incomingQuestionIds = Set(questionCards.compactMap { $0.resolvedId })
+        repliedQuestionIds.formIntersection(incomingQuestionIds)
+        questions = questionCards.filter { card in
+            guard let qid = card.resolvedId else { return true }
+            return !repliedQuestionIds.contains(qid)
+        }
         // Merge — don't wipe on-demand snapshots for threads outside the
         // recent-N window when a full periodic snapshot lands.
         for (key, snapshot) in snapshots {
@@ -1966,10 +1993,24 @@ public final class RemoteSessionModel: ObservableObject {
         case "cancel": label = "Run cancelled."
         default: label = "Denied."
         }
+        // Optimistically dismiss the modal NOW — don't wait for the round-trip
+        // + next projection (which only arrives when the turn advances), which
+        // left the modal stuck on screen after Accept.
+        repliedApprovalToolCallIds.insert(toolCallId)
+        approvals.removeAll { $0.toolCallId == toolCallId }
         send(
             BridgeAction.approvalReply(
                 toolCallId: toolCallId, decision: decision, workspaceId: ws, threadId: thread),
-            successLabel: label)
+            successLabel: label,
+            onAck: { [weak self] accepted in
+                guard let self, !accepted else { return }
+                // The Mac rejected the reply (e.g. the approval already expired)
+                // — stop suppressing + restore the card so the user can retry.
+                self.repliedApprovalToolCallIds.remove(toolCallId)
+                if !self.approvals.contains(where: { $0.toolCallId == toolCallId }) {
+                    self.approvals.insert(card, at: 0)
+                }
+            })
         scheduleThreadRefresh(thread)
     }
 
@@ -2033,11 +2074,20 @@ public final class RemoteSessionModel: ObservableObject {
         else { return }
         let ws = context.workspaceId
         let thread = context.threadId
+        repliedQuestionIds.insert(promptId)
+        questions.removeAll { $0.resolvedId == promptId }
         send(
             BridgeAction.questionReply(
                 questionId: promptId, answer: text, workspaceId: ws, threadId: thread,
                 runId: context.runId),
-            successLabel: "Answer sent.")
+            successLabel: "Answer sent.",
+            onAck: { [weak self] accepted in
+                guard let self, !accepted else { return }
+                self.repliedQuestionIds.remove(promptId)
+                if !self.questions.contains(where: { $0.resolvedId == promptId }) {
+                    self.questions.insert(card, at: 0)
+                }
+            })
         scheduleThreadRefresh(thread)
     }
 
@@ -2049,10 +2099,19 @@ public final class RemoteSessionModel: ObservableObject {
         else { return }
         let ws = context.workspaceId
         let thread = context.threadId
+        repliedQuestionIds.insert(promptId)
+        questions.removeAll { $0.resolvedId == promptId }
         send(
             BridgeAction.questionReject(
                 promptId: promptId, workspaceId: ws, threadId: thread, runId: context.runId),
-            successLabel: "Question dismissed.")
+            successLabel: "Question dismissed.",
+            onAck: { [weak self] accepted in
+                guard let self, !accepted else { return }
+                self.repliedQuestionIds.remove(promptId)
+                if !self.questions.contains(where: { $0.resolvedId == promptId }) {
+                    self.questions.insert(card, at: 0)
+                }
+            })
         scheduleThreadRefresh(thread)
     }
 
