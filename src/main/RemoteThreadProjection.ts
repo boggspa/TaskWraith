@@ -403,6 +403,16 @@ export interface RemoteSubThreadReturnSummary {
   title?: string
 }
 
+/** Structured identity for a mirrored guest-participant reply — lets remote
+ * clients render the reply as a provider-tinted "Provider / Guest" bubble with
+ * a model badge, matching the desktop guest-reply card. */
+export interface RemoteGuestReplySummary {
+  provider?: ProviderId
+  role?: string
+  model?: string
+  guestChatId?: string
+}
+
 export interface RemoteThreadRow {
   /** === desktop `message.id`, so remote deep-links resolve exactly. */
   id: string
@@ -438,6 +448,9 @@ export interface RemoteThreadRow {
   participantHealth?: RemoteParticipantHealthSummary
   /** Structured metadata for returned TaskWraith sub-thread output. */
   subThreadReturn?: RemoteSubThreadReturnSummary
+  /** Present for a mirrored guest-participant reply — the guest's identity so
+   * remote clients render it inline like the desktop guest bubble. */
+  guestReply?: RemoteGuestReplySummary
   /** Present for rows that need the user — drives the remote action UI. */
   attention?: {
     kind: RemoteAttentionKind
@@ -654,7 +667,10 @@ export function classifyRemoteKind(message: ChatMessage): RemoteThreadRowKind {
   const metaKind = message.metadata?.kind
   if (message.role === 'system' && metaKind === 'subThreadDelegation') return 'system'
   if (metaKind === 'subThreadReturn') return 'tool'
-  if (metaKind === 'guestParticipantReply') return 'tool'
+  // Guest replies render as an assistant-style (provider-tinted) bubble, NOT a
+  // tool row — classifying them 'assistant' keeps remote clients from folding
+  // them into adjacent tool groups or suppressing them mid-stream.
+  if (metaKind === 'guestParticipantReply') return 'assistant'
   if (message.role === 'tool') return 'tool'
   if (message.role === 'user') return 'user'
   if (message.role === 'error') return 'error'
@@ -802,12 +818,38 @@ function buildSubThreadReturn(
   return { summary, body: subThreadReturnBody(message.content || '') }
 }
 
+function buildGuestReply(
+  message: ChatMessage
+): { summary: RemoteGuestReplySummary; speaker?: string } | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (metadata?.kind !== 'guestParticipantReply') return undefined
+  const summary: RemoteGuestReplySummary = {}
+  const provider = providerField(metadata.guestProvider)
+  if (provider) summary.provider = provider
+  const role = stringField(metadata.guestRole, 60)
+  if (role) summary.role = role
+  const model = stringField(metadata.guestModel, 120)
+  if (model) summary.model = model
+  const guestChatId = stringField(metadata.guestChatId, 120)
+  if (guestChatId) summary.guestChatId = guestChatId
+  // Graceful-degradation speaker for the existing provider-tinted label path
+  // ("Provider / Role"), so even clients without a dedicated guest card tint +
+  // attribute the reply instead of rendering a bare "System" row.
+  let speaker: string | undefined
+  if (provider) {
+    const label = PROVIDER_LABELS[provider] ?? provider
+    speaker = role ? `${label} / ${role}` : label
+  }
+  return { summary, speaker }
+}
+
 function buildRow(
   message: ChatMessage,
   previewMax: number,
   attentionKind: RemoteAttentionKind | null
 ): RemoteThreadRow {
   const subThreadReturn = buildSubThreadReturn(message)
+  const guestReply = buildGuestReply(message)
   const { preview, truncated } = sanitizePreview(subThreadReturn?.body ?? message.content, previewMax)
   const row: RemoteThreadRow = {
     id: message.id,
@@ -831,6 +873,13 @@ function buildRow(
   const participantHealth = buildParticipantHealth(message)
   if (participantHealth) row.participantHealth = participantHealth
   if (subThreadReturn) row.subThreadReturn = subThreadReturn.summary
+  if (guestReply) {
+    row.guestReply = guestReply.summary
+    // soloSpeakerForMessage skips system rows, so the caller never sets a
+    // speaker for a guest reply — seed it here (the caller only overwrites
+    // when its own resolver returns a truthy speaker, never clears this).
+    if (guestReply.speaker) row.speaker = guestReply.speaker
+  }
   if (attentionKind) {
     row.attention = {
       kind: attentionKind,
