@@ -224,7 +224,14 @@ export class DiscordContextService {
       throw new Error('Discord context reads are not configured for the selected server.')
     }
     const channel = await this.resolveChannel(selection)
-    const guildId = selection.guildId || channel.guild_id || undefined
+    const channelGuildId = normalizeSnowflake(channel.guild_id)
+    if (!channelGuildId || channelGuildId !== selection.guildId) {
+      throw new Error('Discord context reads are not configured for the selected channel.')
+    }
+    if (!isReadableTextChannelType(channel.type)) {
+      throw new Error('Discord context reads require a readable text channel.')
+    }
+    const guildId = channelGuildId
     const guildName = selection.guildName || undefined
     const channelName = selection.channelName || channel.name || selection.channelId
     const messages = await this.requestJson<DiscordApiMessage[]>(
@@ -287,24 +294,9 @@ export class DiscordContextService {
   }
 
   private async resolveChannel(selection: DiscordContextSelection): Promise<DiscordApiChannel> {
-    if (selection.channelName && selection.guildId) {
-      return {
-        id: selection.channelId,
-        name: selection.channelName,
-        guild_id: selection.guildId
-      }
-    }
-    try {
-      return await this.requestJson<DiscordApiChannel>(
-        `/channels/${encodeURIComponent(selection.channelId)}`
-      )
-    } catch {
-      return {
-        id: selection.channelId,
-        name: selection.channelName || selection.channelId,
-        guild_id: selection.guildId
-      }
-    }
+    return this.requestJson<DiscordApiChannel>(
+      `/channels/${encodeURIComponent(selection.channelId)}`
+    )
   }
 
   private async requestJson<T>(path: string): Promise<T> {

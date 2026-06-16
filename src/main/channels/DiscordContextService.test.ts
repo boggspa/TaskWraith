@@ -190,6 +190,68 @@ describe('DiscordContextService', () => {
     ).rejects.toThrow('selected server')
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  it('rejects direct reads when the resolved channel is outside the selected guild', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith('/channels/123456789012345678')) {
+        return jsonResponse({
+          id: '123456789012345678',
+          guild_id: '999999999999999999',
+          name: 'build-help',
+          type: 0
+        })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const service = new DiscordContextService({
+      botToken: 'bot-token',
+      guildIds: ['456789012345678901'],
+      apiBaseUrl: 'https://discord.test/api'
+    })
+
+    await expect(
+      service.readChannel({
+        guildId: '456789012345678901',
+        guildName: 'Task Team',
+        channelId: '123456789012345678',
+        channelName: 'build-help',
+        limit: 25
+      })
+    ).rejects.toThrow('selected channel')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/channels/123456789012345678')
+  })
+
+  it('rejects direct reads for non-text Discord channel types', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith('/channels/123456789012345678')) {
+        return jsonResponse({
+          id: '123456789012345678',
+          guild_id: '456789012345678901',
+          name: 'voice',
+          type: 2
+        })
+      }
+      throw new Error(`unexpected url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const service = new DiscordContextService({
+      botToken: 'bot-token',
+      guildIds: ['456789012345678901'],
+      apiBaseUrl: 'https://discord.test/api'
+    })
+
+    await expect(
+      service.readChannel({
+        guildId: '456789012345678901',
+        channelId: '123456789012345678',
+        channelName: 'voice',
+        limit: 25
+      })
+    ).rejects.toThrow('readable text channel')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('Discord context prompt formatting', () => {
