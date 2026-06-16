@@ -113,6 +113,27 @@ export interface BridgeApnsPusher {
    * (e.g. after a new pairing on a different device, or when transcript
    * events have accumulated for the device's watched chats). */
   pushSilent(pairID: string): Promise<BridgeApnsPushResult>
+
+  /** Token-targeted variants used by the per-device fan-out
+   * (`RemoteAttentionApnsFanout`), which already resolves `{pairID → token,
+   * env}` from the token store. Implementations that cannot deliver (Noop)
+   * still return a visible `{delivered:false, reason:'noop'}` so the skip is
+   * logged and testable rather than a silent early-return. */
+  pushApprovalToToken(
+    deviceTokenHex: string,
+    env: BridgeApnsEnv,
+    payload: BridgeApprovalPushPayload
+  ): Promise<BridgeApnsPushResult>
+  pushRemoteAttentionToToken(
+    deviceTokenHex: string,
+    env: BridgeApnsEnv,
+    payload: BridgeRemoteAttentionPushPayload
+  ): Promise<BridgeApnsPushResult>
+  pushSilentToToken(
+    deviceTokenHex: string,
+    env: BridgeApnsEnv,
+    payload?: Omit<BridgeRemoteAttentionPushPayload, 'pairID'>
+  ): Promise<BridgeApnsPushResult>
 }
 
 /**
@@ -146,6 +167,39 @@ export class NoopApnsPusher implements BridgeApnsPusher {
 
   async pushSilent(pairID: string): Promise<BridgeApnsPushResult> {
     this.log(`[BridgeApnsPusher noop] would silent-push pairID=${pairID} — APNs not yet configured`)
+    return { delivered: false, apnsId: '', reason: 'noop' }
+  }
+
+  async pushApprovalToToken(
+    deviceTokenHex: string,
+    _env: BridgeApnsEnv,
+    payload: BridgeApprovalPushPayload
+  ): Promise<BridgeApnsPushResult> {
+    this.log(
+      `[BridgeApnsPusher noop] would push approval-to-token tok=${deviceTokenHex.slice(0, 8)}… thread=${payload.threadId} tool=${payload.toolCallId} — APNs not configured`
+    )
+    return { delivered: false, apnsId: '', reason: 'noop' }
+  }
+
+  async pushRemoteAttentionToToken(
+    deviceTokenHex: string,
+    _env: BridgeApnsEnv,
+    payload: BridgeRemoteAttentionPushPayload
+  ): Promise<BridgeApnsPushResult> {
+    this.log(
+      `[BridgeApnsPusher noop] would push remote-attention-to-token tok=${deviceTokenHex.slice(0, 8)}… reason=${payload.reason} — APNs not configured`
+    )
+    return { delivered: false, apnsId: '', reason: 'noop' }
+  }
+
+  async pushSilentToToken(
+    deviceTokenHex: string,
+    _env: BridgeApnsEnv,
+    _payload?: Omit<BridgeRemoteAttentionPushPayload, 'pairID'>
+  ): Promise<BridgeApnsPushResult> {
+    this.log(
+      `[BridgeApnsPusher noop] would silent-push-to-token tok=${deviceTokenHex.slice(0, 8)}… — APNs not configured`
+    )
     return { delivered: false, apnsId: '', reason: 'noop' }
   }
 }

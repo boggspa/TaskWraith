@@ -69,7 +69,14 @@ export class RemoteAttentionApnsFanout {
             entry.env,
             payload
           )
-          if (payload.reason === 'approval' && typeof pusher.pushSilentToToken === 'function') {
+          // Any reason that BLOCKS the agent (waiting on the user) needs the
+          // silent background supplement so a closed/locked app gets CPU to
+          // reconnect-and-hydrate — not just approvals.
+          const blocksOnUser =
+            payload.reason === 'approval' ||
+            payload.reason === 'question' ||
+            payload.reason === 'taskNeedsAttention'
+          if (blocksOnUser && typeof pusher.pushSilentToToken === 'function') {
             try {
               const wakeResult = await pusher.pushSilentToToken(
                 entry.deviceToken,

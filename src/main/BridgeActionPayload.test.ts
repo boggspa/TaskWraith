@@ -609,14 +609,14 @@ describe('decodeBridgeActionPayload', () => {
       const wire = encode({
         kind: 'registerApnsToken',
         pairID: 'pair-1',
-        deviceToken: 'abc123def456',
+        deviceToken: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         env: 'production'
       })
       const { payload } = decodeBridgeActionPayload(wire)
       expect(payload.kind).toBe('registerApnsToken')
       if (payload.kind === 'registerApnsToken') {
         expect(payload.pairID).toBe('pair-1')
-        expect(payload.deviceToken).toBe('abc123def456')
+        expect(payload.deviceToken).toBe('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')
         expect(payload.env).toBe('production')
       }
     })
@@ -625,7 +625,7 @@ describe('decodeBridgeActionPayload', () => {
       const wire = encode({
         kind: 'registerApnsToken',
         pairID: 'pair-1',
-        deviceToken: 'tok',
+        deviceToken: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         env: 'sandbox'
       })
       const { payload } = decodeBridgeActionPayload(wire)
@@ -740,7 +740,7 @@ describe('decodeBridgeActionPayload', () => {
         {
           kind: 'registerApnsToken',
           pairID: 'pair-1',
-          deviceToken: 'tok',
+          deviceToken: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
           env: 'production'
         },
         {
@@ -829,6 +829,17 @@ describe('decodeBridgeActionPayload', () => {
         kind: 'registerApnsToken',
         pairID: 'pair-1',
         deviceToken: '',
+        env: 'production'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('unknown')
+    })
+
+    it('treats registerApnsToken with a non-64-hex deviceToken as unknown', () => {
+      const wire = encode({
+        kind: 'registerApnsToken',
+        pairID: 'pair-1',
+        deviceToken: 'not-a-valid-token',
         env: 'production'
       })
       const { payload } = decodeBridgeActionPayload(wire)

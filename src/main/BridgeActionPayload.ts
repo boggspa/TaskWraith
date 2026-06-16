@@ -1454,7 +1454,9 @@ function isRegisterApnsToken(v: Record<string, unknown>): boolean {
     typeof v.pairID === 'string' &&
     v.pairID.length > 0 &&
     typeof v.deviceToken === 'string' &&
-    v.deviceToken.length > 0 &&
+    // APNs device tokens are 32 bytes = 64 hex chars. Reject anything else so a
+    // malformed/foreign token can't be stored verbatim and routed to Apple.
+    /^[0-9a-fA-F]{64}$/.test(v.deviceToken) &&
     (v.env === 'production' || v.env === 'sandbox')
   )
 }

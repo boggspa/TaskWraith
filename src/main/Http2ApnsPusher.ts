@@ -6,7 +6,8 @@ import type {
   BridgeApnsPusher,
   BridgeApnsPushResult,
   BridgeApprovalPushPayload,
-  BridgeRemoteAttentionPushPayload
+  BridgeRemoteAttentionPushPayload,
+  BridgeRemoteAttentionReason
 } from './BridgeApnsPusher'
 
 /**
@@ -198,12 +199,17 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
     payload: BridgeApprovalPushPayload
   ): Promise<BridgeApnsPushResult> {
     const apsBody = this.buildApprovalApsBody(payload)
+    const nowSec = Math.floor(this.now().getTime() / 1000)
     return this.deliver({
       deviceTokenHex,
       env,
       pushType: 'alert',
       priority: 10,
-      body: apsBody
+      body: apsBody,
+      // Honor the approval's own deadline if present, else 1h; collapse on the
+      // per-approval id so a re-send updates rather than stacks.
+      expirationSeconds: payload.expiresAt ? Math.floor(payload.expiresAt / 1000) : nowSec + 3600,
+      collapseId: payload.toolCallId || payload.threadId
     })
   }
 
@@ -215,12 +221,17 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
     payload?: Omit<BridgeRemoteAttentionPushPayload, 'pairID'>
   ): Promise<BridgeApnsPushResult> {
     const body = this.buildSilentApsBody(payload)
+    const nowSec = Math.floor(this.now().getTime() / 1000)
     return this.deliver({
       deviceTokenHex,
       env,
       pushType: 'background',
       priority: 5,
-      body
+      body,
+      // Silent wakes are only useful briefly — drop after 5min rather than
+      // delivering a stale reconnect nudge hours later.
+      expirationSeconds: nowSec + 300,
+      collapseId: payload?.approvalId || payload?.questionId || payload?.threadId
     })
   }
 
@@ -230,12 +241,15 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
     payload: BridgeRemoteAttentionPushPayload
   ): Promise<BridgeApnsPushResult> {
     const body = this.buildRemoteAttentionApsBody(payload)
+    const nowSec = Math.floor(this.now().getTime() / 1000)
     return this.deliver({
       deviceTokenHex,
       env,
       pushType: 'alert',
       priority: 10,
-      body
+      body,
+      expirationSeconds: nowSec + 3600,
+      collapseId: payload.approvalId || payload.questionId || payload.threadId
     })
   }
 
@@ -263,6 +277,11 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
     pushType: 'alert' | 'background'
     priority: 5 | 10
     body: string
+    /** Absolute unix-seconds deadline; APNs stores+retries until then. */
+    expirationSeconds?: number
+    /** apns-collapse-id (<=64 bytes) so re-sends of the same item replace
+     * rather than stack, and a tool-call flood can't trip per-app throttling. */
+    collapseId?: string
   }): Promise<BridgeApnsPushResult> {
     const env = this.forceEnv ?? args.env
     try {
@@ -382,10 +401,10 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
     return JSON.stringify(
       stripNullish({
         aps: {
-          alert: {
-            title: 'TaskWraith needs attention',
-            body: 'Open TaskWraith to review the latest task state.'
-          },
+          // Title/body vary by reason (the reason is already in the payload, so
+          // this leaks nothing new) — a generic "needs attention" string can't
+          // tell an approval from a finished run on the lock screen.
+          alert: remoteAttentionAlert(payload.reason),
           sound: 'default',
           'mutable-content': 1
         },
@@ -412,9 +431,11 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
     pushType: 'alert' | 'background'
     priority: 5 | 10
     body: string
+    expirationSeconds?: number
+    collapseId?: string
   }): Promise<BridgeApnsPushResult> {
     return new Promise<BridgeApnsPushResult>((resolve) => {
-      const req = args.session.request({
+      const headers: http2.OutgoingHttpHeaders = {
         ':method': 'POST',
         ':path': `/3/device/${args.deviceTokenHex}`,
         authorization: `bearer ${args.jwt}`,
@@ -423,7 +444,15 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
         'apns-priority': String(args.priority),
         'content-type': 'application/json',
         'content-length': String(Buffer.byteLength(args.body))
-      })
+      }
+      if (typeof args.expirationSeconds === 'number' && Number.isFinite(args.expirationSeconds)) {
+        headers['apns-expiration'] = String(Math.max(0, Math.floor(args.expirationSeconds)))
+      }
+      if (args.collapseId) {
+        // apns-collapse-id is capped at 64 bytes by Apple.
+        headers['apns-collapse-id'] = args.collapseId.slice(0, 64)
+      }
+      const req = args.session.request(headers)
       let status = 0
       let apnsId = ''
       let responseBody = ''
@@ -460,6 +489,29 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
 }
 
 // MARK: - Helpers
+
+/** Lock-screen title/body per reason. Privacy-safe: `reason` is already a
+ * payload field, so this adds no new information — it only makes the
+ * notification legible instead of a single generic string for every event. */
+function remoteAttentionAlert(reason: BridgeRemoteAttentionReason): { title: string; body: string } {
+  switch (reason) {
+    case 'approval':
+      return { title: 'Approval required', body: 'TaskWraith needs your approval to continue.' }
+    case 'question':
+      return { title: 'TaskWraith has a question', body: 'Open TaskWraith to answer.' }
+    case 'taskNeedsAttention':
+      return { title: 'Task needs attention', body: 'Open TaskWraith to review.' }
+    case 'runComplete':
+      return { title: 'Task complete', body: 'Your TaskWraith run finished.' }
+    case 'runFailed':
+      return { title: 'Task failed', body: 'A TaskWraith run needs your attention.' }
+    default:
+      return {
+        title: 'TaskWraith needs attention',
+        body: 'Open TaskWraith to review the latest task state.'
+      }
+  }
+}
 
 function stripNullish<T extends Record<string, unknown>>(value: T): Record<string, unknown> {
   return Object.fromEntries(
