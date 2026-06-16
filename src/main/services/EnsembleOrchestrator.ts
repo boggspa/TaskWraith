@@ -546,6 +546,47 @@ const FILE_WRITE_TOOL_NAMES = new Set([
   'create_directory'
 ])
 
+/**
+ * How many consecutive failed edits to the SAME file (with no successful
+ * write in between) end a Work Session. Small, like the other reliability
+ * guards: a participant that keeps failing the same file is stuck, and the
+ * coarse per-provider round budget would let it keep trying for dozens of
+ * rounds before giving up.
+ */
+export const MAX_CONSECUTIVE_FILE_EDIT_FAILURES = 3
+
+/**
+ * Work-session supervisor guard. Walks a single run's file-write tool
+ * activities in order and tracks the CURRENT consecutive-failure streak per
+ * file — a successful write to a file resets that file's streak, so a run that
+ * recovered after a couple of bad patches is NOT flagged. Returns the file
+ * left with the largest unresolved failure streak (or null). Pure; exported
+ * for the regression suite.
+ */
+export function worstConsecutiveFileEditFailure(
+  toolActivities: ToolActivity[] | undefined
+): { filePath: string; failures: number } | null {
+  const streak = new Map<string, number>()
+  for (const activity of toolActivities ?? []) {
+    const filePath = activity.filePath
+    if (!filePath) continue
+    if (!FILE_WRITE_TOOL_NAMES.has(stripToolNamespace(activity.toolName))) continue
+    if (activity.status === 'error') {
+      streak.set(filePath, (streak.get(filePath) ?? 0) + 1)
+    } else if (activity.status === 'success') {
+      streak.set(filePath, 0)
+    }
+    // 'running' / 'pending' (unpaired) outcomes don't move the streak.
+  }
+  let worst: { filePath: string; failures: number } | null = null
+  for (const [filePath, failures] of streak) {
+    if (failures > 0 && (!worst || failures > worst.failures)) {
+      worst = { filePath, failures }
+    }
+  }
+  return worst
+}
+
 function buildEnsembleToolActivity(
   event: any,
   startedAt: string,
@@ -2044,6 +2085,7 @@ export class EnsembleOrchestrator {
       // recording failure must never break round finalisation.
       this.recordParticipantUsage(run)
       this.finalizeRun(run, failed ? 'failed' : run.content.trim() ? 'answered' : 'skipped')
+      this.haltWorkSessionOnRepeatedFileFailures(run)
       return true
     }
     return true
@@ -2806,6 +2848,45 @@ export class EnsembleOrchestrator {
         nextEntry.discordContextSnapshots
       )
     }
+  }
+
+  /**
+   * Work-session supervisor guard: after a participant run completes, if it
+   * left a file with MAX_CONSECUTIVE_FILE_EDIT_FAILURES or more consecutive
+   * failed edits (no successful write in between), halt the Work Session
+   * instead of letting it keep queueing rounds at an unfixable file. Mirrors
+   * the duration / round budget halt — transition to `limit_reached` + a status
+   * row; the round-end logic then drops queued continuations. No-op outside an
+   * active Work Session.
+   */
+  private haltWorkSessionOnRepeatedFileFailures(run: ActiveParticipantRun): void {
+    const worst = worstConsecutiveFileEditFailure(run.toolActivities)
+    if (!worst || worst.failures < MAX_CONSECUTIVE_FILE_EDIT_FAILURES) return
+    const chat = this.deps.getChat(run.chatId)
+    const workSession = chat?.ensemble?.workSession
+    if (!chat?.ensemble || !workSession?.enabled || workSession.status !== 'active') return
+    const who = run.participant.role || run.participant.provider
+    const reason = `${who} failed to edit ${worst.filePath} ${worst.failures} times in a row with no successful write.`
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble,
+          workSession: {
+            ...workSession,
+            status: 'limit_reached',
+            endedAt: this.deps.nowIso(),
+            endedReason: reason
+          }
+        }
+      },
+      'round-updated'
+    )
+    this.appendRoundStatus(
+      run.chatId,
+      run.roundId,
+      `🛑 Work Session halted: ${reason} Queued continuations dropped — fix the file or give guidance, then start a new round.`
+    )
   }
 
   private resolveFanoutTargets(

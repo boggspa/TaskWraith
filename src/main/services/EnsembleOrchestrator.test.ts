@@ -3,6 +3,8 @@ import {
   EnsembleOrchestrator,
   parseSelfReflectivePrefix,
   resolveYieldTargetIndex,
+  worstConsecutiveFileEditFailure,
+  MAX_CONSECUTIVE_FILE_EDIT_FAILURES,
   type ParticipantProbeResult
 } from './EnsembleOrchestrator'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
@@ -4530,5 +4532,68 @@ describe('parseSelfReflectivePrefix', () => {
       prompt: 'plain prompt',
       selfReflective: false
     })
+  })
+})
+
+describe('worstConsecutiveFileEditFailure (work-session supervisor guard)', () => {
+  const act = (toolName: string, filePath: string | undefined, status: string): any => ({
+    id: 't',
+    toolName,
+    filePath,
+    status
+  })
+
+  it('returns null when there are no file-write failures', () => {
+    expect(worstConsecutiveFileEditFailure(undefined)).toBeNull()
+    expect(worstConsecutiveFileEditFailure([])).toBeNull()
+    expect(worstConsecutiveFileEditFailure([act('edit_file', 'a.ts', 'success')])).toBeNull()
+  })
+
+  it('ignores failures from non-file-write tools (e.g. a failed read)', () => {
+    expect(
+      worstConsecutiveFileEditFailure([
+        act('read_file', 'a.ts', 'error'),
+        act('read_file', 'a.ts', 'error'),
+        act('read_file', 'a.ts', 'error')
+      ])
+    ).toBeNull()
+  })
+
+  it('counts consecutive failures on the same file up to the HALT threshold', () => {
+    const r = worstConsecutiveFileEditFailure([
+      act('edit_file', 'a.ts', 'error'),
+      act('edit_file', 'a.ts', 'error'),
+      act('edit_file', 'a.ts', 'error')
+    ])
+    expect(r).toEqual({ filePath: 'a.ts', failures: MAX_CONSECUTIVE_FILE_EDIT_FAILURES })
+  })
+
+  it('resets a file streak after a successful write (a recovered run is not flagged)', () => {
+    expect(
+      worstConsecutiveFileEditFailure([
+        act('edit_file', 'a.ts', 'error'),
+        act('edit_file', 'a.ts', 'error'),
+        act('edit_file', 'a.ts', 'success')
+      ])
+    ).toBeNull()
+  })
+
+  it('tracks streaks per file and returns the worst unresolved one', () => {
+    const r = worstConsecutiveFileEditFailure([
+      act('edit_file', 'a.ts', 'error'),
+      act('write_file', 'b.ts', 'error'),
+      act('write_file', 'b.ts', 'error'),
+      act('edit_file', 'a.ts', 'success') // a.ts recovered; b.ts still failing x2
+    ])
+    expect(r).toEqual({ filePath: 'b.ts', failures: 2 })
+  })
+
+  it('strips tool namespaces and ignores unpaired (running) activities', () => {
+    const r = worstConsecutiveFileEditFailure([
+      act('mcp__taskwraith__edit_file', 'a.ts', 'error'),
+      act('edit_file', 'a.ts', 'running'), // unpaired → ignored
+      act('mcp__taskwraith__edit_file', 'a.ts', 'error')
+    ])
+    expect(r).toEqual({ filePath: 'a.ts', failures: 2 })
   })
 })
