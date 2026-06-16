@@ -16,6 +16,16 @@ describe('cursorWriteCapable', () => {
 
 describe('buildCursorCliArgs', () => {
   const base = { prompt: 'do a thing', workspace: '/ws' }
+  const discordPrompt = [
+    'Summarize build status.',
+    '',
+    'External Discord channel snapshot context.',
+    '<discord_messages channel="123" encoding="markdown-fence">',
+    '``` text',
+    '[2026-06-16T12:00:00.000Z] alice: CI failed on linux.',
+    '```',
+    '</discord_messages>'
+  ].join('\n')
 
   it('always uses headless stream-json with --trust + --workspace', () => {
     const args = buildCursorCliArgs(base)
@@ -25,6 +35,13 @@ describe('buildCursorCliArgs', () => {
     expect(args.join(' ')).toContain('--workspace /ws')
     // prompt is the trailing positional
     expect(args[args.length - 1]).toBe('do a thing')
+  })
+
+  it('preserves Discord context prompt text as the trailing positional prompt', () => {
+    const args = buildCursorCliArgs({ ...base, prompt: discordPrompt, approvalMode: 'default' })
+
+    expect(args[args.length - 1]).toBe(discordPrompt)
+    expect(args[args.length - 1]).toContain('External Discord channel snapshot context')
   })
 
   it('read-only mode passes --mode plan', () => {

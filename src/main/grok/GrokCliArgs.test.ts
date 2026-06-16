@@ -34,6 +34,16 @@ describe('normalizeGrokEffortFlag', () => {
 
 describe('buildGrokCliArgs', () => {
   const base = { prompt: 'explain this repo', workspace: '/tmp/ws' }
+  const discordPrompt = [
+    'Summarize build status.',
+    '',
+    'External Discord channel snapshot context.',
+    '<discord_messages channel="123" encoding="markdown-fence">',
+    '``` text',
+    '[2026-06-16T12:00:00.000Z] alice: CI failed on linux.',
+    '```',
+    '</discord_messages>'
+  ].join('\n')
 
   it('emits the read-only baseline argv', () => {
     const args = buildGrokCliArgs(base)
@@ -97,6 +107,17 @@ describe('buildGrokCliArgs', () => {
     expect(buildGrokCliArgs({ ...base, model: 'claude-opus-4-7' })).not.toContain('--model')
     const args = buildGrokCliArgs({ ...base, model: 'grok-code-fast-1' })
     expect(args[args.indexOf('--model') + 1]).toBe('grok-code-fast-1')
+  })
+
+  it('preserves Discord context prompt text as the Grok print prompt', () => {
+    const args = buildGrokCliArgs({
+      ...base,
+      prompt: discordPrompt,
+      approvalMode: 'default'
+    })
+
+    expect(args[args.indexOf('-p') + 1]).toBe(discordPrompt)
+    expect(args[args.indexOf('-p') + 1]).toContain('External Discord channel snapshot context')
   })
 
   it('maps reasoning effort onto --effort only for documented levels', () => {
@@ -192,6 +213,17 @@ describe('grokWriteCapable', () => {
 })
 
 describe('applyGrokPromptPreamble', () => {
+  const discordPrompt = [
+    'Summarize build status.',
+    '',
+    'External Discord channel snapshot context.',
+    '<discord_messages channel="123" encoding="markdown-fence">',
+    '``` text',
+    '[2026-06-16T12:00:00.000Z] alice: CI failed on linux.',
+    '```',
+    '</discord_messages>'
+  ].join('\n')
+
   it('prepends the WRITE steer for a write-capable seat', () => {
     const out = applyGrokPromptPreamble('write the files', true)
     expect(out.startsWith(GROK_WRITE_MODE_PROMPT_PREAMBLE)).toBe(true)
@@ -224,6 +256,14 @@ describe('applyGrokPromptPreamble', () => {
     expect(lower).toContain('write')
     expect(lower).toContain('edit')
     expect(lower).toMatch(/do not end|don't end|adapt|switch/)
+  })
+
+  it('prepends Grok steering without dropping Discord context', () => {
+    const out = applyGrokPromptPreamble(discordPrompt, true)
+
+    expect(out.startsWith(GROK_WRITE_MODE_PROMPT_PREAMBLE)).toBe(true)
+    expect(out.endsWith(discordPrompt)).toBe(true)
+    expect(out).toContain('External Discord channel snapshot context')
   })
 })
 
