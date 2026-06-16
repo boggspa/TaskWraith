@@ -868,6 +868,7 @@ declare global {
         }
         encryptionAvailable: boolean
         registeredDeviceCount: number
+        pusherIsNoop: boolean
       }>
       selectApnsKeyFile: () => Promise<string | null>
       setApnsConfig: (input: {

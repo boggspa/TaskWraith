@@ -20060,7 +20060,14 @@ if (isGeminiMcpBridgeProcess) {
         configuredAt: config?.configuredAt,
         lastTestResult: config?.lastTestResult,
         encryptionAvailable,
-        registeredDeviceCount: bridgeApnsTokenStoreRef?.size() ?? 0
+        registeredDeviceCount: bridgeApnsTokenStoreRef?.size() ?? 0,
+        // LIVE inert-state signal: true when no real pusher is active (null ref
+        // or NoopApnsPusher). Distinct from `configured` (persisted settings),
+        // which stays true even if the .p8 safeStorage decrypt failed at
+        // startup and the live pusher fell back to Noop.
+        pusherIsNoop: Boolean(
+          bridgeApnsPusherRef === null || (bridgeApnsPusherRef as { isNoop?: boolean }).isNoop
+        )
       }
     })
 

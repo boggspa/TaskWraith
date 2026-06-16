@@ -36,6 +36,7 @@ type ApnsStatus = {
   lastTestResult?: LastTestResult
   encryptionAvailable: boolean
   registeredDeviceCount: number
+  pusherIsNoop: boolean
 }
 
 const HELP_BLURB =
@@ -192,11 +193,22 @@ export function ApnsConfigPanel(): React.JSX.Element {
       {error && <div className="settings-error">{error}</div>}
       {info && <div className="settings-hint apns-config-info">{info}</div>}
 
+      {/* Live "inert but devices registered" warning: the persisted config can
+          read as configured while the running pusher is the Noop (e.g. the .p8
+          failed to decrypt at startup), so paired phones silently get no push. */}
+      {status?.pusherIsNoop && (status?.registeredDeviceCount ?? 0) > 0 && (
+        <div className="settings-warning">
+          APNs is not active — {status.registeredDeviceCount} paired device
+          {status.registeredDeviceCount === 1 ? '' : 's'} will not receive push
+          notifications. Add your .p8 key, Key ID, and Team ID below.
+        </div>
+      )}
+
       <section className="bridge-networking-section">
         <header className="bridge-networking-section-header">
           <span className="bridge-networking-section-title">Status</span>
           <StatusPill
-            kind={status?.configured ? 'ok' : 'idle'}
+            kind={status?.pusherIsNoop ? 'warn' : status?.configured ? 'ok' : 'idle'}
             label={status?.configured ? 'Configured' : 'Not configured'}
           />
         </header>

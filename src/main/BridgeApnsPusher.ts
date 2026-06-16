@@ -95,6 +95,13 @@ export interface BridgeApnsPushResult {
 }
 
 export interface BridgeApnsPusher {
+  /** Discriminator: present + true ONLY on the no-op pusher (no APNs
+   * credentials configured). Lets callers detect the LIVE "inert" state that
+   * the persisted settings `configured` flag misses — e.g. a safeStorage
+   * decrypt failure leaves settings saying configured while the live pusher
+   * fell back to NoopApnsPusher. */
+  readonly isNoop?: true
+
   /** Push a "tool call needs approval" notification to a paired iOS device.
    * Returns a structured result so the caller (ApprovalService) can log
    * whether the push went out. Never throws — failed pushes are surfaced
@@ -143,6 +150,7 @@ export interface BridgeApnsPusher {
  * Apple Developer credentials are still in flight.
  */
 export class NoopApnsPusher implements BridgeApnsPusher {
+  readonly isNoop = true
   private readonly log: (line: string) => void
 
   constructor(log?: (line: string) => void) {
