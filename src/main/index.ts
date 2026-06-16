@@ -343,6 +343,10 @@ import {
 } from './RunEventBus'
 import { AppStore } from './store'
 import { assertSafeChatId } from './ChatPath'
+import {
+  buildChatMarkdownTranscript,
+  estimateChatMarkdownTranscriptChars
+} from './TranscriptMarkdownExport'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
 import {
   clearStickyAppWatch,
@@ -19458,6 +19462,52 @@ if (isGeminiMcpBridgeProcess) {
       )
       await fs.writeFile(filePath, image.toPNG())
       return [filePath]
+    })
+
+    ipcMain.handle('copy-chat-markdown-transcript', async (event, chatId: string) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender)
+      if (!senderWindow || senderWindow.isDestroyed()) {
+        return { ok: false, reason: 'unauthorized' }
+      }
+      assertSafeChatId(chatId, 'copy-chat-markdown-transcript chatId')
+      const chat = AppStore.getChat(chatId)
+      if (!chat) return { ok: false, reason: 'not-found' }
+      if (chat.archived) return { ok: false, reason: 'archived' }
+      if (!chat.messages?.length) return { ok: false, reason: 'empty' }
+      const estimatedCharCount = estimateChatMarkdownTranscriptChars(chat)
+      if (estimatedCharCount > 2_000_000) {
+        return {
+          ok: false,
+          reason: 'too-large',
+          messageCount: chat.messages.length,
+          charCount: estimatedCharCount,
+          omissions: ['transcript too large for clipboard copy']
+        }
+      }
+      const workspace = chat.workspaceId
+        ? AppStore.getWorkspaces().find((candidate) => candidate.id === chat.workspaceId) || null
+        : null
+      const result = buildChatMarkdownTranscript(chat, {
+        workspace,
+        homeDir: os.homedir()
+      })
+      if (!result.markdown.trim()) return { ok: false, reason: 'empty' }
+      if (result.charCount > 2_000_000) {
+        return {
+          ok: false,
+          reason: 'too-large',
+          messageCount: result.messageCount,
+          charCount: result.charCount,
+          omissions: result.omissions
+        }
+      }
+      clipboard.writeText(result.markdown, 'clipboard')
+      return {
+        ok: true,
+        messageCount: result.messageCount,
+        charCount: result.charCount,
+        omissions: result.omissions
+      }
     })
 
     ipcMain.handle(

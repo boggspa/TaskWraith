@@ -275,6 +275,21 @@ interface AgentApprovalRequest {
   actions: AgentApprovalAction[]
 }
 
+type CopyChatMarkdownTranscriptResult =
+  | {
+      ok: true
+      messageCount: number
+      charCount: number
+      omissions: string[]
+    }
+  | {
+      ok: false
+      reason: 'not-found' | 'archived' | 'empty' | 'too-large' | 'unauthorized'
+      messageCount?: number
+      charCount?: number
+      omissions?: string[]
+    }
+
 declare global {
   interface Window {
     api: {
@@ -283,6 +298,7 @@ declare global {
       selectWorkspace: () => Promise<WorkspaceRecord | null>
       selectImageFiles: () => Promise<string[]>
       saveClipboardImageAttachment: () => Promise<string[]>
+      copyChatMarkdownTranscript: (chatId: string) => Promise<CopyChatMarkdownTranscriptResult>
       selectExternalPathGrant: (
         access?: 'read' | 'write',
         provider?: string
