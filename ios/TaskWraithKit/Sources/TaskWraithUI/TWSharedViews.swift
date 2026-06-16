@@ -3448,6 +3448,9 @@ public struct EditableRosterStrip: View {
     @State private var draft: [RemoteSessionModel.RosterDraftEntry] = []
     @State private var editingId: String? = nil
     @State private var draggingId: String? = nil
+    /// Id-order we last committed; suppress reconcile until the Mac echoes a
+    /// matching order so an in-flight snapshot can't snap a reorder back.
+    @State private var pendingOrderIds: [String]? = nil
 
     public init(
         model: RemoteSessionModel, threadId: String, workspaceId: String,
@@ -3478,7 +3481,11 @@ public struct EditableRosterStrip: View {
                     model: entry.model,
                     role: entry.role ?? TWTheme.providerLabel(entry.provider),
                     brief: entry.brief ?? "",
-                    enabled: entry.enabled ?? true
+                    enabled: entry.enabled ?? true,
+                    permissionPresetId: entry.permissionPresetId,
+                    reasoningEffort: entry.reasoningEffort,
+                    fastModeEnabled: entry.fastModeEnabled ?? false,
+                    thinkingEnabled: entry.thinkingEnabled ?? false
                 )
             }
     }
@@ -3553,7 +3560,19 @@ public struct EditableRosterStrip: View {
         .onAppear { if draft.isEmpty { draft = remoteRoster } }
         .onChange(of: remoteRoster) { _, fresh in
             // Reconcile from the Mac unless mid-edit (popover open / drag).
-            if editingId == nil, draggingId == nil { draft = fresh }
+            guard editingId == nil, draggingId == nil else { return }
+            // Don't let an in-flight snapshot clobber a just-committed reorder:
+            // hold the optimistic order until the Mac echoes a matching id-order
+            // (it force-broadcasts it). Adopt immediately if membership changed.
+            if let pending = pendingOrderIds {
+                let freshIds = fresh.map(\.id)
+                if freshIds == pending || Set(freshIds) != Set(pending) {
+                    pendingOrderIds = nil
+                    draft = fresh
+                }
+                return
+            }
+            draft = fresh
         }
         .sheet(
             item: Binding(
@@ -3663,6 +3682,7 @@ public struct EditableRosterStrip: View {
 
     private func commit() {
         guard !draft.isEmpty else { return }
+        pendingOrderIds = draft.map(\.id)
         model.updateEnsembleRoster(
             workspaceId: workspaceId, threadId: threadId, entries: draft)
     }
@@ -3708,6 +3728,26 @@ struct RosterChipEditor: View {
     let onRemove: () -> Void
     @Environment(\.dismiss) private var dismiss
 
+    private var participantCatalog: ProviderModelCatalog? {
+        catalogs.first { $0.provider.lowercased() == entry.provider.lowercased() }
+    }
+    private var reasoningEfforts: [String] {
+        twReasoningModelOption(in: participantCatalog, modelId: entry.model)?
+            .supportedReasoningEfforts?.map(\.reasoningEffort) ?? []
+    }
+    private var permissionBinding: Binding<String> {
+        Binding(
+            get: { entry.permissionPresetId ?? "default" },
+            set: { entry.permissionPresetId = $0 }
+        )
+    }
+    private var reasoningBinding: Binding<String> {
+        Binding(
+            get: { entry.reasoningEffort ?? reasoningEfforts.first ?? "medium" },
+            set: { entry.reasoningEffort = $0 }
+        )
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -3729,6 +3769,7 @@ struct RosterChipEditor: View {
                             Button(TWTheme.providerLabel(provider)) {
                                 entry.provider = provider
                                 entry.model = nil
+                                entry.reasoningEffort = nil
                             }
                         }
                     } label: {
@@ -3757,6 +3798,35 @@ struct RosterChipEditor: View {
                             Text(entry.model ?? "CLI Default")
                             Spacer()
                             Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                        }
+                    }
+                }
+                Section("Permission") {
+                    Picker("Approval", selection: permissionBinding) {
+                        Text("Plan / Read-only").tag("read_only")
+                        Text("Default approval").tag("default")
+                        Text("Full workspace").tag("workspace_write")
+                    }
+                    .pickerStyle(.menu)
+                }
+                if entry.provider.lowercased() == "kimi" {
+                    Section("Reasoning") {
+                        Toggle("Extended thinking", isOn: $entry.thinkingEnabled)
+                            .tint(TWTheme.providerAccent(entry.provider))
+                    }
+                } else if !reasoningEfforts.isEmpty {
+                    Section("Reasoning") {
+                        Picker("Effort", selection: reasoningBinding) {
+                            ForEach(reasoningEfforts, id: \.self) { effort in
+                                Text(twReasoningDisplayLabel(effort)).tag(effort)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        if entry.provider.lowercased() == "codex"
+                            || entry.provider.lowercased() == "claude"
+                        {
+                            Toggle("Fast mode", isOn: $entry.fastModeEnabled)
+                                .tint(TWTheme.providerAccent(entry.provider))
                         }
                     }
                 }

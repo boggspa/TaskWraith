@@ -520,9 +520,17 @@ public struct RemoteEnsembleState: Codable, Sendable {
         public let order: Int?
         public let model: String?
         public let brief: String?
+        /// Per-participant approval preset + reasoning (desktop parity). Optional
+        /// so older Mac builds (which didn't project them) still decode.
+        public let permissionPresetId: String?
+        public let reasoningEffort: String?
+        public let fastModeEnabled: Bool?
+        public let thinkingEnabled: Bool?
         public init(
             id: String, provider: String, role: String?, enabled: Bool?,
-            order: Int?, model: String?, brief: String?
+            order: Int?, model: String?, brief: String?,
+            permissionPresetId: String? = nil, reasoningEffort: String? = nil,
+            fastModeEnabled: Bool? = nil, thinkingEnabled: Bool? = nil
         ) {
             self.id = id
             self.provider = provider
@@ -531,6 +539,10 @@ public struct RemoteEnsembleState: Codable, Sendable {
             self.order = order
             self.model = model
             self.brief = brief
+            self.permissionPresetId = permissionPresetId
+            self.reasoningEffort = reasoningEffort
+            self.fastModeEnabled = fastModeEnabled
+            self.thinkingEnabled = thinkingEnabled
         }
     }
 }

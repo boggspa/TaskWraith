@@ -1581,9 +1581,18 @@ public final class RemoteSessionModel: ObservableObject {
         public var role: String
         public var brief: String
         public var enabled: Bool
+        /// Per-participant approval preset (read_only | default | workspace_write).
+        public var permissionPresetId: String?
+        /// Per-participant reasoning effort (provider-interpreted); Kimi uses
+        /// thinkingEnabled instead.
+        public var reasoningEffort: String?
+        public var fastModeEnabled: Bool
+        public var thinkingEnabled: Bool
         public init(
             id: String, provider: String, model: String?, role: String,
-            brief: String, enabled: Bool
+            brief: String, enabled: Bool,
+            permissionPresetId: String? = nil, reasoningEffort: String? = nil,
+            fastModeEnabled: Bool = false, thinkingEnabled: Bool = false
         ) {
             self.id = id
             self.provider = provider
@@ -1591,6 +1600,10 @@ public final class RemoteSessionModel: ObservableObject {
             self.role = role
             self.brief = brief
             self.enabled = enabled
+            self.permissionPresetId = permissionPresetId
+            self.reasoningEffort = reasoningEffort
+            self.fastModeEnabled = fastModeEnabled
+            self.thinkingEnabled = thinkingEnabled
         }
     }
 
@@ -1604,6 +1617,16 @@ public final class RemoteSessionModel: ObservableObject {
             if let model = entry.model, !model.isEmpty { dict["model"] = model }
             if !entry.role.isEmpty { dict["role"] = entry.role }
             dict["brief"] = entry.brief
+            if let preset = entry.permissionPresetId, !preset.isEmpty {
+                dict["permissionPresetId"] = preset
+            }
+            if let reasoning = entry.reasoningEffort, !reasoning.isEmpty {
+                dict["reasoningEffort"] = reasoning
+            }
+            // Booleans sent explicitly so the user can toggle them OFF (the Mac
+            // applies them when present; omitting would preserve the old value).
+            dict["fastModeEnabled"] = entry.fastModeEnabled
+            dict["thinkingEnabled"] = entry.thinkingEnabled
             return dict
         }
         send(
