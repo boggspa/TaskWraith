@@ -290,6 +290,14 @@ type CopyChatMarkdownTranscriptResult =
       omissions?: string[]
     }
 
+interface SpellcheckContextResult {
+  x: number
+  y: number
+  misspelledWord: string
+  dictionarySuggestions: string[]
+  createdAt: number
+}
+
 declare global {
   interface Window {
     api: {
@@ -298,6 +306,12 @@ declare global {
       selectWorkspace: () => Promise<WorkspaceRecord | null>
       selectImageFiles: () => Promise<string[]>
       saveClipboardImageAttachment: () => Promise<string[]>
+      getLastSpellcheckContext: (point: {
+        x: number
+        y: number
+      }) => Promise<SpellcheckContextResult | null>
+      replaceMisspelling: (suggestion: string) => Promise<{ ok: true }>
+      addWordToSpellCheckerDictionary: (word: string) => Promise<{ ok: true }>
       copyChatMarkdownTranscript: (chatId: string) => Promise<CopyChatMarkdownTranscriptResult>
       selectExternalPathGrant: (
         access?: 'read' | 'write',

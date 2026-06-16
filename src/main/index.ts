@@ -515,6 +515,11 @@ import {
   createAuditTranscriptMessage,
   type AuditTranscriptMessageKind
 } from './audit/AuditTranscriptMessages'
+import {
+  sanitizeSpellcheckContext,
+  spellcheckContextMatchesPoint,
+  type SpellcheckContextSnapshot
+} from './SpellcheckContext'
 import { AuditOrchestrator } from './audit/AuditOrchestrator'
 import { AuditRunTracker } from './audit/AuditRunTracker'
 import { createAuditGatesRunner } from './audit/AuditGatesRunner'
@@ -705,6 +710,7 @@ import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
 
 let mainWindow: BrowserWindow | null = null
 const workspacePopoutWindows = new Map<string, BrowserWindow>()
+const latestSpellcheckContextByWebContentsId = new Map<number, SpellcheckContextSnapshot>()
 let messagesPermissionHelperWindow: BrowserWindow | null = null
 let geminiProcess: ChildProcess | null = null
 let geminiSessionProcess: pty.IPty | null = null
@@ -14223,6 +14229,21 @@ function updateAppShellStatsPollingMode(): void {
   appShellStatsService.setWindowActive(isMainWindowStatsActive())
 }
 
+function attachSpellcheckContextTracking(targetWindow: BrowserWindow): void {
+  const webContents = targetWindow.webContents
+  webContents.on('context-menu', (_event, params) => {
+    const snapshot = sanitizeSpellcheckContext(params)
+    if (snapshot) {
+      latestSpellcheckContextByWebContentsId.set(webContents.id, snapshot)
+    } else {
+      latestSpellcheckContextByWebContentsId.delete(webContents.id)
+    }
+  })
+  webContents.on('destroyed', () => {
+    latestSpellcheckContextByWebContentsId.delete(webContents.id)
+  })
+}
+
 function createWindow(): void {
   const isMac = process.platform === 'darwin'
   const settings = AppStore.getSettings()
@@ -14260,6 +14281,8 @@ function createWindow(): void {
       experimentalFeatures: false
     }
   })
+
+  attachSpellcheckContextTracking(mainWindow)
 
   if (initialPlacement.isMaximized) {
     mainWindow.maximize()
@@ -14466,6 +14489,7 @@ async function openWorkspacePopout(input: unknown): Promise<{ ok: true }> {
   })
 
   workspacePopoutWindows.set(key, win)
+  attachSpellcheckContextTracking(win)
   win.webContents.setWindowOpenHandler((details) => {
     openSafeShellTargetDetached(details.url)
     return { action: 'deny' }
@@ -19496,6 +19520,23 @@ if (isGeminiMcpBridgeProcess) {
       )
       await fs.writeFile(filePath, image.toPNG())
       return [filePath]
+    })
+
+    ipcMain.handle('spellcheck:get-last-context', (event, point: unknown) => {
+      const snapshot = latestSpellcheckContextByWebContentsId.get(event.sender.id) || null
+      return spellcheckContextMatchesPoint(snapshot, point) ? snapshot : null
+    })
+
+    ipcMain.handle('spellcheck:replace-misspelling', (event, suggestion: string) => {
+      const replacement = requireNonEmptyString(suggestion, 'Spelling suggestion').slice(0, 80)
+      event.sender.replaceMisspelling(replacement)
+      return { ok: true }
+    })
+
+    ipcMain.handle('spellcheck:add-word-to-dictionary', (event, word: string) => {
+      const dictionaryWord = requireNonEmptyString(word, 'Dictionary word').slice(0, 80)
+      event.sender.session.addWordToSpellCheckerDictionary(dictionaryWord)
+      return { ok: true }
     })
 
     ipcMain.handle('copy-chat-markdown-transcript', async (event, chatId: string) => {

@@ -8742,13 +8742,28 @@ button.diff-file-row {
 
 .composer-textarea-context-menu {
   z-index: 10060;
-  min-width: 188px;
+  min-width: 212px;
+  max-width: min(320px, calc(100vw - 16px));
   padding: 6px;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   background: color-mix(in srgb, var(--surface-elevated, var(--surface-base)) 96%, transparent);
   box-shadow: 0 12px 32px color-mix(in srgb, var(--text-primary) 16%, transparent);
   -webkit-app-region: no-drag;
+}
+
+.composer-textarea-context-menu-heading {
+  padding: 5px 10px 3px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.composer-textarea-context-menu-separator {
+  height: 1px;
+  margin: 5px 4px;
+  background: color-mix(in srgb, var(--border) 72%, transparent);
 }
 
 .composer-textarea-context-menu-item {
@@ -8766,6 +8781,13 @@ button.diff-file-row {
   font-size: 13px;
   text-align: left;
   cursor: pointer;
+}
+
+.composer-textarea-context-menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-textarea-context-menu-item:hover:not(:disabled),

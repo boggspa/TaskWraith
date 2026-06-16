@@ -42,6 +42,12 @@ const api = {
   selectWorkspace: () => ipcRenderer.invoke('select-workspace'),
   selectImageFiles: () => ipcRenderer.invoke('select-image-files'),
   saveClipboardImageAttachment: () => ipcRenderer.invoke('save-clipboard-image-attachment'),
+  getLastSpellcheckContext: (point: { x: number; y: number }) =>
+    ipcRenderer.invoke('spellcheck:get-last-context', point),
+  replaceMisspelling: (suggestion: string) =>
+    ipcRenderer.invoke('spellcheck:replace-misspelling', suggestion),
+  addWordToSpellCheckerDictionary: (word: string) =>
+    ipcRenderer.invoke('spellcheck:add-word-to-dictionary', word),
   copyChatMarkdownTranscript: (chatId: string) =>
     ipcRenderer.invoke('copy-chat-markdown-transcript', chatId),
   // Phase J1 (composer unification): the picker is now cross-provider —

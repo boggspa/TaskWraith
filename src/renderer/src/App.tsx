@@ -18818,6 +18818,7 @@ function App(): React.JSX.Element {
                 <ComposerLinkPreviewStrip text={prompt} />
                 <ComposerTextareaContextMenu
                   anchor={composerContextMenu.anchor}
+                  spellcheckContext={composerContextMenu.spellcheckContext}
                   textareaRef={composerTextareaRef}
                   onValueChange={setPrompt}
                   onClose={() => composerContextMenu.setAnchor(null)}
@@ -21366,6 +21367,7 @@ function App(): React.JSX.Element {
                 </div>
                 <ComposerTextareaContextMenu
                   anchor={sideComposerContextMenu.anchor}
+                  spellcheckContext={sideComposerContextMenu.spellcheckContext}
                   textareaRef={sideComposerTextareaRef}
                   onValueChange={(value) => setChatPromptDraft(sideChat.appChatId, value)}
                   onClose={() => sideComposerContextMenu.setAnchor(null)}
