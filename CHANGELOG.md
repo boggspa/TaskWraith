@@ -4,6 +4,22 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.5.5 - 2026-06-16
+
+### Fixed
+- **iOS Ensemble participant editing.** Each participant chip can now set its own
+  approval mode (Plan / Default / Full workspace) and reasoning/thinking (effort
+  for Codex/Claude/Grok, extended thinking for Kimi, plus fast mode) from the
+  phone — previously only provider / model / role were editable there.
+- **iOS Ensemble reorder.** The Earlier / Later (and drag) participant reorder no
+  longer snaps back: the new speaking order is confirmed to the phone immediately
+  and held until the desktop echoes it.
+- **Ensemble reasoning on concurrent rounds.** Per-participant reasoning / thinking
+  is now applied on concurrent (fan-out) rounds too, not only serial turns.
+
+The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
+(AppImage/deb) installers are attached by CI.
+
 ## 1.5.4 - 2026-06-16
 
 ### Fixed
