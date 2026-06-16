@@ -3,6 +3,7 @@ import { composeRunPrompt, type ComposeRunPromptResult } from '../PromptComposit
 import {
   formatDiscordContextPromptAppendix,
   normalizeDiscordContextSnapshots,
+  redactDiscordContextReadMetadataForHistory,
   type DiscordContextReadMetadata,
   type DiscordContextSnapshot
 } from '../channels/DiscordContextService'
@@ -297,7 +298,11 @@ export class ComposerService {
         uiNoticeMessage: composed.uiNoticeMessage,
         imagePaths,
         ...(discordContextSnapshots.length > 0
-          ? { discordContextReads: discordContextSnapshots.map((snapshot) => snapshot.metadata) }
+          ? {
+              discordContextReads: discordContextSnapshots.map((snapshot) =>
+                redactDiscordContextReadMetadataForHistory(snapshot.metadata)
+              )
+            }
           : {}),
         planModeParsed: planParsed.planMode,
         ...(selfReflectiveRequested ? { selfReflectiveRequested: true } : {})

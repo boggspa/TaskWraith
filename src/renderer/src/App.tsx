@@ -8265,6 +8265,19 @@ function App(): React.JSX.Element {
     }
   }
 
+  const discordContextSelectionQueueKey = (
+    selection: DiscordContextSelection | null | undefined
+  ): string =>
+    selection
+      ? [
+          selection.guildId || '',
+          selection.channelId,
+          selection.limit,
+          selection.channelName || '',
+          selection.guildName || ''
+        ].join(':')
+      : ''
+
   const getQueuedDesktopRunJobs = (sourceJobs: RunQueueJob[] = runQueueJobsRef.current) => {
     const cachedOrder = new Map<string, number>()
     queuedRunsRef.current.forEach((request, index) => {
@@ -8550,7 +8563,9 @@ function App(): React.JSX.Element {
         job.provider === targetProvider &&
         job.chatId === targetChatId &&
         (job.request?.prompt || job.promptPreview || '') === queuedRequest.prompt &&
-        job.request?.selectedModelType === queuedRequest.selectedModelType
+        job.request?.selectedModelType === queuedRequest.selectedModelType &&
+        discordContextSelectionQueueKey(job.request?.discordContextSelection) ===
+          discordContextSelectionQueueKey(queuedRequest.discordContextSelection)
     )
     if (duplicateQueuedRun) {
       updateRunQueueJobStatus(queuedRequest.appRunId, 'cancelled', 'Duplicate queued run ignored.')
@@ -8654,20 +8669,24 @@ function App(): React.JSX.Element {
         ? `Range: ${metadata.firstTimestamp} to ${metadata.lastTimestamp}`
         : '',
       '',
-      'Preview:',
-      ...(metadata.previewMessages.length > 0
-        ? metadata.previewMessages.map(
-            (message) =>
-              `${message.timestamp || 'unknown-time'} ${message.authorName}: ${message.contentPreview}`
-          )
-        : ['No message preview was available.']),
-      '',
+      'Preview omitted: Discord message text is run-only and is not persisted in chat history.',
       metadata.truncated
         ? 'Full Discord context was capped before being supplied to the model.'
         : 'Full content was supplied to the model as external untrusted context.'
     ]
     return lines.filter((line, index) => line || lines[index - 1]).join('\n')
   }
+
+  const redactDiscordContextReadMetadataForHistory = (
+    metadata: DiscordContextReadMetadata
+  ): DiscordContextReadMetadata => ({
+    ...metadata,
+    previewMessages: []
+  })
+
+  const redactDiscordContextReadsForHistory = (
+    reads: DiscordContextReadMetadata[]
+  ): DiscordContextReadMetadata[] => reads.map(redactDiscordContextReadMetadataForHistory)
 
   const createDiscordContextToolMessage = (
     reads: DiscordContextReadMetadata[],
@@ -8726,6 +8745,7 @@ function App(): React.JSX.Element {
       const runWorkspace = isGlobalRun ? null : request.workspaceRecord || currentWorkspace
       if (!runChat || (!isGlobalRun && !runWorkspace) || !request.prompt.trim()) return
       const runProvider = request.provider || currentProvider
+      const currentRunId = request.appRunId || Date.now().toString()
       if (!isGlobalRun) {
         const grantPreflight = findExternalPathGrantGaps({
           chat: runChat,
@@ -8741,6 +8761,36 @@ function App(): React.JSX.Element {
             pendingRun: request,
             trigger: 'preflight'
           })
+          return
+        }
+      }
+      if (request.discordContextSelection && !request.discordContextSnapshots?.length) {
+        try {
+          const snapshot = await window.api.readDiscordContext(request.discordContextSelection)
+          request = {
+            ...request,
+            discordContextSnapshots: [snapshot]
+          }
+          appendThreadRawLog(runChat.appChatId, {
+            type: 'tool',
+            content: discordContextToolResult(snapshot.metadata)
+          })
+        } catch (error) {
+          const message = `Failed to read Discord context: ${redactLog(String(error))}`
+          updateRunQueueJobStatus(currentRunId, 'failed', 'Discord context read failed.', message)
+          appendThreadRawLog(runChat.appChatId, { type: 'stderr', content: message })
+          updateChatById(runChat.appChatId, (source) => ({
+            ...source,
+            messages: [
+              ...source.messages,
+              {
+                id: createMessageId(),
+                role: 'error',
+                content: message,
+                timestamp: new Date().toISOString()
+              }
+            ]
+          }))
           return
         }
       }
@@ -8762,6 +8812,9 @@ function App(): React.JSX.Element {
             path: attachment.path,
             name: attachment.name
           })),
+          ...(request.discordContextSnapshots?.length
+            ? { discordContextSnapshots: request.discordContextSnapshots }
+            : {}),
           // A2 (1.0.3) — DM the selected chip only when the user
           // sent with Cmd/Ctrl held. The orchestrator filters
           // participants to just this one for the round.
@@ -8813,37 +8866,6 @@ function App(): React.JSX.Element {
 
       const requestedRunWorktree =
         !isGlobalRun && runProvider === 'gemini' ? request.geminiWorktree : undefined
-      const currentRunId = request.appRunId || Date.now().toString()
-      if (request.discordContextSelection && !request.discordContextSnapshots?.length) {
-        try {
-          const snapshot = await window.api.readDiscordContext(request.discordContextSelection)
-          request = {
-            ...request,
-            discordContextSnapshots: [snapshot]
-          }
-          appendThreadRawLog(runChat.appChatId, {
-            type: 'tool',
-            content: discordContextToolResult(snapshot.metadata)
-          })
-        } catch (error) {
-          const message = `Failed to read Discord context: ${redactLog(String(error))}`
-          updateRunQueueJobStatus(currentRunId, 'failed', 'Discord context read failed.', message)
-          appendThreadRawLog(runChat.appChatId, { type: 'stderr', content: message })
-          updateChatById(runChat.appChatId, (source) => ({
-            ...source,
-            messages: [
-              ...source.messages,
-              {
-                id: createMessageId(),
-                role: 'error',
-                content: message,
-                timestamp: new Date().toISOString()
-              }
-            ]
-          }))
-          return
-        }
-      }
       let composedPayload: Awaited<ReturnType<typeof window.api.composeRun>>
       try {
         composedPayload = await window.api.composeRun({
@@ -8913,9 +8935,13 @@ function App(): React.JSX.Element {
           : undefined
       const finalPrompt = composerMetadata.finalPrompt
       const discordContextReads =
-        composerMetadata.discordContextReads ||
-        request.discordContextSnapshots?.map((snapshot) => snapshot.metadata) ||
-        []
+        composerMetadata.discordContextReads?.length
+          ? redactDiscordContextReadsForHistory(composerMetadata.discordContextReads)
+          : request.discordContextSnapshots?.length
+            ? redactDiscordContextReadsForHistory(
+                request.discordContextSnapshots.map((snapshot) => snapshot.metadata)
+              )
+            : []
       const displayFinalPrompt = request.displayPrompt ? request.displayPrompt : finalPrompt
       const modelToPass =
         composedPayload.model ||
@@ -9078,9 +9104,13 @@ function App(): React.JSX.Element {
         }
       })
 
+      const promptLogContent =
+        discordContextReads.length > 0
+          ? `Prompt being sent: ${displayFinalPrompt}\n\n[${discordContextReads.length} Discord context snapshot(s) supplied to provider; run-only Discord message content omitted from Inspector log.]`
+          : `Exact prompt being sent: ${contextualPrompt}`
       const initialRawLogs: RawLogEntry[] = [
         { type: 'info', content: contextApplicationLog },
-        { type: 'info', content: `Exact prompt being sent: ${contextualPrompt}` },
+        { type: 'info', content: promptLogContent },
         { type: 'info', content: `Requested model: ${modelToPass}` },
         { type: 'info', content: `Approval Mode: ${modeToPass}` },
         ...(geminiResumeSkippedReason
@@ -19414,17 +19444,12 @@ function App(): React.JSX.Element {
                                 {
                                   id: 'discord-context',
                                   label: 'Discord context',
-                                  description: isCurrentEnsembleChat
-                                    ? 'Solo chats only'
-                                    : currentDiscordContextSelection
-                                      ? `#${currentDiscordContextSelection.channelName || currentDiscordContextSelection.channelId} · last ${currentDiscordContextSelection.limit}`
-                                      : 'Read recent channel messages',
+                                  description: currentDiscordContextSelection
+                                    ? `#${currentDiscordContextSelection.channelName || currentDiscordContextSelection.channelId} · last ${currentDiscordContextSelection.limit}`
+                                    : 'Read recent channel messages',
                                   icon: <ChatMediaIcon />,
                                   active: Boolean(currentDiscordContextSelection),
-                                  disabled:
-                                    isCurrentComposerLocked ||
-                                    isCurrentEnsembleChat ||
-                                    !currentChat,
+                                  disabled: isCurrentComposerLocked || !currentChat,
                                   onSelect: openDiscordContextPicker
                                 }
                               ]

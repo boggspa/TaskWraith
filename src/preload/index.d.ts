@@ -932,6 +932,8 @@ declare global {
         mode?: 'normal' | 'queue' | 'steer'
         concurrentMode?: boolean
         imageAttachments?: ComposerImageAttachment[]
+        discordContextSnapshots?: DiscordContextSnapshot[]
+        externalPathGrants?: ExternalPathGrant[]
         /** A2 (1.0.3) — DM routing: scope the round to a single chip. */
         dmTargetParticipantId?: string
       }) => Promise<{ status: string; roundId?: string }>

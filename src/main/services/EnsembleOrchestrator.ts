@@ -62,6 +62,13 @@ import { concurrentLanesEnabled, concurrentWriteLanesEnabled } from '../featureG
 // + provider totals). Ensemble runs complete here, not via handleProviderExit.
 import { buildEnsembleUsageRecord } from '../ensembleUsageRecord'
 import { bridgeToolDiffStats } from '../bridge/BridgeToolDiffStats'
+import {
+  formatDiscordContextPromptAppendix,
+  normalizeDiscordContextSnapshots,
+  redactDiscordContextReadMetadataForHistory,
+  type DiscordContextReadMetadata,
+  type DiscordContextSnapshot
+} from '../channels/DiscordContextService'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
 
@@ -633,6 +640,59 @@ function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: str
   }
 }
 
+function discordContextToolSummary(metadata: DiscordContextReadMetadata): string {
+  return `Read Discord #${metadata.channelName} · ${metadata.messageCount} messages`
+}
+
+function discordContextToolResult(metadata: DiscordContextReadMetadata): string {
+  const lines = [
+    metadata.guildName ? `Server: ${metadata.guildName}` : '',
+    `Channel: #${metadata.channelName}`,
+    `Fetched at: ${metadata.fetchedAt}`,
+    `Messages: ${metadata.messageCount}`,
+    metadata.firstTimestamp && metadata.lastTimestamp
+      ? `Range: ${metadata.firstTimestamp} to ${metadata.lastTimestamp}`
+      : '',
+    '',
+    'Preview omitted: Discord message text is run-only and is not persisted in chat history.',
+    metadata.truncated
+      ? 'Full Discord context was capped before being supplied to the model.'
+      : 'Full content was supplied to the model as external untrusted context.'
+  ]
+  return lines.filter((line, index) => line || lines[index - 1]).join('\n')
+}
+
+function createDiscordContextToolMessage(
+  reads: DiscordContextReadMetadata[],
+  timestamp: string
+): ChatMessage {
+  return {
+    id: `ensemble-discord-context-${timestamp}`,
+    role: 'tool',
+    content: '',
+    timestamp,
+    toolActivities: reads.map((metadata, index) => ({
+      id: `discord-context-${metadata.channelId}-${metadata.fetchedAt}-${index}`,
+      toolName: discordContextToolSummary(metadata),
+      displayName: discordContextToolSummary(metadata),
+      category: 'read',
+      status: 'success',
+      startedAt: metadata.fetchedAt,
+      endedAt: metadata.fetchedAt,
+      durationMs: 0,
+      parameters: {
+        channelId: metadata.channelId,
+        channelName: metadata.channelName,
+        guildId: metadata.guildId,
+        guildName: metadata.guildName,
+        limit: metadata.limit,
+        retention: metadata.retention
+      },
+      resultSummary: discordContextToolResult(metadata)
+    }))
+  }
+}
+
 /**
  * 1.0.5-EW43a — Runtime-only structured queue entry. Carries both
  * the prompt string (already enriched with `promptWithAttachment
@@ -650,6 +710,7 @@ function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: str
 interface QueuedRoundEntry {
   prompt: string
   imageAttachments: EnsembleImageAttachment[]
+  discordContextSnapshots?: DiscordContextSnapshot[]
 }
 
 interface ActiveRoundRuntime {
@@ -658,6 +719,7 @@ interface ActiveRoundRuntime {
   sender: Electron.WebContents
   prompt: string
   imageAttachments: EnsembleImageAttachment[]
+  discordContextSnapshots?: DiscordContextSnapshot[]
   cancelled: boolean
   /**
    * FIFO queue of prompts to dispatch as fresh rounds after the
@@ -817,6 +879,7 @@ export class EnsembleOrchestrator {
      * participant only sees grants tagged for its own provider).
      */
     externalPathGrants?: ExternalPathGrant[]
+    discordContextSnapshots?: DiscordContextSnapshot[]
     /**
      * 1.0.8 — request read-only concurrent fan-out for this round.
      * The orchestrator validates this against TASKWRAITH_CONCURRENT_LANES
@@ -847,7 +910,8 @@ export class EnsembleOrchestrator {
           [],
           parsed.selfReflective,
           input.externalPathGrants,
-          input.concurrentMode
+          input.concurrentMode,
+          input.discordContextSnapshots
         )
         this.appendRoundStatus(
           input.chatId,
@@ -870,7 +934,8 @@ export class EnsembleOrchestrator {
       // `string[]` shape that the renderer reads.
       existing.queuedPrompts.push({
         prompt: promptWithAttachmentReferences(prompt, imageAttachments),
-        imageAttachments
+        imageAttachments,
+        discordContextSnapshots: normalizeDiscordContextSnapshots(input.discordContextSnapshots)
       })
       const nextQueuedPrompts = existing.queuedPrompts.map((entry) => entry.prompt)
       this.updateChatRound(input.chatId, (round) =>
@@ -897,7 +962,8 @@ export class EnsembleOrchestrator {
       [],
       parsed.selfReflective,
       input.externalPathGrants,
-      input.concurrentMode
+      input.concurrentMode,
+      input.discordContextSnapshots
     )
     return { status: 'started', roundId }
   }
@@ -2018,7 +2084,8 @@ export class EnsembleOrchestrator {
      * tagged for its own provider.
      */
     externalPathGrants: ExternalPathGrant[] = [],
-    concurrentMode?: boolean
+    concurrentMode?: boolean,
+    discordContextSnapshotsInput?: DiscordContextSnapshot[]
   ): string {
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) throw new Error('Ensemble chat not found.')
@@ -2037,6 +2104,10 @@ export class EnsembleOrchestrator {
       : orderedFull
     const startedAt = this.deps.nowIso()
     const normalizedImageAttachments = normalizeEnsembleImageAttachments(imageAttachments)
+    const discordContextSnapshots = normalizeDiscordContextSnapshots(discordContextSnapshotsInput)
+    const discordContextReads = discordContextSnapshots.map((snapshot) =>
+      redactDiscordContextReadMetadataForHistory(snapshot.metadata)
+    )
     const promptForParticipants = promptWithAttachmentReferences(prompt, normalizedImageAttachments)
     const orchestrationMode = resolveEnsembleOrchestrationMode(chat.ensemble)
     const maxContinuationHops = resolveMaxContinuationHops(chat.ensemble)
@@ -2099,11 +2170,14 @@ export class EnsembleOrchestrator {
       metadata: {
         kind: 'ensembleRoundPrompt',
         ensembleRoundId: roundId,
-        ...(normalizedImageAttachments.length
-          ? { imageAttachments: normalizedImageAttachments }
-          : {})
+        ...(normalizedImageAttachments.length ? { imageAttachments: normalizedImageAttachments } : {}),
+        ...(discordContextReads.length > 0 ? { discordContextReads } : {})
       }
     }
+    const toolMessages =
+      discordContextReads.length > 0
+        ? [createDiscordContextToolMessage(discordContextReads, startedAt)]
+        : []
     const updated: ChatRecord = {
       ...chat,
       title:
@@ -2112,7 +2186,7 @@ export class EnsembleOrchestrator {
             ? `${prompt.slice(0, 30)}...`
             : prompt
           : chat.title,
-      messages: [...chat.messages, userMessage],
+      messages: [...chat.messages, userMessage, ...toolMessages],
       ensemble: {
         ...chat.ensemble,
         activeRound: round,
@@ -2127,6 +2201,7 @@ export class EnsembleOrchestrator {
       sender,
       prompt: promptForParticipants,
       imageAttachments: normalizedImageAttachments,
+      ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
       cancelled: false,
       queuedPrompts: [...carryOverQueue],
       orchestrationMode,
@@ -2310,6 +2385,9 @@ export class EnsembleOrchestrator {
         // (or undefined) skips the section entirely.
         scoutBriefs: runtime.scoutBriefs
       })
+      const promptWithDiscordContext = `${prompt}${formatDiscordContextPromptAppendix(
+        runtime.discordContextSnapshots
+      )}`
       // Slice D (1.0.3) — per-participant reasoning + speed + thinking
       // settings flow through the same AgentRunPayload fields the
       // composer uses for solo runs. Provider adapters already accept
@@ -2340,7 +2418,7 @@ export class EnsembleOrchestrator {
         provider: participant.provider,
         scope: chat.scope === 'global' ? 'global' : 'workspace',
         ...(chat.scope === 'global' ? {} : { workspace: chat.workspacePath || '' }),
-        prompt,
+        prompt: promptWithDiscordContext,
         imagePaths: runtime.imageAttachments.map((attachment) => attachment.path),
         appRunId: run.runId,
         appChatId: chat.appChatId,
@@ -2721,7 +2799,11 @@ export class EnsembleOrchestrator {
         runtime.sender,
         undefined,
         nextEntry.imageAttachments,
-        remainingQueue
+        remainingQueue,
+        false,
+        [],
+        undefined,
+        nextEntry.discordContextSnapshots
       )
     }
   }
@@ -2935,11 +3017,14 @@ export class EnsembleOrchestrator {
         roundId: runtime.roundId,
         chatContextTurns: this.deps.getSettings().chatContextTurns
       })
+      const promptWithDiscordContext = `${promptText}${formatDiscordContextPromptAppendix(
+        runtime.discordContextSnapshots
+      )}`
       const payload: AgentRunPayload = {
         provider: participant.provider,
         scope: chat.scope === 'global' ? 'global' : 'workspace',
         ...(chat.scope === 'global' ? {} : { workspace: chat.workspacePath || '' }),
-        prompt: promptText,
+        prompt: promptWithDiscordContext,
         imagePaths: runtime.imageAttachments.map((attachment) => attachment.path),
         appRunId: run.runId,
         appChatId: chat.appChatId,

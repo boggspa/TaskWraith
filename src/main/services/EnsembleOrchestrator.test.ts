@@ -6,6 +6,7 @@ import {
   type ParticipantProbeResult
 } from './EnsembleOrchestrator'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
+import type { DiscordContextSnapshot } from '../channels/DiscordContextService'
 import type {
   AppSettings,
   ChatRecord,
@@ -121,6 +122,42 @@ function makeSettings(): AppSettings {
       perProviderMs: { gemini: 120000, codex: 30000, claude: 120000, kimi: 60000 },
       mainAuthorityMs: 120000
     }
+  }
+}
+
+function makeDiscordSnapshot(content = 'CI failed on linux.'): DiscordContextSnapshot {
+  return {
+    metadata: {
+      kind: 'discordContextRead',
+      guildId: '100000000000000001',
+      guildName: 'Workspace Guild',
+      channelId: '200000000000000002',
+      channelName: 'build-help',
+      limit: 25,
+      messageCount: 1,
+      fetchedAt: '2026-06-16T13:00:00.000Z',
+      firstTimestamp: '2026-06-16T12:59:00.000Z',
+      lastTimestamp: '2026-06-16T12:59:00.000Z',
+      retention: 'run',
+      truncated: false,
+      previewMessages: [
+        {
+          authorName: 'alice',
+          contentPreview: content,
+          timestamp: '2026-06-16T12:59:00.000Z'
+        }
+      ]
+    },
+    messages: [
+      {
+        id: '300000000000000003',
+        authorName: 'alice',
+        content,
+        timestamp: '2026-06-16T12:59:00.000Z',
+        attachmentCount: 0,
+        attachments: []
+      }
+    ]
   }
 }
 
@@ -861,6 +898,135 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[0].imagePaths).toEqual(['/tmp/ensemble-screenshot.png'])
     expect(harness.dispatched[0].prompt).toContain('Attachment references for this request:')
     expect(harness.dispatched[0].prompt).toContain('/tmp/ensemble-screenshot.png')
+  })
+
+  it('forwards Discord context to ensemble participants without persisting raw messages', async () => {
+    const harness = makeHarness()
+    const snapshot = makeDiscordSnapshot()
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Summarize build status.',
+      discordContextSnapshots: [snapshot],
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].prompt).toContain('External Discord channel snapshot context')
+    expect(harness.dispatched[0].prompt).toContain('Workspace Guild / #build-help')
+    expect(harness.dispatched[0].prompt).toContain('alice: CI failed on linux.')
+
+    expect(harness.chat.messages[0]).toMatchObject({
+      role: 'user',
+      content: 'Summarize build status.',
+      metadata: {
+        kind: 'ensembleRoundPrompt',
+        discordContextReads: [
+          {
+            kind: 'discordContextRead',
+            channelId: '200000000000000002',
+            channelName: 'build-help',
+            retention: 'run',
+            previewMessages: []
+          }
+        ]
+      }
+    })
+    expect(harness.chat.messages[0].content).not.toContain('CI failed on linux.')
+    expect(harness.chat.messages[1].role).toBe('tool')
+    expect(harness.chat.messages[1].toolActivities?.[0]).toMatchObject({
+      displayName: 'Read Discord #build-help · 1 messages',
+      category: 'read',
+      status: 'success',
+      resultSummary: expect.stringContaining('Preview omitted')
+    })
+    expect(harness.chat.messages[1].toolActivities?.[0].resultSummary).not.toContain(
+      'CI failed on linux.'
+    )
+  })
+
+  it('forwards Discord context to Grok and Cursor ensemble participants', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'grok',
+        provider: 'grok',
+        enabled: true,
+        role: 'Grok',
+        instructions: 'Review with Grok.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'cursor',
+        provider: 'cursor',
+        enabled: true,
+        role: 'Cursor',
+        instructions: 'Review with Cursor.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Summarize build status.',
+      discordContextSnapshots: [makeDiscordSnapshot()],
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.handleProviderOutput(
+      'grok',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched.map((payload) => payload.provider)).toEqual(['grok', 'cursor'])
+    for (const payload of harness.dispatched) {
+      expect(payload.prompt).toContain('External Discord channel snapshot context')
+      expect(payload.prompt).toContain('alice: CI failed on linux.')
+    }
+  })
+
+  it('preserves Discord snapshots on queued ensemble rounds', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      }
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'First prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const queued = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Second prompt',
+      discordContextSnapshots: [makeDiscordSnapshot('Queued Discord clue.')],
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+    expect(queued.status).toBe('queued')
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].prompt).toContain('External Discord channel snapshot context')
+    expect(harness.dispatched[1].prompt).toContain('alice: Queued Discord clue.')
   })
 
   it('queues a fresh round after the current speaker finishes', async () => {

@@ -18,7 +18,10 @@ import type {
   MessagesBridgePollResult,
   MessagesBridgePollParams
 } from '../main/channels/MessageChannelGatewayService'
-import type { DiscordContextSelection } from '../main/channels/DiscordContextService'
+import type {
+  DiscordContextSelection,
+  DiscordContextSnapshot
+} from '../main/channels/DiscordContextService'
 import type {
   GitPrReadiness,
   GitPrSummary,
@@ -688,6 +691,7 @@ const api = {
     mode?: string
     concurrentMode?: boolean
     imageAttachments?: ComposerImageAttachment[]
+    discordContextSnapshots?: DiscordContextSnapshot[]
     /** A2 (1.0.3) — DM routing: scope this "round" to a single
      * participant chip. The orchestrator's machinery still drives
      * the run (so status pills + per-participant tally still update)

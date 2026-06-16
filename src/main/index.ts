@@ -280,7 +280,10 @@ import { detectConfiguredProviders } from './ProviderConfiguration'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
 import { applyReroutePlanToPayload, resolveProviderDispatch } from './ProviderRunPause'
 import { ComposerService, type ComposerInput } from './services/ComposerService'
-import { DiscordContextService } from './channels/DiscordContextService'
+import {
+  DiscordContextService,
+  type DiscordContextSnapshot
+} from './channels/DiscordContextService'
 import { resolveDiscordContextConfig } from './channels/DiscordContextConfig'
 import { EnsembleOrchestrator, type ParticipantProbeResult } from './services/EnsembleOrchestrator'
 import { WakeupTimerService, classifyWakeupRecovery } from './WakeupTimerService'
@@ -21472,6 +21475,7 @@ if (isGeminiMcpBridgeProcess) {
           mode?: 'normal' | 'queue' | 'steer'
           concurrentMode?: boolean
           imageAttachments?: Array<{ id?: string; path?: string; name?: string }>
+          discordContextSnapshots?: DiscordContextSnapshot[]
           dmTargetParticipantId?: string
           externalPathGrants?: ExternalPathGrant[]
         }
@@ -21495,6 +21499,9 @@ if (isGeminiMcpBridgeProcess) {
                 )
             )
           : []
+        const discordContextSnapshots = Array.isArray(payload?.discordContextSnapshots)
+          ? payload.discordContextSnapshots
+          : []
         return ensembleOrchestratorRef?.startRound({
           chatId,
           prompt,
@@ -21504,6 +21511,7 @@ if (isGeminiMcpBridgeProcess) {
             ? { concurrentMode: Boolean(payload.concurrentMode) }
             : {}),
           imageAttachments: imageAttachmentSnapshots(payload?.imageAttachments),
+          ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
           ...(payload?.dmTargetParticipantId
             ? { dmTargetParticipantId: payload.dmTargetParticipantId }
             : {}),
