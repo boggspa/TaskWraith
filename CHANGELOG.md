@@ -23,6 +23,10 @@ history, and workspace state stay on your machine throughout.
   tool budget before it ever edited, then fail at the cap. Identical repeat calls
   now get a short redirect to act on what they already have, leaving budget to
   actually make the edits.
+- **Ensemble Work Session: stuck-file halt.** If a participant fails to edit the
+  same file several times in a row with no successful write in between, the Work
+  Session now halts with a clear status instead of burning rounds retrying an
+  unfixable file — fix the file or give guidance, then start a new round.
 
 The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
 (AppImage/deb) installers are attached by CI.
