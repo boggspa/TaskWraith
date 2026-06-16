@@ -48,7 +48,9 @@ export function ollamaModelFamilyPromptLines(
     case 'qwen3_4b':
       return [
         'Model profile (Qwen 3 4B): stay lightweight — search first, read one file at a time, answer concisely.',
-        'Avoid wide refactors; prefer a short plan the user can hand to a larger model.'
+        normalizedTier === 'read_only'
+          ? 'Avoid wide refactors; prefer a short plan the user can hand to a larger model.'
+          : 'You have edit tools in this tier — make small, localized, verified edits directly rather than only planning. For broad multi-file refactors, summarize progress and suggest delegation instead of guessing.'
       ]
     case 'minicpm_v45_8b':
       return [
@@ -63,7 +65,9 @@ export function ollamaModelFamilyPromptLines(
     case 'granite4_1_3b':
       return [
         'Model profile (Granite 4.1 3B): use it as a fast local scout; list/search first and keep reads small.',
-        'Avoid broad edits or long shell/test loops; hand off a short plan when the task grows.'
+        normalizedTier === 'read_only'
+          ? 'Avoid broad edits or long shell/test loops; hand off a short plan when the task grows.'
+          : 'You have edit tools in this tier — make small, localized edits directly. For broad changes or long shell/test loops, summarize and suggest delegation rather than looping alone.'
       ]
     case 'granite4_1_30b':
       return [

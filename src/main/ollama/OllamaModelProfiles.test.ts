@@ -14,6 +14,30 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines.join(' ')).toContain('multi-file')
   })
 
+  it('flips tiny-model guidance from hand-off (read-only) to direct edits (edit tiers)', () => {
+    const qwenReadOnly = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'read_only').join(' ')
+    expect(qwenReadOnly).toContain('hand to a larger model')
+    const qwenEdits = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'provider_parity').join(
+      ' '
+    )
+    expect(qwenEdits).toContain('make small, localized, verified edits directly')
+    expect(qwenEdits).not.toContain('hand to a larger model')
+
+    const graniteReadOnly = ollamaModelFamilyPromptLines(
+      'granite4.1:3b',
+      'workspace',
+      'read_only'
+    ).join(' ')
+    expect(graniteReadOnly).toContain('hand off a short plan')
+    const graniteEdits = ollamaModelFamilyPromptLines(
+      'granite4.1:3b',
+      'workspace',
+      'approved_edits'
+    ).join(' ')
+    expect(graniteEdits).toContain('make small, localized edits directly')
+    expect(graniteEdits).not.toContain('hand off a short plan')
+  })
+
   it('adds GPT-OSS tool-call emphasis', () => {
     const lines = ollamaModelFamilyPromptLines('gpt-oss:latest')
     expect(lines.join(' ')).toContain('tool-intent stub')
