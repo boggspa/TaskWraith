@@ -209,6 +209,33 @@ export function computeMergedTodosFromActivities(
   return merged
 }
 
+/**
+ * Group todo activities into per-lane merged lists. `laneOf` maps an activity to
+ * its lane (ensemble participant/provider, or TODO_SOLO_LANE). Powers the
+ * per-participant PlanRail (ensemble shows one lane per author; solo/guest
+ * collapse to a single lane). Pure.
+ */
+export function computeMergedTodosByLane<
+  A extends {
+    toolName?: string | null
+    parameters?: Record<string, unknown>
+    resultSummary?: string
+    outputPreview?: string
+  }
+>(activities: readonly A[], laneOf: (activity: A) => string): Record<string, TodoItem[]> {
+  const byLane = new Map<string, A[]>()
+  for (const activity of activities) {
+    if (!isTodoToolName(activity.toolName)) continue
+    const lane = laneOf(activity) || TODO_SOLO_LANE
+    const bucket = byLane.get(lane)
+    if (bucket) bucket.push(activity)
+    else byLane.set(lane, [activity])
+  }
+  const out: Record<string, TodoItem[]> = {}
+  for (const [lane, acts] of byLane) out[lane] = computeMergedTodosFromActivities(acts)
+  return out
+}
+
 export interface TodoProgressSummary {
   total: number
   completed: number
@@ -234,9 +261,9 @@ export function summarizeTodoProgress(todos: readonly TodoItem[]): TodoProgressS
   const done = completed
   const label =
     total === 0
-      ? 'Goal steps'
+      ? 'Plan'
       : active === 0
-        ? 'Goal steps'
+        ? 'Plan'
         : `${done}/${active} complete`
   return { total, completed, inProgress, pending, cancelled, label }
 }

@@ -33,7 +33,9 @@ import { MarkdownMessage } from './MarkdownMessage'
 import { TodoChecklistCard } from './TodoChecklistCard'
 import {
   computeMergedTodosByActivityId,
+  computeMergedTodosByLane,
   computeMergedTodosFromActivities,
+  TODO_SOLO_LANE,
   isTodoToolName,
   parseTodoItemsFromActivity,
   summarizeTodoProgress,
@@ -1625,6 +1627,22 @@ export function ActivityStack({
     () => computeMergedTodosFromActivities(topLevelActivities),
     [topLevelActivities]
   )
+  // Per-participant PlanRail lanes (ensemble): group todo activities by the
+  // participant/provider that authored them so concurrent plans don't merge
+  // into one undifferentiated list. Solo/guest collapse to a single lane.
+  const planLanes = useMemo(() => {
+    const byLane = computeMergedTodosByLane(
+      topLevelActivities,
+      (a) =>
+        (a.metadata?.ensembleProvider as string | undefined) ??
+        (a.metadata?.provider as string | undefined) ??
+        TODO_SOLO_LANE
+    )
+    return Object.entries(byLane)
+      .filter(([, todos]) => todos.length > 0)
+      .map(([lane, todos]) => ({ lane, todos }))
+      .sort((a, b) => a.lane.localeCompare(b.lane))
+  }, [topLevelActivities])
   // Phase L5 slice 3 — lifted expansion state. The set of ids that
   // are currently open. Single-open mode (default + always in
   // compactDensity) auto-collapses other rows when one expands;
@@ -1739,8 +1757,21 @@ export function ActivityStack({
           active={activitiesHaveLiveWork(activities)}
           revision={liveActivityRevision(topLevelActivities)}
         >
-          {latestMergedTodos.length > 0 && (
-            <TodoChecklistCard todos={latestMergedTodos} variant="pinned" />
+          {planLanes.length > 1 ? (
+            <div className="plan-rail-lanes">
+              {planLanes.map((lane) => (
+                <TodoChecklistCard
+                  key={lane.lane}
+                  todos={lane.todos}
+                  variant="pinned"
+                  laneLabel={lane.lane}
+                />
+              ))}
+            </div>
+          ) : (
+            latestMergedTodos.length > 0 && (
+              <TodoChecklistCard todos={latestMergedTodos} variant="pinned" />
+            )
           )}
           <div className="activity-timeline-live-inner">{timelineNodes}</div>
         </LiveActivityViewport>

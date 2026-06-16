@@ -3,6 +3,7 @@ import {
   applyLaneTodoWrite,
   applyTodoWrite,
   computeMergedTodosByActivityId,
+  computeMergedTodosByLane,
   computeMergedTodosFromActivities,
   findCurrentTodoStep,
   isTodoToolName,
@@ -108,6 +109,31 @@ describe('TodoList', () => {
       ['2', 'completed']
     ])
     expect(merged.codex).toEqual([{ id: '1', content: 'C', status: 'pending' }])
+  })
+
+  it('groups todo activities into per-lane merged lists (ensemble PlanRail)', () => {
+    const byLane = computeMergedTodosByLane(
+      [
+        {
+          id: 'a1',
+          toolName: 'todo_write',
+          parameters: { merge: false, todos: [{ id: '1', content: 'K1', status: 'in_progress' }] },
+          lane: 'kimi'
+        },
+        {
+          id: 'a2',
+          toolName: 'todo_write',
+          parameters: { merge: false, todos: [{ id: '1', content: 'C1', status: 'pending' }] },
+          lane: 'codex'
+        },
+        // Non-todo tool from a participant must not create an empty lane.
+        { id: 'a3', toolName: 'read_file', parameters: {}, lane: 'gemini' }
+      ],
+      (a) => (a as { lane: string }).lane
+    )
+    expect(Object.keys(byLane).sort()).toEqual(['codex', 'kimi'])
+    expect(byLane.kimi).toEqual([{ id: '1', content: 'K1', status: 'in_progress' }])
+    expect(byLane.codex).toEqual([{ id: '1', content: 'C1', status: 'pending' }])
   })
 
   it('tracks merged todos per activity id', () => {

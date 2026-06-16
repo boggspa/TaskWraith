@@ -5,6 +5,9 @@ interface TodoChecklistCardProps {
   todos: readonly TodoItem[]
   variant?: 'compact' | 'full' | 'pinned'
   maxVisible?: number
+  /** When set (ensemble per-participant PlanRail), labels the pinned card with
+   * the lane (e.g. the provider) so concurrent authors are distinguishable. */
+  laneLabel?: string
 }
 
 function statusGlyph(status: TodoItem['status']): string {
@@ -23,7 +26,8 @@ function statusGlyph(status: TodoItem['status']): string {
 export function TodoChecklistCard({
   todos,
   variant = 'compact',
-  maxVisible = 6
+  maxVisible = 6,
+  laneLabel
 }: TodoChecklistCardProps) {
   if (todos.length === 0) return null
 
@@ -33,8 +37,8 @@ export function TodoChecklistCard({
     if (!current) {
       if (summary.completed === summary.total - summary.cancelled && summary.total > 0) {
         return (
-          <div className="todo-pinned-step is-complete" aria-label="All goal steps complete">
-            <span className="todo-pinned-label">Goal steps</span>
+          <div className="todo-pinned-step is-complete" aria-label="All plan steps complete">
+            <span className="todo-pinned-label">{laneLabel || 'Plan'}</span>
             <span className="todo-pinned-text">{summary.label}</span>
           </div>
         )
@@ -46,8 +50,8 @@ export function TodoChecklistCard({
       todos.filter((item) => item.status !== 'cancelled').findIndex((item) => item.id === current.id) +
       1
     return (
-      <div className="todo-pinned-step" aria-label={`Current goal step: ${current.content}`}>
-        <span className="todo-pinned-label">Current step</span>
+      <div className="todo-pinned-step" aria-label={`Current step: ${current.content}`}>
+        <span className="todo-pinned-label">{laneLabel || 'Current step'}</span>
         <span className="todo-pinned-text">
           {stepIndex > 0 && activeTotal > 0 ? `${stepIndex}/${activeTotal} · ` : ''}
           {current.content}
@@ -62,7 +66,7 @@ export function TodoChecklistCard({
   return (
     <ul
       className={`todo-checklist-card${variant === 'compact' ? ' is-compact' : ' is-full'}`}
-      aria-label="Goal steps"
+      aria-label="Plan steps"
     >
       {visible.map((item) => (
         <li
@@ -77,7 +81,7 @@ export function TodoChecklistCard({
         </li>
       ))}
       {hiddenCount > 0 && (
-        <li className="todo-checklist-more" aria-label={`${hiddenCount} more goal steps`}>
+        <li className="todo-checklist-more" aria-label={`${hiddenCount} more plan steps`}>
           +{hiddenCount} more
         </li>
       )}
