@@ -266,7 +266,11 @@ import {
   getTailscaleServeStatus
 } from './TailscaleServe'
 import { selectAdvertisableRelayUrls } from './remote/relayReachability'
-import { UpdateService, type UpdateStateSnapshot } from './UpdateService'
+import {
+  resolveAutoUpdateServiceEnabled,
+  UpdateService,
+  type UpdateStateSnapshot
+} from './UpdateService'
 import { LocalServersService } from './LocalServersService'
 import { SpawnRegistry } from './localServers/SpawnRegistry'
 import { getNativeCapabilitySnapshot } from './NativeCapabilities'
@@ -18053,15 +18057,15 @@ if (isGeminiMcpBridgeProcess) {
 
     const gitService = new GitService()
 
-    // Phase G2: auto-update wiring. Default-off (env override available).
-    // Only enabled in packaged builds AND when updateChannel != 'debug'.
-    // The `TASKWRAITH_AUTO_UPDATE` env var forces enable/disable for
-    // staging tests:
+    // Phase G2: auto-update wiring. User-enabled by default, with an env
+    // override for staging. Effective checks still only run in packaged builds
+    // unless TASKWRAITH_AUTO_UPDATE=on bypasses the packaged-build gate.
+    // The `TASKWRAITH_AUTO_UPDATE` env var controls the environment gate:
     //   TASKWRAITH_AUTO_UPDATE=off  → forced disabled (even in production)
-    //   TASKWRAITH_AUTO_UPDATE=on   → forced enabled (even in dev — useful
-    //                              for testing the checker against a
-    //                              local update feed)
-    //   unset                    → enabled when app.isPackaged + channel != 'debug'
+    //   TASKWRAITH_AUTO_UPDATE=on   → enabled in dev when the user preference
+    //                              is on (useful for local feed testing)
+    //   unset                    → enabled when app.isPackaged + user setting
+    //                              is on + channel != 'debug'
     const updateService = new UpdateService({
       log: (line) => {
         console.log(line)
@@ -18069,17 +18073,17 @@ if (isGeminiMcpBridgeProcess) {
     })
     updateServiceRef = updateService
     const autoUpdateForce = process.env.TASKWRAITH_AUTO_UPDATE
-    const autoUpdateEnabledByDefault = app.isPackaged
-    const autoUpdateEnabled =
-      autoUpdateForce === 'on'
-        ? true
-        : autoUpdateForce === 'off'
-          ? false
-          : autoUpdateEnabledByDefault
     const initialSettings = AppStore.getSettings()
+    const resolveAutoUpdateEnabled = (settings: AppSettings): boolean => {
+      return resolveAutoUpdateServiceEnabled({
+        autoUpdateEnabled: settings.autoUpdateEnabled,
+        isPackaged: app.isPackaged,
+        envOverride: autoUpdateForce
+      })
+    }
     updateService.configure({
       channel: initialSettings.updateChannel,
-      enabled: autoUpdateEnabled
+      enabled: resolveAutoUpdateEnabled(initialSettings)
     })
 
     // Local Servers — detect dev servers/watchers running under the user's
@@ -18154,12 +18158,16 @@ if (isGeminiMcpBridgeProcess) {
       sideEffects: [
         ({ sanitizedPatch }) => {
           // Phase G2: re-configure the auto-updater when the user flips
-          // the updateChannel. Settings → System gets the live effect
-          // without a restart.
-          if (sanitizedPatch.updateChannel !== undefined) {
+          // the updateChannel or the explicit auto-update preference.
+          // Settings -> General gets the live effect without a restart.
+          if (
+            sanitizedPatch.updateChannel !== undefined ||
+            sanitizedPatch.autoUpdateEnabled !== undefined
+          ) {
+            const settings = AppStore.getSettings()
             updateService.configure({
-              channel: sanitizedPatch.updateChannel,
-              enabled: autoUpdateEnabled
+              channel: settings.updateChannel,
+              enabled: resolveAutoUpdateEnabled(settings)
             })
           }
           if (sanitizedPatch.bridgeDaemonEnabled !== undefined) {

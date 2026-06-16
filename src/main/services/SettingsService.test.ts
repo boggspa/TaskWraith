@@ -142,16 +142,18 @@ describe('SettingsService', () => {
     expect(deps.updateSettings).toHaveBeenCalledTimes(1)
   })
 
-  it('can gate UpdateService reconfiguration on updateChannel patches', () => {
+  it('can gate UpdateService reconfiguration on updateChannel and auto-update patches', () => {
     const configure = vi.fn()
-    const autoUpdateEnabled = true
     const { deps } = makeDeps({
       sideEffects: [
-        ({ sanitizedPatch }) => {
-          if (sanitizedPatch.updateChannel !== undefined) {
+        ({ sanitizedPatch, nextSettings }) => {
+          if (
+            sanitizedPatch.updateChannel !== undefined ||
+            sanitizedPatch.autoUpdateEnabled !== undefined
+          ) {
             configure({
-              channel: sanitizedPatch.updateChannel,
-              enabled: autoUpdateEnabled
+              channel: nextSettings.updateChannel,
+              enabled: nextSettings.autoUpdateEnabled !== false
             })
           }
         }
@@ -164,6 +166,11 @@ describe('SettingsService', () => {
     expect(configure).toHaveBeenCalledWith({
       channel: 'stable',
       enabled: true
+    })
+    service.updateSettings({ autoUpdateEnabled: false })
+    expect(configure).toHaveBeenLastCalledWith({
+      channel: 'stable',
+      enabled: false
     })
   })
 })

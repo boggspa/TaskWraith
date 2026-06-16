@@ -93,6 +93,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'messageBridgeEnabled',
   'messageBridgePollIntervalMs',
   'codexSandboxFallback',
+  'autoUpdateEnabled',
   'updateChannel',
   'lastSeenChangelogVersion',
   'pendingUpdateChangelog',
@@ -788,6 +789,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('providerRunPauses' in sanitized) {
       sanitized.providerRunPauses = sanitizeProviderRunPauses(sanitized.providerRunPauses)
+    }
+    if ('autoUpdateEnabled' in sanitized) {
+      if (typeof sanitized.autoUpdateEnabled !== 'boolean') {
+        delete sanitized.autoUpdateEnabled
+      }
     }
     if ('ollamaToolControlTier' in sanitized) {
       const tier = sanitized.ollamaToolControlTier

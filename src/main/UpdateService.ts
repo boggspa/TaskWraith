@@ -86,6 +86,19 @@ export interface UpdateStateSnapshot {
 
 type Listener = (snapshot: UpdateStateSnapshot) => void
 
+export interface AutoUpdateEnableInput {
+  autoUpdateEnabled?: boolean
+  isPackaged: boolean
+  envOverride?: string
+}
+
+export function resolveAutoUpdateServiceEnabled(input: AutoUpdateEnableInput): boolean {
+  if (input.autoUpdateEnabled === false) return false
+  if (input.envOverride === 'off') return false
+  if (input.envOverride === 'on') return true
+  return input.isPackaged
+}
+
 export class UpdateService {
   private channel: ProductUpdateChannel = 'debug'
   private status: UpdateStatus = 'disabled'
@@ -125,6 +138,8 @@ export class UpdateService {
     this.channel = args.channel
     if (!args.enabled || args.channel === 'debug') {
       this.status = 'disabled'
+      autoUpdater.autoDownload = false
+      autoUpdater.autoInstallOnAppQuit = false
       this.downloadProgress = undefined
       this.errorMessage = undefined
       this.clearReleaseMetadata()
@@ -242,10 +257,12 @@ export class UpdateService {
       debug: () => undefined
     }
     autoUpdater.on('checking-for-update', () => {
+      if (this.status === 'disabled') return
       this.status = 'checking'
       this.publish()
     })
     autoUpdater.on('update-available', (info) => {
+      if (this.status === 'disabled') return
       const compatibility = this.applyUpdateInfo(info)
       if (!compatibility.compatible) {
         this.handleError(compatibility.reason || 'Incompatible update artifact.')
@@ -255,19 +272,23 @@ export class UpdateService {
       this.publish()
     })
     autoUpdater.on('update-not-available', () => {
+      if (this.status === 'disabled') return
       this.status = 'not-available'
       this.clearReleaseMetadata()
       this.publish()
     })
     autoUpdater.on('error', (err) => {
+      if (this.status === 'disabled') return
       this.handleError(err instanceof Error ? err.message : String(err))
     })
     autoUpdater.on('download-progress', (progress) => {
+      if (this.status === 'disabled') return
       this.status = 'downloading'
       this.downloadProgress = progress
       this.publish()
     })
     autoUpdater.on('update-downloaded', (info) => {
+      if (this.status === 'disabled') return
       const compatibility = this.applyUpdateInfo(info)
       if (!compatibility.compatible) {
         this.downloadProgress = undefined

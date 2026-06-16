@@ -21,7 +21,11 @@ vi.mock('electron-updater', () => ({
   autoUpdater: mockAutoUpdater
 }))
 
-import { UPDATE_CHECK_INTERVAL_MS, UpdateService } from './UpdateService'
+import {
+  resolveAutoUpdateServiceEnabled,
+  UPDATE_CHECK_INTERVAL_MS,
+  UpdateService
+} from './UpdateService'
 
 function emitUpdaterEvent(name: string, payload?: unknown): void {
   const handler = mockAutoUpdater.on.mock.calls.find((call) => call[0] === name)?.[1]
@@ -32,6 +36,10 @@ function emitUpdaterEvent(name: string, payload?: unknown): void {
 
 describe('UpdateService', () => {
   beforeEach(() => {
+    mockAutoUpdater.channel = 'latest'
+    mockAutoUpdater.autoDownload = true
+    mockAutoUpdater.autoInstallOnAppQuit = true
+    mockAutoUpdater.logger = null
     mockAutoUpdater.checkForUpdates.mockClear()
     mockAutoUpdater.downloadUpdate.mockClear()
     mockAutoUpdater.quitAndInstall.mockClear()
@@ -59,6 +67,8 @@ describe('UpdateService', () => {
     const svc = new UpdateService()
     svc.configure({ channel: 'stable', enabled: false })
     expect(svc.snapshot().status).toBe('disabled')
+    expect(mockAutoUpdater.autoDownload).toBe(false)
+    expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(false)
   })
 
   it('moves to idle when configured with a real channel + enabled', () => {
@@ -347,5 +357,80 @@ describe('UpdateService', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('clears updater flags and ignores late updater events when disabled live', () => {
+    const svc = new UpdateService()
+    svc.configure({ channel: 'stable', enabled: true })
+    expect(mockAutoUpdater.autoDownload).toBe(true)
+    expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(true)
+
+    emitUpdaterEvent('update-available', {
+      version: '1.0.73',
+      files: [],
+      path: 'TaskWraith-1.0.73.dmg',
+      sha512: 'abc'
+    })
+    expect(svc.snapshot().status).toBe('available')
+
+    svc.configure({ channel: 'stable', enabled: false })
+    expect(mockAutoUpdater.autoDownload).toBe(false)
+    expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(false)
+
+    emitUpdaterEvent('checking-for-update')
+    emitUpdaterEvent('download-progress', { percent: 50, transferred: 50, total: 100 })
+    emitUpdaterEvent('update-downloaded', {
+      version: '1.0.74',
+      files: [],
+      path: 'TaskWraith-1.0.74.dmg',
+      sha512: 'def'
+    })
+    emitUpdaterEvent('error', new Error('late updater failure'))
+
+    expect(svc.snapshot()).toMatchObject({
+      status: 'disabled',
+      latestVersion: undefined,
+      downloadProgress: undefined,
+      errorMessage: undefined
+    })
+  })
+})
+
+describe('resolveAutoUpdateServiceEnabled', () => {
+  it('defaults to packaged builds when the user setting is enabled or missing', () => {
+    expect(
+      resolveAutoUpdateServiceEnabled({ autoUpdateEnabled: true, isPackaged: true })
+    ).toBe(true)
+    expect(resolveAutoUpdateServiceEnabled({ isPackaged: true })).toBe(true)
+    expect(
+      resolveAutoUpdateServiceEnabled({ autoUpdateEnabled: true, isPackaged: false })
+    ).toBe(false)
+  })
+
+  it('lets the user disable auto-update even when the env override is on', () => {
+    expect(
+      resolveAutoUpdateServiceEnabled({
+        autoUpdateEnabled: false,
+        isPackaged: true,
+        envOverride: 'on'
+      })
+    ).toBe(false)
+  })
+
+  it('supports env overrides for staging when the user setting allows updates', () => {
+    expect(
+      resolveAutoUpdateServiceEnabled({
+        autoUpdateEnabled: true,
+        isPackaged: false,
+        envOverride: 'on'
+      })
+    ).toBe(true)
+    expect(
+      resolveAutoUpdateServiceEnabled({
+        autoUpdateEnabled: true,
+        isPackaged: true,
+        envOverride: 'off'
+      })
+    ).toBe(false)
   })
 })

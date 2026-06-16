@@ -1581,6 +1581,9 @@ export interface AppSettings {
   messageBridgeEnabled?: boolean
   messageBridgePollIntervalMs?: number
   codexSandboxFallback: CodexSandboxFallbackMode
+  /** Settings -> General "Enable Auto-Update". Defaults on; when false,
+   * the updater service stays disabled even on stable/nightly channels. */
+  autoUpdateEnabled?: boolean
   updateChannel: ProductUpdateChannel
   lastSeenChangelogVersion?: string
   pendingUpdateChangelog?: ProductUpdateChangelog

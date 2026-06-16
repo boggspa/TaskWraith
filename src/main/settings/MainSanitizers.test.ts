@@ -225,6 +225,17 @@ describe('MainSanitizers settings patches', () => {
     ).toBe(false)
   })
 
+  it('preserves the General auto-update checkbox setting', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+
+    expect(sanitizeSettingsPatch({ autoUpdateEnabled: false }).autoUpdateEnabled).toBe(false)
+    expect(sanitizeSettingsPatch({ autoUpdateEnabled: true }).autoUpdateEnabled).toBe(true)
+    for (const value of [undefined, null, 'false', 0, {}]) {
+      expect('autoUpdateEnabled' in sanitizeSettingsPatch({ autoUpdateEnabled: value })).toBe(false)
+    }
+  })
+
   it('sanitizes the local-servers lifecycle toggles', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

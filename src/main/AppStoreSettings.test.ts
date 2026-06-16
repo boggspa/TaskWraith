@@ -20,6 +20,14 @@ describe('AppStore settings defaults', () => {
     expect(AppStore.getSettings().updateChannel).toBe('stable')
   })
 
+  it('defaults auto-update to enabled but preserves an explicit disable', () => {
+    expect(AppStore.getSettings().autoUpdateEnabled).toBe(true)
+
+    AppStore.updateSettings({ autoUpdateEnabled: false })
+
+    expect(AppStore.getSettings().autoUpdateEnabled).toBe(false)
+  })
+
   it('normalizes persisted changelog metadata on load', () => {
     AppStore.updateSettings({
       lastSeenChangelogVersion: ' 1.0.72 ',

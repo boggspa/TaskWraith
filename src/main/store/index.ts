@@ -460,6 +460,7 @@ const defaultSettings: AppSettings = {
   messageBridgeEnabled: false,
   messageBridgePollIntervalMs: 30_000,
   codexSandboxFallback: 'ask_rerun',
+  autoUpdateEnabled: true,
   updateChannel: 'stable',
   approvalTimeouts: {
     enabled: true,
@@ -899,6 +900,10 @@ export class AppStore {
         Number.isFinite(stored.messageBridgePollIntervalMs)
           ? Math.max(5_000, Math.trunc(stored.messageBridgePollIntervalMs))
           : defaultSettings.messageBridgePollIntervalMs,
+      autoUpdateEnabled:
+        typeof stored.autoUpdateEnabled === 'boolean'
+          ? stored.autoUpdateEnabled
+          : defaultSettings.autoUpdateEnabled,
       approvalTimeouts: {
         ...defaultSettings.approvalTimeouts,
         ...(storedApprovalTimeouts || {}),
