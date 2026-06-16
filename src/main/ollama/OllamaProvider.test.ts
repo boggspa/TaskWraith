@@ -17,6 +17,7 @@ import {
   ollamaToolResultSignature,
   evaluateOllamaRepeatedToolCall,
   ollamaRepeatedToolCallNudge,
+  advanceOllamaStallStreak,
   ollamaGoalLifecycleStopContent,
   shouldStopOllamaAfterGoalLifecycleTool,
   isDegenerateOllamaTurn,
@@ -44,6 +45,23 @@ import {
   ollamaToolNamesForTier,
   ollamaToolRequiresIntent
 } from './OllamaToolTiers'
+
+describe('advanceOllamaStallStreak', () => {
+  it('increments the streak and halts once consecutive non-progress turns reach the limit', () => {
+    expect(advanceOllamaStallStreak(0)).toEqual({ streak: 1, halt: false })
+    expect(advanceOllamaStallStreak(1)).toEqual({ streak: 2, halt: false })
+    expect(advanceOllamaStallStreak(2)).toEqual({ streak: 3, halt: true })
+  })
+
+  it('respects a custom limit', () => {
+    expect(advanceOllamaStallStreak(0, 2)).toEqual({ streak: 1, halt: false })
+    expect(advanceOllamaStallStreak(1, 2)).toEqual({ streak: 2, halt: true })
+  })
+
+  it('keeps halting once past the limit (resetting to 0 is the loop owner job)', () => {
+    expect(advanceOllamaStallStreak(3).halt).toBe(true)
+  })
+})
 
 describe('ollamaUsageStats', () => {
   it('emits canonical snake_case fields for ensemble token chips', () => {
