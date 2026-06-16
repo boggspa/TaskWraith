@@ -281,6 +281,69 @@ describe('ProviderCapabilities', () => {
     expect(approvedShell.tools.shellCommands.enforcedByTaskWraith).toBe(true)
   })
 
+  it('warns when Tier 4 is selected but the workspace is not granted parity', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'ollama',
+      settings: settings(defaultServices, {
+        ollamaToolControlTier: 'provider_parity',
+        ollamaProviderParityWorkspaceGrants: {}
+      }),
+      workspacePath: '/tmp/project',
+      status: { provider: 'ollama', available: true }
+    })
+    expect(contract.tools.fileChanges.state).toBe('unavailable')
+    const downgrade = contract.warnings.find(
+      (w) => w.id === 'ollama-provider-parity-not-granted'
+    )
+    expect(downgrade).toBeTruthy()
+    expect(downgrade?.severity).toBe('warning')
+    expect(downgrade?.message).toContain('this workspace has not been granted parity')
+  })
+
+  it('does not warn about parity when the workspace IS granted', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'ollama',
+      settings: settings(defaultServices, {
+        ollamaToolControlTier: 'provider_parity',
+        ollamaProviderParityWorkspaceGrants: { '/tmp/project': '2026-06-08T12:00:00.000Z' }
+      }),
+      workspacePath: '/tmp/project',
+      status: { provider: 'ollama', available: true }
+    })
+    expect(
+      contract.warnings.some((w) => w.id === 'ollama-provider-parity-not-granted')
+    ).toBe(false)
+  })
+
+  it('does not warn about parity at the default read-only tier', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'ollama',
+      settings: settings(),
+      workspacePath: '/tmp/project',
+      status: { provider: 'ollama', available: true }
+    })
+    expect(
+      contract.warnings.some((w) => w.id === 'ollama-provider-parity-not-granted')
+    ).toBe(false)
+  })
+
+  it('warns that global chats never receive parity when Tier 4 is selected without a workspace', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'ollama',
+      settings: settings(defaultServices, {
+        ollamaToolControlTier: 'provider_parity',
+        ollamaProviderParityWorkspaceGrants: { '/tmp/project': '2026-06-08T12:00:00.000Z' }
+      }),
+      workspacePath: undefined,
+      status: { provider: 'ollama', available: true }
+    })
+    const downgrade = contract.warnings.find(
+      (w) => w.id === 'ollama-provider-parity-not-granted'
+    )
+    expect(downgrade).toBeTruthy()
+    expect(downgrade?.message).toContain('global chats always run read-only')
+  })
+
   it('advertises Ollama provider parity after acknowledgement', () => {
     const contract = buildProviderCapabilityContract({
       provider: 'ollama',

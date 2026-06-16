@@ -17,6 +17,7 @@ import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
 import { providerLabel } from './ProviderAdapters'
 import {
   effectiveOllamaToolControlTier,
+  normalizeOllamaToolControlTier,
   ollamaTierLabel,
   ollamaToolNamesForTier
 } from './ollama/OllamaToolTiers'
@@ -908,6 +909,30 @@ export function buildProviderCapabilityContract({
           'warning',
           `${tool.label} blocked`,
           `${tool.label} are blocked by TaskWraith settings for ${label}.`
+        )
+      )
+    }
+  }
+
+  // Surface the silent Tier-4 downgrade. `effectiveOllamaToolControlTier` quietly
+  // collapses `provider_parity` to `read_only` when the workspace lacks a parity
+  // grant (or there is no workspace, e.g. a global chat). The capability detail
+  // becomes `unavailable`, but `unavailable` capabilities never enter `warnings`
+  // (only `blocked` ones do, above), so the user previously got NO feedback —
+  // they picked the top tier and the model just silently never edited. Emit an
+  // explicit, actionable warning instead.
+  if (provider === 'ollama') {
+    const selectedOllamaTier = normalizeOllamaToolControlTier(settings.ollamaToolControlTier)
+    const effectiveOllamaTier = effectiveOllamaToolControlTier(settings, workspacePath)
+    if (selectedOllamaTier === 'provider_parity' && effectiveOllamaTier !== 'provider_parity') {
+      warnings.push(
+        warning(
+          'ollama-provider-parity-not-granted',
+          'warning',
+          'Tier 4 not active for this workspace',
+          workspacePath
+            ? 'Tier 4 (provider parity) is selected, but this workspace has not been granted parity — the local model is running read-only and cannot edit files or run shell commands. Re-acknowledge Tier 4 for this workspace in Settings → Behavior → Ollama to enable edits.'
+            : 'Tier 4 (provider parity) is selected, but global chats always run read-only — the local model cannot edit files here. Open a workspace chat to use Tier 4 edits.'
         )
       )
     }
