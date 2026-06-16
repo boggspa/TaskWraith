@@ -1599,6 +1599,81 @@ private struct ActivityHeatmapStackCard: View {
     }
 }
 
+/// 90-day daily token bar chart for the Inspector Usage tab — mirrors the
+/// desktop TokenUsageChart: one bar per day, height ∝ that day's tokens,
+/// colored by the day's dominant provider. Shows an empty-state line until the
+/// Mac's usage-rollup broadcast carries a series.
+struct TokenUsageBarChart: View {
+    let title: String
+    let series: DailyTokenSeries?
+
+    private var maxTokens: Int { series?.buckets.map(\.tokens).max() ?? 0 }
+    private var hasData: Bool { (series?.totalTokens ?? 0) > 0 && maxTokens > 0 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textTertiary)
+                Spacer()
+                if let series, series.totalTokens > 0 {
+                    Text("\(twCompactTokenCount(series.totalTokens)) tokens")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(TWTheme.textMuted)
+                }
+            }
+            if hasData, let series {
+                GeometryReader { geo in
+                    let count = max(series.buckets.count, 1)
+                    let gap: CGFloat = 1
+                    let barWidth = max(
+                        1, (geo.size.width - CGFloat(count - 1) * gap) / CGFloat(count))
+                    HStack(alignment: .bottom, spacing: gap) {
+                        ForEach(Array(series.buckets.enumerated()), id: \.offset) { _, bucket in
+                            let height =
+                                bucket.tokens > 0
+                                ? max(
+                                    2,
+                                    CGFloat(bucket.tokens) / CGFloat(maxTokens) * geo.size.height)
+                                : 0
+                            RoundedRectangle(cornerRadius: 1, style: .continuous)
+                                .fill(
+                                    bucket.tokens > 0
+                                        ? TWTheme.providerAccent(bucket.provider ?? "")
+                                        : TWTheme.surface3.opacity(0.35)
+                                )
+                                .frame(width: barWidth, height: height)
+                                .frame(maxHeight: .infinity, alignment: .bottom)
+                        }
+                    }
+                }
+                .frame(height: 46)
+                HStack {
+                    Text(series.startLabel)
+                    Spacer()
+                    Text(series.endLabel)
+                }
+                .font(.caption2)
+                .foregroundStyle(TWTheme.textMuted)
+            } else {
+                Text("No token usage in the last 90 days.")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+            }
+        }
+    }
+}
+
+private func twCompactTokenCount(_ value: Int) -> String {
+    if value >= 1_000_000_000 { return String(format: "%.2fB", Double(value) / 1_000_000_000) }
+    if value >= 1_000_000 { return String(format: "%.0fM", Double(value) / 1_000_000) }
+    if value >= 1_000 { return String(format: "%.0fk", Double(value) / 1_000) }
+    return "\(value)"
+}
+
 /// Hour-of-day × weekday rhythm grid (the third desktop flavor).
 public struct WeeklyRhythmHeatmap: View {
     let dates: [Date]
@@ -5531,6 +5606,10 @@ struct UsagePanel: View {
 
             ActivityHeatmapStack(entries: activityHeatmapEntries)
             .padding(.top, 6)
+
+            TokenUsageBarChart(title: "TaskWraith Tokens", series: model.taskwraithTokenDaily)
+                .padding(.top, 6)
+            TokenUsageBarChart(title: "External Tokens", series: model.externalTokenDaily)
         }
     }
 

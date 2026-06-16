@@ -54,6 +54,11 @@ public struct ModelUsageMessage: Codable, Sendable {
 /// Token totals for the heatmap chips (desktop External Activity parity).
 public struct UsageRollupMessage: Codable, Sendable {
     public let rollup: Rollup
+    /// 90-day daily token series for the Inspector "TaskWraith Tokens" /
+    /// "External Tokens" bar charts. Optional so older Mac builds (which only
+    /// sent `rollup`) still decode.
+    public let taskwraithDaily: DailyTokenSeries?
+    public let externalDaily: DailyTokenSeries?
 
     public struct Rollup: Codable, Sendable {
         public let providers: [ProviderBuckets]
@@ -77,6 +82,20 @@ public struct UsageRollupMessage: Codable, Sendable {
             self.d7 = d7
             self.d90 = d90
         }
+    }
+}
+
+/// 90-day daily token totals (oldest → newest) with a per-day dominant provider
+/// for bar coloring; `startLabel`/`endLabel` are short axis labels ("18 Mar").
+public struct DailyTokenSeries: Codable, Sendable {
+    public let totalTokens: Int
+    public let startLabel: String
+    public let endLabel: String
+    public let buckets: [Bucket]
+
+    public struct Bucket: Codable, Sendable {
+        public let tokens: Int
+        public let provider: String?
     }
 }
 

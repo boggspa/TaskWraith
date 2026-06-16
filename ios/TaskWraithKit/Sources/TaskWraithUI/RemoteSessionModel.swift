@@ -146,6 +146,10 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var providerModels: [String: [ModelOption]] = [:]
     /// Token totals for the heatmap chips (24h/7d/90d, per provider).
     @Published public private(set) var usageRollup: UsageRollupMessage.Rollup? = nil
+    /// 90-day daily token series for the Inspector bar charts (Issue 4). Ride
+    /// the usage-rollup broadcast alongside `usageRollup`.
+    @Published public private(set) var taskwraithTokenDaily: DailyTokenSeries? = nil
+    @Published public private(set) var externalTokenDaily: DailyTokenSeries? = nil
     /// Per-provider quota windows (Usage tab; desktop sidebar parity).
     @Published public private(set) var modelUsage: ModelUsageMessage.Usage? = nil
     /// Token-level live text per thread, accumulated from bridge.runEvent
@@ -827,6 +831,8 @@ public final class RemoteSessionModel: ObservableObject {
         providerModels = [:]
         projectionHydrated = false
         usageRollup = nil
+        taskwraithTokenDaily = nil
+        externalTokenDaily = nil
         modelUsage = nil
         gitSnapshots = [:]
         navigationTarget = nil
@@ -971,6 +977,8 @@ public final class RemoteSessionModel: ObservableObject {
                 return
             }
             usageRollup = message.rollup
+            taskwraithTokenDaily = message.taskwraithDaily
+            externalTokenDaily = message.externalDaily
         case "bridge.broadcastProviderModels":
             guard let message = try? JSONDecoder().decode(ProviderModelsMessage.self, from: params)
             else { return }
