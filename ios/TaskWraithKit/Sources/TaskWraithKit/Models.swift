@@ -166,6 +166,10 @@ public struct RemoteTaskCard: Codable, Sendable {
     /// the in-progress welcome screen resolves, but filtered out of list
     /// sections (HomeListViews) — it isn't a real chat yet.
     public let isDraft: Bool?
+    /// Mirrors ChatRecord.archived. Electron hides archived chats from its
+    /// sidebar lists and counts; the phone filters them out too (HomeListViews)
+    /// so the iOS thread count matches the desktop sidebar.
+    public let archived: Bool?
     public let runId: String?
     public let pendingApprovalCount: Int?
     public let pendingQuestionCount: Int?

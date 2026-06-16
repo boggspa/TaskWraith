@@ -95,6 +95,10 @@ export interface RemoteTaskCard {
    * the card so an in-progress welcome screen still resolves, but hide it from
    * chat LISTS — it isn't a real conversation yet. */
   isDraft?: boolean
+  /** Mirrors ChatRecord.archived. Electron's sidebar hides archived chats from
+   * its lists and counts; remote clients must do the same so the iOS thread
+   * count matches the desktop sidebar. */
+  archived?: boolean
   workspaceId: string | null
   workspacePath?: string
   provider: ProviderId
@@ -673,6 +677,7 @@ export function buildRemoteTaskCard(
     ...(chat.sideChatContext?.mode ? { sideChatMode: chat.sideChatContext.mode } : {}),
     ...(chat.chatKind ? { chatKind: chat.chatKind } : {}),
     ...(isContentlessRemoteDraftChat(chat) ? { isDraft: true } : {}),
+    ...(chat.archived ? { archived: true } : {}),
     workspaceId: chat.workspaceId && chat.workspaceId.length > 0 ? chat.workspaceId : null,
     provider: chat.provider ?? 'gemini',
     title: chat.title || 'Untitled chat',

@@ -51,7 +51,7 @@ struct HomeView: View {
     /// stays in `model.taskCards` so its in-progress welcome screen still
     /// resolves, but it must never appear as a real chat row in any list section.
     private var listedCards: [RemoteTaskCard] {
-        model.taskCards.filter { !($0.isDraft ?? false) }
+        model.taskCards.filter { !($0.isDraft ?? false) && !($0.archived ?? false) }
     }
     private var cardsByWorkspace: [String: [RemoteTaskCard]] {
         Dictionary(grouping: listedCards.filter { $0.parentChatId == nil }) {
@@ -59,7 +59,7 @@ struct HomeView: View {
         }
     }
     private var childrenByParent: [String: [RemoteTaskCard]] {
-        Dictionary(grouping: model.taskCards.filter { $0.parentChatId != nil }) {
+        Dictionary(grouping: model.taskCards.filter { $0.parentChatId != nil && !($0.archived ?? false) }) {
             $0.parentChatId ?? ""
         }
     }
@@ -196,7 +196,7 @@ struct HomeView: View {
         }
 
         // ── Active Runs — live work first, desktop-sidebar parity. ────────
-        let activeCards = model.taskCards.filter { $0.status == "running" }
+        let activeCards = model.taskCards.filter { $0.status == "running" && !($0.archived ?? false) }
         if !activeCards.isEmpty {
             Section {
                 if !collapsedSections.contains("activeRuns") {
