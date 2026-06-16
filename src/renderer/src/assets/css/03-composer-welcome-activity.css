@@ -4169,6 +4169,152 @@
   animation: composer-goal-complete-flash 900ms ease-out 1;
 }
 
+.composer-copy-transcript-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.composer-copy-transcript-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 58%, transparent);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer-copy-transcript-button:hover:not(:disabled),
+.composer-copy-transcript-button.is-open {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.composer-copy-transcript-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 56%, transparent);
+  outline-offset: 2px;
+}
+
+.composer-copy-transcript-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.composer-copy-transcript-button .sf-symbol-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.composer-copy-transcript-button.is-copied {
+  color: color-mix(in srgb, var(--success) 88%, var(--text-primary));
+  border-color: color-mix(in srgb, var(--success) 36%, transparent);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.composer-copy-transcript-check {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  color: var(--success);
+  background: var(--composer-bg, var(--surface-base));
+  box-shadow: 0 0 0 1.5px var(--composer-bg, var(--surface-base));
+  font-size: 7px;
+  line-height: 1;
+}
+
+.composer-copy-transcript-popover {
+  position: fixed;
+  z-index: 9120;
+  width: min(300px, calc(100vw - 32px));
+  transform: translate(-50%, -100%);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 10px;
+  background: var(--panel-bg, var(--surface-base));
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.34);
+  color: var(--text-primary);
+}
+
+.composer-copy-transcript-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+}
+
+.composer-copy-transcript-close {
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+}
+
+.composer-copy-transcript-close:hover,
+.composer-copy-transcript-close:focus-visible {
+  color: var(--text-primary);
+}
+
+.composer-copy-transcript-popover p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.composer-copy-transcript-primary {
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+}
+
+.composer-copy-transcript-primary:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.composer-copy-transcript-status,
+.composer-copy-transcript-error {
+  padding: 8px 9px;
+  border-radius: 8px;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.composer-copy-transcript-status {
+  color: color-mix(in srgb, var(--success) 82%, var(--text-primary));
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+
+.composer-copy-transcript-error {
+  color: color-mix(in srgb, var(--danger) 88%, var(--text-primary));
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
 @keyframes composer-goal-complete-flash {
   0% {
     transform: scale(0.82);

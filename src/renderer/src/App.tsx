@@ -225,6 +225,7 @@ import {
   type WorkSessionSetupConfirmInput
 } from './components/WorkSessionSetupSheet'
 import { IncomingPairingPrompt } from './components/IncomingPairingPrompt'
+import { CopyTranscriptButton } from './components/CopyTranscriptButton'
 import { FileTypeIcon } from './components/FileTypeIcon'
 import {
   ArrowUpSendIcon,
@@ -12469,6 +12470,13 @@ function App(): React.JSX.Element {
     [copy]
   )
 
+  const handleCopyCurrentTranscript = useCallback(async () => {
+    if (!currentChat?.appChatId) {
+      return { ok: false as const, reason: 'empty' as const }
+    }
+    return window.api.copyChatMarkdownTranscript(currentChat.appChatId)
+  }, [currentChat?.appChatId])
+
   const refreshSettingsPinnedMessages = useCallback(async () => {
     if (typeof window.api.getPinnedMessages !== 'function') return
     try {
@@ -20850,6 +20858,11 @@ function App(): React.JSX.Element {
 	                    document.body
 	                  )}
 	                </span>
+	                <CopyTranscriptButton
+	                  disabled={!currentChat || currentChat.archived || currentChat.messages.length === 0}
+	                  resetKey={currentChat?.appChatId || null}
+	                  onCopy={handleCopyCurrentTranscript}
+	                />
 	                {/* 1.0.5-AR12c — Workspace switcher in its new home.
                      Sits between the timecodes / Screen Watch cluster
                      on the left and the token tally on the right. The
