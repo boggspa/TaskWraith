@@ -291,8 +291,95 @@ describe('ProductOperations', () => {
       workspaces: [],
       runQueue: [],
       runRecovery: [],
-      scheduledTasks: [],
-      workflows: [],
+      scheduledTasks: [
+        {
+          id: 'task-1',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          chatId: 'chat-secret',
+          provider: 'codex',
+          prompt: 'deploy the private roadmap',
+          displayPrompt: 'private display prompt',
+          selectedModelType: 'cli-default',
+          customModel: '',
+          approvalMode: 'default',
+          sessionTrust: false,
+          imageAttachments: [{ id: 'img-1', path: '/secret/image.png', name: 'image.png' }],
+          externalPathGrants: [
+            {
+              id: 'grant-1',
+              provider: 'codex',
+              path: '/secret/grant',
+              kind: 'directory',
+              access: 'read',
+              duration: 'workspace',
+              createdAt: '2026-05-07T10:00:00.000Z'
+            }
+          ],
+          runtimeProfileId: 'runtime-secret',
+          geminiAuthProfileId: 'auth-secret',
+          runAt: '2026-05-07T10:00:00.000Z',
+          timezone: 'UTC',
+          status: 'pending',
+          lastError: 'failed while reading /secret/task-error',
+          createdAt: '2026-05-07T10:00:00.000Z',
+          updatedAt: '2026-05-07T10:00:00.000Z'
+        }
+      ],
+      workflows: [
+        {
+          id: 'workflow-1',
+          name: 'Private workflow',
+          workspaceId: 'ws-1',
+          workspacePath: '/secret/repo',
+          enabled: true,
+          trigger: { kind: 'manual' },
+          template: {
+            workspaceId: 'ws-1',
+            workspacePath: '/secret/repo',
+            chatId: 'chat-secret',
+            provider: 'codex',
+            prompt: 'audit unreleased roadmap',
+            displayPrompt: 'workflow private display prompt',
+            selectedModelType: 'cli-default',
+            customModel: '',
+            approvalMode: 'default',
+            sessionTrust: false,
+            imageAttachments: [{ id: 'img-2', path: '/secret/workflow-image.png', name: 'w.png' }],
+            externalPathGrants: [
+              {
+                id: 'grant-2',
+                provider: 'codex',
+                path: '/secret/workflow-grant',
+                kind: 'directory',
+                access: 'write',
+                duration: 'workspace',
+                createdAt: '2026-05-07T10:00:00.000Z'
+              }
+            ],
+            runtimeProfileId: 'workflow-runtime-secret',
+            geminiAuthProfileId: 'workflow-auth-secret'
+          },
+          missedRunPolicy: 'coalesce',
+          concurrencyPolicy: 'skip',
+          limits: { maxRunsPerDay: 24, maxConsecutiveFailures: 3 },
+          lastError: 'failed while reading /secret/workflow-error',
+          failureStreak: 0,
+          history: [
+            {
+              id: 'execution-1',
+              workflowId: 'workflow-1',
+              plannedFor: '2026-05-07T10:00:00.000Z',
+              status: 'failed',
+              error: 'failed while reading /secret/history-error',
+              createdAt: '2026-05-07T10:00:00.000Z',
+              updatedAt: '2026-05-07T10:00:00.000Z'
+            }
+          ],
+          createdAt: '2026-05-07T10:00:00.000Z',
+          updatedAt: '2026-05-07T10:00:00.000Z'
+        }
+      ],
       approvalLedger: [],
       workspaceChanges: [],
       recentCrashes: []
@@ -302,5 +389,22 @@ describe('ProductOperations', () => {
     expect(status.counts.queuedRuns).toBe(1)
     expect(serialized).not.toContain('secret-token')
     expect(serialized).not.toContain('encryptedAccessToken')
+    expect(serialized).not.toContain('deploy the private roadmap')
+    expect(serialized).not.toContain('private display prompt')
+    expect(serialized).not.toContain('audit unreleased roadmap')
+    expect(serialized).not.toContain('workflow private display prompt')
+    expect(serialized).not.toContain('/secret/repo')
+    expect(serialized).not.toContain('/secret/grant')
+    expect(serialized).not.toContain('/secret/workflow-grant')
+    expect(serialized).not.toContain('/secret/image.png')
+    expect(serialized).not.toContain('/secret/workflow-image.png')
+    expect(serialized).not.toContain('/secret/task-error')
+    expect(serialized).not.toContain('/secret/workflow-error')
+    expect(serialized).not.toContain('/secret/history-error')
+    expect(serialized).not.toContain('chat-secret')
+    expect(serialized).not.toContain('runtime-secret')
+    expect(serialized).not.toContain('workflow-runtime-secret')
+    expect(serialized).not.toContain('auth-secret')
+    expect(serialized).toContain('externalPathGrantCount')
   })
 })

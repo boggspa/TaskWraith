@@ -525,6 +525,78 @@ export function buildProductOperationsStatus(input: {
   }
 }
 
+function summarizeScheduledTaskForDiagnostics(task: ScheduledTask): Record<string, unknown> {
+  return {
+    id: task.id,
+    provider: task.provider,
+    status: task.status,
+    kind: task.kind || 'single',
+    selectedModelType: task.selectedModelType,
+    approvalMode: task.approvalMode,
+    runAt: task.runAt,
+    timezone: task.timezone,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    firedAt: task.firedAt,
+    completedAt: task.completedAt,
+    workflowId: task.workflowId,
+    workflowExecutionId: task.workflowExecutionId,
+    workflowOccurrenceAt: task.workflowOccurrenceAt,
+    hasPrompt: Boolean(task.prompt),
+    hasDisplayPrompt: Boolean(task.displayPrompt),
+    imageAttachmentCount: task.imageAttachments?.length || 0,
+    externalPathGrantCount: task.externalPathGrants?.length || 0,
+    hasRuntimeProfile: Boolean(task.runtimeProfileId),
+    hasGeminiAuthProfile: Boolean(task.geminiAuthProfileId),
+    hasLastError: Boolean(task.lastError)
+  }
+}
+
+function summarizeWorkflowForDiagnostics(workflow: WorkflowDefinition): Record<string, unknown> {
+  return {
+    id: workflow.id,
+    name: workflow.name,
+    workspaceId: workflow.workspaceId,
+    enabled: workflow.enabled,
+    trigger: workflow.trigger,
+    missedRunPolicy: workflow.missedRunPolicy,
+    concurrencyPolicy: workflow.concurrencyPolicy,
+    limits: workflow.limits,
+    nextRunAt: workflow.nextRunAt,
+    lastRunAt: workflow.lastRunAt,
+    lastCompletedAt: workflow.lastCompletedAt,
+    lastStatus: workflow.lastStatus,
+    hasLastError: Boolean(workflow.lastError),
+    failureStreak: workflow.failureStreak,
+    activeExecutionId: workflow.activeExecutionId,
+    createdAt: workflow.createdAt,
+    updatedAt: workflow.updatedAt,
+    template: {
+      provider: workflow.template.provider,
+      selectedModelType: workflow.template.selectedModelType,
+      approvalMode: workflow.template.approvalMode,
+      sessionTrust: workflow.template.sessionTrust,
+      kind: workflow.template.kind || 'single',
+      hasPrompt: Boolean(workflow.template.prompt),
+      hasDisplayPrompt: Boolean(workflow.template.displayPrompt),
+      imageAttachmentCount: workflow.template.imageAttachments?.length || 0,
+      externalPathGrantCount: workflow.template.externalPathGrants?.length || 0,
+      hasRuntimeProfile: Boolean(workflow.template.runtimeProfileId),
+      hasGeminiAuthProfile: Boolean(workflow.template.geminiAuthProfileId)
+    },
+    history: workflow.history.map((execution) => ({
+      id: execution.id,
+      status: execution.status,
+      plannedFor: execution.plannedFor,
+      createdAt: execution.createdAt,
+      updatedAt: execution.updatedAt,
+      startedAt: execution.startedAt,
+      completedAt: execution.completedAt,
+      hasError: Boolean(execution.error)
+    }))
+  }
+}
+
 export function buildDiagnosticsSnapshot(input: {
   status: ProductOperationsStatus
   settings: AppSettings
@@ -560,8 +632,12 @@ export function buildDiagnosticsSnapshot(input: {
     })),
     runQueue: input.runQueue.slice(0, MAX_DIAGNOSTIC_RECORDS),
     runRecovery: input.runRecovery.slice(0, MAX_DIAGNOSTIC_RECORDS),
-    scheduledTasks: input.scheduledTasks.slice(0, MAX_DIAGNOSTIC_RECORDS),
-    workflows: input.workflows.slice(0, MAX_DIAGNOSTIC_RECORDS),
+    scheduledTasks: input.scheduledTasks
+      .slice(0, MAX_DIAGNOSTIC_RECORDS)
+      .map(summarizeScheduledTaskForDiagnostics),
+    workflows: input.workflows
+      .slice(0, MAX_DIAGNOSTIC_RECORDS)
+      .map(summarizeWorkflowForDiagnostics),
     approvalLedger: input.approvalLedger.slice(0, MAX_DIAGNOSTIC_RECORDS),
     workspaceChanges: input.workspaceChanges.slice(0, MAX_DIAGNOSTIC_RECORDS),
     recentCrashes: input.recentCrashes.slice(0, MAX_DIAGNOSTIC_RECORDS)
