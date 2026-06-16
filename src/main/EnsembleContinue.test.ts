@@ -353,6 +353,69 @@ describe('handleEnsembleContinue', () => {
       expect(result.error).toBe('queue_failed')
     })
   })
+
+  describe('no-progress guard (continuation loop)', () => {
+    it('stops a participant looping on a byte-identical continuation', () => {
+      const chat = makeChat()
+      const { deps } = makeDeps(chat)
+      const args = {
+        acceptanceStatus: 'inProgress' as const,
+        nextPrompt: 'verify the workspace',
+        summary: 'all 12 tests pass'
+      }
+      // MAX_IDENTICAL_CONTINUATIONS = 2 → first two queue, the third is refused.
+      expect(handleEnsembleContinue('chat-1', args, deps).queued).toBe(true)
+      expect(handleEnsembleContinue('chat-1', args, deps).queued).toBe(true)
+      const third = handleEnsembleContinue('chat-1', args, deps)
+      expect(third.ok).toBe(false)
+      expect(third.queued).toBe(false)
+      expect(third.status).toBe('limit_reached')
+      expect(third.error).toBe('no_progress')
+      expect(chat.ensemble?.workSession?.status).toBe('limit_reached')
+    })
+
+    it('does NOT stop when nextPrompt changes each turn (real progress)', () => {
+      const chat = makeChat()
+      const { deps } = makeDeps(chat)
+      const r1 = handleEnsembleContinue('chat-1', { acceptanceStatus: 'inProgress', nextPrompt: 'step 1' }, deps)
+      const r2 = handleEnsembleContinue('chat-1', { acceptanceStatus: 'inProgress', nextPrompt: 'step 2' }, deps)
+      const r3 = handleEnsembleContinue('chat-1', { acceptanceStatus: 'inProgress', nextPrompt: 'step 3' }, deps)
+      expect([r1.queued, r2.queued, r3.queued]).toEqual([true, true, true])
+    })
+
+    it('does NOT stop when a DIFFERENT participant reuses the same prompt (baton pass)', () => {
+      const chat = makeChat()
+      const codex = makeDeps(chat).deps
+      handleEnsembleContinue('chat-1', { acceptanceStatus: 'inProgress', nextPrompt: 'continue' }, codex)
+      handleEnsembleContinue('chat-1', { acceptanceStatus: 'inProgress', nextPrompt: 'continue' }, codex)
+      // A different participant queueing the same prompt resets the counter.
+      const claude = {
+        ...makeDeps(chat).deps,
+        callingParticipantId: 'claude-1',
+        callingProvider: 'claude' as const
+      }
+      const result = handleEnsembleContinue(
+        'chat-1',
+        { acceptanceStatus: 'inProgress', nextPrompt: 'continue' },
+        claude
+      )
+      expect(result.queued).toBe(true)
+    })
+
+    it('resets the counter when the same participant changes its summary', () => {
+      const chat = makeChat()
+      const { deps } = makeDeps(chat)
+      handleEnsembleContinue('chat-1', { acceptanceStatus: 'inProgress', nextPrompt: 'go', summary: 'a' }, deps)
+      handleEnsembleContinue('chat-1', { acceptanceStatus: 'inProgress', nextPrompt: 'go', summary: 'a' }, deps)
+      // Same prompt but a NEW summary = progress reported → counter resets, queues.
+      const fresh = handleEnsembleContinue(
+        'chat-1',
+        { acceptanceStatus: 'inProgress', nextPrompt: 'go', summary: 'b' },
+        deps
+      )
+      expect(fresh.queued).toBe(true)
+    })
+  })
 })
 
 describe('transitionWorkSession', () => {

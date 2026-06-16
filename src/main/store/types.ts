@@ -950,6 +950,18 @@ export interface WorkSessionConfig {
   /** Sum of `roundsUsed[*]`. Cached so the UI doesn't re-sum on
    * every render. */
   totalRoundsUsed: number
+  /** No-progress guard state. Tracks the last successfully-queued
+   * continuation's author + a signature of its (nextPrompt, summary)
+   * and how many times that EXACT continuation has been queued
+   * consecutively by that author. Lets `ensemble_continue` stop a
+   * participant looping on a verbatim continuation long before the
+   * coarse per-provider round budget would (maxRoundsPerProvider can
+   * be up to 38). Absent until the first continuation is queued. */
+  lastContinuation?: {
+    participantId: string
+    signature: string
+    repeatCount: number
+  }
 }
 
 /**

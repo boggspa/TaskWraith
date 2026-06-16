@@ -89,9 +89,21 @@ export interface EnsembleContinueResult {
     | 'missing_next_prompt'
     | 'invalid_acceptance_status'
     | 'budget_exhausted'
+    | 'no_progress'
     | 'queue_failed'
     | 'unknown_chat'
 }
+
+/**
+ * How many times a single participant may queue a BYTE-IDENTICAL
+ * continuation (same `nextPrompt` + `summary`) in a row before the
+ * handler refuses and ends the Work Session as "no progress". The
+ * Nth identical attempt is refused, so up to N-1 identical
+ * continuations dispatch. Kept small: a real continuation changes
+ * its next step as work advances, so verbatim repetition is the
+ * signature of a stuck loop, not legitimate iteration.
+ */
+export const MAX_IDENTICAL_CONTINUATIONS = 2
 
 /**
  * Process an `ensemble_continue` invocation. Pure-ish: returns the
@@ -260,6 +272,40 @@ export function handleEnsembleContinue(
     }
   }
 
+  // No-progress guard: a participant that keeps queueing the SAME
+  // continuation (identical nextPrompt + summary) without doing new
+  // work is looping. The per-provider round budget is far too coarse
+  // to catch this — it would let the loop run dozens of rounds (and
+  // the within-round hop cap resets every round, so it never applies
+  // across rounds). Count consecutive byte-identical continuations
+  // from the SAME participant and stop once the loop is unmistakable.
+  // Scoped per-participant so a legitimate baton-pass that reuses a
+  // prompt across DIFFERENT speakers never trips it, and any change to
+  // nextPrompt or summary resets the count.
+  const continuationSummary = (args.summary || '').trim()
+  const signature = JSON.stringify([nextPrompt, continuationSummary])
+  const last = workSession.lastContinuation
+  const repeatCount =
+    last && last.participantId === deps.callingParticipantId && last.signature === signature
+      ? last.repeatCount + 1
+      : 1
+  if (repeatCount > MAX_IDENTICAL_CONTINUATIONS) {
+    const reason = `No progress: ${deps.callingParticipantId} queued an identical continuation ${repeatCount} times in a row.`
+    const stopped = transitionWorkSession(ensemble, {
+      status: 'limit_reached',
+      endedAt: new Date().toISOString(),
+      endedReason: reason
+    })
+    deps.saveChat({ ...chat, ensemble: stopped })
+    return {
+      ok: false,
+      status: 'limit_reached',
+      message: `ensemble_continue: ${reason} Ending the Work Session — report 'complete' if the acceptance criteria are met, 'blocked' if you need user input, or restate a concrete, DIFFERENT next step.`,
+      queued: false,
+      error: 'no_progress'
+    }
+  }
+
   // Enqueue + bump the counter.
   const queued = deps.queueFollowUpPrompt(chatId, nextPrompt)
   if (!queued) {
@@ -280,16 +326,20 @@ export function handleEnsembleContinue(
     workSession: {
       ...workSession,
       roundsUsed: nextRoundsUsed,
-      totalRoundsUsed: workSession.totalRoundsUsed + 1
+      totalRoundsUsed: workSession.totalRoundsUsed + 1,
+      lastContinuation: {
+        participantId: deps.callingParticipantId,
+        signature,
+        repeatCount
+      }
     }
   }
   deps.saveChat({ ...chat, ensemble: updated })
 
-  const summary = (args.summary || '').trim()
   const target = (args.target || '').trim()
   const message = `Work Session continuing${
     target ? ` → @${target}` : ''
-  }${summary ? `: ${summary}` : ''} (round ${nextRoundsUsed[deps.callingProvider]} of ${workSession.maxRoundsPerProvider} for ${deps.callingProvider})`
+  }${continuationSummary ? `: ${continuationSummary}` : ''} (round ${nextRoundsUsed[deps.callingProvider]} of ${workSession.maxRoundsPerProvider} for ${deps.callingProvider})`
   return { ok: true, status: 'active', message, queued: true }
 }
 
