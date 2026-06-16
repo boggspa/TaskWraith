@@ -294,6 +294,12 @@ export interface RemoteEnsembleRosterEntry {
   model?: string
   /** Goal/brief (instructions), clipped for the wire. */
   brief?: string
+  /** Per-participant approval preset + reasoning, so the remote chip editor can
+   * display and round-trip them (iOS parity with the desktop participant editor). */
+  permissionPresetId?: string
+  reasoningEffort?: string
+  fastModeEnabled?: boolean
+  thinkingEnabled?: boolean
 }
 
 export interface RemoteEnsembleState {
@@ -925,7 +931,13 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
         ...(participant.model ? { model: participant.model } : {}),
         ...(participant.instructions
           ? { brief: sanitizeText(participant.instructions, 500).preview }
-          : {})
+          : {}),
+        ...(participant.permissionPresetId
+          ? { permissionPresetId: participant.permissionPresetId }
+          : {}),
+        ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
+        ...(participant.fastModeEnabled ? { fastModeEnabled: true } : {}),
+        ...(participant.thinkingEnabled ? { thinkingEnabled: true } : {})
       })),
     workSessionStatus: ensemble.workSession?.status
   }

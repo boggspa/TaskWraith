@@ -16038,7 +16038,25 @@ if (isGeminiMcpBridgeProcess) {
                 role: entry.role?.trim() || base.role,
                 instructions: entry.brief !== undefined ? entry.brief : base.instructions,
                 model: entry.model?.trim() || base.model,
-                order: index + 1
+                order: index + 1,
+                // Per-participant permission + reasoning (iOS parity with the
+                // desktop chip editor). Applied when the client sends them;
+                // otherwise the `...base` value (existing/seed) is preserved.
+                ...(entry.permissionPresetId
+                  ? {
+                      permissionPresetId:
+                        entry.permissionPresetId as EnsembleParticipant['permissionPresetId']
+                    }
+                  : {}),
+                ...(entry.reasoningEffort !== undefined
+                  ? { reasoningEffort: entry.reasoningEffort }
+                  : {}),
+                ...(entry.fastModeEnabled !== undefined
+                  ? { fastModeEnabled: entry.fastModeEnabled }
+                  : {}),
+                ...(entry.thinkingEnabled !== undefined
+                  ? { thinkingEnabled: entry.thinkingEnabled }
+                  : {})
               }
             })
           } catch (err) {
@@ -16056,6 +16074,12 @@ if (isGeminiMcpBridgeProcess) {
           broadcastChatUpdated(updated)
           const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
           if (canonical) pushRemoteThreadSnapshot(updated, canonical)
+          // Force the confirming projection snapshot through: the shared ~1s
+          // throttle otherwise drops it during an active round, so the phone
+          // never receives the authoritative new roster/order and an optimistic
+          // reorder snaps back. Roster edits are user-driven + infrequent, so a
+          // forced snapshot here is cheap.
+          bridgeBroadcasterRef?.resetThrottle()
           bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           return { ok: true }
         },

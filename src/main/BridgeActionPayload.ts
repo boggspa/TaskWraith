@@ -371,6 +371,16 @@ export interface BridgeRosterParticipant {
   /** Goal/brief — maps to the participant's instructions. */
   brief?: string
   enabled?: boolean
+  /** Per-participant approval preset (read_only | default | workspace_write | …) —
+   * lets remote clients set plan/default/full permission per participant. */
+  permissionPresetId?: string
+  /** Per-participant reasoning effort (generic; provider-interpreted: Codex/Grok
+   * effort, Claude effort). */
+  reasoningEffort?: string
+  /** Codex serviceTier=fast / Claude fast mode. */
+  fastModeEnabled?: boolean
+  /** Kimi K2 thinking toggle. */
+  thinkingEnabled?: boolean
 }
 
 export interface BridgeSetThreadNotesAction extends BridgeActionMetadata {
@@ -1398,6 +1408,10 @@ function isEnsembleRosterUpdate(v: Record<string, unknown>): boolean {
       return false
     }
     if (e.enabled !== undefined && typeof e.enabled !== 'boolean') return false
+    if (e.permissionPresetId !== undefined && typeof e.permissionPresetId !== 'string') return false
+    if (e.reasoningEffort !== undefined && typeof e.reasoningEffort !== 'string') return false
+    if (e.fastModeEnabled !== undefined && typeof e.fastModeEnabled !== 'boolean') return false
+    if (e.thinkingEnabled !== undefined && typeof e.thinkingEnabled !== 'boolean') return false
     return true
   })
 }

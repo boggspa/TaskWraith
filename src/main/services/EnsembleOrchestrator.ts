@@ -3020,6 +3020,23 @@ export class EnsembleOrchestrator {
       const promptWithDiscordContext = `${promptText}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}`
+      // Mirror the serial path: thread per-participant reasoning/thinking into
+      // the fan-out payload too, else a concurrent round silently runs every
+      // participant at provider-default reasoning regardless of its config.
+      const codexOrGrokReasoning =
+        participant.provider === 'codex' || participant.provider === 'grok'
+          ? participant.reasoningEffort
+          : undefined
+      const codexServiceTier =
+        participant.provider === 'codex'
+          ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
+          : undefined
+      const claudeReasoning =
+        participant.provider === 'claude' ? participant.reasoningEffort : undefined
+      const claudeFastMode =
+        participant.provider === 'claude' ? Boolean(participant.fastModeEnabled) : undefined
+      const kimiThinking =
+        participant.provider === 'kimi' ? Boolean(participant.thinkingEnabled) : undefined
       const payload: AgentRunPayload = {
         provider: participant.provider,
         scope: chat.scope === 'global' ? 'global' : 'workspace',
@@ -3036,7 +3053,12 @@ export class EnsembleOrchestrator {
         providerSessionId: participant.linkedProviderSessionId || null,
         externalPathGrants: permissions.externalPathGrants,
         effectivePermissions: permissions,
-        ensembleRun: ensembleRunIdentity(runtime.roundId, participant, run.laneId)
+        ensembleRun: ensembleRunIdentity(runtime.roundId, participant, run.laneId),
+        ...(codexOrGrokReasoning !== undefined ? { reasoningEffort: codexOrGrokReasoning } : {}),
+        ...(codexServiceTier !== undefined ? { serviceTier: codexServiceTier } : {}),
+        ...(claudeReasoning !== undefined ? { claudeReasoningEffort: claudeReasoning } : {}),
+        ...(claudeFastMode !== undefined ? { claudeFastMode } : {}),
+        ...(kimiThinking !== undefined ? { kimiThinking } : {})
       }
       try {
         const dispatched = await this.deps.dispatch(payload, { sender: runtime.sender })
