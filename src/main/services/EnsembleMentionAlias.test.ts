@@ -10,7 +10,8 @@ import {
   isReservedMentionToken,
   isUserMentionToken,
   normalizeAlias,
-  resolvePhraseToParticipant
+  resolvePhraseToParticipant,
+  resolveSingleEnsembleDmTarget
 } from './EnsembleMentionAlias'
 
 /**
@@ -477,5 +478,31 @@ describe('user-mention resolution', () => {
     expect(matches.length).toBe(2)
     expect(matches[0].kind).toBe('participant')
     expect(matches[1].kind).toBe('user')
+  })
+})
+
+describe('resolveSingleEnsembleDmTarget', () => {
+  const panel = [CODEX, CLAUDE, GEMINI, KIMI]
+
+  it('returns the id when exactly one participant is tagged (provider or role)', () => {
+    expect(resolveSingleEnsembleDmTarget('@codex look at this', panel)).toBe('ensemble-codex')
+    expect(resolveSingleEnsembleDmTarget('hey @Critic thoughts?', panel)).toBe('ensemble-claude')
+  })
+
+  it('returns null when two or more participants are tagged (panel round)', () => {
+    expect(resolveSingleEnsembleDmTarget('@codex and @Critic compare', panel)).toBeNull()
+  })
+
+  it('returns null when no participant is tagged', () => {
+    expect(resolveSingleEnsembleDmTarget('just a normal message', panel)).toBeNull()
+    expect(resolveSingleEnsembleDmTarget('', panel)).toBeNull()
+  })
+
+  it('ignores user-address mentions (not a DM target)', () => {
+    expect(resolveSingleEnsembleDmTarget('@user what do you think', panel)).toBeNull()
+  })
+
+  it('dedupes repeated mentions of one participant to a single target', () => {
+    expect(resolveSingleEnsembleDmTarget('@codex @codex urgent', panel)).toBe('ensemble-codex')
   })
 })

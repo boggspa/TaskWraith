@@ -450,6 +450,28 @@ export function findAllMentions(
 }
 
 /**
+ * The single DM target for a steer/send: the participant id when `text`
+ * @-tags EXACTLY ONE participant, else null (0 or 2+ tags = a panel round,
+ * not a DM). Mirrors the renderer's `extractFirstEnsembleDmTarget` participant
+ * branch so the bridge steer path scopes the round identically — this is what
+ * narrows the "Participants reachable" card to the tagged participant (iOS
+ * parity: the phone sends raw "@Role …" text and the Mac resolves it here).
+ */
+export function resolveSingleEnsembleDmTarget(
+  text: string,
+  participants: EnsembleParticipant[]
+): string | null {
+  const ids = [
+    ...new Set(
+      findAllMentions(text, participants)
+        .filter(isParticipantMention)
+        .map((match) => match.participant.id)
+    )
+  ]
+  return ids.length === 1 ? ids[0] : null
+}
+
+/**
  * Trailing-sentence-punctuation we strip from the LAST word of a
  * candidate prefix before matching it against the alias map. The
  * per-chunk regex allows `.` inside the chunk so model versions

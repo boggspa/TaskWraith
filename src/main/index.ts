@@ -286,6 +286,7 @@ import {
 } from './channels/DiscordContextService'
 import { resolveDiscordContextConfig } from './channels/DiscordContextConfig'
 import { EnsembleOrchestrator, type ParticipantProbeResult } from './services/EnsembleOrchestrator'
+import { resolveSingleEnsembleDmTarget } from './services/EnsembleMentionAlias'
 import { WakeupTimerService, classifyWakeupRecovery } from './WakeupTimerService'
 import { SoloChatWakeupService } from './SoloChatWakeupService'
 import {
@@ -16098,11 +16099,19 @@ if (isGeminiMcpBridgeProcess) {
               steerImagePaths = []
             }
           }
+          // Electron parity (extractFirstEnsembleDmTarget): when the steer
+          // prompt @-tags exactly ONE participant, DM-scope the round to it so
+          // the participants-reachable card narrows to that participant. The
+          // phone sends the raw "@Role …" text; resolve it with the shared
+          // mention matcher. Two+ tagged participants stay a full panel round.
+          const dmTargetParticipantId =
+            resolveSingleEnsembleDmTarget(text, chat.ensemble.participants) ?? undefined
           const result = ensembleOrchestratorRef?.startRound({
             chatId: action.threadId,
             prompt: text,
             event: fakeEvent,
             mode: 'steer',
+            ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
             ...(steerImagePaths.length
               ? {
                   imageAttachments: steerImagePaths.map((imagePath) => ({
