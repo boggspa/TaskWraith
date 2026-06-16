@@ -4,6 +4,29 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.5.6 - 2026-06-16
+
+### Fixed
+- **Ensemble runaway loop.** A participant that kept choosing "continue" with the
+  same restatement (no new work) could loop for dozens of rounds. It now stops
+  after a couple of identical continuations and reports no progress, asking the
+  model to finish, report blocked, or take a genuinely different next step.
+- **iOS Ensemble Stop.** Stop on an Ensemble chat now cancels the whole round
+  (halting the rotation) and cancels each participant by its true provider —
+  matching the desktop. Previously it only cancelled the current participant, so
+  the round kept advancing and you had to tap Stop repeatedly.
+- **Repeated messages on iOS.** Consecutive identical assistant restatements are
+  now collapsed into a single bubble on the phone (and every remote client),
+  matching how the desktop transcript already reads.
+- **Local (Ollama) models re-reading the same file.** A local model that re-issued
+  an identical read (same file, unchanged contents) would burn its whole local
+  tool budget before it ever edited, then fail at the cap. Identical repeat calls
+  now get a short redirect to act on what they already have, leaving budget to
+  actually make the edits.
+
+The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
+(AppImage/deb) installers are attached by CI.
+
 ## 1.5.5 - 2026-06-16
 
 ### Fixed
