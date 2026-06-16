@@ -1297,7 +1297,37 @@ export class AppStore {
     return record
   }
 
+  private static orphanSubThreadsReaped = false
+
+  /** One-time-per-process reap of child chats (sub-threads / side-chats /
+   * guests) whose parent chat FILE no longer exists. Historically `deleteChat`
+   * did not cascade, so deleting a parent stranded its children on disk; those
+   * orphans then surfaced on iOS as perpetual "running" tombstones and inflated
+   * the remote thread count. Runs lazily on the first getChats() so it needs no
+   * startup wiring (keeps the fix out of the concurrently-edited index.ts).
+   * Parent existence is checked by FILE presence — never the parsed list — so a
+   * transiently unparseable parent can never cause its children to be reaped.
+   * Best-effort: any failure leaves data untouched. */
+  private static ensureOrphanSubThreadsReaped(): void {
+    if (this.orphanSubThreadsReaped) return
+    this.orphanSubThreadsReaped = true
+    try {
+      if (!fs.existsSync(chatsDir)) return
+      for (const file of fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))) {
+        const chatId = path.basename(file, '.json')
+        const chat = this.readChatRecordCached(chatId, path.join(chatsDir, file))
+        if (!chat?.parentChatId) continue
+        if (!fs.existsSync(chatPathForId(chatsDir, chat.parentChatId))) {
+          this.deleteChat(chat.appChatId)
+        }
+      }
+    } catch {
+      // best-effort cleanup; never block reads
+    }
+  }
+
   static getChats(workspaceId?: string): ChatRecord[] {
+    this.ensureOrphanSubThreadsReaped()
     if (!fs.existsSync(chatsDir)) return []
     const files = fs.readdirSync(chatsDir).filter((f) => f.endsWith('.json'))
     const chats: ChatRecord[] = []
@@ -1891,7 +1921,18 @@ export class AppStore {
     writeJson(chatListIndexPath, index)
   }
 
-  static deleteChat(chatId: string) {
+  static deleteChat(chatId: string, seen: Set<string> = new Set()): void {
+    // Cascade to linked children FIRST. A parent owns its sub-threads,
+    // side-chats and guest child chats (any chat whose parentChatId is this
+    // chat). Without this cascade those children survive on disk as orphans and
+    // surface on iOS as perpetual "running" tombstones (the remote feed has no
+    // parent-existence gate). `seen` guards against malformed parent cycles.
+    if (seen.has(chatId)) return
+    seen.add(chatId)
+    for (const child of this.getChats().filter((candidate) => candidate.parentChatId === chatId)) {
+      this.deleteChat(child.appChatId, seen)
+    }
+
     // Read the chat's KNOWN runs before unlinking so we can clean up its
     // per-run forensic files (run-event ledger + artifacts) that would
     // otherwise be orphaned on disk forever. Derived purely from this chat's

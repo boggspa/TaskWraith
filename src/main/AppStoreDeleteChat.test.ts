@@ -102,3 +102,86 @@ describe('AppStore.deleteChat run cleanup', () => {
     expect(fs.existsSync(join(userDataPath, 'chats', 'chat-a.json'))).toBe(false)
   })
 })
+
+describe('AppStore.deleteChat cascade + orphan reap', () => {
+  const chatFile = (id: string): string => join(userDataPath, 'chats', `${id}.json`)
+
+  function saveChild(
+    appChatId: string,
+    parentChatId: string,
+    relation?: 'subThread' | 'sideChat'
+  ): void {
+    const chat: ChatRecord = {
+      appChatId,
+      scope: 'workspace',
+      chatKind: 'single',
+      provider: 'gemini',
+      title: appChatId,
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo',
+      parentChatId,
+      ...(relation ? { parentChatRelation: relation } : {}),
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: []
+    }
+    AppStore.saveChat(chat)
+  }
+
+  beforeEach(() => {
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(join(userDataPath, 'chats'), { recursive: true })
+    // The orphan reap runs once per process; reset the latch so each test
+    // exercises it fresh.
+    ;(AppStore as unknown as { orphanSubThreadsReaped: boolean }).orphanSubThreadsReaped = false
+  })
+
+  it('cascades deletion to sub-thread, side-chat and nested children', () => {
+    saveChatWithRuns('parent', [])
+    saveChild('sub', 'parent', 'subThread')
+    saveChild('side', 'parent', 'sideChat')
+    saveChild('grandchild', 'sub', 'subThread')
+
+    AppStore.deleteChat('parent')
+
+    expect(fs.existsSync(chatFile('parent'))).toBe(false)
+    expect(fs.existsSync(chatFile('sub'))).toBe(false)
+    expect(fs.existsSync(chatFile('side'))).toBe(false)
+    expect(fs.existsSync(chatFile('grandchild'))).toBe(false)
+  })
+
+  it('does not touch unrelated chats when cascading', () => {
+    saveChatWithRuns('parent', [])
+    saveChild('sub', 'parent', 'subThread')
+    saveChatWithRuns('bystander', [])
+
+    AppStore.deleteChat('parent')
+
+    expect(fs.existsSync(chatFile('sub'))).toBe(false)
+    expect(fs.existsSync(chatFile('bystander'))).toBe(true)
+  })
+
+  it('reaps an orphaned child whose parent file is gone on first getChats', () => {
+    // Legacy orphan: child persisted, parent never existed on disk.
+    saveChild('orphan', 'missing-parent', 'subThread')
+    expect(fs.existsSync(chatFile('orphan'))).toBe(true)
+
+    const chats = AppStore.getChats()
+
+    expect(fs.existsSync(chatFile('orphan'))).toBe(false)
+    expect(chats.some((c) => c.appChatId === 'orphan')).toBe(false)
+  })
+
+  it('keeps a child whose parent still exists', () => {
+    saveChatWithRuns('parent', [])
+    saveChild('sub', 'parent', 'subThread')
+
+    const chats = AppStore.getChats()
+
+    expect(fs.existsSync(chatFile('sub'))).toBe(true)
+    expect(fs.existsSync(chatFile('parent'))).toBe(true)
+    expect(chats.some((c) => c.appChatId === 'sub')).toBe(true)
+  })
+})
