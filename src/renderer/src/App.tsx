@@ -4756,17 +4756,26 @@ function App(): React.JSX.Element {
     })
   }
 
-  // Sidebar rail / Settings → Workspaces selection. A 'navigate' selection
-  // opens a fresh New Chat draft scoped to the workspace and never relocates
-  // the current chat in place — only the composer / welcome picker (which call
-  // handleSelectExistingWorkspace directly) keep that intentional-switch
-  // power. This fixes the dangerous bug where clicking a workspace in the
-  // sidebar silently moved an in-progress chat (esp. an Ensemble) onto another
-  // workspace. The fall-through still reuses an existing empty draft for the
-  // workspace before creating one, so this does not reintroduce the historical
-  // "hundreds of chats" proliferation.
-  const handleNavigateToWorkspace = (ws: WorkspaceRecord): Promise<void> =>
-    handleSelectExistingWorkspace(ws, { intent: 'navigate' })
+  // Sidebar rail / Settings → Workspaces selection. Clicking a workspace here
+  // navigates to it; it must not silently relocate the chat the user is
+  // looking at the way the composer / welcome picker (an intentional switch)
+  // may. Two cases:
+  //   • Started / in-progress chat → leave it completely untouched and open a
+  //     fresh New Chat draft for the target workspace. This is the fix for the
+  //     dangerous bug where a stray sidebar click moved an in-progress chat
+  //     (esp. an Ensemble) onto another workspace. The fall-through reuses an
+  //     existing empty draft before creating one, so it does not reintroduce
+  //     the historical "hundreds of chats" proliferation.
+  //   • Unstarted welcome draft → there is no in-progress work to endanger, so
+  //     just (re)scope the draft via the welcome handler, which preserves a
+  //     curated-but-unstarted Ensemble panel in place (matching the in-welcome
+  //     workspace picker) instead of abandoning it for a solo draft.
+  const handleNavigateToWorkspace = (ws: WorkspaceRecord): Promise<void> => {
+    if (isWelcomeChat) {
+      return handleSelectWelcomeWorkspace(ws)
+    }
+    return handleSelectExistingWorkspace(ws, { intent: 'navigate' })
+  }
 
   const handleSelectWelcomeWorkspace = async (ws: WorkspaceRecord) => {
     const rebound = rebindWelcomeEnsembleChatToWorkspace(currentChat, ws, isWelcomeChat)
