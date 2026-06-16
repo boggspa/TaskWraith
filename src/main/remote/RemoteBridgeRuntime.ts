@@ -155,6 +155,12 @@ export interface RemoteBridgeRuntimeOptions {
    * broadcastSnapshot (e.g. the async provider-model catalogs) hook here,
    * or a phone that reconnects after an app relaunch never receives them. */
   onDeviceEstablished?: () => void
+  /** Fired whenever the number of ESTABLISHED (connected) devices changes —
+   * on establish and on teardown. The host (index.ts) uses this to hold an
+   * Electron powerSaveBlocker while ≥1 phone is connected so the Mac stays
+   * awake to serve remote approvals, and to release it when the last device
+   * disconnects. Kept as a callback so the runtime stays electron-free. */
+  onConnectedDeviceCountChange?: (connectedCount: number) => void
   /** Pairing QR validity window; the un-paired socket is torn down after. */
   pairingWindowMs?: number
   /** Trusted reconnect (T5): persisted pairing + relay resolve registration.
@@ -546,6 +552,7 @@ export class RemoteBridgeRuntime {
     }
     this.broadcaster.broadcastSnapshot()
     this.opts.onDeviceEstablished?.()
+    this.opts.onConnectedDeviceCountChange?.(this.established.size)
   }
 
   private async handleInbound(
@@ -609,6 +616,7 @@ export class RemoteBridgeRuntime {
     this.stopRegistrationRefresh(device)
     device.client.dispose()
     this.established.delete(iphoneIdentityPubKey)
+    this.opts.onConnectedDeviceCountChange?.(this.established.size)
   }
 
   private teardownAllEstablished(): void {

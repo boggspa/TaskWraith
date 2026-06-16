@@ -8,6 +8,7 @@ import {
   safeStorage,
   screen,
   powerMonitor,
+  powerSaveBlocker,
   nativeImage,
   clipboard,
   Tray
@@ -737,6 +738,48 @@ const remoteQuestionRegistry = new RemoteQuestionRegistry({
   defaultTtlMs: AGENT_QUESTION_TIMEOUT_MS
 })
 let bridgeBroadcasterRef: BridgeBroadcaster | null = null
+// Remote-session power assertion: while >=1 iOS device is connected over the
+// bridge, hold an Electron powerSaveBlocker so the Mac stays awake to serve
+// remote approvals/questions (the agent runs on-Mac; a sleeping Mac can't be
+// reached at all). Released when the last device disconnects, with a hard time
+// cap so a phone that drops WITHOUT a clean disconnect can't pin the Mac awake
+// forever. NOTE: this does nothing if the Mac is ALREADY asleep before a
+// session starts — that remains the hard ceiling of an on-device (non-cloud)
+// agent.
+let remotePowerBlockerId: number | null = null
+let remotePowerBlockerCapTimer: ReturnType<typeof setTimeout> | null = null
+const REMOTE_POWER_BLOCKER_CAP_MS = 4 * 60 * 60 * 1000
+function releaseRemotePowerAssertion(): void {
+  if (remotePowerBlockerCapTimer) {
+    clearTimeout(remotePowerBlockerCapTimer)
+    remotePowerBlockerCapTimer = null
+  }
+  if (remotePowerBlockerId !== null) {
+    if (powerSaveBlocker.isStarted(remotePowerBlockerId)) {
+      powerSaveBlocker.stop(remotePowerBlockerId)
+    }
+    remotePowerBlockerId = null
+  }
+}
+function updateRemotePowerAssertion(connectedDeviceCount: number): void {
+  if (connectedDeviceCount <= 0) {
+    if (remotePowerBlockerId !== null) {
+      console.log('[remote-bridge] power assertion released (no devices connected)')
+    }
+    releaseRemotePowerAssertion()
+    return
+  }
+  if (remotePowerBlockerId === null || !powerSaveBlocker.isStarted(remotePowerBlockerId)) {
+    remotePowerBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+    console.log('[remote-bridge] power assertion held (device connected)')
+  }
+  // (Re)arm the safety cap from the latest connection change.
+  if (remotePowerBlockerCapTimer) clearTimeout(remotePowerBlockerCapTimer)
+  remotePowerBlockerCapTimer = setTimeout(() => {
+    console.log('[remote-bridge] power assertion released (safety cap reached)')
+    releaseRemotePowerAssertion()
+  }, REMOTE_POWER_BLOCKER_CAP_MS)
+}
 // Deferred hook: the provider-model catalog builder is defined inside the
 // app-ready scope (it reuses the get-agent-models extraction); the
 // establish-time callback fires through this indirection.
@@ -17491,6 +17534,11 @@ if (isGeminiMcpBridgeProcess) {
           onBroadcasterChange: (broadcaster) => {
             bridgeBroadcaster = broadcaster
             bridgeBroadcasterRef = broadcaster
+          },
+          // Hold/release the Mac-awake power assertion as phones connect and
+          // disconnect (see updateRemotePowerAssertion).
+          onConnectedDeviceCountChange: (connectedCount) => {
+            updateRemotePowerAssertion(connectedCount)
           },
           // EVERY establish (incl. phone relaunches) re-ships the async
           // provider-model catalogs — a freshly-launched phone starts with
