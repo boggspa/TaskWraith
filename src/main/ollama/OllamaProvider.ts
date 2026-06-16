@@ -2061,7 +2061,24 @@ export async function runOllamaProvider(
     }
 
     if (loopLimitReached && !finalContentEmitted) {
-      throw new Error(ollamaStruggleHandoffMessage(modelLabel))
+      // Graceful local-model handoff instead of throwing. The model exhausted
+      // its tool budget / stalled out with no final answer; surface the handoff
+      // guidance as the run's CONTENT so the user gets an actionable
+      // "delegate to Codex/Claude" message rather than an opaque STDERR error.
+      // (The provider_warning chip already fired at the loop-limit branch.)
+      deps.sendAgentCompatLine(
+        event.sender,
+        'ollama',
+        {
+          type: 'content',
+          text: ollamaStruggleHandoffMessage(modelLabel),
+          model,
+          modelLabel,
+          timestamp: new Date().toISOString()
+        },
+        route
+      )
+      finalContentEmitted = true
     }
 
     if (chatId && deps.saveOllamaSessionMemory && sessionMemory.toolTurnCount > 0) {
