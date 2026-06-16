@@ -13,6 +13,10 @@ import {
   ollamaReasoningOnlyNudgePrompt,
   ollamaToolIntentNudgePrompt,
   ollamaToolResultFollowUpPrompt,
+  ollamaToolCallKey,
+  ollamaToolResultSignature,
+  evaluateOllamaRepeatedToolCall,
+  ollamaRepeatedToolCallNudge,
   ollamaGoalLifecycleStopContent,
   shouldStopOllamaAfterGoalLifecycleTool,
   isDegenerateOllamaTurn,
@@ -704,5 +708,66 @@ describe('buildOllamaOpeningMessages', () => {
     })
 
     expect(messages).toEqual([{ role: 'user', content: 'hello!' }])
+  })
+})
+
+describe('repeated-tool-call guard', () => {
+  it('builds an order-independent key for the same arguments', () => {
+    expect(ollamaToolCallKey('read_file', { path: 'a.py', start: 1 })).toBe(
+      ollamaToolCallKey('read_file', { start: 1, path: 'a.py' })
+    )
+    expect(ollamaToolCallKey('read_file', { path: 'a.py' })).not.toBe(
+      ollamaToolCallKey('read_file', { path: 'b.py' })
+    )
+  })
+
+  it('signatures differ when content changes, match when identical', () => {
+    expect(ollamaToolResultSignature('hello')).toBe(ollamaToolResultSignature('hello'))
+    expect(ollamaToolResultSignature('hello')).not.toBe(ollamaToolResultSignature('hello!'))
+    // Length prefix guards against length-equal hash collisions.
+    expect(ollamaToolResultSignature('')).toBe('0:811c9dc5')
+  })
+
+  it('flags a second identical call with an unchanged result', () => {
+    const sigs = new Map<string, string>()
+    const args = { path: 'test_kimi_datetime.py' }
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'FILE BODY').repeated).toBe(false)
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'FILE BODY').repeated).toBe(true)
+  })
+
+  it('does NOT flag a re-read after the file changed (e.g. post-edit verify)', () => {
+    const sigs = new Map<string, string>()
+    const args = { path: 'a.py' }
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'v1').repeated).toBe(false)
+    // File changed → not a no-op repeat; the new body is recorded.
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'v2').repeated).toBe(false)
+    // Re-reading the NEW body without changes is again a repeat.
+    expect(evaluateOllamaRepeatedToolCall(sigs, 'read_file', args, 'v2').repeated).toBe(true)
+  })
+
+  it('flags non-consecutive repeats (read A, read B, read A again)', () => {
+    const sigs = new Map<string, string>()
+    evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'a.py' }, 'A')
+    evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'b.py' }, 'B')
+    expect(
+      evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'a.py' }, 'A').repeated
+    ).toBe(true)
+  })
+
+  it('keys different tools and different args separately', () => {
+    const sigs = new Map<string, string>()
+    evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'a.py' }, 'same')
+    expect(
+      evaluateOllamaRepeatedToolCall(sigs, 'search_files', { path: 'a.py' }, 'same').repeated
+    ).toBe(false)
+    expect(
+      evaluateOllamaRepeatedToolCall(sigs, 'read_file', { path: 'b.py' }, 'same').repeated
+    ).toBe(false)
+  })
+
+  it('nudge names the tool and forbids repeating', () => {
+    const nudge = ollamaRepeatedToolCallNudge('read_file')
+    expect(nudge).toContain('read_file')
+    expect(nudge).toContain('Do NOT call it again')
   })
 })

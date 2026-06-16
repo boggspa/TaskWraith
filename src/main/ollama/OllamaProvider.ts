@@ -330,6 +330,80 @@ export function truncateOllamaToolResultOutput(
   return `${value.slice(0, maxChars)}\n[tool result truncated for local model context]`
 }
 
+/**
+ * Order-independent JSON serialization so two tool calls with the same
+ * arguments in a different key order still hash to the same key.
+ */
+function ollamaCanonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) return `[${value.map(ollamaCanonicalJson).join(',')}]`
+  const obj = value as Record<string, unknown>
+  return `{${Object.keys(obj)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${ollamaCanonicalJson(obj[k])}`)
+    .join(',')}}`
+}
+
+/** Stable per-run key for a (toolName, arguments) pair. */
+export function ollamaToolCallKey(toolName: string, args: Record<string, unknown>): string {
+  return `${toolName}${ollamaCanonicalJson(args || {})}`
+}
+
+/**
+ * Cheap change-detecting signature of a tool result. Length-prefixed
+ * FNV-1a (32-bit) — collisions are astronomically unlikely for the
+ * "did this file/result change between two identical calls" question,
+ * and it avoids retaining full result bodies in memory.
+ */
+export function ollamaToolResultSignature(output: string): string {
+  const value = String(output || '')
+  let hash = 0x811c9dc5
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return `${value.length}:${(hash >>> 0).toString(16)}`
+}
+
+/**
+ * Detect a no-op repeated tool call: the SAME tool + SAME arguments
+ * returning the SAME result as an earlier call this run. Records the
+ * signature on first/changed calls so a later re-read after an edit
+ * (different result) is correctly treated as fresh, not a repeat. The
+ * passed map is the per-run signature store and is mutated in place.
+ */
+export function evaluateOllamaRepeatedToolCall(
+  signatures: Map<string, string>,
+  toolName: string,
+  args: Record<string, unknown>,
+  output: string
+): { repeated: boolean } {
+  const key = ollamaToolCallKey(toolName, args)
+  const signature = ollamaToolResultSignature(output)
+  const previous = signatures.get(key)
+  if (previous !== undefined && previous === signature) {
+    return { repeated: true }
+  }
+  signatures.set(key, signature)
+  return { repeated: false }
+}
+
+/**
+ * Redirect fed to a local model that just repeated an identical tool
+ * call. Enforces in code the "do not repeat an identical tool call"
+ * rule that otherwise only lived in the system prompt — small models
+ * (e.g. a 9B) ignore the soft rule and burn their whole tool-loop
+ * budget re-reading the same file before they ever edit.
+ */
+export function ollamaRepeatedToolCallNudge(toolName: string): string {
+  return (
+    `You already called \`${toolName}\` with these exact arguments earlier this turn and got the same result, ` +
+    `so its output is unchanged and already in your context. Do NOT call it again. ` +
+    `Act on what you have now: make the edits the task needs (edit_file / write_file), or give your final answer. ` +
+    `Repeating identical reads wastes your limited local tool budget and will end the run with no result.`
+  )
+}
+
 export function normalizeOllamaBaseUrl(value?: string | null): string {
   const raw = String(value || '').trim() || DEFAULT_OLLAMA_BASE_URL
   try {
@@ -1552,6 +1626,11 @@ export async function runOllamaProvider(
       toolProtocolEnabled && (!nativeToolsSupported || runProfile.protocolMode === 'json_only')
     let finalContentEmitted = false
     let loopLimitReached = false
+    // Per-run (toolName+args) → result-signature store for the
+    // repeated-tool-call guard: a model that re-issues an identical call
+    // with an unchanged result gets a redirect instead of the re-dumped
+    // output, so it stops burning its tool-loop budget re-reading files.
+    const toolCallSignatures = new Map<string, string>()
     for (let turnIndex = 0; turnIndex <= OLLAMA_TOOL_LOOP_LIMIT; turnIndex += 1) {
       const jsonToolFallback =
         forceJsonToolFallback ||
@@ -1894,6 +1973,22 @@ export async function runOllamaProvider(
           OLLAMA_TOOL_RESULT_MAX_CHARS,
           toolRequest.toolName
         )
+        // Repeated-tool-call guard: if this exact call already returned the
+        // same result earlier this run, feed the model a redirect instead of
+        // re-dumping identical output. The UI tool_result + trajectory below
+        // still record the real read; only the model-facing follow-up changes.
+        let modelFacingOutput = truncatedOutput
+        if (toolResult.ok) {
+          const repeat = evaluateOllamaRepeatedToolCall(
+            toolCallSignatures,
+            toolRequest.toolName,
+            toolRequest.arguments,
+            toolResult.output
+          )
+          if (repeat.repeated) {
+            modelFacingOutput = ollamaRepeatedToolCallNudge(toolRequest.toolName)
+          }
+        }
         sessionMemory = appendOllamaTrajectoryEntry(sessionMemory, {
           toolName: toolRequest.toolName,
           args: toolRequest.arguments,
@@ -1934,7 +2029,7 @@ export async function runOllamaProvider(
           // so the model resumes naturally on the next turn.
           messages.push({
             role: 'tool',
-            content: truncatedOutput,
+            content: modelFacingOutput,
             tool_name: toolRequest.toolName
           })
         } else {
@@ -1947,14 +2042,14 @@ export async function runOllamaProvider(
             content: harnessEnabled
               ? ollamaHarnessToolFollowUpPrompt({
                   toolName: toolRequest.toolName,
-                  output: truncatedOutput,
+                  output: modelFacingOutput,
                   ok: toolResult.ok,
                   state: harnessState,
                   tier: toolControlTier
                 })
               : ollamaToolResultFollowUpPrompt({
                   toolName: toolRequest.toolName,
-                  output: truncatedOutput,
+                  output: modelFacingOutput,
                   ok: toolResult.ok
                 })
           })
