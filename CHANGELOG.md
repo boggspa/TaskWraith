@@ -4,6 +4,37 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.5.4 - 2026-06-16
+
+### Fixed
+- **Local (Ollama) models can now edit files.** Choosing a file-edit tier (or
+  Tier 4 / Provider parity) reliably grants edit tools: the per-workspace parity
+  grant is matched tolerant of path form, and when Tier 4 is selected but the
+  current workspace isn't granted you now get a clear in-run warning instead of a
+  silent read-only downgrade. Small local models are also prompted to make
+  focused edits directly at edit tiers rather than only drafting a plan to hand
+  off.
+- **iOS "always running" sub-thread tombstones.** Deleting a parent chat now
+  cascades to its sub-threads / side-chats (and already-orphaned ones are
+  reaped), so the phone no longer shows long-dead sub-threads stuck as "running."
+- **iOS thread count.** Archived chats are hidden from the phone's lists and
+  counts, matching the desktop sidebar.
+
+### Changed
+- **iOS notification banners.** Warnings, errors and confirmations now use a
+  translucent glass style with a top-lit rim and consistently appear pinned at
+  the top of the screen instead of crowding the composer.
+- **iOS Ensemble @-mentions.** Tagging a single participant scopes the round to
+  them, so the "Participants reachable" card narrows to the tagged participant
+  (desktop parity).
+- **iOS usage inspector.** Added 90-day daily token bar charts (TaskWraith Tokens
+  and External Tokens) below the activity heatmaps.
+- **Discord context.** Runs can be supplied with Discord channel context,
+  including across ensemble participants.
+
+The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
+(AppImage/deb) installers are attached by CI.
+
 ## 1.5.3 - 2026-06-16
 
 ### Fixed
