@@ -1288,6 +1288,68 @@ function clampIndex(value: number, lo: number, hi: number): number {
 }
 
 /**
+ * True only for a plain assistant text bubble carrying NO structured payload —
+ * the one row kind safe to fold as a duplicate restatement. Mirrors buildRow's
+ * structure detection exactly so a row with a tool card, sub-thread return,
+ * guest reply, image, health badge, or attention flag is never collapsed.
+ */
+function isPlainAssistantTextMessage(
+  message: ChatMessage,
+  attentionFor: (m: ChatMessage) => RemoteAttentionKind | null
+): boolean {
+  if (message.role !== 'assistant') return false
+  if (classifyRemoteKind(message) !== 'assistant') return false
+  if (attentionFor(message)) return false
+  if (buildToolSummary(message)) return false
+  if (buildSubThreadReturn(message)) return false
+  if (buildGuestReply(message)) return false
+  if (buildParticipantHealth(message)) return false
+  const md = message.metadata as Record<string, unknown> | undefined
+  const imagePaths = md?.imagePaths
+  if (Array.isArray(imagePaths) && imagePaths.length > 0) return false
+  return true
+}
+
+/**
+ * Collapse runs of CONSECUTIVE byte-identical assistant restatements from the
+ * SAME speaker into a single row (keeping the first). An ensemble participant
+ * stuck in a continuation loop — e.g. repeatedly calling `ensemble_continue`
+ * with no new work — persists the same reply as N separate messages (one per
+ * round), which the remote projection would otherwise fan out into N identical
+ * bubbles. The desktop concatenates these into one bubble; this gives every
+ * remote client the same hygiene. Deliberately conservative: only adjacent,
+ * same-speaker, exact-content (full text, not the truncated preview),
+ * structure-free, non-attention assistant rows fold — anything with a tool
+ * call, diff, sub-thread return, guest reply, image, or distinct text survives.
+ * Keeping the FIRST occurrence means the surviving id is stable, so a client
+ * anchoring an aroundRow/beforeRow window never references a dropped row.
+ */
+export function collapseConsecutiveAssistantRestatements(
+  messages: ChatMessage[],
+  speakerFor: (m: ChatMessage) => string | undefined,
+  attentionFor: (m: ChatMessage) => RemoteAttentionKind | null
+): ChatMessage[] {
+  const out: ChatMessage[] = []
+  for (const message of messages) {
+    const prev = out[out.length - 1]
+    if (
+      prev &&
+      isPlainAssistantTextMessage(prev, attentionFor) &&
+      isPlainAssistantTextMessage(message, attentionFor) &&
+      speakerFor(prev) === speakerFor(message)
+    ) {
+      const a = (prev.content ?? '').trim()
+      const b = (message.content ?? '').trim()
+      if (a.length > 0 && a === b) {
+        continue // identical restatement — keep the first, drop this one
+      }
+    }
+    out.push(message)
+  }
+  return out
+}
+
+/**
  * Project a thread's messages + runs into a bounded snapshot for the
  * Remote Console. Pure: same inputs → same output (pass `generatedAt`
  * for determinism). Never returns more rows than the mode allows.
@@ -1298,7 +1360,6 @@ export function projectRemoteThread(
   opts: RemoteProjectionOptions
 ): RemoteThreadSnapshot {
   const all = Array.isArray(messages) ? messages.filter((m) => m && typeof m.id === 'string') : []
-  const totalRows = all.length
   const previewMax = opts.previewMaxChars ?? DEFAULT_PREVIEW_MAX
   const generatedAt = opts.generatedAt ?? new Date().toISOString()
   const runSummary = buildRunSummary(runs, opts.costDisplay, all)
@@ -1334,6 +1395,19 @@ export function projectRemoteThread(
     return row
   }
 
+  // Fold consecutive identical assistant restatements (an ensemble continuation
+  // loop persists the same reply once per round) before any windowing — so
+  // totalRows and the window indices below all describe the collapsed view the
+  // client actually sees. Pinned rows + run summaries above intentionally stay
+  // on the raw `all` (the user may have pinned a specific occurrence, and run
+  // summaries resolve their own run→message associations).
+  const visible = collapseConsecutiveAssistantRestatements(
+    all,
+    (m) => opts.speakerForMessage?.(m),
+    attentionFor
+  )
+  const totalRows = visible.length
+
   const base = {
     threadId: opts.threadId,
     schemaVersion: 1 as const,
@@ -1363,7 +1437,7 @@ export function projectRemoteThread(
     const cap = opts.maxAttentionRows ?? DEFAULT_MAX_ATTENTION_ROWS
     const rows: RemoteThreadRow[] = []
     let matched = 0
-    for (const message of all) {
+    for (const message of visible) {
       const att = attentionFor(message)
       if (!att) continue
       matched++
@@ -1381,7 +1455,7 @@ export function projectRemoteThread(
   if (opts.mode.kind === 'aroundRow') {
     const { rowId, radius: rawRadius } = opts.mode
     const radius = clampIndex(rawRadius, 0, totalRows)
-    const targetIndex = all.findIndex((m) => m.id === rowId)
+    const targetIndex = visible.findIndex((m) => m.id === rowId)
     if (targetIndex < 0) {
       // Unknown row → empty window anchored at the end; the caller can
       // fall back to latestN.
@@ -1395,7 +1469,7 @@ export function projectRemoteThread(
     }
     const start = clampIndex(targetIndex - radius, 0, totalRows)
     const end = clampIndex(targetIndex + radius + 1, start, totalRows)
-    const slice = all.slice(start, end)
+    const slice = visible.slice(start, end)
     return {
       ...base,
       rows: slice.map((m) => toRow(m, attentionFor(m))),
@@ -1408,7 +1482,7 @@ export function projectRemoteThread(
   if (opts.mode.kind === 'beforeRow') {
     const { rowId, n: rawN } = opts.mode
     const n = clampIndex(rawN, 0, totalRows)
-    const targetIndex = all.findIndex((m) => m.id === rowId)
+    const targetIndex = visible.findIndex((m) => m.id === rowId)
     if (targetIndex < 0) {
       return {
         ...base,
@@ -1420,7 +1494,7 @@ export function projectRemoteThread(
     }
     const start = clampIndex(targetIndex - n, 0, totalRows)
     const end = clampIndex(targetIndex, start, totalRows)
-    const slice = all.slice(start, end)
+    const slice = visible.slice(start, end)
     return {
       ...base,
       rows: slice.map((m) => toRow(m, attentionFor(m))),
@@ -1433,7 +1507,7 @@ export function projectRemoteThread(
   // latestN
   const n = clampIndex(opts.mode.n, 0, totalRows)
   const start = Math.max(0, totalRows - n)
-  const slice = all.slice(start)
+  const slice = visible.slice(start)
   return {
     ...base,
     rows: slice.map((m) => toRow(m, attentionFor(m))),

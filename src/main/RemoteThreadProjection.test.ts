@@ -122,6 +122,69 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('continuation-loop dedup (consecutive assistant restatements)', () => {
+    // An ensemble participant stuck in a continuation loop persists the SAME
+    // reply once per round. Each is a separate message (separate runId), so the
+    // projection would otherwise fan them out into N identical bubbles on iOS.
+    const speakerFor = (m: ChatMessage): string | undefined =>
+      (m.metadata as Record<string, unknown> | undefined)?.who as string | undefined
+    const kimi = (i: number, content: string, overrides: Partial<ChatMessage> = {}): ChatMessage => ({
+      id: `k${i}`,
+      role: 'assistant',
+      content,
+      timestamp: `2026-01-01T00:00:${String(i).padStart(2, '0')}.000Z`,
+      runId: `kimi-run-${i}`,
+      metadata: { who: 'Kimi' },
+      ...overrides
+    })
+    const REPEAT = 'workspace is already in the verified state: 12 tests pass'
+
+    it('folds N consecutive identical same-speaker restatements into one row, keeping the first', () => {
+      const messages = [kimi(0, REPEAT), kimi(1, REPEAT), kimi(2, REPEAT), kimi(3, REPEAT)]
+      const snap = project({ kind: 'latestN', n: 50 }, messages, [], { speakerForMessage: speakerFor })
+      expect(snap.rows).toHaveLength(1)
+      expect(snap.rows[0].id).toBe('k0') // first occurrence survives → stable anchor id
+      expect(snap.totalRows).toBe(1)
+      expect(snap.hasMoreAbove).toBe(false)
+    })
+
+    it('does NOT fold identical text from DIFFERENT speakers', () => {
+      const messages = [
+        kimi(0, REPEAT),
+        kimi(1, REPEAT, { metadata: { who: 'Codex' } })
+      ]
+      const snap = project({ kind: 'latestN', n: 50 }, messages, [], { speakerForMessage: speakerFor })
+      expect(snap.rows).toHaveLength(2)
+    })
+
+    it('does NOT fold when the duplicate carries a structured payload (images)', () => {
+      const messages = [
+        kimi(0, REPEAT),
+        kimi(1, REPEAT, { metadata: { who: 'Kimi', imagePaths: ['/tmp/a.png'] } })
+      ]
+      const snap = project({ kind: 'latestN', n: 50 }, messages, [], { speakerForMessage: speakerFor })
+      expect(snap.rows).toHaveLength(2)
+    })
+
+    it('does NOT fold NON-consecutive identical restatements (real work in between)', () => {
+      const messages = [
+        kimi(0, REPEAT),
+        { id: 'tool1', role: 'tool', content: '', timestamp: FIXED,
+          toolActivities: [activity({ id: 'c1', toolName: 'edit_file', displayName: 'Edit file' })] } as ChatMessage,
+        kimi(2, REPEAT)
+      ]
+      const snap = project({ kind: 'latestN', n: 50 }, messages, [], { speakerForMessage: speakerFor })
+      // both Kimi rows survive (separated by a tool row) → 3 rows total
+      expect(snap.rows.filter((r) => r.preview.includes('verified state'))).toHaveLength(2)
+    })
+
+    it('does NOT fold distinct adjacent assistant text from the same speaker', () => {
+      const messages = [kimi(0, REPEAT), kimi(1, 'now I will actually edit the file')]
+      const snap = project({ kind: 'latestN', n: 50 }, messages, [], { speakerForMessage: speakerFor })
+      expect(snap.rows).toHaveLength(2)
+    })
+  })
+
   describe('interleaved tool ordering (iOS FINAL snapshot fidelity)', () => {
     // The iOS FINAL (post-stream) snapshot reads ChatRecord.messages through
     // this projection. It must preserve the desktop/bridge interleave —
