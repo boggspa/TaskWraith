@@ -1896,13 +1896,15 @@ public final class RemoteSessionModel: ObservableObject {
     private func replyContext(workspaceId: String?, threadId: String?, runId: String?)
         -> (workspaceId: String, threadId: String, runId: String?)?
     {
+        // Workspace-less (global-scope) chats resolve to the reserved "global"
+        // scope — NOT the first workspace, which the Mac would reject or
+        // mis-attribute (the cancel-scope bug class). Treat an empty string the
+        // same as absent, and route through `remoteScopeForThread` so a loaded
+        // global card maps to "global" rather than its empty workspaceId.
         let ws =
-            workspaceId
-            ?? threadId.flatMap { thread in
-                taskCards.first(where: { $0.id == thread })?.workspaceId
-            }
-            ?? workspaces.first?.id
-        guard let ws else { return nil }
+            workspaceId.flatMap { $0.isEmpty ? nil : $0 }
+            ?? threadId.flatMap { remoteScopeForThread($0) }
+            ?? "global"
         return (ws, threadId ?? runId ?? "", runId)
     }
 
@@ -1961,15 +1963,18 @@ public final class RemoteSessionModel: ObservableObject {
     public func cancelRun(_ card: RemoteTaskCard) {
         // Fall back to the live stream's run id — the throttled `card.runId`
         // lags the un-throttled stream, so an early Stop tap must still target
-        // the in-flight run. Global chats have no workspaceId; the Mac targets a
-        // run by id (ownership is checked against chat.runs, not the workspace),
-        // so send an empty workspace rather than dropping the cancel entirely.
+        // the in-flight run. Global chats carry no workspaceId; present the
+        // reserved "global" scope (NOT an empty string) so the Mac's allowlist
+        // gate ACCEPTS the cancel. That gate runs BEFORE the run-id ownership
+        // check and rejects an empty workspace outright — matching the
+        // empty→"global" resolution used by queue/steer/goal/continueTask.
         let runId = card.runId ?? streamingRunIds[card.id]
         guard let provider = card.provider, let runId, let thread = card.threadId else { return }
+        let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
         send(
             BridgeAction.cancelRun(
                 provider: provider, runId: runId,
-                workspaceId: card.workspaceId ?? "", threadId: thread))
+                workspaceId: ws, threadId: thread))
     }
 
     /// Start a NEW task: create the Mac chat first, then send the initial
