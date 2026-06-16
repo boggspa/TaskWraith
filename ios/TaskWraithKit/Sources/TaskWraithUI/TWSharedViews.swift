@@ -4263,7 +4263,7 @@ public struct StatusBanner: View {
         .modifier(TWBannerGlassBackground(severity: severity, shape: .rounded(radius: 12)))
         .shadow(color: severity.fill.opacity(0.32), radius: 10, y: 3)
         .padding(.horizontal, 10)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .transition(.move(edge: .top).combined(with: .opacity))
         .task(id: message) {
             // Non-error feedback fades on its own; errors stay until read.
             let sev = severity
@@ -4298,29 +4298,33 @@ private struct TWBannerGlassBackground: ViewModifier {
     @ViewBuilder
     private func bannerBackground<S: InsettableShape>(content: Content, shape: S) -> some View {
         let hue = severity.fill
+        // Translucent severity wash — kept light so the material/blur shows
+        // through and the banner reads as glass rather than a hard color block.
         let tint = LinearGradient(
             colors: [
-                hue.opacity(0.82),
-                hue.opacity(0.62),
-                hue.opacity(0.42)
+                hue.opacity(0.46),
+                hue.opacity(0.30),
+                hue.opacity(0.18)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
+        // Top-lit rim highlight: a crisp light edge along the top fading down
+        // the sides — the house "glass rim" look (mirrors the composer dock).
         let rim = LinearGradient(
             colors: [
-                Color.white.opacity(0.40),
-                hue.opacity(0.90),
-                hue.opacity(0.48),
-                Color.white.opacity(0.12)
+                Color.white.opacity(0.55),
+                hue.opacity(0.55),
+                hue.opacity(0.26),
+                Color.white.opacity(0.10)
             ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
+            startPoint: .top,
+            endPoint: .bottom
         )
 
         if #available(iOS 26.0, macOS 26.0, *) {
             content
-                .background(shape.fill(hue.opacity(0.30)))
+                .background(shape.fill(hue.opacity(0.14)))
                 .glassEffect(.regular, in: shape)
                 .background(shape.fill(tint))
                 .overlay(shape.strokeBorder(rim, lineWidth: 1))

@@ -551,6 +551,20 @@ struct ThreadDetailView: View {
         }
     }
 
+    /// Transient action feedback (acks / errors / success) pinned to the TOP of
+    /// the screen alongside the approvals banner. It previously sat above the
+    /// composer, where it was easy to miss and crowded the input; all transient
+    /// banners now live at the top. Glass + rim styling lives in StatusBanner /
+    /// TWBannerGlassBackground.
+    @ViewBuilder
+    private var topActionBanner: some View {
+        if let message = model.lastActionMessage, message != "Sent." {
+            StatusBanner(message: message) {
+                model.clearActionMessage()
+            }
+        }
+    }
+
     private func listCore(proxy: ScrollViewProxy) -> some View {
         List {
             Section {
@@ -675,7 +689,12 @@ struct ThreadDetailView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(TWTheme.appBg)
-        .safeAreaInset(edge: .top, spacing: 0) { attentionBanner }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 4) {
+                topActionBanner
+                attentionBanner
+            }
+        }
         .overlay(alignment: .bottom) {
             // Jump-to-latest: centered just above the composer shell (the
             // trailing spot sat on top of the roster's + button). Black
@@ -758,11 +777,6 @@ struct ThreadDetailView: View {
     @ViewBuilder
     private var composerShellStack: some View {
             VStack(spacing: 4) {
-                if let message = model.lastActionMessage, message != "Sent." {
-                    StatusBanner(message: message) {
-                        model.clearActionMessage()
-                    }
-                }
                 if let card {
                     // T72 — global chats keep the full composer: the Mac
                     // clamps phone-origin turns to plan mode (no file
