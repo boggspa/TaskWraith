@@ -676,6 +676,59 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
     }
   })
 
+  it('sets aps.category for blocking reasons only (lock-screen action buttons)', async () => {
+    const { dir, path } = writeTestAuthKey()
+    try {
+      const bodyWrites: string[] = []
+      const mockConnect = (_authority: string) =>
+        ({
+          closed: false,
+          destroyed: false,
+          on: () => {},
+          request: () => ({
+            on: () => {},
+            setEncoding: () => {},
+            write: (body: string) => {
+              bodyWrites.push(body)
+            },
+            end: () => {}
+          }),
+          close: () => {}
+        }) as never
+      const pusher = new Http2ApnsPusher({
+        authKeyPath: path,
+        keyId: 'KEYID00000',
+        teamId: 'TEAM00ABCD',
+        bundleId: 'com.example.app',
+        connect: mockConnect
+      })
+      void pusher.pushRemoteAttentionToToken('a', 'sandbox', {
+        pairID: 'p',
+        reason: 'approval',
+        threadId: 't',
+        approvalId: 'a-1'
+      })
+      void pusher.pushRemoteAttentionToToken('a', 'sandbox', {
+        pairID: 'p',
+        reason: 'question',
+        threadId: 't',
+        questionId: 'q-1'
+      })
+      void pusher.pushRemoteAttentionToToken('a', 'sandbox', {
+        pairID: 'p',
+        reason: 'runComplete',
+        threadId: 't'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(JSON.parse(bodyWrites[0]).aps.category).toBe('TW_APPROVAL')
+      expect(JSON.parse(bodyWrites[1]).aps.category).toBe('TW_QUESTION')
+      // Non-blocking reason → no category → no lock-screen buttons.
+      expect(JSON.parse(bodyWrites[2]).aps.category).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('sends silent wake/resume pushes with routing identifiers only', () => {
     const { dir, path } = writeTestAuthKey()
     try {

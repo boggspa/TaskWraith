@@ -366,6 +366,7 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
             title: 'TaskWraith needs attention',
             body: 'Open TaskWraith to respond.'
           },
+          category: APNS_CATEGORY_APPROVAL,
           sound: 'default',
           'mutable-content': 1
         },
@@ -405,6 +406,10 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
           // this leaks nothing new) — a generic "needs attention" string can't
           // tell an approval from a finished run on the lock screen.
           alert: remoteAttentionAlert(payload.reason),
+          // Lights up the lock-screen Approve/Deny buttons for blocking reasons.
+          // undefined for non-blocking reasons → JSON.stringify omits it, so a
+          // run-complete push stays button-less.
+          category: remoteAttentionCategory(payload.reason),
           sound: 'default',
           'mutable-content': 1
         },
@@ -489,6 +494,18 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
 }
 
 // MARK: - Helpers
+
+/** UNNotificationCategory identifiers the iOS app registers. The category on
+ * the push selects which action buttons (Approve/Deny) appear on the lock
+ * screen. Only blocking reasons get a category; others stay button-less. */
+const APNS_CATEGORY_APPROVAL = 'TW_APPROVAL'
+const APNS_CATEGORY_QUESTION = 'TW_QUESTION'
+
+function remoteAttentionCategory(reason: BridgeRemoteAttentionReason): string | undefined {
+  if (reason === 'approval') return APNS_CATEGORY_APPROVAL
+  if (reason === 'question') return APNS_CATEGORY_QUESTION
+  return undefined
+}
 
 /** Lock-screen title/body per reason. Privacy-safe: `reason` is already a
  * payload field, so this adds no new information — it only makes the
