@@ -1992,16 +1992,28 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     public func cancelRun(_ card: RemoteTaskCard) {
-        // Fall back to the live stream's run id — the throttled `card.runId`
-        // lags the un-throttled stream, so an early Stop tap must still target
-        // the in-flight run. Global chats carry no workspaceId; present the
-        // reserved "global" scope (NOT an empty string) so the Mac's allowlist
-        // gate ACCEPTS the cancel. That gate runs BEFORE the run-id ownership
-        // check and rejects an empty workspace outright — matching the
-        // empty→"global" resolution used by queue/steer/goal/continueTask.
-        let runId = card.runId ?? streamingRunIds[card.id]
-        guard let provider = card.provider, let runId, let thread = card.threadId else { return }
+        guard let thread = card.threadId else { return }
+        // Global chats carry no workspaceId; present the reserved "global" scope
+        // (NOT an empty string) so the Mac's allowlist gate ACCEPTS the cancel.
         let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        // Ensemble Stop must cancel the whole ROUND, not just the current
+        // participant. A per-run cancel kills one participant's process but never
+        // sets runtime.cancelled, so the orchestrator just advances to the next
+        // participant (and the continuation loop keeps going) — which is why a
+        // single Stop didn't halt the round. cancelRound sets runtime.cancelled
+        // AND cancels each participant by its true provider. Desktop parity:
+        // handleCancel → cancelEnsembleRound for ensemble chats.
+        if card.isEnsemble {
+            send(
+                BridgeAction.ensembleCancelRound(workspaceId: ws, threadId: thread),
+                successLabel: "Round cancelled.")
+            return
+        }
+        // Solo: fall back to the live stream's run id — the throttled `card.runId`
+        // lags the un-throttled stream, so an early Stop tap must still target
+        // the in-flight run.
+        let runId = card.runId ?? streamingRunIds[card.id]
+        guard let provider = card.provider, let runId else { return }
         send(
             BridgeAction.cancelRun(
                 provider: provider, runId: runId,

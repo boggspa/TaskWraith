@@ -842,6 +842,23 @@ public enum BridgeAction {
         return encode(payload)
     }
 
+    /// Cancel an Ensemble ROUND (not just one participant run): the Mac sets
+    /// `runtime.cancelled` so the continuation loop halts and every active
+    /// participant is cancelled by its true provider. `roundId` is optional —
+    /// omit it to cancel whatever round is active.
+    public static func ensembleCancelRound(
+        workspaceId: String, threadId: String,
+        roundId: String? = nil, message: String? = nil, actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "ensembleCancelRound", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId,
+        ]
+        if let roundId { payload["roundId"] = roundId }
+        if let message { payload["message"] = message }
+        return encode(payload)
+    }
+
     /// Start a new agent run in an allowlisted workspace. A FRESH `threadId`
     /// (e.g. "ios-<uuid>") starts a new chat; an existing one continues it.
     /// The Mac enforces the allowlist (workspace, provider, approval mode)
