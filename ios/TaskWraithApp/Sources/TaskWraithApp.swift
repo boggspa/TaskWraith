@@ -5,6 +5,7 @@
 
 import SwiftUI
 import UIKit
+import UserNotifications
 import Security
 import CryptoKit
 import TaskWraithKit
@@ -29,13 +30,46 @@ struct TaskWraithApp: App {
 /// re-delivers on every registerForRemoteNotifications() call, and the model
 /// re-registers on each launch once authorized.
 @MainActor
-final class PushAppDelegate: NSObject, UIApplicationDelegate {
+final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     let model: RemoteSessionModel
+
+    /// Category id carried on blocking pushes (mirrors Http2ApnsPusher's
+    /// APNS_CATEGORY_APPROVAL); selects the Approve/Deny action buttons.
+    private static let approvalCategoryId = "TW_APPROVAL"
+    private static let approveActionId = "TW_APPROVE"
+    private static let denyActionId = "TW_DENY"
 
     override init() {
         self.model = RemoteSessionModel(
             identityStore: KeychainIdentitySeedStore(account: "remote-identity-seed"))
         super.init()
+    }
+
+    func application(
+        _: UIApplication,
+        didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        // Set the delegate + register categories UNCONDITIONALLY at launch
+        // (before any auth check) — registration is idempotent and must precede
+        // the first push, or its category id resolves to no action buttons.
+        UNUserNotificationCenter.current().delegate = self
+        registerNotificationCategories()
+        return true
+    }
+
+    private func registerNotificationCategories() {
+        // .authenticationRequired is MANDATORY: Face ID / passcode must clear
+        // before the handler fires, so a bystander can't approve from a locked
+        // screen. .destructive tints Deny.
+        let approve = UNNotificationAction(
+            identifier: Self.approveActionId, title: "Approve", options: [.authenticationRequired])
+        let deny = UNNotificationAction(
+            identifier: Self.denyActionId, title: "Deny",
+            options: [.destructive, .authenticationRequired])
+        let approvalCategory = UNNotificationCategory(
+            identifier: Self.approvalCategoryId, actions: [approve, deny],
+            intentIdentifiers: [], options: [])
+        UNUserNotificationCenter.current().setNotificationCategories([approvalCategory])
     }
 
     func application(
@@ -82,6 +116,81 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate {
                 bgTask = .invalid
             }
         }
+    }
+
+    // Show blocking pushes (with their action buttons) even when foregrounded.
+    func userNotificationCenter(
+        _: UNUserNotificationCenter,
+        willPresent _: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
+
+    // Lock-screen Approve/Deny + plain-tap deep link.
+    func userNotificationCenter(
+        _: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let userInfo = response.notification.request.content.userInfo
+        let actionId = response.actionIdentifier
+        // approvalId === toolCallId on the Mac; accept toolCallId as a
+        // forward-compat fallback if a future push adds it explicitly.
+        let toolCallId = (userInfo["toolCallId"] as? String) ?? (userInfo["approvalId"] as? String)
+        let threadId = userInfo["threadId"] as? String
+        let workspaceId = userInfo["workspaceId"] as? String
+
+        if actionId == Self.approveActionId || actionId == Self.denyActionId {
+            guard let toolCallId else {
+                completionHandler()
+                return
+            }
+            let decision = actionId == Self.approveActionId ? "accept" : "decline"
+            // Hold a background-task assertion across the reconnect+ack; end it
+            // (and call completionHandler) on EVERY path so iOS never sees a hung
+            // handler.
+            var bgTask: UIBackgroundTaskIdentifier = .invalid
+            bgTask = UIApplication.shared.beginBackgroundTask(withName: "notif-action") {
+                if bgTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(bgTask)
+                    bgTask = .invalid
+                }
+            }
+            Task { @MainActor in
+                let ok = await model.sendApprovalDecisionFromNotification(
+                    toolCallId: toolCallId, decision: decision,
+                    workspaceId: workspaceId, threadId: threadId)
+                if !ok {
+                    // Reconnect missed the background window (Mac offline, cold
+                    // cellular, or Keychain locked before first unlock). The
+                    // Mac's auto-deny timer is the safety net; nudge the user.
+                    postLocalNotification("Couldn't reach your Mac — open TaskWraith to respond.")
+                }
+                completionHandler()
+                if bgTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(bgTask)
+                    bgTask = .invalid
+                }
+            }
+            return
+        }
+
+        // Plain tap (or the fallback local notification's tap) → deep-link to
+        // the thread's approval card.
+        if actionId == UNNotificationDefaultActionIdentifier, let threadId {
+            model.handleNotificationTap(threadId: threadId)
+        }
+        completionHandler()
+    }
+
+    private func postLocalNotification(_ body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "TaskWraith"
+        content.body = body
+        let request = UNNotificationRequest(
+            identifier: "tw-local-\(UUID().uuidString)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
     }
 }
 

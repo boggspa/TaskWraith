@@ -186,6 +186,9 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var lastActionMessage: String?
     /// Set after createThread succeeds — HomeView navigates to the new chat.
     @Published public var navigationTarget: String?
+    /// Deep-link target captured from a notification tap before the session is
+    /// established (cold launch); applied to navigationTarget on `.established`.
+    private var pendingDeepLinkThreadId: String?
     /// Expanded row bodies keyed by threadId → rowId.
     @Published public private(set) var rowExpansions: [String: [String: RemoteThreadSnapshot.Row]] =
         [:]
@@ -264,7 +267,7 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
-    public func handleRemoteWake(reason _: String) async -> Bool {
+    public func handleRemoteWake(reason _: String, timeoutMs: Int = 10_000) async -> Bool {
         guard hasStoredPairing else { return false }
         switch phase {
         case .connected:
@@ -272,7 +275,7 @@ public final class RemoteSessionModel: ObservableObject {
                 let attempt = connectAttempt
                 let alive = await client.checkSocketAlive()
                 guard connectAttempt == attempt else {
-                    return await waitForRemoteWakeConnection(timeoutMs: 10_000)
+                    return await waitForRemoteWakeConnection(timeoutMs: timeoutMs)
                 }
                 if alive { return true }
             }
@@ -284,7 +287,7 @@ public final class RemoteSessionModel: ObservableObject {
             autoReconnectAttempt = 0
             reconnectTrusted()
         }
-        return await waitForRemoteWakeConnection(timeoutMs: 10_000)
+        return await waitForRemoteWakeConnection(timeoutMs: timeoutMs)
     }
 
     private func waitForRemoteWakeConnection(timeoutMs: Int) async -> Bool {
@@ -898,6 +901,13 @@ public final class RemoteSessionModel: ObservableObject {
                         self.phase = .connected
                         self.wasEverConnected = true
                         self.persistCurrentPairing()
+                        // Cold-launch deep link: a notification tap set a target
+                        // before the session existed — apply it now that
+                        // ConnectedShell will render.
+                        if let pending = self.pendingDeepLinkThreadId {
+                            self.navigationTarget = pending
+                            self.pendingDeepLinkThreadId = nil
+                        }
                         // Grace fallback for the hydration gate: a Mac with
                         // genuinely nothing shared must eventually show the
                         // true empty state (with its setup instructions)
@@ -1961,6 +1971,59 @@ public final class RemoteSessionModel: ObservableObject {
                 toolCallId: toolCallId, decision: decision, workspaceId: ws, threadId: thread),
             successLabel: label)
         scheduleThreadRefresh(thread)
+    }
+
+    /// Lock-screen Approve/Deny: resolve an approval from a notification action
+    /// in the background with NO MobileApprovalCard present (a cold-launched
+    /// process has no hydrated cards). Reconnects the E2EE bridge first and only
+    /// sends if connected — the decision comes SOLELY from which button was
+    /// tapped, never from the (untrusted) push payload. Returns true only when
+    /// the Mac acked; the caller posts a "couldn't reach Mac" local notification
+    /// on false. The Mac's auto-deny timer is the safety net, so a missed reply
+    /// degrades to a system decline, never a spurious approve.
+    public func sendApprovalDecisionFromNotification(
+        toolCallId: String, decision: String, workspaceId: String?, threadId: String?,
+        timeoutMs: Int = 22_000
+    ) async -> Bool {
+        guard hasStoredPairing else { return false }
+        // The lock screen only offers Approve/Deny — richer grants
+        // (acceptForSession/Workspace, cancel) stay in-app where the command
+        // text is visible.
+        guard decision == "accept" || decision == "decline" else { return false }
+        let connected = await handleRemoteWake(reason: "notification-action", timeoutMs: timeoutMs)
+        guard connected, case .connected = phase, client != nil else { return false }
+        guard let context = replyContext(workspaceId: workspaceId, threadId: threadId, runId: nil)
+        else { return false }
+        let label = decision == "accept" ? "Allowed once." : "Denied."
+        // Bound the ack request so reconnect (≤timeoutMs) + ack stays within the
+        // OS background-execution budget.
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            send(
+                BridgeAction.approvalReply(
+                    toolCallId: toolCallId, decision: decision,
+                    workspaceId: context.workspaceId, threadId: context.threadId),
+                timeoutMs: 7_000,
+                successLabel: label,
+                navigateToThreadId: context.threadId,
+                onAck: { accepted in continuation.resume(returning: accepted) })
+        }
+    }
+
+    /// Plain notification tap (no action button): bring the bridge up and
+    /// deep-link to the thread's approval card. Survives a cold launch — if the
+    /// session isn't established yet, the target is restored on `.established`.
+    public func handleNotificationTap(threadId: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await self.handleRemoteWake(reason: "notification-tap", timeoutMs: 22_000)
+            await MainActor.run {
+                if case .connected = self.phase {
+                    self.navigationTarget = threadId
+                } else {
+                    self.pendingDeepLinkThreadId = threadId
+                }
+            }
+        }
     }
 
     public func answer(_ card: MobileQuestionCard, _ text: String) {
