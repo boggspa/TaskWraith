@@ -1012,7 +1012,7 @@ describe('BridgeActionRouter', () => {
         JSON.stringify(withReplayMeta({
           kind: 'registerApnsToken',
           pairID: 'pair-1',
-          deviceToken: 'tok-abc',
+          deviceToken: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
           env: 'production'
         })),
         'utf-8'
@@ -1034,7 +1034,7 @@ describe('BridgeActionRouter', () => {
         JSON.stringify(withReplayMeta({
           kind: 'registerApnsToken',
           pairID: 'unaffiliated-pair',
-          deviceToken: 'tok',
+          deviceToken: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
           env: 'sandbox'
         })),
         'utf-8'
@@ -1568,7 +1568,7 @@ describe('BridgeActionRouter', () => {
       const wire = encodeAction({
         kind: 'registerApnsToken',
         pairID: 'pair-1',
-        deviceToken: 'tok',
+        deviceToken: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         env: 'production'
       })
       const result = (await router.route('bridge.requestActionAck', {
