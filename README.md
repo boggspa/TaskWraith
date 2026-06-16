@@ -105,9 +105,9 @@ Run `npm run security:deps` before release work or after dependency changes.
 
 ## Discord Context
 
-Discord Context is a read-only composer attachment for solo chats. It reads a
-recent snapshot from channels your bot can access, labels it as untrusted
-context, and does not post back to Discord.
+Discord Context is a read-only composer attachment for solo and ensemble chats.
+It reads a recent snapshot from channels your bot can access, labels it as
+untrusted context, and does not post back to Discord.
 
 Configure it with a Discord bot token and at least one server ID. The bot needs
 permission to view the channel and read message history. For local development
