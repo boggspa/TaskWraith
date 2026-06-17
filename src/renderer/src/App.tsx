@@ -373,6 +373,8 @@ import {
   type PlanImportFileGrounding,
   type PlanImportPolicyMode,
   type PlanImportRiskLevel,
+  type PlanImportRunConstraintKind,
+  type PlanImportRunConstraint,
   type PlanImportReviewState
 } from './lib/planImport'
 import { applyRecoveryRecordsToChatRuns } from './lib/recoverChatRunTerminals'
@@ -687,6 +689,11 @@ const PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string> = {
   no_telemetry: 'No telemetry',
   quiet_summary: 'Quiet summary'
 }
+const PLAN_IMPORT_RUN_CONSTRAINT_LABELS: Record<PlanImportRunConstraintKind, string> = {
+  max_changed_files: 'Changed-file limit request',
+  exclude_paths_request: 'Avoid-path request',
+  verification_request: 'Verification request'
+}
 const PLAN_IMPORT_GROUNDING_LABELS: Record<PlanImportAssumptionStatus, string> = {
   unverified: 'Unverified',
   verified_from_repo: 'Path indexed',
@@ -718,6 +725,14 @@ function renderPlanImportItems(items: readonly string[], emptyText = 'None detec
       ))}
     </ul>
   )
+}
+
+function formatPlanImportRunConstraintValue(constraint: PlanImportRunConstraint): string | null {
+  if (typeof constraint.value === 'number') return `${constraint.value} changed-file limit`
+  if (Array.isArray(constraint.value) && constraint.value.length > 0) {
+    return constraint.value.join(', ')
+  }
+  return null
 }
 
 function renderPlanImportFileGroundings(
@@ -10447,8 +10462,7 @@ function App(): React.JSX.Element {
       pendingPlanImport &&
       request.chatRecord?.appChatId === currentComposerChatId
     ) {
-      window.alert('Choose Run imported plan or Use raw prompt before sending.')
-      return
+      setPendingPlanImport(null)
     }
 
     const parentChat = request.chatRecord || currentChat
@@ -11237,8 +11251,7 @@ function App(): React.JSX.Element {
       pendingPlanImport &&
       request.chatRecord?.appChatId === currentComposerChatId
     ) {
-      window.alert('Choose Run imported plan or Use raw prompt before sending.')
-      return
+      setPendingPlanImport(null)
     }
 
     const targetChatId = request.chatRecord?.appChatId || currentChat?.appChatId
@@ -19364,10 +19377,6 @@ function App(): React.JSX.Element {
                             if (tryHandleActionSlashSubmit()) {
                               return
                             }
-                            if (pendingPlanImport) {
-                              window.alert('Choose Run imported plan or Use raw prompt before sending.')
-                              return
-                            }
                             triggerSendConfirmation()
                             // DM target resolution order (first match wins):
                             //   1. An explicit `@participant` mention in the
@@ -19726,6 +19735,24 @@ function App(): React.JSX.Element {
                             </ul>
                           </div>
                         )}
+                        {pendingPlanImport.contract.runConstraints.length > 0 && (
+                          <div className="plan-import-section plan-import-fear-section">
+                            <span>Untrusted requested guidance</span>
+                            <ul className="plan-import-fear-list">
+                              {pendingPlanImport.contract.runConstraints.map((constraint) => {
+                                const value = formatPlanImportRunConstraintValue(constraint)
+                                return (
+                                  <li key={`${constraint.kind}-${constraint.sourceText}`}>
+                                    <strong>{PLAN_IMPORT_RUN_CONSTRAINT_LABELS[constraint.kind]}</strong>
+                                    {value && <code>{value}</code>}
+                                    <small>{constraint.sourceText}</small>
+                                    <small>{constraint.note}</small>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </div>
+                        )}
 
                         {planImportExecutionEstimate && (
                           <div
@@ -19836,8 +19863,11 @@ function App(): React.JSX.Element {
                           <button
                             className="btn btn-sm btn-ghost"
                             type="button"
-                            onClick={() => setPendingPlanImport(null)}
-                            disabled={isCurrentComposerLocked || planImportGroundingBusy}
+                            onClick={() => {
+                              setPendingPlanImport(null)
+                              handleRun()
+                            }}
+                            disabled={isCurrentComposerLocked}
                           >
                             Use raw prompt
                           </button>
@@ -21345,12 +21375,6 @@ function App(): React.JSX.Element {
                                   if (tryHandleActionSlashSubmit()) {
                                     return
                                   }
-                                  if (pendingPlanImport) {
-                                    window.alert(
-                                      'Choose Run imported plan or Use raw prompt before sending.'
-                                    )
-                                    return
-                                  }
                                   triggerSendConfirmation()
                                   handleRun()
                                 }}
@@ -21358,15 +21382,10 @@ function App(): React.JSX.Element {
                                   !currentChat ||
                                   (!isCurrentGlobalChat && !currentWorkspace) ||
                                   !prompt.trim() ||
-                                  Boolean(pendingPlanImport) ||
                                   (currentProvider === 'gemini' && !geminiWorkspaceTrustReady) ||
                                   isSteerBusyForCurrentChat
                                 }
-                                title={
-                                  pendingPlanImport
-                                    ? 'Choose Run imported plan or Use raw prompt first'
-                                    : 'Queue next run'
-                                }
+                                title="Queue next run"
                                 aria-label="Queue next run"
                                 type="button"
                               >
@@ -21387,15 +21406,10 @@ function App(): React.JSX.Element {
                                     !currentChat ||
                                     (!isCurrentGlobalChat && !currentWorkspace) ||
                                     !prompt.trim() ||
-                                    Boolean(pendingPlanImport) ||
                                     (currentProvider === 'gemini' && !geminiWorkspaceTrustReady) ||
                                     isSteerBusyForCurrentChat
                                   }
-                                  title={
-                                    pendingPlanImport
-                                      ? 'Choose Run imported plan or Use raw prompt first'
-                                      : 'Interrupt the active turn and dispatch this prompt immediately.'
-                                  }
+                                  title="Interrupt the active turn and dispatch this prompt immediately."
                                   aria-label="Steer: interrupt and dispatch this prompt"
                                   type="button"
                                 >
@@ -21425,12 +21439,6 @@ function App(): React.JSX.Element {
                                 if (tryHandleActionSlashSubmit()) {
                                   return
                                 }
-                                if (pendingPlanImport) {
-                                  window.alert(
-                                    'Choose Run imported plan or Use raw prompt before sending.'
-                                  )
-                                  return
-                                }
                                 triggerSendConfirmation()
                                 // DM target resolution (same precedence as
                                 // the Enter handler above): explicit
@@ -21456,7 +21464,6 @@ function App(): React.JSX.Element {
                                 !currentChat ||
                                 (!isCurrentGlobalChat && !currentWorkspace) ||
                                 !prompt.trim() ||
-                                Boolean(pendingPlanImport) ||
                                 (currentProvider === 'gemini' && !geminiWorkspaceTrustReady)
                               }
                               title={
@@ -21466,11 +21473,9 @@ function App(): React.JSX.Element {
                                     ? 'Pick a workspace folder first'
                                     : !prompt.trim()
                                       ? 'Type a prompt first'
-                                      : pendingPlanImport
-                                        ? 'Choose Run imported plan or Use raw prompt first'
-                                        : currentProvider === 'gemini' && !geminiWorkspaceTrustReady
+                                      : currentProvider === 'gemini' && !geminiWorkspaceTrustReady
                                           ? 'Trust this workspace for Gemini first'
-                                        : isCurrentEnsembleChat && effectiveSelectedParticipantId
+                                          : isCurrentEnsembleChat && effectiveSelectedParticipantId
                                           ? `Run full ensemble round  ·  ${primaryModifierLabel} click = DM the selected chip`
                                           : 'Run'
                               }
