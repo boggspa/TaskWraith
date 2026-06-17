@@ -34,6 +34,7 @@ import { PairedDevicesPanel } from './PairedDevicesPanel'
 import { RemoteWorkspacesPanel } from './RemoteWorkspacesPanel'
 import { BridgeNetworkingPanel } from './BridgeNetworkingPanel'
 import { ApnsConfigPanel } from './ApnsConfigPanel'
+import { TailscaleSetupPanel } from './TailscaleSetupPanel'
 
 interface BootstrapState {
   /** Pretty-printed JSON for display + copy. */
@@ -321,6 +322,17 @@ export function PairingPage(): JSX.Element {
         </header>
         <BridgeNetworkingPanel />
         {APNS_PANEL_ENABLED && <ApnsConfigPanel />}
+      </section>
+
+      <section className="pairing-page__section pairing-page__tailscale">
+        <header className="pairing-page__section-header">
+          <h3 className="pairing-page__section-title">Tailscale · remote access</h3>
+          <p className="pairing-page__section-subtitle">
+            The recommended way to reach this Mac from your iPhone or iPad beyond the local
+            network — free, encrypted, and no port-forwarding.
+          </p>
+        </header>
+        <TailscaleSetupPanel />
       </section>
 
       {/* Maximised QR overlay — covers the screen so the iPad camera

@@ -1,0 +1,57 @@
+/* ============================================================
+   Tailscale setup panel — onboarding + guided auth for the
+   beyond-LAN transport. Reuses .bridge-networking-* chrome; only
+   the numbered step list + the guided-auth form need their own
+   rules. Kept in a dedicated file to stay clear of the contended
+   numbered CSS files.
+   ============================================================ */
+
+.tailscale-setup-steps {
+  margin: 4px 0 10px;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.tailscale-setup-steps li {
+  padding-left: 2px;
+}
+
+.tailscale-setup-steps strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Guided auth-key form (added with the link action). */
+.tailscale-link-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.tailscale-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tailscale-link-row input[type='password'] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tailscale-link-message {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tailscale-link-message.is-error {
+  color: var(--danger, #e5534b);
+}
+
+.tailscale-link-message.is-ok {
+  color: var(--success, #3fb950);
+}
