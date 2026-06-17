@@ -92,9 +92,10 @@ public enum ComposerShellResolver {
             // Controls below + detached above-rows (no capsule/lift/split/text).
             return ComposerShellLayout(controlsBelowTextarea: true, detachedAboveRows: true)
         case .grok:
-            // The lone non-default shell that does NOT detach — grok tucks the
-            // above-rows behind the composer lip (one merged card).
-            return ComposerShellLayout(controlsBelowTextarea: true)
+            // grok "tucked tabs" (CS13): does NOT detach — the above-rows collapse
+            // into ONE narrower inset card that the composer-core's top edge overlaps
+            // (a tab peeking from behind), the composer staying one full-width surface.
+            return ComposerShellLayout(controlsBelowTextarea: true, tuckedAboveTab: true)
         case .claude:
             // Detached pill cards; send lifted to the textarea-bubble corner; the
             // surface wraps ONLY the textarea bubble — the control row + telemetry

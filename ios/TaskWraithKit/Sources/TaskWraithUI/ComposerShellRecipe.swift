@@ -194,6 +194,11 @@ public struct ComposerShellLayout: Equatable, Sendable {
     /// telemetry rail render BARE on the page below it (claude). This is the
     /// umbrella case; surfaceIsCapsule / splitChromeRects are specializations.
     public var surfaceWrapsInputOnly: Bool
+    /// CS13 — grok "tucked tabs": the above-rows collapse into ONE narrower, inset
+    /// card that the composer-core's top edge OVERLAPS by ~10pt (a tab peeking from
+    /// behind), the composer staying one full-width surface. Distinct from
+    /// detachedAboveRows (no per-card float / bare telemetry). grok only.
+    public var tuckedAboveTab: Bool
     public init(
         controlsBelowTextarea: Bool = false,
         detachedAboveRows: Bool = false,
@@ -202,7 +207,8 @@ public struct ComposerShellLayout: Equatable, Sendable {
         splitChromeRects: Bool = false,
         controlsAsPlainText: Bool = false,
         tucksSecondaryRows: Bool = false,
-        surfaceWrapsInputOnly: Bool = false
+        surfaceWrapsInputOnly: Bool = false,
+        tuckedAboveTab: Bool = false
     ) {
         self.controlsBelowTextarea = controlsBelowTextarea
         self.detachedAboveRows = detachedAboveRows
@@ -212,6 +218,7 @@ public struct ComposerShellLayout: Equatable, Sendable {
         self.controlsAsPlainText = controlsAsPlainText
         self.tucksSecondaryRows = tucksSecondaryRows
         self.surfaceWrapsInputOnly = surfaceWrapsInputOnly
+        self.tuckedAboveTab = tuckedAboveTab
     }
     /// CS12 — the shell surface wraps ONLY the input (textarea bubble / capsule /
     /// rect), NOT the whole composer-core; the control row + telemetry rail then

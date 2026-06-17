@@ -832,7 +832,19 @@ struct ThreadDetailView: View {
                     let inputOwnsSurface = resolved.layout.inputOwnsSurface
                     let bareTelemetry =
                         detached && (inputOwnsSurface || resolved.material == .transparent)
-                    VStack(spacing: detached ? 6 : 0) {
+                    // CS13 — grok "tucked tabs": the above-rows form ONE inset card the
+                    // composer-core overlaps by 10pt (a tab peeking behind). Gated on
+                    // above-content (no empty tab). For non-tuck shells every condition
+                    // below collapses to its current value → byte-identical layout.
+                    let hasAboveContent =
+                        hasAttachedRows || card.isEnsemble
+                        || !(card.queuedComposerPrompts ?? []).isEmpty
+                    let tuckedTab = resolved.layout.tuckedAboveTab && hasAboveContent
+                    VStack(spacing: tuckedTab ? -10 : (detached ? 6 : 0)) {
+                        // Above-rows group: inner VStack spacing matches the outer so
+                        // non-tuck stays identical; the grok tuck makes it the inset,
+                        // overlapped tab card.
+                        VStack(spacing: detached ? 6 : 0) {
                         if hasWorkspaceBreakdown {
                             // One attached row per granted workspace
                             // (primary + secondary), desktop-style.
@@ -903,6 +915,9 @@ struct ThreadDetailView: View {
                                 suppressFill: detached && resolved.material != .transparent,
                                 resolved: resolved)
                         }
+                        }  // end above-rows group (CS13 grok tuck card)
+                        .composerShellIf(tuckedTab, resolved)
+                        .padding(.horizontal, tuckedTab ? 18 : 0)
                         // Composer core (input + telemetry rail). In detached
                         // mode this is its OWN card under the floating above-rows;
                         // merged mode keeps it as the final segments of the one
@@ -921,7 +936,7 @@ struct ThreadDetailView: View {
                             Composer(
                                 model: model, card: card, runModel: snapshot?.runSummary?.model,
                                 runStatus: snapshot?.runSummary?.status,
-                                attachedTop: detached
+                                attachedTop: (detached || tuckedTab)
                                     ? false
                                     : (hasAttachedRows || card.isEnsemble
                                         || !(card.queuedComposerPrompts ?? []).isEmpty),
@@ -946,9 +961,10 @@ struct ThreadDetailView: View {
                                 },
                                 planLanes: card.todoLanes ?? [])
                         }
-                        .composerShellIf(detached && !inputOwnsSurface, resolved)
+                        .composerShellIf((detached && !inputOwnsSurface) || tuckedTab, resolved)
+                        .zIndex(tuckedTab ? 1 : 0)
                     }
-                    .composerShellIf(!detached, resolved)
+                    .composerShellIf(!detached && !tuckedTab, resolved)
                     .task(id: composerGitWorkspaceIds(card: card).joined(separator: "\n")) {
                         for workspaceId in composerGitWorkspaceIds(card: card) {
                             await model.refreshGitSnapshotCache(workspaceId: workspaceId)
