@@ -362,10 +362,13 @@ import {
   buildPlanImportDisplayPrompt,
   buildInitialPlanImportReview,
   buildPlanImportRunPrompt,
+  groundPlanImportFileMentions,
   planImportEnabledChipsForPolicy,
   planImportApprovalModeForPolicy,
   shouldOfferPlanImport,
+  type PlanImportAssumptionStatus,
   type PlanImportChipId,
+  type PlanImportFileGrounding,
   type PlanImportPolicyMode,
   type PlanImportReviewState
 } from './lib/planImport'
@@ -681,6 +684,12 @@ const PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string> = {
   no_telemetry: 'No telemetry',
   quiet_summary: 'Quiet summary'
 }
+const PLAN_IMPORT_GROUNDING_LABELS: Record<PlanImportAssumptionStatus, string> = {
+  unverified: 'Unverified',
+  verified_from_repo: 'Path indexed',
+  contradicted_by_repo: 'No exact path match',
+  needs_user_decision: 'Needs decision'
+}
 const GUEST_PARTICIPANT_STEERING_PREAMBLE =
   'You are a guest participant attached to a standard TaskWraith chat. The main parent agent has priority. Respond to the user request in parallel as a second opinion or disjoint helper. Write or edit files only when useful and keep any changes disjoint from the main agent. If your intended edits overlap or conflict with the main agent, stop and explain the conflict instead of fighting the main agent.'
 const GUEST_PARENT_CONTEXT_TURN_LIMIT = 20
@@ -700,6 +709,57 @@ function renderPlanImportItems(items: readonly string[], emptyText = 'None detec
         <li key={item}>{item}</li>
       ))}
     </ul>
+  )
+}
+
+function renderPlanImportFileGroundings(
+  groundings: readonly PlanImportFileGrounding[],
+  busy = false
+): ReactNode {
+  if (groundings.length === 0) {
+    return <span className="plan-import-empty">No file paths detected</span>
+  }
+  const indexedCount = groundings.filter((item) => item.status === 'verified_from_repo').length
+  const unverifiedCount = groundings.filter((item) => item.status === 'unverified').length
+  const decisionCount = groundings.filter((item) => item.status === 'needs_user_decision').length
+  const missingCount = groundings.filter((item) => item.status === 'contradicted_by_repo').length
+  const summaryParts = [
+    `${indexedCount} indexed`,
+    `${unverifiedCount} unverified`,
+    decisionCount > 0 ? `${decisionCount} need decision` : null,
+    missingCount > 0 ? `${missingCount} no exact match` : null
+  ].filter(Boolean)
+  return (
+    <>
+      <small className="plan-import-grounding-summary" role="status" aria-live="polite">
+        Exact workspace-index matches only; plan claims remain unverified. {summaryParts.join(', ')}
+        .
+      </small>
+      <ul className="plan-import-grounding-list" aria-busy={busy}>
+        {groundings.map((grounding) => {
+          const evidenceText =
+            grounding.evidenceRefs.length > 0
+              ? grounding.evidenceRefs
+                  .map((ref) => `${ref.path}${ref.note ? ` - ${ref.note}` : ''}`)
+                  .join('; ')
+              : grounding.note
+          return (
+            <li
+              key={grounding.path}
+              className={`plan-import-grounding-item status-${grounding.status}`}
+            >
+              <div className="plan-import-grounding-top">
+                <code>{grounding.path}</code>
+                <span className="plan-import-grounding-status">
+                  {PLAN_IMPORT_GROUNDING_LABELS[grounding.status]}
+                </span>
+              </div>
+              {evidenceText && <small>{evidenceText}</small>}
+            </li>
+          )
+        })}
+      </ul>
+    </>
   )
 }
 
@@ -2003,6 +2063,8 @@ function App(): React.JSX.Element {
     usePerChatState<PlanChoiceState | null>(null)
   const [pendingPlanImportByChatId, setPendingPlanImportForChat] =
     usePerChatState<PlanImportReviewState | null>(null)
+  const [planImportGroundingBusyByChatId, setPlanImportGroundingBusyForChat] =
+    usePerChatState(false)
   // QMOD (1.0.3) — per-chat pending agent question queue. Driven by the
   // `agent-question-requested` IPC event from main. Cleared per question
   // on submit / dismiss / cancellation. Multiple agents in one chat can
@@ -2513,6 +2575,9 @@ function App(): React.JSX.Element {
   const pendingPlanImport = currentComposerChatId
     ? pendingPlanImportByChatId[currentComposerChatId] || null
     : null
+  const planImportGroundingBusy = currentComposerChatId
+    ? Boolean(planImportGroundingBusyByChatId[currentComposerChatId])
+    : false
   const pendingAgentQuestions = currentComposerChatId
     ? pendingAgentQuestionsByChatId[currentComposerChatId] || EMPTY_AGENT_QUESTION_QUEUE
     : EMPTY_AGENT_QUESTION_QUEUE
@@ -12469,9 +12534,45 @@ function App(): React.JSX.Element {
     applyPolicy()
   }
 
+  const handleGroundImportedPlanFiles = async (): Promise<void> => {
+    const review = pendingPlanImport
+    const chatId = currentComposerChatId
+    if (!review || !chatId || review.contract.fileGroundings.length === 0) return
+    if (planImportGroundingBusy) return
+
+    const workspaceForReview = currentChat ? getWorkspaceForChat(currentChat) : currentWorkspace
+    if (!workspaceForReview?.path) {
+      window.alert('Open a workspace chat before checking path mentions.')
+      return
+    }
+
+    setPlanImportGroundingBusyForChat(chatId, true)
+    try {
+      const workspaceFiles = await window.api.listWorkspaceFiles(workspaceForReview.path)
+      setPendingPlanImportForChat(chatId, (previous) =>
+        previous && previous.id === review.id
+          ? {
+              ...previous,
+              contract: groundPlanImportFileMentions(previous.contract, workspaceFiles, {
+                workspacePath: workspaceForReview.path
+              })
+            }
+          : previous
+      )
+    } catch (error) {
+      window.alert(`Could not check file mentions: ${redactLog(String(error))}`)
+    } finally {
+      setPlanImportGroundingBusyForChat(chatId, false)
+    }
+  }
+
   const handleRunImportedPlan = (): void => {
     const review = pendingPlanImport
     if (!review) return
+    if (planImportGroundingBusy) {
+      window.alert('Wait for path checking to finish before running the imported plan.')
+      return
+    }
 
     if (
       currentChat?.chatKind === 'ensemble' ||
@@ -13836,6 +13937,18 @@ function App(): React.JSX.Element {
   const isCurrentEnsembleChat = currentChat?.chatKind === 'ensemble'
   const isEnsembleModeEnabled = settings?.ensembleModeEnabled !== false
   const isCurrentComposerLocked = isCurrentChatRunning && !isCurrentEnsembleChat
+  const planImportGroundingWorkspace = currentChat ? getWorkspaceForChat(currentChat) : currentWorkspace
+  const planImportGroundingDisabledReason = !pendingPlanImport
+    ? null
+    : pendingPlanImport.contract.fileGroundings.length === 0
+      ? null
+      : isCurrentComposerLocked
+        ? 'Composer is busy.'
+        : planImportGroundingBusy
+          ? 'Checking path mentions.'
+          : !planImportGroundingWorkspace?.path
+            ? 'Open a workspace chat to check path mentions.'
+            : null
 
   // Slice F v2 (1.0.3) — which participant chip the composer pickers
   // currently target. Lives in App.tsx (not the chip-strip component)
@@ -19598,11 +19711,36 @@ function App(): React.JSX.Element {
                               </ul>
                             )}
                           </div>
-                          <div className="plan-import-section">
-                            <span>Files mentioned</span>
-                            {renderPlanImportItems(
-                              pendingPlanImport.contract.filesMentioned,
-                              'No file paths detected'
+                          <div className="plan-import-section" aria-busy={planImportGroundingBusy}>
+                            <div className="plan-import-section-heading">
+                              <span>Path mentions</span>
+                              {pendingPlanImport.contract.fileGroundings.length > 0 && (
+                                <button
+                                  className="plan-import-grounding-button"
+                                  type="button"
+                                  onClick={handleGroundImportedPlanFiles}
+                                  aria-describedby={
+                                    planImportGroundingDisabledReason
+                                      ? `plan-import-grounding-reason-${pendingPlanImport.id}`
+                                      : undefined
+                                  }
+                                  disabled={Boolean(planImportGroundingDisabledReason)}
+                                >
+                                  {planImportGroundingBusy ? 'Checking...' : 'Check paths'}
+                                </button>
+                              )}
+                            </div>
+                            {planImportGroundingDisabledReason && (
+                              <small
+                                id={`plan-import-grounding-reason-${pendingPlanImport.id}`}
+                                className="plan-import-grounding-reason"
+                              >
+                                {planImportGroundingDisabledReason}
+                              </small>
+                            )}
+                            {renderPlanImportFileGroundings(
+                              pendingPlanImport.contract.fileGroundings,
+                              planImportGroundingBusy
                             )}
                           </div>
                           <div className="plan-import-section">
@@ -19619,7 +19757,7 @@ function App(): React.JSX.Element {
                             className="btn btn-sm"
                             type="button"
                             onClick={handleRunImportedPlan}
-                            disabled={isCurrentComposerLocked}
+                            disabled={isCurrentComposerLocked || planImportGroundingBusy}
                           >
                             Run imported plan
                           </button>
@@ -19627,7 +19765,7 @@ function App(): React.JSX.Element {
                             className="btn btn-sm btn-ghost"
                             type="button"
                             onClick={() => setPendingPlanImport(null)}
-                            disabled={isCurrentComposerLocked}
+                            disabled={isCurrentComposerLocked || planImportGroundingBusy}
                           >
                             Use raw prompt
                           </button>

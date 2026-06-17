@@ -5894,7 +5894,8 @@
 }
 
 .plan-import-goal span,
-.plan-import-section > span {
+.plan-import-section > span,
+.plan-import-section-heading > span {
   color: var(--text-muted);
   font-size: 10px;
   font-weight: 700;
@@ -6038,6 +6039,44 @@
   min-width: 0;
 }
 
+.plan-import-section-heading,
+.plan-import-grounding-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.plan-import-section-heading {
+  justify-content: space-between;
+}
+
+.plan-import-grounding-button {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-bg) 88%, transparent);
+  color: var(--text-secondary);
+  min-height: 22px;
+  padding: 0 var(--space-xs);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.plan-import-grounding-button:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.plan-import-grounding-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .plan-import-list {
   display: flex;
   flex-direction: column;
@@ -6057,6 +6096,69 @@
   color: var(--text-muted);
   font-style: normal;
   margin-left: 6px;
+}
+
+.plan-import-grounding-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-import-grounding-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.plan-import-grounding-top {
+  justify-content: space-between;
+}
+
+.plan-import-grounding-item code {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.plan-import-grounding-item small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.plan-import-grounding-summary,
+.plan-import-grounding-reason {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.plan-import-grounding-status {
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  border-radius: 999px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.plan-import-grounding-item.status-verified_from_repo .plan-import-grounding-status {
+  border-color: color-mix(in srgb, var(--success) 60%, transparent);
+  color: color-mix(in srgb, var(--success) 82%, var(--text-primary));
+}
+
+.plan-import-grounding-item.status-contradicted_by_repo .plan-import-grounding-status {
+  border-color: color-mix(in srgb, var(--warning) 64%, transparent);
+  color: color-mix(in srgb, var(--warning) 78%, var(--text-primary));
 }
 
 .plan-import-actions {

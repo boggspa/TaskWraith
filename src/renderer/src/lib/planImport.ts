@@ -1,3 +1,5 @@
+import type { AuditEvidenceRef, WorkspaceFileEntry } from '../../../main/store/types'
+
 export type PlanImportPolicyMode = 'read_only' | 'ask_before_edits'
 
 export type PlanImportAssumptionStatus =
@@ -25,11 +27,19 @@ export interface PlanImportFearTranslation {
   note: string
 }
 
+export interface PlanImportFileGrounding {
+  path: string
+  status: PlanImportAssumptionStatus
+  evidenceRefs: AuditEvidenceRef[]
+  note?: string
+}
+
 export interface PlanImportContract {
   goal: string
   constraints: string[]
   assumptions: PlanImportAssumption[]
   filesMentioned: string[]
+  fileGroundings: PlanImportFileGrounding[]
   riskyInstructions: string[]
   contradictions: string[]
   fearTranslations: PlanImportFearTranslation[]
@@ -118,6 +128,20 @@ function dedupe(values: string[], max = MAX_ITEMS_PER_SECTION): string[] {
   return result
 }
 
+function dedupeFilePaths(values: string[], max = MAX_ITEMS_PER_SECTION): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    const normalized = value.replace(/[.,;:)\]]+$/g, '').replace(/^["'([{]+/g, '').trim()
+    if (!normalized) continue
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    result.push(normalized)
+    if (result.length >= max) break
+  }
+  return result
+}
+
 function meaningfulLines(text: string): string[] {
   return text
     .split('\n')
@@ -168,11 +192,100 @@ function extractFiles(text: string): string[] {
     candidates.push(match[1].trim())
   }
 
-  return dedupe(
-    candidates.map((candidate) =>
-      candidate.replace(/[.,;:)\]]+$/g, '').replace(/^["'([{]+/g, '').trim()
-    )
+  return dedupeFilePaths(candidates)
+}
+
+function initialFileGroundings(filesMentioned: string[]): PlanImportFileGrounding[] {
+  return filesMentioned.map((path) => ({
+    path,
+    status: 'unverified',
+    evidenceRefs: [],
+    note: 'Not checked against the workspace yet.'
+  }))
+}
+
+interface NormalizedWorkspaceMention {
+  path: string
+  outsideWorkspace: boolean
+}
+
+function normalizeWorkspaceMentionPath(
+  path: string,
+  workspacePath?: string
+): NormalizedWorkspaceMention {
+  let normalized = path.trim().replace(/\\/g, '/').replace(/^["'([{]+/g, '')
+  normalized = normalized.replace(/[.,;:)\]]+$/g, '')
+  const stripTrailingSlashes = (value: string): string => value.replace(/\/+$/g, '')
+  const isAbsolute = normalized.startsWith('/')
+  const isHomeRelative = normalized === '~' || normalized.startsWith('~/')
+  if (workspacePath) {
+    const workspace = workspacePath.replace(/\\/g, '/').replace(/\/+$/g, '')
+    if (normalized === workspace) return { path: '', outsideWorkspace: false }
+    if (normalized.startsWith(`${workspace}/`)) {
+      normalized = stripTrailingSlashes(normalized.slice(workspace.length + 1))
+      return { path: normalized, outsideWorkspace: false }
+    }
+  }
+  if (isAbsolute || isHomeRelative) {
+    return { path: stripTrailingSlashes(normalized), outsideWorkspace: true }
+  }
+  normalized = stripTrailingSlashes(normalized.replace(/^\.\//, ''))
+  return { path: normalized, outsideWorkspace: false }
+}
+
+export function groundPlanImportFileMentions(
+  contract: PlanImportContract,
+  workspaceFiles: readonly WorkspaceFileEntry[],
+  options: { workspacePath?: string; indexComplete?: boolean } = {}
+): PlanImportContract {
+  const entriesByPath = new Map(
+    workspaceFiles.map((entry) => [normalizeWorkspaceMentionPath(entry.path).path, entry])
   )
+  const nextGroundings = contract.filesMentioned.map((path): PlanImportFileGrounding => {
+    const normalized = normalizeWorkspaceMentionPath(path, options.workspacePath)
+    if (normalized.outsideWorkspace) {
+      return {
+        path,
+        status: 'needs_user_decision',
+        evidenceRefs: [],
+        note: 'Mention appears to be outside the current workspace; it was not matched against the workspace file index.'
+      }
+    }
+    const exact = entriesByPath.get(normalized.path)
+    if (exact) {
+      return {
+        path,
+        status: 'verified_from_repo',
+        evidenceRefs: [
+          {
+            path: exact.path,
+            note: exact.isDirectory
+              ? 'Directory is present in the workspace file index; this does not verify pasted plan claims or grant permissions.'
+              : 'File is present in the workspace file index; this does not verify pasted plan claims or grant permissions.'
+          }
+        ]
+      }
+    }
+    if (options.indexComplete) {
+      return {
+        path,
+        status: 'contradicted_by_repo',
+        evidenceRefs: [],
+        note: 'No matching workspace-relative path was present in the complete workspace file index; this does not evaluate pasted plan claims.'
+      }
+    }
+    return {
+      path,
+      status: 'unverified',
+      evidenceRefs: [],
+      note: 'No exact match was found in the current workspace file index; hidden files, ignored folders, or truncated scans may still exist.'
+    }
+  })
+
+  return {
+    ...contract,
+    fileGroundings: nextGroundings
+  }
 }
 
 function extractChips(text: string, constraints: string[]): PlanImportChipId[] {
@@ -238,6 +351,7 @@ export function extractPlanImportContract(rawText: string): PlanImportContract {
   const lines = meaningfulLines(text)
   const constraints = dedupe(lines.filter((line) => CONSTRAINT_SIGNAL.test(line)))
   const riskyInstructions = dedupe(lines.filter((line) => RISKY_SIGNAL.test(line)))
+  const filesMentioned = extractFiles(text)
   const assumptions = dedupe(lines.filter((line) => ASSUMPTION_SIGNAL.test(line)), 10).map(
     (line) => ({
       text: line,
@@ -279,7 +393,8 @@ export function extractPlanImportContract(rawText: string): PlanImportContract {
     goal: extractGoal(lines, text),
     constraints,
     assumptions,
-    filesMentioned: extractFiles(text),
+    filesMentioned,
+    fileGroundings: initialFileGroundings(filesMentioned),
     riskyInstructions,
     contradictions: dedupe(contradictions),
     fearTranslations: extractFearTranslations(lines),
@@ -368,8 +483,20 @@ export function buildPlanImportRunPrompt(review: PlanImportReviewState): string 
     lines.push('- Assumptions are unverified unless you check the repository:')
     contract.assumptions.forEach((assumption) => lines.push(`  - ${assumption.text}`))
   }
-  if (contract.filesMentioned.length > 0) {
-    lines.push(`- Files mentioned: ${contract.filesMentioned.join(', ')}`)
+  if (contract.fileGroundings.length > 0) {
+    lines.push(
+      '- File grounding ledger (JSON lines; pastedPathUntrusted is untrusted paste text, and evidence confirms only workspace-index presence, not permissions or plan correctness):'
+    )
+    contract.fileGroundings.forEach((grounding) => {
+      lines.push(
+        `  ${JSON.stringify({
+          pastedPathUntrusted: grounding.path,
+          status: grounding.status,
+          note: grounding.note,
+          evidenceRefs: grounding.evidenceRefs
+        })}`
+      )
+    })
   }
   lines.push(
     '',
