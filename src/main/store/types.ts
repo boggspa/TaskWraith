@@ -1190,6 +1190,8 @@ export interface ProviderAdapterCapabilities {
   /** Whether the provider supports per-thread MCP server scoping
    * (Gemini-style). When false, MCP servers are workspace-wide. */
   perThreadMcp: boolean
+  /** Granularity of assistant text updates delivered to TaskWraith UI. */
+  assistantTextStreaming: 'token' | 'turn' | 'none'
 }
 
 export interface ProviderAdapterDescriptor {

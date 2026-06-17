@@ -135,6 +135,7 @@ describe('defaultProviderDescriptor capabilities', () => {
       expect(typeof cap.contextInjection).toBe('boolean')
       expect(typeof cap.sessionResumption).toBe('boolean')
       expect(typeof cap.perThreadMcp).toBe('boolean')
+      expect(['token', 'turn', 'none']).toContain(cap.assistantTextStreaming)
     })
 
     it(`${provider} declares a serializable capabilities object`, () => {
@@ -167,5 +168,10 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.approvalModes).toEqual(['default'])
     expect(cap.reasoningEffort).toBe(false)
     expect(cap.imageAttachments).toBe(false)
+  })
+
+  it('declares Ollama as token-streaming after HTTP chunk forwarding', () => {
+    const cap = defaultProviderDescriptor('ollama').capabilities
+    expect(cap.assistantTextStreaming).toBe('token')
   })
 })

@@ -120,7 +120,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         imageAttachments: false,
         contextInjection: true,
         sessionResumption: true,
-        perThreadMcp: false
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
       }
     }
   }
@@ -147,7 +148,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         imageAttachments: true,
         contextInjection: true,
         sessionResumption: true,
-        perThreadMcp: true
+        perThreadMcp: true,
+        assistantTextStreaming: 'token'
       }
     }
   }
@@ -174,7 +176,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         imageAttachments: false,
         contextInjection: true,
         sessionResumption: false,
-        perThreadMcp: false
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
       }
     }
   }
@@ -208,7 +211,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         imageAttachments: false,
         contextInjection: false,
         sessionResumption: true,
-        perThreadMcp: false
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
       }
     }
   }
@@ -244,7 +248,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         imageAttachments: false,
         contextInjection: false,
         sessionResumption: true,
-        perThreadMcp: false
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
       }
     }
   }
@@ -271,7 +276,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         imageAttachments: false,
         contextInjection: true,
         sessionResumption: false,
-        perThreadMcp: false
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
       }
     }
   }
@@ -297,7 +303,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       imageAttachments: true,
       contextInjection: true,
       sessionResumption: true,
-      perThreadMcp: false
+      perThreadMcp: false,
+      assistantTextStreaming: 'token'
     }
   }
 }
