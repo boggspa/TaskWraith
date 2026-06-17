@@ -593,6 +593,178 @@ describe('runOllamaProvider streaming', () => {
       'result'
     ])
   })
+
+  it('streams visible Ollama thinking once public content is flowing', async () => {
+    const gate = makeDeferred()
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return delayedOllamaStreamResponse(
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'This answer is already public content. ',
+              thinking: 'Reasoning about the public answer. '
+            }
+          }),
+          gate.promise,
+          [
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content: 'Now finishing.',
+                thinking: 'Done.'
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 16 })
+          ]
+        )
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock })
+    const runPromise = runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    await new Promise((resolve) => setImmediate(resolve))
+    let assertionError: unknown
+    try {
+      const thinkingUse = lines.find((line) => line.payload.tool_name === 'ollama_thinking')
+      const thinkingResults = lines
+        .filter((line) => line.payload.tool_name === 'ollama_thinking' && line.payload.type === 'tool_result')
+        .map((line) => line.payload.output)
+      expect(thinkingUse?.payload.type).toBe('tool_use')
+      expect(thinkingResults).toEqual(['Reasoning about the public answer. '])
+    } catch (error) {
+      assertionError = error
+    } finally {
+      gate.resolve()
+      await runPromise
+    }
+    if (assertionError) throw assertionError
+
+    const thinkingResults = lines
+      .filter((line) => line.payload.tool_name === 'ollama_thinking' && line.payload.type === 'tool_result')
+      .map((line) => line.payload.output)
+    expect(thinkingResults).toEqual([
+      'Reasoning about the public answer. ',
+      'Reasoning about the public answer. Done.'
+    ])
+    expect(
+      lines.filter((line) => line.payload.tool_name === 'ollama_thinking' && line.payload.type === 'tool_use')
+    ).toHaveLength(1)
+  })
+
+  it('does not stream thinking-only text that becomes the visible answer', async () => {
+    const gate = makeDeferred()
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return delayedOllamaStreamResponse(
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              thinking: 'This thinking-only answer should be promoted after completion.'
+            }
+          }),
+          gate.promise,
+          [JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 10 })]
+        )
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock })
+    const runPromise = runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    await new Promise((resolve) => setImmediate(resolve))
+    let assertionError: unknown
+    try {
+      expect(lines.some((line) => line.payload.tool_name === 'ollama_thinking')).toBe(false)
+      expect(lines.some((line) => line.payload.type === 'content')).toBe(false)
+    } catch (error) {
+      assertionError = error
+    } finally {
+      gate.resolve()
+      await runPromise
+    }
+    if (assertionError) throw assertionError
+
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts).toEqual(['This thinking-only answer should be promoted after completion.'])
+    expect(lines.some((line) => line.payload.tool_name === 'ollama_thinking')).toBe(false)
+  })
+
+  it('does not leak tool-enabled thinking-only loops as final content', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              thinking: 'Workspace coding task: I should inspect files internally.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 10 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool: async () => ({ ok: true, output: '' }) })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts).toEqual([
+      'stream-model:latest hit a local reliability limit (tool-loop cap or repeated malformed/tool-intent turns). Consider delegating the remainder to Codex or Claude via ↪ delegate on this chat. Attach your scout notes/plan in the delegation prompt so the cloud agent can implement without re-exploring.'
+    ])
+    expect(contentTexts.join('\n')).not.toContain('Workspace coding task')
+  })
 })
 
 describe('normalizeOllamaBaseUrl', () => {

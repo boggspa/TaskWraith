@@ -255,10 +255,18 @@ interface OllamaChatTurnResult {
   lastDone: OllamaChatChunk | null
   parseErrors: string[]
   streamedContent: string
+  streamedThinking: string
 }
 
 interface OllamaChatTurnStreamCallbackInput {
   delta: string
+  content: string
+  chunk: OllamaChatChunk
+}
+
+interface OllamaChatTurnThinkingCallbackInput {
+  delta: string
+  thinking: string
   content: string
   chunk: OllamaChatChunk
 }
@@ -1471,6 +1479,7 @@ async function runOllamaChatTurn(input: {
   toolProtocolEnabled?: boolean
   availableToolNames?: string[]
   onContentDelta?: (input: OllamaChatTurnStreamCallbackInput) => void
+  onThinkingUpdate?: (input: OllamaChatTurnThinkingCallbackInput) => void
 }): Promise<OllamaChatTurnResult> {
   const options: Record<string, unknown> = {
     temperature: input.temperature ?? 0.2
@@ -1507,6 +1516,7 @@ async function runOllamaChatTurn(input: {
   let pendingStreamContent = ''
   let streamedContent = ''
   let thinking = ''
+  let streamedThinking = ''
   const toolCalls: OllamaToolRequest[] = []
   let lastDone: OllamaChatChunk | null = null
   const parseErrors: string[] = []
@@ -1534,7 +1544,21 @@ async function runOllamaChatTurn(input: {
         input.onContentDelta({ delta, content, chunk })
       }
     }
-    thinking += chunk.message?.thinking || ''
+    const thinkingDelta = chunk.message?.thinking || ''
+    thinking += thinkingDelta
+    if (
+      thinkingDelta &&
+      input.onThinkingUpdate &&
+      input.toolProtocolEnabled !== true &&
+      streamedContent &&
+      !looksLikeOllamaPromptRestatement(thinking)
+    ) {
+      const delta = thinking.slice(streamedThinking.length)
+      if (delta) {
+        streamedThinking = thinking
+        input.onThinkingUpdate({ delta, thinking, content, chunk })
+      }
+    }
     for (const call of chunk.message?.tool_calls || []) {
       const normalized = normalizeOllamaNativeToolCall(call)
       if (normalized) toolCalls.push(normalized)
@@ -1569,7 +1593,7 @@ async function runOllamaChatTurn(input: {
   if (trailing) {
     handleLine(trailing)
   }
-  return { content, thinking, toolCalls, lastDone, parseErrors, streamedContent }
+  return { content, thinking, toolCalls, lastDone, parseErrors, streamedContent, streamedThinking }
 }
 
 export async function runOllamaProvider(
@@ -1780,6 +1804,46 @@ export async function runOllamaProvider(
         runProfile.protocolMode === 'json_fallback' ||
         (nativeToolDefs.length === 0 && toolProtocolEnabled && ollamaPrefersJsonToolProtocol(model, modelInfo))
       const numPredict = toolCallCount > 0 ? runProfile.numPredictFinal : runProfile.numPredictTool
+      const reasoningId = `ollama-thinking-${route.appRunId || 'run'}-${turnIndex}`
+      let streamedThinkingStarted = false
+      let streamedThinkingText = ''
+      const emitOllamaThinkingUpdate = (thinkingText: string): void => {
+        if (!thinkingText) return
+        if (!streamedThinkingStarted) {
+          deps.sendAgentCompatLine(
+            event.sender,
+            'ollama',
+            {
+              type: 'tool_use',
+              tool_id: reasoningId,
+              tool_name: 'ollama_thinking',
+              kind: 'think',
+              parameters: { title: 'Thinking' },
+              provider: 'ollama',
+              server: OLLAMA_LOCAL_TOOL_SERVER
+            },
+            route
+          )
+          streamedThinkingStarted = true
+        }
+        streamedThinkingText = thinkingText
+        const visible = !toolProtocolEnabled && !looksLikeOllamaPromptRestatement(thinkingText)
+        deps.sendAgentCompatLine(
+          event.sender,
+          'ollama',
+          {
+            type: 'tool_result',
+            tool_id: reasoningId,
+            tool_name: 'ollama_thinking',
+            status: 'success',
+            output: thinkingText,
+            provider: 'ollama',
+            server: OLLAMA_LOCAL_TOOL_SERVER,
+            ...(visible ? {} : { transcriptVisible: false })
+          },
+          route
+        )
+      }
       const turn = await runOllamaChatTurn({
         baseUrl,
         model,
@@ -1802,6 +1866,9 @@ export async function runOllamaProvider(
         availableToolNames,
         onContentDelta: ({ delta }) => {
           emitOllamaContent(delta)
+        },
+        onThinkingUpdate: ({ thinking }) => {
+          emitOllamaThinkingUpdate(thinking)
         }
       })
       for (const parseError of turn.parseErrors.slice(0, 3)) {
@@ -1852,37 +1919,56 @@ export async function runOllamaProvider(
       const reasoningIsVisibleAnswer = toolRequests.length === 0 && !turn.content.trim()
       const emitVisibleReasoning = shouldEmitOllamaReasoning(turn, toolRequests.length)
       if (hasReasoningTrace && !reasoningIsVisibleAnswer) {
-        const reasoningId = `ollama-thinking-${route.appRunId || 'run'}-${turnIndex}`
-        deps.sendAgentCompatLine(
-          event.sender,
-          'ollama',
-          {
-            type: 'tool_use',
-            tool_id: reasoningId,
-            tool_name: 'ollama_thinking',
-            kind: 'think',
-            parameters: { title: 'Thinking' },
-            provider: 'ollama',
-            server: OLLAMA_LOCAL_TOOL_SERVER,
-            ...(emitVisibleReasoning ? {} : { transcriptVisible: false })
-          },
-          route
-        )
-        deps.sendAgentCompatLine(
-          event.sender,
-          'ollama',
-          {
-            type: 'tool_result',
-            tool_id: reasoningId,
-            tool_name: 'ollama_thinking',
-            status: 'success',
-            output: turn.thinking,
-            provider: 'ollama',
-            server: OLLAMA_LOCAL_TOOL_SERVER,
-            ...(emitVisibleReasoning ? {} : { transcriptVisible: false })
-          },
-          route
-        )
+        if (streamedThinkingStarted) {
+          if (turn.thinking !== streamedThinkingText) {
+            deps.sendAgentCompatLine(
+              event.sender,
+              'ollama',
+              {
+                type: 'tool_result',
+                tool_id: reasoningId,
+                tool_name: 'ollama_thinking',
+                status: 'success',
+                output: turn.thinking,
+                provider: 'ollama',
+                server: OLLAMA_LOCAL_TOOL_SERVER,
+                ...(emitVisibleReasoning ? {} : { transcriptVisible: false })
+              },
+              route
+            )
+          }
+        } else {
+          deps.sendAgentCompatLine(
+            event.sender,
+            'ollama',
+            {
+              type: 'tool_use',
+              tool_id: reasoningId,
+              tool_name: 'ollama_thinking',
+              kind: 'think',
+              parameters: { title: 'Thinking' },
+              provider: 'ollama',
+              server: OLLAMA_LOCAL_TOOL_SERVER,
+              ...(emitVisibleReasoning ? {} : { transcriptVisible: false })
+            },
+            route
+          )
+          deps.sendAgentCompatLine(
+            event.sender,
+            'ollama',
+            {
+              type: 'tool_result',
+              tool_id: reasoningId,
+              tool_name: 'ollama_thinking',
+              status: 'success',
+              output: turn.thinking,
+              provider: 'ollama',
+              server: OLLAMA_LOCAL_TOOL_SERVER,
+              ...(emitVisibleReasoning ? {} : { transcriptVisible: false })
+            },
+            route
+          )
+        }
       }
       if (toolRequests.length === 0) {
         const hasContent = turn.content.trim().length > 0
