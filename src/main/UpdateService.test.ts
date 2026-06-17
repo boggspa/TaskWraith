@@ -360,7 +360,11 @@ describe('UpdateService', () => {
   })
 
   it('clears updater flags and ignores late updater events when disabled live', () => {
-    const svc = new UpdateService()
+    // Pin platform: on win32 the arch-specific feed gates the mac-shaped
+    // update-available fixture below as incompatible (-> 'error'). This test
+    // exercises disable behavior, not arch-compat, so keep it deterministic
+    // across CI runners.
+    const svc = new UpdateService({ platform: 'darwin' })
     svc.configure({ channel: 'stable', enabled: true })
     expect(mockAutoUpdater.autoDownload).toBe(true)
     expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(true)

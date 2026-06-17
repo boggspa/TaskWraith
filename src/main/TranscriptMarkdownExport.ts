@@ -80,11 +80,24 @@ function safeWorkspaceLabel(chat: ChatRecord, workspace?: WorkspaceRecord | null
 
 function pathReplacements(chat: ChatRecord, options: TranscriptMarkdownExportOptions): Array<[string, string]> {
   const replacements: Array<[string, string]> = []
-  if (chat.workspacePath) replacements.push([path.resolve(chat.workspacePath), '<workspace>'])
-  if (options.workspace?.path) replacements.push([path.resolve(options.workspace.path), '<workspace>'])
-  if (options.homeDir) replacements.push([path.resolve(options.homeDir), '~'])
+  // Match each path both as-given AND resolved, in both separator forms.
+  // path.resolve() is platform-specific — on Windows it prepends a drive letter
+  // and uses backslashes — so resolving alone misses POSIX-style paths that
+  // appear in transcript text on a Windows host (they then leak through to the
+  // home-pattern fallback). Adding every form keeps redaction separator-/
+  // platform-robust: strictly more scrubbing, never less.
+  const addPath = (raw: string | undefined, label: string): void => {
+    if (!raw) return
+    const forms = new Set<string>([raw, path.resolve(raw)])
+    for (const form of [...forms]) forms.add(form.replace(/\\/g, '/'))
+    for (const form of forms) replacements.push([form, label])
+  }
+  addPath(chat.workspacePath, '<workspace>')
+  addPath(options.workspace?.path, '<workspace>')
+  addPath(options.homeDir, '~')
+  const seen = new Set<string>()
   return replacements
-    .filter(([from]) => from.length > 1)
+    .filter(([from]) => from.length > 1 && !seen.has(from) && (seen.add(from), true))
     .sort((a, b) => b[0].length - a[0].length)
 }
 
