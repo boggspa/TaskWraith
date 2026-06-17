@@ -46,11 +46,15 @@ import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
-import { isSubThreadReturnMessage } from './SubThreadReturnCardModel'
+import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ParticipantHealthCard } from './ParticipantHealthCard'
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { MarkdownMessage } from './MarkdownMessage'
 import { MessageActionsChip } from './MessageActionsChip'
+import {
+  TranscriptMessageContextMenu,
+  type TranscriptMessageContextMenuSelection
+} from './TranscriptMessageContextMenu'
 import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } from './ChatMediaPanel'
 import { FileTypeIcon } from './FileTypeIcon'
 import { RunCard } from './RunCard'
@@ -738,6 +742,59 @@ export const TranscriptPanel = memo(
         return !pendingQueuedAppRunIds.has(appRunId)
       })
     }, [isWelcomeChat, messages, pendingQueuedAppRunIds])
+    const [messageContextMenu, setMessageContextMenu] =
+      useState<TranscriptMessageContextMenuSelection | null>(null)
+    const closeMessageContextMenu = useCallback(() => {
+      setMessageContextMenu(null)
+    }, [])
+    const openMessageContextMenu = useCallback(
+      (
+        event: React.MouseEvent,
+        message: ChatMessage,
+        copyContent: string,
+        label: string,
+        options: {
+          copySource?: TranscriptMessageContextMenuSelection['copySource']
+          copyOnly?: boolean
+        } = {}
+      ): void => {
+        event.preventDefault()
+        event.stopPropagation()
+        setMessageContextMenu({
+          anchor: { x: event.clientX, y: event.clientY },
+          message,
+          copyContent,
+          copySource: options.copySource || 'message-content',
+          label,
+          pinned: typeof message.metadata?.pinnedAt === 'number',
+          copyOnly: options.copyOnly
+        })
+      },
+      []
+    )
+    const activeMessageContextMenu = useMemo(() => {
+      if (!messageContextMenu) return null
+      const latestMessage =
+        visibleMessages.find((message) => message.id === messageContextMenu.message.id) ||
+        messageContextMenu.message
+      const copyContent =
+        messageContextMenu.copySource === 'subthread-return-body'
+          ? subThreadReturnBody(latestMessage.content)
+          : messageContextMenu.copySource === 'static'
+            ? messageContextMenu.copyContent
+            : latestMessage.content || ''
+      return {
+        ...messageContextMenu,
+        message: latestMessage,
+        copyContent,
+        pinned: typeof latestMessage.metadata?.pinnedAt === 'number'
+      }
+    }, [messageContextMenu, visibleMessages])
+    useEffect(() => {
+      if (!messageContextMenu) return
+      if (visibleMessages.some((message) => message.id === messageContextMenu.message.id)) return
+      setMessageContextMenu(null)
+    }, [messageContextMenu, visibleMessages])
     const shouldShowRunCompleteNotice = Boolean(runCompleteNotice && !isWelcomeChat)
     const runCompleteSummaryRows = useMemo(() => {
       // Ensemble chats: aggregate across every participant in the
@@ -1028,6 +1085,18 @@ export const TranscriptPanel = memo(
                     } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
                       isGuestReply ? ' guest-participant-reply-message' : ''
                     }`}
+                    onContextMenu={
+                      isReturnCard
+                        ? (event) =>
+                            openMessageContextMenu(
+                              event,
+                              msg,
+                              subThreadReturnBody(msg.content),
+                              'sub-thread result',
+                              { copySource: 'subthread-return-body' }
+                            )
+                        : undefined
+                    }
                   >
                     {isDelegationCard ? (
                       <SubThreadDelegationCard
@@ -1075,7 +1144,12 @@ export const TranscriptPanel = memo(
                 ) : msg.role === 'tool' ? (
                   <div key={msg.id} className="message-group tool-message-fallback">
                     <div className="message-meta">Tool</div>
-                    <div className="message-bubble system tool-message-fallback-bubble">
+                    <div
+                      className="message-bubble system tool-message-fallback-bubble"
+                      onContextMenu={(event) =>
+                        openMessageContextMenu(event, msg, msg.content || '', 'tool message')
+                      }
+                    >
                       {msg.content ? (
                         <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
                       ) : (
@@ -1114,6 +1188,12 @@ export const TranscriptPanel = memo(
                     key={msg.id}
                     message={msg}
                     onCopy={onCopyMessage}
+                    onContextMenu={(event, copyText) =>
+                      openMessageContextMenu(event, msg, copyText, 'provider failure', {
+                        copyOnly: true,
+                        copySource: 'static'
+                      })
+                    }
                     copied={copiedId === msg.id}
                   />
                 ) : (
@@ -1259,6 +1339,9 @@ export const TranscriptPanel = memo(
                             className={`message-bubble user${
                               collapsible ? ' is-collapsible' : ''
                             }${showCollapsed ? ' is-collapsed' : ''}`}
+                            onContextMenu={(event) =>
+                              openMessageContextMenu(event, msg, msg.content, 'user message')
+                            }
                           >
                             <div className="user-message-content">
                               <MarkdownMessage content={preview} chat={currentChat || undefined} />
@@ -1309,6 +1392,18 @@ export const TranscriptPanel = memo(
                         className={`message-bubble ${
                           isGuestReply ? 'assistant guest-participant-reply' : msg.role
                         }${ensembleRoundStatusClass(msg)}`}
+                        onContextMenu={
+                          (msg.role === 'assistant' || msg.role === 'system' || isGuestReply) &&
+                          msg.content
+                            ? (event) =>
+                                openMessageContextMenu(
+                                  event,
+                                  msg,
+                                  msg.content || '',
+                                  `${isGuestReply ? 'guest participant' : msg.role} message`
+                                )
+                            : undefined
+                        }
                       >
                         {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
                           <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
@@ -1642,6 +1737,14 @@ export const TranscriptPanel = memo(
           )}
           <div ref={endRef} />
         </div>
+        <TranscriptMessageContextMenu
+          selection={activeMessageContextMenu}
+          onCopyMessage={onCopyMessage}
+          onTogglePinMessage={onTogglePinMessage}
+          onOpenSideChatFromMessage={onOpenSideChatFromMessage}
+          onDeleteMessage={onDeleteMessage}
+          onClose={closeMessageContextMenu}
+        />
       </div>
     )
   },

@@ -1,4 +1,5 @@
 import type { ChatMessage, ProviderId } from '../../../main/store/types'
+import type { MouseEvent } from 'react'
 import {
   formatProviderRunFailureTimestamp,
   type ProviderRunFailureLine
@@ -9,12 +10,14 @@ import { MessageActionsChip } from './MessageActionsChip'
 interface ProviderRunFailureCardProps {
   message: ChatMessage
   onCopy: (messageId: string, content: string) => void
+  onContextMenu?: (event: MouseEvent<HTMLDivElement>, copyText: string) => void
   copied?: boolean
 }
 
 export function ProviderRunFailureCard({
   message,
   onCopy,
+  onContextMenu,
   copied = false
 }: ProviderRunFailureCardProps): React.JSX.Element | null {
   const metadata = message.metadata
@@ -57,6 +60,7 @@ export function ProviderRunFailureCard({
       className={`provider-run-failure-card provider-${provider}${exitCode === 130 ? ' is-cancelled' : ''}`}
       role="alert"
       aria-label={headline}
+      onContextMenu={onContextMenu ? (event) => onContextMenu(event, copyText) : undefined}
     >
       <div className="provider-run-failure-card-header">
         <span className="provider-run-failure-card-kicker">stderr</span>

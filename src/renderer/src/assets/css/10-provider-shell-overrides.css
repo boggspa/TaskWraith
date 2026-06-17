@@ -465,6 +465,51 @@
   display: block;
 }
 
+.transcript-message-context-menu {
+  z-index: 10060;
+  min-width: 184px;
+  max-width: min(280px, calc(100vw - 16px));
+  max-height: min(320px, calc(100vh - 16px));
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-elevated, var(--surface-base)) 96%, transparent);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--text-primary) 16%, transparent);
+  -webkit-app-region: no-drag;
+}
+
+.transcript-message-context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.transcript-message-context-menu-item:hover:not(:disabled),
+.transcript-message-context-menu-item:focus-visible {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  outline: 0;
+}
+
+.transcript-message-context-menu-item.is-danger {
+  color: var(--danger, #ff6363);
+}
+
+.transcript-message-context-menu-item:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
 .transcript-message-block.is-pinned-message-target .message-bubble {
   outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
   outline-offset: 4px;
