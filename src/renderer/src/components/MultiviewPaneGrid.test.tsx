@@ -85,4 +85,32 @@ describe('MultiviewPaneGrid', () => {
       expect(out).toContain(`grid-area:${area}`)
     }
   })
+
+  it('renders a close button on non-focused cells only when onClosePane is given', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        paneChatIds={['a', 'b']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+        onClosePane={vi.fn()}
+      />
+    )
+    // Only the non-focused cell (index 1) gets a close button; focused has none.
+    expect((out.match(/multiview-pane-close/g) || []).length).toBe(1)
+  })
+
+  it('omits close buttons when onClosePane is not provided', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        paneChatIds={['a', 'b']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    expect(out).not.toContain('multiview-pane-close')
+  })
 })

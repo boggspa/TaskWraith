@@ -23,8 +23,10 @@ export interface MultiviewPaneGridProps {
   renderFocusedCell: () => ReactNode
   /** A read-only ChatViewPane for a non-focused, populated cell. */
   renderViewerCell: (chatId: string, paneIndex: number) => ReactNode
-  /** Placeholder for a non-focused empty cell (slice 10 fills this in). */
+  /** Placeholder for a non-focused empty cell. */
   renderEmptyCell?: (paneIndex: number) => ReactNode
+  /** Close a pane — non-focused cells get a close affordance. */
+  onClosePane?: (paneIndex: number) => void
 }
 
 export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
@@ -60,6 +62,17 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
           style={{ gridArea: area }}
           data-pane-index={paneIndex}
         >
+          {props.onClosePane && paneIndex !== props.focusedPaneIndex && (
+            <button
+              type="button"
+              className="multiview-pane-close"
+              aria-label="Close pane"
+              title="Close pane"
+              onClick={() => props.onClosePane?.(paneIndex)}
+            >
+              ×
+            </button>
+          )}
           {renderCell(paneIndex)}
         </div>
       ))}

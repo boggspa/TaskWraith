@@ -17316,6 +17316,7 @@ function App(): React.JSX.Element {
               layout={multiview.layout}
               paneChatIds={multiview.paneChatIds}
               focusedPaneIndex={multiview.focusedPaneIndex}
+              onClosePane={multiview.closePane}
               renderEmptyCell={(emptyPaneIndex) => (
                 <div className="multiview-empty-pane" data-pane-index={emptyPaneIndex}>
                   <span className="multiview-empty-pane-label">Select a chat for this pane</span>
