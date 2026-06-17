@@ -1359,8 +1359,7 @@ struct ThreadEmptyWelcomeCanvas: View {
     // 560 + ScrollView give it dynamic sizing (1-col stats on a phone, 2 on iPad).
     // Slice A renders the fixture; slice C swaps in `model.welcomeDashboard` (live).
     @ViewBuilder private var dashboardCard: some View {
-        let data = WelcomeDashboard.fixture
-        if data.lifetimeHasActivity {
+        if let data = model.welcomeDashboard, data.lifetimeHasActivity {
             WelcomeUsageDashboardCard(dashboard: data, accent: accent)
         }
     }

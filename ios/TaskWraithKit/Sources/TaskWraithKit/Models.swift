@@ -120,8 +120,8 @@ public struct WelcomeDashboard: Codable, Sendable {
     public let activeDays: Int
     public let longestThreadMs: Int
     public let totalWallTimeMs: Int
-    /// 0–23 local hour, or -1 when there is no peak.
-    public let peakHour: Int
+    /// Pre-formatted by the Mac aggregator ("2 PM" / "n/a").
+    public let peakHour: String
     public let sessions: Int
     public let messages: Int
     public let totalTokens: Int
@@ -223,7 +223,7 @@ public struct WelcomeDashboard: Codable, Sendable {
     public init(
         favoriteModel: String, favoriteProject: String, tokens24h: Int,
         currentStreak: Int, longestStreak: Int, activeDays: Int,
-        longestThreadMs: Int, totalWallTimeMs: Int, peakHour: Int,
+        longestThreadMs: Int, totalWallTimeMs: Int, peakHour: String,
         sessions: Int, messages: Int, totalTokens: Int, totalCostUsd: Double,
         avgSessionMs: Int, tokensPerSession: Int, wallTime24hMs: Int,
         comparisonText: String, hasActivity: Bool, lifetimeHasActivity: Bool,

@@ -143,7 +143,8 @@ export const BRIDGE_BROADCAST_METHODS = {
   remoteProjection: 'bridge.broadcastRemoteProjection',
   remoteProjectionSnapshot: 'bridge.broadcastRemoteProjectionSnapshot',
   usageRollup: 'bridge.broadcastUsageRollup',
-  modelUsage: 'bridge.broadcastModelUsage'
+  modelUsage: 'bridge.broadcastModelUsage',
+  welcomeDashboard: 'bridge.broadcastWelcomeDashboard'
 } as const
 
 /** Convert a `WorkspaceRecord` plus the chats living inside it to the
@@ -327,6 +328,14 @@ export class BridgeBroadcaster {
   /** Token totals for the remote heatmap chips (24h/7d/90d, per provider). */
   broadcastUsageRollup(message: Record<string, unknown>): void {
     const method = BRIDGE_BROADCAST_METHODS.usageRollup
+    if (!this.shouldEmit(method)) return
+    this.sendNotify(method, message)
+  }
+
+  /** The Electron welcome stats dashboard, projected for paired devices
+   * (see RemoteWelcomeDashboard / Swift WelcomeDashboard). */
+  broadcastWelcomeDashboard(message: Record<string, unknown>): void {
+    const method = BRIDGE_BROADCAST_METHODS.welcomeDashboard
     if (!this.shouldEmit(method)) return
     this.sendNotify(method, message)
   }

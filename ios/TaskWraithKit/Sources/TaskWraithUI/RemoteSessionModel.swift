@@ -163,6 +163,9 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var externalTokenDaily: DailyTokenSeries? = nil
     /// Per-provider quota windows (Usage tab; desktop sidebar parity).
     @Published public private(set) var modelUsage: ModelUsageMessage.Usage? = nil
+    /// The Electron welcome stats dashboard (Statistics / Models / Workspaces /
+    /// Providers). Rides the usage-rollup cadence; nil until the first push.
+    @Published public private(set) var welcomeDashboard: WelcomeDashboard? = nil
     /// Token-level live text per thread, accumulated from bridge.runEvent
     /// content deltas — renders as the growing assistant bubble between
     /// snapshot pushes. Cleared when the run exits (the final snapshot row
@@ -859,6 +862,7 @@ public final class RemoteSessionModel: ObservableObject {
         taskwraithTokenDaily = nil
         externalTokenDaily = nil
         modelUsage = nil
+        welcomeDashboard = nil
         gitSnapshots = [:]
         navigationTarget = nil
         visibleThreadId = nil
@@ -1011,6 +1015,14 @@ public final class RemoteSessionModel: ObservableObject {
             usageRollup = message.rollup
             taskwraithTokenDaily = message.taskwraithDaily
             externalTokenDaily = message.externalDaily
+        case "bridge.broadcastWelcomeDashboard":
+            guard
+                let message = try? JSONDecoder().decode(WelcomeDashboardMessage.self, from: params)
+            else {
+                print("[tw] DECODE FAILED: welcome dashboard")
+                return
+            }
+            welcomeDashboard = message.dashboard
         case "bridge.broadcastProviderModels":
             guard let message = try? JSONDecoder().decode(ProviderModelsMessage.self, from: params)
             else { return }

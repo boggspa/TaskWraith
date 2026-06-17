@@ -45,14 +45,6 @@ enum DashboardFmt {
         return h == 0 ? "\(d)d" : "\(d)d \(h)h"
     }
 
-    /// 0–23 → "2 PM" / "12 AM"; out-of-range → "n/a".
-    static func peakHour(_ h: Int) -> String {
-        guard (0...23).contains(h) else { return "n/a" }
-        if h == 0 { return "12 AM" }
-        if h == 12 { return "12 PM" }
-        return h < 12 ? "\(h) AM" : "\(h - 12) PM"
-    }
-
     /// USD 2dp; empty string when ≤0 (matches the Electron blank-when-zero rule).
     static func cost(_ usd: Double) -> String {
         guard usd > 0 else { return "" }
@@ -216,7 +208,7 @@ public struct WelcomeUsageDashboardCard: View {
             ("Active days", DashboardFmt.compact(dashboard.activeDays)),
             ("Longest thread", DashboardFmt.duration(dashboard.longestThreadMs)),
             ("Cumulative wall time", DashboardFmt.duration(dashboard.totalWallTimeMs)),
-            ("Peak hour", DashboardFmt.peakHour(dashboard.peakHour)),
+            ("Peak hour", dashboard.peakHour.isEmpty ? "n/a" : dashboard.peakHour),
             ("Sessions", DashboardFmt.compact(dashboard.sessions)),
             ("Messages", DashboardFmt.compact(dashboard.messages)),
             ("Total tokens", DashboardFmt.compact(dashboard.totalTokens)),
@@ -435,7 +427,7 @@ extension WelcomeDashboard {
             favoriteModel: "GPT-5.5",
             favoriteProject: "so-mr-midi-has-asked-me",
             tokens24h: 364_000, currentStreak: 12, longestStreak: 15, activeDays: 28,
-            longestThreadMs: 6_120_000, totalWallTimeMs: 62_940_000, peakHour: 14,
+            longestThreadMs: 6_120_000, totalWallTimeMs: 62_940_000, peakHour: "2 PM",
             sessions: 99, messages: 802, totalTokens: 19_000_000, totalCostUsd: 0,
             avgSessionMs: 636_000, tokensPerSession: 188_000, wallTime24hMs: 212_000,
             comparisonText: "You've tracked 19M tokens across 7 providers.",
