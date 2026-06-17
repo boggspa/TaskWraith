@@ -553,7 +553,13 @@ public enum ComposerShellResolver {
                 placeholder: placeholder,
                 rim: capsuleRim),
             geometry: ComposerShellGeometry(
-                surfaceCornerRadius: 0,     // OUTER .composer-surface radius 0 (fully transparent)
+                // CS10: material is .solid and surfaceFill IS the navy capsule, so
+                // round the surface at the capsule radius. The old `0` left the
+                // filled card AND the detached above-row pills square-cornered (a
+                // visible regression once CS10 detached the rows). A true
+                // single-capsule input (separate from telemetry) lands with
+                // surfaceIsCapsule in CS11.
+                surfaceCornerRadius: 26,    // navy capsule = 26px (07:2188-2210)
                 innerCornerRadius: 26,      // single rounded CAPSULE = 26px (07:2188-2210)
                 controlShape: .capsule,     // every chip/control is a 999px pill
                 rowSpacing: 6),             // surface flex column gap 6px

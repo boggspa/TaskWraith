@@ -438,9 +438,37 @@ all but grok (grok tucks its above-rows behind the composer lip).
   `composerShellIf(apply:)` helper (ComposerShellContainer.swift) — `apply:false` returns
   the view untouched, so the merged/default path is byte-identical.
 
-### F.5 — Build-11 scope & deferred
+### F.5 — Build-11 scope
 Shipped (host-consumed): `controlsBelowTextarea` (11 shells) + `detachedAboveRows` (10
-shells). **Deferred to CS11** (data staged, host consumption needs a composer-core
-surface-application refactor): `surfaceIsCapsule` (gemini/cursor), `splitChromeRects`
-(obsidian/alabaster). `liftedSend` + `controlsAsPlainText` are effectively already satisfied
-on iOS (trailing-edge send; flat model picker).
+shells), plus the gemini surface-radius fix (its `.solid` navy capsule was drawn at radius
+0 → square detached pills; now 26px to match the capsule). `liftedSend` +
+`controlsAsPlainText` are effectively already satisfied on iOS (trailing-edge send; flat
+plain-text model picker).
+
+### F.6 — Verification
+- `swift build` + 69 Kit tests + a full `xcodebuild` simulator app build, per slice.
+- A 15-agent adversarial review (12 per-shell parity vs the light/dark matrix + 3 skeptics)
+  graded default byte-parity **PASS** (traced element-by-element + git-diff confirmed),
+  layout values/wiring **PASS** (all 13 cases match the table), detached-restructure
+  **CONCERN** (no ViewBuilder/chaining defects; the fill issues in F.7). All 12 non-default
+  shells: layout value correct, consumed-flag structural match **full**.
+
+### F.7 — Deferred to CS11 (with rationale)
+- **codex roster-tuck** — codex's changes/PR/diff rows take the pill format, but the
+  roster/preset rows should TUCK (merge), not detach as separate pills (desktop
+  `:not(:has(.ensemble-above-row))`). Needs per-row-category detach — a restructure of the
+  just-changed composerShellStack. (Review rated codex full-match, so this is fidelity, not
+  a defect.)
+- **surfaceIsCapsule** (gemini/cursor) — true single-capsule input separated from the
+  telemetry rail; needs a composer-core surface refactor. (Interim: gemini rounds at 26px.)
+- **splitChromeRects** (obsidian/alabaster) — textarea + controls each their own lit rect;
+  same surface refactor.
+- **Reduce-Transparency double-fill** — detached roster/queued rows draw their own opaque
+  `surface1` when glass is off, double-filling over the per-card `.composerShell` (and
+  leaking an opaque card on transparent shells). Fix: suppress the row's inner fill in the
+  detached path. a11y-mode only — glass-on (the default) is clean.
+- **composerLayout value test** — pin every shell's layout (locks default-parity); needs
+  the pure layout map moved into TaskWraithKit (TaskWraithUI is not unit-tested by design).
+- **State-identity on live shell switch** — composerShellIf's if/else can reset the composer
+  draft if the user changes shell mid-compose; fix via an always-applied, no-op-capable
+  modifier.
