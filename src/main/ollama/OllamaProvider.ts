@@ -254,6 +254,13 @@ interface OllamaChatTurnResult {
   toolCalls: OllamaToolRequest[]
   lastDone: OllamaChatChunk | null
   parseErrors: string[]
+  streamedContent: string
+}
+
+interface OllamaChatTurnStreamCallbackInput {
+  delta: string
+  content: string
+  chunk: OllamaChatChunk
 }
 
 export interface OllamaToolExecutionRequest {
@@ -1405,6 +1412,44 @@ function resolveOllamaNumCtx(input: {
   return Math.min(limit, rounded)
 }
 
+function shouldHoldOllamaContentForToolProtocol(input: {
+  content: string
+  availableToolNames: string[]
+}): boolean {
+  const trimmed = input.content.trimStart()
+  if (!trimmed) return true
+  if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('```')) return true
+  if (/taskwraith_tool/i.test(trimmed)) return true
+  if (looksLikeLeakedOllamaToolProtocol(trimmed)) return true
+  return looksLikeOllamaToolIntent(trimmed, input.availableToolNames)
+}
+
+function shouldReleaseOllamaContentDelta(input: {
+  content: string
+  pending: string
+  streamed: string
+  jsonToolFallback: boolean
+  toolProtocolEnabled: boolean
+  availableToolNames: string[]
+}): boolean {
+  if (!input.pending) return false
+  if (input.jsonToolFallback) return false
+  if (!input.toolProtocolEnabled) return true
+  if (
+    shouldHoldOllamaContentForToolProtocol({
+      content: input.content,
+      availableToolNames: input.availableToolNames
+    })
+  ) {
+    return false
+  }
+  const totalVisibleLength = input.streamed.length + input.pending.length
+  // In tool-capable turns, wait for enough prose to classify it as ordinary
+  // assistant text before exposing it. This keeps fallback JSON/tool stubs from
+  // flashing into the transcript while still letting normal pre-tool prose flow.
+  return totalVisibleLength >= 24 || /[.!?\n]\s*$/.test(input.content)
+}
+
 function ollamaModelSupportsNativeTools(modelInfo?: OllamaModelInfo | null): boolean {
   if (!modelInfo?.capabilities?.length) return true
   return modelInfo.capabilities.some((capability) => capability.toLowerCase() === 'tools')
@@ -1422,6 +1467,9 @@ async function runOllamaChatTurn(input: {
   numCtx?: number
   numPredict?: number
   keepAlive?: string
+  toolProtocolEnabled?: boolean
+  availableToolNames?: string[]
+  onContentDelta?: (input: OllamaChatTurnStreamCallbackInput) => void
 }): Promise<OllamaChatTurnResult> {
   const options: Record<string, unknown> = {
     temperature: input.temperature ?? 0.2
@@ -1455,6 +1503,8 @@ async function runOllamaChatTurn(input: {
   const decoder = new TextDecoder()
   let buffer = ''
   let content = ''
+  let pendingStreamContent = ''
+  let streamedContent = ''
   let thinking = ''
   const toolCalls: OllamaToolRequest[] = []
   let lastDone: OllamaChatChunk | null = null
@@ -1463,7 +1513,26 @@ async function runOllamaChatTurn(input: {
     if (chunk.error) {
       throw new Error(chunk.error)
     }
-    content += chunk.message?.content || ''
+    const contentDelta = chunk.message?.content || ''
+    content += contentDelta
+    if (contentDelta && input.onContentDelta) {
+      pendingStreamContent += contentDelta
+      if (
+        shouldReleaseOllamaContentDelta({
+          content,
+          pending: pendingStreamContent,
+          streamed: streamedContent,
+          jsonToolFallback: input.jsonToolFallback === true,
+          toolProtocolEnabled: input.toolProtocolEnabled === true,
+          availableToolNames: input.availableToolNames || []
+        })
+      ) {
+        const delta = pendingStreamContent
+        pendingStreamContent = ''
+        streamedContent += delta
+        input.onContentDelta({ delta, content, chunk })
+      }
+    }
     thinking += chunk.message?.thinking || ''
     for (const call of chunk.message?.tool_calls || []) {
       const normalized = normalizeOllamaNativeToolCall(call)
@@ -1476,12 +1545,15 @@ async function runOllamaChatTurn(input: {
   const handleLine = (line: string) => {
     const trimmed = line.trim()
     if (!trimmed) return
+    let parsed: OllamaChatChunk
     try {
-      handleChunk(JSON.parse(trimmed) as OllamaChatChunk)
+      parsed = JSON.parse(trimmed) as OllamaChatChunk
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       parseErrors.push(`Malformed Ollama stream chunk ignored: ${message}`)
+      return
     }
+    handleChunk(parsed)
   }
 
   for await (const value of response.body as any as AsyncIterable<Uint8Array>) {
@@ -1496,7 +1568,7 @@ async function runOllamaChatTurn(input: {
   if (trailing) {
     handleLine(trailing)
   }
-  return { content, thinking, toolCalls, lastDone, parseErrors }
+  return { content, thinking, toolCalls, lastDone, parseErrors, streamedContent }
 }
 
 export async function runOllamaProvider(
@@ -1675,6 +1747,27 @@ export async function runOllamaProvider(
       )
       return true
     }
+    const emitOllamaContent = (text: string): void => {
+      if (!text) return
+      deps.sendAgentCompatLine(
+        event.sender,
+        'ollama',
+        {
+          type: 'content',
+          text,
+          model,
+          modelLabel,
+          timestamp: new Date().toISOString()
+        },
+        route
+      )
+    }
+    const unstreamedOllamaContent = (text: string, streamed: string): string => {
+      if (!streamed) return text
+      if (text === streamed) return ''
+      if (text.startsWith(streamed)) return text.slice(streamed.length)
+      return text
+    }
     for (let turnIndex = 0; turnIndex <= OLLAMA_TOOL_LOOP_LIMIT; turnIndex += 1) {
       const jsonToolFallback =
         forceJsonToolFallback ||
@@ -1698,7 +1791,12 @@ export async function runOllamaProvider(
           reserveTokens: runProfile.numPredictFinal
         }),
         ...(numPredict ? { numPredict } : {}),
-        ...(runProfile.keepAlive ? { keepAlive: runProfile.keepAlive } : {})
+        ...(runProfile.keepAlive ? { keepAlive: runProfile.keepAlive } : {}),
+        toolProtocolEnabled,
+        availableToolNames,
+        onContentDelta: ({ delta }) => {
+          emitOllamaContent(delta)
+        }
       })
       for (const parseError of turn.parseErrors.slice(0, 3)) {
         deps.sendAgentCompatLine(
@@ -1880,18 +1978,7 @@ export async function runOllamaProvider(
         }
         if (visibleText) {
           finalContentEmitted = true
-          deps.sendAgentCompatLine(
-            event.sender,
-            'ollama',
-            {
-              type: 'content',
-              text: visibleText,
-              model,
-              modelLabel,
-              timestamp: new Date().toISOString()
-            },
-            route
-          )
+          emitOllamaContent(unstreamedOllamaContent(visibleText, turn.streamedContent))
         }
         break
       }
@@ -1918,18 +2005,7 @@ export async function runOllamaProvider(
       let goalLifecycleStopContent: string | null = null
       const preToolContent = ollamaPreToolContentText(turn, usingNativeToolCalls)
       if (preToolContent) {
-        deps.sendAgentCompatLine(
-          event.sender,
-          'ollama',
-          {
-            type: 'content',
-            text: preToolContent,
-            model,
-            modelLabel,
-            timestamp: new Date().toISOString()
-          },
-          route
-        )
+        emitOllamaContent(unstreamedOllamaContent(preToolContent, turn.streamedContent))
       }
       if (usingNativeToolCalls) {
         messages.push({

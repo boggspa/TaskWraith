@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import {
   buildOllamaOpeningMessages,
   humanizeOllamaModelId,
@@ -31,11 +32,13 @@ import {
   sanitizeLooseJsonEscapes,
   parseOllamaMemoryPsOutput,
   ollamaPreToolContentText,
+  runOllamaProvider,
   resolveOllamaVisibleText,
   shouldEmitOllamaReasoning,
   unwrapOllamaStructuredResponseText,
   accumulateOllamaUsageStats,
-  ollamaUsageStats
+  ollamaUsageStats,
+  type OllamaProviderDeps
 } from './OllamaProvider'
 import {
   effectiveOllamaToolControlTier,
@@ -45,6 +48,183 @@ import {
   ollamaToolNamesForTier,
   ollamaToolRequiresIntent
 } from './OllamaToolTiers'
+
+type SendLineCall = {
+  provider: string
+  payload: any
+  route: AgentRunRoute | null | undefined
+}
+
+type SendErrorCall = {
+  provider: string
+  error: string
+  route: AgentRunRoute | null | undefined
+}
+
+type SendExitCall = {
+  provider: string
+  code: number | null
+  route: AgentRunRoute | null | undefined
+}
+
+const stubEvent = {
+  sender: { send: () => undefined }
+} as unknown as Electron.IpcMainInvokeEvent
+
+const baseRoute: AgentRunRoute = { appRunId: 'run-ollama-1', appChatId: 'chat-ollama-1' }
+
+const basePayload: AgentRunPayload = {
+  provider: 'ollama',
+  scope: 'workspace',
+  prompt: 'hello from the local model',
+  workspace: '/tmp/taskwraith-ollama-workspace',
+  appRunId: 'run-ollama-1',
+  appChatId: 'chat-ollama-1'
+}
+
+function makeDeferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>((next) => {
+    resolve = next
+  })
+  return { promise, resolve }
+}
+
+function jsonResponse(body: unknown): any {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => body
+  }
+}
+
+function ollamaStreamResponse(lines: string[]): any {
+  const encoder = new TextEncoder()
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      async *[Symbol.asyncIterator]() {
+        for (const line of lines) {
+          yield encoder.encode(`${line}\n`)
+        }
+      }
+    }
+  }
+}
+
+function delayedOllamaStreamResponse(firstLine: string, gate: Promise<void>, laterLines: string[]): any {
+  const encoder = new TextEncoder()
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      async *[Symbol.asyncIterator]() {
+        yield encoder.encode(`${firstLine}\n`)
+        await gate
+        for (const line of laterLines) {
+          yield encoder.encode(`${line}\n`)
+        }
+      }
+    }
+  }
+}
+
+function makeProviderDeps(
+  overrides: {
+    fetchMock?: ReturnType<typeof vi.fn>
+    executeTool?: OllamaProviderDeps['executeTool']
+  } = {}
+): {
+  deps: OllamaProviderDeps
+  lines: SendLineCall[]
+  errors: SendErrorCall[]
+  exits: SendExitCall[]
+  finishes: Array<{ runId: string | undefined; status: string }>
+} {
+  const lines: SendLineCall[] = []
+  const errors: SendErrorCall[] = []
+  const exits: SendExitCall[] = []
+  const finishes: Array<{ runId: string | undefined; status: string }> = []
+  const fetchMock =
+    overrides.fetchMock ||
+    vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({
+          details: { family: 'qwen' },
+          capabilities: ['tools']
+        })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'ok' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 3, eval_count: 1 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+  vi.stubGlobal('fetch', fetchMock)
+
+  return {
+    deps: {
+      getSettings: () =>
+        ({
+          ollamaBaseUrl: 'http://127.0.0.1:11434',
+          ollamaDefaultModel: 'stream-model:latest',
+          ollamaToolControlTier: 'read_only',
+          ollamaDefaultRunProfile: 'local_scout',
+          ollamaRunProfiles: {},
+          ollamaModelPreflightAt: { 'stream-model:latest@digest-stream': Date.now() },
+          ollamaProviderParityWorkspaceGrants: {},
+          agenticServices: { mcpTools: 'allow' },
+          geminiMcpBridgeEnabled: true,
+          codexSandboxFallback: 'read-only'
+        }) as any,
+      getTotalMemoryBytes: () => 32 * 1024 ** 3,
+      markOllamaModelPreflightComplete: vi.fn(),
+      sendAgentCompatLine: (_sender, provider, payload, route) => {
+        lines.push({ provider, payload, route })
+      },
+      sendAgentCompatError: (_sender, provider, error, route) => {
+        errors.push({ provider, error, route })
+      },
+      sendAgentCompatExit: (_sender, provider, code, route) => {
+        exits.push({ provider, code, route })
+      },
+      runManager: {
+        attachAbortController: vi.fn(),
+        finish: (runId, status) => {
+          finishes.push({ runId, status })
+        }
+      },
+      emitProviderCapabilityWarnings: vi.fn(async () => undefined),
+      executeTool: overrides.executeTool,
+      getOllamaSessionMemory: vi.fn(),
+      saveOllamaSessionMemory: vi.fn()
+    },
+    lines,
+    errors,
+    exits,
+    finishes
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 describe('advanceOllamaStallStreak', () => {
   it('increments the streak and halts once consecutive non-progress turns reach the limit', () => {
@@ -98,6 +278,95 @@ describe('ollamaUsageStats', () => {
       total_tokens: 2400,
       duration_ms: 3000
     })
+  })
+})
+
+describe('runOllamaProvider streaming', () => {
+  it('emits content deltas before the Ollama HTTP stream finishes', async () => {
+    const gate = makeDeferred()
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return delayedOllamaStreamResponse(
+          JSON.stringify({ message: { role: 'assistant', content: 'Hello from ' } }),
+          gate.promise,
+          [
+            JSON.stringify({ message: { role: 'assistant', content: 'Ollama streaming.' } }),
+            JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 12 })
+          ]
+        )
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock })
+    const runPromise = runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    await new Promise((resolve) => setImmediate(resolve))
+    let assertionError: unknown
+    try {
+      const contentTexts = lines
+        .filter((line) => line.payload.type === 'content')
+        .map((line) => line.payload.text)
+      expect(contentTexts).toEqual(['Hello from '])
+    } catch (error) {
+      assertionError = error
+    } finally {
+      gate.resolve()
+      await runPromise
+    }
+    if (assertionError) throw assertionError
+
+    const finalContentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(finalContentTexts).toEqual(['Hello from ', 'Ollama streaming.'])
+    expect(lines.at(-1)?.payload.type).toBe('result')
+  })
+
+  it('fails the run for a valid Ollama error stream chunk', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return ollamaStreamResponse([JSON.stringify({ error: 'model not found' })])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(errors).toEqual([{ provider: 'ollama', error: 'model not found', route: baseRoute }])
+    expect(exits).toEqual([{ provider: 'ollama', code: 1, route: baseRoute }])
+    expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'failed' })
+    expect(lines.some((line) => line.payload.type === 'result')).toBe(false)
   })
 })
 
