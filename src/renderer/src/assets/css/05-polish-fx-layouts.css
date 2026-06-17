@@ -2130,22 +2130,13 @@
 
 .sidebar-chat-title-line .sidebar-provider-label {
   flex: 0 0 auto;
-  /* 1.0.3 polish — provider prefix scales with the title (15% smaller
-   * matching `.sidebar-chat-title` below). Scoped to title-line
-   * descendants so non-sidebar usages of `.sidebar-provider-label`
-   * (if any creep in) aren't affected. */
-  font-size: 0.85em;
+  font-size: var(--sidebar-thread-title-font-size);
 }
 
 .sidebar-chat-title {
   font-weight: 610;
   letter-spacing: -0.008em;
-  /* 1.0.3 polish — 15% smaller across Ensembles / Workspace-expanded /
-   * Sub-threads / Global. Pinned + Recents handled separately via
-   * `.sidebar-pinned-label` / `.sidebar-recents-label`. Subtitle
-   * tokens (`.sidebar-chat-subline`, `.sidebar-run-status`,
-   * `.sidebar-branched-badge`) keep their existing size. */
-  font-size: 0.85em;
+  font-size: var(--sidebar-thread-title-font-size);
 }
 
 .sidebar-chat-subline {

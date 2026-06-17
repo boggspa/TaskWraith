@@ -510,6 +510,7 @@
 ) .sidebar-pinned-label,
 .sidebar-recents-label {
   color: var(--sidebar-text);
+  font-size: var(--sidebar-thread-title-font-size);
   font-weight: 610;
   letter-spacing: -0.008em;
   line-height: 1.16;

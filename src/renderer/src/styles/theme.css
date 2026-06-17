@@ -239,6 +239,7 @@
   --font-size-lg: calc(1.365rem * 1);
   --sidebar-row-font-size: calc(1.066rem * 1.2);
   --sidebar-row-meta-font-size: calc(0.936rem * 1.2);
+  --sidebar-thread-title-font-size: calc(var(--sidebar-row-font-size) * 0.72);
 
   /* Scrollbar */
   --scrollbar-track: transparent;
