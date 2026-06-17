@@ -14,6 +14,7 @@ vi.mock('electron', () => ({
 
 const runEventPath = (runId: string): string => join(userDataPath, 'run-events', `${runId}.jsonl`)
 const artifactDir = (runId: string): string => join(userDataPath, 'run-artifacts', runId)
+const chatListIndexPath = (): string => join(userDataPath, 'chat-list-index.json')
 
 function makeRun(runId: string): ChatRun {
   return { runId, startedAt: '2026-05-08T00:00:00.000Z' }
@@ -183,5 +184,57 @@ describe('AppStore.deleteChat cascade + orphan reap', () => {
     expect(fs.existsSync(chatFile('sub'))).toBe(true)
     expect(fs.existsSync(chatFile('parent'))).toBe(true)
     expect(chats.some((c) => c.appChatId === 'sub')).toBe(true)
+  })
+})
+
+describe('AppStore.clearChats all-history cleanup', () => {
+  const chatFile = (id: string): string => join(userDataPath, 'chats', `${id}.json`)
+
+  beforeEach(() => {
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(join(userDataPath, 'chats'), { recursive: true })
+    ;(AppStore as unknown as { orphanSubThreadsReaped: boolean }).orphanSubThreadsReaped = false
+  })
+
+  it('removes every chat file, malformed chat, index, run events, and artifacts', () => {
+    saveChatWithRuns('parent', [makeRun('run-parent')])
+    saveChatWithRuns('ensemble', [makeRun('run-ensemble')])
+    fs.writeFileSync(chatFile('malformed'), '{not json', 'utf8')
+    seedRunFiles('run-parent')
+    seedRunFiles('run-ensemble')
+    seedRunFiles('orphan-run')
+
+    expect(fs.existsSync(chatListIndexPath())).toBe(true)
+    expect(fs.existsSync(chatFile('malformed'))).toBe(true)
+    expect(fs.existsSync(runEventPath('orphan-run'))).toBe(true)
+
+    AppStore.clearChats()
+
+    expect(fs.existsSync(chatFile('parent'))).toBe(false)
+    expect(fs.existsSync(chatFile('ensemble'))).toBe(false)
+    expect(fs.existsSync(chatFile('malformed'))).toBe(false)
+    expect(fs.existsSync(chatListIndexPath())).toBe(false)
+    expect(fs.existsSync(runEventPath('run-parent'))).toBe(false)
+    expect(fs.existsSync(runEventPath('run-ensemble'))).toBe(false)
+    expect(fs.existsSync(runEventPath('orphan-run'))).toBe(false)
+    expect(fs.existsSync(artifactDir('run-parent'))).toBe(false)
+    expect(fs.existsSync(artifactDir('orphan-run'))).toBe(false)
+    expect(AppStore.getChats()).toEqual([])
+  })
+
+  it('keeps workspace-scoped clear limited to that workspace', () => {
+    const workspaceA = saveChatWithRuns('workspace-a-chat', [makeRun('run-a')])
+    const workspaceB = saveChatWithRuns('workspace-b-chat', [makeRun('run-b')])
+    AppStore.saveChat({ ...workspaceB, workspaceId: 'workspace-2', workspacePath: '/repo-2' })
+    seedRunFiles('run-a')
+    seedRunFiles('run-b')
+
+    AppStore.clearChats(workspaceA.workspaceId)
+
+    expect(fs.existsSync(chatFile('workspace-a-chat'))).toBe(false)
+    expect(fs.existsSync(runEventPath('run-a'))).toBe(false)
+    expect(fs.existsSync(chatFile('workspace-b-chat'))).toBe(true)
+    expect(fs.existsSync(runEventPath('run-b'))).toBe(true)
+    expect(AppStore.getChats().map((chat) => chat.appChatId)).toEqual(['workspace-b-chat'])
   })
 })

@@ -701,6 +701,14 @@ function deleteRunForensicFiles(runId: string): void {
   }
 }
 
+function deletePathBestEffort(targetPath: string, label: string): void {
+  try {
+    fs.rmSync(targetPath, { recursive: true, force: true })
+  } catch (e) {
+    console.error(`Failed to delete ${label}`, e)
+  }
+}
+
 function readRunEventFile(filePath: string): RunEventRecord[] {
   try {
     if (!fs.existsSync(filePath)) return []
@@ -1969,6 +1977,17 @@ export class AppStore {
   }
 
   static clearChats(workspaceId?: string) {
+    if (!workspaceId) {
+      deletePathBestEffort(chatsDir, 'chat history directory')
+      deletePathBestEffort(chatListIndexPath, 'chat list index')
+      deletePathBestEffort(runEventsDir, 'run event history directory')
+      deletePathBestEffort(runArtifactsDir, 'run artifact history directory')
+      this.chatRecordCache.clear()
+      this.orphanSubThreadsReaped = false
+      runEventSequenceCache.clear()
+      runEventHashCache.clear()
+      return
+    }
     const chats = this.getChats(workspaceId)
     for (const chat of chats) {
       this.deleteChat(chat.appChatId)
