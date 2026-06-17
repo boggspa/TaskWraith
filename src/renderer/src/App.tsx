@@ -17366,7 +17366,19 @@ function App(): React.JSX.Element {
                     currency={displayCurrency}
                     currencyOverestimatePercent={overestimatePercent}
                     providerRates={providerRates}
-                    onFocusPane={() => multiview.setFocusedPane(viewerPaneIndex)}
+                    onFocusPane={() => {
+                      // Focus routing: pin the outgoing chat into the currently
+                      // focused slot, move focus to this pane, then switch
+                      // currentChat to this pane's chat. Because the focused
+                      // cell renders currentChat inline and the composer /
+                      // sidebar / Copy / Goal all key off currentChat, they
+                      // follow the focused pane with no extra retargeting.
+                      if (currentChat?.appChatId) {
+                        multiview.setPaneChat(multiview.focusedPaneIndex, currentChat.appChatId)
+                      }
+                      multiview.setFocusedPane(viewerPaneIndex)
+                      void handleSelectChat(viewerChat)
+                    }}
                   />
                 )
               }}
