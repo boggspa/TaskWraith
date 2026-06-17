@@ -164,6 +164,12 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--sidebar-text);
 }
+
+.sidebar-section-header .sidebar-overflow-trigger:focus-visible {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 32%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 10%, transparent);
+}
 .sidebar-local-servers-list {
   display: flex;
   flex-direction: column;
@@ -908,14 +914,13 @@
 }
 
 .sidebar-section-title {
-  /* 1.0.3 polish — top-level sidebar hierarchy pills (Pinned / Recents
-   * / Ensembles / Workspaces / Chats) scaled down 15% to match the
-   * chat-title reduction. Was `var(--font-size-xs)`; calc'd
-   * relative-to-the-token so theme overrides still propagate. */
-  font-size: calc(var(--font-size-xs) * 0.85);
-  font-weight: 600;
+  /* Top-level sidebar hierarchy pills (Pinned / Recents / Ensembles /
+   * Workspaces / Chats) stay compact, but need enough weight to remain
+   * findable in long chat lists. */
+  font-size: calc(var(--font-size-xs) * 0.95);
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   color: var(--sidebar-text-secondary);
   margin: 0;
 }
@@ -924,6 +929,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   margin-bottom: var(--space-sm);
 }
 
@@ -941,6 +947,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
   padding: 0;
   border: 0;
   background: transparent;
@@ -984,6 +992,7 @@
 
 .sidebar-section-header-action {
   display: inline-flex;
+  flex: 0 0 auto;
   width: 22px;
   height: 22px;
   align-items: center;
@@ -993,7 +1002,11 @@
   background: color-mix(in srgb, var(--sidebar-text) 6%, transparent);
   color: color-mix(in srgb, var(--sidebar-text) 76%, transparent);
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    color 120ms ease;
 }
 
 .sidebar-section-header-action .sf-symbol-icon {
@@ -1007,6 +1020,12 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--sidebar-text);
   outline: 0;
+}
+
+.sidebar-section-header-action:focus-visible {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 32%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 10%, transparent);
 }
 
 /* First-launch onboarding hint. Sits between the "Workspaces"

@@ -106,10 +106,10 @@ export function ActiveRunsSection({
           className="sidebar-section-header-toggle"
           onClick={() => setCollapsed((current) => !current)}
           aria-expanded={!collapsed}
-          title={collapsed ? 'Expand Active runs' : 'Collapse Active runs'}
+          title={collapsed ? 'Expand Active Runs' : 'Collapse Active Runs'}
         >
           <ActiveRunsChevron isExpanded={!collapsed} />
-          <h4 className="sidebar-section-title">Active runs</h4>
+          <h4 className="sidebar-section-title">Active Runs</h4>
         </button>
         {visibleJobs.length > 0 && (
           <span className="sidebar-active-runs-count">{visibleJobs.length}</span>

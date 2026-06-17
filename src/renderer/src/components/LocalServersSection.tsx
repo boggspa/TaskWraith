@@ -58,10 +58,10 @@ export function LocalServersSection(): JSX.Element | null {
           className="sidebar-section-header-toggle"
           onClick={() => setCollapsed((current) => !current)}
           aria-expanded={!collapsed}
-          title={collapsed ? 'Expand Local servers' : 'Collapse Local servers'}
+          title={collapsed ? 'Expand Local Servers' : 'Collapse Local Servers'}
         >
           <SectionChevron isExpanded={!collapsed} />
-          <h4 className="sidebar-section-title">Local servers</h4>
+          <h4 className="sidebar-section-title">Local Servers</h4>
         </button>
         <span className="sidebar-local-servers-count">{servers.length}</span>
         <SidebarOverflowMenu
