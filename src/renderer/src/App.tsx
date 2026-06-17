@@ -71,6 +71,7 @@ import {
   activeGoalModeLabel,
   createActiveGoal,
   isUnfinishedActiveGoal,
+  MAX_ACTIVE_GOAL_OBJECTIVE_CHARS,
   normalizeActiveGoalObjective,
   resolveActiveGoalForProvider,
   resolveActiveGoalMode,
@@ -20868,7 +20869,7 @@ function App(): React.JSX.Element {
 	                            onChange={(event) => setGoalDraft(event.target.value)}
 	                            placeholder="Describe the objective and stopping condition"
 	                            rows={3}
-	                            maxLength={4000}
+	                            maxLength={MAX_ACTIVE_GOAL_OBJECTIVE_CHARS}
 	                          />
 	                          <div className="composer-goal-popover-actions">
 	                            <button

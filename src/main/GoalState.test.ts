@@ -3,6 +3,8 @@ import {
   activeGoalModeLabel,
   createActiveGoal,
   formatActiveGoalPromptBlock,
+  MAX_ACTIVE_GOAL_OBJECTIVE_CHARS,
+  normalizeActiveGoalObjective,
   resolveActiveGoalForProvider,
   resolveActiveGoalMode,
   shouldInjectActiveGoal,
@@ -19,6 +21,17 @@ describe('GoalState', () => {
     expect(goal.mode).toBe('ollama_harness')
     expect(activeGoalModeLabel(goal.mode)).toBe('Ollama managed')
     expect(goal.objective).toBe('Fix the failing parser test')
+  })
+
+  it('limits active goal objectives to 4000 characters', () => {
+    const overLimit = ` ${'x'.repeat(MAX_ACTIVE_GOAL_OBJECTIVE_CHARS + 20)} `
+
+    expect(normalizeActiveGoalObjective(overLimit)).toHaveLength(MAX_ACTIVE_GOAL_OBJECTIVE_CHARS)
+
+    const goal = createActiveGoal('codex', overLimit, {
+      now: new Date('2026-06-13T12:00:00Z')
+    })
+    expect(goal.objective).toHaveLength(MAX_ACTIVE_GOAL_OBJECTIVE_CHARS)
   })
 
   it('distinguishes native and steered provider modes', () => {
