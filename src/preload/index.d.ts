@@ -310,8 +310,13 @@ declare global {
         x: number
         y: number
       }) => Promise<SpellcheckContextResult | null>
-      replaceMisspelling: (suggestion: string) => Promise<{ ok: true }>
-      addWordToSpellCheckerDictionary: (word: string) => Promise<{ ok: true }>
+      replaceMisspelling: (payload: {
+        suggestion: string
+        point: { x: number; y: number }
+      }) => Promise<{ ok: boolean; reason?: string }>
+      addWordToSpellCheckerDictionary: (payload: {
+        point: { x: number; y: number }
+      }) => Promise<{ ok: boolean; reason?: string }>
       copyChatMarkdownTranscript: (chatId: string) => Promise<CopyChatMarkdownTranscriptResult>
       selectExternalPathGrant: (
         access?: 'read' | 'write',

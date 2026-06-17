@@ -202,8 +202,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'select-image-files': [],
   'save-clipboard-image-attachment': [],
   'spellcheck:get-last-context': ['object'],
-  'spellcheck:replace-misspelling': ['nonEmptyString'],
-  'spellcheck:add-word-to-dictionary': ['nonEmptyString'],
+  'spellcheck:replace-misspelling': ['object'],
+  'spellcheck:add-word-to-dictionary': ['object'],
   'copy-chat-markdown-transcript': ['chatId'],
   'select-external-path-grant': ['externalPathGrantAccess'],
   // 1.0.6-EW69 — the composer workspace manager's add flows (proactive

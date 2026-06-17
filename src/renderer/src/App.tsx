@@ -5733,13 +5733,24 @@ function App(): React.JSX.Element {
     setDiscordContextSelectionByChatId((prev) => ({ ...prev, [targetChatId]: null }))
   }
 
-  const addImageAttachments = (paths: string[]) => {
-    const parsed = paths.map((path, index) => ({
+  const imageAttachmentsFromPaths = (paths: string[]) =>
+    paths.map((path, index) => ({
       id: `${Date.now()}-${index}-${Math.random()}`,
       path: sanitizeImagePath(path),
       name: getImageName(path)
     }))
-    setImageAttachments((prev) => mergeImageAttachments(prev, parsed))
+
+  const addImageAttachmentsToChat = (chatId: string | null | undefined, paths: string[]) => {
+    if (!chatId || paths.length === 0) return
+    const parsed = imageAttachmentsFromPaths(paths)
+    setImageAttachmentsByChatId((prev) => ({
+      ...prev,
+      [chatId]: mergeImageAttachments(prev[chatId] || [], parsed)
+    }))
+  }
+
+  const addImageAttachments = (paths: string[]) => {
+    addImageAttachmentsToChat(getCurrentComposerStateChatId(), paths)
   }
 
   const handlePickImages = async () => {
@@ -18820,7 +18831,29 @@ function App(): React.JSX.Element {
                   anchor={composerContextMenu.anchor}
                   spellcheckContext={composerContextMenu.spellcheckContext}
                   textareaRef={composerTextareaRef}
-                  onValueChange={setPrompt}
+                  onValueChange={(value) => setChatPromptDraft(currentComposerChatId, value)}
+                  isValueTargetCurrent={() =>
+                    (currentChatIdRef.current || currentComposerChatId) === currentComposerChatId
+                  }
+                  onPasteClipboardAttachment={async () => {
+                    const targetChatId = currentComposerChatId
+                    if (!targetChatId) return false
+                    const saved = await window.api.saveClipboardImageAttachment()
+                    const paths = saved || []
+                    if (paths.length === 0) return false
+                    if ((currentChatIdRef.current || targetChatId) !== targetChatId) return false
+                    addImageAttachmentsToChat(targetChatId, paths)
+                    if (imageAttachments.length + paths.length > MAX_IMAGE_ATTACHMENTS) {
+                      setRawLogs((prev) => [
+                        ...prev,
+                        {
+                          type: 'info',
+                          content: `Attachment limit reached (${MAX_IMAGE_ATTACHMENTS}); oldest files were removed.`
+                        }
+                      ])
+                    }
+                    return true
+                  }}
                   onClose={() => composerContextMenu.setAnchor(null)}
                 />
                 <ComposerSlashMenu

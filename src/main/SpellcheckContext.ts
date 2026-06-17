@@ -68,3 +68,10 @@ export function spellcheckContextMatchesPoint(
     Math.abs(snapshot.y - y) <= MAX_COORDINATE_DELTA_PX
   )
 }
+
+export function spellcheckContextIncludesSuggestion(
+  snapshot: SpellcheckContextSnapshot,
+  suggestion: string
+): boolean {
+  return snapshot.dictionarySuggestions.includes(suggestion)
+}

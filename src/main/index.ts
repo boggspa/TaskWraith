@@ -517,6 +517,7 @@ import {
 } from './audit/AuditTranscriptMessages'
 import {
   sanitizeSpellcheckContext,
+  spellcheckContextIncludesSuggestion,
   spellcheckContextMatchesPoint,
   type SpellcheckContextSnapshot
 } from './SpellcheckContext'
@@ -14244,6 +14245,16 @@ function attachSpellcheckContextTracking(targetWindow: BrowserWindow): void {
   })
 }
 
+function currentSpellcheckContextForAction(
+  webContentsId: number,
+  input: unknown
+): SpellcheckContextSnapshot | null {
+  if (!isRecord(input)) return null
+  const point = isRecord(input.point) ? input.point : null
+  const snapshot = latestSpellcheckContextByWebContentsId.get(webContentsId) || null
+  return spellcheckContextMatchesPoint(snapshot, point) ? snapshot : null
+}
+
 function createWindow(): void {
   const isMac = process.platform === 'darwin'
   const settings = AppStore.getSettings()
@@ -19527,16 +19538,30 @@ if (isGeminiMcpBridgeProcess) {
       return spellcheckContextMatchesPoint(snapshot, point) ? snapshot : null
     })
 
-    ipcMain.handle('spellcheck:replace-misspelling', (event, suggestion: string) => {
-      const replacement = requireNonEmptyString(suggestion, 'Spelling suggestion').slice(0, 80)
+    ipcMain.handle('spellcheck:replace-misspelling', (event, input: unknown) => {
+      const snapshot = currentSpellcheckContextForAction(event.sender.id, input)
+      if (!snapshot || !isRecord(input)) {
+        return { ok: false, reason: 'stale-context' }
+      }
+      const rawSuggestion = typeof input.suggestion === 'string' ? input.suggestion.trim() : ''
+      if (!rawSuggestion) {
+        return { ok: false, reason: 'invalid-suggestion' }
+      }
+      const replacement = rawSuggestion.slice(0, 80)
+      if (!spellcheckContextIncludesSuggestion(snapshot, replacement)) {
+        return { ok: false, reason: 'suggestion-mismatch' }
+      }
       event.sender.replaceMisspelling(replacement)
       return { ok: true }
     })
 
-    ipcMain.handle('spellcheck:add-word-to-dictionary', (event, word: string) => {
-      const dictionaryWord = requireNonEmptyString(word, 'Dictionary word').slice(0, 80)
-      event.sender.session.addWordToSpellCheckerDictionary(dictionaryWord)
-      return { ok: true }
+    ipcMain.handle('spellcheck:add-word-to-dictionary', (event, input: unknown) => {
+      const snapshot = currentSpellcheckContextForAction(event.sender.id, input)
+      if (!snapshot) {
+        return { ok: false, reason: 'stale-context' }
+      }
+      const ok = event.sender.session.addWordToSpellCheckerDictionary(snapshot.misspelledWord)
+      return { ok }
     })
 
     ipcMain.handle('copy-chat-markdown-transcript', async (event, chatId: string) => {

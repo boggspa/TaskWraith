@@ -44,10 +44,10 @@ const api = {
   saveClipboardImageAttachment: () => ipcRenderer.invoke('save-clipboard-image-attachment'),
   getLastSpellcheckContext: (point: { x: number; y: number }) =>
     ipcRenderer.invoke('spellcheck:get-last-context', point),
-  replaceMisspelling: (suggestion: string) =>
-    ipcRenderer.invoke('spellcheck:replace-misspelling', suggestion),
-  addWordToSpellCheckerDictionary: (word: string) =>
-    ipcRenderer.invoke('spellcheck:add-word-to-dictionary', word),
+  replaceMisspelling: (payload: { suggestion: string; point: { x: number; y: number } }) =>
+    ipcRenderer.invoke('spellcheck:replace-misspelling', payload),
+  addWordToSpellCheckerDictionary: (payload: { point: { x: number; y: number } }) =>
+    ipcRenderer.invoke('spellcheck:add-word-to-dictionary', payload),
   copyChatMarkdownTranscript: (chatId: string) =>
     ipcRenderer.invoke('copy-chat-markdown-transcript', chatId),
   // Phase J1 (composer unification): the picker is now cross-provider —

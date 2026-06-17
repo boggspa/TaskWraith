@@ -11,6 +11,8 @@ interface ComposerTextareaContextMenuProps {
   spellcheckContext?: ComposerSpellcheckContext | null
   textareaRef: RefObject<HTMLTextAreaElement | null>
   onValueChange: (value: string) => void
+  isValueTargetCurrent?: () => boolean
+  onPasteClipboardAttachment?: () => Promise<boolean>
   onClose: () => void
 }
 
@@ -41,10 +43,13 @@ function applyTextareaValue(
   nextValue: string,
   selectionStart: number,
   selectionEnd: number,
-  onValueChange: (value: string) => void
+  onValueChange: (value: string) => void,
+  isValueTargetCurrent?: () => boolean
 ): void {
+  if (isValueTargetCurrent && !isValueTargetCurrent()) return
   onValueChange(nextValue)
   requestAnimationFrame(() => {
+    if (isValueTargetCurrent && !isValueTargetCurrent()) return
     textarea.focus()
     textarea.setSelectionRange(selectionStart, selectionEnd)
   })
@@ -56,12 +61,35 @@ function hasSelection(textarea: HTMLTextAreaElement): boolean {
 
 function syncTextareaValueFromDom(
   textarea: HTMLTextAreaElement,
-  onValueChange: (value: string) => void
+  onValueChange: (value: string) => void,
+  isValueTargetCurrent?: () => boolean
 ): void {
   requestAnimationFrame(() => {
+    if (isValueTargetCurrent && !isValueTargetCurrent()) return
     onValueChange(textarea.value)
     textarea.focus()
   })
+}
+
+function focusMenuButton(menu: HTMLDivElement, direction: 'first' | 'last' | 'next' | 'previous'): void {
+  const buttons = Array.from(
+    menu.querySelectorAll<HTMLButtonElement>('.composer-textarea-context-menu-item:not(:disabled)')
+  )
+  if (buttons.length === 0) return
+  const activeIndex = buttons.findIndex((button) => button === document.activeElement)
+  if (direction === 'first') {
+    buttons[0]?.focus()
+    return
+  }
+  if (direction === 'last') {
+    buttons[buttons.length - 1]?.focus()
+    return
+  }
+  const fallbackIndex = direction === 'next' ? -1 : 0
+  const currentIndex = activeIndex >= 0 ? activeIndex : fallbackIndex
+  const delta = direction === 'next' ? 1 : -1
+  const nextIndex = (currentIndex + delta + buttons.length) % buttons.length
+  buttons[nextIndex]?.focus()
 }
 
 export function useComposerTextareaContextMenu(): {
@@ -125,6 +153,8 @@ export function ComposerTextareaContextMenu({
   spellcheckContext,
   textareaRef,
   onValueChange,
+  isValueTargetCurrent,
+  onPasteClipboardAttachment,
   onClose
 }: ComposerTextareaContextMenuProps): React.JSX.Element | null {
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -140,6 +170,21 @@ export function ComposerTextareaContextMenu({
       if (event.key === 'Escape') {
         event.preventDefault()
         onClose()
+        return
+      }
+      if (!menuRef.current) return
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        focusMenuButton(menuRef.current, 'next')
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        focusMenuButton(menuRef.current, 'previous')
+      } else if (event.key === 'Home') {
+        event.preventDefault()
+        focusMenuButton(menuRef.current, 'first')
+      } else if (event.key === 'End') {
+        event.preventDefault()
+        focusMenuButton(menuRef.current, 'last')
       }
     }
     document.addEventListener('mousedown', handlePointerDown, true)
@@ -174,8 +219,8 @@ export function ComposerTextareaContextMenu({
                   if (!textarea) return
                   textarea.focus()
                   void window.api
-                    .replaceMisspelling(suggestion)
-                    .then(() => syncTextareaValueFromDom(textarea, onValueChange))
+                    .replaceMisspelling({ suggestion, point: anchor })
+                    .then(() => syncTextareaValueFromDom(textarea, onValueChange, isValueTargetCurrent))
                     .catch(() => undefined)
                   onClose()
                 }
@@ -196,7 +241,7 @@ export function ComposerTextareaContextMenu({
             onSelect: () => {
               textarea?.focus()
               void window.api
-                .addWordToSpellCheckerDictionary(spellcheckContext.misspelledWord)
+                .addWordToSpellCheckerDictionary({ point: anchor })
                 .catch(() => undefined)
               onClose()
             }
@@ -217,11 +262,19 @@ export function ComposerTextareaContextMenu({
         if (!textarea || !selectionActive) return
         const start = textarea.selectionStart
         const end = textarea.selectionEnd
+        const value = textarea.value
         const selected = textarea.value.slice(start, end)
-        void navigator.clipboard.writeText(selected).catch(() => undefined)
-        const nextValue = textarea.value.slice(0, start) + textarea.value.slice(end)
-        applyTextareaValue(textarea, nextValue, start, start, onValueChange)
-        onClose()
+        void navigator.clipboard
+          .writeText(selected)
+          .then(() => {
+            const nextValue = value.slice(0, start) + value.slice(end)
+            applyTextareaValue(textarea, nextValue, start, start, onValueChange, isValueTargetCurrent)
+            onClose()
+          })
+          .catch(() => {
+            textarea.focus()
+            onClose()
+          })
       }
     },
     {
@@ -244,28 +297,55 @@ export function ComposerTextareaContextMenu({
       shortcut: '⌘V',
       onSelect: () => {
         if (!textarea) return
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            const start = textarea.selectionStart
-            const end = textarea.selectionEnd
-            const nextValue = textarea.value.slice(0, start) + text + textarea.value.slice(end)
-            const caret = start + text.length
-            applyTextareaValue(textarea, nextValue, caret, caret, onValueChange)
+        textarea.focus()
+        const start = textarea.selectionStart
+        const end = textarea.selectionEnd
+        const value = textarea.value
+        let nativePasteSucceeded = false
+        try {
+          nativePasteSucceeded = document.execCommand('paste')
+        } catch {
+          nativePasteSucceeded = false
+        }
+        if (nativePasteSucceeded) {
+          syncTextareaValueFromDom(textarea, onValueChange, isValueTargetCurrent)
+          onClose()
+          return
+        }
+        void (async () => {
+          const pastedAttachment = onPasteClipboardAttachment
+            ? await onPasteClipboardAttachment().catch(() => false)
+            : false
+          if (pastedAttachment) {
             onClose()
-          })
-          .catch(() => {
+            return
+          }
+          try {
+            const text = await navigator.clipboard.readText()
+            const nextValue = value.slice(0, start) + text + value.slice(end)
+            const caret = start + text.length
+            applyTextareaValue(
+              textarea,
+              nextValue,
+              caret,
+              caret,
+              onValueChange,
+              isValueTargetCurrent
+            )
+            onClose()
+          } catch {
             textarea.focus()
-            document.execCommand('paste')
             applyTextareaValue(
               textarea,
               textarea.value,
               textarea.selectionStart,
               textarea.selectionEnd,
-              onValueChange
+              onValueChange,
+              isValueTargetCurrent
             )
             onClose()
-          })
+          }
+        })()
       }
     },
     {
@@ -295,6 +375,22 @@ export function ComposerTextareaContextMenu({
       style={{ position: 'fixed', left: `${left}px`, top: `${top}px` }}
       role="menu"
       aria-label="Composer text actions"
+      onKeyDown={(event) => {
+        if (!menuRef.current) return
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          focusMenuButton(menuRef.current, 'next')
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          focusMenuButton(menuRef.current, 'previous')
+        } else if (event.key === 'Home') {
+          event.preventDefault()
+          focusMenuButton(menuRef.current, 'first')
+        } else if (event.key === 'End') {
+          event.preventDefault()
+          focusMenuButton(menuRef.current, 'last')
+        }
+      }}
     >
       {items.map((item) => {
         if (item.type === 'separator') {

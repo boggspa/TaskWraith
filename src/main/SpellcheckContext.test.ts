@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { sanitizeSpellcheckContext, spellcheckContextMatchesPoint } from './SpellcheckContext'
+import {
+  sanitizeSpellcheckContext,
+  spellcheckContextIncludesSuggestion,
+  spellcheckContextMatchesPoint
+} from './SpellcheckContext'
 
 describe('SpellcheckContext', () => {
   it('keeps a small sanitized snapshot of misspelled word suggestions', () => {
@@ -45,5 +49,18 @@ describe('SpellcheckContext', () => {
     expect(spellcheckContextMatchesPoint(snapshot, { x: 110, y: 130 }, 2200)).toBe(true)
     expect(spellcheckContextMatchesPoint(snapshot, { x: 180, y: 130 }, 2200)).toBe(false)
     expect(spellcheckContextMatchesPoint(snapshot, { x: 110, y: 130 }, 4000)).toBe(false)
+  })
+
+  it('checks replacement suggestions against the captured dictionary list', () => {
+    const snapshot = sanitizeSpellcheckContext({
+      x: 10,
+      y: 20,
+      misspelledWord: 'teh',
+      dictionarySuggestions: ['the', 'ten']
+    })
+
+    expect(snapshot).not.toBeNull()
+    expect(spellcheckContextIncludesSuggestion(snapshot!, 'the')).toBe(true)
+    expect(spellcheckContextIncludesSuggestion(snapshot!, 'tea')).toBe(false)
   })
 })
