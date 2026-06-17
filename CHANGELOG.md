@@ -4,7 +4,15 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
-## 1.5.6 - 2026-06-16
+## 1.5.6 - 2026-06-17
+
+### Added
+- **iOS composer shells.** The phone composer now mirrors the Mac's composer
+  style — Default, Codex, Claude, Cursor, Grok, Gemini, Kimi, Modular, Terminal,
+  Ticket Stub, Satellite, Obsidian, and Alabaster — following the Mac by default,
+  with a per-device override in Settings → Composer Shell.
+- **Multiview panes.** Open several chats side by side in a pane grid, with a
+  composer layout picker, per-pane focus/close, and simultaneous streaming.
 
 ### Fixed
 - **Ensemble runaway loop.** A participant that kept choosing "continue" with the
