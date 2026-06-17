@@ -10,6 +10,7 @@ import SwiftUI
 #if canImport(UIKit)
     import UIKit
 #endif
+import TaskWraithKit
 
 public enum TWTheme {
     // ── Backgrounds (--app-bg, --surface-1/2/3) ───────────────────────────────
@@ -357,6 +358,22 @@ public final class TWThemeStore: ObservableObject {
         }
         set {
             UserDefaults.standard.set(newValue.rawValue, forKey: "tw.theme.tool")
+            revision += 1
+        }
+    }
+
+    /// Composer-shell choice for THIS device. `.followMac` (default) mirrors
+    /// the Mac's projected `composerStyle`; `.override` pins a style locally.
+    /// Only the preference is persisted — never the effective style. The
+    /// effective style is resolved at render time via `twEffectiveComposerStyle`.
+    /// See ios/COMPOSER-SHELL-PARITY.md (E.4).
+    public var composerShellPreference: TWComposerShellPreference {
+        get {
+            TWComposerShellPreference(
+                persisted: UserDefaults.standard.string(forKey: "tw.composerShell"))
+        }
+        set {
+            UserDefaults.standard.set(newValue.persisted, forKey: "tw.composerShell")
             revision += 1
         }
     }
