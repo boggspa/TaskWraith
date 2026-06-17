@@ -514,6 +514,85 @@ describe('runOllamaProvider streaming', () => {
       .map((line) => line.payload.text)
     expect(contentTexts).toEqual(['Visible structured answer.'])
   })
+
+  it('streams native pre-tool prose and post-tool final answer in order', async () => {
+    let chatCalls = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                content: 'I will inspect the requested file before answering. '
+              }
+            }),
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'read_file',
+                      arguments: { path: 'README.md' }
+                    }
+                  }
+                ]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 20, eval_count: 8 })
+          ])
+        }
+        return delayedOllamaStreamResponse(
+          JSON.stringify({
+            message: { role: 'assistant', content: 'The README says TaskWraith ' }
+          }),
+          Promise.resolve(),
+          [
+            JSON.stringify({ message: { role: 'assistant', content: 'runs local agents.' } }),
+            JSON.stringify({ done: true, prompt_eval_count: 16, eval_count: 12 })
+          ]
+        )
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({
+      fetchMock,
+      executeTool: async () => ({ ok: true, output: 'TaskWraith runs local agents.' })
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    const ordered = lines
+      .filter((line) => ['content', 'tool_use', 'tool_result', 'result'].includes(line.payload.type))
+      .map((line) =>
+        line.payload.type === 'content' ? `content:${line.payload.text}` : line.payload.type
+      )
+    expect(ordered).toEqual([
+      'content:I will inspect the requested file before answering. ',
+      'tool_use',
+      'tool_result',
+      'content:The README says TaskWraith ',
+      'content:runs local agents.',
+      'result'
+    ])
+  })
 })
 
 describe('normalizeOllamaBaseUrl', () => {

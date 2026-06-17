@@ -1766,7 +1766,12 @@ export async function runOllamaProvider(
     const unstreamedOllamaContent = (text: string, streamed: string): string => {
       if (!streamed) return text
       if (text === streamed) return ''
+      if (text === streamed.trimEnd()) return ''
       if (text.startsWith(streamed)) return text.slice(streamed.length)
+      const trimmedStreamed = streamed.trimEnd()
+      if (trimmedStreamed && text.startsWith(trimmedStreamed)) {
+        return text.slice(trimmedStreamed.length).trimStart()
+      }
       return text
     }
     for (let turnIndex = 0; turnIndex <= OLLAMA_TOOL_LOOP_LIMIT; turnIndex += 1) {
