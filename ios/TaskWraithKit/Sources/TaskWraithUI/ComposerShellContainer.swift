@@ -81,8 +81,19 @@ private struct ComposerSolidShellModifier: ViewModifier {
         let shape = RoundedRectangle(
             cornerRadius: resolved.geometry.surfaceCornerRadius, style: .continuous)
         let rim = resolved.palette.rim
+        let effects = resolved.effects
         return content
-            .background(shape.fill(resolved.palette.surfaceFill))
+            .background(
+                ZStack {
+                    shape.fill(resolved.palette.surfaceFill)
+                    if effects.contains(.paperGrain) {
+                        ComposerPaperGrain()  // stub: faint 135° hatch over the cream fill
+                    }
+                    if effects.contains(.perforation) {
+                        ComposerPerforation(color: resolved.palette.border)  // stub ticket tear
+                    }
+                }
+            )
             .compositingGroup()
             .mask(shape)
             .overlay(shape.strokeBorder(resolved.palette.border, lineWidth: 1))
@@ -91,9 +102,87 @@ private struct ComposerSolidShellModifier: ViewModifier {
                     shape.inset(by: 0.5).strokeBorder(rim.color, lineWidth: rim.width)
                 }
             )
+            // Animated rim-shimmer (obsidian/alabaster). applyAccessibility drops
+            // .rimChase under Reduce Motion, so the static rim above is the fallback.
+            .overlay(
+                effects.contains(.rimChase)
+                    ? ComposerRimChase(
+                        color: rim?.color ?? resolved.palette.border,
+                        cornerRadius: resolved.geometry.surfaceCornerRadius,
+                        lineWidth: rim?.width ?? 2)
+                    : nil
+            )
             .shadow(
                 color: rim?.glow ?? .clear,
                 radius: rim?.glow == nil ? 0 : 14)
+    }
+}
+
+/// 16s conic rim-shimmer that sweeps the surface edge (obsidian/alabaster).
+private struct ComposerRimChase: View {
+    let color: Color
+    let cornerRadius: CGFloat
+    let lineWidth: CGFloat
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let seconds = timeline.date.timeIntervalSinceReferenceDate
+            let fraction = seconds.truncatingRemainder(dividingBy: 16) / 16
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(
+                    AngularGradient(
+                        gradient: Gradient(colors: [
+                            color.opacity(0), color.opacity(0.06), color,
+                            color.opacity(0.06), color.opacity(0),
+                        ]),
+                        center: .center,
+                        angle: .degrees(fraction * 360)),
+                    lineWidth: lineWidth)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Faint diagonal hatch approximating the stub's 135° paper grain.
+private struct ComposerPaperGrain: View {
+    var body: some View {
+        Canvas { ctx, size in
+            let spacing: CGFloat = 6
+            var x: CGFloat = -size.height
+            while x < size.width {
+                var path = Path()
+                path.move(to: CGPoint(x: x, y: 0))
+                path.addLine(to: CGPoint(x: x + size.height, y: size.height))
+                ctx.stroke(path, with: .color(.black.opacity(0.03)), lineWidth: 0.5)
+                x += spacing
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// The stub's dashed perforation tear, ~44pt below the top edge.
+private struct ComposerPerforation: View {
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer().frame(height: 44)
+            ComposerDashedLine()
+                .stroke(color, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                .frame(height: 1)
+            Spacer(minLength: 0)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct ComposerDashedLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 0, y: rect.midY))
+        path.addLine(to: CGPoint(x: rect.width, y: rect.midY))
+        return path
     }
 }
 

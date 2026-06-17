@@ -5707,7 +5707,7 @@ struct MiniThreadView: View {
                     model.updateGoal(card, op: op, objective: objective, reason: reason)
                 })
         }
-        .composerShellGlass()
+        .composerShell(twResolvedComposerShell(model: model, presentation: .miniSideChat))
     }
 }
 

@@ -364,6 +364,11 @@ struct Composer: View {
                     // Ensembles included: steer now carries attachments.
                     photosButton
                 #endif
+                if shell.effects.contains(.terminalCaret) {
+                    Text(">")
+                        .font(twComposerFont(.monospaced).weight(.bold))
+                        .foregroundStyle(shell.sendButton.tint)
+                }
                 TextField(placeholder, text: $text, axis: .vertical)
                     .lineLimit(1...2)
                     .font(twComposerFont(shell.fontDesign))
