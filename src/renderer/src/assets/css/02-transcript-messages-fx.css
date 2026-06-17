@@ -2239,6 +2239,16 @@
   overflow: hidden;
 }
 
+.welcome-standalone-heatmaps--single.is-swipe-enabled {
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.welcome-standalone-heatmaps--single.is-dragging {
+  cursor: grabbing;
+}
+
 .welcome-standalone-heatmap-pane {
   min-width: 0;
   width: 100%;
@@ -2262,14 +2272,31 @@
   will-change: transform;
 }
 
+.welcome-standalone-heatmap-pane.is-incoming.from-right {
+  animation-name: welcome-heatmap-swipe-in-right;
+}
+
 .welcome-standalone-heatmap-pane.is-outgoing {
   animation: welcome-heatmap-swipe-out-right 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
   will-change: transform;
 }
 
+.welcome-standalone-heatmap-pane.is-outgoing.to-left {
+  animation-name: welcome-heatmap-swipe-out-left;
+}
+
 @keyframes welcome-heatmap-swipe-in-left {
   from {
     transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes welcome-heatmap-swipe-in-right {
+  from {
+    transform: translateX(100%);
   }
   to {
     transform: translateX(0);
@@ -2282,6 +2309,15 @@
   }
   to {
     transform: translateX(100%);
+  }
+}
+
+@keyframes welcome-heatmap-swipe-out-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
   }
 }
 
