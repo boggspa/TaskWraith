@@ -42,6 +42,17 @@ export interface AgentRunPayload {
   handoffSourceRunId?: string
   runtimeProfile?: RuntimeProfile
   effectivePermissions?: EffectiveRunPermissions
+  /**
+   * HMAC over the run's permission posture (`approvalMode` +
+   * `effectivePermissions`), stamped by the main-side producer that
+   * built this payload and verified at the `normalizeAgentRunPayload`
+   * trust boundary. Transport-only: it is NOT stored in session state.
+   * Absent / invalid on a payload that carries `effectivePermissions`
+   * triggers a downgrade to a read-only run; absent on a raised
+   * `approvalMode` caps the run to prompt-on-action. See
+   * src/main/RunPermissionPosture.ts.
+   */
+  effectivePermissionsSignature?: string
   ensembleRun?: EnsembleRunIdentity
   /** Present for audit-orchestration role-runs (parallel to ensembleRun) so
    * the adapter/MCP layer routes the run's findings/verdicts/profile back to

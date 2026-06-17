@@ -47,6 +47,7 @@ import {
   RunAnalystRequest,
   RunAnalystSnapshot,
   AgenticServiceId,
+  EffectiveRunPermissions,
   AuditRunRecord,
   ProviderRunReroute
 } from '../main/store/types'
@@ -181,6 +182,8 @@ interface AgentRunPayload {
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
   handoffSourceRunId?: string
+  effectivePermissions?: EffectiveRunPermissions
+  effectivePermissionsSignature?: string
 }
 
 interface ComposerImageAttachment {

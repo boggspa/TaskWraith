@@ -12,6 +12,11 @@ import { experimentalCursorProviderEnabled } from '../cursorGate'
 import { normalizeOllamaSessionMemory } from '../ollama/OllamaRunMemory'
 import { effectiveOllamaToolControlTier } from '../ollama/OllamaToolTiers'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
+import {
+  approvalModeRank,
+  coerceApprovalMode,
+  type RunPermissionPostureContext
+} from '../RunPermissionPosture'
 import { resolveProviderDispatch, type ProviderDispatchResolution } from '../ProviderRunPause'
 import { resolveActiveGoalForProvider } from '../GoalState'
 import {
@@ -23,6 +28,7 @@ import type {
   ChatRecord,
   ChatRun,
   ChatScope,
+  EffectiveRunPermissions,
   ExternalPathGrant,
   GeminiWorktreeLaunchOption,
   ProviderRunReroute,
@@ -104,6 +110,18 @@ export interface ComposerServiceStore {
 export interface ComposerServiceDeps {
   appStore: ComposerServiceStore
   getSettings: () => AppSettings
+  /**
+   * Stamp the run's permission posture (`approvalMode` +
+   * `effectivePermissions`) so the `normalizeAgentRunPayload` clamp trusts
+   * this main-composed payload after it round-trips through the renderer.
+   * Optional: unit tests that don't exercise the run-posture clamp omit it.
+   * See src/main/RunPermissionPosture.ts.
+   */
+  signRunPermissionPosture?: (
+    approvalMode: string | null | undefined,
+    effectivePermissions: EffectiveRunPermissions | null | undefined,
+    context?: RunPermissionPostureContext | null
+  ) => string
 }
 
 export class ComposerService {
@@ -111,9 +129,15 @@ export class ComposerService {
 
   composeRun(input: ComposerInput): ComposerRunPayload {
     const chatId = requireNonEmptyString(input?.chatId, 'Chat id')
-    const chat = input.chatSnapshot || this.deps.appStore.getChat(chatId)
+    const storedChat = this.deps.appStore.getChat(chatId)
+    const chat = input.chatSnapshot || storedChat
     if (!chat) {
       throw new Error(`Chat was not found: ${chatId}`)
+    }
+    const trustedApprovalChat: ChatRecord = storedChat || {
+      ...chat,
+      providerMetadata: {},
+      settingsSnapshot: undefined
     }
 
     const requestedProvider = assertProviderId(input.provider || chat.provider || 'gemini')
@@ -122,7 +146,24 @@ export class ComposerService {
     const settings = this.deps.getSettings()
     const dispatchResolution = resolveProviderDispatch(settings, requestedProvider)
     const provider = dispatchResolution.provider
-    const effectiveInput = applyComposerReroutePlan(input, dispatchResolution)
+    const rawInputBeforeReroute =
+      typeof input.userInput === 'string'
+        ? input.userInput
+        : typeof input.prompt === 'string'
+          ? input.prompt
+          : ''
+    const requestedPlanMode = parsePlanModeInput(rawInputBeforeReroute).planMode
+    const trustedApprovalMode = resolveApprovalMode(
+      scope,
+      requestedPlanMode ? 'plan' : undefined,
+      trustedApprovalChat
+    )
+    const effectiveInput = applyComposerReroutePlan(
+      input,
+      dispatchResolution,
+      requestedProvider,
+      trustedApprovalMode
+    )
     const rawUserInput =
       typeof effectiveInput.userInput === 'string'
         ? effectiveInput.userInput
@@ -137,13 +178,15 @@ export class ComposerService {
     const selfReflectiveRequested = planParsed.selfReflective
 
     const requestedModel = resolveRequestedModel(provider, effectiveInput, chat)
-    const approvalMode =
+    const requestedApprovalMode = planParsed.planMode ? 'plan' : effectiveInput.approvalMode
+    const appRunId = optionalString(input.appRunId)
+    let approvalMode =
       provider === 'ollama'
         ? 'plan'
-        : resolveApprovalMode(
-            scope,
-            planParsed.planMode ? 'plan' : effectiveInput.approvalMode,
-            chat
+        : capRequestedApprovalMode(
+            resolveApprovalMode(scope, undefined, trustedApprovalChat),
+            resolveApprovalMode(scope, requestedApprovalMode, trustedApprovalChat),
+            appRunId
           )
     const imagePaths = normalizeImagePaths(
       effectiveInput.imageAttachments || effectiveInput.attachments || []
@@ -234,6 +277,7 @@ export class ComposerService {
             presetId: 'read_only'
           })
         : undefined
+    const runtimeProfileId = optionalString(effectiveInput.runtimeProfileId)
     const payload: ComposerRunPayload = {
       provider,
       scope,
@@ -249,7 +293,7 @@ export class ComposerService {
         ? { providerReroute: input.providerReroute || dispatchResolution.reroute }
         : {}),
       prompt: composed.contextualPrompt,
-      appRunId: optionalString(input.appRunId),
+      appRunId,
       appChatId: chatId,
       model: requestedModel,
       reasoningEffort:
@@ -274,13 +318,33 @@ export class ComposerService {
           : null,
       approvalMode,
       ...(effectiveRunPermissions ? { effectivePermissions: effectiveRunPermissions } : {}),
+      // Stamp the posture so the renderer can round-trip this payload back
+      // through `run-agent` without the normalize-time clamp downgrading it.
+      // Signed even when `effectiveRunPermissions` is undefined (non-plan
+      // runs) so the approvalMode itself is bound against post-compose bumps.
+      ...(this.deps.signRunPermissionPosture
+        ? {
+            effectivePermissionsSignature: this.deps.signRunPermissionPosture(
+              approvalMode,
+              effectiveRunPermissions,
+              {
+                provider,
+                scope,
+                appRunId,
+                appChatId: chatId,
+                prompt: composed.contextualPrompt,
+                runtimeProfileId
+              }
+            )
+          }
+        : {}),
       imagePaths,
       providerSessionId: resumeDecision.sessionId || null,
       externalPathGrants,
       sessionTrust: provider === 'gemini' ? Boolean(effectiveInput.sessionTrust) : false,
       geminiWorktree:
         scope !== 'global' && provider === 'gemini' ? effectiveInput.geminiWorktree : null,
-      runtimeProfileId: optionalString(effectiveInput.runtimeProfileId),
+      runtimeProfileId,
       geminiAuthProfileId,
       handoffSourceRunId: optionalString(input.handoffSourceRunId),
       composer: {
@@ -315,17 +379,24 @@ export class ComposerService {
 
 function applyComposerReroutePlan(
   input: ComposerInput,
-  resolution: ProviderDispatchResolution
+  resolution: ProviderDispatchResolution,
+  originalProvider: ProviderId,
+  requestedApprovalMode: string | undefined
 ): ComposerInput {
   const plan = resolution.reroutePlan
   if (!plan) return input
+  const providerChanged = originalProvider !== resolution.provider
+  const rerouteApprovalMode = cappedComposerRerouteApprovalMode(
+    requestedApprovalMode,
+    plan.approvalMode
+  )
   return {
     ...input,
     provider: resolution.provider,
     ...(plan.selectedModelType ? { selectedModelType: plan.selectedModelType } : {}),
     ...(plan.customModel !== undefined ? { customModel: plan.customModel } : {}),
-    ...(plan.approvalMode ? { approvalMode: plan.approvalMode } : {}),
-    ...(plan.runtimeProfileId ? { runtimeProfileId: plan.runtimeProfileId } : {}),
+    ...(rerouteApprovalMode ? { approvalMode: rerouteApprovalMode } : {}),
+    runtimeProfileId: plan.runtimeProfileId || (providerChanged ? undefined : input.runtimeProfileId),
     ...(resolution.provider === 'gemini'
       ? { geminiAuthProfileId: plan.geminiAuthProfileId ?? null }
       : {}),
@@ -345,6 +416,21 @@ function applyComposerReroutePlan(
       ? { kimiThinkingEnabled: plan.kimiThinkingEnabled ?? true }
       : {})
   }
+}
+
+function cappedComposerRerouteApprovalMode(
+  currentMode: string | undefined,
+  plannedMode: string | undefined
+): string | undefined {
+  const planned = normalizeComposerRerouteApprovalMode(plannedMode)
+  if (!planned) return undefined
+  const current = coerceApprovalMode(currentMode) || 'default'
+  return approvalModeRank(planned) <= approvalModeRank(current) ? planned : undefined
+}
+
+function normalizeComposerRerouteApprovalMode(value: string | undefined): string | undefined {
+  if (value === 'full_access') return 'auto_edit'
+  return coerceApprovalMode(value)
 }
 
 function assertProviderId(value: unknown): ProviderId {
@@ -416,6 +502,18 @@ function resolveApprovalMode(
     chat.settingsSnapshot?.approvalMode ||
     'default'
   return scope === 'global' && mode !== 'plan' ? 'default' : mode
+}
+
+function capRequestedApprovalMode(
+  trustedMode: string,
+  requestedMode: string,
+  appRunId: string | undefined
+): string {
+  const trusted = coerceApprovalMode(trustedMode) || 'default'
+  const requested = coerceApprovalMode(requestedMode) || 'default'
+  if (approvalModeRank(requested) > approvalModeRank(trusted)) return trusted
+  if (!appRunId && approvalModeRank(requested) > approvalModeRank('default')) return 'default'
+  return requested
 }
 
 function resolveResumeDecision(

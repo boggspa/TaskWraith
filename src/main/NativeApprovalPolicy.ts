@@ -38,14 +38,29 @@ export function effectiveAgenticSettings(
   effectivePermissions: EffectiveRunPermissions | undefined
 ): AppSettings {
   if (!effectivePermissions) return settings
+  const current = settings.agenticServices
+  const effective = effectivePermissions.agenticServices
   return {
     ...settings,
     agenticServices: {
-      ...settings.agenticServices,
-      ...effectivePermissions.agenticServices,
-      networkAccess: effectivePermissions.networkAccess
+      ...current,
+      shellCommands: preserveCurrentDeny(current.shellCommands, effective.shellCommands),
+      fileChanges: preserveCurrentDeny(current.fileChanges, effective.fileChanges),
+      mcpTools: preserveCurrentDeny(current.mcpTools, effective.mcpTools),
+      subThreadDelegation: preserveCurrentDeny(
+        current.subThreadDelegation,
+        effective.subThreadDelegation
+      ),
+      networkAccess: current.networkAccess === 'deny' ? 'deny' : effectivePermissions.networkAccess
     }
   }
+}
+
+function preserveCurrentDeny(
+  current: AgenticServicePolicy | undefined,
+  requested: AgenticServicePolicy
+): AgenticServicePolicy {
+  return current === 'deny' ? 'deny' : requested
 }
 
 export function automaticApprovalReason(args: {

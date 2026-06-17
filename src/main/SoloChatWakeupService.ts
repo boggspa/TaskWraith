@@ -51,6 +51,7 @@ import type {
   SoloChatWakeupRecord
 } from './store/types'
 import type { AgentRunPayload } from './run/AgentRunTypes'
+import type { RunPermissionPostureContext } from './RunPermissionPosture'
 
 /**
  * Pure validator + builder. Resolves the requested wake target
@@ -252,6 +253,17 @@ export interface SoloChatWakeupServiceDeps {
   /** Programmatic run dispatch — same surface ensemble + bridge +
    * sub-thread paths all use. */
   dispatchRun: (payload: AgentRunPayload) => Promise<{ dispatched: boolean; appRunId: string }>
+  /**
+   * Stamp the continuation's permission posture so the
+   * `normalizeAgentRunPayload` clamp trusts this main-built resumed
+   * posture instead of downgrading it to read-only. Optional so the
+   * unit-test harness can omit it. See src/main/RunPermissionPosture.ts.
+   */
+  signRunPermissionPosture?: (
+    approvalMode: string | null | undefined,
+    effectivePermissions: EffectiveRunPermissions | null | undefined,
+    context?: RunPermissionPostureContext | null
+  ) => string
   /** Wakeup timer scheduling. Pluggable so tests can inject a
    * fake timer. */
   scheduleWakeupTimer: (wakeup: SoloChatWakeupRecord) => void
@@ -403,6 +415,22 @@ export class SoloChatWakeupService {
     const refreshed: ChatRecord = this.deps.getChat(chat.appChatId) ?? chat
     const appRunId = this.deps.createRunId(wakeup.provider)
     const payload = buildSoloWakeupResumePayload(refreshed, fired, appRunId, nowIso)
+    // Stamp the resumed posture so the normalize-time clamp trusts this
+    // main-built continuation rather than downgrading it to read-only.
+    if (this.deps.signRunPermissionPosture) {
+      payload.effectivePermissionsSignature = this.deps.signRunPermissionPosture(
+        payload.approvalMode,
+        payload.effectivePermissions,
+        {
+          provider: payload.provider,
+          scope: payload.scope,
+          appRunId: payload.appRunId,
+          appChatId: payload.appChatId,
+          prompt: payload.prompt,
+          runtimeProfileId: payload.runtimeProfileId
+        }
+      )
+    }
     try {
       await this.deps.dispatchRun(payload)
     } catch (error) {

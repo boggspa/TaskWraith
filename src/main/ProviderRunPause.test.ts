@@ -82,6 +82,64 @@ describe('ProviderRunPause', () => {
     expect(routedPayload.approvalMode).toBe('plan')
   })
 
+  it('does not let a reroute plan raise the payload approval mode', () => {
+    const resolution = {
+      provider: 'ollama' as ProviderId,
+      reroute: {
+        from: 'codex' as ProviderId,
+        to: 'ollama' as ProviderId,
+        reason: 'provider-paused' as const
+      },
+      reroutePlan: {
+        provider: 'ollama' as ProviderId,
+        approvalMode: 'full_access'
+      }
+    }
+
+    const routedPayload = applyReroutePlanToPayload(
+      {
+        provider: 'codex' as ProviderId,
+        prompt: 'Read only',
+        approvalMode: 'plan'
+      },
+      resolution
+    )
+
+    expect(routedPayload.approvalMode).toBe('plan')
+  })
+
+  it('drops original-provider runtime posture when rerouting to another provider', () => {
+    const resolution = {
+      provider: 'ollama' as ProviderId,
+      reroute: {
+        from: 'codex' as ProviderId,
+        to: 'ollama' as ProviderId,
+        reason: 'provider-paused' as const
+      },
+      reroutePlan: {
+        provider: 'ollama' as ProviderId
+      }
+    }
+
+    const routedPayload = applyReroutePlanToPayload(
+      {
+        provider: 'codex' as ProviderId,
+        prompt: 'Fallback',
+        approvalMode: 'default',
+        runtimeProfileId: 'codex-profile',
+        effectivePermissions: { readOnly: false },
+        effectivePermissionsSignature: 'abc'
+      },
+      resolution
+    )
+
+    expect((routedPayload as { runtimeProfileId?: string }).runtimeProfileId).toBeUndefined()
+    expect((routedPayload as { effectivePermissions?: unknown }).effectivePermissions).toBeUndefined()
+    expect(
+      (routedPayload as { effectivePermissionsSignature?: string }).effectivePermissionsSignature
+    ).toBeUndefined()
+  })
+
   it('does not reroute into another active pause', () => {
     const state = settings({
       codex: {

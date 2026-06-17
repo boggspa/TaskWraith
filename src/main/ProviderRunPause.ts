@@ -5,6 +5,7 @@ import type {
   ProviderRunPauseState,
   ProviderRunReroute
 } from './store/types'
+import { approvalModeRank, coerceApprovalMode } from './RunPermissionPosture'
 
 const PROVIDER_IDS: readonly ProviderId[] = [
   'gemini',
@@ -99,6 +100,11 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
 ): T & { providerReroute?: ProviderRunReroute } {
   if (!resolution.reroute || !resolution.reroutePlan) return payload
   const plan = resolution.reroutePlan
+  const providerChanged = payload.provider !== resolution.provider
+  const rerouteApprovalMode = cappedRerouteApprovalMode(
+    (payload as { approvalMode?: string }).approvalMode,
+    plan.approvalMode
+  )
   return {
     ...payload,
     provider: resolution.provider,
@@ -108,8 +114,16 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
       : plan.selectedModelType
         ? { model: plan.selectedModelType }
         : {}),
-    ...(plan.approvalMode ? { approvalMode: plan.approvalMode } : {}),
-    ...(plan.runtimeProfileId ? { runtimeProfileId: plan.runtimeProfileId } : {}),
+    ...(rerouteApprovalMode ? { approvalMode: rerouteApprovalMode } : {}),
+    runtimeProfileId:
+      plan.runtimeProfileId ||
+      (providerChanged ? undefined : (payload as { runtimeProfileId?: string }).runtimeProfileId),
+    ...(providerChanged
+      ? {
+          effectivePermissions: undefined,
+          effectivePermissionsSignature: undefined
+        }
+      : {}),
     ...(resolution.provider === 'gemini'
       ? { geminiAuthProfileId: plan.geminiAuthProfileId ?? null }
       : {}),
@@ -129,6 +143,21 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
       ? { kimiThinking: plan.kimiThinkingEnabled ?? null }
       : {})
   }
+}
+
+function cappedRerouteApprovalMode(
+  currentMode: string | undefined,
+  plannedMode: string | undefined
+): string | undefined {
+  const planned = normalizeRerouteApprovalMode(plannedMode)
+  if (!planned) return undefined
+  const current = coerceApprovalMode(currentMode) || 'default'
+  return approvalModeRank(planned) <= approvalModeRank(current) ? planned : undefined
+}
+
+function normalizeRerouteApprovalMode(value: string | undefined): string | undefined {
+  if (value === 'full_access') return 'auto_edit'
+  return coerceApprovalMode(value)
 }
 
 export function formatProviderPausedMessage(

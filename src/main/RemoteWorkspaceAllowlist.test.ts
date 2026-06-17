@@ -153,6 +153,27 @@ describe('RemoteWorkspaceAllowlist', () => {
       }
     })
 
+    it('treats an omitted workspace approvalMode as default for allowlist checks', () => {
+      const allowlist = new RemoteWorkspaceAllowlist()
+      allowlist.upsert({
+        workspaceId: 'ws-plan-only',
+        path: '/a',
+        mode: 'read-only',
+        allowedProviders: ['gemini'],
+        allowedApprovalModes: ['plan']
+      })
+
+      const decision = allowlist.evaluate({
+        workspaceId: 'ws-plan-only',
+        provider: 'gemini'
+      })
+
+      expect(decision.allowed).toBe(false)
+      if (!decision.allowed) {
+        expect(decision.reason).toMatch(/approval mode "default"/i)
+      }
+    })
+
     it('maps legacy read-only mode to monitor + approve capabilities', () => {
       const allowlist = new RemoteWorkspaceAllowlist()
       allowlist.upsert({

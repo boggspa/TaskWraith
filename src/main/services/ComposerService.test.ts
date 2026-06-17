@@ -5,7 +5,18 @@ import {
   type ComposerServiceDeps,
   type ComposerServiceStore
 } from './ComposerService'
-import type { AppSettings, ChatRecord, ExternalPathGrant, ProviderId } from '../store/types'
+import type {
+  AppSettings,
+  ChatRecord,
+  EffectiveRunPermissions,
+  ExternalPathGrant,
+  ProviderId
+} from '../store/types'
+import {
+  clampUntrustedRunPosture,
+  signRunPermissionPosture,
+  verifyRunPermissionPosture
+} from '../RunPermissionPosture'
 
 function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -779,5 +790,183 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
   it('leaves effectivePermissions undefined for a non-read-only run (unchanged behavior)', () => {
     expect(compose({}, { approvalMode: 'default' }).effectivePermissions).toBeUndefined()
     expect(compose({}, { approvalMode: 'auto_edit' }).effectivePermissions).toBeUndefined()
+  })
+})
+
+describe('composeRun ↔ normalize posture clamp contract', () => {
+  const SECRET = Buffer.from('f'.repeat(64), 'hex')
+  const SENTINEL_READONLY: EffectiveRunPermissions = {
+    presetId: 'read_only',
+    approvalMode: 'plan',
+    agenticServices: {
+      shellCommands: 'deny',
+      fileChanges: 'deny',
+      mcpTools: 'ask',
+      subThreadDelegation: 'ask'
+    },
+    networkAccess: 'deny',
+    externalPathGrants: [],
+    workspaceGrantServiceIds: [],
+    readOnly: true
+  }
+
+  function composeSigned(
+    inputOverrides: Record<string, unknown>,
+    chatOverrides: Partial<ChatRecord> = {}
+  ): ComposerRunPayload {
+    const chat = makeChat(chatOverrides)
+    const { deps } = makeDeps(chat)
+    const service = new ComposerService({
+      ...deps,
+      signRunPermissionPosture: (mode, perms, context) =>
+        signRunPermissionPosture(SECRET, mode, perms, context)
+    })
+    return service.composeRun({
+      chatId: chat.appChatId,
+      appRunId: 'run-signed',
+      provider: chat.provider as ProviderId,
+      workspace: chat.workspacePath,
+      userInput: 'Do the thing',
+      selectedModelType: 'flash-lite',
+      approvalMode: 'default',
+      ...inputOverrides
+    })
+  }
+
+  const clampDeps = {
+    verify: (
+      mode: string | null | undefined,
+      perms: EffectiveRunPermissions | null | undefined,
+      sig: string | null | undefined,
+      context?: Parameters<typeof verifyRunPermissionPosture>[4]
+    ) => verifyRunPermissionPosture(SECRET, mode, perms, sig, context),
+    reDeriveReadOnly: () => SENTINEL_READONLY,
+    reDeriveDefault: (): EffectiveRunPermissions => ({
+      ...SENTINEL_READONLY,
+      presetId: 'default',
+      approvalMode: 'default',
+      readOnly: false
+    })
+  }
+
+  const payloadContext = (payload: ComposerRunPayload) => ({
+    provider: payload.provider,
+    scope: payload.scope,
+    appRunId: payload.appRunId,
+    appChatId: payload.appChatId,
+    prompt: payload.prompt,
+    runtimeProfileId: payload.runtimeProfileId
+  })
+
+  it('stamps a verifiable signature on a plan run that survives the clamp byte-for-byte', () => {
+    const payload = composeSigned({ approvalMode: 'plan' })
+    expect(payload.effectivePermissionsSignature).toBeTruthy()
+    const clamped = clampUntrustedRunPosture(
+      {
+        scope: 'workspace',
+        approvalMode: payload.approvalMode,
+        effectivePermissions: payload.effectivePermissions,
+        signature: payload.effectivePermissionsSignature,
+        context: payloadContext(payload)
+      },
+      clampDeps
+    )
+    expect(clamped.downgraded).toBe(false)
+    expect(clamped.approvalMode).toBe('plan')
+    expect(clamped.effectivePermissions).toEqual(payload.effectivePermissions)
+  })
+
+  it('binds approvalMode even when effectivePermissions is undefined (non-plan run)', () => {
+    const payload = composeSigned(
+      { approvalMode: 'auto_edit' },
+      { providerMetadata: { approvalMode: 'auto_edit' } }
+    )
+    expect(payload.effectivePermissions).toBeUndefined()
+    expect(payload.effectivePermissionsSignature).toBeTruthy()
+    // Untampered: clamp trusts the signed auto_edit posture.
+    expect(
+      clampUntrustedRunPosture(
+        {
+          scope: 'workspace',
+          approvalMode: payload.approvalMode,
+          effectivePermissions: payload.effectivePermissions,
+          signature: payload.effectivePermissionsSignature,
+          context: payloadContext(payload)
+        },
+        clampDeps
+      ).approvalMode
+    ).toBe('auto_edit')
+  })
+
+  it('rejects replaying a composed signature onto a different run context', () => {
+    const payload = composeSigned(
+      { approvalMode: 'auto_edit' },
+      { providerMetadata: { approvalMode: 'auto_edit' } }
+    )
+    const clamped = clampUntrustedRunPosture(
+      {
+        scope: 'workspace',
+        approvalMode: payload.approvalMode,
+        effectivePermissions: payload.effectivePermissions,
+        signature: payload.effectivePermissionsSignature,
+        context: { ...payloadContext(payload), appRunId: 'run-other' }
+      },
+      clampDeps
+    )
+    expect(clamped.downgraded).toBe(true)
+    expect(clamped.reason).toBe('invalid-posture-signature')
+    expect(clamped.approvalMode).toBe('plan')
+    expect(clamped.effectivePermissions).toEqual(SENTINEL_READONLY)
+  })
+
+  it('caps renderer-requested auto_edit to the trusted persisted chat posture before signing', () => {
+    const payload = composeSigned({ approvalMode: 'auto_edit' })
+    expect(payload.approvalMode).toBe('default')
+    expect(payload.effectivePermissions).toBeUndefined()
+    expect(payload.effectivePermissionsSignature).toBeTruthy()
+    const clamped = clampUntrustedRunPosture(
+      {
+        scope: 'workspace',
+        approvalMode: payload.approvalMode,
+        effectivePermissions: payload.effectivePermissions,
+        signature: payload.effectivePermissionsSignature,
+        context: payloadContext(payload)
+      },
+      clampDeps
+    )
+    expect(clamped.downgraded).toBe(false)
+    expect(clamped.approvalMode).toBe('default')
+  })
+
+  it('downgrades to read-only when the renderer inflates the composed posture', () => {
+    const payload = composeSigned({ approvalMode: 'plan' })
+    // Renderer tampers the round-tripped payload: keeps the plan-run signature
+    // but swaps in an over-permissive effectivePermissions object.
+    const clamped = clampUntrustedRunPosture(
+      {
+        scope: 'workspace',
+        approvalMode: 'auto_edit',
+        effectivePermissions: {
+          ...SENTINEL_READONLY,
+          presetId: 'full_access',
+          approvalMode: 'auto_edit',
+          agenticServices: {
+            shellCommands: 'allow',
+            fileChanges: 'allow',
+            mcpTools: 'allow',
+            subThreadDelegation: 'allow'
+          },
+          networkAccess: 'allow',
+          readOnly: false
+        },
+        signature: payload.effectivePermissionsSignature,
+        context: payloadContext(payload)
+      },
+      clampDeps
+    )
+    expect(clamped.downgraded).toBe(true)
+    expect(clamped.reason).toBe('invalid-posture-signature')
+    expect(clamped.approvalMode).toBe('plan')
+    expect(clamped.effectivePermissions).toEqual(SENTINEL_READONLY)
   })
 })

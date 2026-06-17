@@ -400,13 +400,11 @@ export class RemoteWorkspaceAllowlist {
         reason: `Provider "${check.provider}" is not allowed for workspace "${check.workspaceId}"`
       }
     }
-    if (
-      check.approvalMode !== undefined &&
-      !entry.allowedApprovalModes.includes(check.approvalMode)
-    ) {
+    const approvalMode = check.approvalMode ?? 'default'
+    if (!entry.allowedApprovalModes.includes(approvalMode)) {
       return {
         allowed: false,
-        reason: `Approval mode "${check.approvalMode}" is not allowed for workspace "${check.workspaceId}"`
+        reason: `Approval mode "${approvalMode}" is not allowed for workspace "${check.workspaceId}"`
       }
     }
     if (

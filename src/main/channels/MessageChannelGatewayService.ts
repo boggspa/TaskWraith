@@ -2,6 +2,7 @@ import { createHash } from 'crypto'
 import { promises as fs } from 'fs'
 import { basename, isAbsolute, relative, resolve } from 'path'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
+import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import type { ChatMessage, ChatRecord, ChatRun, DiffFileSummary, ProviderId } from '../store/types'
 import { MessageChannelRouter } from './MessageChannelRouter'
 import type { MessageChannelBindingStore } from './MessageChannelBindingStore'
@@ -87,6 +88,11 @@ export interface MessageChannelGatewayDeps {
   getChat: (chatId: string) => ChatRecord | null
   saveChat: (chat: ChatRecord) => void
   dispatchRun: (payload: AgentRunPayload) => Promise<{ dispatched: boolean; appRunId: string }>
+  signRunPermissionPosture?: (
+    approvalMode: string | null | undefined,
+    effectivePermissions: null | undefined,
+    context?: RunPermissionPostureContext | null
+  ) => string
   delivery?: Pick<MessageChannelDeliveryService, 'registerRunTarget'> &
     Partial<Pick<MessageChannelDeliveryService, 'sendDirectReply'>>
   cancelActiveRunsForChat?: (chatId: string) => Promise<number> | number
@@ -151,6 +157,25 @@ export class MessageChannelGatewayService {
     this.router = new MessageChannelRouter({ bindingStore: deps.bindingStore })
     this.rateLimiter =
       deps.rateLimit === false ? null : new MessageChannelRateLimiter(resolveRateLimitConfig(deps.rateLimit))
+  }
+
+  private signRunPayload<T extends AgentRunPayload>(payload: T): T {
+    if (!this.deps.signRunPermissionPosture) return payload
+    return {
+      ...payload,
+      effectivePermissionsSignature: this.deps.signRunPermissionPosture(
+        payload.approvalMode,
+        undefined,
+        {
+          provider: payload.provider,
+          scope: payload.scope,
+          appRunId: payload.appRunId,
+          appChatId: payload.appChatId,
+          prompt: payload.prompt,
+          runtimeProfileId: payload.runtimeProfileId
+        }
+      )
+    }
   }
 
   async pollOnce(params: MessagesBridgePollParams = {}): Promise<MessageChannelPollSummary> {
@@ -347,7 +372,7 @@ export class MessageChannelGatewayService {
 
       let dispatch: { dispatched: boolean; appRunId: string }
       try {
-        dispatch = await this.deps.dispatchRun({
+        dispatch = await this.deps.dispatchRun(this.signRunPayload({
           provider: decision.turn.provider,
           scope: chat.scope || (chat.workspacePath ? 'workspace' : 'global'),
           workspace: chat.workspacePath,
@@ -362,7 +387,7 @@ export class MessageChannelGatewayService {
           ...(decision.turn.metadata.imagePaths?.length
             ? { imagePaths: decision.turn.metadata.imagePaths }
             : {})
-        })
+        }))
       } catch (err) {
         summary.rejected['dispatch-failed'] = (summary.rejected['dispatch-failed'] || 0) + 1
         retryFromRowId = rememberRetryableRow(retryFromRowId, message.rowId)
@@ -826,7 +851,7 @@ export class MessageChannelGatewayService {
     this.deps.saveChat(chatForDispatch)
 
     try {
-      const dispatch = await this.deps.dispatchRun({
+      const dispatch = await this.deps.dispatchRun(this.signRunPayload({
         provider,
         scope: chatForDispatch.scope || (chatForDispatch.workspacePath ? 'workspace' : 'global'),
         workspace: chatForDispatch.workspacePath,
@@ -836,7 +861,7 @@ export class MessageChannelGatewayService {
           provider === chatForDispatch.provider ? chatForDispatch.linkedProviderSessionId : undefined,
         approvalMode: chatForDispatch.settingsSnapshot?.approvalMode || 'default',
         ...(turn.metadata.imagePaths?.length ? { imagePaths: turn.metadata.imagePaths } : {})
-      })
+      }))
       if (!dispatch.dispatched) {
         chatForDispatch = markChannelMessageDispatchStatus(
           chatForDispatch,
@@ -1344,7 +1369,7 @@ export class MessageChannelGatewayService {
     const dispatchPrompt = promptForStoredChannelMessage(message)
     const imagePaths = imagePathsFromChannelMessage(source)
     try {
-      const dispatch = await this.deps.dispatchRun({
+      const dispatch = await this.deps.dispatchRun(this.signRunPayload({
         provider: targetProvider,
         scope: chat.scope || (chat.workspacePath ? 'workspace' : 'global'),
         workspace: chat.workspacePath,
@@ -1353,7 +1378,7 @@ export class MessageChannelGatewayService {
         providerSessionId: targetProvider === chat.provider ? chat.linkedProviderSessionId : undefined,
         approvalMode: chat.settingsSnapshot?.approvalMode || 'default',
         ...(imagePaths.length ? { imagePaths } : {})
-      })
+      }))
       if (!dispatch.dispatched) {
         const failedAt = this.nowIso()
         this.deps.saveChat(
@@ -1420,7 +1445,7 @@ export class MessageChannelGatewayService {
     const handoffBinding = { ...binding, provider: command.provider }
     const imagePaths = imagePathsFromChannelMessage(source)
     try {
-      const dispatch = await this.deps.dispatchRun({
+      const dispatch = await this.deps.dispatchRun(this.signRunPayload({
         provider: command.provider,
         scope: chat.scope || (chat.workspacePath ? 'workspace' : 'global'),
         workspace: chat.workspacePath,
@@ -1430,7 +1455,7 @@ export class MessageChannelGatewayService {
           command.provider === chat.provider ? chat.linkedProviderSessionId : undefined,
         approvalMode: chat.settingsSnapshot?.approvalMode || 'default',
         ...(imagePaths.length ? { imagePaths } : {})
-      })
+      }))
       if (!dispatch.dispatched) {
         this.deps.saveChat(
           markChannelMessageDispatchStatus(chat, messageId, 'retryable-failed', {

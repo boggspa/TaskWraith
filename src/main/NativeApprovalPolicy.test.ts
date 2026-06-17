@@ -155,4 +155,31 @@ describe('effectiveAgenticSettings', () => {
     expect(merged.agenticServices.mcpTools).toBe('ask')
     expect(merged.agenticServices.networkAccess).toBe('deny')
   })
+
+  it('preserves current explicit deny when merging stale effective permissions', () => {
+    const settings = {
+      agenticServices: {
+        shellCommands: 'deny',
+        fileChanges: 'deny',
+        mcpTools: 'deny',
+        subThreadDelegation: 'deny',
+        networkAccess: 'deny'
+      }
+    } as AppSettings
+    const effective = effectivePermissions(false, {
+      shellCommands: 'allow',
+      fileChanges: 'allow',
+      mcpTools: 'allow',
+      subThreadDelegation: 'allow'
+    })
+    effective.networkAccess = 'allow'
+
+    const merged = effectiveAgenticSettings(settings, effective)
+
+    expect(merged.agenticServices.shellCommands).toBe('deny')
+    expect(merged.agenticServices.fileChanges).toBe('deny')
+    expect(merged.agenticServices.mcpTools).toBe('deny')
+    expect(merged.agenticServices.subThreadDelegation).toBe('deny')
+    expect(merged.agenticServices.networkAccess).toBe('deny')
+  })
 })

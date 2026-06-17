@@ -6,8 +6,10 @@ import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
 import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import { providerLabel } from '../ProviderAdapters'
 import { AppStore } from '../store'
+import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
 import type {
   AppSettings,
+  AgenticServicePolicy,
   ChatScope,
   GeminiAuthStatus,
   GeminiMcpBridgeStatus,
@@ -188,9 +190,45 @@ export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | nu
     ...base,
     agenticServices: {
       ...(base.agenticServices || {}),
-      ...profile.agenticServices
+      shellCommands: stricterServicePolicy(
+        base.agenticServices?.shellCommands,
+        profile.agenticServices.shellCommands
+      ),
+      fileChanges: stricterServicePolicy(
+        base.agenticServices?.fileChanges,
+        profile.agenticServices.fileChanges
+      ),
+      mcpTools: stricterServicePolicy(
+        base.agenticServices?.mcpTools,
+        profile.agenticServices.mcpTools
+      ),
+      subThreadDelegation: stricterServicePolicy(
+        base.agenticServices?.subThreadDelegation,
+        profile.agenticServices.subThreadDelegation
+      ),
+      networkAccess:
+        base.agenticServices?.networkAccess === 'deny'
+          ? 'deny'
+          : profile.agenticServices.networkAccess || base.agenticServices?.networkAccess || 'allow'
     }
   }
+}
+
+function servicePolicyRank(value: unknown): number {
+  if (value === 'deny') return 0
+  if (value === 'ask') return 1
+  if (value === 'workspace') return 2
+  if (value === 'allow') return 3
+  return 1
+}
+
+function stricterServicePolicy(
+  base: AgenticServicePolicy | undefined,
+  profile: AgenticServicePolicy | undefined
+): AgenticServicePolicy {
+  const current = base || 'ask'
+  if (profile === undefined) return current
+  return servicePolicyRank(profile) <= servicePolicyRank(current) ? profile : current
 }
 
 export function resolveRuntimeProfileForPayload(
@@ -237,10 +275,10 @@ export function applyRuntimeProfileToPayload(
     // (observed live: a read-only Grok run went write-capable via
     // builtin:grok:global, so the deny rules + host read-only gate never engaged).
     // A profile MAY still tighten a non-read-only seat (including to 'plan').
-    const incomingReadOnly = (payload.approvalMode ?? '').trim() === 'plan'
-    const profileReadOnly = profile.approvalMode.trim() === 'plan'
-    if (!incomingReadOnly || profileReadOnly) {
-      payload.approvalMode = profile.approvalMode
+    const incomingMode = coerceApprovalMode(payload.approvalMode) ?? 'default'
+    const profileMode = coerceApprovalMode(profile.approvalMode) ?? 'default'
+    if (approvalModeRank(profileMode) <= approvalModeRank(incomingMode)) {
+      payload.approvalMode = profileMode
     }
   }
   return payload

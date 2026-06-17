@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   applyRuntimeProfileToPayload,
+  runtimeSettings,
   type CliProviderRuntimeDependencies,
   type RuntimeProfilePayload
 } from './CliProviderRuntime'
-import type { RuntimeProfile } from '../store/types'
+import type { AppSettings, RuntimeProfile } from '../store/types'
 
 // CliProviderRuntime imports AppStore from '../store', which touches Electron/fs
 // at module load. We exercise applyRuntimeProfileToPayload with INJECTED deps, so
@@ -70,11 +71,60 @@ describe('applyRuntimeProfileToPayload — read-only is a safety floor', () => {
     expect(out.approvalMode).toBe('plan')
   })
 
+  it('does NOT raise a verified default seat to auto_edit via runtime profile', () => {
+    const out = applyRuntimeProfileToPayload(
+      payload({ approvalMode: 'default' }),
+      depsWith(makeProfile({ approvalMode: 'auto_edit' }))
+    )
+    expect(out.approvalMode).toBe('default')
+  })
+
+  it('preserves an explicit auto_edit seat when the matching profile is also auto_edit', () => {
+    const out = applyRuntimeProfileToPayload(
+      payload({ approvalMode: 'auto_edit' }),
+      depsWith(makeProfile({ approvalMode: 'auto_edit' }))
+    )
+    expect(out.approvalMode).toBe('auto_edit')
+  })
+
   it('leaves approvalMode untouched when no runtime profile id is set', () => {
     const out = applyRuntimeProfileToPayload(
       { provider: 'grok', scope: 'workspace', approvalMode: 'plan' },
       depsWith(makeProfile())
     )
     expect(out.approvalMode).toBe('plan')
+  })
+})
+
+describe('runtimeSettings', () => {
+  const baseSettings = {
+    agenticServices: {
+      shellCommands: 'ask',
+      fileChanges: 'deny',
+      mcpTools: 'ask',
+      subThreadDelegation: 'workspace',
+      networkAccess: 'deny'
+    }
+  } as AppSettings
+
+  it('allows runtime profiles to tighten but not loosen agentic services', () => {
+    const settings = runtimeSettings(
+      baseSettings,
+      makeProfile({
+        agenticServices: {
+          shellCommands: 'allow',
+          fileChanges: 'allow',
+          mcpTools: 'deny',
+          subThreadDelegation: 'allow',
+          networkAccess: 'allow'
+        }
+      })
+    )
+
+    expect(settings.agenticServices.shellCommands).toBe('ask')
+    expect(settings.agenticServices.fileChanges).toBe('deny')
+    expect(settings.agenticServices.mcpTools).toBe('deny')
+    expect(settings.agenticServices.subThreadDelegation).toBe('workspace')
+    expect(settings.agenticServices.networkAccess).toBe('deny')
   })
 })

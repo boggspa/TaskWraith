@@ -1,5 +1,6 @@
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
+import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import {
   buildEnsembleParticipantPrompt,
   getOrderedEnsembleParticipants,
@@ -119,6 +120,18 @@ export interface EnsembleOrchestratorDeps {
   getChat: (chatId: string) => ChatRecord | null
   saveChat: (chat: ChatRecord) => void
   getSettings: () => AppSettings
+  /**
+   * Stamp a participant run's permission posture so the
+   * `normalizeAgentRunPayload` clamp trusts this main-built (and
+   * legitimately permissive) payload instead of downgrading it to
+   * read-only. Optional so the unit-test harness can omit it.
+   * See src/main/RunPermissionPosture.ts.
+   */
+  signRunPermissionPosture?: (
+    approvalMode: string | null | undefined,
+    effectivePermissions: EffectiveRunPermissions | null | undefined,
+    context?: RunPermissionPostureContext | null
+  ) => string
   dispatch: (
     payload: AgentRunPayload,
     event: EnsembleDispatchEvent
@@ -2472,6 +2485,22 @@ export class EnsembleOrchestrator {
         providerSessionId: run.providerSessionId || participant.linkedProviderSessionId || null,
         externalPathGrants: permissions.externalPathGrants,
         effectivePermissions: permissions,
+        ...(this.deps.signRunPermissionPosture
+          ? {
+              effectivePermissionsSignature: this.deps.signRunPermissionPosture(
+                permissions.approvalMode,
+                permissions,
+                {
+                  provider: participant.provider,
+                  scope: chat.scope === 'global' ? 'global' : 'workspace',
+                  appRunId: run.runId,
+                  appChatId: chat.appChatId,
+                  prompt: promptWithDiscordContext,
+                  runtimeProfileId: participant.runtimeProfileId
+                }
+              )
+            }
+          : {}),
         ensembleRun: ensembleRunIdentity(runtime.roundId, participant),
         ...(codexOrGrokReasoning !== undefined ? { reasoningEffort: codexOrGrokReasoning } : {}),
         ...(codexServiceTier !== undefined ? { serviceTier: codexServiceTier } : {}),
@@ -3134,6 +3163,22 @@ export class EnsembleOrchestrator {
         providerSessionId: participant.linkedProviderSessionId || null,
         externalPathGrants: permissions.externalPathGrants,
         effectivePermissions: permissions,
+        ...(this.deps.signRunPermissionPosture
+          ? {
+              effectivePermissionsSignature: this.deps.signRunPermissionPosture(
+                permissions.approvalMode,
+                permissions,
+                {
+                  provider: participant.provider,
+                  scope: chat.scope === 'global' ? 'global' : 'workspace',
+                  appRunId: run.runId,
+                  appChatId: chat.appChatId,
+                  prompt: promptWithDiscordContext,
+                  runtimeProfileId: participant.runtimeProfileId
+                }
+              )
+            }
+          : {}),
         ensembleRun: ensembleRunIdentity(runtime.roundId, participant, run.laneId),
         ...(codexOrGrokReasoning !== undefined ? { reasoningEffort: codexOrGrokReasoning } : {}),
         ...(codexServiceTier !== undefined ? { serviceTier: codexServiceTier } : {}),
