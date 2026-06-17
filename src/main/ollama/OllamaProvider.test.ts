@@ -209,6 +209,7 @@ function makeProviderDeps(
         attachAbortController: vi.fn(),
         finish: (runId, status) => {
           finishes.push({ runId, status })
+          return undefined
         }
       },
       emitProviderCapabilityWarnings: vi.fn(async () => undefined),

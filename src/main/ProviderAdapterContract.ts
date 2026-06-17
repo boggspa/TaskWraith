@@ -241,7 +241,8 @@ export function makeFakeProviderAdapter(
       imageAttachments: false,
       contextInjection: false,
       sessionResumption: false,
-      perThreadMcp: false
+      perThreadMcp: false,
+      assistantTextStreaming: 'none'
     },
     async run(_context: ProviderRunContext): Promise<void> {
       // No-op fake — real adapters spawn a CLI subprocess.
