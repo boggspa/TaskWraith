@@ -68,55 +68,60 @@ export function buildRemoteWelcomeDashboard(
   statResetAt: number
 ): RemoteWelcomeDashboard {
   const d = buildWelcomeUsageDashboardData(records, chats, '30d', now, workspaces, statResetAt)
+  // Force every Swift-`Int` field to a finite integer at the boundary: Swift's
+  // JSONDecoder rejects an Int decoded from a fractional JSON number, which fails
+  // the whole (strict) decode and silently hides the card. UsageRecord token /
+  // duration sums are typed `number`, not integer-guaranteed, so round here.
+  const int = (n: number): number => (Number.isFinite(n) ? Math.round(n) : 0)
   return {
     favoriteModel: d.favoriteModel,
     favoriteProject: d.favoriteProject,
-    tokens24h: d.tokens24h,
-    currentStreak: d.currentStreak,
-    longestStreak: d.longestStreak,
-    activeDays: d.activeDays,
-    longestThreadMs: d.longestThreadMs,
-    totalWallTimeMs: d.totalWallTimeMs,
+    tokens24h: int(d.tokens24h),
+    currentStreak: int(d.currentStreak),
+    longestStreak: int(d.longestStreak),
+    activeDays: int(d.activeDays),
+    longestThreadMs: int(d.longestThreadMs),
+    totalWallTimeMs: int(d.totalWallTimeMs),
     peakHour: d.peakHour,
-    sessions: d.sessions,
-    messages: d.messages,
-    totalTokens: d.totalTokens,
+    sessions: int(d.sessions),
+    messages: int(d.messages),
+    totalTokens: int(d.totalTokens),
     totalCostUsd: d.totalCostUsd,
-    avgSessionMs: d.avgSessionMs,
-    tokensPerSession: d.tokensPerSession,
-    wallTime24hMs: d.wallTime24hMs,
+    avgSessionMs: int(d.avgSessionMs),
+    tokensPerSession: int(d.tokensPerSession),
+    wallTime24hMs: int(d.wallTime24hMs),
     comparisonText: d.comparisonText,
     hasActivity: d.hasActivity,
     lifetimeHasActivity: d.lifetimeHasActivity,
     // Record<ProviderId, number> -> array, ribbon-relevant (>0) only.
     providerTokenTotals: Object.entries(d.providerTokenTotals)
-      .map(([provider, tokens]) => ({ provider, tokens: Number(tokens) || 0 }))
+      .map(([provider, tokens]) => ({ provider, tokens: int(Number(tokens)) }))
       .filter((entry) => entry.tokens > 0),
     modelBreakdown: d.modelBreakdown.map((m) => ({
       id: m.id,
       provider: m.provider,
       label: m.label,
-      inputTokens: m.inputTokens,
-      outputTokens: m.outputTokens,
+      inputTokens: int(m.inputTokens),
+      outputTokens: int(m.outputTokens),
       percent: m.percent
     })),
     workspaceBreakdown: d.workspaceCostBreakdown.map((w) => ({
       id: w.workspaceId,
       displayName: w.displayName,
-      tokens: w.tokens,
+      tokens: int(w.tokens),
       costUsd: w.costUsd,
       shareOfTotalTokens: w.shareOfTotalTokens
     })),
     dailyBreakdown: d.dailyCostBreakdown.map((b) => ({
       id: b.dayKey,
       dayLabel: b.dayLabel,
-      tokens: b.tokens,
+      tokens: int(b.tokens),
       costUsd: b.costUsd
     })),
     providerBreakdown: d.providerCostBreakdown.map((p) => ({
       provider: p.provider,
       displayName: p.displayName,
-      tokens: p.tokens,
+      tokens: int(p.tokens),
       costUsd: p.costUsd,
       shareOfTotalTokens: p.shareOfTotalTokens
     }))

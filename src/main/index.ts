@@ -451,6 +451,13 @@ import {
   normalizeCodexModel
 } from './providers/StaticProviderModels'
 import { buildCodexStatusSnapshot } from './CodexStatusSnapshot'
+import { resolveEffectiveRunPermissions } from './EffectiveRunPermissions'
+import {
+  clampUntrustedRunPosture,
+  signRunPermissionPosture,
+  verifyRunPermissionPosture,
+  type RunPermissionPostureContext
+} from './RunPermissionPosture'
 import {
   applyRuntimeProfileToPayload as applyRuntimeProfileToPayloadViaCliRuntime,
   captureProcessOutput,
@@ -1907,6 +1914,59 @@ function isMainIssuedExternalPathGrant(grant: ExternalPathGrant): boolean {
   return expected.length === actual.length && timingSafeEqual(expected, actual)
 }
 
+// Run permission posture provenance. Mirrors the external-path-grant HMAC
+// above but binds the whole `{ approvalMode, effectivePermissions }` pair
+// so only a main-side producer can mint a permissive run posture. Every
+// trusted producer (ComposerService, EnsembleOrchestrator, sub-thread
+// delegation, SoloChatWakeupService) stamps `effectivePermissionsSignature`
+// via `signRunPosture`; `normalizeAgentRunPayload` verifies + downgrades.
+// See src/main/RunPermissionPosture.ts.
+function signRunPosture(
+  approvalMode: string | null | undefined,
+  effectivePermissions: EffectiveRunPermissions | null | undefined,
+  context?: RunPermissionPostureContext | null
+): string {
+  return signRunPermissionPosture(
+    externalGrantSigningSecret,
+    approvalMode,
+    effectivePermissions,
+    context
+  )
+}
+
+function verifyRunPosture(
+  approvalMode: string | null | undefined,
+  effectivePermissions: EffectiveRunPermissions | null | undefined,
+  signature: string | null | undefined,
+  context?: RunPermissionPostureContext | null
+): boolean {
+  return verifyRunPermissionPosture(
+    externalGrantSigningSecret,
+    approvalMode,
+    effectivePermissions,
+    signature,
+    context
+  )
+}
+
+function runPostureContextFromPayload(payload: {
+  provider?: unknown
+  scope?: unknown
+  appRunId?: unknown
+  appChatId?: unknown
+  prompt?: unknown
+  runtimeProfileId?: unknown
+}): RunPermissionPostureContext {
+  return {
+    provider: optionalString(payload.provider),
+    scope: optionalString(payload.scope),
+    appRunId: optionalString(payload.appRunId),
+    appChatId: optionalString(payload.appChatId),
+    prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+    runtimeProfileId: optionalString(payload.runtimeProfileId)
+  }
+}
+
 function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
   const payload = requireRecord(rawPayload, 'Run payload')
   const provider = assertProviderId(payload.provider)
@@ -1943,6 +2003,53 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
   } else {
     workspace = canonicalPath(requireNonEmptyString(payload.workspace, 'Workspace'))
   }
+  const suppliedEffectivePermissions = isRecord(payload.effectivePermissions)
+    ? (payload.effectivePermissions as unknown as EffectiveRunPermissions)
+    : undefined
+  // Downgrade-only permission-posture clamp at the renderer / bridge trust
+  // boundary. A validly-signed posture (stamped by a main-side producer via
+  // `signRunPosture`) passes through byte-for-byte; an unsigned / forged /
+  // inflated posture is clamped so it cannot auto-approve itself. This closes
+  // the escalation-via-payload gap that `preserveExplicitDeny` (which only
+  // stops un-denying a global deny) does not cover. See RunPermissionPosture.ts.
+  const clampedPosture = clampUntrustedRunPosture(
+    {
+      scope,
+      approvalMode: optionalString(payload.approvalMode),
+      effectivePermissions: suppliedEffectivePermissions,
+      signature: optionalString(payload.effectivePermissionsSignature),
+      context: runPostureContextFromPayload({
+        provider,
+        scope,
+        appRunId: optionalString(payload.appRunId),
+        appChatId,
+        prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+        runtimeProfileId: optionalString(payload.runtimeProfileId)
+      })
+    },
+    {
+      verify: verifyRunPosture,
+      reDeriveReadOnly: () =>
+        resolveEffectiveRunPermissions({
+          provider,
+          workspacePath: scope === 'global' ? undefined : workspace,
+          settings: AppStore.getSettings(),
+          presetId: 'read_only'
+        }),
+      reDeriveDefault: () =>
+        resolveEffectiveRunPermissions({
+          provider,
+          workspacePath: undefined,
+          settings: AppStore.getSettings(),
+          presetId: 'default'
+        })
+    }
+  )
+  if (clampedPosture.downgraded) {
+    console.warn(
+      `[run-posture] clamped ${provider} run permission posture — ${clampedPosture.reason}`
+    )
+  }
   return {
     provider,
     scope,
@@ -1957,12 +2064,7 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
     claudeFastMode:
       typeof payload.claudeFastMode === 'boolean' ? payload.claudeFastMode : undefined,
     kimiThinking: typeof payload.kimiThinking === 'boolean' ? payload.kimiThinking : undefined,
-    approvalMode:
-      scope === 'global'
-        ? optionalString(payload.approvalMode) === 'plan'
-          ? 'plan'
-          : 'default'
-        : optionalString(payload.approvalMode),
+    approvalMode: clampedPosture.approvalMode,
     imagePaths: stringArray(payload.imagePaths),
     providerSessionId: optionalStringOrNull(payload.providerSessionId),
     externalPathGrants: scopedExternalPathGrants,
@@ -1971,9 +2073,8 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
     runtimeProfileId: optionalString(payload.runtimeProfileId),
     geminiAuthProfileId: optionalStringOrNull(payload.geminiAuthProfileId),
     handoffSourceRunId: optionalString(payload.handoffSourceRunId),
-    effectivePermissions: isRecord(payload.effectivePermissions)
-      ? (payload.effectivePermissions as unknown as EffectiveRunPermissions)
-      : undefined,
+    effectivePermissions: clampedPosture.effectivePermissions,
+    effectivePermissionsSignature: clampedPosture.signature,
     ensembleRun: normalizeEnsembleRunIdentity(payload.ensembleRun),
     auditRun: normalizeAuditRunIdentity(payload.auditRun)
   }
@@ -2516,6 +2617,19 @@ async function maybeAutoResumeParentAgent(args: {
   // sub-thread delegation paths use. Fire-and-forget: we don't await
   // the run's completion (which could take minutes), we just kick it
   // off. Errors bubble to the caller's try/catch.
+  const parentLastRun = [...(parentWithPrompt.runs || [])]
+    .reverse()
+    .find((run) => run.provider === parent.provider)
+  const continuationApprovalMode = parentLastRun?.approvalMode === 'plan' ? 'plan' : 'default'
+  const continuationEffectivePermissions =
+    continuationApprovalMode === 'plan'
+      ? resolveEffectiveRunPermissions({
+          provider: parent.provider,
+          workspacePath: parent.workspacePath,
+          settings: AppStore.getSettings(),
+          presetId: 'read_only'
+        })
+      : undefined
   const payload: AgentRunPayload = {
     provider: parent.provider,
     scope: parent.workspacePath ? 'workspace' : 'global',
@@ -2523,9 +2637,17 @@ async function maybeAutoResumeParentAgent(args: {
     prompt: continuationPrompt,
     appRunId: continuationRunId,
     appChatId: parent.appChatId,
-    approvalMode: 'default',
-    model: parent.requestedModel || 'cli-default'
+    approvalMode: continuationApprovalMode,
+    model: parent.requestedModel || 'cli-default',
+    ...(continuationEffectivePermissions
+      ? { effectivePermissions: continuationEffectivePermissions }
+      : {})
   }
+  payload.effectivePermissionsSignature = signRunPosture(
+    payload.approvalMode,
+    payload.effectivePermissions,
+    runPostureContextFromPayload(payload)
+  )
   const dispatchEvent: { sender: Electron.WebContents } = { sender }
   await runCoordinatorRef.dispatch(payload, dispatchEvent)
 }
@@ -4153,16 +4275,7 @@ async function requestAgenticServiceApproval(
   // scope and free.
   const appChatId = session?.state?.appChatId
   const auditRoute = { appRunId: request.runId, ...(appChatId ? { appChatId } : {}) }
-  const effectiveSettings = effectivePermissions
-    ? {
-        ...settings,
-        agenticServices: {
-          ...settings.agenticServices,
-          ...effectivePermissions.agenticServices,
-          networkAccess: effectivePermissions.networkAccess
-        }
-      }
-    : settings
+  const effectiveSettings = effectiveAgenticSettings(settings, effectivePermissions)
   const resolution = permissionService.resolvePermission(
     provider,
     service,
@@ -5177,10 +5290,24 @@ const cliProviderRuntimeDeps: CliProviderRuntimeDependencies = {
 }
 
 function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload {
-  return applyRuntimeProfileToPayloadViaCliRuntime(
+  const applied = applyRuntimeProfileToPayloadViaCliRuntime(
     payload,
     cliProviderRuntimeDeps
   ) as AgentRunPayload
+  if (applied.approvalMode === 'plan' && applied.effectivePermissions?.readOnly !== true) {
+    applied.effectivePermissions = resolveEffectiveRunPermissions({
+      provider: applied.provider,
+      workspacePath: applied.scope === 'global' ? undefined : applied.workspace,
+      settings: AppStore.getSettings(),
+      presetId: 'read_only'
+    })
+    applied.effectivePermissionsSignature = signRunPosture(
+      applied.approvalMode,
+      applied.effectivePermissions,
+      runPostureContextFromPayload(applied)
+    )
+  }
+  return applied
 }
 
 async function getCliProviderStatus(provider: ProviderId): Promise<any> {
@@ -8510,6 +8637,7 @@ function getAgentToolContext(
     approvalMode: state.approvalMode,
     sessionTrust: state.sessionTrust,
     externalPathGrants: state.externalPathGrants,
+    effectivePermissions: state.effectivePermissions,
     runtimeProfileId: state.runtimeProfileId
   }
 }
@@ -13778,6 +13906,10 @@ async function executeGeminiMcpTool(
         approvalMode: delegatedApprovalMode,
         runtimeProfileId: inheritableRuntimeProfileId
       })
+      // SECURITY: a delegated sub-thread inherits the parent's resolved
+      // posture so a read-only participant can't escalate to write via
+      // delegation (see inheritedSubThreadPermissions for the full rationale).
+      const subThreadEffectivePermissions = inheritedSubThreadPermissions(context)
       const runPayload: AgentRunPayload = {
         provider: providerArg,
         scope: context.scope ?? 'workspace',
@@ -13790,10 +13922,7 @@ async function executeGeminiMcpTool(
         sessionTrust: Boolean(context.sessionTrust),
         externalPathGrants: context.externalPathGrants,
         runtimeProfileId: inheritableRuntimeProfileId,
-        // SECURITY: a delegated sub-thread inherits the parent's resolved
-        // posture so a read-only participant can't escalate to write via
-        // delegation (see inheritedSubThreadPermissions for the full rationale).
-        effectivePermissions: inheritedSubThreadPermissions(context),
+        effectivePermissions: subThreadEffectivePermissions,
         // Phase J2: on recall, inject the existing sub-thread's
         // linked provider session id so the target provider's native
         // session resumes (Codex `thread/resume`, Claude SDK
@@ -13803,6 +13932,13 @@ async function executeGeminiMcpTool(
         // a fresh provider-side session.
         ...(recalledProviderSessionId ? { providerSessionId: recalledProviderSessionId } : {})
       }
+      // Stamp the posture so the normalize-time clamp trusts this
+      // main-built inheritance instead of downgrading it.
+      runPayload.effectivePermissionsSignature = signRunPosture(
+        delegatedApprovalMode,
+        subThreadEffectivePermissions,
+        runPostureContextFromPayload(runPayload)
+      )
       // RunCoordinator.dispatch now accepts the structural
       // `RunDispatchEvent` shape (just `{ sender }`); no cast required.
       // The previous `as IpcMainInvokeEvent` cast silently widened the
@@ -16952,6 +17088,15 @@ if (isGeminiMcpBridgeProcess) {
               `[bridge-run] composed ${composed.contextTurnsApplied} context turns for run=${runId}`
             )
           }
+          const bridgeEffectivePermissions =
+            effectiveApprovalMode === 'plan'
+              ? resolveEffectiveRunPermissions({
+                  provider,
+                  workspacePath: isGlobalScope ? undefined : workspaceRecord?.path,
+                  settings: AppStore.getSettings(),
+                  presetId: 'read_only'
+                })
+              : undefined
           const payload: AgentRunPayload = {
             // T72 — workspace runs carry their allowlisted workspace; a
             // global run rides the desktop's own global lane (scope
@@ -16966,6 +17111,9 @@ if (isGeminiMcpBridgeProcess) {
             appChatId: chat.appChatId,
             appRunId: runId,
             approvalMode: effectiveApprovalMode,
+            ...(bridgeEffectivePermissions
+              ? { effectivePermissions: bridgeEffectivePermissions }
+              : {}),
             model: inheritedModel,
             ...(inheritedReasoningEffort ? { reasoningEffort: inheritedReasoningEffort } : {}),
             ...(inheritedClaudeReasoningEffort
@@ -16996,6 +17144,11 @@ if (isGeminiMcpBridgeProcess) {
                 }
               : {})
           }
+          payload.effectivePermissionsSignature = signRunPosture(
+            payload.approvalMode,
+            payload.effectivePermissions,
+            runPostureContextFromPayload(payload)
+          )
           // Ack at ACCEPTANCE, not completion. dispatchAgentRun includes
           // heavy provider preflight (Ollama model/RAM probes, Codex
           // ensureStarted) that can outlive the phone's 8s ack window —
@@ -18266,7 +18419,8 @@ if (isGeminiMcpBridgeProcess) {
     })
     const composerService = new ComposerService({
       appStore: AppStore,
-      getSettings: () => AppStore.getSettings()
+      getSettings: () => AppStore.getSettings(),
+      signRunPermissionPosture: signRunPosture
     })
     const discordContextConfig = resolveDiscordContextConfig({
       userDataPath: app.getPath('userData'),
@@ -19124,7 +19278,11 @@ if (isGeminiMcpBridgeProcess) {
                     ?.resetAt ?? 0
               })
             })
-          } catch {}
+          } catch (err) {
+            // Never let a dashboard-build failure silently hide the card (it rides
+            // the rollup, which is broadcast above and unaffected).
+            console.error('[remote] welcome dashboard broadcast failed:', err)
+          }
         })
         .catch(() => {})
     }
@@ -21127,6 +21285,7 @@ if (isGeminiMcpBridgeProcess) {
         },
         getChat: (chatId) => AppStore.getChat(chatId),
         saveChat: saveAndBroadcastChat,
+        signRunPermissionPosture: signRunPosture,
         delivery: messageChannelDeliveryService,
         cursorStore: messageChannelCursorStore,
         auditStore: messageChannelAuditStore,
@@ -21183,6 +21342,7 @@ if (isGeminiMcpBridgeProcess) {
       getChat: (chatId) => AppStore.getChat(chatId),
       saveChat: saveAndBroadcastChat,
       getSettings: () => AppStore.getSettings(),
+      signRunPermissionPosture: signRunPosture,
       dispatch: (payload, event) => dispatchRunWithProviderPause(payload, event),
       cancelRun: (provider, runId) => providerAdapters.require(provider).cancel(runId),
       createRunId: createFallbackRunId,
@@ -21382,6 +21542,7 @@ if (isGeminiMcpBridgeProcess) {
       listChats: () => AppStore.getChats(),
       dispatchRun: (payload) =>
         dispatchRunWithProviderPause(payload, { sender: mainWindow!.webContents }),
+      signRunPermissionPosture: signRunPosture,
       scheduleWakeupTimer: (wakeup) => wakeupTimerServiceRef?.schedule(wakeup),
       cancelWakeupTimer: (wakeupId) => wakeupTimerServiceRef?.cancel(wakeupId),
       createRunId: createFallbackRunId,

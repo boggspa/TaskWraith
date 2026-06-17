@@ -220,6 +220,45 @@ public struct WelcomeDashboard: Codable, Sendable {
         }
     }
 
+    /// Resilient decode — every field defaults rather than throwing, so one
+    /// missing/mistyped value (e.g. a fractional number where an Int is expected)
+    /// degrades that field instead of nuking the whole dashboard (a strict decode
+    /// failure → nil → hidden card). Arrays default to empty.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func i(_ k: CodingKeys) -> Int { (try? c.decode(Int.self, forKey: k)) ?? 0 }
+        func d(_ k: CodingKeys) -> Double { (try? c.decode(Double.self, forKey: k)) ?? 0 }
+        func s(_ k: CodingKeys) -> String { (try? c.decode(String.self, forKey: k)) ?? "" }
+        func b(_ k: CodingKeys) -> Bool { (try? c.decode(Bool.self, forKey: k)) ?? false }
+        favoriteModel = s(.favoriteModel)
+        favoriteProject = s(.favoriteProject)
+        tokens24h = i(.tokens24h)
+        currentStreak = i(.currentStreak)
+        longestStreak = i(.longestStreak)
+        activeDays = i(.activeDays)
+        longestThreadMs = i(.longestThreadMs)
+        totalWallTimeMs = i(.totalWallTimeMs)
+        peakHour = s(.peakHour)
+        sessions = i(.sessions)
+        messages = i(.messages)
+        totalTokens = i(.totalTokens)
+        totalCostUsd = d(.totalCostUsd)
+        avgSessionMs = i(.avgSessionMs)
+        tokensPerSession = i(.tokensPerSession)
+        wallTime24hMs = i(.wallTime24hMs)
+        comparisonText = s(.comparisonText)
+        hasActivity = b(.hasActivity)
+        lifetimeHasActivity = b(.lifetimeHasActivity)
+        providerTokenTotals =
+            (try? c.decode([ProviderTokenTotal].self, forKey: .providerTokenTotals)) ?? []
+        modelBreakdown = (try? c.decode([ModelDatum].self, forKey: .modelBreakdown)) ?? []
+        workspaceBreakdown =
+            (try? c.decode([WorkspaceDatum].self, forKey: .workspaceBreakdown)) ?? []
+        dailyBreakdown = (try? c.decode([DailyBucket].self, forKey: .dailyBreakdown)) ?? []
+        providerBreakdown =
+            (try? c.decode([ProviderDatum].self, forKey: .providerBreakdown)) ?? []
+    }
+
     public init(
         favoriteModel: String, favoriteProject: String, tokens24h: Int,
         currentStreak: Int, longestStreak: Int, activeDays: Int,
