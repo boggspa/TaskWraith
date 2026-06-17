@@ -134,6 +134,7 @@ function makeProviderDeps(
   overrides: {
     fetchMock?: ReturnType<typeof vi.fn>
     executeTool?: OllamaProviderDeps['executeTool']
+    settings?: Record<string, unknown>
   } = {}
 ): {
   deps: OllamaProviderDeps
@@ -190,7 +191,8 @@ function makeProviderDeps(
           ollamaProviderParityWorkspaceGrants: {},
           agenticServices: { mcpTools: 'allow' },
           geminiMcpBridgeEnabled: true,
-          codexSandboxFallback: 'read-only'
+          codexSandboxFallback: 'read-only',
+          ...(overrides.settings || {})
         }) as any,
       getTotalMemoryBytes: () => 32 * 1024 ** 3,
       markOllamaModelPreflightComplete: vi.fn(),
@@ -302,10 +304,12 @@ describe('runOllamaProvider streaming', () => {
       }
       if (String(url).endsWith('/api/chat')) {
         return delayedOllamaStreamResponse(
-          JSON.stringify({ message: { role: 'assistant', content: 'Hello from ' } }),
+          JSON.stringify({
+            message: { role: 'assistant', content: 'This is a streamed Ollama answer ' }
+          }),
           gate.promise,
           [
-            JSON.stringify({ message: { role: 'assistant', content: 'Ollama streaming.' } }),
+            JSON.stringify({ message: { role: 'assistant', content: 'with a second chunk.' } }),
             JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 12 })
           ]
         )
@@ -321,7 +325,7 @@ describe('runOllamaProvider streaming', () => {
       const contentTexts = lines
         .filter((line) => line.payload.type === 'content')
         .map((line) => line.payload.text)
-      expect(contentTexts).toEqual(['Hello from '])
+      expect(contentTexts).toEqual(['This is a streamed Ollama answer '])
     } catch (error) {
       assertionError = error
     } finally {
@@ -333,7 +337,10 @@ describe('runOllamaProvider streaming', () => {
     const finalContentTexts = lines
       .filter((line) => line.payload.type === 'content')
       .map((line) => line.payload.text)
-    expect(finalContentTexts).toEqual(['Hello from ', 'Ollama streaming.'])
+    expect(finalContentTexts).toEqual([
+      'This is a streamed Ollama answer ',
+      'with a second chunk.'
+    ])
     expect(lines.at(-1)?.payload.type).toBe('result')
   })
 
@@ -367,6 +374,145 @@ describe('runOllamaProvider streaming', () => {
     expect(exits).toEqual([{ provider: 'ollama', code: 1, route: baseRoute }])
     expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'failed' })
     expect(lines.some((line) => line.payload.type === 'result')).toBe(false)
+  })
+
+  it('does not stream a degenerate stub that is rejected and retried', async () => {
+    let chatCalls = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({ message: { role: 'assistant', content: 'The' } }),
+            JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 1 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'This retry is a complete streamed answer.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 7, eval_count: 10 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts).toEqual(['This retry is a complete streamed answer.'])
+    expect(contentTexts).not.toContain('The')
+  })
+
+  it('does not stream raw JSON fallback tool protocol blobs', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content:
+                '{"taskwraith_tool":{"name":"read_file","arguments":{"path":"README.md"}}}'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 12 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({
+      fetchMock,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      },
+      executeTool: async () => ({ ok: true, output: 'README body' })
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.some((text) => /taskwraith_tool|read_file/.test(text))).toBe(false)
+    expect(lines.some((line) => line.payload.type === 'tool_use')).toBe(true)
+  })
+
+  it('does not stream raw structured response envelopes before unwrapping', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: '{"analysis":"private","response":"Visible structured answer."}'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 5, eval_count: 14 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts).toEqual(['Visible structured answer.'])
   })
 })
 

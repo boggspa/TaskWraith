@@ -1412,7 +1412,7 @@ function resolveOllamaNumCtx(input: {
   return Math.min(limit, rounded)
 }
 
-function shouldHoldOllamaContentForToolProtocol(input: {
+function shouldHoldOllamaContentForPublicStream(input: {
   content: string
   availableToolNames: string[]
 }): boolean {
@@ -1421,6 +1421,7 @@ function shouldHoldOllamaContentForToolProtocol(input: {
   if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('```')) return true
   if (/taskwraith_tool/i.test(trimmed)) return true
   if (looksLikeLeakedOllamaToolProtocol(trimmed)) return true
+  if (looksLikeDegenerateOllamaStub(trimmed)) return true
   return looksLikeOllamaToolIntent(trimmed, input.availableToolNames)
 }
 
@@ -1434,15 +1435,15 @@ function shouldReleaseOllamaContentDelta(input: {
 }): boolean {
   if (!input.pending) return false
   if (input.jsonToolFallback) return false
-  if (!input.toolProtocolEnabled) return true
   if (
-    shouldHoldOllamaContentForToolProtocol({
+    shouldHoldOllamaContentForPublicStream({
       content: input.content,
       availableToolNames: input.availableToolNames
     })
   ) {
     return false
   }
+  if (!input.toolProtocolEnabled) return true
   const totalVisibleLength = input.streamed.length + input.pending.length
   // In tool-capable turns, wait for enough prose to classify it as ordinary
   // assistant text before exposing it. This keeps fallback JSON/tool stubs from
