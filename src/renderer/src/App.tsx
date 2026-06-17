@@ -461,6 +461,7 @@ import { TranscriptPanel } from './components/TranscriptPanel'
 import { AuditRunCard } from './components/AuditRunCard'
 import { AuditRunNotice } from './components/AuditRunNotice'
 import { ChatViewPane } from './components/ChatViewPane'
+import { MultiviewLayoutPicker } from './components/MultiviewLayoutPicker'
 import { MultiviewPaneGrid } from './components/MultiviewPaneGrid'
 import { useMultiviewState } from './hooks/useMultiviewState'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
@@ -21123,6 +21124,12 @@ function App(): React.JSX.Element {
 	                  disabled={!currentChat || currentChat.archived || currentChat.messages.length === 0}
 	                  resetKey={currentChat?.appChatId || null}
 	                  onCopy={handleCopyCurrentTranscript}
+	                />
+	                <MultiviewLayoutPicker
+	                  layout={multiview.layout}
+	                  onSelectLayout={multiview.setLayout}
+	                  provider={currentProvider}
+	                  composerStyle={appearance.composerStyle}
 	                />
 	                {/* 1.0.5-AR12c — Workspace switcher in its new home.
                      Sits between the timecodes / Screen Watch cluster

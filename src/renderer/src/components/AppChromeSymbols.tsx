@@ -173,6 +173,24 @@ export function SplitChatIcon() {
   )
 }
 
+export function MultiviewSymbolIcon() {
+  return (
+    <span className="composer-control-icon">
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="2.2" y="2.2" width="11.6" height="11.6" rx="1.9" />
+        <path d="M8 2.6v10.8M2.6 8h10.8" />
+      </svg>
+    </span>
+  )
+}
+
 export function BackToParentIcon() {
   return (
     <span className="chat-corner-symbol">
