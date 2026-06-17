@@ -331,7 +331,7 @@ import {
 } from './ProviderRunStats'
 import { getExternalUsageCached, buildExternalUsageRollup, prewarmExternalUsageCache } from './ExternalProviderActivity'
 import { buildDailyTokenSeries } from './DailyTokenSeries'
-import { buildRemoteWelcomeDashboard } from './WelcomeDashboardRemote'
+import { buildRemoteWelcomeDashboardThrottled } from './WelcomeDashboardRemote'
 import {
   canonicalizeExternalPathGrantMetadata,
   coalesceExternalPathGrants,
@@ -19114,17 +19114,15 @@ if (isGeminiMcpBridgeProcess) {
           // (same cadence + records as the rollup above). buildRemoteWelcomeDashboard
           // runs the renderer aggregator main-side and flattens it for the iOS struct.
           try {
-            const dashSettings = AppStore.getSettings()
-            const dashResetAt =
-              (dashSettings.dashboardStatPrefs as { resetAt?: number } | undefined)?.resetAt ?? 0
             bridgeBroadcasterRef?.broadcastWelcomeDashboard({
-              dashboard: buildRemoteWelcomeDashboard(
-                taskwraithRecords,
-                AppStore.getChats(),
-                AppStore.getWorkspaces().map((w) => ({ id: w.id, displayName: w.displayName })),
-                now,
-                dashResetAt
-              )
+              dashboard: buildRemoteWelcomeDashboardThrottled(taskwraithRecords, now, {
+                getChats: () => AppStore.getChats(),
+                getWorkspaces: () =>
+                  AppStore.getWorkspaces().map((w) => ({ id: w.id, displayName: w.displayName })),
+                getStatResetAt: () =>
+                  (AppStore.getSettings().dashboardStatPrefs as { resetAt?: number } | undefined)
+                    ?.resetAt ?? 0
+              })
             })
           } catch {}
         })

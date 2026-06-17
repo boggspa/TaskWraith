@@ -122,3 +122,46 @@ export function buildRemoteWelcomeDashboard(
     }))
   }
 }
+
+// — Throttled wrapper —
+// The dashboard rides the usage-rollup broadcast (a 4s prewarm + per-device
+// establish + a 2h interval + on-usage-change), but the aggregation plus its three
+// store reads (chats/workspaces/settings) are far heavier than the sibling rollup
+// work. Rebuild only when the record set changes or the cache is >5 min stale (so
+// time-relative stats like the rolling 24h window stay fresh); otherwise return the
+// cached projection so newly-paired devices still receive it cheaply on establish.
+let cachedDashboard: RemoteWelcomeDashboard | null = null
+let cachedSignature = ''
+let cachedAtMs = 0
+const DASHBOARD_REBUILD_MIN_INTERVAL_MS = 5 * 60_000
+
+export function buildRemoteWelcomeDashboardThrottled(
+  records: UsageRecord[],
+  now: number,
+  deps: {
+    getChats: () => ChatRecord[]
+    getWorkspaces: () => Pick<WorkspaceRecord, 'id' | 'displayName'>[]
+    getStatResetAt: () => number
+  }
+): RemoteWelcomeDashboard {
+  // Usage records are append-only, so length is a reliable change signal — and it
+  // avoids the three store reads + full aggregation on an unchanged, fresh cache.
+  const signature = String(records.length)
+  if (
+    cachedDashboard &&
+    signature === cachedSignature &&
+    now - cachedAtMs < DASHBOARD_REBUILD_MIN_INTERVAL_MS
+  ) {
+    return cachedDashboard
+  }
+  cachedDashboard = buildRemoteWelcomeDashboard(
+    records,
+    deps.getChats(),
+    deps.getWorkspaces(),
+    now,
+    deps.getStatResetAt()
+  )
+  cachedSignature = signature
+  cachedAtMs = now
+  return cachedDashboard
+}

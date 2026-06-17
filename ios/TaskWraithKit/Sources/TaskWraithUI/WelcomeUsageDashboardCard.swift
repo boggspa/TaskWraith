@@ -28,7 +28,9 @@ enum DashboardFmt {
     static func duration(_ ms: Int) -> String {
         if ms <= 0 { return "0s" }
         if ms < 1_000 { return "<1s" }
-        let totalSec = ms / 1_000
+        // Round to the nearest second BEFORE splitting (matches the Electron
+        // formatDashboardDuration; truncating renders a second short at boundaries).
+        let totalSec = Int((Double(ms) / 1_000).rounded())
         if totalSec < 60 { return "\(totalSec)s" }
         let totalMin = totalSec / 60
         if totalMin < 60 {
@@ -228,7 +230,7 @@ public struct WelcomeUsageDashboardCard: View {
                     HStack(spacing: 8) {
                         Text(item.label)
                             .font(.caption).foregroundStyle(TWTheme.textTertiary)
-                            .lineLimit(1)
+                            .lineLimit(1).layoutPriority(1)
                         Spacer(minLength: 6)
                         Text(item.value)
                             .font(.caption.weight(.semibold))
@@ -278,6 +280,13 @@ public struct WelcomeUsageDashboardCard: View {
     // MARK: Workspaces
 
     private var totalDailyTokens: Int { dashboard.dailyBreakdown.reduce(0) { $0 + $1.tokens } }
+    private var totalDailyCost: Double { dashboard.dailyBreakdown.reduce(0) { $0 + $1.costUsd } }
+    /// Electron parity: the daily chart scales by COST when any day carries cost,
+    /// else by tokens (WelcomeUsageDashboard.tsx lines 558-575).
+    private var dailyScaleByCost: Bool { dashboard.dailyBreakdown.contains { $0.costUsd > 0 } }
+    private func dailyValue(_ b: WelcomeDashboard.DailyBucket) -> Double {
+        dailyScaleByCost ? b.costUsd : Double(b.tokens)
+    }
 
     private var workspacesTab: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -303,23 +312,26 @@ public struct WelcomeUsageDashboardCard: View {
     }
 
     private var dailyChart: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let scaleByCost = dailyScaleByCost
+        return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Daily tokens · last 30 days")
+                Text(scaleByCost ? "Daily cost · last 30 days" : "Daily tokens · last 30 days")
                     .font(.caption2.weight(.semibold)).foregroundStyle(TWTheme.textTertiary)
                 Spacer()
-                Text("\(DashboardFmt.compact(totalDailyTokens)) tokens total")
-                    .font(.caption2).foregroundStyle(TWTheme.textSecondary)
+                Text(
+                    scaleByCost
+                        ? "\(DashboardFmt.cost(totalDailyCost)) total"
+                        : "\(DashboardFmt.compact(totalDailyTokens)) tokens total"
+                )
+                .font(.caption2).foregroundStyle(TWTheme.textSecondary)
             }
             GeometryReader { geo in
-                let maxTok = max(1, dashboard.dailyBreakdown.map(\.tokens).max() ?? 1)
+                let maxVal = max(0.0001, dashboard.dailyBreakdown.map(dailyValue).max() ?? 0.0001)
                 HStack(alignment: .bottom, spacing: 1.5) {
                     ForEach(dashboard.dailyBreakdown) { b in
                         RoundedRectangle(cornerRadius: 1, style: .continuous)
                             .fill(accent.opacity(0.75))
-                            .frame(
-                                height: max(
-                                    1, geo.size.height * CGFloat(b.tokens) / CGFloat(maxTok)))
+                            .frame(height: max(1, geo.size.height * CGFloat(dailyValue(b) / maxVal)))
                             .frame(maxWidth: .infinity, alignment: .bottom)
                     }
                 }
@@ -368,6 +380,7 @@ public struct WelcomeUsageDashboardCard: View {
             Text(DashboardFmt.wallClock(dashboard.wallTime24hMs))
                 .font(.system(size: 34, weight: .bold, design: .monospaced))
                 .monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.6)
                 .foregroundStyle(TWTheme.textPrimary)
             Text("Cumulative wall-clock time across runs in the rolling 24-hour window.")
                 .font(.system(size: 9)).foregroundStyle(TWTheme.textTertiary)
@@ -480,5 +493,12 @@ extension WelcomeDashboard {
                 .init(provider: "grok", displayName: "Grok",
                     tokens: 93_000, costUsd: 0, shareOfTotalTokens: 0.1),
             ])
+    }
+}
+
+#Preview {
+    ScrollView {
+        WelcomeUsageDashboardCard(dashboard: .fixture, accent: TWTheme.chroma1Default)
+            .padding()
     }
 }
