@@ -242,6 +242,9 @@ struct ComposerRecipeSendLabel: View {
 
     private var glyphColor: Color {
         if isRunActive { return .white }
+        // A recipe may state its own glyph ink (e.g. stub's #2a1d05 on gold);
+        // otherwise derive from fill (.accent -> white, else the tint).
+        if let glyphTint = shell.sendButton.glyphTint { return glyphTint }
         switch shell.sendButton.fill {
         case .accent: return .white
         case .neutral: return shell.sendButton.tint  // the ink rides over the fg fill

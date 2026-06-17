@@ -30,7 +30,7 @@ public enum ComposerControlShape: Equatable, Sendable {
     case rect(CGFloat)
 }
 
-/// The send-button glyph family (desktop App.tsx:20675-20685 mapping).
+/// The send-button glyph family (desktop App.tsx:20846-20854 mapping).
 public enum ComposerSendGlyph: Equatable, Sendable {
     case returnArrow  // claude
     case arrowUp      // codex/gemini/cursor/grok/kimi (+ the shipped iOS default)
@@ -91,18 +91,25 @@ public struct ComposerSendButton: Equatable, Sendable {
     public var size: CGFloat
     public var fill: ComposerSendFill
     public var tint: Color
+    /// Explicit glyph (ink) color. When nil, the glyph color is derived from
+    /// `fill` (.accent -> white; .neutral/.outline/.plain -> tint). Set it when a
+    /// shell needs a specific ink over its fill — e.g. stub's near-black warm
+    /// ink (#2a1d05) on the gold send button, which a blanket white would break.
+    public var glyphTint: Color?
     public init(
         glyph: ComposerSendGlyph,
         shape: ComposerControlShape = .capsule,
         size: CGFloat = 40,
         fill: ComposerSendFill = .accent,
-        tint: Color
+        tint: Color,
+        glyphTint: Color? = nil
     ) {
         self.glyph = glyph
         self.shape = shape
         self.size = size
         self.fill = fill
         self.tint = tint
+        self.glyphTint = glyphTint
     }
 }
 

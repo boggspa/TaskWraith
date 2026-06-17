@@ -113,7 +113,7 @@ public enum ComposerShellResolver {
     /// Evidence: 07-composer-shells.css:22-45 (surfaces + radii), :60-73
     /// (focus, rim removed), :323-350 (send light circle 32px, glyph #0d0d0d),
     /// 08-theme-picker-overrides.css:3971-4047 (light derive),
-    /// App.tsx:18185-18186 (float above), :20677-20684 (ArrowUpSendIcon).
+    /// App.tsx:18355 (aboveRowsFloatAboveStack) + :18555-18556 (detached render), :20852 (ArrowUpSendIcon).
     private static func codexRecipe(_ context: ComposerShellContext) -> ResolvedComposerShell {
         // Outer surface: dark #212121 (07:26) / light derives to surface-2.
         let surfaceFill = context.appIsLight
@@ -170,7 +170,7 @@ public enum ComposerShellResolver {
                 rowSpacing: 0),
             fontDesign: .system,           // system sans (no mono/serif)
             sendButton: ComposerSendButton(
-                glyph: .arrowUp,           // ArrowUpSendIcon (App.tsx:20677-20684)
+                glyph: .arrowUp,           // ArrowUpSendIcon (App.tsx:20852)
                 shape: .capsule,           // circle r999
                 size: 32,                  // 32×32 (07:323-350)
                 // Inverse-of-surface: a near-white circle on the dark shell.
@@ -178,7 +178,7 @@ public enum ComposerShellResolver {
                 // Glyph color #0d0d0d (07: dark up-arrow on the light circle).
                 tint: Color(hex: 0x0D0D0D)),
             // Above-bar git/Create-PR + secondary-workspace rows float above the
-            // merged stack as detached pills (App.tsx:18185-18186).
+            // merged stack as detached pills (App.tsx:18555-18556).
             rowPolicy: .floatAbove,
             // Defining structural effect is the two-surface card-in-card split.
             // The ▾ caret chips are desktop ::after CSS only → skipped on iOS.
@@ -428,7 +428,7 @@ public enum ComposerShellResolver {
                 rowSpacing: 6),
             fontDesign: .system, // System sans (NOT mono, despite the look)
             sendButton: ComposerSendButton(
-                glyph: .arrowUp, // ArrowUpSendIcon (App.tsx:20675-20685)
+                glyph: .arrowUp, // ArrowUpSendIcon (App.tsx:20852)
                 shape: .capsule, // 999px circle
                 size: 32, // 32x32
                 fill: .neutral, // inverse-of-surface (filled with --grok-fg)
@@ -508,7 +508,7 @@ public enum ComposerShellResolver {
                 rowSpacing: 6),             // surface flex column gap 6px
             fontDesign: .system,            // sans, no italic/tabular/letter-spacing
             sendButton: ComposerSendButton(
-                glyph: .arrowUp,            // authoritative (App.tsx:20677-20682 ArrowUpSendIcon)
+                glyph: .arrowUp,            // authoritative (App.tsx:20852 ArrowUpSendIcon)
                 shape: .capsule,            // 999px circle
                 size: 32,                   // 32×32px
                 fill: .neutral,             // inverse-of-surface near-white circle (color-mix(#ffffff 90%))
@@ -646,7 +646,7 @@ public enum ComposerShellResolver {
                 rowSpacing: 8),                  // above-bar pure flex gap:8px (footer 6px)
             fontDesign: .system,                 // inherits app default sans — no override
             sendButton: ComposerSendButton(
-                glyph: .runTriangle,             // RunSymbolIcon (App.tsx:20675-20685)
+                glyph: .runTriangle,             // RunSymbolIcon (App.tsx:20854)
                 shape: .capsule,                 // r999 accent capsule (08:4831 / base 03:6324)
                 size: 40,                        // 40×40 base
                 fill: .accent,                   // color-mix(--accent 86%, transparent) filled capsule
@@ -727,7 +727,7 @@ public enum ComposerShellResolver {
         // a flat cream card. The gold send button is the only piece locked across
         // all themes. Evidence: 08-theme-picker-overrides.css:5284-5403, :5383-5403
         // (light flip), :5373-5381 (gold send), :5308-5321 (perforation),
-        // theme.css:234 (--font-serif); App.tsx:20675-20685 (run-triangle).
+        // theme.css:234 (--font-serif); App.tsx:20854 (RunSymbolIcon).
 
         // Gold accents NEVER re-theme — the same warm tan/gold ink in every theme
         // (spec: "Gold send button NOT re-themed — stays gold #c19a4d / #2a1d05").
@@ -776,11 +776,12 @@ public enum ComposerShellResolver {
                 rowSpacing: 0),
             fontDesign: .serif,                       // SERIF everywhere — var(--font-serif) "New York","Times New Roman",Georgia (theme.css:234)
             sendButton: ComposerSendButton(
-                glyph: .runTriangle,                  // App.tsx:20675-20685 else → RunSymbolIcon
+                glyph: .runTriangle,                  // App.tsx:20846-20854 else → RunSymbolIcon
                 shape: .rect(4),                      // squared 4px button — "rounded 4px square (NOT circle)"
                 size: 40,                             // no explicit width/height in CSS — inherits base sizing
                 fill: .accent,                        // solid gold fill (color-mix(#c19a4d 60%, #fcf6e6)) — treated as accent fill
-                tint: goldFill),                      // gold #c19a4d, locked across all themes; glyph ink #2a1d05 drawn by the view
+                tint: goldFill,                       // gold #c19a4d, locked across all themes
+                glyphTint: Color(hex: 0x2A1D05)),     // near-black warm ink on the gold button (08-theme-picker-overrides.css:5373-5381 color:#2a1d05)
             rowPolicy: .insideStack,                  // inside/stacked family — each row its own cream ticket-head card, NOT merged
             effects: [.paperGrain, .perforation],     // 135deg diagonal grain + dashed gold perforation line, both always on
             themeImmune: false)                       // theme-DERIVED: derives in dark, flat-cream flip in light
@@ -843,7 +844,7 @@ public enum ComposerShellResolver {
                 rowSpacing: 12),
             fontDesign: .system,  // App sans — no mono, no serif (Typography line 220)
             sendButton: ComposerSendButton(
-                glyph: .runTriangle,        // authoritative — desktop else→RunSymbolIcon (App.tsx:20675-20685)
+                glyph: .runTriangle,        // authoritative — desktop else→RunSymbolIcon (App.tsx:20854)
                 shape: .rounded(999),       // satellite sets radius 999 explicitly → perfect circle
                 size: 40,                   // 40×40px (Geometry line 217)
                 fill: .accent,              // accent-filled circle, color-mix(var(--accent) 92%)
@@ -914,7 +915,7 @@ public enum ComposerShellResolver {
                 rowSpacing: 0),
             fontDesign: .system,              // System sans, no override (Typography section)
             sendButton: ComposerSendButton(
-                glyph: .runTriangle,          // run-triangle (authoritative; App.tsx:20675-20685)
+                glyph: .runTriangle,          // run-triangle (authoritative; App.tsx:20854)
                 shape: .capsule,              // round capsule 999px
                 size: 40,                     // 40×40px
                 fill: .accent,                // color-mix(var(--accent) 90%, transparent), border 0
@@ -971,7 +972,7 @@ public enum ComposerShellResolver {
                 rowSpacing: 8), // split bottom-controls flex column gap
             fontDesign: .system, // System sans, no override
             sendButton: ComposerSendButton(
-                glyph: .runTriangle, // App.tsx:20675-20685 else → RunSymbolIcon
+                glyph: .runTriangle, // App.tsx:20846-20854 else → RunSymbolIcon
                 shape: .capsule, // circular pill (999px), border 0
                 size: 40, // inherited from base run-btn
                 fill: .accent, // bg color-mix(var(--accent) 90%, transparent)
