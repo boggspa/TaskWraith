@@ -922,7 +922,8 @@ struct ThreadDetailView: View {
                             activeGoal: card.activeGoal,
                             onGoalUpdate: { op, objective, reason in
                                 model.updateGoal(card, op: op, objective: objective, reason: reason)
-                            })
+                            },
+                            planLanes: card.todoLanes ?? [])
                     }
                     .composerShellGlass()
                     .task(id: composerGitWorkspaceIds(card: card).joined(separator: "\n")) {
@@ -1228,7 +1229,8 @@ struct ThreadEmptyWelcomeCanvas: View {
                 activeGoal: card.activeGoal,
                 onGoalUpdate: { op, objective, reason in
                     model.updateGoal(card, op: op, objective: objective, reason: reason)
-                })
+                },
+                planLanes: card.todoLanes ?? [])
         }
         .composerShellGlass()
     }

@@ -3021,6 +3021,9 @@ public struct TelemetryFooterRail: View {
     let workspaceName: String?
     let activeGoal: RemoteActiveGoal?
     let onGoalUpdate: ((String, String?, String?) -> Void)?
+    /// Per-author working plans (PlanRail) — read-only checklist shown beside the
+    /// goal control. Empty hides the control.
+    var planLanes: [RemoteTodoLane] = []
     /// Allowlisted workspaces for the secondary-grant picker (empty = the
     /// rail renders the plain read-only label).
     var workspaceOptions: [(id: String, name: String)] = []
@@ -3037,12 +3040,14 @@ public struct TelemetryFooterRail: View {
         secondaryWorkspaceId: Binding<String?>? = nil,
         onPrimaryWorkspaceSelect: ((String) -> Void)? = nil,
         activeGoal: RemoteActiveGoal? = nil,
-        onGoalUpdate: ((String, String?, String?) -> Void)? = nil
+        onGoalUpdate: ((String, String?, String?) -> Void)? = nil,
+        planLanes: [RemoteTodoLane] = []
     ) {
         self.run = run
         self.workspaceName = workspaceName
         self.activeGoal = activeGoal
         self.onGoalUpdate = onGoalUpdate
+        self.planLanes = planLanes
         self.workspaceOptions = workspaceOptions
         self.primaryWorkspaceId = primaryWorkspaceId
         self.secondaryWorkspaceId = secondaryWorkspaceId
@@ -3248,6 +3253,9 @@ public struct TelemetryFooterRail: View {
                 if let onGoalUpdate {
                     GoalRailControl(goal: activeGoal, onUpdate: onGoalUpdate)
                 }
+                if !planLanes.isEmpty {
+                    PlanRailControl(lanes: planLanes)
+                }
                 Spacer()
                 workspaceRailView
                 if tokenTelemetryText != nil || costTelemetryText != nil {
@@ -3429,6 +3437,137 @@ private struct GoalRailControl: View {
                         .buttonStyle(.bordered)
                 }
             }
+        }
+    }
+}
+
+/// Read-only PlanRail control — the footer-rail sibling of GoalRailControl.
+/// Shows the agent's working plan (todo checklist). Ensemble chats render one
+/// section per author; solo/guest collapse to a single unlabeled list. Mirrors
+/// the desktop ActivityStack pinned PlanRail; the plan is the agent's, so it is
+/// not user-editable here.
+private struct PlanRailControl: View {
+    let lanes: [RemoteTodoLane]
+
+    @State private var presented = false
+
+    private var hasInProgress: Bool { lanes.contains { $0.currentStep?.isInProgress == true } }
+    private var totalActive: Int { lanes.reduce(0) { $0 + $1.activeCount } }
+    private var totalCompleted: Int { lanes.reduce(0) { $0 + $1.completedCount } }
+    private var allComplete: Bool { totalActive > 0 && totalCompleted >= totalActive }
+
+    @MainActor
+    private var accent: Color {
+        if hasInProgress { return TWTheme.chroma1 }
+        if allComplete { return TWTheme.statusSuccess }
+        return TWTheme.textTertiary
+    }
+
+    @MainActor
+    private func statusIcon(_ item: RemoteTodoItem) -> (String, Color) {
+        if item.isCompleted { return ("checkmark.circle.fill", TWTheme.statusSuccess) }
+        if item.isInProgress { return ("circle.lefthalf.filled", TWTheme.chroma1) }
+        if item.isCancelled { return ("xmark.circle", TWTheme.textTertiary) }
+        return ("circle", TWTheme.textTertiary)
+    }
+
+    private var accessibilitySummary: String {
+        let base = totalActive > 0 ? "Plan, \(totalCompleted) of \(totalActive) steps done" : "Plan"
+        return hasInProgress ? "\(base), in progress" : base
+    }
+
+    var body: some View {
+        Button { presented = true } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .frame(width: 18, height: 18)
+                    .background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
+                if hasInProgress {
+                    Circle()
+                        .fill(accent)
+                        .frame(width: 5, height: 5)
+                        .offset(x: 2, y: -2)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilitySummary)
+        .popover(isPresented: $presented) {
+            popoverBody
+                .frame(width: 320)
+                .padding(12)
+                .background(TWTheme.surface2)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    @ViewBuilder
+    private var popoverBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Plan")
+                    .font(.headline)
+                    .foregroundStyle(TWTheme.textPrimary)
+                Spacer()
+                if totalActive > 0 {
+                    Text("\(totalCompleted)/\(totalActive)")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(TWTheme.textSecondary)
+                }
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(lanes) { lane in
+                        laneSection(lane)
+                    }
+                }
+            }
+            .frame(maxHeight: 360)
+        }
+    }
+
+    @ViewBuilder
+    private func laneSection(_ lane: RemoteTodoLane) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !lane.isSolo && lanes.count > 1 {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(TWTheme.providerAccent(lane.lane))
+                        .frame(width: 7, height: 7)
+                    Text(TWTheme.providerLabel(lane.lane))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TWTheme.textSecondary)
+                    Spacer()
+                    Text("\(lane.completedCount)/\(lane.activeCount)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(TWTheme.textTertiary)
+                }
+            }
+            ForEach(lane.items) { item in
+                row(item)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ item: RemoteTodoItem) -> some View {
+        let (icon, color) = statusIcon(item)
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(color)
+                .frame(width: 16)
+            Text(item.content)
+                .font(.callout)
+                .foregroundStyle(
+                    item.isCompleted || item.isCancelled
+                        ? TWTheme.textSecondary : TWTheme.textPrimary
+                )
+                .strikethrough(item.isCancelled)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
     }
 }

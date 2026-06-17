@@ -16,10 +16,12 @@ import type {
   ThemeAccentStyle,
   ThemeAppearance,
   ThemeCornerStyle,
+  ToolActivity,
   VisualEffectStyle
 } from './store/types'
 import { collectExternalPathGrantsFromMetadata } from './store/ExternalPathGrants'
 import { isContentlessRemoteDraftChat } from './remote/RemoteDraftChats'
+import { computeMergedTodosByLane, TODO_SOLO_LANE, type TodoStatus } from './TodoList'
 
 export type RemoteProjectionKind =
   | 'taskCard'
@@ -55,6 +57,24 @@ export interface RemoteActiveGoal {
   completedAt?: string
   completedSummary?: string
   lastStatusReason?: string
+}
+
+/** One step of an agent's working plan (todo). Mirrors TodoItem on the wire. */
+export interface RemoteTodoItem {
+  id: string
+  content: string
+  status: TodoStatus
+}
+
+/**
+ * One author's plan within a chat. `lane` is the ensemble participant/provider
+ * id, or TODO_SOLO_LANE for solo/guest chats. Derived from the activity stream
+ * (todo_write / Claude TodoWrite / Codex codex_plan), so it covers every
+ * provider whose plan flows as a tool activity — desktop PlanRail parity.
+ */
+export interface RemoteTodoLane {
+  lane: string
+  items: RemoteTodoItem[]
 }
 
 export interface RemoteProjectionEnvelope<TPayload = unknown> {
@@ -121,6 +141,9 @@ export interface RemoteTaskCard {
   pendingApprovalCount: number
   pendingQuestionCount: number
   activeGoal?: RemoteActiveGoal
+  /** Per-author working plans (PlanRail). Ensemble chats carry one lane per
+   * participant; solo/guest collapse to a single TODO_SOLO_LANE lane. */
+  todoLanes?: RemoteTodoLane[]
   capabilities?: RemoteTaskCapabilities
   diffSummary?: MobileDiffSummary
   additionalWorkspaces?: RemoteAdditionalWorkspace[]
@@ -608,6 +631,34 @@ function projectActiveGoal(goal?: ActiveGoal): RemoteActiveGoal | undefined {
   }
 }
 
+/**
+ * Derive per-author working plans from the chat's tool activities — the same
+ * source the desktop PlanRail uses (ActivityStack), so iOS shows the identical
+ * lanes. Top-level activities only (sub-agent children excluded); grouped by
+ * ensemble participant/provider, or TODO_SOLO_LANE for solo/guest.
+ */
+function buildRemoteTodoLanes(chat: ChatRecord): RemoteTodoLane[] {
+  const activities: ToolActivity[] = []
+  for (const message of chat.messages ?? []) {
+    for (const activity of message.toolActivities ?? []) {
+      // Sub-agent (Task/Agent child) calls never carry the parent plan; exclude
+      // them so a delegate's todos don't leak into the parent's PlanRail.
+      if (activity.parentToolCallId) continue
+      activities.push(activity)
+    }
+  }
+  if (activities.length === 0) return []
+  const byLane = computeMergedTodosByLane(
+    activities,
+    (activity) =>
+      activity.metadata?.ensembleProvider ?? activity.metadata?.provider ?? TODO_SOLO_LANE
+  )
+  return Object.entries(byLane)
+    .filter(([, items]) => items.length > 0)
+    .map(([lane, items]) => ({ lane, items }))
+    .sort((a, b) => a.lane.localeCompare(b.lane))
+}
+
 function buildRemoteAdditionalWorkspaces(chat: ChatRecord): RemoteAdditionalWorkspace[] {
   if (!chat.workspacePath) return []
   const grants = collectExternalPathGrantsFromMetadata(chat.providerMetadata)
@@ -719,6 +770,8 @@ export function buildRemoteTaskCard(
   if (latestRun?.endedAt) card.runEndedAt = latestRun.endedAt
   const activeGoal = projectActiveGoal(chat.activeGoal)
   if (activeGoal) card.activeGoal = activeGoal
+  const todoLanes = buildRemoteTodoLanes(chat)
+  if (todoLanes.length > 0) card.todoLanes = todoLanes
   if (options.capabilities) card.capabilities = options.capabilities
   const diffSummary = latestRun
     ? buildMobileDiffSummary(latestRun, {

@@ -193,6 +193,11 @@ public struct RemoteTaskCard: Codable, Sendable {
     public let pendingApprovalCount: Int?
     public let pendingQuestionCount: Int?
     public let activeGoal: RemoteActiveGoal?
+    /// Per-author working plans (PlanRail). Ensemble chats carry one lane per
+    /// participant; solo/guest collapse to a single `__solo__` lane. Derived on
+    /// the Mac from the activity stream, so it covers every provider whose plan
+    /// flows as a tool activity (todo_write / Claude TodoWrite / Codex plan).
+    public let todoLanes: [RemoteTodoLane]?
     public let capabilities: RemoteTaskCapabilities?
     public let additionalWorkspaces: [AdditionalWorkspace]?
     public let queuedComposerPrompts: [QueuedComposerPrompt]?
@@ -259,6 +264,36 @@ public struct RemoteActiveGoal: Codable, Sendable, Hashable {
     public var isPaused: Bool { status == "paused" }
     public var isBlocked: Bool { status == "blocked" }
     public var isCompleted: Bool { status == "completed" }
+}
+
+/// One step of an agent's working plan. Mirrors the Mac TodoItem on the wire.
+public struct RemoteTodoItem: Codable, Sendable, Identifiable, Hashable {
+    public let id: String
+    public let content: String
+    /// pending | in_progress | completed | cancelled
+    public let status: String
+
+    public var isCompleted: Bool { status == "completed" }
+    public var isInProgress: Bool { status == "in_progress" }
+    public var isCancelled: Bool { status == "cancelled" }
+}
+
+/// One author's plan within a chat (PlanRail lane). `lane` is the ensemble
+/// participant/provider id, or `__solo__` for solo/guest chats.
+public struct RemoteTodoLane: Codable, Sendable, Identifiable, Hashable {
+    public static let soloLane = "__solo__"
+    public let lane: String
+    public let items: [RemoteTodoItem]
+    public var id: String { lane }
+
+    /// True when this lane represents a solo/guest chat (no per-author label).
+    public var isSolo: Bool { lane == Self.soloLane }
+    /// The in-progress step, else the first pending step — the "current" step.
+    public var currentStep: RemoteTodoItem? {
+        items.first { $0.isInProgress } ?? items.first { $0.status == "pending" }
+    }
+    public var completedCount: Int { items.filter { $0.isCompleted }.count }
+    public var activeCount: Int { items.filter { !$0.isCancelled }.count }
 }
 
 public struct RemoteTaskCapabilities: Codable, Sendable, Hashable {
@@ -505,6 +540,9 @@ public struct RemoteEnsembleState: Codable, Sendable {
     public let queuedPromptCount: Int?
     /// Queued prompt texts in injection order (index addresses actions).
     public let queuedPrompts: [QueuedPrompt]?
+    /// Work-session supervisor status (idle | running | paused | …), projected
+    /// by the Mac but previously dropped on decode. Optional for old builds.
+    public let workSessionStatus: String?
 
     public struct QueuedPrompt: Codable, Sendable, Identifiable {
         public let index: Int

@@ -423,4 +423,94 @@ describe('RemoteTaskProjection', () => {
       participantCount: 1
     })
   })
+
+  it('derives per-lane todo plans from the activity stream (ensemble PlanRail)', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        chatKind: 'ensemble',
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            content: 'planning',
+            timestamp: ISO,
+            toolActivities: [
+              {
+                id: 'a1',
+                toolName: 'todo_write',
+                displayName: 'Plan',
+                category: 'task',
+                status: 'completed',
+                parameters: {
+                  merge: false,
+                  todos: [{ id: '1', content: 'Codex step', status: 'in_progress' }]
+                },
+                metadata: { ensembleProvider: 'codex' }
+              },
+              {
+                id: 'a2',
+                toolName: 'codex_plan',
+                displayName: 'Plan',
+                category: 'task',
+                status: 'completed',
+                parameters: {
+                  merge: false,
+                  todos: [{ id: '1', content: 'Claude step', status: 'pending' }]
+                },
+                metadata: { ensembleProvider: 'claude' }
+              },
+              {
+                // A sub-agent child must NOT leak into the parent's PlanRail.
+                id: 'a3',
+                toolName: 'todo_write',
+                displayName: 'Plan',
+                category: 'task',
+                status: 'completed',
+                parentToolCallId: 'task-parent',
+                parameters: {
+                  merge: false,
+                  todos: [{ id: '1', content: 'Delegate step', status: 'pending' }]
+                },
+                metadata: { ensembleProvider: 'codex' }
+              }
+            ]
+          }
+        ]
+      })
+    )
+    expect(card.todoLanes).toEqual([
+      { lane: 'claude', items: [{ id: '1', content: 'Claude step', status: 'pending' }] },
+      { lane: 'codex', items: [{ id: '1', content: 'Codex step', status: 'in_progress' }] }
+    ])
+  })
+
+  it('collapses solo todos to the solo lane and omits todoLanes when empty', () => {
+    const solo = buildRemoteTaskCard(
+      chat({
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            content: 'planning',
+            timestamp: ISO,
+            toolActivities: [
+              {
+                id: 'a1',
+                toolName: 'update_todo_list',
+                displayName: 'Plan',
+                category: 'task',
+                status: 'completed',
+                parameters: { merge: false, todos: [{ id: '1', content: 'Solo step', status: 'pending' }] }
+              }
+            ]
+          }
+        ]
+      })
+    )
+    expect(solo.todoLanes).toEqual([
+      { lane: '__solo__', items: [{ id: '1', content: 'Solo step', status: 'pending' }] }
+    ])
+    // No todo activities → field omitted entirely (keeps the wire lean).
+    expect(buildRemoteTaskCard(chat()).todoLanes).toBeUndefined()
+  })
 })
