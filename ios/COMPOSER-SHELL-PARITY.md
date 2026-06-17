@@ -381,3 +381,66 @@ files** (concurrent sessions edit this tree).
 - **Keep global:** do NOT add composer style to Composer `@State`, thread/task card models, remote
   action payloads, or `SceneStorage`.
 - **`default` parity is sacrosanct** — its recipe reproduces the shipped look exactly.
+
+## Part F — CS10: structural LAYOUT parity (build 11)
+
+CS1–CS8 ported per-component *styling* (material/palette/geometry/effects) but every
+shell still shared the native *arrangement* — switching shells changed colors, not the
+composer layout. CS10 adds the structural layer.
+
+### F.1 — Contract
+`ComposerShellLayout` (ComposerShellRecipe.swift) — 6 bool flags on `ResolvedComposerShell`,
+all-false `.standard` = the signed-off native arrangement:
+- `controlsBelowTextarea` — control row renders BELOW the text input (vs above + hairline).
+- `detachedAboveRows` — each above-row (changes/workspace/queued/roster) + the composer
+  core become their OWN `.composerShell` card with gaps, vs one merged surface with hairlines.
+- `liftedSend` — send floats to the input corner (iOS already places send at the input
+  trailing edge, so this is effectively a no-op on iOS).
+- `surfaceIsCapsule` — input surface is a single capsule (gemini/cursor).
+- `splitChromeRects` — textarea + controls each own a separate lit rect (obsidian/alabaster).
+- `controlsAsPlainText` — control chips flatten to bare text (the iOS model picker is
+  already flat plain-text for all shells, so this is largely a no-op on iOS).
+
+### F.2 — Resolution (central)
+`ComposerShellResolver.composerLayout(for:)` — one switch maps every style → its layout,
+applied in `resolve()` (`base.layout = composerLayout(for: style.renderStyle)`). Single
+source of truth; recipes no longer carry layout inline.
+
+### F.3 — Verified flag table
+Derived by a 22-agent extract+adversarial-refute pass over the desktop CSS
+(`07-composer-shells.css`, `05-polish-fx-layouts.css`, `10-provider-shell-overrides.css`)
++ the light/dark screenshot matrix in `design-assets/TaskWraith Composer Shell Electron
+Variants/` (zero refute-corrections, all high-confidence):
+
+| shell | ctrlsBelow | detached | lifted | capsule | splitRects | plainText |
+|-------|:--:|:--:|:--:|:--:|:--:|:--:|
+| default | · | · | · | · | · | · |
+| codex | ✓ | ✓ | · | · | · | · |
+| claude | ✓ | ✓ | ✓ | · | · | · |
+| cursor | ✓ | ✓ | ✓ | ✓ | · | ✓ |
+| grok | ✓ | · | · | · | · | · |
+| gemini | ✓ | ✓ | ✓ | ✓ | · | · |
+| kimi | ✓ | ✓ | · | · | · | · |
+| modular | ✓ | ✓ | · | · | · | · |
+| terminal | ✓ | ✓ | · | · | · | · |
+| stub | ✓ | ✓ | · | · | · | · |
+| satellite | ✓ | ✓ | · | · | · | ✓ |
+| obsidian | ✓ | ✓ | ✓ | · | ✓ | ✓ |
+| alabaster | ✓ | ✓ | ✓ | · | ✓ | ✓ |
+
+Two clean rules: `controlsBelowTextarea` = every non-default shell; `detachedAboveRows` =
+all but grok (grok tucks its above-rows behind the composer lip).
+
+### F.4 — Host seams
+- `ComposerView.body` branches on `shell.layout.controlsBelowTextarea` (input-first vs
+  controls-first; the control row stays hidden for ensembles in both branches).
+- `composerShellStack` (ThreadDetailViews) branches on `detachedAboveRows` via the
+  `composerShellIf(apply:)` helper (ComposerShellContainer.swift) — `apply:false` returns
+  the view untouched, so the merged/default path is byte-identical.
+
+### F.5 — Build-11 scope & deferred
+Shipped (host-consumed): `controlsBelowTextarea` (11 shells) + `detachedAboveRows` (10
+shells). **Deferred to CS11** (data staged, host consumption needs a composer-core
+surface-application refactor): `surfaceIsCapsule` (gemini/cursor), `splitChromeRects`
+(obsidian/alabaster). `liftedSend` + `controlsAsPlainText` are effectively already satisfied
+on iOS (trailing-edge send; flat model picker).
