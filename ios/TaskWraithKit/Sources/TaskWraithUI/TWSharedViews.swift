@@ -2199,7 +2199,7 @@ public struct TWMentionRange {
     return out
 }
 
-/// Desktop ActivityStack parity: one card per tool call — category icon,
+/// Desktop ActivityStack parity: one card per tool call — tool-family icon,
 /// name, touched file, per-edit +/− diff chips, status dot, result line.
 public struct ToolActivityCards: View {
     let entries: [RemoteThreadSnapshot.Row.ToolEntry]
@@ -2248,7 +2248,8 @@ public struct ToolActivityCards: View {
                         ? (last.entry.additions ?? 0) + (entry.additions ?? 0) : nil,
                     deletions: (last.entry.deletions ?? 0) + (entry.deletions ?? 0) > 0
                         ? (last.entry.deletions ?? 0) + (entry.deletions ?? 0) : nil,
-                    detail: entry.detail ?? last.entry.detail
+                    detail: entry.detail ?? last.entry.detail,
+                    toolName: entry.toolName ?? last.entry.toolName
                 )
                 out[out.count - 1] = CollapsedEntry(
                     entry: merged, count: last.count + 1, ordinal: last.ordinal)
@@ -2293,8 +2294,10 @@ public struct ToolActivityCards: View {
     private func row(_ entry: RemoteThreadSnapshot.Row.ToolEntry, count: Int = 1) -> some View {
         let isEdit = isEditCard(entry)
         HStack(alignment: .top, spacing: 7) {
-            Image(systemName: icon(entry.category))
-                .font(.caption)
+            ToolFamilyGlyph(
+                toolName: entry.toolName ?? entry.name,
+                category: entry.category,
+                size: 16)
                 .foregroundStyle(categoryColor(entry.category))
                 .frame(width: 16)
                 .padding(.top, 1)
@@ -2354,17 +2357,6 @@ public struct ToolActivityCards: View {
                         .lineLimit(2)
                 }
             }
-        }
-    }
-
-    private func icon(_ category: String?) -> String {
-        switch category {
-        case "shell": return "terminal"
-        case "write": return "pencil.line"
-        case "read": return "doc.text"
-        case "search": return "magnifyingglass"
-        case "task": return "person.2"
-        default: return "wrench.and.screwdriver"
         }
     }
 
