@@ -304,6 +304,14 @@ struct Composer: View {
         }
     }
 
+    /// CS12: control-chip fill — bare (clear) for plain-text shells (cursor /
+    /// satellite / obsidian / alabaster), else the standard surface3 chip. The
+    /// model picker is already flat; this flattens the approval token to match.
+    private var controlChipFill: AnyShapeStyle {
+        shell.layout.controlsAsPlainText
+            ? AnyShapeStyle(Color.clear) : AnyShapeStyle(TWTheme.surface3)
+    }
+
     @ViewBuilder
     private var approvalControl: some View {
         if isGlobalChat {
@@ -316,7 +324,7 @@ struct Composer: View {
             }
             .font(twComposerFont(shell.fontDesign, .caption2))
             .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(TWTheme.surface3, in: twControlShape(shell.geometry.controlShape))
+            .background(controlChipFill, in: twControlShape(shell.geometry.controlShape))
             .foregroundStyle(TWTheme.textSecondary)
         } else {
             Menu {
@@ -333,7 +341,7 @@ struct Composer: View {
                 }
                 .font(twComposerFont(shell.fontDesign, .caption2))
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(TWTheme.surface3, in: twControlShape(shell.geometry.controlShape))
+                .background(controlChipFill, in: twControlShape(shell.geometry.controlShape))
                 .foregroundStyle(TWTheme.textSecondary)
             }
         }
