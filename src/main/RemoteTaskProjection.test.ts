@@ -440,7 +440,7 @@ describe('RemoteTaskProjection', () => {
                 toolName: 'todo_write',
                 displayName: 'Plan',
                 category: 'task',
-                status: 'completed',
+                status: 'success',
                 parameters: {
                   merge: false,
                   todos: [{ id: '1', content: 'Codex step', status: 'in_progress' }]
@@ -452,7 +452,7 @@ describe('RemoteTaskProjection', () => {
                 toolName: 'codex_plan',
                 displayName: 'Plan',
                 category: 'task',
-                status: 'completed',
+                status: 'success',
                 parameters: {
                   merge: false,
                   todos: [{ id: '1', content: 'Claude step', status: 'pending' }]
@@ -465,7 +465,7 @@ describe('RemoteTaskProjection', () => {
                 toolName: 'todo_write',
                 displayName: 'Plan',
                 category: 'task',
-                status: 'completed',
+                status: 'success',
                 parentToolCallId: 'task-parent',
                 parameters: {
                   merge: false,
@@ -499,7 +499,7 @@ describe('RemoteTaskProjection', () => {
                 toolName: 'update_todo_list',
                 displayName: 'Plan',
                 category: 'task',
-                status: 'completed',
+                status: 'success',
                 parameters: { merge: false, todos: [{ id: '1', content: 'Solo step', status: 'pending' }] }
               }
             ]
