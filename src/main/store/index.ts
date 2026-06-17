@@ -148,6 +148,8 @@ const runEventsDir = path.join(userDataPath, 'run-events')
 const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
 const runEventSequenceCache = new Map<string, number>()
 const runEventHashCache = new Map<string, string>()
+const deletedChatIds = new Set<string>()
+const deletedRunIds = new Set<string>()
 const WORKFLOW_HISTORY_LIMIT = 50
 // Newest-N audit runs kept on disk. Each run holds its own findings/verdicts;
 // the per-run JSONL ledger (run-events) carries the replayable detail.
@@ -689,6 +691,9 @@ function runArtifactDirPath(runId: string): string {
 // ignored so a partially-written run cannot abort the chat deletion.
 function deleteRunForensicFiles(runId: string): void {
   if (!runId) return
+  deletedRunIds.add(runId)
+  runEventSequenceCache.delete(runId)
+  runEventHashCache.delete(runId)
   try {
     fs.rmSync(runEventFilePath(runId), { force: true })
   } catch (e) {
@@ -706,6 +711,35 @@ function deletePathBestEffort(targetPath: string, label: string): void {
     fs.rmSync(targetPath, { recursive: true, force: true })
   } catch (e) {
     console.error(`Failed to delete ${label}`, e)
+  }
+}
+
+function tombstoneRunEventFiles(): void {
+  try {
+    if (!fs.existsSync(runEventsDir)) return
+    for (const file of fs.readdirSync(runEventsDir).filter((item) => item.endsWith('.jsonl'))) {
+      const runId = path.basename(file, '.jsonl')
+      if (!runId) continue
+      deletedRunIds.add(runId)
+      runEventSequenceCache.delete(runId)
+      runEventHashCache.delete(runId)
+    }
+  } catch {
+    // Best-effort; direct directory deletion below is still authoritative.
+  }
+}
+
+function tombstoneRunArtifactDirs(): void {
+  try {
+    if (!fs.existsSync(runArtifactsDir)) return
+    for (const entry of fs.readdirSync(runArtifactsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      deletedRunIds.add(entry.name)
+      runEventSequenceCache.delete(entry.name)
+      runEventHashCache.delete(entry.name)
+    }
+  } catch {
+    // Best-effort; direct directory deletion below is still authoritative.
   }
 }
 
@@ -786,6 +820,15 @@ function appendRunStreamArtifact(
 }
 
 export class AppStore {
+  static resetTransientDeletionGuardsForTests(): void {
+    deletedChatIds.clear()
+    deletedRunIds.clear()
+    runEventSequenceCache.clear()
+    runEventHashCache.clear()
+    this.chatRecordCache.clear()
+    this.orphanSubThreadsReaped = false
+  }
+
   // Settings
   static getSettings(): AppSettings {
     migrateLegacySettingsIfMissing()
@@ -1912,6 +1955,9 @@ export class AppStore {
     const normalizedChat = this.normalizeChatRecord(compactChatForPersist(chat))
     normalizedChat.updatedAt = Date.now()
     const chatPath = chatPathForId(chatsDir, normalizedChat.appChatId)
+    if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
+      return
+    }
     const preStat = fs.existsSync(chatPath) ? fs.statSync(chatPath) : null
     writeJson(chatPath, normalizedChat)
     // Write-through: the next read (bridge broadcast fires right after most
@@ -1947,6 +1993,7 @@ export class AppStore {
     // parent-existence gate). `seen` guards against malformed parent cycles.
     if (seen.has(chatId)) return
     seen.add(chatId)
+    deletedChatIds.add(chatId)
     for (const child of this.getChats().filter((candidate) => candidate.parentChatId === chatId)) {
       this.deleteChat(child.appChatId, seen)
     }
@@ -1978,10 +2025,29 @@ export class AppStore {
 
   static clearChats(workspaceId?: string) {
     if (!workspaceId) {
+      try {
+        if (fs.existsSync(chatsDir)) {
+          for (const file of fs.readdirSync(chatsDir).filter((item) => item.endsWith('.json'))) {
+            deletedChatIds.add(path.basename(file, '.json'))
+          }
+        }
+        for (const chat of this.getChats()) {
+          deletedChatIds.add(chat.appChatId)
+          for (const run of chat.runs || []) {
+            if (run?.runId) deleteRunForensicFiles(run.runId)
+          }
+        }
+      } catch {
+        // The direct directory removal below still clears best-effort history.
+      }
+      tombstoneRunEventFiles()
+      tombstoneRunArtifactDirs()
       deletePathBestEffort(chatsDir, 'chat history directory')
       deletePathBestEffort(chatListIndexPath, 'chat list index')
       deletePathBestEffort(runEventsDir, 'run event history directory')
       deletePathBestEffort(runArtifactsDir, 'run artifact history directory')
+      deletePathBestEffort(runQueuePath, 'run queue history')
+      deletePathBestEffort(runRecoveryPath, 'run recovery history')
       this.chatRecordCache.clear()
       this.orphanSubThreadsReaped = false
       runEventSequenceCache.clear()
@@ -2661,6 +2727,9 @@ export class AppStore {
 
   // Run transcript/event store
   static appendRunEvent(input: RunEventInput): RunEventRecord {
+    if (deletedRunIds.has(input.runId)) {
+      return createRunEventRecord(input, 1, { storeRawPayload: false })
+    }
     const filePath = runEventFilePath(input.runId)
     const cachedSequence = runEventSequenceCache.get(input.runId)
     const cachedHash = runEventHashCache.get(input.runId)

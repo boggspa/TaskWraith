@@ -1,0 +1,77 @@
+/* ============================================================
+   Multiview — split the central chat pane into 1-4 panes.
+
+   Distinct from side-chats; the grid lives INSIDE .chat-split-main
+   and never touches either sidebar. Single layout renders the
+   focused content with no .multiview-grid wrapper at all (fragment
+   passthrough in MultiviewPaneGrid), so the single-pane look is
+   unchanged — none of these rules apply to it.
+
+   Cells are placed by grid-area (set inline from the layout
+   catalogue in src/shared/multiviewLayouts.ts). Each cell hosts a
+   full .app-transcript that fills it and scrolls internally.
+   ============================================================ */
+
+.multiview-grid {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  gap: 8px;
+  padding: 6px;
+  box-sizing: border-box;
+}
+
+.multiview-cell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--surface-border) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-1) 28%, transparent);
+}
+
+/* The transcript (focused content or a viewer) fills its cell and
+   keeps its own internal scroll. min-height:0 lets it shrink inside
+   the grid track instead of forcing the row taller. */
+.multiview-cell > .app-transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  border-radius: inherit;
+}
+
+.multiview-pane-transcript {
+  height: 100%;
+}
+
+/* The single sidebar / composer / Copy / Goal all act on the focused
+   pane — make it obvious which one that is. */
+.multiview-cell-focused {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent),
+    0 10px 28px color-mix(in srgb, #000000 22%, transparent);
+}
+
+.multiview-empty-pane {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+.multiview-empty-pane-label {
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--text-tertiary);
+}

@@ -3042,6 +3042,29 @@
   line-height: 1.35;
 }
 
+.settings-danger-zone {
+  border-top: 1px solid color-mix(in srgb, var(--danger, #ff5f57) 24%, transparent);
+  padding-top: var(--space-md);
+}
+
+.settings-danger-zone-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.settings-delete-history-modal .settings-delete-history-confirm {
+  border-color: color-mix(in srgb, var(--danger, #ff5f57) 44%, transparent);
+  background: color-mix(in srgb, var(--danger, #ff5f57) 20%, var(--popout-control-bg, transparent));
+  color: color-mix(in srgb, var(--danger, #ff5f57) 88%, var(--text-primary));
+}
+
+.settings-delete-history-modal .settings-delete-history-confirm:hover:not(:disabled),
+.settings-delete-history-modal .settings-delete-history-confirm:focus-visible {
+  background: color-mix(in srgb, var(--danger, #ff5f57) 30%, var(--popout-control-bg, transparent));
+  color: var(--text-primary);
+}
+
 .settings-label {
   font-size: var(--font-size-sm);
   color: var(--text-primary);
