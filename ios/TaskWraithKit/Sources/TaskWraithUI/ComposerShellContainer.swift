@@ -27,6 +27,24 @@ func twResolvedComposerShell(
         context: .current(presentation: presentation, width: width, providerAccent: providerAccent))
 }
 
+/// SwiftUI font for a shell's font design (monospaced = terminal, serif = stub).
+func twComposerFont(_ design: ComposerShellFontDesign, _ style: Font.TextStyle = .body) -> Font {
+    switch design {
+    case .system: return .system(style)
+    case .monospaced: return .system(style, design: .monospaced)
+    case .serif: return .system(style, design: .serif)
+    }
+}
+
+/// Background shape for a shell's control silhouette (capsule / rounded / rect).
+func twControlShape(_ shape: ComposerControlShape) -> AnyShape {
+    switch shape {
+    case .capsule: return AnyShape(Capsule())
+    case .rounded(let radius): return AnyShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    case .rect(let radius): return AnyShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
+}
+
 extension View {
     /// Apply a resolved composer shell's surface chrome.
     func composerShell(_ resolved: ResolvedComposerShell) -> some View {

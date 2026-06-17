@@ -1232,7 +1232,7 @@ struct ThreadEmptyWelcomeCanvas: View {
                 },
                 planLanes: card.todoLanes ?? [])
         }
-        .composerShellGlass()
+        .composerShell(twResolvedComposerShell(model: model, presentation: .welcome))
     }
 
     private func switchPrimaryWorkspace(to workspaceId: String) {

@@ -80,6 +80,10 @@ struct Composer: View {
     private var accent: Color {
         card.isEnsemble ? TWTheme.chroma2 : TWTheme.providerAccent(selectedProvider)
     }
+
+    /// The resolved composer shell for the active style (default unless the Mac
+    /// projects, or the user overrides, another). Drives per-style body theming.
+    private var shell: ResolvedComposerShell { twResolvedComposerShell(model: model) }
     private var providerName: String { TWTheme.providerLabel(selectedProvider) }
     private var canChangeProvider: Bool {
         allowsProviderChange ?? (newTaskWorkspaceId != nil)
@@ -206,7 +210,13 @@ struct Composer: View {
 
     @ViewBuilder
     private var composerBodyBackground: some View {
-        Rectangle().fill(composerInputRowFill())
+        // Per-style card-in-card fill (e.g. codex #252525); default falls back
+        // to the native input-row fill so the signed-off shell is unchanged.
+        if let fill = shell.palette.innerModuleFill {
+            Rectangle().fill(fill)
+        } else {
+            Rectangle().fill(composerInputRowFill())
+        }
     }
 
     private var composerControlsRow: some View {
@@ -264,9 +274,9 @@ struct Composer: View {
                 Image(systemName: "list.bullet.clipboard")
                 Text("Plan · no file changes")
             }
-            .font(.caption2)
+            .font(twComposerFont(shell.fontDesign, .caption2))
             .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(TWTheme.surface3, in: Capsule())
+            .background(TWTheme.surface3, in: twControlShape(shell.geometry.controlShape))
             .foregroundStyle(TWTheme.textSecondary)
         } else {
             Menu {
@@ -281,9 +291,9 @@ struct Composer: View {
                             ? "list.bullet.clipboard" : "checkmark.shield")
                     Text(approvalMode == "plan" ? "Plan" : "Default")
                 }
-                .font(.caption2)
+                .font(twComposerFont(shell.fontDesign, .caption2))
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(TWTheme.surface3, in: Capsule())
+                .background(TWTheme.surface3, in: twControlShape(shell.geometry.controlShape))
                 .foregroundStyle(TWTheme.textSecondary)
             }
         }
@@ -356,7 +366,8 @@ struct Composer: View {
                 #endif
                 TextField(placeholder, text: $text, axis: .vertical)
                     .lineLimit(1...2)
-                    .foregroundStyle(TWTheme.textPrimary)
+                    .font(twComposerFont(shell.fontDesign))
+                    .foregroundStyle(shell.palette.textPrimary)
                 if canQueueCurrentPrompt {
                     queueButton
                 }
