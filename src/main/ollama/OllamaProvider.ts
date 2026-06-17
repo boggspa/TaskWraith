@@ -1459,6 +1459,20 @@ function shouldReleaseOllamaContentDelta(input: {
   return totalVisibleLength >= 24 || /[.!?\n]\s*$/.test(input.content)
 }
 
+function shouldReleaseOllamaThinkingUpdate(input: {
+  thinking: string
+  streamedContent: string
+  toolProtocolEnabled: boolean
+}): boolean {
+  const thinking = input.thinking.trim()
+  if (!thinking) return false
+  if (input.toolProtocolEnabled) return false
+  if (!input.streamedContent) return false
+  if (looksLikeOllamaPromptRestatement(thinking)) return false
+  if (looksLikeDegenerateOllamaStub(thinking)) return false
+  return thinking.length >= OLLAMA_DEGENERATE_STUB_MAX_CHARS || /[.!?\n]\s*$/.test(input.thinking)
+}
+
 function ollamaModelSupportsNativeTools(modelInfo?: OllamaModelInfo | null): boolean {
   if (!modelInfo?.capabilities?.length) return true
   return modelInfo.capabilities.some((capability) => capability.toLowerCase() === 'tools')
@@ -1549,9 +1563,11 @@ async function runOllamaChatTurn(input: {
     if (
       thinkingDelta &&
       input.onThinkingUpdate &&
-      input.toolProtocolEnabled !== true &&
-      streamedContent &&
-      !looksLikeOllamaPromptRestatement(thinking)
+      shouldReleaseOllamaThinkingUpdate({
+        thinking,
+        streamedContent,
+        toolProtocolEnabled: input.toolProtocolEnabled === true
+      })
     ) {
       const delta = thinking.slice(streamedThinking.length)
       if (delta) {

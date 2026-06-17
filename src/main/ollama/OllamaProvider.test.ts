@@ -476,6 +476,62 @@ describe('runOllamaProvider streaming', () => {
     expect(lines.some((line) => line.payload.type === 'tool_use')).toBe(true)
   })
 
+  it('does not leak split-prefix JSON fallback tool protocol blobs', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'I will use '
+            }
+          }),
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content:
+                'read_file now. {"taskwraith_tool":{"name":"read_file","arguments":{"path":"README.md"}}}'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 6, eval_count: 12 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({
+      fetchMock,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      },
+      executeTool: async () => ({ ok: true, output: 'README body' })
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).not.toMatch(/I will use|taskwraith_tool|read_file/)
+    expect(lines.some((line) => line.payload.type === 'tool_use')).toBe(true)
+  })
+
   it('does not stream raw structured response envelopes before unwrapping', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/tags')) {
@@ -667,6 +723,66 @@ describe('runOllamaProvider streaming', () => {
     expect(
       lines.filter((line) => line.payload.tool_name === 'ollama_thinking' && line.payload.type === 'tool_use')
     ).toHaveLength(1)
+  })
+
+  it('does not leak split-prefix prompt restatement thinking', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'This answer is already public content. ',
+              thinking: 'Workspace '
+            }
+          }),
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'Done.',
+              thinking: 'coding task: inspect files internally.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 16 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    const visibleThinking = lines
+      .filter(
+        (line) =>
+          line.payload.tool_name === 'ollama_thinking' &&
+          line.payload.type === 'tool_result' &&
+          line.payload.transcriptVisible !== false
+      )
+      .map((line) => line.payload.output)
+    expect(visibleThinking).toEqual([])
+    const hiddenThinking = lines.filter(
+      (line) =>
+        line.payload.tool_name === 'ollama_thinking' &&
+        line.payload.type === 'tool_result' &&
+        line.payload.transcriptVisible === false
+    )
+    expect(hiddenThinking.length).toBeGreaterThan(0)
   })
 
   it('does not stream thinking-only text that becomes the visible answer', async () => {

@@ -129,6 +129,7 @@ export function runProviderAdapterContractTests<TPayload = unknown, TEvent = unk
       expect(typeof cap.contextInjection).toBe('boolean')
       expect(typeof cap.sessionResumption).toBe('boolean')
       expect(typeof cap.perThreadMcp).toBe('boolean')
+      expect(['token', 'turn', 'none']).toContain(cap.assistantTextStreaming)
       // speedTiers: string array (may be empty)
       expect(Array.isArray(cap.speedTiers)).toBe(true)
       for (const tier of cap.speedTiers) {
