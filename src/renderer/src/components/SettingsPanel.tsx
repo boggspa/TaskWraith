@@ -244,6 +244,7 @@ interface SettingsPanelProps {
   onRefreshProductOperationsStatus: () => void
   onExportProductDiagnostics: () => void
   onRepairProductInstall: () => void
+  onDeleteAllChatHistory?: () => Promise<void> | void
   onChange: (partial: {
     mode?: AppearanceMode
     visualEffectStyle?: VisualEffectStyle
@@ -1698,6 +1699,7 @@ export function SettingsPanel({
   onRefreshProductOperationsStatus,
   onExportProductDiagnostics,
   onRepairProductInstall,
+  onDeleteAllChatHistory,
   onChange,
   onClose,
   activeTab: activeTabProp,
@@ -1762,6 +1764,9 @@ export function SettingsPanel({
   const [fxRefreshing, setFxRefreshing] = useState(false)
   const [fxError, setFxError] = useState<string | null>(null)
   const [showOllamaParityAck, setShowOllamaParityAck] = useState(false)
+  const [showDeleteHistoryConfirm, setShowDeleteHistoryConfirm] = useState(false)
+  const [deleteHistoryPending, setDeleteHistoryPending] = useState(false)
+  const [deleteHistoryError, setDeleteHistoryError] = useState('')
   // TaskWraith MCP bridge "Test" feedback. `onRefreshGeminiMcpBridgeStatus`
   // is fire-and-forget (void), so capture the status `checkedAt` at click
   // time; we're "testing" until a fresh status (new `checkedAt`) lands.
@@ -2271,6 +2276,20 @@ export function SettingsPanel({
       ollamaProviderParityWorkspaceGrants: nextGrants
     })
   }
+  const confirmDeleteAllChatHistory = async (): Promise<void> => {
+    if (!onDeleteAllChatHistory || deleteHistoryPending) return
+    setDeleteHistoryPending(true)
+    setDeleteHistoryError('')
+    try {
+      await onDeleteAllChatHistory()
+      setShowDeleteHistoryConfirm(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setDeleteHistoryError(message || 'Delete failed.')
+    } finally {
+      setDeleteHistoryPending(false)
+    }
+  }
 
   return (
     <div className={`settings-panel settings-panel-${layout}`}>
@@ -2327,6 +2346,54 @@ export function SettingsPanel({
                   disabled={!currentWorkspacePath}
                 >
                   I understand, enable for this workspace
+                </button>
+              </footer>
+            </div>
+          </div>,
+          document.body
+        )}
+      {showDeleteHistoryConfirm &&
+        createPortal(
+          <div
+            className="creative-approval-backdrop"
+            role="presentation"
+            onMouseDown={() => {
+              if (!deleteHistoryPending) setShowDeleteHistoryConfirm(false)
+            }}
+          >
+            <div
+              className="creative-approval-modal settings-delete-history-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-history-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <header className="creative-approval-modal-header">
+                <h2 id="delete-history-title" className="creative-approval-modal-title">
+                  Are You Sure?
+                </h2>
+              </header>
+              {deleteHistoryError && (
+                <p className="creative-approval-modal-description approval-elevation-caution">
+                  {deleteHistoryError}
+                </p>
+              )}
+              <footer className="creative-approval-modal-actions">
+                <button
+                  type="button"
+                  className="creative-approval-modal-reject"
+                  onClick={() => setShowDeleteHistoryConfirm(false)}
+                  disabled={deleteHistoryPending}
+                >
+                  No
+                </button>
+                <button
+                  type="button"
+                  className="creative-approval-modal-approve-once settings-delete-history-confirm"
+                  onClick={() => void confirmDeleteAllChatHistory()}
+                  disabled={deleteHistoryPending}
+                >
+                  {deleteHistoryPending ? 'Deleting...' : 'Yes'}
                 </button>
               </footer>
             </div>
@@ -5700,6 +5767,30 @@ export function SettingsPanel({
         {
           activeTab === 'behavior' && (
             <>
+              <div className="settings-group settings-danger-zone span-all">
+                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                  Delete all chat history
+                </h4>
+                <div className="settings-danger-zone-actions">
+                  <button
+                    type="button"
+                    className="settings-button settings-button-danger"
+                    onClick={() => {
+                      setDeleteHistoryError('')
+                      setShowDeleteHistoryConfirm(true)
+                    }}
+                    disabled={!onDeleteAllChatHistory || deleteHistoryPending}
+                  >
+                    Delete
+                  </button>
+                </div>
+                {deleteHistoryError && (
+                  <p className="settings-error" style={{ margin: 0 }}>
+                    {deleteHistoryError}
+                  </p>
+                )}
+              </div>
+
               <div className="settings-group span-all">
                 <h4 className="sidebar-section-title" style={{ margin: 0 }}>
                   Product operations

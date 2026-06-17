@@ -2222,6 +2222,7 @@ function App(): React.JSX.Element {
   const currentWorkspaceIdRef = useRef<string | null>(null)
   const currentChatIdRef = useRef<string | null>(null)
   const chatByIdRef = useRef<Map<string, ChatRecord>>(new Map())
+  const clearedChatIdsRef = useRef<Set<string>>(new Set())
   const rawLogsByChatIdRef = useRef<Map<string, RawLogEntry[]>>(new Map())
   const activeRunChatSnapshotRef = useRef<ChatRecord | null>(null)
   const activeRunChatIdRef = useRef<string | null>(null)
@@ -5435,6 +5436,87 @@ function App(): React.JSX.Element {
     }
   }
 
+  const handleDeleteAllChatHistory = async () => {
+    const deletedChatIds = new Set([
+      ...chats.map((chat) => chat.appChatId),
+      ...Array.from(chatByIdRef.current.keys())
+    ])
+    clearedChatIdsRef.current = new Set([...clearedChatIdsRef.current, ...deletedChatIds])
+    const activeRunContexts = Array.from(activeRunsRef.current.values())
+    const activeEnsembleChatIds = new Set(
+      chats
+        .filter(
+          (chat) =>
+            chat.chatKind === 'ensemble' &&
+            (runningChatIds.has(chat.appChatId) ||
+              chat.ensemble?.activeRound?.status === 'running')
+        )
+        .map((chat) => chat.appChatId)
+    )
+
+    await Promise.allSettled([
+      ...activeRunContexts.map((context) =>
+        window.api.cancelAgentRun(context.provider, context.runId)
+      ),
+      ...Array.from(activeEnsembleChatIds).map((chatId) => window.api.cancelEnsembleRound(chatId))
+    ])
+
+    for (const timer of saveChatTimersRef.current.values()) {
+      clearTimeout(timer)
+    }
+    saveChatTimersRef.current.clear()
+    activeRunsRef.current.clear()
+    recentlyCompletedChatIdsRef.current.clear()
+    activeRunUsageResetHintsRef.current.clear()
+    adapterRef.current = null
+    activeRunIdRef.current = null
+    activeRunChatIdRef.current = null
+    activeRunChatSnapshotRef.current = null
+    activeRunWorkspacePathRef.current = null
+    activeRunStartedAtRef.current = null
+    activeRunDiffUnavailableRef.current = false
+    activeScheduledTaskIdRef.current = null
+    latestRunRequestRef.current = null
+    preSnapshotRef.current = null
+
+    await window.api.clearChats()
+    const nextChats = await loadChatList().catch(() => [])
+    chatByIdRef.current.clear()
+    rawLogsByChatIdRef.current.clear()
+    queuedRunsRef.current = []
+    runQueueJobsRef.current = []
+    currentChatIdRef.current = null
+    for (const chatId of deletedChatIds) {
+      setComposerDraftForChat(chatId, '')
+      setPendingPlanChoiceForChat(chatId, null)
+      setPendingAgentQuestionsForChat(chatId, EMPTY_AGENT_QUESTION_QUEUE)
+      setCommandPaletteOpenForChat(chatId, false)
+      setCommandPaletteQueryForChat(chatId, '')
+      setScheduleRunAtForChat(chatId, '')
+    }
+    setChats(Array.isArray(nextChats) ? nextChats : [])
+    setCurrentChat(null)
+    setActiveSidebarChatId(null)
+    setSideChatId(null)
+    setSideChatMenuOpen(false)
+    setQueuedRuns([])
+    setRunQueueJobs([])
+    setRunningChatIds(new Set())
+    setImageAttachmentsByChatId({})
+    setDiscordContextSelectionByChatId({})
+    setPermissionRequestByChatId({})
+    setExternalPathGrantPromptByChatId({})
+    setPendingAgentApprovalByChatId({})
+    setPendingApprovalQueueByChatId({})
+    setIsThinking(false)
+    setRawLogs([])
+    setDiff(null)
+    setRunDiff(null)
+    setRunCompleteNotice(null)
+    setShowFallbackUX(false)
+    clearImagePermissions()
+  }
+
   const handleTogglePinWorkspace = async (workspaceId: string) => {
     const workspace = workspaces.find((item) => item.id === workspaceId)
     if (!workspace) return
@@ -7953,6 +8035,9 @@ function App(): React.JSX.Element {
       // appChatIds), so when a sub-thread is added here the workspace
       // group containing its parent auto-expands too.
       window.api.onChatUpdated((chat) => {
+        if (clearedChatIdsRef.current.has(chat.appChatId) && !chatByIdRef.current.has(chat.appChatId)) {
+          return
+        }
         // Stream-safe merge: main may broadcast a disk-stale `ChatRecord`
         // mid-stream (saveChat debounces by 200ms; sub-thread delegation
         // card injection, F2 back-prop, surfaceSubThreadDispatchFailure
@@ -17119,6 +17204,7 @@ function App(): React.JSX.Element {
               onRefreshProductOperationsStatus={() => void refreshProductOperationsStatus()}
               onExportProductDiagnostics={() => void exportProductDiagnostics()}
               onRepairProductInstall={() => void repairProductInstall()}
+              onDeleteAllChatHistory={() => handleDeleteAllChatHistory()}
               onChange={handleSettingsChange}
               onClose={() => setShowSettings(false)}
               workspaces={workspaces}

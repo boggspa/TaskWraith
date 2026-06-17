@@ -194,6 +194,13 @@ public final class RemoteSessionModel: ObservableObject {
     /// Git status snapshots keyed by workspace id. Composer rows use this for
     /// branch/upstream/worktree parity with the desktop native composer.
     @Published public private(set) var gitSnapshots: [String: GitWorkspaceSnapshot] = [:]
+    /// Latest composer shellAppearance projected by the Mac (drives the
+    /// "Follow Mac" composer style); stale re-broadcasts ignored via generatedAt.
+    @Published public private(set) var projectedShellAppearance: TWRemoteShellAppearance?
+    /// generatedAt of the last applied shellAppearance — the staleness gate.
+    private var lastShellAppearanceGeneratedAt: String?
+    /// The Mac-projected composer style (nil until the first shellAppearance).
+    public var projectedComposerStyle: TWComposerStyle? { projectedShellAppearance?.style }
     @Published public private(set) var lastActionMessage: String?
     /// Set after createThread succeeds — HomeView navigates to the new chat.
     @Published public var navigationTarget: String?
@@ -1204,9 +1211,25 @@ public final class RemoteSessionModel: ObservableObject {
                     taskCards.insert(card, at: 0)
                 }
             }
+        case "shellAppearance":
+            if let appearance = envelope.decodePayload(TWRemoteShellAppearance.self) {
+                applyShellAppearance(appearance)
+            }
         default:
             break
         }
+    }
+
+    /// Apply a projected composer shellAppearance, ignoring stale re-broadcasts.
+    /// The Mac re-sends the same `remote-shell-appearance:global` envelope in
+    /// every snapshot; only a strictly-newer generatedAt updates published
+    /// state. See ios/COMPOSER-SHELL-PARITY.md (E.1/E.4).
+    private func applyShellAppearance(_ appearance: TWRemoteShellAppearance) {
+        guard twShouldApplyShellAppearance(
+            incoming: appearance.generatedAt, last: lastShellAppearanceGeneratedAt)
+        else { return }
+        lastShellAppearanceGeneratedAt = appearance.generatedAt
+        projectedShellAppearance = appearance
     }
 
     private func mergeThreadSnapshot(_ incoming: RemoteThreadSnapshot, key: String) {
@@ -2110,6 +2133,10 @@ public final class RemoteSessionModel: ObservableObject {
                     let key = diff.taskId ?? diff.threadId ?? envelope.threadId
                 {
                     diffSnapshots[key] = diff
+                }
+            case "shellAppearance":
+                if let appearance = envelope.decodePayload(TWRemoteShellAppearance.self) {
+                    applyShellAppearance(appearance)
                 }
             default:
                 break
