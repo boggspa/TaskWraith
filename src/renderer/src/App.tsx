@@ -18178,11 +18178,17 @@ function App(): React.JSX.Element {
                  * ABOVE the merged stack (roster / ensemble / queue), not
                  * as its first segment. Other shells keep the row inside
                  * the stack. */
+                /* Shells that float the git / Create-PR + secondary-workspace
+                   rows as detached pills ABOVE the merged stack, rather than as
+                   its first segments. Codex joins Cursor here so the ensemble
+                   merged-frame never flattens these two rows. */
+                const aboveRowsFloatAboveStack =
+                  appearance.composerStyle === 'cursor' || appearance.composerStyle === 'codex'
                 const primaryWorkspaceAboveBar =
                   !isWelcomeChat && currentWorkspace ? (
                     <div
                       className={`composer-above-bar style-unified${
-                        appearance.composerStyle === 'cursor' ? ' composer-above-bar--cursor-lead' : ''
+                        aboveRowsFloatAboveStack ? ' composer-above-bar--cursor-lead' : ''
                       }`}
                     >
                       {/*
@@ -18369,17 +18375,17 @@ function App(): React.JSX.Element {
                               workspacePath: group.path
                             })
                           }
-                          cursorLeadDetached={appearance.composerStyle === 'cursor'}
+                          cursorLeadDetached={aboveRowsFloatAboveStack}
                         />
                       ))
                     : null
 
                 return (
                   <>
-                    {appearance.composerStyle === 'cursor' && primaryWorkspaceAboveBar}
-                    {appearance.composerStyle === 'cursor' && externalWorkspaceAboveRows}
+                    {aboveRowsFloatAboveStack && primaryWorkspaceAboveBar}
+                    {aboveRowsFloatAboveStack && externalWorkspaceAboveRows}
                     <div className={`composer-above-bar-stack ${composerAboveBarStackAuraClass}`}>
-                      {appearance.composerStyle !== 'cursor' && primaryWorkspaceAboveBar}
+                      {!aboveRowsFloatAboveStack && primaryWorkspaceAboveBar}
                       {/* Slice 3 of the external-path-redesign arc. One stacked
                     row per external-path grant. Per-grant repo metadata
                     decides whether the row shows branch+repo-name or a
@@ -18390,7 +18396,7 @@ function App(): React.JSX.Element {
                     PR state is keyed by `grant.path`, so an ensemble's
                     several same-path write grants share one repo's PR
                     progress. READ grants keep the reference-only banner. */}
-                      {appearance.composerStyle !== 'cursor' && externalWorkspaceAboveRows}
+                      {!aboveRowsFloatAboveStack && externalWorkspaceAboveRows}
                 {/*
                   Slice F (1.0.3) — ensemble participants live in the
                   composer above-row stack now. Sits below the unified

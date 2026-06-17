@@ -3184,30 +3184,64 @@
   box-shadow: 0 18px 56px rgba(0, 0, 0, 0.32);
 }
 
-/* Codex shell only: float the git / Create-PR row and each secondary-workspace
-   row out of the stacked above-bar into detached glass-pill bubbles with a rim
-   highlight. The roster-preset, ensemble, and queued/steer rows use different
-   classes (.ensemble-*, .queued-messages-*) and stay stacked, untouched.
-   Tweak knobs: --radius (bubble roundness), the codex tint % in `background`,
-   the top-rim alpha + glow in `box-shadow`, and `margin-block` (detach gap). */
-[data-composer-style="codex"] .composer-above-bar-stack .composer-above-bar {
+/* Codex shell: the git / Create-PR row and each secondary-workspace row are
+   rendered ABOVE the stack (App.tsx tags them .composer-above-bar--cursor-lead,
+   the shared "float above the merged stack" marker) so the ensemble merged-frame
+   can never flatten them. Style them as detached glass-pill bubbles with a rim
+   highlight; the roster-preset / ensemble / queued rows keep the framed stack.
+   Tweak knobs: border-radius (bubble roundness), the codex tint % in background,
+   the top-rim alpha + glow in box-shadow, and margin-block (detach gap). */
+[data-composer-style="codex"] .composer-area > .composer-above-bar--cursor-lead {
   align-self: center;
   width: -moz-fit-content;
   width: fit-content;
   max-width: 100%;
   margin-inline: auto;
-  margin-block: 5px;
-  padding: 6px 15px;
-  border-radius: 999px;
-  background: color-mix(in srgb, #1c1c1c 90%, #756af4 10%);
-  border: 1px solid color-mix(in srgb, #8c80ff 24%, #ffffff 10%);
-  backdrop-filter: blur(16px) saturate(150%);
-  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  margin-block: 6px;
+  padding: 6px 14px;
+  border-radius: 16px;
+  /* Polarity-neutral "instrument glass" rim — mirrors the default shell's
+     --native-instrument-* idiom (those vars are scoped to the default shell, so
+     the equivalent values are inlined). Neutral grey glass, a fine hairline, an
+     inset 1px rim, a faint inner glow, a top-edge light catch, and a soft drop
+     shadow — no codex purple, no heavy glow — to match the reference row. */
+  background: color-mix(in srgb, var(--surface-2) 46%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 11%, transparent);
+  backdrop-filter: blur(20px) saturate(155%);
+  -webkit-backdrop-filter: blur(20px) saturate(155%);
   box-shadow:
-    inset 0 1.5px 0 rgba(255, 255, 255, 0.28),
-    inset 0 0 0 1px color-mix(in srgb, #8c80ff 16%, transparent),
-    0 12px 30px -14px rgba(0, 0, 0, 0.72),
-    0 0 26px -10px color-mix(in srgb, #756af4 34%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 22%, rgba(255, 255, 255, 0.1)),
+    inset 0 0 14px color-mix(in srgb, var(--text-primary) 5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent),
+    0 12px 32px color-mix(in srgb, #000000 26%, transparent);
+}
+
+/* The floated Codex secondary-workspace row is a detached pill, same as the
+   primary Create-PR row. The in-tray "strip chrome" rules (08:9039-9055) remove
+   its background / rim / radius / padding / margin with !important (they assume a
+   flush row inside the merged tray), so re-assert the identical pill here at
+   higher specificity + !important to win — otherwise it renders square (clipped)
+   with no rim and tucks under the primary pill's shadow. */
+[data-composer-style="codex"]
+  .composer-area
+  > .composer-above-bar--cursor-lead.composer-above-bar-secondary {
+  padding: 6px 14px !important;
+  margin-inline: auto !important;
+  margin-block: 6px !important;
+  border-radius: 16px !important;
+  background: color-mix(in srgb, var(--surface-2) 46%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 11%, transparent) !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 22%, rgba(255, 255, 255, 0.1)),
+    inset 0 0 14px color-mix(in srgb, var(--text-primary) 5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent),
+    0 12px 32px color-mix(in srgb, #000000 26%, transparent) !important;
+}
+
+/* Solo Codex chat: the git rows floated out, leaving the merged stack with no
+   rows — hide the empty frame so only the floating pills show (mirrors cursor). */
+[data-composer-style="codex"] .composer-area .composer-above-bar-stack:empty {
+  display: none;
 }
 
 [data-interface-style="claude"] .composer-above-bar {
