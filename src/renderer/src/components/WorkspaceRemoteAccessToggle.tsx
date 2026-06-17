@@ -9,26 +9,44 @@ import {
 } from './workspaceRemoteAccess'
 
 /**
- * Per-workspace remote-access control for the Settings → Workspaces card. A
- * self-contained leaf (like RemoteWorkspacesPanel) that reads + writes the iOS
- * remote allowlist directly via window.api, so it adds no state to the App.tsx
- * god-component. Sits left of Pin/Remove.
+ * Per-workspace remote-access control for the Settings → Workspaces card. Reads
+ * + writes the iOS remote allowlist directly via window.api, so it adds no state
+ * to the App.tsx god-component. Sits left of Pin/Remove.
  *
  * Off → remove the allowlist entry. Read → read-only grant. Read/Write →
  * read-write grant WITH file editing (gated behind a confirm, since fileWrite
- * also authorizes git commit/push over the network). Flipping between Read and
- * Read/Write is read-modify-write (see buildAllowlistUpsertForSegment) so it
- * never widens providers/approval/expiry a user narrowed in the Devices tab.
+ * also authorizes git commit/push over the network). Flipping is read-modify-
+ * write (buildAllowlistUpsertForSegment) so it never widens providers/approval/
+ * expiry a user narrowed in the Devices tab.
+ *
+ * Selecting a segment APPLIES immediately, so this is an honest segmented button
+ * group (role="group" + aria-pressed), not an ARIA radiogroup (whose arrow-key
+ * contract would mean firing an IPC/confirm on every arrow press).
+ *
+ * Controlled vs uncontrolled: when `entries` is provided (SettingsPanel hoists a
+ * single fetch and passes it to every card), the control derives from that prop
+ * and reports changes via `onChanged`. When absent, it self-fetches on mount.
  */
 
 const SEGMENTS: ReadonlyArray<{
   value: WorkspaceRemoteSegment
   label: string
   aria: string
+  title: string
 }> = [
-  { value: 'off', label: 'Off', aria: 'Remote access off' },
-  { value: 'read', label: 'Read', aria: 'Remote read only' },
-  { value: 'read-write', label: 'Read/Write', aria: 'Remote read and write' }
+  { value: 'off', label: 'Off', aria: 'Remote access off', title: 'Not shared with paired devices' },
+  {
+    value: 'read',
+    label: 'Read',
+    aria: 'Remote read only',
+    title: 'Phone can monitor and approve, no file changes'
+  },
+  {
+    value: 'read-write',
+    label: 'Read/Write',
+    aria: 'Remote read and write',
+    title: 'Phone can read and edit files (and git commit/push)'
+  }
 ]
 
 function canConfirm(): boolean {
@@ -41,30 +59,31 @@ export function WorkspaceRemoteAccessToggle({
   onChanged
 }: {
   workspace: WorkspaceRecord
-  /** Optional preloaded allowlist (test seam / parent-provided). When absent
-   * the component self-fetches on mount. */
+  /** When provided, the control is CONTROLLED — it derives from this list and
+   * reports mutations via onChanged (parent owns the single fetch). When absent
+   * it self-fetches on mount (uncontrolled). */
   entries?: RemoteWorkspaceEntry[]
   onChanged?: () => void
 }): ReactElement {
-  const [entries, setEntries] = useState<RemoteWorkspaceEntry[] | null>(seededEntries ?? null)
+  const controlled = seededEntries !== undefined
+  const [fetched, setFetched] = useState<RemoteWorkspaceEntry[] | null>(null)
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
       const list = (await window.api.bridgeAllowlistList()) as RemoteWorkspaceEntry[]
-      setEntries(list ?? [])
+      setFetched(list ?? [])
     } catch {
-      // Leave the last-known list; a transient bridge error shouldn't blank the
-      // control (deriveWorkspaceRemoteSegment treats unknown as Off anyway).
+      // Leave the last-known list; deriveWorkspaceRemoteSegment treats unknown as Off.
     }
   }, [])
 
   useEffect(() => {
-    if (seededEntries) return
+    if (controlled) return
     void refresh()
-  }, [seededEntries, refresh])
+  }, [controlled, refresh])
 
-  const list = entries ?? []
+  const list = controlled ? (seededEntries ?? []) : (fetched ?? [])
   const entry = list.find((candidate) => candidate.workspaceId === workspace.id)
   const segment = deriveWorkspaceRemoteSegment(entry)
   const filesOff = entry !== undefined && segment === 'read-write' && !entryHasFileCapabilities(entry)
@@ -74,6 +93,8 @@ export function WorkspaceRemoteAccessToggle({
       // Idempotent: re-selecting the active segment is a no-op. This also stops a
       // legacy files-off read-write entry from silently gaining file caps on a
       // stray re-click — escalation happens only on a real Read→Read/Write move.
+      // The busy guard blocks keyboard re-activation while a change is in flight
+      // (the buttons stay focusable; see the no-disabled note below).
       if (busy || target === segment) return
 
       const isFirstGrant = list.length === 0
@@ -98,33 +119,29 @@ export function WorkspaceRemoteAccessToggle({
       try {
         if (target === 'off') {
           await window.api.bridgeAllowlistRemove(workspace.id)
-          setEntries(list.filter((candidate) => candidate.workspaceId !== workspace.id))
         } else {
           const payload = buildAllowlistUpsertForSegment(
             { id: workspace.id, path: workspace.path },
             target,
             entry
           )
-          const saved = (await window.api.bridgeAllowlistUpsert(payload)) as RemoteWorkspaceEntry
-          setEntries([
-            ...list.filter((candidate) => candidate.workspaceId !== workspace.id),
-            saved
-          ])
+          await window.api.bridgeAllowlistUpsert(payload)
         }
         onChanged?.()
       } finally {
         setBusy(false)
-        void refresh()
+        if (!controlled) void refresh()
       }
     },
-    [busy, segment, list, entry, workspace.id, workspace.path, workspace.displayName, onChanged, refresh]
+    [busy, segment, list, entry, workspace.id, workspace.path, workspace.displayName, controlled, onChanged, refresh]
   )
 
   return (
     <div
       className="settings-workspace-remote"
-      role="radiogroup"
+      role="group"
       aria-label={`Remote access for ${workspace.displayName}`}
+      aria-busy={busy ? 'true' : undefined}
       aria-disabled={busy ? 'true' : undefined}
     >
       {SEGMENTS.map((seg) => {
@@ -134,24 +151,23 @@ export function WorkspaceRemoteAccessToggle({
           <button
             key={seg.value}
             type="button"
-            role="radio"
-            aria-checked={active}
+            // Honest segmented control: one button is "pressed" (the active tier).
+            // Not role="radio" — selection applies immediately, so the radio
+            // arrow-key contract would fire IPC/confirms on every arrow press.
+            aria-pressed={active}
+            aria-label={seg.aria}
             data-segment={seg.value}
-            title={
-              isWrite
-                ? 'Phone can read and edit files (and git commit/push)'
-                : seg.value === 'read'
-                  ? 'Phone can monitor and approve, no file changes'
-                  : 'Not shared with paired devices'
-            }
+            title={seg.title}
+            // No `disabled={busy}`: disabling the focused button mid-change drops
+            // keyboard focus to <body>. The handleSelect busy-guard blocks
+            // re-activation; aria-disabled + CSS pointer-events block the mouse.
             className={`settings-workspace-remote-segment ${active ? 'is-active' : ''} ${
               isWrite ? 'is-write' : ''
             } ${active && isWrite && filesOff ? 'is-files-off' : ''}`}
-            disabled={busy}
             onClick={() => void handleSelect(seg.value)}
           >
             {seg.label}
-            {active && isWrite && filesOff ? ' · files off' : ''}
+            {active && isWrite && filesOff ? ' · files off' : ''}
           </button>
         )
       })}

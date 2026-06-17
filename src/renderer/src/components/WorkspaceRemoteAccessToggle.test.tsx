@@ -39,10 +39,11 @@ function activeSegment(html: string): string | null {
 }
 
 describe('WorkspaceRemoteAccessToggle', () => {
-  it('renders all three segments with a per-workspace radiogroup label', () => {
+  it('renders all three segments as a labelled segmented button group', () => {
     const html = render([])
-    expect(html).toContain('role="radiogroup"')
+    expect(html).toContain('role="group"')
     expect(html).toContain('aria-label="Remote access for Repo"')
+    expect(html).toContain('aria-pressed')
     expect(html).toContain('data-segment="off"')
     expect(html).toContain('data-segment="read"')
     expect(html).toContain('data-segment="read-write"')

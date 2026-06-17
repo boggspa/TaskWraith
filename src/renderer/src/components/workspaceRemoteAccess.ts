@@ -88,7 +88,8 @@ export function deriveWorkspaceRemoteSegment(
 export function buildAllowlistUpsertForSegment(
   workspace: { id: string; path: string },
   target: 'read' | 'read-write',
-  existing?: RemoteWorkspaceEntry
+  existing?: RemoteWorkspaceEntry,
+  now: number = Date.now()
 ): AllowlistUpsertPayload {
   const mode: RemoteWorkspaceMode = target === 'read' ? 'read-only' : 'read-write'
   const baseCapabilities =
@@ -96,7 +97,11 @@ export function buildAllowlistUpsertForSegment(
       ? [...READ_ONLY_REMOTE_WORKSPACE_CAPABILITIES]
       : [...READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES]
 
-  if (!existing) {
+  // An expired entry reads as Off in the UI (deriveWorkspaceRemoteSegment), so
+  // re-granting it must behave like a fresh grant — NOT resurrect its stale
+  // (possibly narrowed) policy or copy a past expiresAt forward (which would
+  // make the new grant dead-on-arrival at enforcement).
+  if (!existing || isExpired(existing, now)) {
     return {
       workspaceId: workspace.id,
       path: workspace.path,

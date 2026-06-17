@@ -86,7 +86,7 @@ describe('buildAllowlistUpsertForSegment', () => {
       mode: 'read-only',
       allowedProviders: ['claude'],
       allowedApprovalModes: ['plan'],
-      expiresAt: 1717000000000,
+      expiresAt: 4102444800000,
       capabilities: ['monitor', 'approve']
     })
     const out = buildAllowlistUpsertForSegment(ws, 'read-write', existing)
@@ -94,8 +94,34 @@ describe('buildAllowlistUpsertForSegment', () => {
     // Providers/approval/expiry are NOT widened or erased.
     expect(out.allowedProviders).toEqual(['claude'])
     expect(out.allowedApprovalModes).toEqual(['plan'])
-    expect(out.expiresAt).toBe(1717000000000)
+    expect(out.expiresAt).toBe(4102444800000)
     expect(out.workspaceId).toBe('ws-9')
+  })
+
+  it('treats an EXPIRED existing entry as a fresh grant (no stale expiresAt, defaults restored)', () => {
+    const expired = entry({
+      workspaceId: 'ws-9',
+      path: '/repo/nine',
+      mode: 'read-write',
+      allowedProviders: ['claude'],
+      allowedApprovalModes: ['plan'],
+      expiresAt: 50,
+      capabilities: ['monitor', 'approve']
+    })
+    // now=100 > expiresAt=50 → the UI shows this as Off, so re-granting must NOT
+    // copy the dead timestamp forward or keep the narrowed providers.
+    const out = buildAllowlistUpsertForSegment({ id: 'ws-9', path: '/repo/nine' }, 'read', expired, 100)
+    expect(out.expiresAt).toBeUndefined()
+    expect(out.allowedProviders).toEqual([
+      'gemini',
+      'codex',
+      'claude',
+      'kimi',
+      'grok',
+      'cursor',
+      'ollama'
+    ])
+    expect(out.mode).toBe('read-only')
   })
 
   it('preserves admin caps (pin/yolo) across a mode flip', () => {

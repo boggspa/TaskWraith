@@ -1187,6 +1187,9 @@ function App(): React.JSX.Element {
     workspace: WorkspaceRecord
     next: () => void | Promise<void>
   } | null>(null)
+  // Guards the deferred navigation so it runs exactly once even if the modal
+  // fires onClose more than once (e.g. Escape racing apply()'s finally).
+  const remoteAccessNavRanRef = useRef(false)
 
   const [chats, setChats] = useState<ChatRecord[]>([])
   const [currentChat, setCurrentChat] = useState<ChatRecord | null>(null)
@@ -5182,6 +5185,7 @@ function App(): React.JSX.Element {
     const ws = await window.api.selectWorkspace()
     if (ws) {
       setWorkspaces(await window.api.getWorkspaces())
+      remoteAccessNavRanRef.current = false
       setPendingRemoteAccessWorkspace({
         workspace: ws,
         next: () => handleSelectExistingWorkspace(ws)
@@ -5321,6 +5325,7 @@ function App(): React.JSX.Element {
     const ws = await window.api.selectWorkspace()
     if (ws) {
       setWorkspaces(await window.api.getWorkspaces())
+      remoteAccessNavRanRef.current = false
       setPendingRemoteAccessWorkspace({
         workspace: ws,
         next: () => handleSelectWelcomeWorkspace(ws)
@@ -21975,6 +21980,11 @@ function App(): React.JSX.Element {
         <WorkspaceRemoteAccessModal
           workspace={pendingRemoteAccessWorkspace.workspace}
           onClose={() => {
+            // Run the deferred navigation exactly once (the modal guards its own
+            // dismiss paths too; this is belt-and-suspenders against a double-fire
+            // that would otherwise create a stray duplicate chat).
+            if (remoteAccessNavRanRef.current) return
+            remoteAccessNavRanRef.current = true
             const next = pendingRemoteAccessWorkspace.next
             setPendingRemoteAccessWorkspace(null)
             void next()

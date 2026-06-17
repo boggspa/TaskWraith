@@ -91,6 +91,7 @@ import { TokenUsageChart } from './TokenUsageChart'
 import { UsageHeatmap } from './UsageHeatmap'
 import { WorkspaceActivityHeatmap } from './WorkspaceActivityHeatmap'
 import { WorkspaceRemoteAccessToggle } from './WorkspaceRemoteAccessToggle'
+import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
@@ -1713,6 +1714,23 @@ export function SettingsPanel({
   // pass `activeTab`/`onTabChange` — i.e. when SettingsPanel is mounted
   // without the surrounding sidebar takeover (legacy / future tests).
   const [internalActiveTab, setInternalActiveTab] = useState<SettingsTab>('appearance')
+  // Hoist a SINGLE iOS-allowlist fetch and feed every workspace card's remote
+  // toggle (controlled mode), instead of N cards each self-fetching. Starts as
+  // [] so the toggles are controlled from the first render; the real list lands
+  // a tick later. `refreshRemoteAllowlist` re-syncs all cards after any toggle.
+  const [remoteAllowlist, setRemoteAllowlist] = useState<RemoteWorkspaceEntry[]>([])
+  const refreshRemoteAllowlist = (): void => {
+    void window.api
+      .bridgeAllowlistList()
+      .then((list) => setRemoteAllowlist((list ?? []) as RemoteWorkspaceEntry[]))
+      .catch(() => undefined)
+  }
+  useEffect(() => {
+    void window.api
+      .bridgeAllowlistList()
+      .then((list) => setRemoteAllowlist((list ?? []) as RemoteWorkspaceEntry[]))
+      .catch(() => undefined)
+  }, [])
   const requestedActiveTab = activeTabProp ?? internalActiveTab
   const activeTab = resolveVisibleSettingsTab(requestedActiveTab)
   const visibleSettingsTabs = getVisibleSettingsTabs()
@@ -5765,7 +5783,11 @@ export function SettingsPanel({
                         </span>
                       </button>
                       <div className="settings-workspace-actions">
-                        <WorkspaceRemoteAccessToggle workspace={workspace} />
+                        <WorkspaceRemoteAccessToggle
+                          workspace={workspace}
+                          entries={remoteAllowlist}
+                          onChanged={refreshRemoteAllowlist}
+                        />
                         {onTogglePinWorkspace && (
                           <button
                             type="button"
