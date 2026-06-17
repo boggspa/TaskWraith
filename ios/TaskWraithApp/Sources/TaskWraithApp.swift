@@ -30,7 +30,7 @@ struct TaskWraithApp: App {
 /// re-delivers on every registerForRemoteNotifications() call, and the model
 /// re-registers on each launch once authorized.
 @MainActor
-final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+final class PushAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
     let model: RemoteSessionModel
 
     /// Category id carried on blocking pushes (mirrors Http2ApnsPusher's
