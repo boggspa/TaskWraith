@@ -163,6 +163,48 @@ public struct ComposerShellGeometry: Equatable, Sendable {
     }
 }
 
+/// Structural LAYOUT of the composer (distinct from the per-component styling in
+/// the rest of the recipe). The host views (ComposerView.body, composerShellStack)
+/// branch on these to actually RE-ARRANGE the composer per shell. All-false =
+/// `.standard` = the signed-off iOS arrangement (controls above the textarea,
+/// send inline, attached above-rows, one merged surface). See CS10 + the desktop
+/// shell matrix in design-assets/TaskWraith Composer Shell Electron Variants/.
+public struct ComposerShellLayout: Equatable, Sendable {
+    /// Control row sits BELOW the textarea (codex/claude/gemini/modular/satellite/
+    /// obsidian/alabaster) instead of above it.
+    public var controlsBelowTextarea: Bool
+    /// git/changes/Create-PR rows detach as their own cards/rects ABOVE the shell
+    /// (codex/cursor/obsidian/alabaster) instead of attaching as top segments.
+    public var detachedAboveRows: Bool
+    /// The send button floats to the textarea/capsule bottom-right corner
+    /// (gemini/cursor/obsidian/alabaster) instead of inline at the textarea edge.
+    public var liftedSend: Bool
+    /// The textarea is a single rounded capsule (gemini/cursor).
+    public var surfaceIsCapsule: Bool
+    /// Two-surface split: textarea + controls each get their own lit rect
+    /// (obsidian/alabaster).
+    public var splitChromeRects: Bool
+    /// Control chips flatten to bare text tokens (satellite/modular/obsidian/alabaster).
+    public var controlsAsPlainText: Bool
+    public init(
+        controlsBelowTextarea: Bool = false,
+        detachedAboveRows: Bool = false,
+        liftedSend: Bool = false,
+        surfaceIsCapsule: Bool = false,
+        splitChromeRects: Bool = false,
+        controlsAsPlainText: Bool = false
+    ) {
+        self.controlsBelowTextarea = controlsBelowTextarea
+        self.detachedAboveRows = detachedAboveRows
+        self.liftedSend = liftedSend
+        self.surfaceIsCapsule = surfaceIsCapsule
+        self.splitChromeRects = splitChromeRects
+        self.controlsAsPlainText = controlsAsPlainText
+    }
+    /// The signed-off iOS default arrangement (no structural changes).
+    public static let standard = ComposerShellLayout()
+}
+
 /// The fully resolved shell — material + palette + geometry + behavior. Views
 /// render this verbatim; a11y downgrades are already baked in by the resolver.
 public struct ResolvedComposerShell: Equatable, Sendable {
@@ -177,6 +219,9 @@ public struct ResolvedComposerShell: Equatable, Sendable {
     /// True for shells that lock their own palette regardless of app theme
     /// (grok/cursor/terminal/obsidian/alabaster).
     public var themeImmune: Bool
+    /// Structural layout (see ComposerShellLayout). `.standard` = today's iOS
+    /// arrangement; non-default shells set flags to re-arrange the composer (CS10).
+    public var layout: ComposerShellLayout
     public init(
         style: TWComposerStyle,
         material: ComposerShellMaterial,
@@ -186,7 +231,8 @@ public struct ResolvedComposerShell: Equatable, Sendable {
         sendButton: ComposerSendButton,
         rowPolicy: ComposerShellRowPolicy = .insideStack,
         effects: ComposerShellEffects = [],
-        themeImmune: Bool = false
+        themeImmune: Bool = false,
+        layout: ComposerShellLayout = .standard
     ) {
         self.style = style
         self.material = material
@@ -197,6 +243,7 @@ public struct ResolvedComposerShell: Equatable, Sendable {
         self.rowPolicy = rowPolicy
         self.effects = effects
         self.themeImmune = themeImmune
+        self.layout = layout
     }
 }
 
