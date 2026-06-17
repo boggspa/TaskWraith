@@ -64,6 +64,20 @@ extension View {
             self
         }
     }
+
+    /// CS12d — apply the shell surface UNLESS the shell owns its surface at the
+    /// INPUT level (claude/gemini/cursor/obsidian/alabaster). Those shells let the
+    /// Composer shell its own input internally, so an outer wrap here would
+    /// double-chrome and box the bare footer. Used by the welcome + mini side-chat
+    /// composer hosts (the main composerShellStack gates this inline).
+    @ViewBuilder
+    func composerShellUnlessInputOwns(_ resolved: ResolvedComposerShell) -> some View {
+        if resolved.layout.inputOwnsSurface {
+            self
+        } else {
+            composerShell(resolved)
+        }
+    }
 }
 
 private struct ComposerShellContainerModifier: ViewModifier {

@@ -250,6 +250,12 @@ struct Composer: View {
         if shell.layout.inputOwnsSurface {
             return AnyShapeStyle(Color.clear)
         }
+        if shell.material == .transparent {
+            // CS12d (Codex review P2-2): modular/satellite float their controls
+            // free — their innerModuleFill is the textarea pill ONLY, not a
+            // full-width footer strip. Don't fuse the control row into it.
+            return AnyShapeStyle(Color.clear)
+        }
         if let fill = shell.palette.innerModuleFill {
             return AnyShapeStyle(fill)
         }

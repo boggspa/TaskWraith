@@ -899,7 +899,9 @@ struct ThreadDetailView: View {
                         if !tuck {
                             composerSecondaryRows(
                                 card: card, hasAttachedRows: hasAttachedRows,
-                                onOwnCards: detached, resolved: resolved)
+                                onOwnCards: detached,
+                                suppressFill: detached && resolved.material != .transparent,
+                                resolved: resolved)
                         }
                         // Composer core (input + telemetry rail). In detached
                         // mode this is its OWN card under the floating above-rows;
@@ -913,7 +915,8 @@ struct ThreadDetailView: View {
                             if tuck {
                                 composerSecondaryRows(
                                     card: card, hasAttachedRows: hasAttachedRows,
-                                    onOwnCards: false, resolved: resolved)
+                                    onOwnCards: false, suppressFill: true,
+                                    resolved: resolved)
                             }
                             Composer(
                                 model: model, card: card, runModel: snapshot?.runSummary?.model,
@@ -957,16 +960,16 @@ struct ThreadDetailView: View {
             .background(Color.clear)
     }
 
-    /// The roster + queued "secondary" above-rows. Rendered either as detached
-    /// sibling cards (onOwnCards = detached) above the composer, or — for codex —
-    /// tucked INTO the core card (onOwnCards = false → merged segments with
-    /// hairlines). With onOwnCards = detached this reproduces the pre-CS11 inline
-    /// blocks exactly; composerShellIf(false) is a no-op, so non-codex shells are
-    /// unchanged.
+    /// The roster + queued "secondary" above-rows. `onOwnCards` drives the per-row
+    /// .composerShell wrap + hairline (detached sibling cards vs merged segments).
+    /// `suppressFill` (CS12d) INDEPENDENTLY clears the row's own opaque fill — true
+    /// when a SOLID surface backs it (a detached-solid card, or the codex solid
+    /// core), false for transparent shells (keep surface1 under Reduce Transparency)
+    /// and merged-default segments.
     @ViewBuilder
     private func composerSecondaryRows(
         card: RemoteTaskCard, hasAttachedRows: Bool, onOwnCards: Bool,
-        resolved: ResolvedComposerShell
+        suppressFill: Bool, resolved: ResolvedComposerShell
     ) -> some View {
         if card.isEnsemble,
             let queued = model.ensembleStates[taskId]?.queuedPrompts,
@@ -976,7 +979,7 @@ struct ThreadDetailView: View {
             // queue, any-device origin.
             QueuedPromptsStack(
                 model: model, card: card, prompts: queued,
-                isShellTop: !hasAttachedRows, onOwnCard: onOwnCards
+                isShellTop: !hasAttachedRows, onOwnCard: suppressFill
             ) { queuedText in
                 followUp = queuedText
             }
@@ -991,7 +994,7 @@ struct ThreadDetailView: View {
         {
             QueuedComposerPromptsStack(
                 model: model, card: card, prompts: queued,
-                isShellTop: !hasAttachedRows, onOwnCard: onOwnCards
+                isShellTop: !hasAttachedRows, onOwnCard: suppressFill
             ) { queuedText in
                 followUp = queuedText
             }
@@ -1008,7 +1011,7 @@ struct ThreadDetailView: View {
                 isShellTop: !hasAttachedRows
                     && (model.ensembleStates[taskId]?.queuedPrompts ?? [])
                         .isEmpty,
-                onOwnCard: onOwnCards)
+                onOwnCard: suppressFill)
             .composerShellIf(onOwnCards, resolved)
             if !onOwnCards {
                 Rectangle().fill(TWTheme.border).frame(height: 1)
@@ -1311,7 +1314,7 @@ struct ThreadEmptyWelcomeCanvas: View {
                 },
                 planLanes: card.todoLanes ?? [])
         }
-        .composerShell(twResolvedComposerShell(model: model, presentation: .welcome))
+        .composerShellUnlessInputOwns(twResolvedComposerShell(model: model, presentation: .welcome))
     }
 
     private func switchPrimaryWorkspace(to workspaceId: String) {

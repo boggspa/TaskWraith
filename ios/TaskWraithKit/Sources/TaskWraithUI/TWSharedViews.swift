@@ -5745,7 +5745,7 @@ struct MiniThreadView: View {
                     model.updateGoal(card, op: op, objective: objective, reason: reason)
                 })
         }
-        .composerShell(twResolvedComposerShell(model: model, presentation: .miniSideChat))
+        .composerShellUnlessInputOwns(twResolvedComposerShell(model: model, presentation: .miniSideChat))
     }
 }
 
