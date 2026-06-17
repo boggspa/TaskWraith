@@ -44,6 +44,11 @@ interface BootstrapState {
 
 const DISPLAY_NAME_STORAGE_KEY = 'taskwraith-pairing-display-name'
 
+// APNs off-LAN wake is hidden: it needs a developer-issued .p8 that virtually
+// nobody configures, and Tailscale is the supported beyond-LAN path. Flip to
+// true to bring the credentials panel back.
+const APNS_PANEL_ENABLED = false
+
 export function PairingPage(): JSX.Element {
   const [displayName, setDisplayName] = useState<string>(() => {
     return window.localStorage?.getItem(DISPLAY_NAME_STORAGE_KEY) || 'iPad'
@@ -311,14 +316,11 @@ export function PairingPage(): JSX.Element {
           <h3 className="pairing-page__section-title">Bridge networking</h3>
           <p className="pairing-page__section-subtitle">
             How the desktop daemon advertises itself to paired iOS devices, and how off-LAN devices
-            wake the Mac via APNs.
+            reach the Mac over Tailscale.
           </p>
         </header>
         <BridgeNetworkingPanel />
-        {/* Phase E1: APNs production wiring — sits alongside bridge
-           networking because APNs is the off-LAN wake path for paired
-           iPhones. */}
-        <ApnsConfigPanel />
+        {APNS_PANEL_ENABLED && <ApnsConfigPanel />}
       </section>
 
       {/* Maximised QR overlay — covers the screen so the iPad camera
