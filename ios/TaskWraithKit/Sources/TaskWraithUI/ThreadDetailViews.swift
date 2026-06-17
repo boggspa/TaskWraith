@@ -813,10 +813,15 @@ struct ThreadDetailView: View {
                     let hasAttachedRows =
                         hasWorkspaceBreakdown || hasDiff || primaryGitSnapshot != nil
                         || !visibleAdditionalRows.isEmpty || hasStandaloneSecondaryWorkspace
-                    // Desktop composer-shell parity: attached diff header
-                    // (rounded top), composer body, telemetry rail
-                    // (rounded bottom) — one bordered container.
-                    VStack(spacing: 0) {
+                    // Desktop composer-shell parity. MERGED (default + most
+                    // shells): attached diff header (rounded top), composer body,
+                    // telemetry rail (rounded bottom) in ONE bordered container.
+                    // DETACHED (codex/cursor/…): each above-row + the composer
+                    // core become their own floating card — gaps, no hairlines,
+                    // a per-card shell surface. CS10.
+                    let resolved = twResolvedComposerShell(model: model)
+                    let detached = resolved.layout.detachedAboveRows
+                    VStack(spacing: detached ? 6 : 0) {
                         if hasWorkspaceBreakdown {
                             // One attached row per granted workspace
                             // (primary + secondary), desktop-style.
@@ -834,7 +839,10 @@ struct ThreadDetailView: View {
                                     onRemove: workspaceId == secondaryWorkspaceId
                                         ? { secondaryWorkspaceBinding.wrappedValue = nil } : nil
                                 ) { openComposerDiff(workspaceId: workspaceId) }
-                                Rectangle().fill(TWTheme.border).frame(height: 1)
+                                .composerShellIf(detached, resolved)
+                                if !detached {
+                                    Rectangle().fill(TWTheme.border).frame(height: 1)
+                                }
                             }
                         } else if hasDiff || primaryGitSnapshot != nil {
                             ChangesAttachedRow(
@@ -842,7 +850,10 @@ struct ThreadDetailView: View {
                                 workspaceName: model.workspaceName(for: primaryWorkspaceId),
                                 gitSnapshot: primaryGitSnapshot
                             ) { openComposerDiff(workspaceId: primaryWorkspaceId) }
-                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                            .composerShellIf(detached, resolved)
+                            if !detached {
+                                Rectangle().fill(TWTheme.border).frame(height: 1)
+                            }
                         }
                         ForEach(visibleAdditionalRows) { row in
                             WorkspaceChangesAttachedRow(
@@ -852,7 +863,10 @@ struct ThreadDetailView: View {
                                 canWrite: row.showsWriteAccess,
                                 onRemove: nil
                             ) { openComposerDiff(workspaceId: row.workspaceId) }
-                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                            .composerShellIf(detached, resolved)
+                            if !detached {
+                                Rectangle().fill(TWTheme.border).frame(height: 1)
+                            }
                         }
                         if hasStandaloneSecondaryWorkspace, let secondaryWorkspaceId {
                             WorkspaceChangesAttachedRow(
@@ -862,7 +876,10 @@ struct ThreadDetailView: View {
                                 canWrite: model.workspaceCanEditFiles(secondaryWorkspaceId),
                                 onRemove: { secondaryWorkspaceBinding.wrappedValue = nil }
                             ) { openComposerDiff(workspaceId: secondaryWorkspaceId) }
-                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                            .composerShellIf(detached, resolved)
+                            if !detached {
+                                Rectangle().fill(TWTheme.border).frame(height: 1)
+                            }
                         }
                         if card.isEnsemble,
                             let queued = model.ensembleStates[taskId]?.queuedPrompts,
@@ -876,7 +893,10 @@ struct ThreadDetailView: View {
                             ) { queuedText in
                                 followUp = queuedText
                             }
-                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                            .composerShellIf(detached, resolved)
+                            if !detached {
+                                Rectangle().fill(TWTheme.border).frame(height: 1)
+                            }
                         }
                         if !card.isEnsemble,
                             let queued = card.queuedComposerPrompts,
@@ -888,7 +908,10 @@ struct ThreadDetailView: View {
                             ) { queuedText in
                                 followUp = queuedText
                             }
-                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                            .composerShellIf(detached, resolved)
+                            if !detached {
+                                Rectangle().fill(TWTheme.border).frame(height: 1)
+                            }
                         }
                         if card.isEnsemble, let wsId = card.workspaceId {
                             // Roster row lives IN the shell, always under the
@@ -899,33 +922,46 @@ struct ThreadDetailView: View {
                                 isShellTop: !hasAttachedRows
                                     && (model.ensembleStates[taskId]?.queuedPrompts ?? [])
                                         .isEmpty)
-                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                            .composerShellIf(detached, resolved)
+                            if !detached {
+                                Rectangle().fill(TWTheme.border).frame(height: 1)
+                            }
                         }
-                        Composer(
-                            model: model, card: card, runModel: snapshot?.runSummary?.model,
-                            runStatus: snapshot?.runSummary?.status,
-                            attachedTop: hasAttachedRows || card.isEnsemble
-                                || !(card.queuedComposerPrompts ?? []).isEmpty,
-                            attachedBottom: true,
-                            extraWorkspaceIds: extraWorkspaceIdsForSend(card: card),
-                            allowsProviderChange: allowsFirstTurnProviderChange,
-                            text: $followUp)
-                        Rectangle().fill(TWTheme.border).frame(height: 1)
-                        TelemetryFooterRail(
-                            run: snapshot?.runSummary,
-                            workspaceName: model.workspaceName(for: card.workspaceId),
-                            workspaceOptions: model.workspaces.map {
-                                (id: $0.id, name: $0.displayName)
-                            },
-                            primaryWorkspaceId: card.workspaceId,
-                            secondaryWorkspaceId: secondaryWorkspaceBinding,
-                            activeGoal: card.activeGoal,
-                            onGoalUpdate: { op, objective, reason in
-                                model.updateGoal(card, op: op, objective: objective, reason: reason)
-                            },
-                            planLanes: card.todoLanes ?? [])
+                        // Composer core (input + telemetry rail). In detached
+                        // mode this is its OWN card under the floating above-rows;
+                        // merged mode keeps it as the final segments of the one
+                        // shared surface (nested zero-spacing VStack is layout-
+                        // identical to the old inline siblings).
+                        VStack(spacing: 0) {
+                            Composer(
+                                model: model, card: card, runModel: snapshot?.runSummary?.model,
+                                runStatus: snapshot?.runSummary?.status,
+                                attachedTop: detached
+                                    ? false
+                                    : (hasAttachedRows || card.isEnsemble
+                                        || !(card.queuedComposerPrompts ?? []).isEmpty),
+                                attachedBottom: true,
+                                extraWorkspaceIds: extraWorkspaceIdsForSend(card: card),
+                                allowsProviderChange: allowsFirstTurnProviderChange,
+                                text: $followUp)
+                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                            TelemetryFooterRail(
+                                run: snapshot?.runSummary,
+                                workspaceName: model.workspaceName(for: card.workspaceId),
+                                workspaceOptions: model.workspaces.map {
+                                    (id: $0.id, name: $0.displayName)
+                                },
+                                primaryWorkspaceId: card.workspaceId,
+                                secondaryWorkspaceId: secondaryWorkspaceBinding,
+                                activeGoal: card.activeGoal,
+                                onGoalUpdate: { op, objective, reason in
+                                    model.updateGoal(card, op: op, objective: objective, reason: reason)
+                                },
+                                planLanes: card.todoLanes ?? [])
+                        }
+                        .composerShellIf(detached, resolved)
                     }
-                    .composerShell(twResolvedComposerShell(model: model))
+                    .composerShellIf(!detached, resolved)
                     .task(id: composerGitWorkspaceIds(card: card).joined(separator: "\n")) {
                         for workspaceId in composerGitWorkspaceIds(card: card) {
                             await model.refreshGitSnapshotCache(workspaceId: workspaceId)

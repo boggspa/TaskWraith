@@ -50,6 +50,20 @@ extension View {
     func composerShell(_ resolved: ResolvedComposerShell) -> some View {
         modifier(ComposerShellContainerModifier(resolved: resolved))
     }
+
+    /// Apply the shell surface only when `apply` is true (CS10 detached rows:
+    /// each above-row + the composer core get their OWN surface, so the detached
+    /// path applies it per card while the merged path applies it once to the
+    /// whole stack). `false` returns the view UNTOUCHED — so the merged/default
+    /// layout stays byte-identical.
+    @ViewBuilder
+    func composerShellIf(_ apply: Bool, _ resolved: ResolvedComposerShell) -> some View {
+        if apply {
+            composerShell(resolved)
+        } else {
+            self
+        }
+    }
 }
 
 private struct ComposerShellContainerModifier: ViewModifier {
