@@ -1210,6 +1210,9 @@
 .ensemble-hierarchy-tile.provider-cursor {
   border-color: color-mix(in srgb, var(--provider-cursor-color) 48%, var(--panel-border));
 }
+.ensemble-hierarchy-tile.provider-ollama {
+  border-color: color-mix(in srgb, var(--provider-ollama-color) 48%, var(--panel-border));
+}
 .ensemble-hierarchy-tile-text {
   display: flex;
   flex-direction: column;
