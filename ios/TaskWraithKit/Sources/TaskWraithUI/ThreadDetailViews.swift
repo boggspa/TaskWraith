@@ -965,7 +965,7 @@ struct ThreadDetailView: View {
             // queue, any-device origin.
             QueuedPromptsStack(
                 model: model, card: card, prompts: queued,
-                isShellTop: !hasAttachedRows
+                isShellTop: !hasAttachedRows, onOwnCard: onOwnCards
             ) { queuedText in
                 followUp = queuedText
             }
@@ -980,7 +980,7 @@ struct ThreadDetailView: View {
         {
             QueuedComposerPromptsStack(
                 model: model, card: card, prompts: queued,
-                isShellTop: !hasAttachedRows
+                isShellTop: !hasAttachedRows, onOwnCard: onOwnCards
             ) { queuedText in
                 followUp = queuedText
             }
@@ -996,7 +996,8 @@ struct ThreadDetailView: View {
                 attached: true,
                 isShellTop: !hasAttachedRows
                     && (model.ensembleStates[taskId]?.queuedPrompts ?? [])
-                        .isEmpty)
+                        .isEmpty,
+                onOwnCard: onOwnCards)
             .composerShellIf(onOwnCards, resolved)
             if !onOwnCards {
                 Rectangle().fill(TWTheme.border).frame(height: 1)

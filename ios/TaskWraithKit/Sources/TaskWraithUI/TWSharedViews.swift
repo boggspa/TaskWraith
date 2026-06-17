@@ -3593,13 +3593,14 @@ public struct EditableRosterStrip: View {
 
     public init(
         model: RemoteSessionModel, threadId: String, workspaceId: String,
-        attached: Bool = false, isShellTop: Bool = false
+        attached: Bool = false, isShellTop: Bool = false, onOwnCard: Bool = false
     ) {
         self.model = model
         self.threadId = threadId
         self.workspaceId = workspaceId
         self.attached = attached
         self.isShellTop = isShellTop
+        self.onOwnCard = onOwnCard
     }
 
     private var state: RemoteEnsembleState? { model.ensembleStates[threadId] }
@@ -3640,6 +3641,10 @@ public struct EditableRosterStrip: View {
     /// Rounds the top corners when this is the shell's FIRST row (no
     /// changes row above).
     public var isShellTop: Bool = false
+    /// CS11: this row is on its OWN detached `.composerShell` card, so suppress
+    /// its own opaque fill (the shell surface provides it). Prevents double-fill
+    /// under Reduce Transparency, where composerAttachedRowFill is surface1 not clear.
+    public var onOwnCard: Bool = false
 
     @ViewBuilder
     private var chipRun: some View {
@@ -3684,7 +3689,7 @@ public struct EditableRosterStrip: View {
             }
         }
         .background(
-            attached
+            attached && !onOwnCard
                 ? composerAttachedRowFill()
                 : AnyShapeStyle(Color.clear),
             in: UnevenRoundedRectangle(
@@ -4940,17 +4945,19 @@ public struct QueuedPromptsStack: View {
     let card: RemoteTaskCard
     let prompts: [RemoteEnsembleState.QueuedPrompt]
     let isShellTop: Bool
+    let onOwnCard: Bool
     let onEdit: ((String) -> Void)?
 
     public init(
         model: RemoteSessionModel, card: RemoteTaskCard,
         prompts: [RemoteEnsembleState.QueuedPrompt], isShellTop: Bool,
-        onEdit: ((String) -> Void)? = nil
+        onOwnCard: Bool = false, onEdit: ((String) -> Void)? = nil
     ) {
         self.model = model
         self.card = card
         self.prompts = prompts
         self.isShellTop = isShellTop
+        self.onOwnCard = onOwnCard
         self.onEdit = onEdit
     }
 
@@ -4965,7 +4972,7 @@ public struct QueuedPromptsStack: View {
             }
         }
         .background(
-            composerAttachedRowFill(),
+            onOwnCard ? AnyShapeStyle(Color.clear) : composerAttachedRowFill(),
             in: UnevenRoundedRectangle(
                 topLeadingRadius: isShellTop ? 16 : 0, bottomLeadingRadius: 0,
                 bottomTrailingRadius: 0, topTrailingRadius: isShellTop ? 16 : 0,
@@ -5061,17 +5068,19 @@ public struct QueuedComposerPromptsStack: View {
     let card: RemoteTaskCard
     let prompts: [RemoteTaskCard.QueuedComposerPrompt]
     let isShellTop: Bool
+    let onOwnCard: Bool
     let onEdit: ((String) -> Void)?
 
     public init(
         model: RemoteSessionModel, card: RemoteTaskCard,
         prompts: [RemoteTaskCard.QueuedComposerPrompt], isShellTop: Bool,
-        onEdit: ((String) -> Void)? = nil
+        onOwnCard: Bool = false, onEdit: ((String) -> Void)? = nil
     ) {
         self.model = model
         self.card = card
         self.prompts = prompts
         self.isShellTop = isShellTop
+        self.onOwnCard = onOwnCard
         self.onEdit = onEdit
     }
 
@@ -5086,7 +5095,7 @@ public struct QueuedComposerPromptsStack: View {
             }
         }
         .background(
-            composerAttachedRowFill(),
+            onOwnCard ? AnyShapeStyle(Color.clear) : composerAttachedRowFill(),
             in: UnevenRoundedRectangle(
                 topLeadingRadius: isShellTop ? 16 : 0, bottomLeadingRadius: 0,
                 bottomTrailingRadius: 0, topTrailingRadius: isShellTop ? 16 : 0,
