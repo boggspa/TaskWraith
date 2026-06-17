@@ -90,6 +90,7 @@ import { ModelUsageSettingsTable } from './ModelUsageSettingsTable'
 import { TokenUsageChart } from './TokenUsageChart'
 import { UsageHeatmap } from './UsageHeatmap'
 import { WorkspaceActivityHeatmap } from './WorkspaceActivityHeatmap'
+import { WorkspaceRemoteAccessToggle } from './WorkspaceRemoteAccessToggle'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
@@ -5764,6 +5765,7 @@ export function SettingsPanel({
                         </span>
                       </button>
                       <div className="settings-workspace-actions">
+                        <WorkspaceRemoteAccessToggle workspace={workspace} />
                         {onTogglePinWorkspace && (
                           <button
                             type="button"

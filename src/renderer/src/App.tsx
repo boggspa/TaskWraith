@@ -188,6 +188,7 @@ import {
 } from './lib/ComposerSlashCommands'
 import { ComposerSlashMenu } from './components/ComposerSlashMenu'
 import { CreativeActionApprovalModal } from './components/CreativeActionApprovalModal'
+import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
 import { WorkflowCreator, type WorkflowCreatorSubmitInput } from './components/WorkflowCreator'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
 import { decideApprovalElevation } from './lib/approvalElevation'
@@ -1179,6 +1180,13 @@ function App(): React.JSX.Element {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
   const [workspacesHydrated, setWorkspacesHydrated] = useState(false)
   const [currentWorkspace, setCurrentWorkspace] = useState<WorkspaceRecord | null>(null)
+  // After a NEW workspace is added via the folder picker, offer to grant it
+  // remote (iOS) access in the same breath. Navigation into the workspace is
+  // deferred until this modal closes (next()).
+  const [pendingRemoteAccessWorkspace, setPendingRemoteAccessWorkspace] = useState<{
+    workspace: WorkspaceRecord
+    next: () => void | Promise<void>
+  } | null>(null)
 
   const [chats, setChats] = useState<ChatRecord[]>([])
   const [currentChat, setCurrentChat] = useState<ChatRecord | null>(null)
@@ -5174,7 +5182,10 @@ function App(): React.JSX.Element {
     const ws = await window.api.selectWorkspace()
     if (ws) {
       setWorkspaces(await window.api.getWorkspaces())
-      await handleSelectExistingWorkspace(ws)
+      setPendingRemoteAccessWorkspace({
+        workspace: ws,
+        next: () => handleSelectExistingWorkspace(ws)
+      })
     }
   }
 
@@ -5310,7 +5321,10 @@ function App(): React.JSX.Element {
     const ws = await window.api.selectWorkspace()
     if (ws) {
       setWorkspaces(await window.api.getWorkspaces())
-      await handleSelectWelcomeWorkspace(ws)
+      setPendingRemoteAccessWorkspace({
+        workspace: ws,
+        next: () => handleSelectWelcomeWorkspace(ws)
+      })
     }
   }
 
@@ -21957,6 +21971,16 @@ function App(): React.JSX.Element {
           window.api.decideCreativeAction(requestId, approved, rememberForSession)
         }
       />
+      {pendingRemoteAccessWorkspace && (
+        <WorkspaceRemoteAccessModal
+          workspace={pendingRemoteAccessWorkspace.workspace}
+          onClose={() => {
+            const next = pendingRemoteAccessWorkspace.next
+            setPendingRemoteAccessWorkspace(null)
+            void next()
+          }}
+        />
+      )}
       {pendingElevation && (
         <ApprovalModeElevationSheet
           tier={pendingElevation.tier}
