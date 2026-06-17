@@ -925,7 +925,7 @@ struct ThreadDetailView: View {
                         // it); the horizontal inset is OUTSIDE (it is the tab's margin).
                         .padding(.top, tuckedTab ? 6 : 0)
                         .padding(.bottom, tuckedTab ? 14 : 0)
-                        .composerShellIf(tuckedTab, resolved)
+                        .composerShellIf(tuckedTab, resolved, topCornersOnly: true)
                         .padding(.horizontal, tuckedTab ? 18 : 0)
                         // Composer core (input + telemetry rail). In detached
                         // mode this is its OWN card under the floating above-rows;

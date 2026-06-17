@@ -46,9 +46,14 @@ func twControlShape(_ shape: ComposerControlShape) -> AnyShape {
 }
 
 extension View {
-    /// Apply a resolved composer shell's surface chrome.
-    func composerShell(_ resolved: ResolvedComposerShell) -> some View {
-        modifier(ComposerShellContainerModifier(resolved: resolved))
+    /// Apply a resolved composer shell's surface chrome. `topCornersOnly` rounds
+    /// only the TOP corners (square bottom) — used by the grok tucked-tab card so
+    /// its sides run straight down behind the composer instead of curving inward.
+    func composerShell(
+        _ resolved: ResolvedComposerShell, topCornersOnly: Bool = false
+    ) -> some View {
+        modifier(
+            ComposerShellContainerModifier(resolved: resolved, topCornersOnly: topCornersOnly))
     }
 
     /// Apply the shell surface only when `apply` is true (CS10 detached rows:
@@ -57,9 +62,11 @@ extension View {
     /// whole stack). `false` returns the view UNTOUCHED — so the merged/default
     /// layout stays byte-identical.
     @ViewBuilder
-    func composerShellIf(_ apply: Bool, _ resolved: ResolvedComposerShell) -> some View {
+    func composerShellIf(
+        _ apply: Bool, _ resolved: ResolvedComposerShell, topCornersOnly: Bool = false
+    ) -> some View {
         if apply {
-            composerShell(resolved)
+            composerShell(resolved, topCornersOnly: topCornersOnly)
         } else {
             self
         }
@@ -82,6 +89,7 @@ extension View {
 
 private struct ComposerShellContainerModifier: ViewModifier {
     let resolved: ResolvedComposerShell
+    var topCornersOnly: Bool = false
 
     func body(content: Content) -> some View {
         switch resolved.material {
@@ -90,7 +98,8 @@ private struct ComposerShellContainerModifier: ViewModifier {
             // stays pixel-identical (the only .glass shell is `default`).
             content.composerShellGlass(cornerRadius: resolved.geometry.surfaceCornerRadius)
         case .solid, .paper:
-            content.modifier(ComposerSolidShellModifier(resolved: resolved))
+            content.modifier(
+                ComposerSolidShellModifier(resolved: resolved, topCornersOnly: topCornersOnly))
         case .transparent:
             // Container draws no chrome; children float (modular/satellite).
             // Per-pill chrome is added in CS6.
@@ -104,13 +113,33 @@ private struct ComposerShellContainerModifier: ViewModifier {
 /// modifier's structure (fill → mask → border → static rim) with a solid fill.
 private struct ComposerSolidShellModifier: ViewModifier {
     let resolved: ResolvedComposerShell
+    var topCornersOnly: Bool = false
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(
-            cornerRadius: resolved.geometry.surfaceCornerRadius, style: .continuous)
+        let r = resolved.geometry.surfaceCornerRadius
+        // CS13b — the grok tucked tab rounds only its TOP corners; its bottom runs
+        // straight down behind the composer (matches the desktop). Every other
+        // surface keeps the all-corner RoundedRectangle, byte-identical.
+        if topCornersOnly {
+            return AnyView(
+                decorate(
+                    content,
+                    shape: UnevenRoundedRectangle(
+                        topLeadingRadius: r, bottomLeadingRadius: 0,
+                        bottomTrailingRadius: 0, topTrailingRadius: r, style: .continuous)))
+        }
+        return AnyView(
+            decorate(content, shape: RoundedRectangle(cornerRadius: r, style: .continuous)))
+    }
+
+    /// Shared chrome (fill → mask → border → static rim → shadow), generic over the
+    /// surface shape so the all-corner and top-only paths render identically apart
+    /// from the corner geometry.
+    @ViewBuilder
+    private func decorate<S: InsettableShape>(_ content: Content, shape: S) -> some View {
         let rim = resolved.palette.rim
         let effects = resolved.effects
-        return content
+        content
             .background(
                 ZStack {
                     shape.fill(resolved.palette.surfaceFill)

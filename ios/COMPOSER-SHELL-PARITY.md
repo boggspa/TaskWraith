@@ -496,9 +496,11 @@ re-verified byte-identical.
   composer staying one full-width surface. New `tuckedAboveTab` layout flag (grok only); the
   host wraps the inline above-rows in an inner VStack (spacing matched to the outer ⇒ non-tuck
   byte-identical), drops the outer merged wrap, and zIndex(1)s the core. The tab carries
-  padding-top 6 / padding-bottom 14 so the overlap eclipses padding not content; the overlap
-  hides its bottom corners (no top-only-corner primitive needed). 3-agent reviewed (non-tuck
-  safety + desktop fidelity + the clip fix).
+  padding-top 6 / padding-bottom 14 so the overlap eclipses padding not content. CS13b: the
+  tab is TOP-rounded only (`topCornersOnly` → UnevenRoundedRectangle, bottom squared) so its
+  sides run straight down behind the composer like the desktop, instead of the rounded bottom
+  corners peeking out where they meet the composer. 3-agent reviewed (non-tuck safety +
+  desktop fidelity + the clip fix).
 
 ### F.11 — Still deferred (live visual review)
 - **Theme-immune footer legibility** — cursor/gemini lock a dark palette but the bare footer
