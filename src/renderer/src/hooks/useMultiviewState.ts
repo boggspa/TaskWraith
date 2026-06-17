@@ -1,0 +1,214 @@
+import { useCallback, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
+import {
+  DEFAULT_MULTIVIEW_LAYOUT,
+  MAX_MULTIVIEW_PANES,
+  clampFocusedPaneIndex,
+  clampPaneChatIds,
+  paneCountForLayout,
+  type MultiviewLayout
+} from '../../../shared/multiviewLayouts'
+
+/**
+ * useMultiviewState — owns the renderer-only Multiview state (which layout,
+ * which chat is in each pane, and which pane is focused). It writes NO App.tsx
+ * singleton; the focused pane is wired to the existing currentChat machinery in
+ * a later slice. All the real logic lives in the pure `apply*` transitions
+ * below so they can be unit-tested without a DOM (the repo avoids jsdom).
+ */
+
+export interface MultiviewCoreState {
+  layout: MultiviewLayout
+  /** index = grid cell; null = an empty cell. Length always === paneCount. */
+  paneChatIds: (string | null)[]
+  focusedPaneIndex: number
+}
+
+/**
+ * Closing a pane downgrades the layout by exactly one pane. Each step reduces
+ * paneCount by one: quad(4) -> two-top-one-bottom(3) -> vertical-2(2) ->
+ * single(1). The four 3-pane variants all collapse to vertical-2.
+ */
+const DOWNGRADE_LAYOUT: Record<MultiviewLayout, MultiviewLayout> = {
+  single: 'single',
+  'vertical-2': 'single',
+  'horizontal-2': 'single',
+  'two-top-one-bottom': 'vertical-2',
+  'one-top-two-bottom': 'vertical-2',
+  'one-left-two-right': 'vertical-2',
+  'two-left-one-right': 'vertical-2',
+  quad: 'two-top-one-bottom'
+}
+
+export function createInitialMultiviewState(
+  initialPaneChatId: string | null = null
+): MultiviewCoreState {
+  return {
+    layout: DEFAULT_MULTIVIEW_LAYOUT,
+    paneChatIds: clampPaneChatIds([initialPaneChatId], DEFAULT_MULTIVIEW_LAYOUT),
+    focusedPaneIndex: 0
+  }
+}
+
+/** Switch layout, re-clamping pane assignments and the focused index to fit. */
+export function applySetLayout(
+  state: MultiviewCoreState,
+  next: MultiviewLayout
+): MultiviewCoreState {
+  if (next === state.layout) return state
+  return {
+    layout: next,
+    paneChatIds: clampPaneChatIds(state.paneChatIds, next),
+    focusedPaneIndex: clampFocusedPaneIndex(state.focusedPaneIndex, next)
+  }
+}
+
+/** Put a chat (or null) into a specific pane cell. */
+export function applySetPaneChat(
+  state: MultiviewCoreState,
+  index: number,
+  chatId: string | null
+): MultiviewCoreState {
+  if (index < 0 || index >= state.paneChatIds.length) return state
+  if (state.paneChatIds[index] === chatId) return state
+  const paneChatIds = state.paneChatIds.slice()
+  paneChatIds[index] = chatId
+  return { ...state, paneChatIds }
+}
+
+/** Move focus to a pane (clamped into the current layout's range). */
+export function applySetFocusedPane(state: MultiviewCoreState, index: number): MultiviewCoreState {
+  const focusedPaneIndex = clampFocusedPaneIndex(index, state.layout)
+  if (focusedPaneIndex === state.focusedPaneIndex) return state
+  return { ...state, focusedPaneIndex }
+}
+
+/**
+ * Close a pane: drop that cell, compact the rest in order, and downgrade the
+ * layout one step. Focus follows: closing before the focused cell shifts focus
+ * left by one; closing the focused cell keeps focus on the same slot index
+ * (clamped). A no-op in single layout (nothing to collapse into).
+ */
+export function applyClosePane(state: MultiviewCoreState, index: number): MultiviewCoreState {
+  if (state.layout === 'single') return state
+  if (index < 0 || index >= state.paneChatIds.length) return state
+  const nextLayout = DOWNGRADE_LAYOUT[state.layout]
+  const remaining = state.paneChatIds.filter((_, i) => i !== index)
+  const paneChatIds = clampPaneChatIds(remaining, nextLayout)
+  let nextFocus = state.focusedPaneIndex
+  if (index < state.focusedPaneIndex) nextFocus -= 1
+  else if (index === state.focusedPaneIndex) nextFocus = index
+  return {
+    layout: nextLayout,
+    paneChatIds,
+    focusedPaneIndex: clampFocusedPaneIndex(nextFocus, nextLayout)
+  }
+}
+
+/**
+ * Assign a chat to the most natural pane and focus it: the focused pane if it
+ * is empty, else the first empty cell, else the focused pane (overwrite).
+ * Returns the chosen pane index. In single layout this always overwrites pane
+ * 0 — callers that want a fresh pane must widen the layout first.
+ */
+export function applyAssignToNextPane(
+  state: MultiviewCoreState,
+  chatId: string
+): { state: MultiviewCoreState; index: number } {
+  const count = paneCountForLayout(state.layout)
+  let target: number
+  if (state.paneChatIds[state.focusedPaneIndex] == null) {
+    target = state.focusedPaneIndex
+  } else {
+    const firstEmpty = state.paneChatIds.findIndex((chatId) => chatId == null)
+    target = firstEmpty >= 0 ? firstEmpty : state.focusedPaneIndex
+  }
+  target = Math.max(0, Math.min(target, count - 1))
+  const paneChatIds = state.paneChatIds.slice()
+  paneChatIds[target] = chatId
+  return { state: { ...state, paneChatIds, focusedPaneIndex: target }, index: target }
+}
+
+export interface MultiviewPaneRefs {
+  scrollRef: RefObject<HTMLDivElement | null>
+  contentRef: RefObject<HTMLDivElement | null>
+  endRef: RefObject<HTMLDivElement | null>
+}
+
+export interface UseMultiviewStateOptions {
+  /** Seed pane 0 with this chat id (the chat that was active before split). */
+  initialPaneChatId?: string | null
+}
+
+export interface UseMultiviewStateResult extends MultiviewCoreState {
+  /** paneChatIds[focusedPaneIndex] (or null). The chat the sidebar/composer drive. */
+  focusedChatId: string | null
+  isMultiview: boolean
+  /** Stable per-pane ref pool (length MAX_MULTIVIEW_PANES) for the grid panes. */
+  paneRefs: MultiviewPaneRefs[]
+  setLayout: (next: MultiviewLayout) => void
+  setPaneChat: (index: number, chatId: string | null) => void
+  setFocusedPane: (index: number) => void
+  closePane: (index: number) => void
+  /** Place + focus a chat; returns the pane index it landed in. */
+  assignToNextPane: (chatId: string) => number
+}
+
+export function useMultiviewState(
+  options: UseMultiviewStateOptions = {}
+): UseMultiviewStateResult {
+  const [state, setState] = useState<MultiviewCoreState>(() =>
+    createInitialMultiviewState(options.initialPaneChatId ?? null)
+  )
+
+  // Keep the latest state reachable synchronously so assignToNextPane can
+  // return the chosen index without depending on a setState callback's timing.
+  const stateRef = useRef(state)
+  stateRef.current = state
+
+  // One stable ref-object pool for every possible pane. Plain { current }
+  // objects are valid React refs; memoized so identity never changes.
+  const paneRefs = useMemo<MultiviewPaneRefs[]>(
+    () =>
+      Array.from({ length: MAX_MULTIVIEW_PANES }, () => ({
+        scrollRef: { current: null } as RefObject<HTMLDivElement | null>,
+        contentRef: { current: null } as RefObject<HTMLDivElement | null>,
+        endRef: { current: null } as RefObject<HTMLDivElement | null>
+      })),
+    []
+  )
+
+  const setLayout = useCallback(
+    (next: MultiviewLayout) => setState((s) => applySetLayout(s, next)),
+    []
+  )
+  const setPaneChat = useCallback(
+    (index: number, chatId: string | null) => setState((s) => applySetPaneChat(s, index, chatId)),
+    []
+  )
+  const setFocusedPane = useCallback(
+    (index: number) => setState((s) => applySetFocusedPane(s, index)),
+    []
+  )
+  const closePane = useCallback((index: number) => setState((s) => applyClosePane(s, index)), [])
+  const assignToNextPane = useCallback((chatId: string) => {
+    const result = applyAssignToNextPane(stateRef.current, chatId)
+    stateRef.current = result.state
+    setState(result.state)
+    return result.index
+  }, [])
+
+  const focusedChatId = state.paneChatIds[state.focusedPaneIndex] ?? null
+
+  return {
+    ...state,
+    focusedChatId,
+    isMultiview: state.layout !== 'single',
+    paneRefs,
+    setLayout,
+    setPaneChat,
+    setFocusedPane,
+    closePane,
+    assignToNextPane
+  }
+}
