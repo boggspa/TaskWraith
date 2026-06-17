@@ -843,7 +843,10 @@ struct ThreadDetailView: View {
                     VStack(spacing: tuckedTab ? -10 : (detached ? 6 : 0)) {
                         // Above-rows group: inner VStack spacing matches the outer so
                         // non-tuck stays identical; the grok tuck makes it the inset,
-                        // overlapped tab card.
+                        // overlapped tab card. INVARIANT (keep both true or this wrapper
+                        // shifts non-tuck layout): the inner spacing MUST equal the outer
+                        // (always an explicit 0/6, never adaptive), and every above-row
+                        // must be full-width (else the inner VStack's .center re-centers).
                         VStack(spacing: detached ? 6 : 0) {
                         if hasWorkspaceBreakdown {
                             // One attached row per granted workspace
@@ -916,6 +919,12 @@ struct ThreadDetailView: View {
                                 resolved: resolved)
                         }
                         }  // end above-rows group (CS13 grok tuck card)
+                        // Desktop tab carries padding-top 6 / padding-bottom 14 so the
+                        // -10 overlap eclipses PADDING, not the last row's content. The
+                        // top/bottom padding is INSIDE the shell (the fill extends under
+                        // it); the horizontal inset is OUTSIDE (it is the tab's margin).
+                        .padding(.top, tuckedTab ? 6 : 0)
+                        .padding(.bottom, tuckedTab ? 14 : 0)
                         .composerShellIf(tuckedTab, resolved)
                         .padding(.horizontal, tuckedTab ? 18 : 0)
                         // Composer core (input + telemetry rail). In detached
