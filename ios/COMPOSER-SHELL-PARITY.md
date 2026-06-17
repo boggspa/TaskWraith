@@ -478,15 +478,18 @@ module; satellite/modular drop the stray divider; a 6px gap separates the framed
 the bare footer. default/grok/kimi/terminal/stub stay ONE merged surface — 3-agent
 re-verified byte-identical.
 
-### F.9 — Still deferred (need live iterative review)
-- **liftedSend** (claude/gemini/cursor/obsidian/alabaster) — float the send into the input
-  bubble/capsule bottom-right corner (today it sits inline at the input's trailing edge,
-  which is close for 1–2 lines). Overlay positioning.
-- **controlsAsPlainText** (cursor/satellite/obsidian/alabaster) — flatten the approval/guest
-  chips to bare text on the now-bare footer (the model picker is already flat).
+### F.9 — Done in CS12c
+- **controlsAsPlainText** (cursor/satellite/obsidian/alabaster) — the approval token now
+  flattens to bare text (`controlChipFill`) on the bare footer, matching the flat model
+  picker.
+- **liftedSend** — effectively satisfied on iOS: the 1–2 line input keeps the send at its
+  trailing edge (= the corner); the desktop "lift" only matters for a tall growing textarea.
+
+### F.10 — Still deferred (live visual review)
 - **Theme-immune footer legibility** — cursor/gemini lock a dark palette but the bare footer
-  chrome (chips, telemetry) is theme-following → mismatch on a light app theme; the footer
-  should adopt the shell palette for theme-immune shells.
+  chrome (chips, telemetry) is theme-following → mismatch on a LIGHT app theme; the footer
+  should adopt the shell palette for theme-immune shells. (Edge case: light app + locked-dark
+  shell.)
 - **composerLayout value test** (needs the pure layout map moved into TaskWraithKit) +
   **state-identity on live shell switch** (composerShellIf if/else can reset the draft
   mid-compose — LOW).
