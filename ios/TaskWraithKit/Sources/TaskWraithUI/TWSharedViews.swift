@@ -4218,9 +4218,38 @@ public struct AppSettingsSheet: View {
                     } label: {
                         Label("Tool Call Theme", systemImage: "wrench.and.screwdriver")
                     }
-                    Text("Mirrors your Mac's Appearance settings where sensible. Composer-shell theming is desktop-only for now.")
+                    Text("Mirrors your Mac's Appearance settings where sensible.")
                         .font(.caption)
                         .foregroundStyle(TWTheme.textMuted)
+                }
+                Section("Composer Shell") {
+                    Picker(
+                        selection: Binding<String>(
+                            get: {
+                                switch themes.composerShellPreference {
+                                case .followMac: return "followMac"
+                                case .override(let style): return style.raw
+                                }
+                            },
+                            set: { raw in
+                                themes.composerShellPreference =
+                                    raw == "followMac"
+                                    ? .followMac : .override(TWComposerStyle(raw: raw))
+                            }
+                        )
+                    ) {
+                        Text("Follow Mac").tag("followMac")
+                        ForEach(TWComposerStyle.known, id: \.raw) { style in
+                            Text(style.label).tag(style.raw)
+                        }
+                    } label: {
+                        Label("Style", systemImage: "rectangle.and.pencil.and.ellipsis")
+                    }
+                    Text(
+                        "Follow Mac mirrors your desktop composer style. Override to pin a style on this device."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textMuted)
                 }
                 Section("About") {
                     LabeledContent("App", value: "TaskWraith Remote")
