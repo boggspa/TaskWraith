@@ -438,12 +438,16 @@ all but grok (grok tucks its above-rows behind the composer lip).
   `composerShellIf(apply:)` helper (ComposerShellContainer.swift) — `apply:false` returns
   the view untouched, so the merged/default path is byte-identical.
 
-### F.5 — Build-11 scope
-Shipped (host-consumed): `controlsBelowTextarea` (11 shells) + `detachedAboveRows` (10
-shells), plus the gemini surface-radius fix (its `.solid` navy capsule was drawn at radius
-0 → square detached pills; now 26px to match the capsule). `liftedSend` +
-`controlsAsPlainText` are effectively already satisfied on iOS (trailing-edge send; flat
-plain-text model picker).
+### F.5 — Build scope
+**Build 11 (CS10):** `controlsBelowTextarea` (11 shells) + `detachedAboveRows` (10 shells),
+plus the gemini surface-radius fix (its `.solid` navy capsule was drawn at radius 0 → square
+detached pills; now 26px to match the capsule). `liftedSend` + `controlsAsPlainText` are
+effectively already satisfied on iOS (trailing-edge send; flat plain-text model picker).
+
+**Build 12 (CS11 A+B):** codex roster-tuck (`tucksSecondaryRows` — roster/queued rows tuck
+into the core card while changes/PR pill out) + the Reduce-Transparency double-fill fix
+(`onOwnCard` suppresses a detached row's own opaque fill). 3-agent review: default
+byte-parity PASS, both fixes PASS.
 
 ### F.6 — Verification
 - `swift build` + 69 Kit tests + a full `xcodebuild` simulator app build, per slice.
@@ -453,22 +457,24 @@ plain-text model picker).
   **CONCERN** (no ViewBuilder/chaining defects; the fill issues in F.7). All 12 non-default
   shells: layout value correct, consumed-flag structural match **full**.
 
-### F.7 — Deferred to CS11 (with rationale)
-- **codex roster-tuck** — codex's changes/PR/diff rows take the pill format, but the
-  roster/preset rows should TUCK (merge), not detach as separate pills (desktop
-  `:not(:has(.ensemble-above-row))`). Needs per-row-category detach — a restructure of the
-  just-changed composerShellStack. (Review rated codex full-match, so this is fidelity, not
-  a defect.)
+### F.7 — Done in build 12 (CS11 A+B)
+- **codex roster-tuck** — `tucksSecondaryRows`: codex's roster/queued rows tuck into the
+  core card as merged segments while changes/PR rows pill out (desktop
+  `:not(:has(.ensemble-above-row))`). `composerSecondaryRows(onOwnCards:)` keeps non-codex
+  shells byte-identical.
+- **Reduce-Transparency double-fill** — `onOwnCard` suppresses a detached row's own opaque
+  `surface1` fill so the per-card `.composerShell` surface shows (a11y-mode only; glass-on
+  was already clean).
+
+### F.8 — Still deferred (need live iterative review)
 - **surfaceIsCapsule** (gemini/cursor) — true single-capsule input separated from the
-  telemetry rail; needs a composer-core surface refactor. (Interim: gemini rounds at 26px.)
+  telemetry rail; needs a composer-core surface refactor (lift the input surface out of the
+  shared core surface). Interim: gemini rounds at 26px.
 - **splitChromeRects** (obsidian/alabaster) — textarea + controls each their own lit rect;
-  same surface refactor.
-- **Reduce-Transparency double-fill** — detached roster/queued rows draw their own opaque
-  `surface1` when glass is off, double-filling over the per-card `.composerShell` (and
-  leaking an opaque card on transparent shells). Fix: suppress the row's inner fill in the
-  detached path. a11y-mode only — glass-on (the default) is clean.
-- **composerLayout value test** — pin every shell's layout (locks default-parity); needs
-  the pure layout map moved into TaskWraithKit (TaskWraithUI is not unit-tested by design).
+  same composer-core surface refactor. With surfaceIsCapsule, this is the genuinely-hard
+  restructure — best done with live review, not AFK.
+- **composerLayout value test** — pin every shell's layout (locks default-parity); needs the
+  pure layout map moved into TaskWraithKit (TaskWraithUI is not unit-tested by design).
 - **State-identity on live shell switch** — composerShellIf's if/else can reset the composer
-  draft if the user changes shell mid-compose; fix via an always-applied, no-op-capable
-  modifier.
+  draft if the user switches shell mid-compose; fix via an always-applied, no-op-capable
+  modifier. (LOW — mid-compose shell switch is rare.)
