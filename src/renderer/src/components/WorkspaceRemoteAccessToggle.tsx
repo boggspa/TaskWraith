@@ -97,8 +97,27 @@ export function WorkspaceRemoteAccessToggle({
       // (the buttons stay focusable; see the no-disabled note below).
       if (busy || target === segment) return
 
-      const isFirstGrant = list.length === 0
-      if (target !== 'off') {
+      if (target === 'off') {
+        setBusy(true)
+        try {
+          await window.api.bridgeAllowlistRemove(workspace.id)
+          onChanged?.()
+        } finally {
+          setBusy(false)
+          if (!controlled) void refresh()
+        }
+        return
+      }
+
+      setBusy(true)
+      try {
+        // Read the LIVE allowlist right before writing: a stale or still-loading
+        // `entries` prop (seeded []) must never make a Devices-narrowed entry look
+        // absent and get widened to first-grant defaults. read-modify-write only
+        // holds if `existing` reflects truth at write time, not at render time.
+        const fresh = ((await window.api.bridgeAllowlistList()) ?? []) as RemoteWorkspaceEntry[]
+        const freshEntry = fresh.find((candidate) => candidate.workspaceId === workspace.id)
+        const isFirstGrant = fresh.length === 0
         const warnings: string[] = []
         if (target === 'read-write') {
           warnings.push(
@@ -113,27 +132,19 @@ export function WorkspaceRemoteAccessToggle({
           )
         }
         if (warnings.length > 0 && canConfirm() && !window.confirm(warnings.join('\n\n'))) return
-      }
-
-      setBusy(true)
-      try {
-        if (target === 'off') {
-          await window.api.bridgeAllowlistRemove(workspace.id)
-        } else {
-          const payload = buildAllowlistUpsertForSegment(
-            { id: workspace.id, path: workspace.path },
-            target,
-            entry
-          )
-          await window.api.bridgeAllowlistUpsert(payload)
-        }
+        const payload = buildAllowlistUpsertForSegment(
+          { id: workspace.id, path: workspace.path },
+          target,
+          freshEntry
+        )
+        await window.api.bridgeAllowlistUpsert(payload)
         onChanged?.()
       } finally {
         setBusy(false)
         if (!controlled) void refresh()
       }
     },
-    [busy, segment, list, entry, workspace.id, workspace.path, workspace.displayName, controlled, onChanged, refresh]
+    [busy, segment, workspace.id, workspace.path, workspace.displayName, controlled, onChanged, refresh]
   )
 
   return (
