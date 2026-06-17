@@ -14,7 +14,7 @@ import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
 // 1.0.5-EW25 — User-currency cost formatting helper.
-import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
+import { formatCost, setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
 import {
   AppSettings,
@@ -362,14 +362,17 @@ import {
   buildPlanImportDisplayPrompt,
   buildInitialPlanImportReview,
   buildPlanImportRunPrompt,
+  estimatePlanImportExecution,
   groundPlanImportFileMentions,
   planImportEnabledChipsForPolicy,
   planImportApprovalModeForPolicy,
   shouldOfferPlanImport,
   type PlanImportAssumptionStatus,
   type PlanImportChipId,
+  type PlanImportExecutionEstimate,
   type PlanImportFileGrounding,
   type PlanImportPolicyMode,
+  type PlanImportRiskLevel,
   type PlanImportReviewState
 } from './lib/planImport'
 import { applyRecoveryRecordsToChatRuns } from './lib/recoverChatRunTerminals'
@@ -690,6 +693,11 @@ const PLAN_IMPORT_GROUNDING_LABELS: Record<PlanImportAssumptionStatus, string> =
   contradicted_by_repo: 'No exact path match',
   needs_user_decision: 'Needs decision'
 }
+const PLAN_IMPORT_RISK_LABELS: Record<PlanImportRiskLevel, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High'
+}
 const GUEST_PARTICIPANT_STEERING_PREAMBLE =
   'You are a guest participant attached to a standard TaskWraith chat. The main parent agent has priority. Respond to the user request in parallel as a second opinion or disjoint helper. Write or edit files only when useful and keep any changes disjoint from the main agent. If your intended edits overlap or conflict with the main agent, stop and explain the conflict instead of fighting the main agent.'
 const GUEST_PARENT_CONTEXT_TURN_LIMIT = 20
@@ -761,6 +769,24 @@ function renderPlanImportFileGroundings(
       </ul>
     </>
   )
+}
+
+function formatPlanImportTokenEstimate(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return '0'
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`
+  return String(Math.round(tokens))
+}
+
+function formatPlanImportCostEstimate(
+  estimate: PlanImportExecutionEstimate,
+  currency: DisplayCurrency,
+  overestimatePercent: number
+): string {
+  if (estimate.costStatus === 'zero_rate') return 'Local / zero-rate'
+  if (!estimate.costAvailable) return 'Pricing unavailable'
+  const formatted = formatCost(estimate.estimatedCostUsd, currency, undefined, overestimatePercent)
+  return formatted ? `~${formatted} API-equiv` : 'Pricing unavailable'
 }
 
 function truncateGuestContextText(value: string, maxChars: number): string {
@@ -14982,6 +15008,17 @@ function App(): React.JSX.Element {
     0,
     Math.min(25, Number(settings?.currencyOverestimatePercent ?? 0) || 0)
   )
+  const selectedPlanImportModel =
+    selectedModelType === 'custom' ? customModel.trim() || 'custom' : selectedModelType
+  const planImportExecutionEstimate = pendingPlanImport
+    ? estimatePlanImportExecution(pendingPlanImport, {
+        provider: currentProvider,
+        model: selectedPlanImportModel,
+        providerRates,
+        contextTokens: cumulativeChatTokens,
+        approvalsAutoAllowed: sessionYoloMode.enabled
+      })
+    : null
   const threadTokenTallyHasValue = chatTokenTally.totalTokens > 0 || liveRunOutputTokens > 0
   // B1 (1.0.3) — per-participant breakdown for the ensemble tally
   // footer's hover tooltip. Solo chats: `null` (the existing
@@ -19579,8 +19616,7 @@ function App(): React.JSX.Element {
                     {pendingPlanImport && (
                       <div
                         className="composer-plan-import-card"
-                        role="status"
-                        aria-live="polite"
+                        role="region"
                         aria-labelledby={`plan-import-title-${pendingPlanImport.id}`}
                       >
                         <div className="plan-import-header">
@@ -19686,6 +19722,42 @@ function App(): React.JSX.Element {
                                   <small>Requested signals only; enforced policy is shown above.</small>
                                   <small>{translation.note}</small>
                                 </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {planImportExecutionEstimate && (
+                          <div
+                            className={`plan-import-section plan-import-estimate-section risk-${planImportExecutionEstimate.riskLevel}`}
+                            aria-label="Plan import pre-run estimate"
+                          >
+                            <span>Pre-run estimate</span>
+                            <div className="plan-import-estimate-metrics">
+                              <span>
+                                <strong>Cost</strong>
+                                {formatPlanImportCostEstimate(
+                                  planImportExecutionEstimate,
+                                  displayCurrency,
+                                  overestimatePercent
+                                )}
+                              </span>
+                              <span>
+                                <strong>Tokens</strong>~
+                                {formatPlanImportTokenEstimate(
+                                  planImportExecutionEstimate.totalTokens
+                                )}
+                              </span>
+                              <span>
+                                <strong>Risk</strong>
+                                {PLAN_IMPORT_RISK_LABELS[planImportExecutionEstimate.riskLevel]}
+                              </span>
+                            </div>
+                            <small>{planImportExecutionEstimate.tokenNote}</small>
+                            <small>{planImportExecutionEstimate.routingNote}</small>
+                            <ul className="plan-import-estimate-reasons">
+                              {planImportExecutionEstimate.riskReasons.map((reason) => (
+                                <li key={reason}>{reason}</li>
                               ))}
                             </ul>
                           </div>

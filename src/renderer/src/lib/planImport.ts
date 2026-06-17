@@ -1,4 +1,9 @@
-import type { AuditEvidenceRef, WorkspaceFileEntry } from '../../../main/store/types'
+import type { AuditEvidenceRef, ProviderId, WorkspaceFileEntry } from '../../../main/store/types'
+import {
+  estimateRunCostUsd,
+  type RendererModelRate,
+  type RendererProviderRates
+} from './providerRateEstimate'
 
 export type PlanImportPolicyMode = 'read_only' | 'ask_before_edits'
 
@@ -15,6 +20,8 @@ export type PlanImportChipId =
   | 'no_network'
   | 'no_telemetry'
   | 'quiet_summary'
+
+export type PlanImportRiskLevel = 'low' | 'medium' | 'high'
 
 export interface PlanImportAssumption {
   text: string
@@ -58,6 +65,20 @@ export interface PlanImportReviewState {
   enabledChips: PlanImportChipId[]
 }
 
+export interface PlanImportExecutionEstimate {
+  promptTokens: number
+  contextTokens: number
+  expectedOutputTokens: number
+  totalTokens: number
+  estimatedCostUsd: number
+  costStatus: 'estimated' | 'unavailable' | 'zero_rate'
+  costAvailable: boolean
+  riskLevel: PlanImportRiskLevel
+  riskReasons: string[]
+  routingNote: string
+  tokenNote: string
+}
+
 const LARGE_PASTE_MIN_CHARS = 900
 const STRUCTURED_PASTE_MIN_CHARS = 520
 const MAX_ITEMS_PER_SECTION = 12
@@ -78,7 +99,7 @@ const NO_NETWORK_SIGNAL =
 const NO_TELEMETRY_SIGNAL = /\b(?:no|disable|without)\s+telemetry\b/i
 const QUIET_SIGNAL = /\b(?:no spam|don't spam|do not spam|quiet|concise|summari[sz]e)\b/i
 const RISKY_SIGNAL =
-  /\b(ignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions?|bypass|disable\s+(?:safety|guardrails?|approvals?|sandbox)|skip\s+approvals?|auto[-\s]?approve|do not ask\s+(?:for\s+)?approval|never ask\s+(?:for\s+)?approval|no\s+approval\s+needed|run\s+without\s+confirmation|do not prompt|don't prompt|approval[-\s]?free|unrestricted\s+permissions?|workspace[-\s]?write|auto[-\s]?edit|allow all|full access|sudo|rm\s+-rf|exfiltrat|steal|secrets?)\b/i
+  /\b(ignore\s+(?:all\s+)?(?:previous|prior|above|system|developer)\s+instructions?|treat\s+(?:this|the)\s+(?:paste|plan|prompt)\s+as\s+(?:higher|highest)\s+priority|higher\s+priority\s+than\s+TaskWraith|bypass|disable\s+(?:safety|guardrails?|approvals?|sandbox)|skip\s+approvals?|auto[-\s]?(?:approve|allow)|always[-\s]?approve|trust\s+mode|yolo|do not ask\s+(?:for\s+)?approval|never ask\s+(?:for\s+)?approval|no\s+approval\s+needed|run\s+without\s+confirmation|do not prompt|don't prompt|approval[-\s]?free|unrestricted\s+permissions?|workspace[-\s]?write|auto[-\s]?edit|allow all|full access|sudo|rm\s+-rf|exfiltrat|steal|secrets?)\b/i
 const EDIT_INTENT_SIGNAL =
   /\b(implement|edit|modify|change|refactor|fix|write|create|add|remove|delete|commit|land|ship|update|wire|build)\b/i
 const ASSUMPTION_SIGNAL =
@@ -104,6 +125,10 @@ function truncate(value: string, max: number): string {
   const normalized = value.trim()
   if (normalized.length <= max) return normalized
   return `${normalized.slice(0, Math.max(0, max - 3)).trimEnd()}...`
+}
+
+function estimateTokenCount(value: string): number {
+  return Math.max(1, Math.ceil(value.length / 4))
 }
 
 function quoteUntrustedPaste(value: string): string {
@@ -504,4 +529,131 @@ export function buildPlanImportRunPrompt(review: PlanImportReviewState): string 
     quoteUntrustedPaste(review.rawText)
   )
   return lines.join('\n')
+}
+
+export function estimatePlanImportExecution(
+  review: PlanImportReviewState,
+  options: {
+    provider?: ProviderId
+    model?: string
+    providerRates?: RendererProviderRates
+    contextTokens?: number
+    approvalsAutoAllowed?: boolean
+  } = {}
+): PlanImportExecutionEstimate {
+  const promptTokens = estimateTokenCount(buildPlanImportRunPrompt(review))
+  const contextTokens =
+    typeof options.contextTokens === 'number' && Number.isFinite(options.contextTokens)
+      ? Math.max(0, Math.trunc(options.contextTokens))
+      : 0
+  const expectedOutputTokens = Math.min(
+    6_000,
+    Math.max(
+      900,
+      900 +
+        review.contract.stages.length * 180 +
+        review.contract.assumptions.length * 80 +
+        review.contract.fileGroundings.length * 60 +
+        (review.selectedPolicy === 'ask_before_edits' ? 350 : 150)
+    )
+  )
+  const inputTokens = promptTokens + contextTokens
+  const rate = resolveStrictPlanImportRate(options.providerRates || {}, options.provider, options.model)
+  const zeroRate =
+    rate !== null && rate.inputUsdPerMillion === 0 && rate.outputUsdPerMillion === 0
+  const estimatedCostUsd =
+    rate && !zeroRate && options.provider
+      ? estimateRunCostUsd(
+          { [options.provider]: [rate] },
+          options.provider,
+          rate.modelId,
+          inputTokens,
+          expectedOutputTokens
+        )
+      : 0
+  const costStatus: PlanImportExecutionEstimate['costStatus'] =
+    rate && zeroRate ? 'zero_rate' : estimatedCostUsd > 0 ? 'estimated' : 'unavailable'
+  const needsDecisionCount = review.contract.fileGroundings.filter(
+    (grounding) => grounding.status === 'needs_user_decision'
+  ).length
+  const contradictedPathCount = review.contract.fileGroundings.filter(
+    (grounding) => grounding.status === 'contradicted_by_repo'
+  ).length
+  const unverifiedCount =
+    review.contract.assumptions.length +
+    review.contract.fileGroundings.filter((grounding) => grounding.status === 'unverified').length
+  const riskReasons: string[] = []
+  if (review.selectedPolicy === 'ask_before_edits') {
+    riskReasons.push(
+      options.approvalsAutoAllowed
+        ? 'Trust mode active; approval prompts may auto-allow in this session.'
+        : 'Edit-capable approval mode selected; existing approval settings govern prompts or auto-allow.'
+    )
+  } else if (options.approvalsAutoAllowed) {
+    riskReasons.push('Trust mode active; Plan / read-only remains selected for this import.')
+  }
+  if (review.contract.riskyInstructions.length > 0) {
+    riskReasons.push(`${review.contract.riskyInstructions.length} risky pasted instruction(s).`)
+  }
+  if (review.contract.contradictions.length > 0) {
+    riskReasons.push(`${review.contract.contradictions.length} surfaced contradiction(s).`)
+  }
+  if (needsDecisionCount > 0) {
+    riskReasons.push(`${needsDecisionCount} path mention(s) need a user decision.`)
+  }
+  if (contradictedPathCount > 0) {
+    riskReasons.push(`${contradictedPathCount} path mention(s) have no exact repo match.`)
+  }
+  if (unverifiedCount > 0) {
+    riskReasons.push(`${unverifiedCount} assumption/path item(s) remain unverified.`)
+  }
+  if (riskReasons.length === 0) {
+    riskReasons.push('Imported paste is untrusted model-facing context.')
+  }
+
+  const riskLevel: PlanImportRiskLevel =
+    review.contract.riskyInstructions.length > 0 ||
+    review.contract.contradictions.length > 0 ||
+    needsDecisionCount > 0 ||
+    contradictedPathCount > 0 ||
+    review.selectedPolicy === 'ask_before_edits'
+      ? 'high'
+      : unverifiedCount > 0
+        ? 'medium'
+        : 'medium'
+
+  return {
+    promptTokens,
+    contextTokens,
+    expectedOutputTokens,
+    totalTokens: inputTokens + expectedOutputTokens,
+    estimatedCostUsd,
+    costStatus,
+    costAvailable: costStatus === 'estimated',
+    riskLevel,
+    riskReasons: riskReasons.slice(0, 4),
+    routingNote:
+      'Execution uses the selected provider/model through the normal run path.',
+    tokenNote:
+      'Approximate pre-run signal: includes the imported prompt, expected first response, and current chat token tally; provider resume, compaction, scaffolding, attachments, and final composed context can move the actual request higher or lower.'
+  }
+}
+
+function resolveStrictPlanImportRate(
+  rates: RendererProviderRates,
+  provider: ProviderId | undefined,
+  model: string | undefined
+): RendererModelRate | null {
+  if (!provider) return null
+  const table = rates[provider]
+  if (!table || table.length === 0) return null
+  const wanted = (model || '').trim().toLowerCase()
+  if (!wanted || wanted === 'custom') return null
+  const exact = table.find((rate) => rate.modelId.toLowerCase() === wanted)
+  if (exact) return exact
+  return (
+    table.find(
+      (rate) => wanted.startsWith(`${rate.modelId.toLowerCase()}-`)
+    ) || null
+  )
 }

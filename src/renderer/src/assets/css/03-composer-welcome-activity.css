@@ -6026,6 +6026,65 @@
   line-height: 1.35;
 }
 
+.plan-import-estimate-section {
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 62%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 62%, transparent);
+  padding: var(--space-xs) 0;
+}
+
+.plan-import-estimate-metrics {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.plan-import-estimate-metrics > span {
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 var(--space-xs);
+  font-size: var(--font-size-xs);
+}
+
+.plan-import-estimate-metrics strong {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plan-import-estimate-section.risk-low .plan-import-estimate-metrics > span:last-child {
+  border-color: color-mix(in srgb, var(--success) 48%, transparent);
+}
+
+.plan-import-estimate-section.risk-medium .plan-import-estimate-metrics > span:last-child,
+.plan-import-estimate-section.risk-high .plan-import-estimate-metrics > span:last-child {
+  border-color: color-mix(in srgb, var(--warning) 56%, transparent);
+}
+
+.plan-import-estimate-section small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.plan-import-estimate-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
 .plan-import-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
