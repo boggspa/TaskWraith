@@ -148,6 +148,10 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var workspaces: [WorkspaceSummary] = []
     /// Latest thread snapshot per taskId/threadId (drives the detail view).
     @Published public private(set) var threadSnapshots: [String: RemoteThreadSnapshot] = [:]
+    /// Run summaries the phone hid when the user sent a follow-up turn. The Mac
+    /// may continue projecting old terminal summaries until the next run
+    /// finishes, so filter those exact old summaries out of later snapshots.
+    private var hiddenRunSummaryFingerprintsByThread: [String: Set<String>] = [:]
     /// Per-provider model catalogs (same source as the desktop picker) —
     /// arrives shortly after establish; empty until then.
     @Published public private(set) var providerModels: [String: [ModelOption]] = [:]
@@ -1206,26 +1210,28 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func mergeThreadSnapshot(_ incoming: RemoteThreadSnapshot, key: String) {
+        let filteredIncoming = snapshotFilteringHiddenRunSummaries(incoming, key: key)
         guard let current = threadSnapshots[key] else {
-            threadSnapshots[key] = incoming
+            threadSnapshots[key] = filteredIncoming
             return
         }
+        let filteredCurrent = snapshotFilteringHiddenRunSummaries(current, key: key)
 
-        let incomingRows = incoming.rows ?? []
-        let currentRows = current.rows ?? []
+        let incomingRows = filteredIncoming.rows ?? []
+        let currentRows = filteredCurrent.rows ?? []
         if incomingRows.isEmpty {
             return
         }
         guard !currentRows.isEmpty else {
             threadSnapshots[key] = mergedSnapshot(
-                base: incoming, fallback: current, rows: incomingRows,
-                windowStartIndex: windowStart(for: incoming),
-                totalRows: bestTotalRows(incoming, current))
+                base: filteredIncoming, fallback: filteredCurrent, rows: incomingRows,
+                windowStartIndex: windowStart(for: filteredIncoming),
+                totalRows: bestTotalRows(filteredIncoming, filteredCurrent))
             return
         }
 
-        let incomingStart = windowStart(for: incoming)
-        let currentStart = windowStart(for: current)
+        let incomingStart = windowStart(for: filteredIncoming)
+        let currentStart = windowStart(for: filteredCurrent)
         var rowsById: [String: (index: Int, row: RemoteThreadSnapshot.Row)] = [:]
 
         for (offset, row) in currentRows.enumerated() {
@@ -1241,10 +1247,119 @@ public final class RemoteSessionModel: ObservableObject {
         }
         let rows = orderedPairs.map(\.row)
         let start = orderedPairs.map(\.index).min() ?? min(incomingStart, currentStart)
-        let totalRows = bestTotalRows(incoming, current)
+        let totalRows = bestTotalRows(filteredIncoming, filteredCurrent)
         threadSnapshots[key] = mergedSnapshot(
-            base: incoming, fallback: current, rows: rows, windowStartIndex: start,
+            base: filteredIncoming, fallback: filteredCurrent, rows: rows, windowStartIndex: start,
             totalRows: totalRows)
+    }
+
+    private func currentRunSummaryFingerprints(
+        threadId: String, fallbackRunId: String? = nil,
+        fallbackEnsembleRoundId: String? = nil
+    ) -> Set<String> {
+        var fingerprints: Set<String> = []
+        if let fallback = Self.runSummaryFingerprint(runId: fallbackRunId) {
+            fingerprints.insert(fallback)
+        }
+        if let fallback = Self.runSummaryFingerprint(ensembleRoundId: fallbackEnsembleRoundId) {
+            fingerprints.insert(fallback)
+        }
+        guard let snapshot = threadSnapshots[threadId] else { return fingerprints }
+        if let runSummary = snapshot.runSummary {
+            fingerprints.formUnion(Self.runSummaryFingerprints(runSummary))
+        }
+        for summary in snapshot.runSummaries ?? [] {
+            fingerprints.formUnion(Self.runSummaryFingerprints(summary))
+        }
+        return fingerprints
+    }
+
+    private func hideRunSummaryFingerprintsForNextTurn(
+        _ fingerprints: Set<String>, threadId: String
+    ) {
+        guard !fingerprints.isEmpty else { return }
+        hiddenRunSummaryFingerprintsByThread[threadId, default: []].formUnion(fingerprints)
+        guard let snapshot = threadSnapshots[threadId] else { return }
+        threadSnapshots[threadId] = snapshotFilteringHiddenRunSummaries(snapshot, key: threadId)
+    }
+
+    private func snapshotFilteringHiddenRunSummaries(
+        _ snapshot: RemoteThreadSnapshot, key: String
+    ) -> RemoteThreadSnapshot {
+        guard let hidden = hiddenRunSummaryFingerprintsByThread[key], !hidden.isEmpty else {
+            return snapshot
+        }
+        let runSummary = snapshot.runSummary.flatMap { summary in
+            Self.runSummaryIsHidden(summary, hidden: hidden) ? nil : summary
+        }
+        let runSummaries = snapshot.runSummaries.flatMap { summaries in
+            let visible = summaries.filter { !Self.runSummaryIsHidden($0, hidden: hidden) }
+            return visible.isEmpty && !summaries.isEmpty ? nil : visible
+        }
+        return RemoteThreadSnapshot(
+            threadId: snapshot.threadId,
+            taskId: snapshot.taskId,
+            workspaceId: snapshot.workspaceId,
+            provider: snapshot.provider,
+            rows: snapshot.rows,
+            totalRows: snapshot.totalRows,
+            runSummary: runSummary,
+            notes: snapshot.notes,
+            pinnedRows: snapshot.pinnedRows,
+            blackboardEntries: snapshot.blackboardEntries,
+            runSummaries: runSummaries,
+            windowStartIndex: snapshot.windowStartIndex,
+            hasMoreAbove: snapshot.hasMoreAbove,
+            hasMoreBelow: snapshot.hasMoreBelow)
+    }
+
+    private static func runSummaryIsHidden(
+        _ summary: RemoteThreadSnapshot.RunSummary, hidden: Set<String>
+    ) -> Bool {
+        !hidden.isDisjoint(with: runSummaryFingerprints(summary))
+    }
+
+    private static func runSummaryFingerprints(
+        _ summary: RemoteThreadSnapshot.RunSummary
+    ) -> Set<String> {
+        var fingerprints: Set<String> = []
+        if let runFingerprint = runSummaryFingerprint(runId: summary.runId) {
+            fingerprints.insert(runFingerprint)
+        }
+        if let roundFingerprint = runSummaryFingerprint(ensembleRoundId: summary.ensembleRoundId) {
+            fingerprints.insert(roundFingerprint)
+        }
+        if !fingerprints.isEmpty {
+            return fingerprints
+        }
+        var parts: [String] = []
+        parts.append(summary.ensembleRoundId ?? "")
+        parts.append(summary.provider ?? "")
+        parts.append(summary.model ?? "")
+        parts.append(summary.status ?? "")
+        parts.append(summary.startedAt ?? "")
+        parts.append(summary.endedAt ?? "")
+        parts.append(summary.durationMs.map(String.init) ?? "")
+        parts.append(summary.totalTokens.map(String.init) ?? "")
+        parts.append(summary.tokensIn.map(String.init) ?? "")
+        parts.append(summary.tokensOut.map(String.init) ?? "")
+        parts.append(summary.costText ?? "")
+        fingerprints.insert("summary:\(parts.joined(separator: "|"))")
+        return fingerprints
+    }
+
+    private static func runSummaryFingerprint(runId: String?) -> String? {
+        guard let runId = runId?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !runId.isEmpty
+        else { return nil }
+        return "run:\(runId)"
+    }
+
+    private static func runSummaryFingerprint(ensembleRoundId: String?) -> String? {
+        guard let ensembleRoundId = ensembleRoundId?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !ensembleRoundId.isEmpty
+        else { return nil }
+        return "round:\(ensembleRoundId)"
     }
 
     private func mergedSnapshot(
@@ -1268,14 +1383,104 @@ public final class RemoteSessionModel: ObservableObject {
             provider: base.provider ?? fallback.provider,
             rows: rows,
             totalRows: totalRows ?? base.totalRows ?? fallback.totalRows,
-            runSummary: base.runSummary ?? fallback.runSummary,
+            runSummary: mergedRunSummary(base: base.runSummary, fallback: fallback.runSummary),
             notes: base.notes ?? fallback.notes,
             pinnedRows: base.pinnedRows ?? fallback.pinnedRows,
             blackboardEntries: base.blackboardEntries ?? fallback.blackboardEntries,
-            runSummaries: base.runSummaries ?? fallback.runSummaries,
+            runSummaries: mergedRunSummaries(base: base, fallback: fallback),
             windowStartIndex: windowStartIndex,
             hasMoreAbove: windowStartIndex > 0,
             hasMoreBelow: hasMoreBelow)
+    }
+
+    private func mergedRunSummary(
+        base: RemoteThreadSnapshot.RunSummary?,
+        fallback: RemoteThreadSnapshot.RunSummary?
+    ) -> RemoteThreadSnapshot.RunSummary? {
+        guard let base else { return fallback }
+        guard let fallback else { return base }
+        guard Self.runSummaryMergeKey(base) == Self.runSummaryMergeKey(fallback) else {
+            return base
+        }
+        return Self.preferredRunSummary(base, fallback)
+    }
+
+    private func mergedRunSummaries(
+        base: RemoteThreadSnapshot,
+        fallback: RemoteThreadSnapshot
+    ) -> [RemoteThreadSnapshot.RunSummary]? {
+        guard base.runSummaries != nil || fallback.runSummaries != nil else { return nil }
+        let fallbackSummaries = fallback.runSummaries ?? [fallback.runSummary].compactMap { $0 }
+        let baseSummaries = base.runSummaries ?? [base.runSummary].compactMap { $0 }
+        var order: [String] = []
+        var summariesByKey: [String: RemoteThreadSnapshot.RunSummary] = [:]
+        for summary in fallbackSummaries + baseSummaries {
+            let key = Self.runSummaryMergeKey(summary)
+            if let existing = summariesByKey[key] {
+                summariesByKey[key] = Self.preferredRunSummary(summary, existing)
+            } else {
+                order.append(key)
+                summariesByKey[key] = summary
+            }
+        }
+        return order.compactMap { summariesByKey[$0] }
+    }
+
+    private static func runSummaryMergeKey(_ summary: RemoteThreadSnapshot.RunSummary) -> String {
+        if let runFingerprint = runSummaryFingerprint(runId: summary.runId) {
+            return runFingerprint
+        }
+        if let roundFingerprint = runSummaryFingerprint(ensembleRoundId: summary.ensembleRoundId) {
+            return roundFingerprint
+        }
+        return runSummaryFingerprints(summary).sorted().joined(separator: "\n")
+    }
+
+    private static func preferredRunSummary(
+        _ candidate: RemoteThreadSnapshot.RunSummary,
+        _ existing: RemoteThreadSnapshot.RunSummary
+    ) -> RemoteThreadSnapshot.RunSummary {
+        let candidateTerminal = isTerminalRunSummary(candidate)
+        let existingTerminal = isTerminalRunSummary(existing)
+        if candidateTerminal != existingTerminal {
+            return candidateTerminal ? candidate : existing
+        }
+        let candidateScore = runSummaryCompletenessScore(candidate)
+        let existingScore = runSummaryCompletenessScore(existing)
+        if candidateScore != existingScore {
+            return candidateScore > existingScore ? candidate : existing
+        }
+        return existing
+    }
+
+    private static func runSummaryCompletenessScore(
+        _ summary: RemoteThreadSnapshot.RunSummary
+    ) -> Int {
+        var score = 0
+        if summary.status != nil { score += 1 }
+        if summary.startedAt != nil { score += 1 }
+        if summary.endedAt != nil { score += 1 }
+        if summary.durationMs != nil { score += 1 }
+        if summary.totalTokens != nil { score += 1 }
+        if summary.tokensIn != nil { score += 1 }
+        if summary.tokensOut != nil { score += 1 }
+        if summary.costText != nil { score += 1 }
+        if let fileChanges = summary.fileChanges {
+            score += 2
+            if fileChanges.filesChanged != nil { score += 1 }
+            if fileChanges.additions != nil { score += 1 }
+            if fileChanges.deletions != nil { score += 1 }
+            if fileChanges.createdFiles != nil { score += 1 }
+            if fileChanges.modifiedFiles != nil { score += 1 }
+            if fileChanges.deletedFiles != nil { score += 1 }
+            score += min(fileChanges.files?.count ?? 0, 12)
+        }
+        return score
+    }
+
+    private static func isTerminalRunSummary(_ summary: RemoteThreadSnapshot.RunSummary) -> Bool {
+        guard let status = summary.status, !status.isEmpty else { return false }
+        return status != "running"
     }
 
     private func windowStart(for snapshot: RemoteThreadSnapshot) -> Int {
@@ -2280,13 +2485,31 @@ public final class RemoteSessionModel: ObservableObject {
         // clamps their turns to plan mode (no file mutation).
         let cardWorkspace = (card.workspaceId ?? "").isEmpty ? nil : card.workspaceId
         let ws = cardWorkspace ?? "global"
+        let ensembleRoundId =
+            card.isEnsemble ? (ensembleStates[card.id]?.roundId ?? ensembleStates[thread]?.roundId) : nil
+        let threadSummaryFingerprints: Set<String> = currentRunSummaryFingerprints(
+            threadId: thread, fallbackRunId: card.runId, fallbackEnsembleRoundId: ensembleRoundId)
+        let cardSummaryFingerprints: Set<String> =
+            card.id != thread
+            ? currentRunSummaryFingerprints(
+                threadId: card.id, fallbackRunId: card.runId,
+                fallbackEnsembleRoundId: ensembleRoundId) : []
         if card.isEnsemble {
             send(
                 BridgeAction.ensembleSteer(
                     workspaceId: ws, threadId: thread, text: prompt,
                     imageAttachments: imageAttachments),
                 successLabel: "Sent to ensemble.",
-                navigateOnAck: navigateOnAck)
+                navigateOnAck: navigateOnAck,
+                onAck: { [weak self] accepted in
+                    guard accepted else { return }
+                    self?.hideRunSummaryFingerprintsForNextTurn(
+                        threadSummaryFingerprints, threadId: thread)
+                    if card.id != thread {
+                        self?.hideRunSummaryFingerprintsForNextTurn(
+                            cardSummaryFingerprints, threadId: card.id)
+                    }
+                })
         } else {
             guard let provider = providerOverride ?? card.provider else { return }
             send(
@@ -2298,7 +2521,16 @@ public final class RemoteSessionModel: ObservableObject {
                     imageAttachments: imageAttachments),
                 timeoutMs: 12_000,
                 successLabel: "Sent.",
-                navigateOnAck: navigateOnAck)
+                navigateOnAck: navigateOnAck,
+                onAck: { [weak self] accepted in
+                    guard accepted else { return }
+                    self?.hideRunSummaryFingerprintsForNextTurn(
+                        threadSummaryFingerprints, threadId: thread)
+                    if card.id != thread {
+                        self?.hideRunSummaryFingerprintsForNextTurn(
+                            cardSummaryFingerprints, threadId: card.id)
+                    }
+                })
         }
         scheduleThreadRefresh(thread)
     }
