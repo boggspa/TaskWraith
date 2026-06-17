@@ -377,6 +377,46 @@ describe('runOllamaProvider streaming', () => {
     expect(lines.some((line) => line.payload.type === 'result')).toBe(false)
   })
 
+  it('fails the run when an Ollama error arrives after streamed content', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: { role: 'assistant', content: 'Partial answer before failure. ' }
+          }),
+          JSON.stringify({ error: 'runner crashed' })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(
+      lines.filter((line) => line.payload.type === 'content').map((line) => line.payload.text)
+    ).toEqual(['Partial answer before failure. '])
+    expect(errors).toEqual([{ provider: 'ollama', error: 'runner crashed', route: baseRoute }])
+    expect(exits).toEqual([{ provider: 'ollama', code: 1, route: baseRoute }])
+    expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'failed' })
+    expect(lines.some((line) => line.payload.type === 'result')).toBe(false)
+  })
+
   it('does not stream a degenerate stub that is rejected and retried', async () => {
     let chatCalls = 0
     const fetchMock = vi.fn(async (url: string) => {
