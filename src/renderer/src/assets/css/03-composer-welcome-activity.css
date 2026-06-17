@@ -5986,6 +5986,45 @@
   letter-spacing: 0.04em;
 }
 
+.plan-import-fear-section {
+  gap: var(--space-xs);
+}
+
+.plan-import-fear-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-import-fear-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  min-width: 0;
+}
+
+.plan-import-fear-list strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.plan-import-fear-list div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.plan-import-fear-list small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .plan-import-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

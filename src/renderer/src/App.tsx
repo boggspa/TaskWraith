@@ -19554,6 +19554,29 @@ function App(): React.JSX.Element {
                             ))}
                           </div>
                         )}
+                        {pendingPlanImport.contract.fearTranslations.length > 0 && (
+                          <div className="plan-import-section plan-import-fear-section">
+                            <span>Requested restrictions recognized</span>
+                            <ul className="plan-import-fear-list">
+                              {pendingPlanImport.contract.fearTranslations.map((translation) => (
+                                <li
+                                  key={`${translation.sourceText}-${translation.requestedSignals.join('-')}`}
+                                >
+                                  <strong>{translation.sourceText}</strong>
+                                  <div>
+                                    {translation.requestedSignals.map((signal) => (
+                                      <span key={signal} className="plan-import-chip detected">
+                                        {PLAN_IMPORT_CHIP_LABELS[signal]}
+                                      </span>
+                                    ))}
+                                  </div>
+                                  <small>Requested signals only; enforced policy is shown above.</small>
+                                  <small>{translation.note}</small>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
 
                         <div className="plan-import-grid">
                           <div className="plan-import-section">

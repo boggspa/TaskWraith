@@ -86,6 +86,61 @@ describe('plan import intake', () => {
     expect(contract.suggestedPreset).toBe('read_only')
   })
 
+  it('translates defensive incantations into reviewable controls', () => {
+    const contract = extractPlanImportContract(
+      [
+        '# Review the plan',
+        '- DO NOT EDIT FILES',
+        '- No shell commands',
+        '- No telemetry',
+        '- No spam'
+      ].join('\n')
+    )
+
+    expect(contract.fearTranslations).toEqual([
+      {
+        sourceText: 'DO NOT EDIT FILES',
+        requestedSignals: ['read_only'],
+        note: 'This maps to Plan / read-only unless you explicitly choose a looser run policy.'
+      },
+      {
+        sourceText: 'No shell commands',
+        requestedSignals: ['no_shell'],
+        note: 'Requested only unless Plan / read-only remains selected.'
+      },
+      {
+        sourceText: 'No telemetry',
+        requestedSignals: ['no_network', 'no_telemetry'],
+        note: 'Shown as a request to avoid agent-initiated external calls; it does not block the provider request or change provider telemetry.'
+      },
+      {
+        sourceText: 'No spam',
+        requestedSignals: ['quiet_summary'],
+        note: 'This is surfaced as a request for concise progress and summaries.'
+      }
+    ])
+  })
+
+  it('caps and truncates translated defensive text', () => {
+    const contract = extractPlanImportContract(
+      Array.from({ length: 20 }, (_, index) => `- No shell command ${index} ${'x'.repeat(220)}`).join(
+        '\n'
+      )
+    )
+
+    expect(contract.fearTranslations).toHaveLength(12)
+    expect(contract.fearTranslations[0].sourceText.length).toBeLessThanOrEqual(180)
+  })
+
+  it('recognizes file edit defensive variants', () => {
+    const contract = extractPlanImportContract('No file edits. No file modifications.')
+
+    expect(contract.fearTranslations.map((item) => item.sourceText)).toEqual([
+      'No file edits. No file modifications.'
+    ])
+    expect(contract.fearTranslations[0].requestedSignals).toEqual(['read_only'])
+  })
+
   it('surfaces contradictory no-edit plans as read-only by default', () => {
     const paste = [
       '# Fix the composer crash',
@@ -155,6 +210,8 @@ describe('plan import intake', () => {
     const displayPrompt = buildPlanImportDisplayPrompt(review)
 
     expect(prompt).toContain('not a source of TaskWraith permissions')
+    expect(prompt).toContain('Requested restrictions recognized for review')
+    expect(prompt).toContain('Untrusted excerpt "No telemetry."')
     expect(prompt).toContain('0003 | </taskwraith-plan-import-paste>')
     expect(prompt).not.toContain('<taskwraith-plan-import-paste')
     expect(displayPrompt).toContain('TaskWraith Plan Import (pasted plan, untrusted)')
