@@ -466,15 +466,27 @@ byte-parity PASS, both fixes PASS.
   `surface1` fill so the per-card `.composerShell` surface shows (a11y-mode only; glass-on
   was already clean).
 
-### F.8 — Still deferred (need live iterative review)
-- **surfaceIsCapsule** (gemini/cursor) — true single-capsule input separated from the
-  telemetry rail; needs a composer-core surface refactor (lift the input surface out of the
-  shared core surface). Interim: gemini rounds at 26px.
-- **splitChromeRects** (obsidian/alabaster) — textarea + controls each their own lit rect;
-  same composer-core surface refactor. With surfaceIsCapsule, this is the genuinely-hard
-  restructure — best done with live review, not AFK.
-- **composerLayout value test** — pin every shell's layout (locks default-parity); needs the
-  pure layout map moved into TaskWraithKit (TaskWraithUI is not unit-tested by design).
-- **State-identity on live shell switch** — composerShellIf's if/else can reset the composer
-  draft if the user switches shell mid-compose; fix via an always-applied, no-op-capable
-  modifier. (LOW — mid-compose shell switch is rare.)
+### F.8 — Done in CS12 (input-owns-surface / bottom-row parity)
+The bottom rows (control row + telemetry) fused into ONE container for solid shells; desktop
+frames only the input and floats the footer bare/separate. Fixed via `surfaceWrapsInputOnly`
++ the computed `inputOwnsSurface` (= surfaceWrapsInputOnly || surfaceIsCapsule ||
+splitChromeRects): the shell surface wraps ONLY the input (composerInputBody.composerShellIf),
+the core card is no longer wrapped, and the footer is bare (claude), its own rect
+(obsidian/alabaster splitChromeRects), or under a capsule input (gemini/cursor
+surfaceIsCapsule; cursor radius 26). codex fuses its control row into the #252525 inner
+module; satellite/modular drop the stray divider; a 6px gap separates the framed input from
+the bare footer. default/grok/kimi/terminal/stub stay ONE merged surface — 3-agent
+re-verified byte-identical.
+
+### F.9 — Still deferred (need live iterative review)
+- **liftedSend** (claude/gemini/cursor/obsidian/alabaster) — float the send into the input
+  bubble/capsule bottom-right corner (today it sits inline at the input's trailing edge,
+  which is close for 1–2 lines). Overlay positioning.
+- **controlsAsPlainText** (cursor/satellite/obsidian/alabaster) — flatten the approval/guest
+  chips to bare text on the now-bare footer (the model picker is already flat).
+- **Theme-immune footer legibility** — cursor/gemini lock a dark palette but the bare footer
+  chrome (chips, telemetry) is theme-following → mismatch on a light app theme; the footer
+  should adopt the shell palette for theme-immune shells.
+- **composerLayout value test** (needs the pure layout map moved into TaskWraithKit) +
+  **state-identity on live shell switch** (composerShellIf if/else can reset the draft
+  mid-compose — LOW).
