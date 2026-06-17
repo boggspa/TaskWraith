@@ -3062,8 +3062,28 @@
   border-color: color-mix(in srgb, #f4a35d 24%, transparent);
 }
 
-[data-interface-style="codex"] .app-sidebar .sidebar-chat-title,
-[data-interface-style="claude"] .app-sidebar .sidebar-chat-title {
+[data-interface-style="codex"] .app-sidebar :is(.sidebar-chat-title, .sidebar-recents-label),
+[data-interface-style="codex"] .app-sidebar .sidebar-pinned-item:is(
+  .provider-gemini,
+  .provider-codex,
+  .provider-claude,
+  .provider-kimi,
+  .provider-grok,
+  .provider-cursor,
+  .provider-ollama,
+  .provider-ensemble
+) .sidebar-pinned-label,
+[data-interface-style="claude"] .app-sidebar :is(.sidebar-chat-title, .sidebar-recents-label),
+[data-interface-style="claude"] .app-sidebar .sidebar-pinned-item:is(
+  .provider-gemini,
+  .provider-codex,
+  .provider-claude,
+  .provider-kimi,
+  .provider-grok,
+  .provider-cursor,
+  .provider-ollama,
+  .provider-ensemble
+) .sidebar-pinned-label {
   font-weight: 500;
   letter-spacing: 0;
 }
