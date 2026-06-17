@@ -1,6 +1,16 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MascotGhost } from './AppChromeSymbols'
+import {
+  ArrowUpSendIcon,
+  ClaudeReturnSymbolIcon,
+  CopyResponseIcon,
+  FolderSymbolIcon,
+  GoalSymbolIcon,
+  MascotGhost,
+  RunSymbolIcon,
+  ScreenWatchSymbolIcon
+} from './AppChromeSymbols'
+import { ComposerCumulativeTimecode, ComposerRunTimecode } from './ComposerTimecodes'
 import type {
   AgenticNetworkPolicy,
   AgenticServiceId,
@@ -2613,53 +2623,62 @@ export function SettingsPanel({
                   >
                     <div className="composer-above-bar-stack">
                       <div className="composer-above-bar style-unified">
-                        <span className="composer-above-bar-branch">
-                          <svg
-                            width="13"
-                            height="13"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            aria-hidden
+                        <div className="composer-above-bar-pill composer-above-bar-pill--git">
+                          <span className="composer-above-bar-branch">
+                            <svg
+                              width="13"
+                              height="13"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.4"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden
+                            >
+                              <circle cx="4" cy="3.5" r="1.6" />
+                              <circle cx="4" cy="12.5" r="1.6" />
+                              <circle cx="12" cy="7" r="1.6" />
+                              <path d="M4 5.1v5.8M5.6 7c2 0 4.8 0 4.8-1.5" />
+                            </svg>
+                            <span>
+                              Preview workspace ·{' '}
+                              <em className="composer-above-bar-secondary-branch git-tone-main">
+                                main
+                              </em>
+                            </span>
+                          </span>
+                        </div>
+                        <div className="composer-above-bar-pill composer-above-bar-pill--changes">
+                          <span className="composer-above-bar-files-cluster">
+                            <span className="composer-above-bar-files">
+                              <strong>2</strong> files changed
+                            </span>
+                            <span className="composer-above-bar-stats">
+                              <span className="composer-diff-add">+42</span>
+                              <span className="composer-diff-del">-8</span>
+                            </span>
+                          </span>
+                        </div>
+                        <div className="composer-above-bar-pill composer-above-bar-pill--action">
+                          <button
+                            type="button"
+                            className="composer-above-bar-action"
+                            tabIndex={-1}
+                            aria-hidden="true"
                           >
-                            <circle cx="4" cy="3.5" r="1.6" />
-                            <circle cx="4" cy="12.5" r="1.6" />
-                            <circle cx="12" cy="7" r="1.6" />
-                            <path d="M4 5.1v5.8M5.6 7c2 0 4.8 0 4.8-1.5" />
-                          </svg>
-                          <span>
-                            Preview workspace ·{' '}
-                            <em className="composer-above-bar-secondary-branch">main</em>
-                          </span>
-                        </span>
-                        <span className="composer-above-bar-files-cluster">
-                          <span className="composer-above-bar-files">
-                            <strong>2</strong> files changed
-                          </span>
-                          <span className="composer-above-bar-stats">
-                            <span className="composer-diff-add">+42</span>
-                            <span className="composer-diff-del">-8</span>
-                          </span>
-                        </span>
-                        <button
-                          type="button"
-                          className="composer-above-bar-action"
-                          tabIndex={-1}
-                          aria-hidden="true"
-                        >
-                          {composerStyle === 'codex' || composerStyle === 'grok'
-                            ? 'Create PR'
-                            : 'Review changes'}
-                        </button>
+                            {composerStyle === 'codex' || composerStyle === 'grok'
+                              ? 'Create PR'
+                              : 'Review changes'}
+                          </button>
+                        </div>
                       </div>
                     </div>
                     <div className="composer-surface settings-composer-preview-surface">
                       <div className="composer-chips" aria-hidden="true">
                         <span className="composer-chip">Branch: main</span>
                         <span className="composer-chip accent">Preview only</span>
+                        <span className="composer-chip">2 queued</span>
                       </div>
                       {/*
                         1.0.6-EW68/EW70 — .composer-textarea-wrap +
@@ -2740,7 +2759,6 @@ export function SettingsPanel({
                                     />
                                   </svg>
                                 </span>
-                                <span className="composer-thread-token-tally">44%</span>
                                 <span className="composer-send-cluster">
                                   <button
                                     type="button"
@@ -2748,13 +2766,77 @@ export function SettingsPanel({
                                     tabIndex={-1}
                                     aria-label="Preview send button"
                                   >
-                                    ↑
+                                    {composerStyle === 'claude' ? (
+                                      <ClaudeReturnSymbolIcon />
+                                    ) : composerStyle === 'codex' ||
+                                      composerStyle === 'gemini' ||
+                                      composerStyle === 'cursor' ||
+                                      composerStyle === 'grok' ||
+                                      composerStyle === 'kimi' ? (
+                                      <ArrowUpSendIcon />
+                                    ) : (
+                                      <RunSymbolIcon />
+                                    )}
                                   </button>
                                 </span>
                               </div>
                             </div>
                           </div>
                         </div>
+                      </div>
+                      {/* Composer telemetry rail (run/cumulative timecodes,
+                          Screen-Watch, goal, copy-transcript, the workspace
+                          switcher chip, and the token/cost tally) — a sibling of
+                          .composer-inner-module inside .composer-surface, matching
+                          the live composer. Static/inert in the preview. */}
+                      <div
+                        className="composer-telemetry-row"
+                        data-has-token-tally="true"
+                        aria-hidden="true"
+                      >
+                        <ComposerRunTimecode running={false} startedAt={null} />
+                        <ComposerCumulativeTimecode
+                          running={false}
+                          startedAt={null}
+                          cumulativeBaseMs={0}
+                        />
+                        <button
+                          type="button"
+                          className="composer-screen-watch-button settings-composer-preview-control"
+                          tabIndex={-1}
+                        >
+                          <ScreenWatchSymbolIcon />
+                        </button>
+                        <span className="composer-goal-control-wrap">
+                          <button
+                            type="button"
+                            className="composer-goal-button is-idle settings-composer-preview-control"
+                            tabIndex={-1}
+                          >
+                            <GoalSymbolIcon />
+                          </button>
+                        </span>
+                        <span className="composer-copy-transcript-wrap">
+                          <button
+                            type="button"
+                            className="composer-copy-transcript-button settings-composer-preview-control"
+                            tabIndex={-1}
+                          >
+                            <CopyResponseIcon />
+                          </button>
+                        </span>
+                        <button
+                          type="button"
+                          className="composer-picker-label composer-workspace-button settings-composer-preview-control"
+                          data-composer-control="workspace"
+                          tabIndex={-1}
+                        >
+                          <FolderSymbolIcon />
+                          <span className="composer-workspace-button-label">
+                            Preview workspace +1
+                          </span>
+                        </button>
+                        <span className="composer-thread-token-tally">1.2M in / 5k out</span>
                       </div>
                     </div>
                   </div>

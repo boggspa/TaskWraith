@@ -343,6 +343,26 @@
   transform: none;
 }
 
+/* Telemetry-rail glyphs added to the composer preview are inert static
+   stand-ins for the live run timer / screen-watch / goal / copy / workspace
+   controls — render them non-interactive like the rest of the preview. */
+.settings-composer-preview-area .composer-telemetry-row .composer-screen-watch-button,
+.settings-composer-preview-area .composer-telemetry-row .composer-goal-button,
+.settings-composer-preview-area .composer-telemetry-row .composer-copy-transcript-button,
+.settings-composer-preview-area .composer-telemetry-row .composer-workspace-button,
+.settings-composer-preview-area .composer-telemetry-row .composer-run-timecode {
+  cursor: default;
+  pointer-events: none;
+}
+
+.settings-composer-preview-area .composer-telemetry-row .composer-screen-watch-button:hover,
+.settings-composer-preview-area .composer-telemetry-row .composer-goal-button:hover,
+.settings-composer-preview-area .composer-telemetry-row .composer-copy-transcript-button:hover,
+.settings-composer-preview-area .composer-telemetry-row .composer-workspace-button:hover,
+.settings-composer-preview-area .composer-telemetry-row .composer-run-timecode:hover {
+  transform: none;
+}
+
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .settings-composer-preview-card[data-composer-style="codex"]
   .composer-above-bar,
@@ -498,6 +518,20 @@
     inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 20%, rgba(255, 255, 255, 0.14)),
     inset 0 0 14px color-mix(in srgb, var(--text-primary) 5%, transparent),
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+
+/* TELEMETRY ROW — the live native composer relocates the row to a transparent,
+ * border-less seamless bar (the `[data-composer-style="default"] .app-transcript
+ * .composer-telemetry-row` rule in shard 03). That selector is .app-transcript-
+ * gated, so it never reaches the preview card — the row otherwise falls back to
+ * the global base rule's top divider + wider margins, which reads as a stray
+ * line under the controls. Re-create the relocated treatment here so the native
+ * preview's telemetry rail flows seamlessly like the real shell. */
+.settings-composer-preview-card[data-composer-style="default"] .composer-telemetry-row {
+  background: transparent;
+  border-top: 0;
+  margin: 0 6px;
+  padding: 2px 4px 0;
 }
 
 /* Model usage tab — cross-provider quota dashboard.
