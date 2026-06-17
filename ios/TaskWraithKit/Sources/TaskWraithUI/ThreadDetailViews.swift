@@ -1131,7 +1131,7 @@ struct ThreadEmptyWelcomeCanvas: View {
 
     private var hero: some View {
         VStack(spacing: 10) {
-            MastheadLogoView(size: 46)
+            GhostMonolineMarkView(size: 46)
                 .shadow(color: accent.opacity(0.45), radius: 18)
             Group {
                 switch titleParts {
