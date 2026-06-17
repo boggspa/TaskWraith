@@ -856,11 +856,6 @@ export function FirstLaunchSheet({
                     </div>
                   </div>
                   <div className="composer-surface settings-composer-preview-surface">
-                    <div className="composer-chips" aria-hidden="true">
-                      <span className="composer-chip">Branch: main</span>
-                      <span className="composer-chip accent">Preview only</span>
-                      <span className="composer-chip">2 queued</span>
-                    </div>
                     {/*
                       1.0.6-EW68/EW70 — wrap the textarea + control rows
                       in .composer-textarea-wrap / .composer-bottom-controls

@@ -422,61 +422,50 @@
  * untouched. The card carries both `data-composer-style` and
  * `data-theme`, so the light-theme split keys off the same card. */
 
-/* OUTER frame — gray glass bezel (matches live native composer). */
-.settings-composer-preview-card[data-composer-style="default"] .composer-surface {
-  background: color-mix(in srgb, var(--surface-2) 46%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 22%, rgba(255, 255, 255, 0.1)),
-    inset 0 0 14px color-mix(in srgb, var(--text-primary) 5%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent);
+/* OUTER FRAME — merge the above-bar-stack + surface into ONE native-instrument
+ * frame, mirroring the live composer (03:3240-3303). Those real rules are
+ * `.app-transcript`-gated, so they never reach the static preview card — without
+ * them the above-bar rendered as a detached bezel instead of the rounded TOP of
+ * the shell. The --native-instrument-* vars are theme-adaptive, so a single set
+ * of rules covers light + dark (no per-theme variants needed). Stack = rounded
+ * TOP of the frame; each above-row is flush + chrome-less inside it; the surface
+ * is pulled flush as the rounded BOTTOM with a hairline seam. */
+.settings-composer-preview-card[data-composer-style="default"] .composer-above-bar-stack {
+  gap: 0;
+  background: var(--native-instrument-glass-bg);
+  border: 1px solid var(--native-instrument-glass-border);
+  border-bottom: none;
+  border-radius: calc(var(--radius-lg) * 2.45) calc(var(--radius-lg) * 2.45) 0 0;
+  box-shadow: var(--native-instrument-outer-shadow, var(--composer-shadow));
 }
-:is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
-  )
-  .settings-composer-preview-card[data-composer-style="default"]
-  .composer-surface {
-  background: color-mix(in srgb, var(--surface-2) 58%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 18%, rgba(255, 255, 255, 0.12)),
-    inset 0 0 14px color-mix(in srgb, var(--text-primary) 4%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent);
+.settings-composer-preview-card[data-composer-style="default"] .composer-above-bar-stack > * {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
-/* Kill the surface side-vignette so the frame reads as a clean bezel. */
-.settings-composer-preview-card[data-composer-style="default"] .composer-surface::before {
+.settings-composer-preview-card[data-composer-style="default"]
+  .composer-above-bar-stack
+  > * + * {
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+.settings-composer-preview-card[data-composer-style="default"] .composer-above-bar::before {
   background: none !important;
   box-shadow: none !important;
 }
-
-/* ABOVE-BAR — match the gray glass frame + kill its own side-vignette. */
-.settings-composer-preview-card[data-composer-style="default"] .composer-above-bar {
-  background: color-mix(in srgb, var(--surface-2) 46%, transparent);
-  border-color: color-mix(in srgb, var(--text-primary) 17%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 22%, rgba(255, 255, 255, 0.1)),
-    inset 0 0 14px color-mix(in srgb, var(--text-primary) 5%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent);
+/* SURFACE — rounded BOTTOM of the merged frame: same instrument tone, pulled
+ * flush under the stack with squared top corners + a hairline seam divider. */
+.settings-composer-preview-card[data-composer-style="default"] .composer-surface {
+  background: var(--native-instrument-glass-bg);
+  border-color: var(--native-instrument-glass-border);
+  box-shadow: var(--native-instrument-outer-shadow, var(--composer-shadow));
+  margin-top: calc(-1 * var(--space-sm));
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
-:is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
-  )
-  .settings-composer-preview-card[data-composer-style="default"]
-  .composer-above-bar {
-  background: color-mix(in srgb, var(--surface-2) 58%, transparent);
-  border-color: color-mix(in srgb, var(--text-primary) 12%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 18%, rgba(255, 255, 255, 0.12)),
-    inset 0 0 14px color-mix(in srgb, var(--text-primary) 4%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent);
-}
-.settings-composer-preview-card[data-composer-style="default"] .composer-above-bar::before {
+.settings-composer-preview-card[data-composer-style="default"] .composer-surface::before {
   background: none !important;
   box-shadow: none !important;
 }
