@@ -17,7 +17,12 @@ public enum ComposerShellResolver {
         _ style: TWComposerStyle,
         context: ComposerShellContext
     ) -> ResolvedComposerShell {
-        let base = recipe(for: style.renderStyle, context: context)
+        var base = recipe(for: style.renderStyle, context: context)
+        // CS10 — structural LAYOUT is resolved centrally (one switch shows every
+        // shell's arrangement at a glance) and overrides whatever a recipe
+        // carried. The host views (ComposerView.body, composerShellStack, …)
+        // branch on base.layout.
+        base.layout = composerLayout(for: style.renderStyle)
         return applyAccessibility(base, context: context)
     }
 
@@ -63,6 +68,52 @@ public enum ComposerShellResolver {
             resolved.effects.remove(.rimChase)
         }
         return resolved
+    }
+
+    /// CS10 — the STRUCTURAL layout per shell (controls position, detached
+    /// above-rows, lifted send, capsule input, two-surface split, plain-text
+    /// chips). Verified against the desktop CSS + the light/dark screenshot
+    /// matrix (design-assets/TaskWraith Composer Shell Electron Variants/) by a
+    /// 22-agent extract+refute pass. Kept central so the whole shell→layout map
+    /// reads at a glance. `default` is the signed-off iOS arrangement (all-false
+    /// `.standard`); EVERY non-default shell drops its controls BELOW the
+    /// textarea, and all but grok DETACH their above-rows into floating cards.
+    static func composerLayout(for style: TWComposerStyle) -> ComposerShellLayout {
+        switch style {
+        case .defaultShell, .unknown:
+            return .standard
+        case .codex, .kimi, .modular, .terminal, .stub:
+            // Controls below + detached above-rows (no capsule/lift/split/text).
+            return ComposerShellLayout(controlsBelowTextarea: true, detachedAboveRows: true)
+        case .grok:
+            // The lone non-default shell that does NOT detach — grok tucks the
+            // above-rows behind the composer lip (one merged card).
+            return ComposerShellLayout(controlsBelowTextarea: true)
+        case .claude:
+            // Detached pill cards; send lifted to the textarea-bubble corner.
+            return ComposerShellLayout(
+                controlsBelowTextarea: true, detachedAboveRows: true, liftedSend: true)
+        case .gemini:
+            // Single capsule input; send lifted into the capsule corner.
+            return ComposerShellLayout(
+                controlsBelowTextarea: true, detachedAboveRows: true, liftedSend: true,
+                surfaceIsCapsule: true)
+        case .cursor:
+            // Gemini-style capsule clone with bare-text control satellites.
+            return ComposerShellLayout(
+                controlsBelowTextarea: true, detachedAboveRows: true, liftedSend: true,
+                surfaceIsCapsule: true, controlsAsPlainText: true)
+        case .satellite:
+            // Fully transparent floating elements; controls are bare text.
+            return ComposerShellLayout(
+                controlsBelowTextarea: true, detachedAboveRows: true, controlsAsPlainText: true)
+        case .obsidian, .alabaster:
+            // Two stacked lit rects (textarea + controls each own a rect); send
+            // lifted to the textarea corner; controls bare text.
+            return ComposerShellLayout(
+                controlsBelowTextarea: true, detachedAboveRows: true, liftedSend: true,
+                splitChromeRects: true, controlsAsPlainText: true)
+        }
     }
 
     // MARK: - Recipes
@@ -185,13 +236,7 @@ public enum ComposerShellResolver {
             effects: [.twoSurfaceSplit],
             // Hybrid theme behavior: locks its own dark palette, hand-derives
             // the light family above → NOT theme-immune (the contract reserves it for the fully-locked set: grok/cursor/terminal/obsidian/alabaster).
-            themeImmune: false,
-            // CS10 — controls render BELOW the textarea (the desktop codex
-            // inner-module is a flex COLUMN: textarea, then the control row), and
-            // the git/Create-PR/roster rows DETACH into their own floating cards
-            // above the composer (desktop rowPolicy float-above pills).
-            layout: ComposerShellLayout(
-                controlsBelowTextarea: true, detachedAboveRows: true))
+            themeImmune: false)
     }
 
     /// Claude — whisper-quiet near-monochrome dark shell mimicking Claude Code's
