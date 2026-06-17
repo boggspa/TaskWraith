@@ -472,6 +472,7 @@ describe('RemoteThreadProjection', () => {
       // Per-tool entries (desktop activity-card parity).
       expect(snap.rows[0].toolSummary?.tools).toHaveLength(2)
       expect(snap.rows[0].toolSummary?.tools?.[0]).toMatchObject({
+        toolName: 'shell',
         name: 'Shell',
         category: 'shell',
         status: 'success'

@@ -809,6 +809,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         }
         public struct ToolEntry: Codable, Sendable, Identifiable {
             public let name: String
+            public let toolName: String?
             public let category: String?
             public let status: String?
             public let file: String?
@@ -818,9 +819,11 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             public var id: String { name + (file ?? "") + (detail ?? "") }
             public init(
                 name: String, category: String?, status: String?, file: String?,
-                additions: Int?, deletions: Int?, detail: String?
+                additions: Int?, deletions: Int?, detail: String?,
+                toolName: String? = nil
             ) {
                 self.name = name
+                self.toolName = toolName
                 self.category = category
                 self.status = status
                 self.file = file

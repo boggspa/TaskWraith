@@ -373,6 +373,9 @@ export type RemoteThreadRowKind =
 export type RemoteAttentionKind = 'planChoice' | 'agentQuestion' | 'approval'
 
 export interface RemoteToolEntry {
+  /** Raw tool identifier for remote icon-family parity. `name` stays the
+   * human-facing display label. */
+  toolName?: string
   name: string
   category: 'task' | 'read' | 'write' | 'search' | 'shell' | 'unknown'
   status: 'running' | 'success' | 'error'
@@ -706,6 +709,7 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
   else status = 'success'
   const tools: RemoteToolEntry[] = activities.slice(0, 12).map((activity) => {
     const entry: RemoteToolEntry = {
+      toolName: activity.toolName,
       name: activity.displayName || activity.toolName,
       category: activity.category ?? 'unknown',
       status:
