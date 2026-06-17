@@ -6308,12 +6308,14 @@ export function SettingsPanel({
                       title="TaskWraith Tokens"
                       records={usageRecords}
                       dayCount={90}
+                      showProviderFilter
                       className="token-usage-chart--settings"
                     />
                     <TokenUsageChart
                       title="External Tokens"
                       source="external"
                       dayCount={90}
+                      showProviderFilter
                       className="token-usage-chart--settings"
                     />
                   </div>

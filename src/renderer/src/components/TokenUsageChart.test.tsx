@@ -1,6 +1,11 @@
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { UsageRecord } from '../../../main/store/types'
-import { buildTokenUsageChartData } from './TokenUsageChart'
+import {
+  buildProviderFilteredTokenUsageChartData,
+  buildTokenUsageChartData,
+  TokenUsageChart
+} from './TokenUsageChart'
 
 const record = (overrides: Partial<UsageRecord>): UsageRecord =>
   ({
@@ -58,5 +63,48 @@ describe('buildTokenUsageChartData', () => {
     expect(data.days.map((day) => day.dominantProvider)).toEqual([null, 'claude', 'codex'])
     expect(data.totalTokens).toBe(175)
     expect(data.maxTokens).toBe(100)
+  })
+
+  it('filters bars by provider while preserving the all-provider total', () => {
+    const now = new Date(2026, 5, 15, 12)
+    const data = buildProviderFilteredTokenUsageChartData(
+      [
+        record({
+          id: 'codex',
+          timestamp: new Date(2026, 5, 15, 9).getTime(),
+          provider: 'codex',
+          totalTokens: 100
+        }),
+        record({
+          id: 'claude',
+          timestamp: new Date(2026, 5, 15, 10).getTime(),
+          provider: 'claude',
+          totalTokens: 40
+        })
+      ],
+      now,
+      1,
+      'codex'
+    )
+
+    expect(data.days).toHaveLength(1)
+    expect(data.days[0].tokens).toBe(100)
+    expect(data.days[0].dominantProvider).toBe('codex')
+    expect(data.maxTokens).toBe(100)
+    expect(data.totalTokens).toBe(140)
+  })
+})
+
+describe('TokenUsageChart', () => {
+  it('renders provider isolation controls when requested', () => {
+    const html = renderToStaticMarkup(
+      <TokenUsageChart title="TaskWraith Tokens" records={[]} showProviderFilter />
+    )
+
+    for (const label of ['All', 'Codex', 'Claude', 'Gemini', 'Kimi', 'Grok', 'Cursor', 'Ollama']) {
+      expect(html).toContain(`>${label}</button>`)
+    }
+    expect(html).toContain('TaskWraith Tokens provider filter')
+    expect(html).toContain('token-usage-chart--with-provider-filter')
   })
 })

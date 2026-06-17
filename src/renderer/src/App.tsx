@@ -15967,6 +15967,7 @@ function App(): React.JSX.Element {
           records={usageRecords}
           dayCount={90}
           refreshKey={welcomeHeatmapRefreshKey}
+          showProviderFilter
           className="token-usage-chart--welcome"
         />
       )
@@ -15979,6 +15980,7 @@ function App(): React.JSX.Element {
           source="external"
           dayCount={90}
           refreshKey={welcomeHeatmapRefreshKey}
+          showProviderFilter
           className="token-usage-chart--welcome"
         />
       )

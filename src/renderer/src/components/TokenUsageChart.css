@@ -18,6 +18,12 @@
   min-width: 0;
 }
 
+.token-usage-chart--with-provider-filter .token-usage-chart-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+}
+
 .token-usage-chart-title {
   min-width: 0;
   overflow: hidden;
@@ -28,8 +34,13 @@
   white-space: nowrap;
 }
 
+.token-usage-chart-provider-filter {
+  max-width: min(100%, 460px);
+}
+
 .token-usage-chart-total {
   flex: 0 0 auto;
+  justify-self: end;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
@@ -104,5 +115,14 @@
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .token-usage-chart--with-provider-filter .token-usage-chart-header {
+    display: flex;
+  }
+
+  .token-usage-chart-provider-filter,
+  .token-usage-chart-total {
+    justify-self: start;
   }
 }

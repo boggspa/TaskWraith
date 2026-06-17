@@ -2110,6 +2110,11 @@
   background: color-mix(in srgb, var(--provider-cursor-color) 12%, transparent);
 }
 
+.usage-heatmap-provider-filter-tab.provider-ollama[data-active="true"] {
+  color: var(--provider-ollama-color);
+  background: color-mix(in srgb, var(--provider-ollama-color) 12%, transparent);
+}
+
 .usage-heatmap-chips {
   display: inline-flex;
   align-items: center;

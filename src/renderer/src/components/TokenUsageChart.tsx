@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { ProviderId, UsageRecord } from '../../../main/store/types'
-import { formatTokenCount, HEATMAP_PROVIDER_COLOR_HEX } from '../lib/UsageHeatmap'
+import {
+  formatTokenCount,
+  HEATMAP_PROVIDER_COLOR_HEX,
+  type HeatmapProviderFilter
+} from '../lib/UsageHeatmap'
 import './TokenUsageChart.css'
 
 type TokenUsageSource = 'taskwraith' | 'external'
@@ -25,10 +29,22 @@ interface TokenUsageChartProps {
   records?: UsageRecord[]
   dayCount?: number
   refreshKey?: number
+  showProviderFilter?: boolean
   className?: string
 }
 
 const tokenUsageChartCache = new Map<TokenUsageSource, UsageRecord[]>()
+
+const TOKEN_PROVIDER_FILTERS: Array<{ id: HeatmapProviderFilter; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'claude', label: 'Claude' },
+  { id: 'gemini', label: 'Gemini' },
+  { id: 'kimi', label: 'Kimi' },
+  { id: 'grok', label: 'Grok' },
+  { id: 'cursor', label: 'Cursor' },
+  { id: 'ollama', label: 'Ollama' }
+]
 
 const PROVIDER_ORDER: ProviderId[] = [
   'codex',
@@ -116,18 +132,40 @@ export function buildTokenUsageChartData(
   return { days, maxTokens, totalTokens }
 }
 
+export function buildProviderFilteredTokenUsageChartData(
+  records: UsageRecord[],
+  now: Date = new Date(),
+  dayCount = 90,
+  providerFilter: HeatmapProviderFilter = 'all'
+): TokenUsageChartData {
+  const allProviderData = buildTokenUsageChartData(records, now, dayCount)
+  if (providerFilter === 'all') return allProviderData
+
+  const filteredData = buildTokenUsageChartData(
+    records.filter((record) => record.provider === providerFilter),
+    now,
+    dayCount
+  )
+  return {
+    ...filteredData,
+    totalTokens: allProviderData.totalTokens
+  }
+}
+
 export function TokenUsageChart({
   title,
   source = 'taskwraith',
   records,
   dayCount = 90,
   refreshKey = 0,
+  showProviderFilter = false,
   className
 }: TokenUsageChartProps) {
   const [fetchedRecords, setFetchedRecords] = useState<UsageRecord[]>(
     () => tokenUsageChartCache.get(source) ?? []
   )
   const [loading, setLoading] = useState(false)
+  const [providerFilter, setProviderFilter] = useState<HeatmapProviderFilter>('all')
 
   useEffect(() => {
     if (records) {
@@ -165,10 +203,24 @@ export function TokenUsageChart({
 
   const chartRecords = records ?? fetchedRecords
   const data = useMemo(
-    () => buildTokenUsageChartData(chartRecords, new Date(), dayCount),
-    [chartRecords, dayCount]
+    () =>
+      showProviderFilter
+        ? buildProviderFilteredTokenUsageChartData(
+            chartRecords,
+            new Date(),
+            dayCount,
+            providerFilter
+          )
+        : buildTokenUsageChartData(chartRecords, new Date(), dayCount),
+    [chartRecords, dayCount, providerFilter, showProviderFilter]
   )
-  const rootClassName = ['token-usage-chart', className].filter(Boolean).join(' ')
+  const rootClassName = [
+    'token-usage-chart',
+    showProviderFilter ? 'token-usage-chart--with-provider-filter' : '',
+    className
+  ]
+    .filter(Boolean)
+    .join(' ')
   const windowLabel = `${data.days.length}D`
 
   return (
@@ -179,6 +231,25 @@ export function TokenUsageChart({
     >
       <div className="token-usage-chart-header">
         <span className="token-usage-chart-title">{title}</span>
+        {showProviderFilter && (
+          <div
+            className="usage-heatmap-provider-filter token-usage-chart-provider-filter"
+            aria-label={`${title} provider filter`}
+          >
+            {TOKEN_PROVIDER_FILTERS.map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                aria-pressed={providerFilter === filter.id}
+                className={`usage-heatmap-provider-filter-tab provider-${filter.id}`}
+                data-active={providerFilter === filter.id ? 'true' : undefined}
+                onClick={() => setProviderFilter(filter.id)}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+        )}
         <span className="token-usage-chart-total">
           {windowLabel} <strong>{formatTokenCount(data.totalTokens)}</strong> tokens
         </span>
