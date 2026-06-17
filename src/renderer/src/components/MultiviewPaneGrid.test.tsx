@@ -1,0 +1,88 @@
+import { describe, expect, it, vi } from 'vitest'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { MultiviewPaneGrid } from './MultiviewPaneGrid'
+
+const focused = () => <div id="focused-cell" />
+const viewer = (chatId: string) => <div className="viewer-cell">{chatId}</div>
+const empty = (i: number) => <div className="empty-cell" data-empty-index={i} />
+
+describe('MultiviewPaneGrid', () => {
+  it('single layout renders the focused content with no grid wrapper (zero-diff)', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="single"
+        paneChatIds={['a']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    expect(out).toBe('<div id="focused-cell"></div>')
+    expect(out).not.toContain('multiview-grid')
+  })
+
+  it('multiview lays out a grid with the focused cell + viewer cells by area', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        paneChatIds={['a', 'b']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    expect(out).toContain('multiview-grid')
+    expect(out).toContain('multiview-layout-vertical-2')
+    expect(out).toContain('multiview-cell-focused')
+    expect(out).toContain('id="focused-cell"')
+    expect(out).toContain('>b</div>') // viewer cell rendered chat 'b'
+    expect(out).toContain('grid-area:a') // focused pane in cell area 'a'
+    expect(out).toContain('grid-area:b') // viewer pane in cell area 'b'
+  })
+
+  it('renders the focused cell in whichever area the focused index maps to', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        paneChatIds={['a', 'b']}
+        focusedPaneIndex={1}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    // Focused content sits in cell area 'b'; the viewer for 'a' in area 'a'.
+    expect(out).toMatch(/grid-area:b[^>]*><div id="focused-cell">/)
+  })
+
+  it('renders the empty placeholder for null pane cells', () => {
+    const renderEmpty = vi.fn(empty)
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        paneChatIds={['a', null]}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+        renderEmptyCell={renderEmpty}
+      />
+    )
+    expect(out).toContain('empty-cell')
+    expect(renderEmpty).toHaveBeenCalledWith(1)
+  })
+
+  it('quad layout renders four cells', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="quad"
+        paneChatIds={['a', 'b', 'c', 'd']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    expect((out.match(/data-pane-index=/g) || []).length).toBe(4)
+    for (const area of ['a', 'b', 'c', 'd']) {
+      expect(out).toContain(`grid-area:${area}`)
+    }
+  })
+})
