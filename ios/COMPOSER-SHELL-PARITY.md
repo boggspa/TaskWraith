@@ -491,16 +491,16 @@ re-verified byte-identical.
   agent-aura rim (it also rims the core, consistent with terminal/stub).
 - **claude above-row radius** — `surfaceCornerRadius` 14 → 12 (slightly less round; shared
   with the input bubble; stays in claude's 10-14 band).
+- **grok "tucked tabs"** — the above-rows collapse into ONE 18pt-inset, top-rounded
+  `.composerShell` card the composer-core overlaps by 10pt (a tab peeking from behind), the
+  composer staying one full-width surface. New `tuckedAboveTab` layout flag (grok only); the
+  host wraps the inline above-rows in an inner VStack (spacing matched to the outer ⇒ non-tuck
+  byte-identical), drops the outer merged wrap, and zIndex(1)s the core. The tab carries
+  padding-top 6 / padding-bottom 14 so the overlap eclipses padding not content; the overlap
+  hides its bottom corners (no top-only-corner primitive needed). 3-agent reviewed (non-tuck
+  safety + desktop fidelity + the clip fix).
 
 ### F.11 — Still deferred (live visual review)
-- **grok "tucked tabs"** — the above-rows should collapse into ONE narrower (~18px inset),
-  top-rounded card that the composer's top edge OVERLAPS by ~10px (a tab peeking from behind),
-  with the composer staying one full-width surface. Approach (agent investigation): add a
-  `tuckedAboveTab` layout flag (grok only) + a composerShellStack branch wrapping the
-  above-rows in one inset `.composerShell` card and the composer-core in another, stacked via
-  `VStack(spacing: -10)` (the overlap hides the tab's bottom corners → no top-only-corner
-  primitive needed). Deferred: needs the above-rows grouped (they carry many local deps in
-  composerShellStack) + visual verification.
 - **Theme-immune footer legibility** — cursor/gemini lock a dark palette but the bare footer
   chrome (chips, telemetry) is theme-following → mismatch on a LIGHT app theme; the footer
   should adopt the shell palette for theme-immune shells. (Edge case: light app + locked-dark.)
