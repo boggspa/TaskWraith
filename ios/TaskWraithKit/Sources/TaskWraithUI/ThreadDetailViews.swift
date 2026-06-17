@@ -821,6 +821,9 @@ struct ThreadDetailView: View {
                     // a per-card shell surface. CS10.
                     let resolved = twResolvedComposerShell(model: model)
                     let detached = resolved.layout.detachedAboveRows
+                    // codex: the SECONDARY rows (roster/queued) tuck INTO the core
+                    // card; only the changes/PR rows pill out above it (CS11).
+                    let tuck = detached && resolved.layout.tucksSecondaryRows
                     VStack(spacing: detached ? 6 : 0) {
                         if hasWorkspaceBreakdown {
                             // One attached row per granted workspace
@@ -881,51 +884,14 @@ struct ThreadDetailView: View {
                                 Rectangle().fill(TWTheme.border).frame(height: 1)
                             }
                         }
-                        if card.isEnsemble,
-                            let queued = model.ensembleStates[taskId]?.queuedPrompts,
-                            !queued.isEmpty
-                        {
-                            // Stacked queued prompts (desktop parity) — one
-                            // shared Mac-side queue, any-device origin.
-                            QueuedPromptsStack(
-                                model: model, card: card, prompts: queued,
-                                isShellTop: !hasAttachedRows
-                            ) { queuedText in
-                                followUp = queuedText
-                            }
-                            .composerShellIf(detached, resolved)
-                            if !detached {
-                                Rectangle().fill(TWTheme.border).frame(height: 1)
-                            }
-                        }
-                        if !card.isEnsemble,
-                            let queued = card.queuedComposerPrompts,
-                            !queued.isEmpty
-                        {
-                            QueuedComposerPromptsStack(
-                                model: model, card: card, prompts: queued,
-                                isShellTop: !hasAttachedRows
-                            ) { queuedText in
-                                followUp = queuedText
-                            }
-                            .composerShellIf(detached, resolved)
-                            if !detached {
-                                Rectangle().fill(TWTheme.border).frame(height: 1)
-                            }
-                        }
-                        if card.isEnsemble, let wsId = card.workspaceId {
-                            // Roster row lives IN the shell, always under the
-                            // changes row(s) — desktop composer parity.
-                            EditableRosterStrip(
-                                model: model, threadId: taskId, workspaceId: wsId,
-                                attached: true,
-                                isShellTop: !hasAttachedRows
-                                    && (model.ensembleStates[taskId]?.queuedPrompts ?? [])
-                                        .isEmpty)
-                            .composerShellIf(detached, resolved)
-                            if !detached {
-                                Rectangle().fill(TWTheme.border).frame(height: 1)
-                            }
+                        // Secondary rows (queued + roster). Detached shells float
+                        // them as their own cards above the composer; codex (tuck)
+                        // re-homes them into the core card below — so render them
+                        // as siblings here only when NOT tucking.
+                        if !tuck {
+                            composerSecondaryRows(
+                                card: card, hasAttachedRows: hasAttachedRows,
+                                onOwnCards: detached, resolved: resolved)
                         }
                         // Composer core (input + telemetry rail). In detached
                         // mode this is its OWN card under the floating above-rows;
@@ -933,6 +899,13 @@ struct ThreadDetailView: View {
                         // shared surface (nested zero-spacing VStack is layout-
                         // identical to the old inline siblings).
                         VStack(spacing: 0) {
+                            // codex tucks the roster/queued rows INTO this core
+                            // card (above the input), as merged segments.
+                            if tuck {
+                                composerSecondaryRows(
+                                    card: card, hasAttachedRows: hasAttachedRows,
+                                    onOwnCards: false, resolved: resolved)
+                            }
                             Composer(
                                 model: model, card: card, runModel: snapshot?.runSummary?.model,
                                 runStatus: snapshot?.runSummary?.status,
@@ -971,6 +944,64 @@ struct ThreadDetailView: View {
                 }
             }
             .background(Color.clear)
+    }
+
+    /// The roster + queued "secondary" above-rows. Rendered either as detached
+    /// sibling cards (onOwnCards = detached) above the composer, or — for codex —
+    /// tucked INTO the core card (onOwnCards = false → merged segments with
+    /// hairlines). With onOwnCards = detached this reproduces the pre-CS11 inline
+    /// blocks exactly; composerShellIf(false) is a no-op, so non-codex shells are
+    /// unchanged.
+    @ViewBuilder
+    private func composerSecondaryRows(
+        card: RemoteTaskCard, hasAttachedRows: Bool, onOwnCards: Bool,
+        resolved: ResolvedComposerShell
+    ) -> some View {
+        if card.isEnsemble,
+            let queued = model.ensembleStates[taskId]?.queuedPrompts,
+            !queued.isEmpty
+        {
+            // Stacked queued prompts (desktop parity) — one shared Mac-side
+            // queue, any-device origin.
+            QueuedPromptsStack(
+                model: model, card: card, prompts: queued,
+                isShellTop: !hasAttachedRows
+            ) { queuedText in
+                followUp = queuedText
+            }
+            .composerShellIf(onOwnCards, resolved)
+            if !onOwnCards {
+                Rectangle().fill(TWTheme.border).frame(height: 1)
+            }
+        }
+        if !card.isEnsemble,
+            let queued = card.queuedComposerPrompts,
+            !queued.isEmpty
+        {
+            QueuedComposerPromptsStack(
+                model: model, card: card, prompts: queued,
+                isShellTop: !hasAttachedRows
+            ) { queuedText in
+                followUp = queuedText
+            }
+            .composerShellIf(onOwnCards, resolved)
+            if !onOwnCards {
+                Rectangle().fill(TWTheme.border).frame(height: 1)
+            }
+        }
+        if card.isEnsemble, let wsId = card.workspaceId {
+            // Roster row lives IN the shell, under the changes row(s).
+            EditableRosterStrip(
+                model: model, threadId: taskId, workspaceId: wsId,
+                attached: true,
+                isShellTop: !hasAttachedRows
+                    && (model.ensembleStates[taskId]?.queuedPrompts ?? [])
+                        .isEmpty)
+            .composerShellIf(onOwnCards, resolved)
+            if !onOwnCards {
+                Rectangle().fill(TWTheme.border).frame(height: 1)
+            }
+        }
     }
 
     private func openComposerDiff(workspaceId: String?) {

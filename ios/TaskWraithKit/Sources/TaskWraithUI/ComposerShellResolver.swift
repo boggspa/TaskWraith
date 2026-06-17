@@ -82,7 +82,13 @@ public enum ComposerShellResolver {
         switch style {
         case .defaultShell, .unknown:
             return .standard
-        case .codex, .kimi, .modular, .terminal, .stub:
+        case .codex:
+            // Controls below; the changes/PR rows pill out, but the roster/queued
+            // SECONDARY rows TUCK into the core card (desktop codex "tucked tabs"
+            // — `:not(:has(.ensemble-above-row))` pills only the non-ensemble rows).
+            return ComposerShellLayout(
+                controlsBelowTextarea: true, detachedAboveRows: true, tucksSecondaryRows: true)
+        case .kimi, .modular, .terminal, .stub:
             // Controls below + detached above-rows (no capsule/lift/split/text).
             return ComposerShellLayout(controlsBelowTextarea: true, detachedAboveRows: true)
         case .grok:

@@ -186,13 +186,18 @@ public struct ComposerShellLayout: Equatable, Sendable {
     public var splitChromeRects: Bool
     /// Control chips flatten to bare text tokens (satellite/modular/obsidian/alabaster).
     public var controlsAsPlainText: Bool
+    /// Detached shells where the SECONDARY above-rows (roster/queued) tuck INTO
+    /// the composer-core card instead of detaching as their own pills — only the
+    /// changes/PR rows pill out above (codex). Inert unless detachedAboveRows.
+    public var tucksSecondaryRows: Bool
     public init(
         controlsBelowTextarea: Bool = false,
         detachedAboveRows: Bool = false,
         liftedSend: Bool = false,
         surfaceIsCapsule: Bool = false,
         splitChromeRects: Bool = false,
-        controlsAsPlainText: Bool = false
+        controlsAsPlainText: Bool = false,
+        tucksSecondaryRows: Bool = false
     ) {
         self.controlsBelowTextarea = controlsBelowTextarea
         self.detachedAboveRows = detachedAboveRows
@@ -200,6 +205,7 @@ public struct ComposerShellLayout: Equatable, Sendable {
         self.surfaceIsCapsule = surfaceIsCapsule
         self.splitChromeRects = splitChromeRects
         self.controlsAsPlainText = controlsAsPlainText
+        self.tucksSecondaryRows = tucksSecondaryRows
     }
     /// The signed-off iOS default arrangement (no structural changes).
     public static let standard = ComposerShellLayout()
