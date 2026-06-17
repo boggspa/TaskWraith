@@ -390,18 +390,26 @@ struct Composer: View {
     }
 
     private var primaryActionButton: some View {
-        Button {
+        let shell = twResolvedComposerShell(model: model)
+        return Button {
             if isRunActive {
                 model.cancelRun(card)
             } else {
                 sendCurrent()
             }
         } label: {
-            Image(systemName: isRunActive ? "stop.circle.fill" : "arrow.up.circle.fill")
-                .font(.system(size: 34, weight: .semibold))
-                .foregroundStyle(primaryActionColor)
-                .frame(width: 38, height: 38)
-                .contentShape(Circle())
+            if shell.style == .defaultShell {
+                // Signed-off native button — unchanged (default parity).
+                Image(systemName: isRunActive ? "stop.circle.fill" : "arrow.up.circle.fill")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(primaryActionColor)
+                    .frame(width: 38, height: 38)
+                    .contentShape(Circle())
+            } else {
+                ComposerRecipeSendLabel(
+                    shell: shell, isRunActive: isRunActive,
+                    enabled: isRunActive ? canCancelRun : !sendDisabled)
+            }
         }
         .disabled(isRunActive ? !canCancelRun : sendDisabled)
     }

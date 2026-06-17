@@ -925,7 +925,7 @@ struct ThreadDetailView: View {
                             },
                             planLanes: card.todoLanes ?? [])
                     }
-                    .composerShellGlass()
+                    .composerShell(twResolvedComposerShell(model: model))
                     .task(id: composerGitWorkspaceIds(card: card).joined(separator: "\n")) {
                         for workspaceId in composerGitWorkspaceIds(card: card) {
                             await model.refreshGitSnapshotCache(workspaceId: workspaceId)
