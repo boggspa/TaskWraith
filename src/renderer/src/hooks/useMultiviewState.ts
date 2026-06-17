@@ -40,6 +40,22 @@ const DOWNGRADE_LAYOUT: Record<MultiviewLayout, MultiviewLayout> = {
   quad: 'two-top-one-bottom'
 }
 
+/**
+ * Inverse of DOWNGRADE_LAYOUT: grow the layout by exactly one pane
+ * (single -> vertical-2 -> two-top-one-bottom -> quad). Used when opening a
+ * chat in a new pane and no spare cell is free.
+ */
+const UPGRADE_LAYOUT: Record<MultiviewLayout, MultiviewLayout> = {
+  single: 'vertical-2',
+  'vertical-2': 'two-top-one-bottom',
+  'horizontal-2': 'two-top-one-bottom',
+  'two-top-one-bottom': 'quad',
+  'one-top-two-bottom': 'quad',
+  'one-left-two-right': 'quad',
+  'two-left-one-right': 'quad',
+  quad: 'quad'
+}
+
 export function createInitialMultiviewState(
   initialPaneChatId: string | null = null
 ): MultiviewCoreState {
@@ -129,6 +145,27 @@ export function applyAssignToNextPane(
   return { state: { ...state, paneChatIds, focusedPaneIndex: target }, index: target }
 }
 
+/**
+ * Open a chat in a NON-focused pane WITHOUT moving focus — the sidebar
+ * "Open in Multiview pane" action. Grows the layout by one pane when there is
+ * no spare non-focused cell; once at quad, overwrites a non-focused cell. The
+ * focused (interactive) pane is never disturbed.
+ */
+export function applyOpenInNewPane(state: MultiviewCoreState, chatId: string): MultiviewCoreState {
+  let next = state
+  const hasSpare = next.paneChatIds.some((id, i) => i !== next.focusedPaneIndex && id == null)
+  if (!hasSpare) {
+    const grown = UPGRADE_LAYOUT[next.layout]
+    if (grown !== next.layout) next = applySetLayout(next, grown)
+  }
+  let target = next.paneChatIds.findIndex((id, i) => i !== next.focusedPaneIndex && id == null)
+  if (target < 0) target = next.paneChatIds.findIndex((_, i) => i !== next.focusedPaneIndex)
+  if (target < 0) target = next.focusedPaneIndex
+  const paneChatIds = next.paneChatIds.slice()
+  paneChatIds[target] = chatId
+  return { ...next, paneChatIds }
+}
+
 export interface MultiviewPaneRefs {
   scrollRef: RefObject<HTMLDivElement | null>
   contentRef: RefObject<HTMLDivElement | null>
@@ -152,6 +189,8 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   closePane: (index: number) => void
   /** Place + focus a chat; returns the pane index it landed in. */
   assignToNextPane: (chatId: string) => number
+  /** Open a chat in a non-focused pane (grows the layout if needed); keeps focus. */
+  openInNewPane: (chatId: string) => void
 }
 
 export function useMultiviewState(
@@ -197,6 +236,9 @@ export function useMultiviewState(
     setState(result.state)
     return result.index
   }, [])
+  const openInNewPane = useCallback((chatId: string) => {
+    setState((s) => applyOpenInNewPane(s, chatId))
+  }, [])
 
   const focusedChatId = state.paneChatIds[state.focusedPaneIndex] ?? null
 
@@ -209,6 +251,7 @@ export function useMultiviewState(
     setPaneChat,
     setFocusedPane,
     closePane,
-    assignToNextPane
+    assignToNextPane,
+    openInNewPane
   }
 }

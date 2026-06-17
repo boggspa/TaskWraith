@@ -17013,6 +17013,7 @@ function App(): React.JSX.Element {
                 onOpenChatInSidePanel={(chat, presentation) =>
                   void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
                 }
+                onOpenInMultiview={(chat) => multiview.openInNewPane(chat.appChatId)}
                 onOpenSettings={() => setShowSettings(true)}
                 updateSnapshot={updateStatus.snapshot}
                 onQuickUpdate={handleSidebarQuickUpdate}

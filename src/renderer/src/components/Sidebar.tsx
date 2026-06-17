@@ -126,6 +126,8 @@ interface SidebarProps {
   ensembleModeEnabled?: boolean
   onSelectChat: (chat: ChatRecord) => void
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
+  /** Open this chat as a read-only viewer in a Multiview pane (all chat types). */
+  onOpenInMultiview?: (chat: ChatRecord) => void
   onOpenSettings: () => void
   /** Live update snapshot for the one-click pill above the masthead. */
   updateSnapshot?: UpdateStateSnapshot | null
@@ -1335,6 +1337,7 @@ export function Sidebar({
   ensembleModeEnabled = true,
   onSelectChat,
   onOpenChatInSidePanel,
+  onOpenInMultiview,
   onOpenSettings,
   updateSnapshot,
   onQuickUpdate,
@@ -2119,6 +2122,14 @@ export function Sidebar({
         label: 'Open drawer beside parent',
         group: 'primary',
         onSelect: () => onOpenChatInSidePanel(chat, 'drawer')
+      })
+    }
+    if (onOpenInMultiview) {
+      items.push({
+        id: 'open-in-multiview',
+        label: 'Open in Multiview pane',
+        group: 'primary',
+        onSelect: () => onOpenInMultiview(chat)
       })
     }
     if (onDeleteChat) {

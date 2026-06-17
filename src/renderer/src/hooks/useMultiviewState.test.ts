@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyAssignToNextPane,
   applyClosePane,
+  applyOpenInNewPane,
   applySetFocusedPane,
   applySetLayout,
   applySetPaneChat,
@@ -157,5 +158,55 @@ describe('applyAssignToNextPane', () => {
     const result = applyAssignToNextPane(state({ paneChatIds: ['a'] }), 'z')
     expect(result.index).toBe(0)
     expect(result.state.paneChatIds).toEqual(['z'])
+  })
+})
+
+describe('applyOpenInNewPane', () => {
+  it('grows single -> vertical-2 and fills the spare pane, keeping focus', () => {
+    const next = applyOpenInNewPane(
+      state({ layout: 'single', paneChatIds: ['a'], focusedPaneIndex: 0 }),
+      'b'
+    )
+    expect(next.layout).toBe('vertical-2')
+    expect(next.paneChatIds).toEqual(['a', 'b'])
+    expect(next.focusedPaneIndex).toBe(0)
+  })
+
+  it('uses an existing non-focused empty cell without growing', () => {
+    const next = applyOpenInNewPane(
+      state({ layout: 'vertical-2', paneChatIds: ['a', null], focusedPaneIndex: 0 }),
+      'b'
+    )
+    expect(next.layout).toBe('vertical-2')
+    expect(next.paneChatIds).toEqual(['a', 'b'])
+  })
+
+  it('never fills the focused pane even when it is empty', () => {
+    const next = applyOpenInNewPane(
+      state({ layout: 'vertical-2', paneChatIds: [null, null], focusedPaneIndex: 0 }),
+      'b'
+    )
+    expect(next.paneChatIds).toEqual([null, 'b'])
+    expect(next.focusedPaneIndex).toBe(0)
+  })
+
+  it('grows when the only empty cell is the focused one', () => {
+    const next = applyOpenInNewPane(
+      state({ layout: 'vertical-2', paneChatIds: ['a', null], focusedPaneIndex: 1 }),
+      'b'
+    )
+    expect(next.layout).toBe('two-top-one-bottom')
+    expect(next.paneChatIds).toEqual(['a', null, 'b'])
+    expect(next.focusedPaneIndex).toBe(1)
+  })
+
+  it('overwrites a non-focused cell when already at quad', () => {
+    const next = applyOpenInNewPane(
+      state({ layout: 'quad', paneChatIds: ['a', 'b', 'c', 'd'], focusedPaneIndex: 0 }),
+      'z'
+    )
+    expect(next.layout).toBe('quad')
+    expect(next.paneChatIds).toEqual(['a', 'z', 'c', 'd'])
+    expect(next.focusedPaneIndex).toBe(0)
   })
 })
