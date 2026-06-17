@@ -54,9 +54,11 @@ public enum ComposerShellResolver {
         context: ComposerShellContext
     ) -> ResolvedComposerShell {
         var resolved = shell
-        if context.reduceTransparency, resolved.material == .glass {
-            resolved.material = .solid
-        }
+        // Do NOT downgrade .glass -> .solid here: the only .glass shell is the
+        // signed-off `default`, and composerShellGlass self-degrades under Reduce
+        // Transparency (TWTheme.composerGlassEnabled) while KEEPING its top-lit
+        // rim. Flipping to the generic solid modifier dropped that rim — a default
+        // regression. Reduce Transparency for default is owned by the glass modifier.
         if context.reduceMotion {
             resolved.effects.remove(.rimChase)
         }

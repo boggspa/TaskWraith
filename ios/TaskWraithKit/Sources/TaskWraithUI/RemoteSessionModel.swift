@@ -1229,6 +1229,10 @@ public final class RemoteSessionModel: ObservableObject {
             incoming: appearance.generatedAt, last: lastShellAppearanceGeneratedAt)
         else { return }
         lastShellAppearanceGeneratedAt = appearance.generatedAt
+        // The Mac re-stamps generatedAt on every snapshot, so the timestamp gate
+        // alone would republish constantly. Only composerStyle is consumed on iOS
+        // (projectedComposerStyle), so republish only when it actually changes.
+        guard appearance.composerStyle != projectedShellAppearance?.composerStyle else { return }
         projectedShellAppearance = appearance
     }
 

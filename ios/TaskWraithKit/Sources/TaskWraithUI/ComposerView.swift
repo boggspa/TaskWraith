@@ -210,12 +210,16 @@ struct Composer: View {
 
     @ViewBuilder
     private var composerBodyBackground: some View {
-        // Per-style card-in-card fill (e.g. codex #252525); default falls back
-        // to the native input-row fill so the signed-off shell is unchanged.
+        // Per-style card-in-card fill (e.g. codex #252525). Default keeps the
+        // native input-row fill (signed-off). Other shells with no inner module
+        // let the shell surface show through (terminal green, satellite/modular
+        // transparent, stub cream) rather than painting the theme input fill.
         if let fill = shell.palette.innerModuleFill {
             Rectangle().fill(fill)
-        } else {
+        } else if shell.style == .defaultShell {
             Rectangle().fill(composerInputRowFill())
+        } else {
+            Color.clear
         }
     }
 
@@ -428,6 +432,7 @@ struct Composer: View {
             }
         }
         .disabled(isRunActive ? !canCancelRun : sendDisabled)
+        .accessibilityLabel(isRunActive ? "Stop run" : "Send message")
     }
 
     private var primaryActionColor: Color {
