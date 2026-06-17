@@ -368,6 +368,21 @@
   outline: none;
 }
 
+.sidebar-pinned-item:focus-visible,
+.sidebar-recents-item:focus-visible {
+  box-shadow:
+    0 0 0 2px color-mix(
+      in srgb,
+      var(--chat-provider-accent, var(--accent)) 28%,
+      transparent
+    ),
+    inset 0 0 0 1px color-mix(
+      in srgb,
+      var(--chat-provider-accent, var(--accent)) 38%,
+      var(--panel-border)
+    );
+}
+
 .sidebar-pinned-item.active,
 .sidebar-recents-item.active,
 .sidebar-workflow-item.active,
@@ -386,6 +401,22 @@
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--chat-provider-accent) 40%, var(--panel-border)),
     inset 0 0 12px color-mix(in srgb, var(--chat-provider-accent) 9%, transparent);
+}
+
+.sidebar-pinned-item.active:focus-visible,
+.sidebar-recents-item.active:focus-visible {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--chat-provider-accent, var(--accent)) 28%, transparent),
+    inset 0 0 0 1px color-mix(
+      in srgb,
+      var(--chat-provider-accent, var(--accent)) 40%,
+      var(--panel-border)
+    ),
+    inset 0 0 12px color-mix(
+      in srgb,
+      var(--chat-provider-accent, var(--accent)) 9%,
+      transparent
+    );
 }
 
 .sidebar-pinned-item.provider-gemini,
@@ -428,6 +459,22 @@
   --chat-provider-accent: var(--provider-ensemble-color);
 }
 
+.sidebar-pinned-item:is(
+  .provider-gemini,
+  .provider-codex,
+  .provider-claude,
+  .provider-kimi,
+  .provider-grok,
+  .provider-cursor,
+  .provider-ollama,
+  .provider-ensemble
+),
+.sidebar-recents-item {
+  min-height: 36px;
+  padding: 5px 8px 5px 10px;
+  border-radius: 8px;
+}
+
 .sidebar-pinned-label,
 .sidebar-recents-label,
 .sidebar-workflow-name {
@@ -451,9 +498,27 @@
   font-size: 0.85em;
 }
 
+.sidebar-pinned-item:is(
+  .provider-gemini,
+  .provider-codex,
+  .provider-claude,
+  .provider-kimi,
+  .provider-grok,
+  .provider-cursor,
+  .provider-ollama,
+  .provider-ensemble
+) .sidebar-pinned-label,
+.sidebar-recents-label {
+  color: var(--sidebar-text);
+  font-weight: 610;
+  letter-spacing: -0.008em;
+  line-height: 1.16;
+}
+
 .sidebar-recents-item .sidebar-chat-age {
   opacity: 0.6;
   color: var(--text-muted);
+  font-size: calc(var(--sidebar-row-meta-font-size) * 0.9);
   font-variant-numeric: tabular-nums;
 }
 
