@@ -460,6 +460,10 @@ import { ComposerWorkspaceSwitcher } from './components/ComposerWorkspaceSwitche
 import { TranscriptPanel } from './components/TranscriptPanel'
 import { AuditRunCard } from './components/AuditRunCard'
 import { AuditRunNotice } from './components/AuditRunNotice'
+import { ChatViewPane } from './components/ChatViewPane'
+import { MultiviewPaneGrid } from './components/MultiviewPaneGrid'
+import { useMultiviewState } from './hooks/useMultiviewState'
+import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 // Re-exported so the existing `TranscriptPanel.test.tsx` (which imports it
 // from './App') keeps resolving after the component moved to its own module.
 export { TranscriptPanel } from './components/TranscriptPanel'
@@ -1988,6 +1992,9 @@ function App(): React.JSX.Element {
   const [scheduleRunAtByChatId, setScheduleRunAtForChat] = usePerChatState('')
   const [dueScheduledTasks, setDueScheduledTasks] = useState<ScheduledTask[]>([])
   const [runningChatIds, setRunningChatIds] = useState<Set<string>>(new Set())
+  // Multiview: split the central pane into 1-4 panes. Inert until a layout is
+  // chosen — single layout renders byte-identically to before Multiview.
+  const multiview = useMultiviewState()
 
   const imageDragCounterRef = useRef(0)
   const sendConfirmationTimeoutRef = useRef<number | null>(null)
@@ -17215,6 +17222,65 @@ function App(): React.JSX.Element {
           style={chatSplitStyle}
         >
           <div className="chat-split-main">
+            <MultiviewPaneGrid
+              layout={multiview.layout}
+              paneChatIds={multiview.paneChatIds}
+              focusedPaneIndex={multiview.focusedPaneIndex}
+              renderEmptyCell={(emptyPaneIndex) => (
+                <div className="multiview-empty-pane" data-pane-index={emptyPaneIndex}>
+                  <span className="multiview-empty-pane-label">Select a chat for this pane</span>
+                </div>
+              )}
+              renderViewerCell={(viewerChatId, viewerPaneIndex) => {
+                const viewerChat = chatByIdRef.current.get(viewerChatId)
+                if (!viewerChat) {
+                  return (
+                    <div className="multiview-empty-pane" data-pane-index={viewerPaneIndex}>
+                      <span className="multiview-empty-pane-label">Chat unavailable</span>
+                    </div>
+                  )
+                }
+                const viewerProvider = getChatProvider(viewerChat)
+                const viewerIsRunning = deriveChatIsRunning({
+                  chat: viewerChat,
+                  runningChatIds,
+                  runQueueJobs
+                })
+                return (
+                  <ChatViewPane
+                    key={viewerChatId}
+                    refs={multiview.paneRefs[viewerPaneIndex]}
+                    chat={viewerChat}
+                    messages={viewerChat.messages || EMPTY_CHAT_MESSAGES}
+                    provider={viewerProvider}
+                    providerLabel={getProviderLabel(viewerProvider)}
+                    providerClass={viewerProvider}
+                    interfaceStyle={interfaceStyle}
+                    isEnsemble={viewerChat.chatKind === 'ensemble'}
+                    isWelcomeChat={(viewerChat.messages?.length || 0) === 0}
+                    isThinking={viewerIsRunning}
+                    runCompleteNotice={deriveChatRunCompleteNotice(viewerChat, viewerIsRunning)}
+                    pendingAgentQuestions={
+                      pendingAgentQuestionsByChatId[viewerChatId] || EMPTY_AGENT_QUESTION_QUEUE
+                    }
+                    chats={chats}
+                    runningChatIds={runningChatIdsArray}
+                    compactDensity={appearance.compactDensity}
+                    liveActivityViewport={appearance.liveActivityViewport}
+                    pendingQueuedAppRunIds={pendingQueuedAppRunIds}
+                    copiedId={copiedId}
+                    copy={copy}
+                    onOpenSubThread={handleOpenCockpitThread}
+                    onCopyMessage={handleCopyMessage}
+                    onPreviewImage={setPreviewChatMediaRef}
+                    currency={displayCurrency}
+                    currencyOverestimatePercent={overestimatePercent}
+                    providerRates={providerRates}
+                    onFocusPane={() => multiview.setFocusedPane(viewerPaneIndex)}
+                  />
+                )
+              }}
+              renderFocusedCell={() => (
             <div
               ref={appTranscriptRef}
               className={`app-transcript provider-${currentProvider} interface-${interfaceStyle} ${isCurrentEnsembleChat ? 'chat-kind-ensemble' : ''} ${isWelcomeChat ? 'welcome-mode' : ''} ${welcomeDashboardHiddenByFit ? 'welcome-dashboard-hidden-by-fit' : ''} ${isAdvancedFxActive ? `fx-labs-active fx-intensity-${advancedFxIntensity}` : ''} ${showSettings ? 'transcript-hidden-for-settings' : ''}`}
@@ -21095,6 +21161,8 @@ function App(): React.JSX.Element {
             )}
           </div>
             </div>
+              )}
+            />
           </div>
 
           {dockPresence.mounted && (
