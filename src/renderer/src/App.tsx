@@ -358,6 +358,17 @@ import { resolveContextWindow, formatContextTokens } from './lib/contextWindows'
 import { buildProviderRunFailureSnippet } from './lib/providerRunFailureSnippet'
 import { rawLogFromRunEvent, type RawLogEntry } from './lib/rawLogEntry'
 import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQueueScheduling'
+import {
+  buildPlanImportDisplayPrompt,
+  buildInitialPlanImportReview,
+  buildPlanImportRunPrompt,
+  planImportEnabledChipsForPolicy,
+  planImportApprovalModeForPolicy,
+  shouldOfferPlanImport,
+  type PlanImportChipId,
+  type PlanImportPolicyMode,
+  type PlanImportReviewState
+} from './lib/planImport'
 import { applyRecoveryRecordsToChatRuns } from './lib/recoverChatRunTerminals'
 import { visibleRunningChatIds } from './lib/runningChatVisibility'
 import {
@@ -662,6 +673,14 @@ const SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY = 'sideChatSelectedParticip
 const SIDE_CHAT_SELECTED_PARTICIPANT_ROLE_METADATA_KEY = 'sideChatSelectedParticipantRole'
 const SIDE_CHAT_HIDDEN_CONTEXT_PROMPT_METADATA_KEY = 'sideChatHiddenContextPrompt'
 const SIDE_CHAT_HIDDEN_CONTEXT_CONSUMED_AT_METADATA_KEY = 'sideChatHiddenContextConsumedAt'
+const PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string> = {
+  read_only: 'Plan / read-only',
+  ask_before_edits: 'Ask before edits',
+  no_shell: 'No shell',
+  no_network: 'No network',
+  no_telemetry: 'No telemetry',
+  quiet_summary: 'Quiet summary'
+}
 const GUEST_PARTICIPANT_STEERING_PREAMBLE =
   'You are a guest participant attached to a standard TaskWraith chat. The main parent agent has priority. Respond to the user request in parallel as a second opinion or disjoint helper. Write or edit files only when useful and keep any changes disjoint from the main agent. If your intended edits overlap or conflict with the main agent, stop and explain the conflict instead of fighting the main agent.'
 const GUEST_PARENT_CONTEXT_TURN_LIMIT = 20
@@ -670,6 +689,19 @@ const GUEST_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT = 1800
 const SIDE_CHAT_PARENT_CONTEXT_TURN_LIMIT = 8
 const SIDE_CHAT_PARENT_CONTEXT_CHAR_LIMIT = 5000
 const SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT = 700
+
+function renderPlanImportItems(items: readonly string[], emptyText = 'None detected'): ReactNode {
+  if (items.length === 0) {
+    return <span className="plan-import-empty">{emptyText}</span>
+  }
+  return (
+    <ul className="plan-import-list">
+      {items.map((item) => (
+        <li key={item}>{item}</li>
+      ))}
+    </ul>
+  )
+}
 
 function truncateGuestContextText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value
@@ -1969,6 +2001,8 @@ function App(): React.JSX.Element {
   const [isAttachingWindow, setIsAttachingWindow] = useState(false)
   const [pendingPlanChoiceByChatId, setPendingPlanChoiceForChat] =
     usePerChatState<PlanChoiceState | null>(null)
+  const [pendingPlanImportByChatId, setPendingPlanImportForChat] =
+    usePerChatState<PlanImportReviewState | null>(null)
   // QMOD (1.0.3) — per-chat pending agent question queue. Driven by the
   // `agent-question-requested` IPC event from main. Cleared per question
   // on submit / dismiss / cancellation. Multiple agents in one chat can
@@ -2476,6 +2510,9 @@ function App(): React.JSX.Element {
   const pendingPlanChoice = currentComposerChatId
     ? pendingPlanChoiceByChatId[currentComposerChatId] || null
     : null
+  const pendingPlanImport = currentComposerChatId
+    ? pendingPlanImportByChatId[currentComposerChatId] || null
+    : null
   const pendingAgentQuestions = currentComposerChatId
     ? pendingAgentQuestionsByChatId[currentComposerChatId] || EMPTY_AGENT_QUESTION_QUEUE
     : EMPTY_AGENT_QUESTION_QUEUE
@@ -2532,6 +2569,11 @@ function App(): React.JSX.Element {
     },
     [currentComposerChatId, setChatPromptDraft]
   )
+  const clearPlanImportIfDraftChanged = (nextValue: string): void => {
+    if (pendingPlanImport && nextValue.trim() !== pendingPlanImport.rawText) {
+      setPendingPlanImport(null)
+    }
+  }
   // 1.0.4-AQ3 — restore the composer textarea's caret position
   // after each `prompt` change. React's controlled-input caret
   // preservation glitches when the textarea's className flips
@@ -2694,6 +2736,15 @@ function App(): React.JSX.Element {
   ) => {
     const chatId = getCurrentComposerStateChatId()
     setPendingPlanChoiceForChat(chatId, value)
+  }
+  const setPendingPlanImport = (
+    value:
+      | PlanImportReviewState
+      | null
+      | ((previous: PlanImportReviewState | null) => PlanImportReviewState | null)
+  ) => {
+    const chatId = getCurrentComposerStateChatId()
+    setPendingPlanImportForChat(chatId, value)
   }
   const setCommandPaletteQuery = (value: string | ((previous: string) => string)) => {
     const chatId = getCurrentComposerStateChatId()
@@ -5806,6 +5857,27 @@ function App(): React.JSX.Element {
     setPermissionRequestSource(null)
   }
 
+  const openPlanImportReview = (
+    rawText: string,
+    options: { silentUnsupported?: boolean } = {}
+  ): PlanImportReviewState | null => {
+    const trimmed = rawText.trim()
+    if (!trimmed) return null
+    const unsupportedChat =
+      currentChat?.chatKind === 'ensemble' ||
+      Boolean(currentChat?.guestParticipant) ||
+      Boolean(currentChat && getSideChatMode(currentChat) === 'guestParticipant')
+    if (unsupportedChat) {
+      if (!options.silentUnsupported) {
+        window.alert('Plan Import is available for solo chats in this slice.')
+      }
+      return null
+    }
+    const review = buildInitialPlanImportReview(trimmed, approvalMode)
+    setPendingPlanImport(review)
+    return review
+  }
+
   const showAttachmentPermissionRequest = (request: GeminiPermissionRequest) => {
     const permissionPaths = dedupePaths(request.paths)
     if (permissionPaths.length === 0) {
@@ -6057,6 +6129,15 @@ function App(): React.JSX.Element {
   }
 
   const handleComposerPaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedText = event.clipboardData?.getData('text/plain') || ''
+    if (shouldOfferPlanImport(pastedText)) {
+      const target = event.currentTarget
+      const selectionStart = target.selectionStart ?? target.value.length
+      const selectionEnd = target.selectionEnd ?? selectionStart
+      const nextDraft = `${target.value.slice(0, selectionStart)}${pastedText}${target.value.slice(selectionEnd)}`
+      openPlanImportReview(nextDraft, { silentUnsupported: true })
+    }
+
     let paths = collectClipboardAttachmentPaths(event.clipboardData)
     if (paths.length === 0) {
       const hasImageItem = Array.from(event.clipboardData?.items || []).some((item) =>
@@ -8619,6 +8700,8 @@ function App(): React.JSX.Element {
     target?: {
       chat?: ChatRecord | null
       prompt?: string
+      displayPrompt?: string
+      approvalMode?: string
       imageAttachments?: ImageAttachment[]
     }
   ): QueuedRunRequest => {
@@ -8638,7 +8721,7 @@ function App(): React.JSX.Element {
       ? rawRequestModel
       : getDefaultModelForProvider(provider)
     const requestCustomModel = composerSelection?.customModel ?? customModel
-    const requestApprovalMode = composerSelection?.approvalMode || approvalMode
+    const requestApprovalMode = target?.approvalMode || composerSelection?.approvalMode || approvalMode
     const requestReasoningEffort =
       provider === 'codex'
         ? composerSelection?.codexReasoningEffort || codexReasoningEffort
@@ -8681,6 +8764,7 @@ function App(): React.JSX.Element {
       scope,
       provider,
       prompt: target?.prompt !== undefined ? target.prompt : existingPrompt || prompt,
+      ...(target?.displayPrompt !== undefined ? { displayPrompt: target.displayPrompt } : {}),
       overrideModel,
       existingPrompt,
       selectedModelType: requestModel,
@@ -9145,6 +9229,7 @@ function App(): React.JSX.Element {
         setRunCompleteNotice(null)
         setRunDiff(null)
         setPendingPlanChoice(null)
+        setPendingPlanImport(null)
         setIsThinking(true)
       }
 
@@ -10266,6 +10351,14 @@ function App(): React.JSX.Element {
     if (!request.prompt.trim()) {
       return
     }
+    if (
+      !existingPrompt &&
+      pendingPlanImport &&
+      request.chatRecord?.appChatId === currentComposerChatId
+    ) {
+      window.alert('Choose Run imported plan or Use raw prompt before sending.')
+      return
+    }
 
     const parentChat = request.chatRecord || currentChat
     const guestAddressTarget =
@@ -11046,6 +11139,14 @@ function App(): React.JSX.Element {
   const handleSteer = async (overrideModel?: string, existingPrompt?: string) => {
     const request = buildRunRequest(overrideModel, existingPrompt)
     if (!request.prompt.trim()) {
+      return
+    }
+    if (
+      !existingPrompt &&
+      pendingPlanImport &&
+      request.chatRecord?.appChatId === currentComposerChatId
+    ) {
+      window.alert('Choose Run imported plan or Use raw prompt before sending.')
       return
     }
 
@@ -12224,6 +12325,25 @@ function App(): React.JSX.Element {
     })
   }
 
+  const handleImportPlanSlashCommand = (): void => {
+    const candidate = promptWithoutCurrentSlashToken()
+      .replace(/^\s*\/import-plan\b/i, '')
+      .trim()
+    if (!candidate) {
+      consumeSlashTokenFromPrompt()
+      window.alert('Paste or type a plan in the composer, then run /import-plan.')
+      return
+    }
+    openPlanImportReview(candidate)
+    setPrompt(candidate)
+    requestAnimationFrame(() => {
+      const ta = composerTextareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(candidate.length, candidate.length)
+    })
+  }
+
   const currentActiveGoal = currentChat?.activeGoal || null
   const currentGoalModeOptions = {
     codexNativeAvailable: Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
@@ -12311,6 +12431,96 @@ function App(): React.JSX.Element {
     setGoalDraft(goal.objective)
     setGoalEditing(false)
     setGoalPopoverOpen(true)
+  }
+
+  const setPlanImportPolicy = (policy: PlanImportPolicyMode): void => {
+    const applyPolicy = (): void => {
+      setPendingPlanImport((previous) =>
+        previous
+          ? {
+              ...previous,
+              selectedPolicy: policy,
+              enabledChips: planImportEnabledChipsForPolicy(policy)
+            }
+          : previous
+      )
+    }
+    if (policy === 'ask_before_edits') {
+      const elevation = decideApprovalElevation({
+        from: 'plan',
+        to: 'default',
+        provider: currentProvider,
+        workspacePath: currentWorkspacePath,
+        acknowledgedDefault: acknowledgedElevationDefaults
+      })
+      if (elevation) {
+        setPendingElevation({
+          tier: elevation.tier,
+          provider: currentProvider,
+          workspaceLabel: currentWorkspace?.displayName ?? null,
+          ackKey: elevation.ackKey,
+          persistAck: elevation.persistAckOnConfirm,
+          toMode: 'default',
+          apply: applyPolicy
+        })
+        return
+      }
+    }
+    applyPolicy()
+  }
+
+  const handleRunImportedPlan = (): void => {
+    const review = pendingPlanImport
+    if (!review) return
+
+    if (
+      currentChat?.chatKind === 'ensemble' ||
+      currentChat?.guestParticipant ||
+      (currentChat && getSideChatMode(currentChat) === 'guestParticipant')
+    ) {
+      window.alert('Plan Import is available for solo chats in this slice.')
+      setPendingPlanImport(null)
+      return
+    }
+    if (prompt.trim() !== review.rawText) {
+      setPendingPlanImport(null)
+      window.alert('The composer changed after this plan was reviewed. Import the plan again.')
+      return
+    }
+    const objective = normalizeActiveGoalObjective(review.contract.goal)
+    if (
+      currentActiveGoal &&
+      currentActiveGoal.status !== 'completed' &&
+      currentActiveGoal.objective.trim() !== objective
+    ) {
+      const confirmed = window.confirm(
+        'Replace the current active goal with the imported plan goal?'
+      )
+      if (!confirmed) return
+    }
+    setGoalFromObjective(review.contract.goal, { confirmReplace: false })
+    const request = buildRunRequest(undefined, undefined, {
+      prompt: buildPlanImportRunPrompt(review),
+      displayPrompt: buildPlanImportDisplayPrompt(review),
+      approvalMode: planImportApprovalModeForPolicy(review.selectedPolicy),
+      imageAttachments
+    })
+    if (!request.prompt.trim()) return
+
+    setPendingPlanImport(null)
+    if (isChatBusy(request.chatRecord?.appChatId || currentChat?.appChatId)) {
+      queueRunRequest(request)
+      clearComposerAttachmentsForSubmittedRequest(request)
+      if (!request.existingPrompt) {
+        setChatPromptDraft(
+          request.chatRecord?.appChatId || currentChatIdRef.current || currentChat?.appChatId,
+          ''
+        )
+      }
+      return
+    }
+
+    void executeRun(request)
   }
 
   const updateCurrentGoalStatus = (status: ActiveGoalStatus, reason?: string): void => {
@@ -16681,6 +16891,18 @@ function App(): React.JSX.Element {
     },
     {
       kind: 'action',
+      id: 'taskwraith-import-plan',
+      command: '/import-plan',
+      label: 'Import pasted plan',
+      description:
+        'Review a pasted plan as untrusted input, pick a safe run policy, then run it through the normal queue.',
+      group: 'Custom',
+      run: () => {
+        handleImportPlanSlashCommand()
+      }
+    },
+    {
+      kind: 'action',
       id: 'taskwraith-clear',
       command: '/clear',
       label: 'Clear conversation',
@@ -18932,6 +19154,7 @@ function App(): React.JSX.Element {
                           }
                           composerCaretRestoreEpochRef.current += 1
                           setPrompt(nextValue)
+                          clearPlanImportIfDraftChanged(nextValue)
                           // Composer popover coordinator: scan the text before the
                           // caret for a leading `/<query>` token (start-of-line or
                           // after whitespace), then for an `@<query>` mention token.
@@ -18991,6 +19214,10 @@ function App(): React.JSX.Element {
                             if (tryHandleActionSlashSubmit()) {
                               return
                             }
+                            if (pendingPlanImport) {
+                              window.alert('Choose Run imported plan or Use raw prompt before sending.')
+                              return
+                            }
                             triggerSendConfirmation()
                             // DM target resolution order (first match wins):
                             //   1. An explicit `@participant` mention in the
@@ -19026,7 +19253,10 @@ function App(): React.JSX.Element {
                   anchor={composerContextMenu.anchor}
                   spellcheckContext={composerContextMenu.spellcheckContext}
                   textareaRef={composerTextareaRef}
-                  onValueChange={(value) => setChatPromptDraft(currentComposerChatId, value)}
+                  onValueChange={(value) => {
+                    setChatPromptDraft(currentComposerChatId, value)
+                    clearPlanImportIfDraftChanged(value)
+                  }}
                   isValueTargetCurrent={() =>
                     (currentChatIdRef.current || currentComposerChatId) === currentComposerChatId
                   }
@@ -19229,6 +19459,154 @@ function App(): React.JSX.Element {
                             onClick={clearImagePermissions}
                           >
                             Dismiss
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {pendingPlanImport && (
+                      <div
+                        className="composer-plan-import-card"
+                        role="status"
+                        aria-live="polite"
+                        aria-labelledby={`plan-import-title-${pendingPlanImport.id}`}
+                      >
+                        <div className="plan-import-header">
+                          <div className="plan-import-title">
+                            <GoalSymbolIcon />
+                            <div>
+                              <strong id={`plan-import-title-${pendingPlanImport.id}`}>
+                                Plan import
+                              </strong>
+                              <span>From pasted plan - untrusted</span>
+                            </div>
+                          </div>
+                          <div className="plan-import-header-actions">
+                            <span className="plan-import-source">
+                              {pendingPlanImport.contract.source}
+                            </span>
+                            <button
+                              className="composer-inline-clear"
+                              type="button"
+                              onClick={() => setPendingPlanImport(null)}
+                              disabled={isCurrentComposerLocked}
+                              title="Dismiss plan import"
+                              aria-label="Dismiss plan import"
+                            >
+                              <XSymbolIcon />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="plan-import-goal">
+                          <span>Goal</span>
+                          <strong>{pendingPlanImport.contract.goal}</strong>
+                        </div>
+
+                        <div
+                          className="plan-import-policy-row"
+                          role="radiogroup"
+                          aria-label="Plan import policy"
+                        >
+                          <button
+                            className={`plan-import-policy-chip${pendingPlanImport.selectedPolicy === 'read_only' ? ' active' : ''}`}
+                            type="button"
+                            role="radio"
+                            aria-checked={pendingPlanImport.selectedPolicy === 'read_only'}
+                            onClick={() => setPlanImportPolicy('read_only')}
+                            disabled={isCurrentComposerLocked}
+                          >
+                            <PermissionSymbolIcon />
+                            Plan / read-only
+                          </button>
+                          <button
+                            className={`plan-import-policy-chip${pendingPlanImport.selectedPolicy === 'ask_before_edits' ? ' active' : ''}`}
+                            type="button"
+                            role="radio"
+                            aria-checked={pendingPlanImport.selectedPolicy === 'ask_before_edits'}
+                            onClick={() => setPlanImportPolicy('ask_before_edits')}
+                            disabled={isCurrentComposerLocked}
+                          >
+                            <ExclamationShieldIcon />
+                            Ask before edits
+                          </button>
+                          <span className="plan-import-policy-note">
+                            {pendingPlanImport.selectedPolicy === 'read_only'
+                              ? 'File writes, shell, and network stay denied by the read-only preset.'
+                              : 'Uses Default Approval; write actions go through the existing approval flow.'}
+                          </span>
+                        </div>
+
+                        <div className="plan-import-chip-row">
+                          <span className="plan-import-chip-label">Enforced</span>
+                          {pendingPlanImport.enabledChips.map((chip) => (
+                            <span key={chip} className="plan-import-chip">
+                              {PLAN_IMPORT_CHIP_LABELS[chip]}
+                            </span>
+                          ))}
+                        </div>
+                        {pendingPlanImport.contract.detectedChips.length > 0 && (
+                          <div className="plan-import-chip-row">
+                            <span className="plan-import-chip-label">Detected</span>
+                            {pendingPlanImport.contract.detectedChips.map((chip) => (
+                              <span key={chip} className="plan-import-chip detected">
+                                {PLAN_IMPORT_CHIP_LABELS[chip]}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="plan-import-grid">
+                          <div className="plan-import-section">
+                            <span>Constraints</span>
+                            {renderPlanImportItems(pendingPlanImport.contract.constraints)}
+                          </div>
+                          <div className="plan-import-section">
+                            <span>Assumptions</span>
+                            {pendingPlanImport.contract.assumptions.length === 0 ? (
+                              <span className="plan-import-empty">None detected</span>
+                            ) : (
+                              <ul className="plan-import-list">
+                                {pendingPlanImport.contract.assumptions.map((assumption) => (
+                                  <li key={assumption.text}>
+                                    {assumption.text}
+                                    <em>Unverified</em>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                          <div className="plan-import-section">
+                            <span>Files mentioned</span>
+                            {renderPlanImportItems(
+                              pendingPlanImport.contract.filesMentioned,
+                              'No file paths detected'
+                            )}
+                          </div>
+                          <div className="plan-import-section">
+                            <span>Risky or contradictory text</span>
+                            {renderPlanImportItems([
+                              ...pendingPlanImport.contract.riskyInstructions,
+                              ...pendingPlanImport.contract.contradictions
+                            ])}
+                          </div>
+                        </div>
+
+                        <div className="plan-import-actions">
+                          <button
+                            className="btn btn-sm"
+                            type="button"
+                            onClick={handleRunImportedPlan}
+                            disabled={isCurrentComposerLocked}
+                          >
+                            Run imported plan
+                          </button>
+                          <button
+                            className="btn btn-sm btn-ghost"
+                            type="button"
+                            onClick={() => setPendingPlanImport(null)}
+                            disabled={isCurrentComposerLocked}
+                          >
+                            Use raw prompt
                           </button>
                         </div>
                       </div>
@@ -20734,6 +21112,12 @@ function App(): React.JSX.Element {
                                   if (tryHandleActionSlashSubmit()) {
                                     return
                                   }
+                                  if (pendingPlanImport) {
+                                    window.alert(
+                                      'Choose Run imported plan or Use raw prompt before sending.'
+                                    )
+                                    return
+                                  }
                                   triggerSendConfirmation()
                                   handleRun()
                                 }}
@@ -20741,10 +21125,15 @@ function App(): React.JSX.Element {
                                   !currentChat ||
                                   (!isCurrentGlobalChat && !currentWorkspace) ||
                                   !prompt.trim() ||
+                                  Boolean(pendingPlanImport) ||
                                   (currentProvider === 'gemini' && !geminiWorkspaceTrustReady) ||
                                   isSteerBusyForCurrentChat
                                 }
-                                title="Queue next run"
+                                title={
+                                  pendingPlanImport
+                                    ? 'Choose Run imported plan or Use raw prompt first'
+                                    : 'Queue next run'
+                                }
                                 aria-label="Queue next run"
                                 type="button"
                               >
@@ -20765,10 +21154,15 @@ function App(): React.JSX.Element {
                                     !currentChat ||
                                     (!isCurrentGlobalChat && !currentWorkspace) ||
                                     !prompt.trim() ||
+                                    Boolean(pendingPlanImport) ||
                                     (currentProvider === 'gemini' && !geminiWorkspaceTrustReady) ||
                                     isSteerBusyForCurrentChat
                                   }
-                                  title="Interrupt the active turn and dispatch this prompt immediately."
+                                  title={
+                                    pendingPlanImport
+                                      ? 'Choose Run imported plan or Use raw prompt first'
+                                      : 'Interrupt the active turn and dispatch this prompt immediately.'
+                                  }
                                   aria-label="Steer: interrupt and dispatch this prompt"
                                   type="button"
                                 >
@@ -20798,6 +21192,12 @@ function App(): React.JSX.Element {
                                 if (tryHandleActionSlashSubmit()) {
                                   return
                                 }
+                                if (pendingPlanImport) {
+                                  window.alert(
+                                    'Choose Run imported plan or Use raw prompt before sending.'
+                                  )
+                                  return
+                                }
                                 triggerSendConfirmation()
                                 // DM target resolution (same precedence as
                                 // the Enter handler above): explicit
@@ -20823,6 +21223,7 @@ function App(): React.JSX.Element {
                                 !currentChat ||
                                 (!isCurrentGlobalChat && !currentWorkspace) ||
                                 !prompt.trim() ||
+                                Boolean(pendingPlanImport) ||
                                 (currentProvider === 'gemini' && !geminiWorkspaceTrustReady)
                               }
                               title={
@@ -20832,6 +21233,8 @@ function App(): React.JSX.Element {
                                     ? 'Pick a workspace folder first'
                                     : !prompt.trim()
                                       ? 'Type a prompt first'
+                                      : pendingPlanImport
+                                        ? 'Choose Run imported plan or Use raw prompt first'
                                         : currentProvider === 'gemini' && !geminiWorkspaceTrustReady
                                           ? 'Trust this workspace for Gemini first'
                                         : isCurrentEnsembleChat && effectiveSelectedParticipantId
