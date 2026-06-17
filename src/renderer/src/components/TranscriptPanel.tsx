@@ -60,7 +60,7 @@ import { FileTypeIcon } from './FileTypeIcon'
 import { RunCard } from './RunCard'
 import { ThinkingIndicator } from './AppChromeSymbols'
 
-type TranscriptPanelProps = {
+export type TranscriptPanelProps = {
   scrollRef: React.RefObject<HTMLDivElement | null>
   /**
    * Ref pinned to the SINGLE inner content div (`.transcript-inner`)
