@@ -173,7 +173,9 @@ struct Composer: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // CS12: input-owning shells gap the framed input from the bare control
+        // row below it (desktop flex-column gap); others stay flush (spacing 0).
+        VStack(alignment: .leading, spacing: shell.layout.inputOwnsSurface ? 6 : 0) {
             if shell.layout.controlsBelowTextarea {
                 // CS10: text input first, control row BELOW it (codex/claude/…
                 // desktop parity). No hairline — the controls float under the

@@ -405,10 +405,10 @@ public enum ComposerShellResolver {
                 placeholder: placeholder,
                 rim: ComposerShellRim(color: rimColor, width: 1, glow: nil)),
             geometry: ComposerShellGeometry(
-                // Merged stack radius --cursor-shell-stack-radius 14px is the
-                // outer surface; capsule radius --cursor-shell-capsule-radius
-                // 26px is the inner typing module.
-                surfaceCornerRadius: 14,
+                // CS12: the input now OWNS the surface (inputOwnsSurface), so the
+                // surface IS the 26px capsule (--cursor-shell-capsule-radius). The
+                // old 14px merged-stack radius no longer applies (no merged outer).
+                surfaceCornerRadius: 26,
                 innerCornerRadius: 26,
                 controlShape: .capsule,
                 rowSpacing: 6),          // surface flex column gap 6px

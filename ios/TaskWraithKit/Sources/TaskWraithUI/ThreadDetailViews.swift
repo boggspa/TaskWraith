@@ -905,8 +905,9 @@ struct ThreadDetailView: View {
                         // mode this is its OWN card under the floating above-rows;
                         // merged mode keeps it as the final segments of the one
                         // shared surface (nested zero-spacing VStack is layout-
-                        // identical to the old inline siblings).
-                        VStack(spacing: 0) {
+                        // identical to the old inline siblings). CS12: bare-footer
+                        // shells gap the input bubble from the bare telemetry rail.
+                        VStack(spacing: bareTelemetry ? 6 : 0) {
                             // codex tucks the roster/queued rows INTO this core
                             // card (above the input), as merged segments.
                             if tuck {
