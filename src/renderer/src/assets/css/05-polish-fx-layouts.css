@@ -3044,7 +3044,7 @@
   .composer-above-bar-stack.fx-agent-aura::after,
 [data-composer-style="grok"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(> :nth-child(2))),
+  .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura::after,
 [data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura::after {
@@ -3073,7 +3073,14 @@
   ),
 [data-composer-style="grok"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(> :nth-child(2))),
+  .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  ),
 [data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura
@@ -3108,7 +3115,14 @@
   )::after,
 [data-composer-style="grok"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(> :nth-child(2))),
+  .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::after,
 [data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura
@@ -3151,7 +3165,14 @@
   )::after,
 [data-composer-style="grok"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(> :nth-child(2))),
+  .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura.fx-status-running
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::after,
 [data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura.fx-status-running
@@ -3190,7 +3211,14 @@
   )::after,
 [data-composer-style="grok"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(> :nth-child(2))),
+  .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura.fx-status-approval
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::after,
 [data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura.fx-status-approval
@@ -3228,7 +3256,14 @@
   )::after,
 [data-composer-style="grok"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(> :nth-child(2))),
+  .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura.fx-status-failed
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::after,
 [data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura.fx-status-failed
@@ -3268,7 +3303,14 @@
 :root[data-reduce-motion="true"]
   [data-composer-style="grok"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(> :nth-child(2))),
+  .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura.fx-status-running
+  > :is(
+    .composer-above-bar,
+    .ensemble-above-row,
+    .queued-messages-above-row,
+    .composer-create-pr-row,
+    .ensemble-roster-preset-picker.is-compact
+  )::after,
 [data-composer-style="codex"]
   .app-transcript
   .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura.fx-status-running
