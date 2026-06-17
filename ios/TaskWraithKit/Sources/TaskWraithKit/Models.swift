@@ -99,6 +99,165 @@ public struct DailyTokenSeries: Codable, Sendable {
     }
 }
 
+/// The Electron "New Chat welcome" stats dashboard (4 tabs: Statistics / Model
+/// Comparisons / Workspaces / Providers, LAST 30 DAYS), projected from the Mac's
+/// `buildWelcomeUsageDashboardData` aggregator into a flat, iOS-friendly shape
+/// (the aggregator's per-model `dailyTotals` Map and other renderer-only fields
+/// are dropped). Broadcast over `bridge.broadcastWelcomeDashboard`, decoded into
+/// `RemoteSessionModel.welcomeDashboard`, rendered by `WelcomeUsageDashboardCard`.
+public struct WelcomeDashboardMessage: Codable, Sendable {
+    public let dashboard: WelcomeDashboard
+    public init(dashboard: WelcomeDashboard) { self.dashboard = dashboard }
+}
+
+public struct WelcomeDashboard: Codable, Sendable {
+    // — Statistics tab scalars —
+    public let favoriteModel: String
+    public let favoriteProject: String
+    public let tokens24h: Int
+    public let currentStreak: Int
+    public let longestStreak: Int
+    public let activeDays: Int
+    public let longestThreadMs: Int
+    public let totalWallTimeMs: Int
+    /// 0–23 local hour, or -1 when there is no peak.
+    public let peakHour: Int
+    public let sessions: Int
+    public let messages: Int
+    public let totalTokens: Int
+    public let totalCostUsd: Double
+    public let avgSessionMs: Int
+    public let tokensPerSession: Int
+    /// Providers tab — rolling 24h cumulative wall-clock across runs.
+    public let wallTime24hMs: Int
+    /// Statistics footer ("You've tracked 19M tokens across 7 providers.").
+    public let comparisonText: String
+    /// True when the 30-day window has activity (drives the empty state).
+    public let hasActivity: Bool
+    /// True when there is ANY lifetime activity (drives whether to show the card).
+    public let lifetimeHasActivity: Bool
+
+    // — Provider-mix gradient ribbon under the tabs —
+    public let providerTokenTotals: [ProviderTokenTotal]
+    // — Model Comparisons tab —
+    public let modelBreakdown: [ModelDatum]
+    // — Workspaces tab (ranked cards + 30-day daily chart) —
+    public let workspaceBreakdown: [WorkspaceDatum]
+    public let dailyBreakdown: [DailyBucket]
+    // — Providers tab (ranked cards + 24h wall time) —
+    public let providerBreakdown: [ProviderDatum]
+
+    public struct ProviderTokenTotal: Codable, Sendable, Identifiable {
+        public let provider: String
+        public let tokens: Int
+        public var id: String { provider }
+        public init(provider: String, tokens: Int) {
+            self.provider = provider; self.tokens = tokens
+        }
+    }
+
+    public struct ModelDatum: Codable, Sendable, Identifiable {
+        public let id: String
+        public let provider: String
+        public let label: String
+        public let inputTokens: Int
+        public let outputTokens: Int
+        /// Share of kept-model tokens, 0–100.
+        public let percent: Double
+        public init(
+            id: String, provider: String, label: String,
+            inputTokens: Int, outputTokens: Int, percent: Double
+        ) {
+            self.id = id; self.provider = provider; self.label = label
+            self.inputTokens = inputTokens; self.outputTokens = outputTokens
+            self.percent = percent
+        }
+    }
+
+    public struct WorkspaceDatum: Codable, Sendable, Identifiable {
+        public let id: String
+        public let displayName: String
+        public let tokens: Int
+        public let costUsd: Double
+        /// Share of total tokens, 0–100 (drives the meter).
+        public let shareOfTotalTokens: Double
+        public init(
+            id: String, displayName: String, tokens: Int,
+            costUsd: Double, shareOfTotalTokens: Double
+        ) {
+            self.id = id; self.displayName = displayName; self.tokens = tokens
+            self.costUsd = costUsd; self.shareOfTotalTokens = shareOfTotalTokens
+        }
+    }
+
+    public struct ProviderDatum: Codable, Sendable, Identifiable {
+        public let provider: String
+        public let displayName: String
+        public let tokens: Int
+        public let costUsd: Double
+        public let shareOfTotalTokens: Double
+        public var id: String { provider }
+        public init(
+            provider: String, displayName: String, tokens: Int,
+            costUsd: Double, shareOfTotalTokens: Double
+        ) {
+            self.provider = provider; self.displayName = displayName
+            self.tokens = tokens; self.costUsd = costUsd
+            self.shareOfTotalTokens = shareOfTotalTokens
+        }
+    }
+
+    public struct DailyBucket: Codable, Sendable, Identifiable {
+        /// YYYY-MM-DD local-day key.
+        public let id: String
+        /// Short axis/tooltip label ("May 15").
+        public let dayLabel: String
+        public let tokens: Int
+        public let costUsd: Double
+        public init(id: String, dayLabel: String, tokens: Int, costUsd: Double) {
+            self.id = id; self.dayLabel = dayLabel
+            self.tokens = tokens; self.costUsd = costUsd
+        }
+    }
+
+    public init(
+        favoriteModel: String, favoriteProject: String, tokens24h: Int,
+        currentStreak: Int, longestStreak: Int, activeDays: Int,
+        longestThreadMs: Int, totalWallTimeMs: Int, peakHour: Int,
+        sessions: Int, messages: Int, totalTokens: Int, totalCostUsd: Double,
+        avgSessionMs: Int, tokensPerSession: Int, wallTime24hMs: Int,
+        comparisonText: String, hasActivity: Bool, lifetimeHasActivity: Bool,
+        providerTokenTotals: [ProviderTokenTotal], modelBreakdown: [ModelDatum],
+        workspaceBreakdown: [WorkspaceDatum], dailyBreakdown: [DailyBucket],
+        providerBreakdown: [ProviderDatum]
+    ) {
+        self.favoriteModel = favoriteModel
+        self.favoriteProject = favoriteProject
+        self.tokens24h = tokens24h
+        self.currentStreak = currentStreak
+        self.longestStreak = longestStreak
+        self.activeDays = activeDays
+        self.longestThreadMs = longestThreadMs
+        self.totalWallTimeMs = totalWallTimeMs
+        self.peakHour = peakHour
+        self.sessions = sessions
+        self.messages = messages
+        self.totalTokens = totalTokens
+        self.totalCostUsd = totalCostUsd
+        self.avgSessionMs = avgSessionMs
+        self.tokensPerSession = tokensPerSession
+        self.wallTime24hMs = wallTime24hMs
+        self.comparisonText = comparisonText
+        self.hasActivity = hasActivity
+        self.lifetimeHasActivity = lifetimeHasActivity
+        self.providerTokenTotals = providerTokenTotals
+        self.modelBreakdown = modelBreakdown
+        self.workspaceBreakdown = workspaceBreakdown
+        self.dailyBreakdown = dailyBreakdown
+        self.providerBreakdown = providerBreakdown
+    }
+}
+
 public struct ProviderModelsMessage: Codable, Sendable {
     public let providers: [ProviderModelCatalog]
 }

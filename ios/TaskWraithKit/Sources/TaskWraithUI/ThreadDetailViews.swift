@@ -1224,6 +1224,7 @@ struct ThreadEmptyWelcomeCanvas: View {
                 scopeChips
                 composerBlock
                     .padding(.horizontal, 4)
+                dashboardCard
                 activityFooter
                     .padding(.top, 8)
                 Spacer(minLength: 24)
@@ -1351,6 +1352,17 @@ struct ThreadEmptyWelcomeCanvas: View {
             provider: currentDraftProvider,
             threadId: card.threadId ?? card.id,
             title: card.title ?? "New Chat")
+    }
+
+    // CS-DASH — the Electron 4-tab welcome stats dashboard, ported to iOS. Sits
+    // between the composer and the activity heatmap; the welcome VStack's maxWidth
+    // 560 + ScrollView give it dynamic sizing (1-col stats on a phone, 2 on iPad).
+    // Slice A renders the fixture; slice C swaps in `model.welcomeDashboard` (live).
+    @ViewBuilder private var dashboardCard: some View {
+        let data = WelcomeDashboard.fixture
+        if data.lifetimeHasActivity {
+            WelcomeUsageDashboardCard(dashboard: data, accent: accent)
+        }
     }
 
     private var activityFooter: some View {
