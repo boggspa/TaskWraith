@@ -3021,6 +3021,21 @@ Next action:
     )
   })
 
+  it('allows configured continuous handoff limits up to 500', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 500
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Use the configured handoff cap.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.chat.ensemble?.activeRound?.maxContinuationHops).toBe(500)
+  })
+
   it('does not promote on self-mention (speaker referencing their own role)', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [

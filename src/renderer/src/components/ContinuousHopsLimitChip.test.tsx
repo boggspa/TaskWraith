@@ -65,6 +65,7 @@ describe('ContinuousHopsLimitChip', () => {
     // value never under/over-flows the editor.
     expect(CONTINUOUS_HOPS_RANGE.min).toBeLessThanOrEqual(6)
     expect(CONTINUOUS_HOPS_RANGE.max).toBeGreaterThanOrEqual(6)
+    expect(CONTINUOUS_HOPS_RANGE.max).toBe(500)
   })
 
   it('positions the edit popover above the trigger', () => {

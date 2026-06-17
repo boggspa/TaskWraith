@@ -31,7 +31,7 @@ import {
 import { createPortal } from 'react-dom'
 
 const MIN_HOPS = 1
-const MAX_HOPS = 100
+const MAX_HOPS = 500
 const POPOVER_WIDTH = 260
 const POPOVER_GAP = 6
 const POPOVER_FALLBACK_HEIGHT = 154

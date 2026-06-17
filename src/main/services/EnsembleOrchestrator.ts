@@ -82,7 +82,7 @@ export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
 const ENSEMBLE_GLOBAL_USAGE_WORKSPACE_ID = '__taskwraith_global_chats__'
 
 const DEFAULT_CONTINUATION_HOP_LIMIT = 6
-const MAX_CONTINUATION_HOP_LIMIT = 12
+const MAX_CONTINUATION_HOP_LIMIT = 500
 
 export interface EnsembleDispatchEvent {
   sender: Electron.WebContents

@@ -13831,13 +13831,13 @@ function App(): React.JSX.Element {
 
   // 1.0.6 — persist the user-set max handoff turns for continuous rounds onto
   // chat.ensemble.maxContinuationHops. Range-clamped at the call site
-  // (ContinuousHopsLimitChip enforces 1–100); we still guard here so a malformed
+  // (ContinuousHopsLimitChip enforces 1–500); we still guard here so a malformed
   // value never lands in the store. Also mirror onto activeRound when a round is
   // in flight so the hops meter and persisted round snapshot stay in sync.
   const updateCurrentEnsembleMaxContinuationHops = useCallback(
     (nextMax: number) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      const safeMax = Math.max(1, Math.min(100, Math.round(Number(nextMax) || 0)))
+      const safeMax = Math.max(1, Math.min(500, Math.round(Number(nextMax) || 0)))
       if (!Number.isFinite(safeMax) || safeMax <= 0) return
       updateChatById(currentChat.appChatId, (source) => {
         if (!source.ensemble) return source
