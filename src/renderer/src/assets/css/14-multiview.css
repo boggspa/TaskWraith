@@ -95,6 +95,41 @@
   color: var(--text-primary);
 }
 
+/* Composer layout-picker trigger — container-less to match the Goal /
+   Screen Watch / Copy buttons in the telemetry row (no "+" bubble). */
+.composer-multiview-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 54%, transparent);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.composer-multiview-trigger:hover:not(:disabled),
+.composer-multiview-trigger[aria-expanded='true'] {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.composer-multiview-trigger:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.composer-multiview-trigger .composer-control-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .multiview-empty-pane {
   display: flex;
   align-items: center;

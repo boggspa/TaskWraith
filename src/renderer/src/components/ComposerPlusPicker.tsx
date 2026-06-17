@@ -24,6 +24,10 @@ interface ComposerPlusPickerProps {
   sections: ComposerPlusPickerSection[]
   disabled?: boolean
   triggerIcon: ReactNode
+  /** Trigger chrome overrides — default to the "+" image-picker bubble. */
+  triggerClassName?: string
+  triggerControl?: string
+  triggerLabel?: string
 }
 
 export function ComposerPlusPicker({
@@ -31,7 +35,10 @@ export function ComposerPlusPicker({
   composerStyle,
   sections,
   disabled,
-  triggerIcon
+  triggerIcon,
+  triggerClassName = 'composer-image-picker-btn composer-plus-picker-trigger',
+  triggerControl = 'attach',
+  triggerLabel = 'Composer tools'
 }: ComposerPlusPickerProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -144,15 +151,15 @@ export function ComposerPlusPicker({
     <>
       <button
         ref={triggerRef}
-        className="composer-image-picker-btn composer-plus-picker-trigger"
+        className={triggerClassName}
         type="button"
-        title="Composer tools"
-        aria-label="Composer tools"
+        title={triggerLabel}
+        aria-label={triggerLabel}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
         disabled={disabled || visibleSections.length === 0}
-        data-composer-control="attach"
+        data-composer-control={triggerControl}
       >
         {triggerIcon}
       </button>
