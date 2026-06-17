@@ -485,11 +485,25 @@ re-verified byte-identical.
 - **liftedSend** — effectively satisfied on iOS: the 1–2 line input keeps the send at its
   trailing edge (= the corner); the desktop "lift" only matters for a tall growing textarea.
 
-### F.10 — Still deferred (live visual review)
+### F.10 — Done in CS13 (build-14 screenshot review)
+- **codex above-row rim** — `codexRecipe.palette.rim` = rgb(87 148 255) (ring 0.28 / glow
+  0.18); the detached Create-PR / changes / secondary-workspace pills now carry the desktop
+  agent-aura rim (it also rims the core, consistent with terminal/stub).
+- **claude above-row radius** — `surfaceCornerRadius` 14 → 12 (slightly less round; shared
+  with the input bubble; stays in claude's 10-14 band).
+
+### F.11 — Still deferred (live visual review)
+- **grok "tucked tabs"** — the above-rows should collapse into ONE narrower (~18px inset),
+  top-rounded card that the composer's top edge OVERLAPS by ~10px (a tab peeking from behind),
+  with the composer staying one full-width surface. Approach (agent investigation): add a
+  `tuckedAboveTab` layout flag (grok only) + a composerShellStack branch wrapping the
+  above-rows in one inset `.composerShell` card and the composer-core in another, stacked via
+  `VStack(spacing: -10)` (the overlap hides the tab's bottom corners → no top-only-corner
+  primitive needed). Deferred: needs the above-rows grouped (they carry many local deps in
+  composerShellStack) + visual verification.
 - **Theme-immune footer legibility** — cursor/gemini lock a dark palette but the bare footer
   chrome (chips, telemetry) is theme-following → mismatch on a LIGHT app theme; the footer
-  should adopt the shell palette for theme-immune shells. (Edge case: light app + locked-dark
-  shell.)
+  should adopt the shell palette for theme-immune shells. (Edge case: light app + locked-dark.)
 - **composerLayout value test** (needs the pure layout map moved into TaskWraithKit) +
   **state-identity on live shell switch** (composerShellIf if/else can reset the draft
   mid-compose — LOW).

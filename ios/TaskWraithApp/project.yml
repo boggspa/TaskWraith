@@ -80,7 +80,7 @@ targets:
         # before running on a physical device.
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 8CZML8FK2D
-        CURRENT_PROJECT_VERSION: "14"
+        CURRENT_PROJECT_VERSION: "15"
         MARKETING_VERSION: "0.1.0"
         SWIFT_VERSION: "6.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
