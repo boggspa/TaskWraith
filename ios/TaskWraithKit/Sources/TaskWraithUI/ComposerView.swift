@@ -174,11 +174,24 @@ struct Composer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !card.isEnsemble {
-                composerControlsRow
-                Rectangle().fill(TWTheme.border).frame(height: 1)
+            if shell.layout.controlsBelowTextarea {
+                // CS10: text input first, control row BELOW it (codex/claude/…
+                // desktop parity). No hairline — the controls float under the
+                // input separated only by the rows' own padding, mirroring the
+                // desktop inner-module `gap`.
+                composerInputBody
+                if !card.isEnsemble {
+                    composerControlsRow
+                }
+            } else {
+                // Signed-off native arrangement: controls ABOVE the input with a
+                // hairline divider. Unchanged (default parity).
+                if !card.isEnsemble {
+                    composerControlsRow
+                    Rectangle().fill(TWTheme.border).frame(height: 1)
+                }
+                composerInputBody
             }
-            composerInputBody
         }
         // Re-bind the picker to the LOADED thread on first appear AND on every
         // thread switch. SwiftUI reuses this Composer instance across threads on

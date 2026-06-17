@@ -185,7 +185,12 @@ public enum ComposerShellResolver {
             effects: [.twoSurfaceSplit],
             // Hybrid theme behavior: locks its own dark palette, hand-derives
             // the light family above → NOT theme-immune (the contract reserves it for the fully-locked set: grok/cursor/terminal/obsidian/alabaster).
-            themeImmune: false)
+            themeImmune: false,
+            // CS10 — controls render BELOW the textarea: the desktop codex
+            // inner-module is a flex COLUMN (textarea, then the control row).
+            // detachedAboveRows (the git/Create-PR float-above pills) lands with
+            // its composerShellStack restructure in the detached-rows slice.
+            layout: ComposerShellLayout(controlsBelowTextarea: true))
     }
 
     /// Claude — whisper-quiet near-monochrome dark shell mimicking Claude Code's
