@@ -190,6 +190,10 @@ public struct ComposerShellLayout: Equatable, Sendable {
     /// the composer-core card instead of detaching as their own pills — only the
     /// changes/PR rows pill out above (codex). Inert unless detachedAboveRows.
     public var tucksSecondaryRows: Bool
+    /// The shell surface clothes ONLY the textarea/input; the control row + the
+    /// telemetry rail render BARE on the page below it (claude). This is the
+    /// umbrella case; surfaceIsCapsule / splitChromeRects are specializations.
+    public var surfaceWrapsInputOnly: Bool
     public init(
         controlsBelowTextarea: Bool = false,
         detachedAboveRows: Bool = false,
@@ -197,7 +201,8 @@ public struct ComposerShellLayout: Equatable, Sendable {
         surfaceIsCapsule: Bool = false,
         splitChromeRects: Bool = false,
         controlsAsPlainText: Bool = false,
-        tucksSecondaryRows: Bool = false
+        tucksSecondaryRows: Bool = false,
+        surfaceWrapsInputOnly: Bool = false
     ) {
         self.controlsBelowTextarea = controlsBelowTextarea
         self.detachedAboveRows = detachedAboveRows
@@ -206,6 +211,16 @@ public struct ComposerShellLayout: Equatable, Sendable {
         self.splitChromeRects = splitChromeRects
         self.controlsAsPlainText = controlsAsPlainText
         self.tucksSecondaryRows = tucksSecondaryRows
+        self.surfaceWrapsInputOnly = surfaceWrapsInputOnly
+    }
+    /// CS12 — the shell surface wraps ONLY the input (textarea bubble / capsule /
+    /// rect), NOT the whole composer-core; the control row + telemetry rail then
+    /// render bare (or, for splitChromeRects, the controls get their OWN second
+    /// rect). True for claude (bare bubble) + gemini/cursor (capsule) + obsidian/
+    /// alabaster (two rects). default/codex/kimi/grok/terminal/stub keep ONE merged
+    /// surface, so this is false for them.
+    public var inputOwnsSurface: Bool {
+        surfaceWrapsInputOnly || surfaceIsCapsule || splitChromeRects
     }
     /// The signed-off iOS default arrangement (no structural changes).
     public static let standard = ComposerShellLayout()

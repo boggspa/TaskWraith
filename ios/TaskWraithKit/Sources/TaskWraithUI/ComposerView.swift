@@ -227,13 +227,31 @@ struct Composer: View {
         // native input-row fill (signed-off). Other shells with no inner module
         // let the shell surface show through (terminal green, satellite/modular
         // transparent, stub cream) rather than painting the theme input fill.
-        if let fill = shell.palette.innerModuleFill {
+        if shell.layout.inputOwnsSurface {
+            // CS12: the input gets its OWN shell surface (bubble/capsule/rect)
+            // applied in composerInputBody — don't double-paint a fill here.
+            Color.clear
+        } else if let fill = shell.palette.innerModuleFill {
             Rectangle().fill(fill)
         } else if shell.style == .defaultShell {
             Rectangle().fill(composerInputRowFill())
         } else {
             Color.clear
         }
+    }
+
+    /// CS12 — background behind the control row. Bare (clear) for input-owning
+    /// shells whose footer floats free (claude/gemini/cursor) or gets its own rect
+    /// (obsidian/alabaster, via .composerShellIf below); codex fuses the row into
+    /// its #252525 inner module; everyone else keeps the attached-row fill.
+    private var composerControlsRowFill: AnyShapeStyle {
+        if shell.layout.inputOwnsSurface {
+            return AnyShapeStyle(Color.clear)
+        }
+        if let fill = shell.palette.innerModuleFill {
+            return AnyShapeStyle(fill)
+        }
+        return composerAttachedRowFill()
     }
 
     private var composerControlsRow: some View {
@@ -251,7 +269,10 @@ struct Composer: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(Rectangle().fill(composerAttachedRowFill()))
+        .background(Rectangle().fill(composerControlsRowFill))
+        // CS12: two-rect shells (obsidian/alabaster) give the control row its OWN
+        // lit rect; bare-footer shells (claude/gemini/cursor) leave it transparent.
+        .composerShellIf(shell.layout.splitChromeRects, shell)
     }
 
     @ViewBuilder
@@ -401,6 +422,9 @@ struct Composer: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(composerBodyBackground)
+        // CS12: input-owning shells (claude bubble / gemini-cursor capsule /
+        // obsidian-alabaster rect) frame ONLY the input here; the footer is bare.
+        .composerShellIf(shell.layout.inputOwnsSurface, shell)
     }
 
     private var queueButton: some View {

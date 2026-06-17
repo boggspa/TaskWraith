@@ -824,6 +824,14 @@ struct ThreadDetailView: View {
                     // codex: the SECONDARY rows (roster/queued) tuck INTO the core
                     // card; only the changes/PR rows pill out above it (CS11).
                     let tuck = detached && resolved.layout.tucksSecondaryRows
+                    // CS12: input-owning shells (claude/gemini/cursor/obsidian/
+                    // alabaster) frame ONLY the input; the control row + telemetry
+                    // render BARE, so the core card is NOT wrapped and the
+                    // input->telemetry divider drops. Transparent shells (satellite/
+                    // modular) likewise float their telemetry free.
+                    let inputOwnsSurface = resolved.layout.inputOwnsSurface
+                    let bareTelemetry =
+                        detached && (inputOwnsSurface || resolved.material == .transparent)
                     VStack(spacing: detached ? 6 : 0) {
                         if hasWorkspaceBreakdown {
                             // One attached row per granted workspace
@@ -917,7 +925,9 @@ struct ThreadDetailView: View {
                                 extraWorkspaceIds: extraWorkspaceIdsForSend(card: card),
                                 allowsProviderChange: allowsFirstTurnProviderChange,
                                 text: $followUp)
-                            Rectangle().fill(TWTheme.border).frame(height: 1)
+                            if !bareTelemetry {
+                                Rectangle().fill(TWTheme.border).frame(height: 1)
+                            }
                             TelemetryFooterRail(
                                 run: snapshot?.runSummary,
                                 workspaceName: model.workspaceName(for: card.workspaceId),
@@ -932,7 +942,7 @@ struct ThreadDetailView: View {
                                 },
                                 planLanes: card.todoLanes ?? [])
                         }
-                        .composerShellIf(detached, resolved)
+                        .composerShellIf(detached && !inputOwnsSurface, resolved)
                     }
                     .composerShellIf(!detached, resolved)
                     .task(id: composerGitWorkspaceIds(card: card).joined(separator: "\n")) {

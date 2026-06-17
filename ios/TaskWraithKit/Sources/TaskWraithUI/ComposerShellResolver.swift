@@ -96,9 +96,12 @@ public enum ComposerShellResolver {
             // above-rows behind the composer lip (one merged card).
             return ComposerShellLayout(controlsBelowTextarea: true)
         case .claude:
-            // Detached pill cards; send lifted to the textarea-bubble corner.
+            // Detached pill cards; send lifted to the textarea-bubble corner; the
+            // surface wraps ONLY the textarea bubble — the control row + telemetry
+            // float BARE below it (CS12 bottom-row parity).
             return ComposerShellLayout(
-                controlsBelowTextarea: true, detachedAboveRows: true, liftedSend: true)
+                controlsBelowTextarea: true, detachedAboveRows: true, liftedSend: true,
+                surfaceWrapsInputOnly: true)
         case .gemini:
             // Single capsule input; send lifted into the capsule corner.
             return ComposerShellLayout(
