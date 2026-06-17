@@ -8810,3 +8810,43 @@ button.diff-file-row {
   color: var(--text-secondary);
   font-size: 12px;
 }
+
+/* ── Remote (iOS) access in the composer workspace popover ────────────────────
+   The reused .settings-workspace-remote toggle drops to its own line under the
+   primary workspace's name/badge row; the add-section "Remote off|read|R/W"
+   toggle stacks under the local Read|Write toggle, sharing its chrome. */
+.composer-workspace-row-primary {
+  flex-wrap: wrap;
+}
+.composer-workspace-row-primary .settings-workspace-remote {
+  flex-basis: 100%;
+  margin-top: 4px;
+}
+.composer-workspace-access-option.is-write.is-active {
+  background: color-mix(in srgb, var(--warning) 22%, transparent);
+}
+/* Keyboard focus ring — the UA ring is suppressed by appearance:none on these
+   segments. Also covers the pre-existing local Read|Write toggle (same class). */
+.composer-workspace-access-option:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* Small captions that disambiguate the local "agent access" toggle from the
+   remote "phone access" toggle stacked beneath it. */
+.composer-workspace-remote-caption {
+  margin: 6px 10px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+.composer-workspace-remote-hint {
+  margin: 0 10px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  /* Mix amber with --text-primary (not --text-secondary) so the security
+     disclosure stays legible in BOTH light and dark themes — --text-primary is
+     theme-adaptive high-contrast, avoiding the amber-on-near-white failure. */
+  color: color-mix(in srgb, var(--warning) 55%, var(--text-primary));
+}

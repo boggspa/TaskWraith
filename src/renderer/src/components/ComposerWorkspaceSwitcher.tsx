@@ -4,6 +4,9 @@ import { describeExternalPath } from '../lib/ExternalPathRepoDetect'
 import type { ExternalPathGitMetadata } from '../lib/ExternalPathRepoDetect'
 import type { AppSettings, ExternalPathGrant, WorkspaceRecord } from '../../../main/store/types'
 import { FolderSymbolIcon } from './AppChromeSymbols'
+import { WorkspaceRemoteAccessToggle } from './WorkspaceRemoteAccessToggle'
+import { buildAllowlistUpsertForSegment } from './workspaceRemoteAccess'
+import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 
 /**
  * 1.0.5-AR12b — Composer-position workspace switcher.
@@ -155,6 +158,30 @@ export function ComposerWorkspaceSwitcher({
   // workspace list (same pattern as QueuedMessagesAboveRow).
   const [dragPath, setDragPath] = useState<string | null>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
+  // Remote (iOS) access for workspaces added from the list below, and shown per
+  // current workspace. 'off' (default) writes nothing — preserves the prior add
+  // behavior. One allowlist fetch (on open) feeds the primary toggle (controlled)
+  // and the add logic.
+  const [addRemoteMode, setAddRemoteMode] = useState<'off' | 'read' | 'read-write'>('off')
+  const [remoteAllowlist, setRemoteAllowlist] = useState<RemoteWorkspaceEntry[]>([])
+  const refreshRemoteAllowlist = (): void => {
+    void window.api
+      .bridgeAllowlistList()
+      .then((list) => setRemoteAllowlist((list ?? []) as RemoteWorkspaceEntry[]))
+      .catch(() => undefined)
+  }
+  useEffect(() => {
+    if (!popoverOpen) {
+      // Re-arm to the safe default each session, so a previously chosen Read/Write
+      // can't silently apply to a later add.
+      setAddRemoteMode('off')
+      return
+    }
+    void window.api
+      .bridgeAllowlistList()
+      .then((list) => setRemoteAllowlist((list ?? []) as RemoteWorkspaceEntry[]))
+      .catch(() => undefined)
+  }, [popoverOpen])
 
   // Same outside-click + Escape dismiss pattern as WelcomeWorkspacePicker.
   useEffect(() => {
@@ -276,6 +303,35 @@ export function ComposerWorkspaceSwitcher({
   const handleSelectFromPopover = (callback: () => void): void => {
     setPopoverOpen(false)
     setTimeout(callback, 0)
+  }
+
+  // Add a known workspace as a secondary folder AND, if a remote tier is chosen,
+  // write its iOS allowlist entry. Read-modify-write (buildAllowlistUpsertForSegment)
+  // so it never widens a grant narrowed in Settings → Devices.
+  const handleAddKnown = (ws: WorkspaceRecord): void => {
+    handleSelectFromPopover(() => {
+      onAddKnownWorkspace?.(ws.path, addAccess)
+      if (addRemoteMode === 'off') return
+      void (async () => {
+        try {
+          // Read the LIVE allowlist right before writing so read-modify-write is
+          // based on truth, not a stale/unresolved snapshot — otherwise a fast add
+          // could widen a grant the user narrowed in Settings → Devices to
+          // first-grant defaults. (The popover is already closed; the on-open
+          // effect re-fetches next time, so no refresh is needed here.)
+          const fresh = ((await window.api.bridgeAllowlistList()) ?? []) as RemoteWorkspaceEntry[]
+          const existing = fresh.find((entry) => entry.workspaceId === ws.id)
+          const payload = buildAllowlistUpsertForSegment(
+            { id: ws.id, path: ws.path },
+            addRemoteMode,
+            existing
+          )
+          await window.api.bridgeAllowlistUpsert(payload)
+        } catch {
+          // keep prior behavior on IPC failure
+        }
+      })()
+    })
   }
 
   // 1.0.6-EW66 — commit a drag: splice the source path to the
@@ -414,6 +470,11 @@ export function ComposerWorkspaceSwitcher({
                     PRIMARY
                   </span>
                   <WorkspaceRevealButton path={currentWorkspace.path} label={primaryLabel} />
+                  <WorkspaceRemoteAccessToggle
+                    workspace={currentWorkspace}
+                    entries={remoteAllowlist}
+                    onChanged={refreshRemoteAllowlist}
+                  />
                 </div>
               ) : (
                 <div className="composer-workspace-row composer-workspace-row-empty">
@@ -492,6 +553,7 @@ export function ComposerWorkspaceSwitcher({
             {onAddFolder && (
               <div className="welcome-workspace-popover-section composer-workspace-add">
                 <div className="welcome-workspace-popover-header">Add a workspace</div>
+                <div className="composer-workspace-remote-caption">Agent access (this chat)</div>
                 <div
                   className="composer-workspace-access-toggle"
                   role="radiogroup"
@@ -522,6 +584,43 @@ export function ComposerWorkspaceSwitcher({
                     Write
                   </button>
                 </div>
+                <div className="composer-workspace-remote-caption">Phone access (remote)</div>
+                <div
+                  className="composer-workspace-access-toggle composer-workspace-remote-toggle"
+                  role="group"
+                  aria-label="Remote (iOS) access for the workspace you add"
+                >
+                  {(['off', 'read', 'read-write'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={addRemoteMode === mode}
+                      className={`composer-workspace-access-option ${
+                        addRemoteMode === mode ? 'is-active' : ''
+                      } ${mode === 'read-write' ? 'is-write' : ''}`}
+                      onClick={() => setAddRemoteMode(mode)}
+                      title={
+                        mode === 'off'
+                          ? 'Remote: not shared with paired devices'
+                          : mode === 'read'
+                            ? 'Remote: phone can monitor + approve, no file changes'
+                            : 'Remote: phone can edit files and run git commit/push'
+                      }
+                    >
+                      {mode === 'off' ? 'Off' : mode === 'read' ? 'Read' : 'Read/Write'}
+                    </button>
+                  ))}
+                </div>
+                {addRemoteMode !== 'off' && (
+                  <p className="composer-workspace-remote-hint">
+                    {addRemoteMode === 'read-write'
+                      ? 'Workspaces you add become writable from your phone (incl. git commit/push).'
+                      : 'Workspaces you add become viewable from your phone.'}
+                    {remoteAllowlist.length === 0
+                      ? ' Your first remote grant also exposes global chats to your phone in plan mode.'
+                      : ''}
+                  </p>
+                )}
                 {/*
                   1.0.6-EW69 — one-click add for every KNOWN workspace
                   that isn't the primary and isn't already attached.
@@ -534,9 +633,7 @@ export function ComposerWorkspaceSwitcher({
                       type="button"
                       role="menuitem"
                       className="welcome-workspace-popover-row composer-workspace-add-known"
-                      onClick={() =>
-                        handleSelectFromPopover(() => onAddKnownWorkspace(ws.path, addAccess))
-                      }
+                      onClick={() => handleAddKnown(ws)}
                       title={`Attach ${ws.displayName || ws.path} as a ${
                         addAccess === 'write' ? 'read + write' : 'read-only'
                       } additional workspace`}
