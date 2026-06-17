@@ -660,7 +660,12 @@ import {
   isCodexNativeGoalUnsupportedError
 } from './CodexNativeGoal'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
-import { applyLaneTodoWrite, TODO_SOLO_LANE, validateTodoWriteArgs } from './TodoList'
+import {
+  applyLaneTodoWrite,
+  parseTodoItemsFromUnknown,
+  TODO_SOLO_LANE,
+  validateTodoWriteArgs
+} from './TodoList'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
 import {
   MCP_AUTO_ALLOWED_TOOLS,
@@ -9013,7 +9018,22 @@ function emitCodexPlanItem(state: CodexRunState, item: any) {
   const itemId = codexTimelineItemId({ item }, 'codex-plan')
   const steps = item?.steps || item?.plan || item?.content || item?.text || item?.summary || item
   const output = codexString(steps)
-  ensureCodexTimelineTool(state, itemId, 'codex_plan', { title: 'Plan update', kind: 'plan' })
+  // Codex's native plan now feeds the unified PlanRail: parse the steps and
+  // carry them in `parameters.todos` ('codex_plan' is a recognized todo tool).
+  // emitCodexPlanItem fires per plan update with a stable item id, so re-emit
+  // the tool-use with the refreshed steps — the once-only timeline guard would
+  // otherwise freeze the plan at its initial all-pending state.
+  const todos = parseTodoItemsFromUnknown(steps)
+  const parameters: Record<string, unknown> = { title: 'Plan update', kind: 'plan' }
+  if (todos.length > 0) {
+    parameters.todos = todos
+    parameters.merge = false
+  }
+  if (!state.timelineStartedItemIds.has(itemId)) {
+    ensureCodexTimelineTool(state, itemId, 'codex_plan', parameters)
+  } else if (todos.length > 0) {
+    sendCodexSyntheticToolUse(state, itemId, 'codex_plan', parameters)
+  }
   if (output) {
     sendCodexSyntheticToolResult(
       state,

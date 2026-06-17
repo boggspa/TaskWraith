@@ -9,6 +9,7 @@ import {
   isTodoToolName,
   mergeTodoLists,
   parseTodoItemsFromActivity,
+  parseTodoItemsFromUnknown,
   summarizeTodoProgress,
   TODO_SOLO_LANE,
   validateTodoWriteArgs
@@ -19,7 +20,23 @@ describe('TodoList', () => {
     expect(isTodoToolName('todo_write')).toBe(true)
     expect(isTodoToolName('mcp__TaskWraith__todo_write')).toBe(true)
     expect(isTodoToolName('update_todo_list')).toBe(true)
+    expect(isTodoToolName('codex_plan')).toBe(true)
     expect(isTodoToolName('read_file')).toBe(false)
+  })
+
+  it('parses Codex-style plan steps ({step,status}) and bare strings', () => {
+    expect(
+      parseTodoItemsFromUnknown([
+        { step: 'Scan repo', status: 'completed' },
+        { step: 'Edit file', status: 'in progress' }
+      ])
+    ).toEqual([
+      { id: 'todo-1', content: 'Scan repo', status: 'completed' },
+      { id: 'todo-2', content: 'Edit file', status: 'in_progress' }
+    ])
+    expect(parseTodoItemsFromUnknown(['just text'])).toEqual([
+      { id: 'todo-1', content: 'just text', status: 'pending' }
+    ])
   })
 
   it('parses todos from parameters and normalises status aliases', () => {

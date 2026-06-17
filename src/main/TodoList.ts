@@ -20,7 +20,9 @@ const TODO_TOOL_NAMES = new Set([
   'todowrite',
   'update_todo_list',
   'updatetodolist',
-  'updatetodo'
+  'updatetodo',
+  // Codex's native plan, emitted as a synthetic 'codex_plan' tool activity.
+  'codex_plan'
 ])
 
 const TODO_STATUS_ALIASES: Record<string, TodoStatus> = {
@@ -58,9 +60,17 @@ export function normalizeTodoStatus(value: unknown): TodoStatus {
 }
 
 function normalizeTodoRecord(raw: unknown, index: number): TodoItem | null {
+  // A bare-string step (some plan shapes emit `["step text", ...]`).
+  if (typeof raw === 'string') {
+    const content = raw.trim()
+    return content ? { id: `todo-${index + 1}`, content, status: 'pending' } : null
+  }
   if (!raw || typeof raw !== 'object') return null
   const record = raw as Record<string, unknown>
-  const content = String(record.content ?? record.text ?? record.title ?? record.task ?? '').trim()
+  // `step` / `description` cover Codex's native plan step shape ({ step, status }).
+  const content = String(
+    record.content ?? record.text ?? record.title ?? record.task ?? record.step ?? record.description ?? ''
+  ).trim()
   if (!content) return null
   const id = String(record.id ?? record.todo_id ?? record.key ?? `todo-${index + 1}`).trim()
   return {
