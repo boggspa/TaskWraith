@@ -57,9 +57,14 @@ jobs:
   # target, so a broken iOS build/test fails CI before any TestFlight upload.
   ios:
     name: iOS (Kit tests + app build)
-    runs-on: macos-15
+    # macOS 26 runner: TaskWraithUI uses the iOS-26 "Liquid Glass" API
+    # (`.glassEffect(.regular)`), so the toolchain needs the iOS 26 SDK —
+    # older runner Xcodes fail with "no member 'glassEffect'".
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: xcodebuild -version && swift --version
       - name: Swift package tests (TaskWraithKit)
         run: swift test --package-path ios/TaskWraithKit
       - name: Generate Xcode project (XcodeGen)
