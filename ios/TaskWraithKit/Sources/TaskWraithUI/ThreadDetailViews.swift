@@ -21,6 +21,10 @@ struct ThreadDetailView: View {
     @ObservedObject var model: RemoteSessionModel
     let taskId: String
     @State private var followUp = ""
+    /// Mirrors the Composer's expanded state (focused / drafting / queued /
+    /// ensemble) so the host hides the secondary rows + telemetry rail when the
+    /// composer is idle — i.e. the compact one-line composer.
+    @State private var composerExpanded = false
     /// Follow the transcript tail as content streams in — disabled the
     /// moment the user drags, re-enabled by the jump-to-latest pill.
     @State private var autoFollow = true
@@ -911,7 +915,7 @@ struct ThreadDetailView: View {
                         // them as their own cards above the composer; codex (tuck)
                         // re-homes them into the core card below — so render them
                         // as siblings here only when NOT tucking.
-                        if !tuck {
+                        if !tuck && composerExpanded {
                             composerSecondaryRows(
                                 card: card, hasAttachedRows: hasAttachedRows,
                                 onOwnCards: detached,
@@ -936,7 +940,7 @@ struct ThreadDetailView: View {
                         VStack(spacing: bareTelemetry ? 6 : 0) {
                             // codex tucks the roster/queued rows INTO this core
                             // card (above the input), as merged segments.
-                            if tuck {
+                            if tuck && composerExpanded {
                                 composerSecondaryRows(
                                     card: card, hasAttachedRows: hasAttachedRows,
                                     onOwnCards: false, suppressFill: true,
@@ -949,26 +953,35 @@ struct ThreadDetailView: View {
                                     ? false
                                     : (hasAttachedRows || card.isEnsemble
                                         || !(card.queuedComposerPrompts ?? []).isEmpty),
-                                attachedBottom: true,
+                                // Idle (rail hidden) → round the composer's bottom;
+                                // expanded (rail present) → flatten to fuse the rail.
+                                attachedBottom: composerExpanded,
                                 extraWorkspaceIds: extraWorkspaceIdsForSend(card: card),
                                 allowsProviderChange: allowsFirstTurnProviderChange,
+                                onExpandedChange: { composerExpanded = $0 },
+                                // Ensemble stays expanded (its @-direct roster is core
+                                // context); solo threads collapse when idle.
+                                forcesExpanded: card.isEnsemble,
                                 text: $followUp)
-                            if !bareTelemetry {
-                                Rectangle().fill(TWTheme.border).frame(height: 1)
+                            if composerExpanded {
+                                if !bareTelemetry {
+                                    Rectangle().fill(TWTheme.border).frame(height: 1)
+                                }
+                                TelemetryFooterRail(
+                                    run: snapshot?.runSummary,
+                                    workspaceName: model.workspaceName(for: card.workspaceId),
+                                    workspaceOptions: model.workspaces.map {
+                                        (id: $0.id, name: $0.displayName)
+                                    },
+                                    primaryWorkspaceId: card.workspaceId,
+                                    secondaryWorkspaceId: secondaryWorkspaceBinding,
+                                    activeGoal: card.activeGoal,
+                                    onGoalUpdate: { op, objective, reason in
+                                        model.updateGoal(
+                                            card, op: op, objective: objective, reason: reason)
+                                    },
+                                    planLanes: card.todoLanes ?? [])
                             }
-                            TelemetryFooterRail(
-                                run: snapshot?.runSummary,
-                                workspaceName: model.workspaceName(for: card.workspaceId),
-                                workspaceOptions: model.workspaces.map {
-                                    (id: $0.id, name: $0.displayName)
-                                },
-                                primaryWorkspaceId: card.workspaceId,
-                                secondaryWorkspaceId: secondaryWorkspaceBinding,
-                                activeGoal: card.activeGoal,
-                                onGoalUpdate: { op, objective, reason in
-                                    model.updateGoal(card, op: op, objective: objective, reason: reason)
-                                },
-                                planLanes: card.todoLanes ?? [])
                         }
                         .composerShellIf((detached && !inputOwnsSurface) || tuckedTab, resolved)
                         .zIndex(tuckedTab ? 1 : 0)
@@ -1331,6 +1344,8 @@ struct ThreadEmptyWelcomeCanvas: View {
                 attachedBottom: true,
                 providerEcho: $draftProvider,
                 allowsProviderChange: !card.isEnsemble,
+                // Welcome hero stays full (its roster + rail show unconditionally).
+                forcesExpanded: true,
                 text: $draft)
             Rectangle().fill(TWTheme.border).frame(height: 1)
             TelemetryFooterRail(

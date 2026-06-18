@@ -40,9 +40,17 @@ struct Composer: View {
     /// Existing chats normally keep their provider. Empty transcript welcome
     /// screens may still choose the first-turn provider before dispatch.
     var allowsProviderChange: Bool? = nil
+    /// Idle-collapse plumbing: the host passes `onExpandedChange` to mirror the
+    /// composer's expanded state (so it can hide its secondary rows + telemetry
+    /// rail when the composer is idle); `forcesExpanded` keeps the composer
+    /// always-open (welcome hero, ensemble roster).
+    var onExpandedChange: ((Bool) -> Void)? = nil
+    var forcesExpanded: Bool = false
     @Binding var text: String
 
     @State private var approvalMode = "default"
+    /// Drives compact (idle) vs full composer — focusing the field expands it.
+    @FocusState private var inputFocused: Bool
     /// Scope-global chat — every phone-origin turn is clamped to plan mode
     /// (no file mutation) by the Mac; the composer pins the picker to match.
     private var isGlobalChat: Bool {
@@ -109,6 +117,15 @@ struct Composer: View {
     }
     private var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    private var hasQueued: Bool {
+        !(card.queuedComposerPrompts ?? []).isEmpty
+    }
+    /// Compact (idle) when the field is unfocused, empty, and has nothing
+    /// pending. Anything queued/typed/attached — or a host that forces it —
+    /// keeps the composer expanded so controls + rows + rail stay visible.
+    private var isExpanded: Bool {
+        forcesExpanded || inputFocused || !isEmpty || hasImageAttachments || hasQueued
     }
     /// Run id of a live stream for this thread, if one is in flight. The
     /// Mac-pushed `card.runId` is snapshot-throttled and lags the un-throttled
@@ -190,7 +207,9 @@ struct Composer: View {
                 // hairline divider. Unchanged (default parity).
                 if !card.isEnsemble {
                     composerControlsRow
-                    Rectangle().fill(TWTheme.border).frame(height: 1)
+                    if isExpanded {
+                        Rectangle().fill(TWTheme.border).frame(height: 1)
+                    }
                 }
                 composerInputBody
             }
@@ -201,6 +220,12 @@ struct Composer: View {
         // one-shot seed would leak thread A's model/reasoning into thread B.
         .onChange(of: card.id, initial: true) {
             resyncPickerToThread()
+            // Composer is reused across threads on iPhone (no per-thread .id) —
+            // clear focus so thread B doesn't inherit thread A's expanded state.
+            inputFocused = false
+        }
+        .onChange(of: isExpanded, initial: true) { _, expanded in
+            onExpandedChange?(expanded)
         }
         .onChange(of: selectedProvider) { _, newValue in
             providerEcho?.wrappedValue = newValue
@@ -265,13 +290,17 @@ struct Composer: View {
     private var composerControlsRow: some View {
         HStack(spacing: 8) {
             modelPickerControl
-            composerControlSeparator
-            approvalControl
-            if !canChangeProvider, card.parentChatId == nil, newTaskWorkspaceId == nil {
+            // Compact idle bar: only the model pill shows. Approval + guest
+            // controls appear once the composer is focused/expanded.
+            if isExpanded {
                 composerControlSeparator
-                // Guest participant: + invites, chip shows/changes,
-                // × removes (desktop guest-picker parity).
-                GuestParticipantControl(model: model, card: card)
+                approvalControl
+                if !canChangeProvider, card.parentChatId == nil, newTaskWorkspaceId == nil {
+                    composerControlSeparator
+                    // Guest participant: + invites, chip shows/changes,
+                    // × removes (desktop guest-picker parity).
+                    GuestParticipantControl(model: model, card: card)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -424,6 +453,7 @@ struct Composer: View {
                         .foregroundStyle(shell.sendButton.tint)
                 }
                 TextField(placeholder, text: $text, axis: .vertical)
+                    .focused($inputFocused)
                     .lineLimit(1...2)
                     .font(twComposerFont(shell.fontDesign))
                     .foregroundStyle(shell.palette.textPrimary)
