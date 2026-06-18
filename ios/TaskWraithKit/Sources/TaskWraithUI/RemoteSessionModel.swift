@@ -1922,8 +1922,11 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     /// The current guest participant child of a thread, if any.
+    /// Filters on `sideChatIsActive` so a removed guest (whose child the Mac
+    /// marks `closed` rather than deleting) drops out — otherwise the composer
+    /// guest chip lingers after the user removes the guest.
     public func guestParticipant(of threadId: String) -> RemoteTaskCard? {
-        taskCards.first { $0.parentChatId == threadId && $0.isGuestSideChat }
+        taskCards.first { $0.parentChatId == threadId && $0.isGuestSideChat && $0.sideChatIsActive }
     }
 
     /// Invite / change the guest participant on a solo thread.

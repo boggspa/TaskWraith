@@ -333,7 +333,8 @@ describe('RemoteTaskProjection', () => {
       id: 'guest-1',
       parentChatId: 'parent-1',
       parentChatRelation: 'sideChat',
-      sideChatMode: 'guestParticipant'
+      sideChatMode: 'guestParticipant',
+      sideChatLifecycleState: 'active'
     })
     expect(sideChat).toMatchObject({
       id: 'side-1',
@@ -345,6 +346,31 @@ describe('RemoteTaskProjection', () => {
       id: 'sub-1',
       parentChatId: 'parent-1',
       parentChatRelation: 'subThread'
+    })
+  })
+
+  it('projects the closed lifecycle of a removed guest so the phone can drop its chip', () => {
+    // removeGuestParticipant marks the guest child `closed` (it is not deleted),
+    // so the card MUST carry the lifecycle for the phone's active-guest detector
+    // to filter it out — otherwise the composer guest chip lingers after removal.
+    const closedGuest = buildRemoteTaskCard(
+      chat({
+        appChatId: 'guest-closed',
+        parentChatId: 'parent-1',
+        parentChatRelation: 'sideChat',
+        sideChatContext: {
+          createdAt: NOW,
+          mode: 'guestParticipant',
+          lifecycleState: 'closed',
+          closedAt: NOW,
+          transcriptVisibility: 'none'
+        }
+      })
+    )
+    expect(closedGuest).toMatchObject({
+      id: 'guest-closed',
+      sideChatMode: 'guestParticipant',
+      sideChatLifecycleState: 'closed'
     })
   })
 

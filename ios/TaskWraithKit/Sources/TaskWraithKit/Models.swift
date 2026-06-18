@@ -378,6 +378,11 @@ public struct RemoteTaskCard: Codable, Sendable {
     public let agentAccent: String?
     public let agentSlug: String?
     public let sideChatMode: String?
+    /// Side-chat lifecycle from the Mac (`active` | `closed` | `terminated`).
+    /// Absent ⇒ treat as active (older Mac builds didn't project it). A removed
+    /// guest's child chat is marked `closed` (not deleted), so the active-guest
+    /// detector filters on this to clear the composer chip on removal.
+    public let sideChatLifecycleState: String?
     public let chatKind: String?
     /// Unstarted welcome-card draft (0 messages/runs). Kept in the card set so
     /// the in-progress welcome screen resolves, but filtered out of list
@@ -434,6 +439,13 @@ public struct RemoteTaskCard: Codable, Sendable {
     }
     public var isGuestSideChat: Bool {
         parentChatRelation == "sideChat" && sideChatMode == "guestParticipant"
+    }
+    /// A side chat the Mac still considers live. Absent lifecycle ⇒ active, so
+    /// older Mac builds (pre-`sideChatLifecycleState`) keep showing the guest.
+    /// A removed guest's child becomes `closed`, so this drops it from the
+    /// ACTIVE-guest detector while leaving it visible in the Side-chats history.
+    public var sideChatIsActive: Bool {
+        (sideChatLifecycleState ?? "active") == "active"
     }
     public var isSubThread: Bool {
         parentChatRelation == "subThread" || (parentChatId != nil && parentChatRelation == nil)
