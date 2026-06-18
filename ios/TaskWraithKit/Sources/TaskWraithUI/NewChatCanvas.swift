@@ -12,6 +12,7 @@ struct NewChatBootstrapView: View {
 
     @State private var createdThreadId: String?
     @State private var requestedKey: String?
+    @State private var createFailed = false
 
     private var targetWorkspaceId: String? {
         switch mode {
@@ -37,6 +38,8 @@ struct NewChatBootstrapView: View {
         Group {
             if let threadId = createdThreadId {
                 detailHost(threadId: threadId)
+            } else if createFailed {
+                failureView
             } else {
                 VStack(spacing: 12) {
                     TaskWraithMonolineBrandView(markSize: 44, titleSize: 20)
@@ -86,17 +89,62 @@ struct NewChatBootstrapView: View {
         }
     }
 
+    private var failureView: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 32))
+                .foregroundStyle(TWTheme.textMuted)
+            Text(failureTitle)
+                .font(.headline)
+                .foregroundStyle(TWTheme.textPrimary)
+                .multilineTextAlignment(.center)
+            Text(model.lastActionMessage ?? "Your Mac declined the request.")
+                .font(.callout)
+                .foregroundStyle(TWTheme.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                createFailed = false
+                createIfReady()
+            } label: {
+                Text("Try Again").font(.callout.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(TWTheme.chroma1)
+            .padding(.top, 2)
+        }
+        .padding(28)
+        .frame(maxWidth: 420)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(TWTheme.appBg)
+    }
+
+    private var failureTitle: String {
+        switch mode {
+        case .workspace: return "Couldn't start this chat"
+        case .ensemble: return "Couldn't start this ensemble"
+        case .global: return "Couldn't start a global chat"
+        }
+    }
+
     private func createIfReady() {
         guard createdThreadId == nil, let workspaceId = targetWorkspaceId else { return }
         let key = "\(variant):\(workspaceId)"
         guard requestedKey != key else { return }
         requestedKey = key
+        createFailed = false
         model.createEmptyThread(
             workspaceId: workspaceId,
             variant: variant,
             title: "New Chat"
         ) { threadId in
-            guard let threadId else { return }
+            guard let threadId else {
+                // Mac declined (or the request failed) — stop spinning, surface
+                // the reason, and allow Retry (clear the latched key).
+                requestedKey = nil
+                createFailed = true
+                return
+            }
             createdThreadId = threadId
         }
     }
