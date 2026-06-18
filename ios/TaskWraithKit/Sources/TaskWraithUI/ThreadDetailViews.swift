@@ -939,6 +939,23 @@ struct ThreadDetailView: View {
                         .padding(.bottom, tuckedTab ? 14 : 0)
                         .composerShellIf(tuckedTab, resolved, topCornersOnly: true)
                         .padding(.horizontal, tuckedTab ? 18 : 0)
+                        // Explicit zIndex: the core below carries .zIndex(tuckedTab ? 1 : 0),
+                        // and a conditionally-inserted sibling with an IMPLICIT zIndex
+                        // renders behind an explicit-zIndex sibling on insertion — which
+                        // ate grok's tucked tab when it returned on focus. Make it explicit.
+                        .zIndex(0)
+                        } else if hasDiff {
+                            // Blurred + active changes: a generic mini diff pill stands in
+                            // for the full (composer-specific) changes row, which only
+                            // returns on focus. Same pill for every shell.
+                            ComposerDiffPill(
+                                filesChanged: changedFileCount,
+                                additions: diff?.additions ?? 0,
+                                deletions: diff?.deletions ?? 0,
+                                onTap: { openComposerDiff(workspaceId: primaryWorkspaceId) }
+                            )
+                            .padding(.bottom, 8)
+                            .zIndex(0)
                         }  // end focus-gated above-rows group
                         // Composer core (input + telemetry rail). In detached
                         // mode this is its OWN card under the floating above-rows;
