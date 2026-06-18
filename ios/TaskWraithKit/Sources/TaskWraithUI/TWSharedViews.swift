@@ -1055,14 +1055,39 @@ public enum TWFont {
         _ size: CGFloat = 16, weight: Font.Weight = .regular,
         relativeTo style: Font.TextStyle = .callout
     ) -> Font {
-        let name: String
-        switch weight {
-        case .bold: name = "AvenirNext-Bold"
-        case .semibold: name = "AvenirNext-DemiBold"
-        case .medium: name = "AvenirNext-Medium"
-        default: name = "AvenirNext-Regular"
+        // Honors Settings → Transcript → Response Font (default Avenir Next). Read
+        // straight from UserDefaults (nonisolated-safe) so this stays callable from
+        // any context; the root keys on TWThemeStore.revision, so a change in
+        // Settings re-renders the tree and every transcript Text re-reads the face.
+        let pref =
+            TWTranscriptFont(
+                rawValue: UserDefaults.standard.string(forKey: "tw.transcriptFont")
+                    ?? "avenirNext") ?? .avenirNext
+        return font(for: pref, size: size, weight: weight, relativeTo: style)
+    }
+
+    /// The SwiftUI font for an explicit transcript-font choice (used by the
+    /// Settings preview). Avenir Next scales with Dynamic Type via `relativeTo`;
+    /// the system designs render at the given base size + weight.
+    public static func font(
+        for pref: TWTranscriptFont, size: CGFloat = 16, weight: Font.Weight = .regular,
+        relativeTo style: Font.TextStyle = .callout
+    ) -> Font {
+        switch pref {
+        case .avenirNext:
+            let name: String
+            switch weight {
+            case .bold: name = "AvenirNext-Bold"
+            case .semibold: name = "AvenirNext-DemiBold"
+            case .medium: name = "AvenirNext-Medium"
+            default: name = "AvenirNext-Regular"
+            }
+            return .custom(name, size: size, relativeTo: style)
+        case .sfPro: return .system(size: size, weight: weight, design: .default)
+        case .serif: return .system(size: size, weight: weight, design: .serif)
+        case .monospaced: return .system(size: size, weight: weight, design: .monospaced)
+        case .rounded: return .system(size: size, weight: weight, design: .rounded)
         }
-        return .custom(name, size: size, relativeTo: style)
     }
 }
 
@@ -4247,6 +4272,25 @@ public struct AppSettingsSheet: View {
                     )
                     .font(.caption)
                     .foregroundStyle(TWTheme.textMuted)
+                }
+                Section("Transcript") {
+                    Picker(
+                        selection: Binding(
+                            get: { themes.transcriptFontPreference },
+                            set: { themes.transcriptFontPreference = $0 }
+                        )
+                    ) {
+                        ForEach(TWTranscriptFont.allCases, id: \.self) { font in
+                            Text(font.label)
+                                .font(TWFont.font(for: font, size: 16, relativeTo: .body))
+                                .tag(font)
+                        }
+                    } label: {
+                        Label("Response Font", systemImage: "textformat")
+                    }
+                    Text("Typeface for assistant response text in the transcript.")
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textMuted)
                 }
                 Section("About") {
                     LabeledContent("App", value: "TaskWraith Remote")

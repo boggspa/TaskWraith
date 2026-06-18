@@ -319,8 +319,27 @@ public enum TWToolTheme: String, CaseIterable, Identifiable {
 }
 
 @MainActor
+/// Transcript response typeface choice (Settings → Transcript). `avenirNext` is
+/// the default (the long-standing message-body face); the others map to SwiftUI
+/// system designs so they need no bundled fonts and work on every device.
+public enum TWTranscriptFont: String, CaseIterable {
+    case avenirNext, sfPro, serif, monospaced, rounded
+    public var label: String {
+        switch self {
+        case .avenirNext: return "Avenir Next"
+        case .sfPro: return "SF Pro"
+        case .serif: return "Serif"
+        case .monospaced: return "Monospaced"
+        case .rounded: return "Rounded"
+        }
+    }
+}
+
 public final class TWThemeStore: ObservableObject {
-    public static let shared = TWThemeStore()
+    // UI-only singleton, touched from the main actor; `nonisolated(unsafe)` keeps
+    // it reachable from the (main-thread) nonisolated TWFont/UserDefaults readers
+    // under strict concurrency without forcing @MainActor onto every caller.
+    public nonisolated(unsafe) static let shared = TWThemeStore()
 
     /// Bumped on every change — the root view keys its identity on this so
     /// the whole tree re-reads the TWTheme computed tokens.
@@ -374,6 +393,19 @@ public final class TWThemeStore: ObservableObject {
         }
         set {
             UserDefaults.standard.set(newValue.persisted, forKey: "tw.composerShell")
+            revision += 1
+        }
+    }
+
+    /// Transcript response typeface for THIS device. Default `.avenirNext`.
+    public var transcriptFontPreference: TWTranscriptFont {
+        get {
+            TWTranscriptFont(
+                rawValue: UserDefaults.standard.string(forKey: "tw.transcriptFont")
+                    ?? "avenirNext") ?? .avenirNext
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "tw.transcriptFont")
             revision += 1
         }
     }
