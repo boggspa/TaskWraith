@@ -18,20 +18,28 @@ Mac/provider runtime.
 
 ## Remote notifications
 
-Release/TestFlight builds do not request APNs registration by default. The
-current desktop APNs sender is a local-admin/development feature that requires
-an Apple APNs auth key for the companion bundle; that is not a reviewable
-consumer App Store design. Keep release registration disabled until one of
-these is true:
+Release/TestFlight builds request notification permission **after a successful
+pairing** (not at cold launch). The user can deny; the app still works without
+push (open the app to reconnect / refresh). When granted, the APNs device token
+travels over the paired encrypted bridge to the user's own Mac and is stored
+there — there is no developer-operated push backend.
 
-- A developer-controlled push relay owns the APNs key and sends metadata-only
-  wake pushes.
-- Distribution is explicitly scoped to local-admin/internal builds with
-  documented APNs key management outside App Store review.
+**Push delivery depends on the user's Mac having APNs credentials.** The Mac
+sends wake pushes only when an Apple APNs auth key (`.p8`) for the companion
+bundle is configured via environment (`TASKWRAITH_APNS_KEY_PATH`,
+`TASKWRAITH_APNS_KEY_ID`, `TASKWRAITH_APNS_TEAM_ID`, `TASKWRAITH_APNS_BUNDLE_ID`).
+Without those, the Mac uses a no-op pusher: pairing and manual reconnect work,
+but **no notifications are delivered**. The relay carries pairing/transport only
+— it does not send push.
 
-Debug builds can opt into local APNs registration for development. Release
-builds can only opt in by compiling with `TASKWRAITH_ENABLE_APNS_REGISTRATION`
-after the release owner accepts the distribution model.
+APNs payloads carry routing metadata only (pair identifier, coarse reason,
+thread/run identifiers, timestamps) — never prompts, commands, diffs, file
+paths, filenames, workspace names, model output, or user messages.
+
+App Store Connect: declare push notifications; the data is the device token +
+routing metadata, kept within the user's own device + Mac (no developer
+backend). For a consumer launch, do **not** feature push as a hero capability
+unless the Mac ships with push pre-configured — present it as optional/advanced.
 
 ## Export compliance
 

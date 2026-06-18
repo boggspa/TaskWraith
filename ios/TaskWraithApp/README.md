@@ -4,8 +4,10 @@ SwiftUI app that pairs with TaskWraith on the Mac over the `taskwraith-e2ee-v1`
 relay transport and renders the remote task feed (approvals, questions, running
 agents) with action controls — all end-to-end encrypted.
 
-This is the thin UI shell. The substance lives in the `TaskWraithKit` Swift
-package next door:
+The app target is a thin wrapper; the substance lives in the `TaskWraithKit`
+Swift package next door (the companion itself is feature-rich — pairing,
+approvals/questions, global + side chats, ensemble roster, diff/file views,
+token streaming, composer shells, APNs actions):
 
 - **`TaskWraithKit`** — the CryptoKit port of `src/shared/e2ee` + the
   `RelayTransportClient` and Codable domain models. Validated byte-for-byte
@@ -59,9 +61,10 @@ cleartext `ws://` to a LAN/Tailscale relay. Checklist:
 4. Run, tap **Scan QR code**, point it at the ghost QR on the Mac, compare the
    6-digit codes, confirm on the Mac. Done.
 
-> ⚠️ The ATS `NSAllowsArbitraryLoads` exception is for development only —
-> switch the relay to `wss://` (TLS) and remove the exception before any
-> TestFlight build, alongside the crypto review noted below.
+> ATS is already scoped to `NSAllowsLocalNetworking` only (no global
+> `NSAllowsArbitraryLoads`). LAN relays use cleartext `ws://` on the local
+> network; off-LAN/remote use requires a `wss://` (TLS) relay — the Tailscale
+> serve path documented for desktop 1.5+.
 
 ## Pairing locally
 
@@ -73,11 +76,6 @@ cleartext `ws://` to a LAN/Tailscale relay. Checklist:
    JSON, and a 6-digit confirm code once the phone connects.
 4. In the app, paste the pairing-code JSON and tap **Pair**. Compare the 6-digit
    code, then tap **Pair** on the Mac. The task feed appears.
-
-## Not yet wired (intentional scaffold gaps)
-
-- **Incremental run-event rendering** — the feed renders the projection snapshot;
-  live `bridge.runEvent` streaming into a transcript view is a follow-up.
 
 ## TestFlight / App Store archive path
 
@@ -93,23 +91,42 @@ TASKWRAITH_APPLE_TEAM_ID=ABCDE12345 ./scripts/archive-testflight.sh
 
 Before upload:
 
-1. Confirm the archived entitlement prints `aps-environment = production`.
+1. Confirm the **exported IPA** entitlements show `aps-environment = production`
+   and `get-task-allow = false` (the script prints these). The archive-stage
+   entitlements may read `development` / `get-task-allow = true` under automatic
+   signing — that is expected; the export is what ships.
 2. Complete the App Store Connect export-compliance questionnaire. This project
    sets `ITSAppUsesNonExemptEncryption=false`: the app's CryptoKit E2EE uses
    standard algorithms that qualify for the export-compliance exemption.
 3. Read `AppStorePrivacyNotes.md` and make the App Store privacy answers match
    the selected distribution model.
 
-Remote notifications are intentionally disabled by default in Release builds.
-The current Mac-side APNs sender is a local-admin/development feature that
-requires an APNs auth key for the companion bundle; that is not suitable for a
-consumer TestFlight/App Store review flow. Re-enable Release APNs registration
-only after a developer-controlled push service exists, or for an explicitly
-internal/local-admin distribution by compiling with
-`TASKWRAITH_ENABLE_APNS_REGISTRATION`.
+## Push notifications (post-pairing opt-in; delivery needs Mac credentials)
+
+Release/TestFlight builds request notification permission **after a successful
+pairing**, and register the APNs token to the user's paired Mac. The app works
+fine if the user denies (open to reconnect/refresh).
+
+Delivery requires the **Mac** to have APNs credentials configured — set these in
+the Mac's environment before `npm run dev` / the packaged app launch:
+
+```sh
+TASKWRAITH_APNS_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8
+TASKWRAITH_APNS_KEY_ID=XXXXXXXXXX      # 10-char Key ID
+TASKWRAITH_APNS_TEAM_ID=8CZML8FK2D     # 10-char Team ID
+TASKWRAITH_APNS_BUNDLE_ID=com.taskwraith.companion
+```
+
+Without these the Mac uses a no-op pusher (pairing + manual reconnect still
+work; no pushes delivered). The relay does not send push. For a consumer App
+Store listing, don't market push as a hero feature unless the Mac ships with
+push pre-configured — see `AppStorePrivacyNotes.md`.
 
 ## Security
 
-The E2EE core is security-sensitive. Recommend an independent crypto review of
-`TaskWraithKit` (and the shared `src/shared/e2ee`) before a public App Store
-submission.
+The E2EE core is security-sensitive. An independent crypto review of
+`TaskWraithKit` (and the shared `src/shared/e2ee`) was completed 2026-06;
+CRITICAL/HIGH findings were fixed and the results are tracked in
+`docs/security/e2ee-review-findings.md` (one residual MED — silent identity
+regeneration if the Keychain/`safeStorage` is unavailable — is documented there
+and accepted for the companion-beta scope).
