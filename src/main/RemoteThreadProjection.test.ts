@@ -593,6 +593,78 @@ describe('RemoteThreadProjection', () => {
       })
     })
 
+    it('aggregates an ensemble round — sums tokens + cost, spans duration, unions files', () => {
+      const roundRun = (
+        runId: string,
+        provider: string,
+        started: string,
+        ended: string,
+        tokensIn: number,
+        tokensOut: number,
+        costUsd: number,
+        file: string
+      ) =>
+        ({
+          runId,
+          provider,
+          ensembleRoundId: 'round-7',
+          startedAt: started,
+          endedAt: ended,
+          stats: {
+            inputTokens: tokensIn,
+            outputTokens: tokensOut,
+            totalTokens: tokensIn + tokensOut,
+            cost_usd: costUsd
+          },
+          runDiff: {
+            runId,
+            preSnapshot: { capturedAt: started, isGitRepo: true, workspacePath: '/repo' },
+            postSnapshot: { capturedAt: ended, isGitRepo: true, workspacePath: '/repo' },
+            createdFiles: [],
+            modifiedFiles: [
+              { path: file, status: 'modified', additions: 2, deletions: 1, previewKind: 'git_diff' }
+            ],
+            deletedFiles: [],
+            preExistingFiles: []
+          }
+        }) as unknown as ChatRun
+      const summary = buildRunSummary([
+        roundRun('r-a', 'claude', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:05.000Z', 100, 50, 0.1, 'a.ts'),
+        roundRun('r-b', 'codex', '2026-01-01T00:00:01.000Z', '2026-01-01T00:00:09.000Z', 200, 80, 0.2, 'b.ts'),
+        roundRun('r-c', 'gemini', '2026-01-01T00:00:02.000Z', '2026-01-01T00:00:07.000Z', 40, 10, 0.05, 'a.ts')
+      ])
+      // tokens summed across all 3 participants (not just the last)
+      expect(summary?.tokensIn).toBe(340)
+      expect(summary?.tokensOut).toBe(140)
+      expect(summary?.totalTokens).toBe(480)
+      // cost summed (0.10 + 0.20 + 0.05); explicit → no ~ estimate prefix
+      expect(summary?.costText).toContain('0.35')
+      expect(summary?.costText?.startsWith('~')).toBe(false)
+      // span: earliest start (:00) → latest end (:09)
+      expect(summary?.durationMs).toBe(9000)
+      expect(summary?.startedAt).toBe('2026-01-01T00:00:00.000Z')
+      expect(summary?.endedAt).toBe('2026-01-01T00:00:09.000Z')
+      // a.ts (touched by r-a + r-c) folds to ONE row with summed churn; b.ts once
+      expect(summary?.fileChanges?.filesChanged).toBe(2)
+      expect(summary?.fileChanges?.files?.find((f) => f.path === 'a.ts')).toEqual({
+        path: 'a.ts',
+        status: 'modified',
+        additions: 4,
+        deletions: 2
+      })
+      // representative identity = round-boundary (last) run
+      expect(summary?.runId).toBe('r-c')
+      expect(summary?.ensembleRoundId).toBe('round-7')
+    })
+
+    it('does not aggregate a single-run round (keeps last-run behaviour)', () => {
+      const summary = buildRunSummary([
+        { runId: 'solo', ensembleRoundId: 'round-x', stats: { totalTokens: 11 } } as unknown as ChatRun
+      ])
+      expect(summary?.runId).toBe('solo')
+      expect(summary?.totalTokens).toBe(11)
+    })
+
     it('falls back to successful write tool summaries when run diff is not available', () => {
       const messages = [
         msg(1, {
