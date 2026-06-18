@@ -5191,6 +5191,54 @@ public struct QueuedComposerPromptsStack: View {
 /// model picker; an active guest renders as a green-accent chip
 /// — tap to change provider/model, × to remove. One guest per thread
 /// (desktop set/remove semantics).
+/// Compact, generic diff summary shown above the ONE-LINE composer when it's
+/// blurred and there are active changes — a stand-in for the (composer-specific)
+/// changes row, which only returns on focus. Same look for every shell. Tap
+/// opens the diff. (Codex-app-style pill, TaskWraith twist.)
+public struct ComposerDiffPill: View {
+    let filesChanged: Int
+    let additions: Int
+    let deletions: Int
+    var onTap: (() -> Void)? = nil
+
+    public init(
+        filesChanged: Int, additions: Int, deletions: Int, onTap: (() -> Void)? = nil
+    ) {
+        self.filesChanged = filesChanged
+        self.additions = additions
+        self.deletions = deletions
+        self.onTap = onTap
+    }
+
+    /// 2_100 → "2.1k", 25_000 → "25k", 718 → "718".
+    private func compact(_ n: Int) -> String {
+        guard n >= 1000 else { return "\(n)" }
+        let k = Double(n) / 1000
+        return String(format: k >= 10 ? "%.0fk" : "%.1fk", k)
+    }
+
+    public var body: some View {
+        Button { onTap?() } label: {
+            HStack(spacing: 8) {
+                Text("\(filesChanged) file\(filesChanged == 1 ? "" : "s")")
+                    .foregroundStyle(TWTheme.textMuted)
+                Text("+\(compact(additions))")
+                    .foregroundStyle(TWTheme.statusSuccess)
+                Text("−\(compact(deletions))")
+                    .foregroundStyle(TWTheme.statusFailed)
+            }
+            .font(.caption.weight(.semibold).monospacedDigit())
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(TWTheme.surface3, in: Capsule())
+            .overlay(Capsule().strokeBorder(TWTheme.border.opacity(0.6)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            "\(filesChanged) files changed, \(additions) added, \(deletions) removed. Open diff.")
+    }
+}
+
 public struct GuestParticipantControl: View {
     @ObservedObject var model: RemoteSessionModel
     let card: RemoteTaskCard
