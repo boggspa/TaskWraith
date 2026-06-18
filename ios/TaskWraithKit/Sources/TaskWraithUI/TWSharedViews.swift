@@ -5771,6 +5771,9 @@ struct MiniThreadView: View {
                 attachedTop: !(card.queuedComposerPrompts ?? []).isEmpty,
                 attachedBottom: true,
                 navigateOnSend: false,
+                // Side-chat mini composer stays full for v1 (its queued stack +
+                // rail show unconditionally); idle-collapse here is a follow-up.
+                forcesExpanded: true,
                 text: $draft)
             Rectangle().fill(TWTheme.border).frame(height: 1)
             TelemetryFooterRail(
