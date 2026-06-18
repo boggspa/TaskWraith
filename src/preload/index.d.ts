@@ -729,6 +729,11 @@ declare global {
         message?: string | null
         status?: Record<string, unknown>
       }>
+      iosRemoteTailscaleLink: (authKey: string) => Promise<{
+        ok: boolean
+        message?: string | null
+        status?: Record<string, unknown>
+      }>
       setBridgeDaemonEnabled: (enabled: boolean) => Promise<{
         lan: {
           enabled: boolean

@@ -55,3 +55,13 @@
 .tailscale-link-message.is-ok {
   color: var(--success, #3fb950);
 }
+
+.tailscale-link-message.is-warn {
+  color: var(--warning, #d29922);
+}
+
+/* Always-mounted live region collapses when empty (so it announces reliably
+   without taking layout space). */
+.tailscale-link-message-wrap:empty {
+  display: none;
+}

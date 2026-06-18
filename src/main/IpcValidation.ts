@@ -196,6 +196,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'ios-remote-tailscale-status': [],
   'ios-remote-tailscale-enable': [],
   'ios-remote-tailscale-disable': [],
+  'ios-remote-tailscale-link': ['nonEmptyString'],
   'run-approved-host-command': ['nonEmptyString'],
   'list-gemini-sessions': [],
   'select-workspace': [],

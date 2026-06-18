@@ -265,6 +265,7 @@ import {
   enableTailscaleServe,
   getTailscaleServeStatus
 } from './TailscaleServe'
+import { tailscaleUpWithAuthKey } from './TailscaleAuth'
 import { selectAdvertisableRelayUrls } from './remote/relayReachability'
 import {
   resolveAutoUpdateServiceEnabled,
@@ -18562,6 +18563,35 @@ if (isGeminiMcpBridgeProcess) {
         AppStore.updateSettings({ iosRemoteRelayUrl: '' })
       }
       return { ok: true, status: await iosRemoteTailscaleStatus() }
+    })
+    ipcMain.handle('ios-remote-tailscale-link', async (_event, authKey: string) => {
+      const tailscale = await detectTailscale()
+      if (!tailscale.cliPath) {
+        return {
+          ok: false,
+          message:
+            tailscale.reason ||
+            'Tailscale is not installed — install it first, then paste your auth key.'
+        }
+      }
+      if (tailscale.available) {
+        // Already on a tailnet — re-running `tailscale up` with a key could
+        // switch tailnets or reset this node's flags. Don't; just report it.
+        return {
+          ok: true,
+          message: tailscale.tailnetName
+            ? `This Mac is already connected to tailnet "${tailscale.tailnetName}" — no linking needed.`
+            : 'This Mac is already connected to Tailscale — no linking needed.',
+          status: await iosRemoteTailscaleStatus()
+        }
+      }
+      // The auth key is used once here and never stored or logged.
+      const result = await tailscaleUpWithAuthKey({ cliPath: tailscale.cliPath, authKey })
+      return {
+        ok: result.ok,
+        message: result.message ?? null,
+        status: await iosRemoteTailscaleStatus()
+      }
     })
     ipcMain.handle(
       'set-ios-remote-config',

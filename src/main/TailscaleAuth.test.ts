@@ -1,26 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  looksLikeTailscaleAuthKey,
-  redactAuthKey,
-  tailscaleUpWithAuthKey
-} from './TailscaleAuth'
+import { redactAuthKey, tailscaleUpWithAuthKey, type PreparedKeyFile } from './TailscaleAuth'
 
 const KEY = 'tskey-auth-k7Q3xExample0123456789abcdef'
 
-describe('looksLikeTailscaleAuthKey', () => {
-  it('accepts tskey-… values of reasonable length', () => {
-    expect(looksLikeTailscaleAuthKey(KEY)).toBe(true)
-    expect(looksLikeTailscaleAuthKey('tskey-api-abcdef0123456789')).toBe(true)
-    expect(looksLikeTailscaleAuthKey(`  ${KEY}  `)).toBe(true)
-  })
-
-  it('rejects non-keys and too-short values', () => {
-    expect(looksLikeTailscaleAuthKey('garbage')).toBe(false)
-    expect(looksLikeTailscaleAuthKey('tskey-')).toBe(false)
-    expect(looksLikeTailscaleAuthKey('')).toBe(false)
-    expect(looksLikeTailscaleAuthKey('   ')).toBe(false)
-  })
-})
+// Fake key-file prep so no real FS is touched; records cleanup.
+const fakePrepare = () => {
+  const cleanup = vi.fn(async () => {})
+  const prepareKeyFile = vi.fn(
+    async (_key: string): Promise<PreparedKeyFile> => ({ path: '/tmp/fake/key', cleanup })
+  )
+  return { prepareKeyFile, cleanup }
+}
 
 describe('redactAuthKey', () => {
   it('never reveals the middle of the key', () => {
@@ -32,49 +22,77 @@ describe('redactAuthKey', () => {
 })
 
 describe('tailscaleUpWithAuthKey', () => {
-  it('refuses without a CLI path and never calls exec', async () => {
+  it('refuses without a CLI path and never touches exec or the FS', async () => {
     const exec = vi.fn()
-    const res = await tailscaleUpWithAuthKey({ cliPath: '', authKey: KEY, exec })
+    const { prepareKeyFile } = fakePrepare()
+    const res = await tailscaleUpWithAuthKey({ cliPath: '', authKey: KEY, exec, prepareKeyFile })
     expect(res.ok).toBe(false)
     expect(exec).not.toHaveBeenCalled()
+    expect(prepareKeyFile).not.toHaveBeenCalled()
   })
 
-  it('refuses a malformed key and never calls exec', async () => {
+  it('refuses a malformed key before writing it anywhere', async () => {
     const exec = vi.fn()
-    const res = await tailscaleUpWithAuthKey({ cliPath: '/usr/bin/tailscale', authKey: 'nope', exec })
+    const { prepareKeyFile } = fakePrepare()
+    const res = await tailscaleUpWithAuthKey({
+      cliPath: '/usr/bin/tailscale',
+      authKey: 'nope',
+      exec,
+      prepareKeyFile
+    })
     expect(res.ok).toBe(false)
     expect(res.message).toMatch(/auth key/i)
     expect(exec).not.toHaveBeenCalled()
+    expect(prepareKeyFile).not.toHaveBeenCalled()
   })
 
-  it('passes the key as a single --auth-key arg (no shell, minimal flags)', async () => {
+  it('keeps the key OFF the argv (file: path only) and cleans up', async () => {
     const exec = vi.fn(async (_cmd: string, _args: string[]) => ({ stdout: '', stderr: '' }))
-    const res = await tailscaleUpWithAuthKey({ cliPath: '/usr/bin/tailscale', authKey: KEY, exec })
+    const { prepareKeyFile, cleanup } = fakePrepare()
+    const res = await tailscaleUpWithAuthKey({
+      cliPath: '/usr/bin/tailscale',
+      authKey: KEY,
+      exec,
+      prepareKeyFile
+    })
     expect(res.ok).toBe(true)
-    expect(exec).toHaveBeenCalledTimes(1)
     const [cmd, args] = exec.mock.calls[0]
     expect(cmd).toBe('/usr/bin/tailscale')
-    expect(args).toEqual(['up', `--auth-key=${KEY}`, '--timeout=30s'])
-    // No --accept-routes / --reset / other surprises.
+    expect(args).toEqual(['up', '--auth-key=file:/tmp/fake/key', '--timeout=30s'])
+    expect(args.join(' ')).not.toContain(KEY) // raw key never on the command line
     expect(args).not.toContain('--accept-routes')
     expect(args).not.toContain('--reset')
+    expect(cleanup).toHaveBeenCalledTimes(1)
   })
 
   it('strips the key from the success message even if the CLI echoes it', async () => {
     const exec = vi.fn(async () => ({ stdout: `authenticated with ${KEY}`, stderr: '' }))
-    const res = await tailscaleUpWithAuthKey({ cliPath: '/usr/bin/tailscale', authKey: KEY, exec })
+    const { prepareKeyFile } = fakePrepare()
+    const res = await tailscaleUpWithAuthKey({
+      cliPath: '/usr/bin/tailscale',
+      authKey: KEY,
+      exec,
+      prepareKeyFile
+    })
     expect(res.ok).toBe(true)
     expect(res.message).not.toContain(KEY)
     expect(res.message).toContain('redacted')
   })
 
-  it('surfaces a redacted error when the CLI fails', async () => {
+  it('cleans up the key file and redacts even when the CLI fails', async () => {
     const exec = vi.fn(async () => {
       throw Object.assign(new Error('exit 1'), { stderr: `invalid key ${KEY}` })
     })
-    const res = await tailscaleUpWithAuthKey({ cliPath: '/usr/bin/tailscale', authKey: KEY, exec })
+    const { prepareKeyFile, cleanup } = fakePrepare()
+    const res = await tailscaleUpWithAuthKey({
+      cliPath: '/usr/bin/tailscale',
+      authKey: KEY,
+      exec,
+      prepareKeyFile
+    })
     expect(res.ok).toBe(false)
     expect(res.message).not.toContain(KEY)
     expect(res.message).toMatch(/invalid key/)
+    expect(cleanup).toHaveBeenCalledTimes(1)
   })
 })
