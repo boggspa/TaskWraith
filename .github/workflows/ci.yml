@@ -59,7 +59,7 @@ jobs:
   # debt rather than real regressions. (TODO: clear that Swift-6.3 region-
   # isolation debt in RemoteSessionModel before bumping the pin.)
   ios:
-    name: iOS (Kit tests + app build)
+    name: iOS (Kit tests)
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -71,18 +71,14 @@ jobs:
           xcode-version: "26.0"
       - name: Toolchain versions
         run: xcodebuild -version && swift --version
+      # `swift test` builds TaskWraithKit + TaskWraithUI (all the SwiftUI/Glass
+      # code) for the host and runs the 73 unit tests — the real regression
+      # gate. An app-target `xcodebuild` is intentionally NOT run here: the
+      # pinned Xcode 26.0 lacks the iOS simulator PLATFORM (GitHub pre-installs
+      # it only for the runner's default Xcode 26.5), and `-downloadPlatform iOS`
+      # would add minutes + GBs per run just to compile the thin app wrapper.
       - name: Swift package tests (TaskWraithKit)
         run: swift test --package-path ios/TaskWraithKit
-      - name: Generate Xcode project (XcodeGen)
-        run: |
-          brew install xcodegen
-          cd ios/TaskWraithApp && xcodegen generate
-      - name: Build app target (iOS Simulator, unsigned)
-        run: |
-          xcodebuild -project ios/TaskWraithApp/TaskWraith.xcodeproj \
-            -scheme TaskWraith \
-            -destination 'generic/platform=iOS Simulator' \
-            build CODE_SIGNING_ALLOWED=NO
 
   notarized-macos-release:
     name: Notarized macOS Release
