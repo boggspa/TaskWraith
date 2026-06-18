@@ -218,6 +218,11 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public var expandedWorkspaces: Set<String> = []
     @Published public var collapsedSections: Set<String> = []
     @Published public var collapsedParents: Set<String> = []
+    /// Settings sheet presentation — hoisted so a theme/composer/font change
+    /// made inside it doesn't tear the sheet down with the rest of the tree.
+    /// Presented from RootView (above the `.id(revision)` boundary); the sheet
+    /// re-themes live via its own `@ObservedObject themes`.
+    @Published public var settingsPresented = false
     /// Deep-link target captured from a notification tap before the session is
     /// established (cold launch); applied to navigationTarget on `.established`.
     private var pendingDeepLinkThreadId: String?

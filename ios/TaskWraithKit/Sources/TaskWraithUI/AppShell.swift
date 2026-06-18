@@ -77,6 +77,16 @@ public struct RootView: View {
         // Theme tokens are computed statics — a revision bump rebuilds the
         // tree so every TWTheme read picks up the new selection.
         .id(themes.revision)
+        // Settings sheet lives ABOVE the revision teardown (attached after
+        // `.id`) so a theme/composer/font change made inside it keeps the sheet
+        // open — AppSettingsSheet re-themes live via its own @ObservedObject
+        // themes. Presented here, not from HomeView, which is inside the
+        // `.id(revision)` subtree that rebuilds on every settings change.
+        .sheet(isPresented: $model.settingsPresented) {
+            AppSettingsSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         .animation(.easeInOut(duration: 0.25), value: showShellDuringDrop)
         // Privacy shield: iOS snapshots the UI for the app switcher —
         // transcripts and file contents must not be readable there.

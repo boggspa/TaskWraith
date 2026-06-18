@@ -25,7 +25,6 @@ struct HomeView: View {
         get { model.collapsedParents }
         nonmutating set { model.collapsedParents = newValue }
     }
-    @State private var showSettings = false
     @State private var canvasMode: ComposeMode? = nil
 
     private func openCanvas(_ mode: ComposeMode) {
@@ -122,7 +121,7 @@ struct HomeView: View {
                         Image(systemName: "arrow.clockwise")
                     }
                     Button {
-                        showSettings = true
+                        model.settingsPresented = true
                     } label: {
                         Image(systemName: "gearshape")
                     }
@@ -137,11 +136,6 @@ struct HomeView: View {
         }
         .navigationDestination(item: $canvasMode) { mode in
             NewChatBootstrapView(model: model, mode: mode, initialWorkspaceId: nil)
-        }
-        .sheet(isPresented: $showSettings) {
-            AppSettingsSheet()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
         }
     }
 
