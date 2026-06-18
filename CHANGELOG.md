@@ -4,6 +4,41 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.5.7 - 2026-06-18
+
+### Added
+- **Guided Tailscale device linking.** Settings → Devices now walks you through
+  connecting a phone over Tailscale — a setup signposting section plus guided
+  auth-key linking — so remote access is reachable without hand-editing config.
+  The standalone APNs credentials section is hidden; push wake is handled through
+  the relay path.
+- **Plan import.** Bring an external plan into a chat and TaskWraith makes it
+  actionable: it grounds `@`-file mentions against your workspace, rewrites
+  defensive/uncertain phrasing into concrete steps, and estimates the execution
+  risk before anything runs — with intake-safety guards on the way in.
+- **iOS companion — composer shells, welcome dashboard, transcript font.** The
+  phone composer now matches the Mac's per-shell *layout* (Codex, Claude, Cursor,
+  Grok, Gemini and the rest — rows, tucked tabs, rims, corner radii); the New
+  Chat welcome screen shows a compact usage dashboard mirrored live from the Mac;
+  and Settings adds a Transcript response-font picker (Avenir Next, SF Pro, Serif,
+  Monospaced, Rounded).
+- **Richer iOS transcripts.** Tool calls render with their family glyphs and true
+  tool names on the phone, matching the desktop transcript.
+
+### Fixed
+- **Run permission posture.** Hardened how a run's permissions are resolved so it
+  can't end up with a broader posture than intended.
+- **Welcome dashboard robustness.** The Mac→remote dashboard broadcast no longer
+  swallows errors silently, numeric fields are rounded before they cross the wire,
+  and remote clients decode partial payloads defensively.
+- **Sidebar typography.** Thread titles and section headers were unified and
+  tightened, and thread labels normalize cleanly under the shell themes.
+- **Windows CI.** Transcript path redaction and update-service test determinism
+  were fixed so the Windows build stays green.
+
+The macOS build is notarized + stapled (universal). Windows (unsigned) and Linux
+(AppImage/deb) installers are attached by CI.
+
 ## 1.5.6 - 2026-06-17
 
 ### Added
