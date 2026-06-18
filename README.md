@@ -5,10 +5,13 @@ agents against developer workspaces. It provides a macOS-focused Electron UI for
 provider CLIs and SDK-backed workflows while keeping execution, history, and
 workspace state on the user's machine.
 
-> **iOS companion status:** TaskWraith for iPhone/iPad is pending
-> TestFlight/App Store review. Until then, the iOS companion is provisionally
-> available from this repository for testers who can sign and provision the app
-> with their own Apple Developer team.
+> **iOS companion status:** TaskWraith for iPhone/iPad is in **TestFlight beta**.
+> It is a **Mac companion** — it pairs with TaskWraith on macOS over an
+> end-to-end-encrypted connection to monitor runs, approve actions, and reply
+> from the phone; it is not a standalone AI app. Testers can also build it from
+> this repository with their own Apple Developer team. Push notifications are
+> opt-in after pairing and require APNs credentials on the Mac (see
+> `ios/TaskWraithApp/README.md`).
 
 <table>
   <tr>

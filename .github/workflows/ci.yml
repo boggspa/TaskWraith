@@ -50,6 +50,29 @@ jobs:
           swift --version
           npm run test:swift:bridge
 
+  # iOS companion gate — the Electron matrix can't see iOS regressions, and the
+  # phone is the monetized launch surface. Run the TaskWraithKit Swift tests
+  # (e2ee interop vectors, session round-trip, composer-shell resolver, guest
+  # card lifecycle, streaming, …) plus an UNSIGNED simulator build of the app
+  # target, so a broken iOS build/test fails CI before any TestFlight upload.
+  ios:
+    name: iOS (Kit tests + app build)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift package tests (TaskWraithKit)
+        run: swift test --package-path ios/TaskWraithKit
+      - name: Generate Xcode project (XcodeGen)
+        run: |
+          brew install xcodegen
+          cd ios/TaskWraithApp && xcodegen generate
+      - name: Build app target (iOS Simulator, unsigned)
+        run: |
+          xcodebuild -project ios/TaskWraithApp/TaskWraith.xcodeproj \
+            -scheme TaskWraith \
+            -destination 'generic/platform=iOS Simulator' \
+            build CODE_SIGNING_ALLOWED=NO
+
   notarized-macos-release:
     name: Notarized macOS Release
     runs-on: macos-15
