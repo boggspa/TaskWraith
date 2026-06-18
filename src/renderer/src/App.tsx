@@ -2360,6 +2360,15 @@ function App(): React.JSX.Element {
   const currentWorkspaceIdRef = useRef<string | null>(null)
   const currentChatIdRef = useRef<string | null>(null)
   const chatByIdRef = useRef<Map<string, ChatRecord>>(new Map())
+  // Turn-based guest participation: a guest send is deferred here (keyed by
+  // parent chatId) and dispatched only once the host run on that chat
+  // completes, so the guest answers WITH the host's reply in context. The ref
+  // to dispatchGuestParticipantRun (defined far below) lets the run-completion
+  // handler fire it without a forward reference.
+  const pendingGuestDispatchRef = useRef<Map<string, QueuedRunRequest>>(new Map())
+  const dispatchGuestParticipantRunRef = useRef<
+    ((request: QueuedRunRequest) => Promise<void>) | null
+  >(null)
   const clearedChatIdsRef = useRef<Set<string>>(new Set())
   const rawLogsByChatIdRef = useRef<Map<string, RawLogEntry[]>>(new Map())
   const activeRunChatSnapshotRef = useRef<ChatRecord | null>(null)
@@ -7731,6 +7740,20 @@ function App(): React.JSX.Element {
         }
       })
       handlers.triggerFxBurst('run-complete')
+      // Turn-based guest participation (parity with the bridge): the host run
+      // just finished — fire the deferred guest now, with the host's reply
+      // already in the parent transcript so the guest can respond to it.
+      if (completedRunChatId && pendingGuestDispatchRef.current.has(completedRunChatId)) {
+        const deferredGuestRequest = pendingGuestDispatchRef.current.get(completedRunChatId)
+        pendingGuestDispatchRef.current.delete(completedRunChatId)
+        if (deferredGuestRequest) {
+          const freshParent = chatByIdRef.current.get(completedRunChatId)
+          void dispatchGuestParticipantRunRef.current?.({
+            ...deferredGuestRequest,
+            chatRecord: freshParent ?? deferredGuestRequest.chatRecord
+          })
+        }
+      }
       if (context.warnings.length > 0) {
         handlers.triggerFxBurst('run-summary')
       }
@@ -10320,6 +10343,7 @@ function App(): React.JSX.Element {
     }
     void executeRunRef.current(guestRequest)
   }
+  dispatchGuestParticipantRunRef.current = dispatchGuestParticipantRun
 
   const appendGuestAddressedUserMessage = (request: QueuedRunRequest): void => {
     const parentChat = request.chatRecord || currentChat
@@ -10494,9 +10518,10 @@ function App(): React.JSX.Element {
 
     if (isChatBusy(request.chatRecord?.appChatId || currentChat?.appChatId)) {
       queueRunRequest(request)
-      if (shouldDispatchGuest) {
-        if (parentChat?.appChatId) markGuestDispatchPending(parentChat.appChatId)
-        void dispatchGuestParticipantRun(request)
+      if (shouldDispatchGuest && parentChat?.appChatId) {
+        markGuestDispatchPending(parentChat.appChatId)
+        // Turn-based: defer the guest until this queued host run completes.
+        pendingGuestDispatchRef.current.set(parentChat.appChatId, request)
       }
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
@@ -10509,9 +10534,11 @@ function App(): React.JSX.Element {
     }
 
     void executeRun(request)
-    if (shouldDispatchGuest) {
-      if (parentChat?.appChatId) markGuestDispatchPending(parentChat.appChatId)
-      void dispatchGuestParticipantRun(request)
+    if (shouldDispatchGuest && parentChat?.appChatId) {
+      markGuestDispatchPending(parentChat.appChatId)
+      // Turn-based: defer the guest until the host run completes (see the
+      // run-completion handler), so it answers with the host's reply in context.
+      pendingGuestDispatchRef.current.set(parentChat.appChatId, request)
     }
   }
 
