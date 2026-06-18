@@ -4,6 +4,24 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.5.8 - 2026-06-18
+
+### Changed
+- **Turn-based guest participation.** When a chat has a guest agent, the primary
+  agent now answers first and the guest replies on its turn — so each sees and
+  can build on the other's response, instead of both answering at once. Tag
+  `@guest` to address the guest alone, or `@parent` for the host alone. Phone-
+  originated turns now drive the guest too (through the Mac bridge), not just
+  desktop turns.
+
+### Fixed
+- **iOS companion.** Removing a guest now reliably clears the composer chip
+  (bigger tap target plus an explicit "Remove guest" item in the guest picker);
+  each composer shell collapses to a single line when you're not typing;
+  changing a setting on the phone no longer drops your active chat, sidebar, or
+  open Settings sheet; and creating a new global/ensemble chat surfaces why it
+  was declined instead of spinning indefinitely.
+
 ## 1.5.7 - 2026-06-18
 
 ### Added
