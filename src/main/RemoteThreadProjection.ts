@@ -906,7 +906,23 @@ export function buildRunSummary(
   messages?: ChatMessage[]
 ): RemoteRunSummary | undefined {
   if (!Array.isArray(runs) || runs.length === 0) return undefined
-  return summarizeRun(runs[runs.length - 1], costDisplay, messages)
+  const last = runs[runs.length - 1]
+  // An ensemble round dispatches one run per participant (all sharing an
+  // `ensembleRoundId`). The headline Task-complete card renders at the round
+  // boundary, so it must reflect the WHOLE round — summed tokens/cost, unioned
+  // file changes, the round's wall-clock span — not just whichever participant
+  // finished last. Continuous ensembles (many rounds) made the last-only tally
+  // badly understate the round.
+  if (last && typeof last.ensembleRoundId === 'string' && last.ensembleRoundId) {
+    const roundRuns = runs.filter(
+      (run) => typeof run?.runId === 'string' && run.ensembleRoundId === last.ensembleRoundId
+    )
+    if (roundRuns.length > 1) {
+      const aggregate = summarizeEnsembleRound(roundRuns, costDisplay, messages)
+      if (aggregate) return aggregate
+    }
+  }
+  return summarizeRun(last, costDisplay, messages)
 }
 
 /** Per-run projection — powers the per-run Task-complete cards. */
@@ -935,32 +951,216 @@ export function summarizeRun(
   // outputTokens / totalTokens; cost via cost_usd / total_cost_usd).
   const stats = run.stats as Record<string, unknown> | undefined
   if (stats) {
-    const num = (...keys: string[]): number | undefined => {
-      for (const key of keys) {
-        const v = stats[key]
-        if (typeof v === 'number' && Number.isFinite(v)) return v
-        if (typeof v === 'string' && v.trim() && Number.isFinite(Number(v))) return Number(v)
-      }
-      return undefined
-    }
     const usage = extractRemoteUsageCounts(stats)
     if (usage.inputTokens > 0) summary.tokensIn = usage.inputTokens
     if (usage.outputTokens > 0) summary.tokensOut = usage.outputTokens
     if (usage.totalTokens > 0) summary.totalTokens = usage.totalTokens
-    const cost = num('cost_usd', 'total_cost_usd', 'costUsd', 'totalCostUsd')
-    const explicitCostUsd = cost !== undefined && cost > 0 ? cost : 0
-    const hasExplicitCost = explicitCostUsd > 0
-    const costUsd = hasExplicitCost
-      ? explicitCostUsd
-      : estimateRemoteRunCostUsd(costDisplay, run.provider, model, usage)
+    const { usd: costUsd, estimated: costEstimated } = extractRunCostUsd(run, costDisplay)
     if (costUsd > 0) {
       const formatted = formatRemoteCost(costUsd, costDisplay)
-      if (formatted) summary.costText = hasExplicitCost ? formatted : `~${formatted}`
+      if (formatted) summary.costText = costEstimated ? `~${formatted}` : formatted
     }
   }
   const fileChanges = summarizeRunFileChanges(run, messages)
   if (fileChanges) summary.fileChanges = fileChanges
   return summary
+}
+
+/** Numeric run cost in USD + whether it was estimated (vs reported). Shared by
+ * the per-run summary and the ensemble-round fold so costs can be summed before
+ * formatting. Mirrors summarizeRun's cost logic exactly. */
+function extractRunCostUsd(
+  run: ChatRun | undefined,
+  costDisplay?: RemoteCostDisplayOptions
+): { usd: number; estimated: boolean } {
+  if (!run) return { usd: 0, estimated: false }
+  const stats = run.stats as Record<string, unknown> | undefined
+  if (!stats) return { usd: 0, estimated: false }
+  const num = (...keys: string[]): number | undefined => {
+    for (const key of keys) {
+      const v = stats[key]
+      if (typeof v === 'number' && Number.isFinite(v)) return v
+      if (typeof v === 'string' && v.trim() && Number.isFinite(Number(v))) return Number(v)
+    }
+    return undefined
+  }
+  const explicit = num('cost_usd', 'total_cost_usd', 'costUsd', 'totalCostUsd')
+  if (explicit !== undefined && explicit > 0) return { usd: explicit, estimated: false }
+  const usage = extractRemoteUsageCounts(stats)
+  const model = run.actualModel || run.requestedModel
+  const estimated = estimateRemoteRunCostUsd(costDisplay, run.provider, model, usage)
+  return estimated > 0 ? { usd: estimated, estimated: true } : { usd: 0, estimated: false }
+}
+
+/** Fold every participant run of one ensemble round into a single headline
+ * summary. Tokens and cost are SUMMED across participants, file changes are
+ * UNIONED, and the duration spans the whole round (earliest start → latest
+ * end). The round-boundary (last) run supplies the representative
+ * runId/provider/model/status/exitCode. */
+export function summarizeEnsembleRound(
+  roundRuns: ChatRun[],
+  costDisplay?: RemoteCostDisplayOptions,
+  messages?: ChatMessage[]
+): RemoteRunSummary | undefined {
+  const perRun = roundRuns
+    .map((run) => summarizeRun(run, costDisplay, messages))
+    .filter((entry): entry is RemoteRunSummary => Boolean(entry))
+  if (perRun.length === 0) return undefined
+  const base = summarizeRun(roundRuns[roundRuns.length - 1], costDisplay, messages)
+  if (!base) return undefined
+  const summary: RemoteRunSummary = { ...base }
+
+  // Summed token tallies across every participant.
+  const sumTokens = (key: 'tokensIn' | 'tokensOut' | 'totalTokens'): number =>
+    perRun.reduce((acc, entry) => acc + (typeof entry[key] === 'number' ? entry[key]! : 0), 0)
+  const tokensIn = sumTokens('tokensIn')
+  const tokensOut = sumTokens('tokensOut')
+  const totalTokens = sumTokens('totalTokens')
+  if (tokensIn > 0) summary.tokensIn = tokensIn
+  else delete summary.tokensIn
+  if (tokensOut > 0) summary.tokensOut = tokensOut
+  else delete summary.tokensOut
+  if (totalTokens > 0) summary.totalTokens = totalTokens
+  else delete summary.totalTokens
+
+  // Summed cost (numeric, formatted once). "~" if ANY participant was estimated.
+  let costUsd = 0
+  let anyEstimated = false
+  for (const run of roundRuns) {
+    const { usd, estimated } = extractRunCostUsd(run, costDisplay)
+    if (usd > 0) {
+      costUsd += usd
+      if (estimated) anyEstimated = true
+    }
+  }
+  if (costUsd > 0) {
+    const formatted = formatRemoteCost(costUsd, costDisplay)
+    if (formatted) summary.costText = anyEstimated ? `~${formatted}` : formatted
+    else delete summary.costText
+  } else {
+    delete summary.costText
+  }
+
+  // Wall-clock span across the round.
+  let minStart = Number.POSITIVE_INFINITY
+  let maxEnd = Number.NEGATIVE_INFINITY
+  let minStartStr: string | undefined
+  let maxEndStr: string | undefined
+  for (const run of roundRuns) {
+    const started = parseTime(run.startedAt)
+    const ended = parseTime(run.endedAt)
+    if (Number.isFinite(started) && started < minStart) {
+      minStart = started
+      minStartStr = run.startedAt
+    }
+    if (Number.isFinite(ended) && ended > maxEnd) {
+      maxEnd = ended
+      maxEndStr = run.endedAt
+    }
+  }
+  if (minStartStr) summary.startedAt = minStartStr
+  if (maxEndStr) summary.endedAt = maxEndStr
+  if (Number.isFinite(minStart) && Number.isFinite(maxEnd) && maxEnd >= minStart) {
+    summary.durationMs = maxEnd - minStart
+  } else {
+    delete summary.durationMs
+  }
+
+  // Unioned file changes across participants.
+  const merged = mergeEnsembleFileChanges(
+    perRun
+      .map((entry) => entry.fileChanges)
+      .filter((entry): entry is RemoteRunFileChangeCounts => Boolean(entry))
+  )
+  if (merged) summary.fileChanges = merged
+  else delete summary.fileChanges
+
+  return summary
+}
+
+/** Union per-participant file-change tallies for an ensemble round: per-file
+ * rows dedupe by path (churn from the same file across participants folds into
+ * one row with summed ±), per-workspace rows dedupe by workspacePath, and the
+ * scalar counts sum. */
+function mergeEnsembleFileChanges(
+  parts: RemoteRunFileChangeCounts[]
+): RemoteRunFileChangeCounts | undefined {
+  if (parts.length === 0) return undefined
+  const sumKey = (key: keyof RemoteRunFileChangeCounts): number =>
+    parts.reduce((acc, part) => acc + (typeof part[key] === 'number' ? (part[key] as number) : 0), 0)
+  const sumOptional = (key: keyof RemoteRunFileChangeCounts): number | undefined => {
+    let total = 0
+    let present = false
+    for (const part of parts) {
+      const v = part[key]
+      if (typeof v === 'number') {
+        total += v
+        present = true
+      }
+    }
+    return present ? total : undefined
+  }
+
+  const fileByPath = new Map<string, RemoteRunChangedFile>()
+  for (const part of parts) {
+    for (const file of part.files ?? []) {
+      const existing = fileByPath.get(file.path)
+      if (!existing) {
+        fileByPath.set(file.path, { ...file })
+      } else {
+        if (typeof file.additions === 'number') {
+          existing.additions = (existing.additions ?? 0) + file.additions
+        }
+        if (typeof file.deletions === 'number') {
+          existing.deletions = (existing.deletions ?? 0) + file.deletions
+        }
+        if (!existing.status && file.status) existing.status = file.status
+      }
+    }
+  }
+
+  const workspaceByPath = new Map<string, RemoteRunWorkspaceFileChanges>()
+  for (const part of parts) {
+    for (const workspace of part.workspaces ?? []) {
+      const key = workspace.workspacePath ?? ''
+      const existing = workspaceByPath.get(key)
+      if (!existing) {
+        workspaceByPath.set(key, { ...workspace })
+      } else {
+        existing.filesChanged += workspace.filesChanged
+        existing.additions += workspace.additions
+        existing.deletions += workspace.deletions
+        const addOpt = (a?: number, b?: number): number | undefined =>
+          a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0)
+        existing.createdFiles = addOpt(existing.createdFiles, workspace.createdFiles)
+        existing.modifiedFiles = addOpt(existing.modifiedFiles, workspace.modifiedFiles)
+        existing.deletedFiles = addOpt(existing.deletedFiles, workspace.deletedFiles)
+        existing.preExistingFiles = addOpt(existing.preExistingFiles, workspace.preExistingFiles)
+      }
+    }
+  }
+
+  const merged: RemoteRunFileChangeCounts = {
+    // Unique files across the round when per-file rows are present; otherwise
+    // fall back to the summed per-run counts.
+    filesChanged: fileByPath.size > 0 ? fileByPath.size : sumKey('filesChanged'),
+    additions: sumKey('additions'),
+    deletions: sumKey('deletions')
+  }
+  const createdFiles = sumOptional('createdFiles')
+  if (createdFiles !== undefined) merged.createdFiles = createdFiles
+  const modifiedFiles = sumOptional('modifiedFiles')
+  if (modifiedFiles !== undefined) merged.modifiedFiles = modifiedFiles
+  const deletedFiles = sumOptional('deletedFiles')
+  if (deletedFiles !== undefined) merged.deletedFiles = deletedFiles
+  const preExistingFiles = sumOptional('preExistingFiles')
+  if (preExistingFiles !== undefined) merged.preExistingFiles = preExistingFiles
+  if (fileByPath.size > 0) merged.files = [...fileByPath.values()]
+  if (workspaceByPath.size > 0) {
+    merged.workspaces = [...workspaceByPath.values()]
+    merged.workspaceCount = workspaceByPath.size
+  }
+  return merged
 }
 
 function summarizeRunFileChanges(
