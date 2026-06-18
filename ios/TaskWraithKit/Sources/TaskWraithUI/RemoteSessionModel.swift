@@ -2457,16 +2457,26 @@ public final class RemoteSessionModel: ObservableObject {
                 title: title),
             timeoutMs: 12_000,
             successLabel: "Chat created.",
-            navigateOnAck: true
-        ) { [weak self] threadId in
-            guard let self, let threadId else {
-                onCreated?(nil)
-                return
+            navigateOnAck: true,
+            onThreadCreated: { [weak self] threadId in
+                guard let self, let threadId else {
+                    onCreated?(nil)
+                    return
+                }
+                self.rememberThreadWorkspace(threadId, workspaceId: workspaceId)
+                self.scheduleThreadRefresh(threadId)
+                onCreated?(threadId)
+            },
+            // A denied/failed create never reaches onThreadCreated (send only
+            // fires that when accepted), which left the new-chat canvas spinning
+            // on "Creating…" forever — exactly what "can't start a global /
+            // ensemble chat" looks like. Surface the failure so the canvas can
+            // show the Mac's reason (e.g. ensemble mode disabled, global not
+            // shared while the workspace allowlist is empty) and offer Retry.
+            onAck: { accepted in
+                if !accepted { onCreated?(nil) }
             }
-            self.rememberThreadWorkspace(threadId, workspaceId: workspaceId)
-            self.scheduleThreadRefresh(threadId)
-            onCreated?(threadId)
-        }
+        )
     }
 
     /// Create an empty ensemble chat, optionally queue the first prompt.
