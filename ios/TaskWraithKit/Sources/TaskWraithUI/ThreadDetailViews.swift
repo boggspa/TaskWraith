@@ -849,6 +849,16 @@ struct ThreadDetailView: View {
                         && (hasAttachedRows || card.isEnsemble
                             || !(card.queuedComposerPrompts ?? []).isEmpty)
                     let tuckedTab = resolved.layout.tuckedAboveTab && hasAboveContent
+                    // SHELL PLACEMENT must be focus-INDEPENDENT. The core/outer
+                    // `.composerShellIf` below toggle a ViewModifier on/off; because
+                    // `composerShellIf` is a @ViewBuilder if/else, flipping it changes
+                    // the subtree's structural identity, which tears down + rebuilds the
+                    // Composer and RESETS its @FocusState — so for grok (the only
+                    // tuckedAboveTab shell) focus never latched and BOTH the above rows
+                    // and the telemetry collapsed. Key placement off the STATIC recipe
+                    // flag, not the focus-derived `tuckedTab`. (`tuckedTab` still drives
+                    // the focus-gated tab geometry/spacing, which don't change identity.)
+                    let tuckedShell = resolved.layout.tuckedAboveTab
                     VStack(spacing: tuckedTab ? -10 : (detached ? 6 : 0)) {
                         // Above-rows group: inner VStack spacing matches the outer so
                         // non-tuck stays identical; the grok tuck makes it the inset,
@@ -1009,10 +1019,10 @@ struct ThreadDetailView: View {
                                     planLanes: card.todoLanes ?? [])
                             }
                         }
-                        .composerShellIf((detached && !inputOwnsSurface) || tuckedTab, resolved)
-                        .zIndex(tuckedTab ? 1 : 0)
+                        .composerShellIf((detached && !inputOwnsSurface) || tuckedShell, resolved)
+                        .zIndex(tuckedShell ? 1 : 0)
                     }
-                    .composerShellIf(!detached && !tuckedTab, resolved)
+                    .composerShellIf(!detached && !tuckedShell, resolved)
                     .task(id: composerGitWorkspaceIds(card: card).joined(separator: "\n")) {
                         for workspaceId in composerGitWorkspaceIds(card: card) {
                             await model.refreshGitSnapshotCache(workspaceId: workspaceId)
