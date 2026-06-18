@@ -4,6 +4,21 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.5.9 - 2026-06-18
+
+### Changed
+- **iOS composer collapses to one line when idle.** On the phone, when the
+  composer isn't focused (keyboard down) it now collapses to a single-line
+  input + model pill + send — the diff/changes rows, participant roster, queued
+  prompts, and telemetry rail all tuck away and reappear when you tap in.
+
+### Fixed
+- **Ensemble "Task Complete" summary covers the whole round.** The end-of-round
+  completion card now sums tokens and cost across every participant, unions
+  their file changes, and spans the full round duration — previously it showed
+  only the last participant's numbers, which badly understated long continuous
+  ensembles.
+
 ## 1.5.8 - 2026-06-18
 
 ### Changed
