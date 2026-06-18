@@ -109,6 +109,12 @@ export interface RemoteTaskCard {
   /** When `parentChatRelation === 'sideChat'`, the side-chat mode
    * (`guestParticipant`, `ensembleClone`, `fanOut`, …). */
   sideChatMode?: string
+  /** When `parentChatRelation === 'sideChat'`, the side-chat lifecycle
+   * (`active` | `closed` | `terminated`). Absent ⇒ treat as active. A removed
+   * guest's child chat is marked `closed` (not deleted) by the store, so the
+   * phone must read this to drop it from the ACTIVE-guest detector — otherwise
+   * the composer guest chip lingers after removal. */
+  sideChatLifecycleState?: string
   /** `ensemble` chats need `ensembleQueuePrompt` on remote send paths. */
   chatKind?: 'single' | 'ensemble'
   /** Unstarted iOS welcome-card draft (0 messages/runs). Remote clients keep
@@ -732,6 +738,9 @@ export function buildRemoteTaskCard(
     ...(agentIdentity?.slug ? { agentSlug: agentIdentity.slug } : {}),
     ...(chat.parentChatRelation ? { parentChatRelation: chat.parentChatRelation } : {}),
     ...(chat.sideChatContext?.mode ? { sideChatMode: chat.sideChatContext.mode } : {}),
+    ...(chat.sideChatContext?.lifecycleState
+      ? { sideChatLifecycleState: chat.sideChatContext.lifecycleState }
+      : {}),
     ...(chat.chatKind ? { chatKind: chat.chatKind } : {}),
     ...(isContentlessRemoteDraftChat(chat) ? { isDraft: true } : {}),
     ...(chat.archived ? { archived: true } : {}),

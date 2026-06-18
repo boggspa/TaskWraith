@@ -5233,12 +5233,19 @@ public struct GuestParticipantControl: View {
                         model.removeGuestParticipant(card)
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(TWTheme.textMuted)
+                            // An 8pt glyph with no frame gave a ~8×8pt tap target
+                            // (far below the 44pt minimum), so taps missed and the
+                            // guest never got removed. Give it real hit area.
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Remove guest")
                 }
-                .padding(.horizontal, 7)
+                .padding(.leading, 7)
+                .padding(.trailing, 1)
                 .padding(.vertical, 3)
                 .background(guestAccent.opacity(0.12), in: Capsule())
                 .overlay(Capsule().strokeBorder(guestAccent.opacity(0.4)))
@@ -5271,6 +5278,16 @@ public struct GuestParticipantControl: View {
                 } else {
                     Text(TWTheme.providerLabel(catalog.provider))
                 }
+            }
+        }
+        // A reliable removal path from the provider/model picker itself — the
+        // tiny inline X is easy to miss. Only meaningful once a guest exists.
+        if guest != nil {
+            Divider()
+            Button(role: .destructive) {
+                model.removeGuestParticipant(card)
+            } label: {
+                Label("Remove guest", systemImage: "person.crop.circle.badge.minus")
             }
         }
     }
