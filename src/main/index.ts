@@ -3555,7 +3555,7 @@ function finalizeBridgeRunTranscript(
     // Turn-based guest participation. After the HOST reply is flushed
     // (persisted), dispatch the guest so it answers WITH the host's reply in
     // context; after a GUEST run finishes, mirror its reply into the parent.
-    if (state.guestFanout && resolvedStatus === 'success') {
+    if (state.guestFanout) {
       const f = state.guestFanout
       bridgeGuestParticipantRunner?.dispatchGuestTurn({
         parentChatId: f.parentChatId,
