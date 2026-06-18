@@ -19,9 +19,12 @@ import TaskWraithKit
 struct HomeView: View {
     @ObservedObject var model: RemoteSessionModel
     @Binding var selection: String?
-    /// Parent chats whose sub-thread/side-chat children are collapsed.
-    @State private var collapsedParents: Set<String> = []
-    @State private var showSettings = false
+    /// Parent chats whose sub-thread/side-chat children are collapsed. Backed by
+    /// the model so it survives the theme-revision teardown (see selectedTaskId).
+    private var collapsedParents: Set<String> {
+        get { model.collapsedParents }
+        nonmutating set { model.collapsedParents = newValue }
+    }
     @State private var canvasMode: ComposeMode? = nil
 
     private func openCanvas(_ mode: ComposeMode) {
@@ -40,10 +43,16 @@ struct HomeView: View {
     /// Workspace folders the user has EXPANDED — inverted from the old
     /// collapsed-set so folders start collapsed (a tidy first open; expand
     /// state then sticks for the session).
-    @State private var expandedWorkspaces: Set<String> = []
+    private var expandedWorkspaces: Set<String> {
+        get { model.expandedWorkspaces }
+        nonmutating set { model.expandedWorkspaces = newValue }
+    }
     /// Top-level sections (activeRuns / pinned / recents / workspaces /
     /// globalChats) the user has collapsed — sections start expanded.
-    @State private var collapsedSections: Set<String> = []
+    private var collapsedSections: Set<String> {
+        get { model.collapsedSections }
+        nonmutating set { model.collapsedSections = newValue }
+    }
 
     /// Top-level threads per workspace; sub-threads/side chats nest under
     /// their parent like the desktop sidebar.
@@ -112,7 +121,7 @@ struct HomeView: View {
                         Image(systemName: "arrow.clockwise")
                     }
                     Button {
-                        showSettings = true
+                        model.settingsPresented = true
                     } label: {
                         Image(systemName: "gearshape")
                     }
@@ -127,11 +136,6 @@ struct HomeView: View {
         }
         .navigationDestination(item: $canvasMode) { mode in
             NewChatBootstrapView(model: model, mode: mode, initialWorkspaceId: nil)
-        }
-        .sheet(isPresented: $showSettings) {
-            AppSettingsSheet()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
         }
     }
 
@@ -488,9 +492,20 @@ struct HomeView: View {
             .listRowSeparator(.hidden)
             .listRowBackground(selectedChrome)
         } else {
-            NavigationLink(value: card.id) {
-                TaskRow(model: model, card: card, nested: nested)
+            // Compact: selection-driven push via `navigationDestination(item:)`
+            // (not NavigationLink) so the open chat is restorable from the
+            // model after the theme-revision teardown.
+            Button {
+                selection = card.id
+            } label: {
+                HStack(spacing: 6) {
+                    TaskRow(model: model, card: card, nested: nested)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted)
+                }
             }
+            .buttonStyle(.plain)
             .listRowInsets(rowInsets)
             .listRowSeparator(.hidden)
             .listRowBackground(rowChrome)

@@ -77,6 +77,16 @@ public struct RootView: View {
         // Theme tokens are computed statics — a revision bump rebuilds the
         // tree so every TWTheme read picks up the new selection.
         .id(themes.revision)
+        // Settings sheet lives ABOVE the revision teardown (attached after
+        // `.id`) so a theme/composer/font change made inside it keeps the sheet
+        // open — AppSettingsSheet re-themes live via its own @ObservedObject
+        // themes. Presented here, not from HomeView, which is inside the
+        // `.id(revision)` subtree that rebuilds on every settings change.
+        .sheet(isPresented: $model.settingsPresented) {
+            AppSettingsSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         .animation(.easeInOut(duration: 0.25), value: showShellDuringDrop)
         // Privacy shield: iOS snapshots the UI for the app switcher —
         // transcripts and file contents must not be readable there.
@@ -176,7 +186,6 @@ struct MastheadRow: View {
 struct ConnectedShell: View {
     @ObservedObject var model: RemoteSessionModel
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var selectedTaskId: String?
     @StateObject private var fileState = MobileFileEditorState()
     @StateObject private var diffState = MobileDiffStudioState()
     @State private var shellMode: ShellMode = .app
@@ -232,11 +241,11 @@ struct ConnectedShell: View {
                 }
             } else {
                 NavigationSplitView {
-                    HomeView(model: model, selection: $selectedTaskId, explicitSelection: true)
+                    HomeView(model: model, selection: $model.selectedTaskId, explicitSelection: true)
                         .navigationSplitViewColumnWidth(min: 300, ideal: 340)
                         .iPadSidebarInnerRim(edge: .trailing)
                 } detail: {
-                    if let taskId = selectedTaskId, taskId.hasPrefix("new-") {
+                    if let taskId = model.selectedTaskId, taskId.hasPrefix("new-") {
                         NavigationStack {
                             NewChatBootstrapView(
                                 model: model,
@@ -247,7 +256,7 @@ struct ConnectedShell: View {
                                     ? String(taskId.split(separator: ":")[1]) : nil)
                         }
                         .id(taskId)
-                    } else if let taskId = selectedTaskId {
+                    } else if let taskId = model.selectedTaskId {
                         // Hand-rolled third column: SwiftUI's `.inspector`
                         // presents as an overlay here regardless of attach
                         // level (tried both); an HStack pane DETERMINISTICALLY
@@ -259,7 +268,7 @@ struct ConnectedShell: View {
                             if model.inspectorPresented {
                                 ThreadInspector(model: model, threadId: taskId) { childId in
                                     model.inspectorPresented = false
-                                    selectedTaskId = childId
+                                    model.selectedTaskId = childId
                                 }
                                 .frame(width: 390)
                                 .background(TWTheme.appBg)
@@ -281,8 +290,8 @@ struct ConnectedShell: View {
             }
         } else {
             NavigationStack {
-                HomeView(model: model, selection: $selectedTaskId)
-                    .navigationDestination(for: String.self) { taskId in
+                HomeView(model: model, selection: $model.selectedTaskId)
+                    .navigationDestination(item: $model.selectedTaskId) { taskId in
                         ThreadDetailView(model: model, taskId: taskId)
                             // Compact: the same binding presents as a sheet.
                             .inspector(isPresented: $model.inspectorPresented) {
