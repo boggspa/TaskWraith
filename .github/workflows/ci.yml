@@ -50,6 +50,40 @@ jobs:
           swift --version
           npm run test:swift:bridge
 
+  # iOS companion gate — the Electron matrix can't see iOS regressions, and the
+  # phone is the monetized launch surface. macOS 26 runner for the iOS 26 SDK
+  # (TaskWraithUI uses `.glassEffect`), with Xcode PINNED to 26.0 (Swift 6.2) to
+  # MATCH the shipping toolchain: the runner's default Xcode 26.5 (Swift 6.3.2)
+  # enforces region-isolation `sending` diagnostics as errors that local
+  # Swift 6.2.4 does not, so an unpinned lane would fail on latent concurrency
+  # debt rather than real regressions. (TODO: clear that Swift-6.3 region-
+  # isolation debt in RemoteSessionModel before bumping the pin.)
+  ios:
+    name: iOS (Kit tests + app build)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Available Xcodes (pre-pin diagnostic)
+        run: ls -d /Applications/Xcode*.app
+      - name: Select Xcode 26.0 (Swift 6.2 — matches ship toolchain)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.0"
+      - name: Toolchain versions
+        run: xcodebuild -version && swift --version
+      - name: Swift package tests (TaskWraithKit)
+        run: swift test --package-path ios/TaskWraithKit
+      - name: Generate Xcode project (XcodeGen)
+        run: |
+          brew install xcodegen
+          cd ios/TaskWraithApp && xcodegen generate
+      - name: Build app target (iOS Simulator, unsigned)
+        run: |
+          xcodebuild -project ios/TaskWraithApp/TaskWraith.xcodeproj \
+            -scheme TaskWraith \
+            -destination 'generic/platform=iOS Simulator' \
+            build CODE_SIGNING_ALLOWED=NO
+
   notarized-macos-release:
     name: Notarized macOS Release
     runs-on: macos-15
