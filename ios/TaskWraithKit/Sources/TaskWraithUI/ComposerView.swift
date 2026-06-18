@@ -45,6 +45,10 @@ struct Composer: View {
     /// rail when the composer is idle); `forcesExpanded` keeps the composer
     /// always-open (welcome hero, ensemble roster).
     var onExpandedChange: ((Bool) -> Void)? = nil
+    /// Mirrors raw input focus (keyboard up). Distinct from `onExpandedChange`,
+    /// which also stays true while a draft/queued prompt lingers after blur —
+    /// the host uses focus to hide the ABOVE rows when the keyboard drops.
+    var onFocusChange: ((Bool) -> Void)? = nil
     var forcesExpanded: Bool = false
     @Binding var text: String
 
@@ -226,6 +230,9 @@ struct Composer: View {
         }
         .onChange(of: isExpanded, initial: true) { _, expanded in
             onExpandedChange?(expanded)
+        }
+        .onChange(of: inputFocused, initial: true) { _, focused in
+            onFocusChange?(focused)
         }
         .onChange(of: selectedProvider) { _, newValue in
             providerEcho?.wrappedValue = newValue

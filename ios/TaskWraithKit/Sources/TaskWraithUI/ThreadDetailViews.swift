@@ -24,7 +24,7 @@ struct ThreadDetailView: View {
     /// Mirrors the Composer's expanded state (focused / drafting / queued /
     /// ensemble) so the host hides the secondary rows + telemetry rail when the
     /// composer is idle — i.e. the compact one-line composer.
-    @State private var composerExpanded = false
+    @State private var composerFocused = false
     /// Follow the transcript tail as content streams in — disabled the
     /// moment the user drags, re-enabled by the jump-to-latest pill.
     @State private var autoFollow = true
@@ -840,9 +840,14 @@ struct ThreadDetailView: View {
                     // composer-core overlaps by 10pt (a tab peeking behind). Gated on
                     // above-content (no empty tab). For non-tuck shells every condition
                     // below collapses to its current value → byte-identical layout.
+                    // The above rows + telemetry collapse when the composer is not
+                    // focused (keyboard down) — a blurred composer is just the
+                    // one-line input + model pill + send. Focus is the gate, NOT
+                    // composerExpanded (which lingers while a draft/queue exists).
                     let hasAboveContent =
-                        hasAttachedRows || card.isEnsemble
-                        || !(card.queuedComposerPrompts ?? []).isEmpty
+                        composerFocused
+                        && (hasAttachedRows || card.isEnsemble
+                            || !(card.queuedComposerPrompts ?? []).isEmpty)
                     let tuckedTab = resolved.layout.tuckedAboveTab && hasAboveContent
                     VStack(spacing: tuckedTab ? -10 : (detached ? 6 : 0)) {
                         // Above-rows group: inner VStack spacing matches the outer so
@@ -851,6 +856,9 @@ struct ThreadDetailView: View {
                         // shifts non-tuck layout): the inner spacing MUST equal the outer
                         // (always an explicit 0/6, never adaptive), and every above-row
                         // must be full-width (else the inner VStack's .center re-centers).
+                        // The whole above-rows group collapses with the keyboard
+                        // (gated on focus); see hasAboveContent.
+                        if composerFocused {
                         VStack(spacing: detached ? 6 : 0) {
                         if hasWorkspaceBreakdown {
                             // One attached row per granted workspace
@@ -915,7 +923,7 @@ struct ThreadDetailView: View {
                         // them as their own cards above the composer; codex (tuck)
                         // re-homes them into the core card below — so render them
                         // as siblings here only when NOT tucking.
-                        if !tuck && composerExpanded {
+                        if !tuck {
                             composerSecondaryRows(
                                 card: card, hasAttachedRows: hasAttachedRows,
                                 onOwnCards: detached,
@@ -931,6 +939,7 @@ struct ThreadDetailView: View {
                         .padding(.bottom, tuckedTab ? 14 : 0)
                         .composerShellIf(tuckedTab, resolved, topCornersOnly: true)
                         .padding(.horizontal, tuckedTab ? 18 : 0)
+                        }  // end focus-gated above-rows group
                         // Composer core (input + telemetry rail). In detached
                         // mode this is its OWN card under the floating above-rows;
                         // merged mode keeps it as the final segments of the one
@@ -940,7 +949,7 @@ struct ThreadDetailView: View {
                         VStack(spacing: bareTelemetry ? 6 : 0) {
                             // codex tucks the roster/queued rows INTO this core
                             // card (above the input), as merged segments.
-                            if tuck && composerExpanded {
+                            if tuck && composerFocused {
                                 composerSecondaryRows(
                                     card: card, hasAttachedRows: hasAttachedRows,
                                     onOwnCards: false, suppressFill: true,
@@ -951,19 +960,19 @@ struct ThreadDetailView: View {
                                 runStatus: snapshot?.runSummary?.status,
                                 attachedTop: (detached || tuckedTab)
                                     ? false
-                                    : (hasAttachedRows || card.isEnsemble
-                                        || !(card.queuedComposerPrompts ?? []).isEmpty),
+                                    : hasAboveContent,
                                 // Idle (rail hidden) → round the composer's bottom;
-                                // expanded (rail present) → flatten to fuse the rail.
-                                attachedBottom: composerExpanded,
+                                // focused (rail present) → flatten to fuse the rail.
+                                attachedBottom: composerFocused,
                                 extraWorkspaceIds: extraWorkspaceIdsForSend(card: card),
                                 allowsProviderChange: allowsFirstTurnProviderChange,
-                                onExpandedChange: { composerExpanded = $0 },
-                                // Ensemble stays expanded (its @-direct roster is core
-                                // context); solo threads collapse when idle.
-                                forcesExpanded: card.isEnsemble,
+                                onFocusChange: { composerFocused = $0 },
+                                // Every chat (incl. ensemble) collapses to one line
+                                // when the keyboard drops — above rows + telemetry
+                                // follow focus, not draft/queue presence.
+                                forcesExpanded: false,
                                 text: $followUp)
-                            if composerExpanded {
+                            if composerFocused {
                                 if !bareTelemetry {
                                     Rectangle().fill(TWTheme.border).frame(height: 1)
                                 }
