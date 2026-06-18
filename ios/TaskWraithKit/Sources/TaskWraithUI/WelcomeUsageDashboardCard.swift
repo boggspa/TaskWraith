@@ -96,14 +96,14 @@ public struct WelcomeUsageDashboardCard: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             header
             if hasRibbon { ribbon }
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .animation(.easeInOut(duration: 0.15), value: tab)
         }
-        .padding(14)
+        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous).fill(TWTheme.surface2))
         .overlay(
@@ -198,46 +198,53 @@ public struct WelcomeUsageDashboardCard: View {
 
     // MARK: Statistics
 
-    private var statItems: [(label: String, value: String)] {
-        let cost = DashboardFmt.cost(dashboard.totalCostUsd)
-        return [
-            ("Favorite model", dashboard.favoriteModel.isEmpty ? "—" : dashboard.favoriteModel),
-            ("Favorite project",
-                dashboard.favoriteProject.isEmpty ? "—" : dashboard.favoriteProject),
+    /// `prioritizeValue` true (numeric stats): the value is the point — keep it
+    /// whole, let the label truncate. False (favorite model/project): the value is
+    /// a long name/slug — keep the label whole, truncate the value's middle.
+    private func statRow(_ label: String, _ value: String, prioritizeValue: Bool = true)
+        -> some View
+    {
+        HStack(spacing: 8) {
+            Text(label).font(.caption).foregroundStyle(TWTheme.textTertiary)
+                .lineLimit(1).layoutPriority(prioritizeValue ? 0 : 1)
+            Spacer(minLength: 6)
+            Text(value).font(.caption.weight(.semibold))
+                .foregroundStyle(TWTheme.textPrimary)
+                .lineLimit(1).truncationMode(.middle)
+                .layoutPriority(prioritizeValue ? 1 : 0)
+        }
+    }
+
+    // Compact (iOS is compact-only): favorite model/project span full width (their
+    // values are long); the headline numeric stats sit in a tight 2-column grid
+    // (short values fit without truncation). Trimmed from the desktop's 15 stats so
+    // the card sits above the ghost without turning the welcome into a scroll screen.
+    private var statisticsTab: some View {
+        let numeric: [(label: String, value: String)] = [
             ("24H Tkns", DashboardFmt.compact(dashboard.tokens24h)),
+            ("Total tokens", DashboardFmt.compact(dashboard.totalTokens)),
             ("Current streak", "\(dashboard.currentStreak)d"),
             ("Longest streak", "\(dashboard.longestStreak)d"),
             ("Active days", DashboardFmt.compact(dashboard.activeDays)),
-            ("Longest thread", DashboardFmt.duration(dashboard.longestThreadMs)),
-            ("Cumulative wall time", DashboardFmt.duration(dashboard.totalWallTimeMs)),
             ("Peak hour", dashboard.peakHour.isEmpty ? "n/a" : dashboard.peakHour),
             ("Sessions", DashboardFmt.compact(dashboard.sessions)),
             ("Messages", DashboardFmt.compact(dashboard.messages)),
-            ("Total tokens", DashboardFmt.compact(dashboard.totalTokens)),
-            ("Total cost", cost.isEmpty ? "—" : cost),
             ("Avg session", DashboardFmt.duration(dashboard.avgSessionMs)),
-            ("Tokens / session", DashboardFmt.compact(dashboard.tokensPerSession)),
         ]
-    }
-
-    private var statisticsTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 8) {
+            statRow(
+                "Favorite model",
+                dashboard.favoriteModel.isEmpty ? "—" : dashboard.favoriteModel,
+                prioritizeValue: false)
+            statRow(
+                "Favorite project",
+                dashboard.favoriteProject.isEmpty ? "—" : dashboard.favoriteProject,
+                prioritizeValue: false)
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 200), spacing: 10)],
-                alignment: .leading, spacing: 9
+                columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                alignment: .leading, spacing: 8
             ) {
-                ForEach(statItems, id: \.label) { item in
-                    HStack(spacing: 8) {
-                        Text(item.label)
-                            .font(.caption).foregroundStyle(TWTheme.textTertiary)
-                            .lineLimit(1).layoutPriority(1)
-                        Spacer(minLength: 6)
-                        Text(item.value)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(TWTheme.textPrimary)
-                            .lineLimit(1).truncationMode(.middle)
-                    }
-                }
+                ForEach(numeric, id: \.label) { item in statRow(item.label, item.value) }
             }
             if !dashboard.comparisonText.isEmpty {
                 Text(dashboard.comparisonText)
@@ -253,7 +260,7 @@ public struct WelcomeUsageDashboardCard: View {
             if dashboard.modelBreakdown.isEmpty {
                 emptyLine("No model-level usage tracked in the last 30 days.")
             } else {
-                ForEach(dashboard.modelBreakdown) { m in
+                ForEach(dashboard.modelBreakdown.prefix(4)) { m in
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 7) {
                             Circle().fill(TWTheme.providerAccent(m.provider))
@@ -294,7 +301,7 @@ public struct WelcomeUsageDashboardCard: View {
                 if dashboard.workspaceBreakdown.isEmpty {
                     emptyLine("No workspace-attributed activity tracked in the last 30 days.")
                 } else {
-                    ForEach(dashboard.workspaceBreakdown) { w in
+                    ForEach(dashboard.workspaceBreakdown.prefix(4)) { w in
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 8) {
                                 Text(w.displayName).font(.caption.weight(.medium))
@@ -337,13 +344,7 @@ public struct WelcomeUsageDashboardCard: View {
                 }
                 .frame(maxHeight: .infinity, alignment: .bottom)
             }
-            .frame(height: 50)
-            HStack {
-                Text(dashboard.dailyBreakdown.first?.dayLabel ?? "")
-                Spacer()
-                Text(dashboard.dailyBreakdown.last?.dayLabel ?? "")
-            }
-            .font(.system(size: 9)).foregroundStyle(TWTheme.textTertiary)
+            .frame(height: 24)
         }
     }
 
@@ -352,7 +353,7 @@ public struct WelcomeUsageDashboardCard: View {
     private var providersTab: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(dashboard.providerBreakdown) { p in
+                ForEach(dashboard.providerBreakdown.prefix(4)) { p in
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 7) {
                             Circle().fill(TWTheme.providerAccent(p.provider))
@@ -378,16 +379,13 @@ public struct WelcomeUsageDashboardCard: View {
                 .font(.system(size: 9, weight: .semibold)).tracking(1.2)
                 .foregroundStyle(TWTheme.textTertiary)
             Text(DashboardFmt.wallClock(dashboard.wallTime24hMs))
-                .font(.system(size: 34, weight: .bold, design: .monospaced))
+                .font(.system(size: 24, weight: .bold, design: .monospaced))
                 .monospacedDigit()
                 .lineLimit(1).minimumScaleFactor(0.6)
                 .foregroundStyle(TWTheme.textPrimary)
-            Text("Cumulative wall-clock time across runs in the rolling 24-hour window.")
-                .font(.system(size: 9)).foregroundStyle(TWTheme.textTertiary)
-                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 6)
+        .padding(.top, 2)
     }
 
     // MARK: Shared bits

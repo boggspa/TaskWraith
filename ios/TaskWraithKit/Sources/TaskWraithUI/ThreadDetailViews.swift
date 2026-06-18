@@ -1193,6 +1193,9 @@ struct ThreadEmptyWelcomeCanvas: View {
     let card: RemoteTaskCard
     @Binding var draft: String
     @State private var draftProvider = ""
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    /// iPhone portrait = compact width; iPad (and landscape regular) = regular.
+    private var isCompactWidth: Bool { hSizeClass == .compact }
 
     private var isGlobal: Bool { card.isGlobalScope }
     private var canSwitchPrimaryWorkspace: Bool { !isGlobal && !model.workspaces.isEmpty }
@@ -1218,15 +1221,20 @@ struct ThreadEmptyWelcomeCanvas: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
-                Spacer(minLength: 34)
+            VStack(spacing: 14) {
+                Spacer(minLength: 20)
+                dashboardCard
                 hero
                 scopeChips
                 composerBlock
                     .padding(.horizontal, 4)
-                dashboardCard
-                activityFooter
-                    .padding(.top, 8)
+                // iPhone (compact width) drops the bottom heatmap so the dashboard
+                // above the ghost fits without a scroll screen — the dashboard's
+                // Workspaces / Providers tabs already cover that activity. iPad keeps it.
+                if !isCompactWidth {
+                    activityFooter
+                        .padding(.top, 8)
+                }
                 Spacer(minLength: 24)
             }
             .padding(.horizontal, 18)
