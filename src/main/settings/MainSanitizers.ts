@@ -19,7 +19,7 @@ import type {
   WorkspaceRecord
 } from '../store/types'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
-import { coerceLiveProvider } from '../../shared/retiredProviders'
+import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -140,6 +140,31 @@ export function assertProviderId(value: unknown): ProviderId {
 
 export function availableProviderIds(): ProviderId[] {
   return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']
+}
+
+/**
+ * The subset of KNOWN providers that may be OFFERED or RUN — excludes retired
+ * providers (e.g. gemini). Use this for pickers, MCP tool enums, run-command
+ * parsing, and "supported provider" error lists. `availableProviderIds()` stays
+ * the full known set so decode/validation of historical data keeps working.
+ */
+export function selectableProviderIds(): ProviderId[] {
+  return availableProviderIds().filter((provider) => !isRetiredProvider(provider))
+}
+
+/**
+ * Like `assertProviderId`, but also rejects RETIRED providers. Use at run
+ * DISPATCH so a retired/historical provider can never start a new run, while
+ * read/validate paths keep `assertProviderId` (which still accepts it).
+ */
+export function assertLiveProviderId(value: unknown): ProviderId {
+  const provider = assertProviderId(value)
+  if (isRetiredProvider(provider)) {
+    throw new Error(
+      `${provider} has been retired and can no longer start runs. Chat history is preserved.`
+    )
+  }
+  return provider
 }
 
 export function requireNonEmptyString(value: unknown, label: string): string {

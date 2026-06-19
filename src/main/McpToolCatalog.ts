@@ -1,4 +1,4 @@
-import { availableProviderIds } from './settings/MainSanitizers'
+import { selectableProviderIds } from './settings/MainSanitizers'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
 
 export interface TaskWraithMcpToolDefinition {
@@ -634,7 +634,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         properties: {
           provider: {
             type: 'string',
-            enum: availableProviderIds(),
+            enum: selectableProviderIds(),
             description: "Optional provider override. Defaults to the calling agent's provider."
           },
           service: {
@@ -706,7 +706,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       },
       inputSchema: {
         type: 'object',
-        properties: { provider: { type: 'string', enum: availableProviderIds() } }
+        properties: { provider: { type: 'string', enum: selectableProviderIds() } }
       }
     },
     {
@@ -731,7 +731,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         properties: {
           provider: {
             type: 'string',
-            enum: availableProviderIds(),
+            enum: selectableProviderIds(),
             description: 'Optional provider to filter to. Omit to return all four providers.'
           }
         }
@@ -770,7 +770,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         properties: {
           runId: { type: 'string' },
           chatId: { type: 'string' },
-          provider: { type: 'string', enum: availableProviderIds() },
+          provider: { type: 'string', enum: selectableProviderIds() },
           includeArtifacts: { type: 'boolean' },
           limit: { type: 'number' }
         }
@@ -1162,7 +1162,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         properties: {
           summary: { type: 'string' },
           finalPrompt: { type: 'string' },
-          recommendedProvider: { type: 'string', enum: availableProviderIds() },
+          recommendedProvider: { type: 'string', enum: selectableProviderIds() },
           selectedFiles: { type: 'array', items: { type: 'string' } }
         }
       }
@@ -1194,7 +1194,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       inputSchema: {
         type: 'object',
         properties: {
-          provider: { type: 'string', enum: availableProviderIds() },
+          provider: { type: 'string', enum: selectableProviderIds() },
           role: { type: 'string' },
           instructions: { type: 'string' }
         },
@@ -1574,7 +1574,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         properties: {
           provider: {
             type: 'string',
-            enum: availableProviderIds(),
+            enum: selectableProviderIds(),
             description: 'Which TaskWraith provider should run the sub-thread.'
           },
           prompt: {

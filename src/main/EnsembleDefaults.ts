@@ -37,13 +37,6 @@ const DEFAULT_ENSEMBLE_ROLES: Array<{
     permissionPresetId: 'workspace_write'
   },
   {
-    provider: 'gemini',
-    role: 'Gemini',
-    instructions:
-      'Use broad context to find supporting facts, references, and alternate approaches.',
-    permissionPresetId: 'read_only'
-  },
-  {
     provider: 'kimi',
     role: 'Kimi',
     instructions: 'Review prior responses for gaps, edge cases, and test coverage.',
@@ -117,8 +110,9 @@ export function createDefaultEnsembleConfig(activeProvider?: ProviderId, configu
     enabled: true,
     // 1.0.4-AR2 — track the global ceiling (was 6).
     // 1.0.5-EW1 — ceiling raised 8 → 12. The DEFAULT_ENSEMBLE_ROLES
-    // seed yields 4 enabled participants (claude / codex / gemini /
-    // kimi) so the user starts with a 4-of-12 panel and has plenty
+    // seed yields the live providers (claude / codex / kimi / grok /
+    // cursor / ollama; gemini retired) so the user starts with a panel
+    // well under the cap and has plenty
     // of headroom to add specialists / extra Claudes / etc. before
     // hitting the cap. The chip strip wraps at 7+ to a 6-column
     // second row, so even a fully-loaded 12-participant panel

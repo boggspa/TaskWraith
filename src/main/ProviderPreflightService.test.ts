@@ -162,7 +162,10 @@ describe('ProviderPreflightService', () => {
     )
   })
 
-  it('blocks enabled unavailable Gemini bridge state fail closed', () => {
+  it('blocks a retired provider (gemini) before any availability/bridge check', () => {
+    // Gemini is retired: preflight short-circuits to a clean "retired" block even
+    // when the contract looks bridge-repairable. No repair action is offered
+    // because there is nothing for the user to fix.
     const result = service.evaluate(
       { provider: 'gemini', workspacePath: '/repo' },
       contract({
@@ -182,7 +185,8 @@ describe('ProviderPreflightService', () => {
     )
 
     expect(result.state).toBe('blocked')
-    expect(result.repairAction).toBe('install_gemini_bridge')
+    expect(result.repairAction).toBe('none')
+    expect(result.reason).toMatch(/retired/i)
     expect(result.fallbackAvailable).toBe(false)
   })
 })

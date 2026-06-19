@@ -7,6 +7,7 @@ import type {
   ProviderId
 } from './store/types'
 import { toolingControlRows } from './ProviderCapabilities'
+import { isRetiredProvider } from '../shared/retiredProviders'
 
 export type ProviderPreflightState = 'ready' | 'repairable' | 'blocked'
 export type ProviderPreflightRepairAction =
@@ -61,6 +62,19 @@ export class ProviderPreflightService {
   ): ProviderPreflightResult {
     const chips: ProviderCapabilityWarning[] = [...contract.warnings]
     const label = contract.label || input.provider
+
+    if (isRetiredProvider(input.provider)) {
+      const reason = `${label} has been retired. Chat history is preserved; start a new chat with another provider to continue.`
+      return {
+        provider: input.provider,
+        state: 'blocked',
+        reason,
+        repairAction: 'none',
+        fallbackAvailable: false,
+        contract,
+        chips: [warning(`${input.provider}-retired`, 'error', `${label} retired`, reason), ...chips]
+      }
+    }
 
     if (!contract.availability.available) {
       const reason =

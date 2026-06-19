@@ -42,6 +42,7 @@ import { redactGeminiProfileForMcp } from '../GeminiAuthRedaction'
 import { buildProviderAuthStatusV2 } from '../ProviderAuthStatus'
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
 import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUsageStatus'
+import { isRetiredProvider } from '../../shared/retiredProviders'
 import type { NativeCapabilitySnapshot } from '../NativeCapabilities'
 import type {
   AgenticServiceId,
@@ -345,7 +346,12 @@ function assertProviderId(value: unknown): ProviderId {
 }
 
 function availableProviderIds(): ProviderId[] {
-  return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']
+  // Offer/sweep list for MCP desktop tools — excludes retired providers (gemini)
+  // so an agent can neither target nor sweep one. `assertProviderId` above still
+  // accepts retired ids for decode of historical args.
+  return (['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as ProviderId[]).filter(
+    (provider) => !isRetiredProvider(provider)
+  )
 }
 
 function assertAgenticServiceId(value: unknown): AgenticServiceId {

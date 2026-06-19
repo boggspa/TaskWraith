@@ -428,7 +428,9 @@ import {
   MIN_WINDOW_HEIGHT,
   MIN_WINDOW_WIDTH,
   assertProviderId,
+  assertLiveProviderId,
   availableProviderIds,
+  selectableProviderIds,
   consoleMessageLevelToNumber,
   createMainSanitizers,
   imageAttachmentSnapshots,
@@ -2059,7 +2061,9 @@ function runPostureContextFromPayload(payload: {
 
 function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
   const payload = requireRecord(rawPayload, 'Run payload')
-  const provider = assertProviderId(payload.provider)
+  // Universal run-dispatch chokepoint (renderer + main-built ensemble / sub-thread
+  // / solo all flow through here): a retired provider can never start a new run.
+  const provider = assertLiveProviderId(payload.provider)
   const scope: ChatScope = payload.scope === 'global' ? 'global' : 'workspace'
   const rawExternalPathGrants = Array.isArray(payload.externalPathGrants)
     ? (payload.externalPathGrants as ExternalPathGrant[])
@@ -13697,9 +13701,9 @@ async function executeGeminiMcpTool(
       const returnResult = args.returnResult !== false
       let providerArg: ProviderId
       try {
-        providerArg = assertProviderId(providerArgRaw)
+        providerArg = assertLiveProviderId(providerArgRaw)
       } catch {
-        const supportedProviders = availableProviderIds().join('/')
+        const supportedProviders = selectableProviderIds().join('/')
         throw new Error(
           `delegate_to_subthread: provider must be one of ${supportedProviders} (got: ${providerArgRaw}).`
         )

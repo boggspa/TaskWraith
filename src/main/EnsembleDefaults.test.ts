@@ -3,19 +3,12 @@ import { createDefaultEnsembleConfig } from './EnsembleDefaults'
 import type { ProviderId } from './store/types'
 import { getDefaultEnsembleParticipantConfig } from '../renderer/src/lib/ensembleProviderDefaults'
 
-const EXPECTED_PROVIDERS = [
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama'
-] as const
-const DEFAULT_ORDER = ['claude', 'codex', 'gemini', 'kimi', 'grok', 'cursor', 'ollama'] as const
+// gemini is RETIRED — it is no longer seeded into the default ensemble.
+const EXPECTED_PROVIDERS = ['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as const
+const DEFAULT_ORDER = ['claude', 'codex', 'kimi', 'grok', 'cursor', 'ollama'] as const
 
 describe('createDefaultEnsembleConfig parity guard', () => {
-  it('seeds exactly the seven supported providers', () => {
+  it('seeds exactly the six live providers (gemini retired)', () => {
     const config = createDefaultEnsembleConfig()
     const providers = config.participants.map((participant) => participant.provider)
 
@@ -56,11 +49,6 @@ describe('createDefaultEnsembleConfig parity guard', () => {
       codex: {
         role: 'Codex',
         instructions: 'Implement concrete code or workflow changes when the round calls for action.'
-      },
-      gemini: {
-        role: 'Gemini',
-        instructions:
-          'Use broad context to find supporting facts, references, and alternate approaches.'
       },
       kimi: {
         role: 'Kimi',
@@ -114,26 +102,26 @@ describe('createDefaultEnsembleConfig parity guard', () => {
 })
 
 describe('createDefaultEnsembleConfig — configured-provider seeding (E)', () => {
-  it('seeds all seven when no configured set is supplied (back-compat)', () => {
-    const providers = createDefaultEnsembleConfig('gemini').participants.map((p) => p.provider)
+  it('seeds all six live providers when no configured set is supplied (back-compat)', () => {
+    const providers = createDefaultEnsembleConfig('claude').participants.map((p) => p.provider)
     expect(new Set(providers)).toEqual(new Set(EXPECTED_PROVIDERS))
   })
 
   it('seeds only the configured providers when a set is supplied', () => {
-    const configured = new Set<ProviderId>(['claude', 'gemini'])
+    const configured = new Set<ProviderId>(['claude', 'codex'])
     const providers = createDefaultEnsembleConfig('claude', configured).participants.map(
       (p) => p.provider
     )
-    expect(new Set(providers)).toEqual(new Set(['claude', 'gemini']))
+    expect(new Set(providers)).toEqual(new Set(['claude', 'codex']))
     expect(providers).toHaveLength(2)
   })
 
   it('always includes the active provider even if absent from the configured set', () => {
-    const configured = new Set<ProviderId>(['claude', 'gemini'])
+    const configured = new Set<ProviderId>(['claude', 'codex'])
     const providers = createDefaultEnsembleConfig('grok', configured).participants.map(
       (p) => p.provider
     )
-    expect(new Set(providers)).toEqual(new Set(['claude', 'gemini', 'grok']))
+    expect(new Set(providers)).toEqual(new Set(['claude', 'codex', 'grok']))
   })
 
   it('falls back to the full roster when fewer than two would remain', () => {
@@ -145,7 +133,7 @@ describe('createDefaultEnsembleConfig — configured-provider seeding (E)', () =
   })
 
   it('treats an empty configured set as a fallback to the full roster', () => {
-    const providers = createDefaultEnsembleConfig('gemini', new Set<ProviderId>()).participants.map(
+    const providers = createDefaultEnsembleConfig('claude', new Set<ProviderId>()).participants.map(
       (p) => p.provider
     )
     expect(new Set(providers)).toEqual(new Set(EXPECTED_PROVIDERS))
