@@ -19,6 +19,7 @@ import type {
   WorkspaceRecord
 } from '../store/types'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
+import { coerceLiveProvider } from '../../shared/retiredProviders'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -775,7 +776,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       sanitized[key] = value
     }
     if ('activeProvider' in sanitized && sanitized.activeProvider !== undefined) {
-      sanitized.activeProvider = assertProviderId(sanitized.activeProvider)
+      // assertProviderId still rejects genuinely unknown ids, but a RETIRED
+      // provider (e.g. gemini) must never become the active provider — coerce it
+      // to a live default so legacy/stale patches migrate instead of sticking.
+      sanitized.activeProvider = coerceLiveProvider(assertProviderId(sanitized.activeProvider))
     }
     if ('providerRunPauses' in sanitized) {
       sanitized.providerRunPauses = sanitizeProviderRunPauses(sanitized.providerRunPauses)

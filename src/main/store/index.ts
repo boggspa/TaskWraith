@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
+import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import {
   AppSettings,
   WorkspaceRecord,
@@ -365,7 +366,7 @@ function normalizeAuditRunRecord(value: unknown): AuditRunRecord | null {
 }
 
 const defaultSettings: AppSettings = {
-  activeProvider: 'gemini',
+  activeProvider: DEFAULT_PROVIDER,
   providerRunPauses: {},
   claudeBinaryPath: '',
   kimiBinaryPath: '',
@@ -1480,7 +1481,7 @@ export class AppStore {
       appChatId: randomUUID(),
       scope: 'workspace',
       chatKind: 'single',
-      provider: settings.activeProvider || 'gemini',
+      provider: coerceLiveProvider(settings.activeProvider),
       title: 'New Chat',
       workspaceId,
       workspacePath,
@@ -1502,7 +1503,7 @@ export class AppStore {
       appChatId: randomUUID(),
       scope: 'global',
       chatKind: 'single',
-      provider: settings.activeProvider || 'gemini',
+      provider: coerceLiveProvider(settings.activeProvider),
       title: 'New Chat',
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -1521,7 +1522,7 @@ export class AppStore {
     configuredProviders?: Set<ProviderId>
   ): ChatRecord {
     const settings = this.getSettings()
-    const activeProvider = settings.activeProvider || 'gemini'
+    const activeProvider = coerceLiveProvider(settings.activeProvider)
     const scope: ChatRecord['scope'] =
       args.workspaceId && args.workspacePath ? 'workspace' : 'global'
     const chat: ChatRecord = {
@@ -1576,7 +1577,7 @@ export class AppStore {
       args.chatKind === 'ensemble' || sideChatMode === 'ensembleClone' || sideChatMode === 'fanOut'
         ? 'ensemble'
         : 'single'
-    const provider = args.provider || parent.provider || settings.activeProvider || 'gemini'
+    const provider = coerceLiveProvider(args.provider || parent.provider || settings.activeProvider)
     const scope = parent.scope ?? 'workspace'
     const title =
       args.title?.trim() ||
@@ -1888,7 +1889,7 @@ export class AppStore {
       parentChatRelation: 'subThread',
       delegationContext: {
         createdAt: Date.now(),
-        parentProvider: parent.provider ?? settings.activeProvider ?? 'gemini',
+        parentProvider: coerceLiveProvider(parent.provider ?? settings.activeProvider),
         delegationPrompt: args.delegationPrompt,
         returnResultToParent: args.returnResultToParent
       }
