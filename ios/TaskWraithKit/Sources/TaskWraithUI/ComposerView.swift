@@ -185,6 +185,7 @@ struct Composer: View {
                     .compactMap { $0?.lowercased() }
                     .filter { !$0.isEmpty })
         return keys
+            .filter { !TWTheme.isRetiredProvider($0) }
             .map { liveByProvider[$0] ?? ProviderModelCatalog(provider: $0, models: []) }
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
     }

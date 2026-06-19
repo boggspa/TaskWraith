@@ -3667,6 +3667,7 @@ public struct EditableRosterStrip: View {
     private var catalogs: [ProviderModelCatalog] {
         model.providerModels
             .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
+            .filter { !TWTheme.isRetiredProvider($0.provider) }
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
     }
 
@@ -3815,28 +3816,37 @@ public struct EditableRosterStrip: View {
     }
 
     private func chip(_ entry: RemoteSessionModel.RosterDraftEntry) -> some View {
-        let accent = TWTheme.providerAccent(entry.provider)
+        let retired = TWTheme.isRetiredProvider(entry.provider)
+        let accent = retired ? TWTheme.textMuted : TWTheme.providerAccent(entry.provider)
         let status = roundStatus(for: entry.id)
-        let isActive = status == "running" || state?.activeParticipantId == entry.id
-        let fillOpacity: Double = entry.enabled ? 0.12 : 0.04
+        let isActive = !retired && (status == "running" || state?.activeParticipantId == entry.id)
+        let live = entry.enabled && !retired
+        let fillOpacity: Double = live ? 0.12 : 0.04
         let strokeColor: Color =
-            isActive ? accent : accent.opacity(entry.enabled ? 0.35 : 0.15)
+            isActive ? accent : accent.opacity(live ? 0.35 : 0.15)
         let strokeWidth: CGFloat = isActive ? 1.5 : 1
-        let labelColor: Color = entry.enabled ? accent : TWTheme.textMuted
-        let dotColor: Color = entry.enabled ? accent : TWTheme.textMuted
+        let labelColor: Color = live ? accent : TWTheme.textMuted
+        let dotColor: Color = live ? accent : TWTheme.textMuted
         let title =
             entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
         return Button {
             editingId = entry.id
         } label: {
             HStack(spacing: 5) {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: 6, height: 6)
+                if retired {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(TWTheme.textMuted)
+                } else {
+                    Circle()
+                        .fill(dotColor)
+                        .frame(width: 6, height: 6)
+                }
                 Text(title)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(labelColor)
                     .lineLimit(1)
+                    .strikethrough(retired, color: TWTheme.textMuted)
                 if status == "done" {
                     Image(systemName: "checkmark")
                         .font(.system(size: 8, weight: .bold))
@@ -5297,6 +5307,7 @@ public struct GuestParticipantControl: View {
     private var catalogs: [ProviderModelCatalog] {
         model.providerModels
             .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
+            .filter { !TWTheme.isRetiredProvider($0.provider) }
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
     }
 
@@ -5469,6 +5480,7 @@ struct SideChatsPanel: View {
     private var catalogs: [ProviderModelCatalog] {
         model.providerModels
             .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
+            .filter { !TWTheme.isRetiredProvider($0.provider) }
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
     }
     private var createCatalog: ProviderModelCatalog? {

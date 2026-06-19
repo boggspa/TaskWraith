@@ -121,6 +121,18 @@ public enum TWTheme {
         case nil: return "Agent"
         }
     }
+
+    // ── Retired providers ─────────────────────────────────────────────────────
+    /// Providers retired from new use (Gemini, 2026-06-18). Kept for historical
+    /// decode/render — the label/accent tables above still resolve them — but
+    /// never offered in pickers, and ensemble chips show them greyed + locked.
+    /// Mirrors the Mac's src/shared/retiredProviders.ts.
+    public static let retiredProviderIds: Set<String> = ["gemini"]
+
+    public static func isRetiredProvider(_ provider: String?) -> Bool {
+        guard let provider else { return false }
+        return retiredProviderIds.contains(provider.lowercased())
+    }
 }
 
 extension Color {

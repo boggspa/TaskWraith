@@ -36,24 +36,31 @@ struct EnsembleRosterStrip: View {
 
     @ViewBuilder
     private func chip(_ participant: RemoteEnsembleState.Participant) -> some View {
-        let accent = TWTheme.providerAccent(participant.provider)
-        let isActive = participant.participantId == state.activeParticipantId
+        let retired = TWTheme.isRetiredProvider(participant.provider)
+        let accent = retired ? TWTheme.textMuted : TWTheme.providerAccent(participant.provider)
+        let isActive = !retired && participant.participantId == state.activeParticipantId
         HStack(spacing: 4) {
-            Circle()
-                .fill(statusColor(participant.status, accent: accent))
-                .frame(width: 5, height: 5)
+            if retired {
+                Image(systemName: "lock.fill").font(.system(size: 7))
+            } else {
+                Circle()
+                    .fill(statusColor(participant.status, accent: accent))
+                    .frame(width: 5, height: 5)
+            }
             Text(
                 participant.role?.isEmpty == false
                     ? participant.role! : TWTheme.providerLabel(participant.provider)
             )
             .font(.caption2.weight(isActive ? .bold : .medium))
             .lineLimit(1)
+            .strikethrough(retired, color: TWTheme.textMuted)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .background(accent.opacity(isActive ? 0.22 : 0.10), in: Capsule())
         .overlay(Capsule().strokeBorder(accent.opacity(isActive ? 0.6 : 0.25)))
         .foregroundStyle(isActive ? accent : TWTheme.textSecondary)
+        .opacity(retired ? 0.5 : 1)
     }
 
     private func statusColor(_ status: String?, accent: Color) -> Color {
