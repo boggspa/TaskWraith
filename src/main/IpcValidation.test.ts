@@ -114,9 +114,10 @@ describe('IpcValidation', () => {
     ).not.toThrow()
   })
 
-  it('rejects Grok at the IPC trust boundary when the kill-switch is set', () => {
-    // 1.0.6 — TASKWRAITH_DISABLE_GROK=1 is the emergency opt-OUT; it forces grok
-    // back out of the accept-set at the boundary before any dispatch.
+  it('keeps accepting Grok even with the removed kill-switch env var set', () => {
+    // The eligibility gate was removed 2026-06: Grok is permanently first-class,
+    // so the old TASKWRAITH_DISABLE_GROK env var no longer hides it. Regression
+    // guard against anyone reintroducing a provider-eligibility gate.
     const previous = process.env.TASKWRAITH_DISABLE_GROK
     process.env.TASKWRAITH_DISABLE_GROK = '1'
     try {
@@ -124,7 +125,7 @@ describe('IpcValidation', () => {
         validateIpcArgs('run-agent', [
           { provider: 'grok', workspace: '/tmp/workspace', prompt: 'hello' }
         ])
-      ).toThrow(/known provider/)
+      ).not.toThrow()
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_DISABLE_GROK
       else process.env.TASKWRAITH_DISABLE_GROK = previous
@@ -150,9 +151,9 @@ describe('IpcValidation', () => {
     )
   })
 
-  it('rejects Cursor at the IPC trust boundary when the kill-switch is set', () => {
-    // TASKWRAITH_DISABLE_CURSOR=1 is the emergency opt-OUT; it forces cursor back
-    // out of the accept-set at the boundary before any dispatch.
+  it('keeps accepting Cursor even with the removed kill-switch env var set', () => {
+    // Cursor is permanently first-class (eligibility gate removed 2026-06): the
+    // old TASKWRAITH_DISABLE_CURSOR env var no longer hides it.
     const previous = process.env.TASKWRAITH_DISABLE_CURSOR
     process.env.TASKWRAITH_DISABLE_CURSOR = '1'
     try {
@@ -160,7 +161,7 @@ describe('IpcValidation', () => {
         validateIpcArgs('run-agent', [
           { provider: 'cursor', workspace: '/tmp/workspace', prompt: 'hello' }
         ])
-      ).toThrow(/known provider/)
+      ).not.toThrow()
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_DISABLE_CURSOR
       else process.env.TASKWRAITH_DISABLE_CURSOR = previous

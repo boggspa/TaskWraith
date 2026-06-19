@@ -1,6 +1,4 @@
 import { randomUUID } from 'crypto'
-import { experimentalCursorProviderEnabled } from '../cursorGate'
-import { experimentalGrokProviderEnabled } from '../grokGate'
 import { normalizeDiscordContextSelection } from '../channels/DiscordContextService'
 import type { RunQueueJobInput } from '../RunQueue'
 import type { RunSession } from '../RunManager'
@@ -36,7 +34,8 @@ const RUN_QUEUE_SOURCES = new Set<RunQueueJobSource>([
   'host_rerun',
   'system'
 ])
-const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'ollama'])
+// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
 
 export interface RunQueueStore {
   getChat: (chatId: string) => ChatRecord | null
@@ -234,19 +233,6 @@ export class RunQueueService {
 function assertProviderId(value: unknown): ProviderId {
   if (typeof value === 'string' && PROVIDER_IDS.has(value as ProviderId)) {
     return value as ProviderId
-  }
-  // 1.0.6-G3f — grok is accepted only when the experimental gate is on. The
-  // normal run-dispatch path requests a run-queue job, so this must admit grok
-  // (when gated) or the streamed assistant message has no placeholder to render
-  // into, even though the run itself completes.
-  if (value === 'grok' && experimentalGrokProviderEnabled()) {
-    return 'grok'
-  }
-  // 1.0.6-CRUX20 — same gated admission for Cursor (was missing, so Cursor
-  // queued / scheduled runs threw "Provider is invalid" and never rendered a
-  // placeholder). Mirrors the grok arm above.
-  if (value === 'cursor' && experimentalCursorProviderEnabled()) {
-    return 'cursor'
   }
   throw new Error('Provider is invalid.')
 }

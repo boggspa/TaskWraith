@@ -1,6 +1,4 @@
 import type { IpcMain } from 'electron'
-import { experimentalGrokProviderEnabled } from './grokGate'
-import { experimentalCursorProviderEnabled } from './cursorGate'
 import { assertSafeChatId } from './ChatPath'
 
 type ArgSpec =
@@ -30,7 +28,8 @@ type ArgSpec =
   | 'runQueueStatus'
   | 'bugReportPayload'
 
-const PROVIDERS = new Set(['gemini', 'codex', 'claude', 'kimi', 'ollama'])
+// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+const PROVIDERS = new Set(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
 const APPROVAL_ACTIONS = new Set([
   'accept',
   'acceptForSession',
@@ -402,10 +401,7 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
     throw new Error(`${label} must be an array.`)
   if (
     (spec === 'provider' || spec === 'optionalProvider') &&
-    (typeof value !== 'string' ||
-      (!PROVIDERS.has(value) &&
-        !(value === 'grok' && experimentalGrokProviderEnabled()) &&
-        !(value === 'cursor' && experimentalCursorProviderEnabled())))
+    (typeof value !== 'string' || !PROVIDERS.has(value))
   )
     throw new Error(`${label} must be a known provider.`)
   if (spec === 'approvalAction' && (typeof value !== 'string' || !APPROVAL_ACTIONS.has(value)))

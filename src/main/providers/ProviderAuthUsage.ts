@@ -27,7 +27,6 @@ import {
   loadCursorUsageSnapshot,
   type CursorUsageSnapshot
 } from '../cursor/CursorUsage'
-import { experimentalCursorProviderEnabled } from '../cursorGate'
 import { AppStore } from '../store'
 import type {
   GeminiAuthProfile,
@@ -1375,7 +1374,6 @@ export async function fetchCursorUsageRpc(token: string): Promise<unknown> {
 }
 
 export async function fetchCursorUsageSnapshot(): Promise<CursorUsageSnapshot | null> {
-  if (!experimentalCursorProviderEnabled()) return null
   const now = Date.now()
   if (cursorUsageCache && now - cursorUsageCache.fetchedAt < CURSOR_USAGE_FRESH_TTL_MS) {
     return cursorUsageCache.snapshot

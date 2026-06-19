@@ -1400,11 +1400,9 @@ function App(): React.JSX.Element {
 
   // Model & Mode Selectors
   const [activeProvider, setActiveProvider] = useState<ProviderId>('gemini')
-  // 1.0.6 — Grok is now first-class (the experimental gate was lifted in GLIFT).
-  // We still learn its availability from the get-provider-adapters descriptor
-  // list on init: the main process registers the Grok adapter by default, so
-  // this resolves true unless Grok is force-disabled (TASKWRAITH_DISABLE_GROK=1),
-  // in which case the adapter is absent → this stays false → grok never shows.
+  // Grok is a permanent first-class provider. We learn its availability from the
+  // get-provider-adapters descriptor list on init: the main process always
+  // registers the Grok adapter, so this resolves true once that list arrives.
   const [grokProviderAvailable, setGrokProviderAvailable] = useState(false)
   const [cursorProviderAvailable, setCursorProviderAvailable] = useState(false)
   const [selectedModelType, setSelectedModelType] = useState<string>('flash-lite')

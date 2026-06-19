@@ -574,11 +574,7 @@ import {
 import { RunRepository } from './RunRepository'
 import { PermissionService } from './PermissionService'
 import { ProviderPreflightService } from './ProviderPreflightService'
-import {
-  experimentalGrokProviderEnabled,
-  grokAcpEnabled,
-  grokReadOnlyMcpAdvertiseEnabled
-} from './grokGate'
+import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from './grokGate'
 import {
   grokWriteCapable,
   buildGrokProviderCliArgs,
@@ -587,10 +583,7 @@ import {
 } from './grok/GrokCliArgs'
 import { grokToolKindToService } from './grok/GrokAcpProtocol'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
-import {
-  experimentalCursorProviderEnabled,
-  cursorDebugEnabled
-} from './cursorGate'
+import { cursorDebugEnabled } from './cursorGate'
 import { buildCursorProviderCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
 import { cursorEventToRunEvents, type NormalizedCursorRunEvent } from './cursor/CursorStreamJson'
 import { applyCursorWriteModeConfig } from './cursor/CursorWorkspaceConfig'
@@ -1256,9 +1249,6 @@ function getFaviconService(): FaviconService {
  *   capability snapshot exposed via IPC so the runtime can flip
  *   it without an app restart.
  */
-// experimentalGrokProviderEnabled() now lives in the pure ./grokGate module
-// (imported above) so the services + IpcValidation can share one gate
-// implementation without importing this Electron-heavy module.
 
 // Late-bound BridgeDaemonClient ref. The daemon is constructed inside the
 // IPC handler block; exposed at module scope so `executeGeminiMcpTool` —
@@ -7093,14 +7083,6 @@ async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     await runGrokAcpProvider(event, payload)
     return
   }
-  // Defense-in-depth: IpcValidation PROVIDERS, assertProviderId, and the adapter
-  // registry are all gated, but refuse here too if the gate is somehow off.
-  if (!experimentalGrokProviderEnabled()) {
-    runManager.finish(route.appRunId, 'failed')
-    sendAgentCompatError(event.sender, 'grok', 'Grok provider is not enabled.', route)
-    sendAgentCompatExit(event.sender, 'grok', 1, route)
-    return
-  }
   const resolved = await resolveCliProviderBinary('grok', payload.runtimeProfile)
   if (!resolved.binaryPath) {
     runManager.finish(route.appRunId, 'failed')
@@ -7178,12 +7160,6 @@ async function ensureCursorMcpApproved(binaryPath: string, workspace: string): P
 // CursorCliArgs NEVER emits bare -p / --force / --yolo.
 async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('cursor', payload)
-  if (!experimentalCursorProviderEnabled()) {
-    runManager.finish(route.appRunId, 'failed')
-    sendAgentCompatError(event.sender, 'cursor', 'Cursor provider is not enabled.', route)
-    sendAgentCompatExit(event.sender, 'cursor', 1, route)
-    return
-  }
   const resolved = await resolveCliProviderBinary('cursor', payload.runtimeProfile)
   if (!resolved.binaryPath) {
     runManager.finish(route.appRunId, 'failed')
@@ -7350,12 +7326,6 @@ function grokAcpEmptyToolFailureMessage(state: CliProviderStreamState): string {
 
 async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('grok', payload)
-  if (!experimentalGrokProviderEnabled()) {
-    runManager.finish(route.appRunId, 'failed')
-    sendAgentCompatError(event.sender, 'grok', 'Grok provider is not enabled.', route)
-    sendAgentCompatExit(event.sender, 'grok', 1, route)
-    return
-  }
   const resolved = await resolveCliProviderBinary('grok', payload.runtimeProfile)
   if (!resolved.binaryPath) {
     runManager.finish(route.appRunId, 'failed')
@@ -11789,46 +11759,32 @@ async function runGeminiProvider(
   })
 }
 
-// 1.0.6-G3c — The Grok adapter is registered ONLY when the experimental gate
-// is on. Gate off → it is absent → providerAdapters.require('grok') throws →
-// dispatch is impossible. This is the third of the triple-gate (alongside the
-// IpcValidation PROVIDERS accept-set and assertProviderId).
-const grokAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] =
-  experimentalGrokProviderEnabled()
-    ? [
-        {
-          ...defaultProviderDescriptor('grok'),
-          run: ({ event, payload }) => runGrokProvider(event, payload),
-          cancel: (runId) => cancelProviderRun('grok', runId),
-          getStatus: () => getAgentStatusSnapshotDirect('grok'),
-          getMcpStatus: () => getAgentMcpStatusSnapshotDirect('grok'),
-          getCapabilityContract: (request = {}) =>
-            getProviderCapabilityContractDirect('grok', request.workspacePath, request.approvalMode)
-        }
-      ]
-    : []
+// Grok is a first-class provider — its adapter is always registered.
+const grokAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
+  {
+    ...defaultProviderDescriptor('grok'),
+    run: ({ event, payload }) => runGrokProvider(event, payload),
+    cancel: (runId) => cancelProviderRun('grok', runId),
+    getStatus: () => getAgentStatusSnapshotDirect('grok'),
+    getMcpStatus: () => getAgentMcpStatusSnapshotDirect('grok'),
+    getCapabilityContract: (request = {}) =>
+      getProviderCapabilityContractDirect('grok', request.workspacePath, request.approvalMode)
+  }
+]
 
-// CR4 — conditional Cursor adapter (dispatch gate #3). First-class by default
-// (experimentalCursorProviderEnabled), removed only under the kill-switch.
+// Cursor is a first-class provider — its adapter is always registered.
 // runCursorProvider runs read-only until CR6.
-const cursorAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] =
-  experimentalCursorProviderEnabled()
-    ? [
-        {
-          ...defaultProviderDescriptor('cursor'),
-          run: ({ event, payload }) => runCursorProvider(event, payload),
-          cancel: (runId) => cancelProviderRun('cursor', runId),
-          getStatus: () => getAgentStatusSnapshotDirect('cursor'),
-          getMcpStatus: () => getAgentMcpStatusSnapshotDirect('cursor'),
-          getCapabilityContract: (request = {}) =>
-            getProviderCapabilityContractDirect(
-              'cursor',
-              request.workspacePath,
-              request.approvalMode
-            )
-        }
-      ]
-    : []
+const cursorAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
+  {
+    ...defaultProviderDescriptor('cursor'),
+    run: ({ event, payload }) => runCursorProvider(event, payload),
+    cancel: (runId) => cancelProviderRun('cursor', runId),
+    getStatus: () => getAgentStatusSnapshotDirect('cursor'),
+    getMcpStatus: () => getAgentMcpStatusSnapshotDirect('cursor'),
+    getCapabilityContract: (request = {}) =>
+      getProviderCapabilityContractDirect('cursor', request.workspacePath, request.approvalMode)
+  }
+]
 
 const providerAdapters = createProviderAdapterRegistry<
   AgentRunPayload,
@@ -20349,13 +20305,11 @@ if (isGeminiMcpBridgeProcess) {
     // noninteractive command — the only safe source is the interactive
     // `/usage` → "Show Usage" screen captured via PTY. No prompt is ever sent
     // (no model call / credit consumption); we never read ~/.grok credentials.
-    // Triple-safe: gated behind the experimental flag, returns 'unavailable'
-    // (never throws) when the flag is off or the binary is missing.
+    // Safe by construction: no prompt is sent (no model call / credit
+    // consumption) and it returns 'unavailable' (never throws) when the grok
+    // binary is missing.
     ipcMain.handle('grok-usage:probe', async (): Promise<GrokUsageSnapshot> => {
       const now = (): string => new Date().toISOString()
-      if (!experimentalGrokProviderEnabled()) {
-        return parseGrokUsage('', now())
-      }
       // Serve a fresh cached observed snapshot so a second consumer (the
       // Settings Provider-Telemetry card alongside the sidebar meter) doesn't
       // spawn a second TUI probe within the TTL.

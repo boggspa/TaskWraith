@@ -8,11 +8,10 @@ import type {
   SideChatMode,
   WorkspaceRecord
 } from '../store/types'
-import { experimentalGrokProviderEnabled } from '../grokGate'
-import { experimentalCursorProviderEnabled } from '../cursorGate'
 import { assertSafeChatId } from '../ChatPath'
 
-const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'ollama'])
+// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
 
 export interface CreateSubThreadInput {
   parentChatId: string
@@ -310,13 +309,6 @@ export class ChatService {
 function assertProviderId(value: unknown): ProviderId {
   if (typeof value === 'string' && PROVIDER_IDS.has(value as ProviderId)) {
     return value as ProviderId
-  }
-  // 1.0.6-G3c — grok is accepted only when the experimental gate is on.
-  if (value === 'grok' && experimentalGrokProviderEnabled()) {
-    return 'grok'
-  }
-  if (value === 'cursor' && experimentalCursorProviderEnabled()) {
-    return 'cursor'
   }
   throw new Error('Provider is invalid.')
 }

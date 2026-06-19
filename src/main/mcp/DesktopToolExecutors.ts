@@ -43,8 +43,6 @@ import { buildProviderAuthStatusV2 } from '../ProviderAuthStatus'
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
 import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUsageStatus'
 import type { NativeCapabilitySnapshot } from '../NativeCapabilities'
-import { experimentalCursorProviderEnabled } from '../cursorGate'
-import { experimentalGrokProviderEnabled } from '../grokGate'
 import type {
   AgenticServiceId,
   AppSettings,
@@ -65,7 +63,8 @@ const MAX_CREATIVE_PROJECT_SNAPSHOT_BYTES = 2_000_000
 const CREATIVE_RUNNING_PROBE_TTL_MS = 3_000
 const FCPXML_DTD_CACHE_DIR = `${os.tmpdir()}/taskwraith-fcpxml-dtds`
 
-const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'ollama'])
+// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
 const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'shellCommands',
   'fileChanges',
@@ -342,20 +341,11 @@ function assertProviderId(value: unknown): ProviderId {
   if (typeof value === 'string' && PROVIDER_IDS.has(value as ProviderId)) {
     return value as ProviderId
   }
-  if (value === 'grok' && experimentalGrokProviderEnabled()) {
-    return 'grok'
-  }
-  if (value === 'cursor' && experimentalCursorProviderEnabled()) {
-    return 'cursor'
-  }
   throw new Error('Provider is invalid.')
 }
 
 function availableProviderIds(): ProviderId[] {
-  const ids: ProviderId[] = ['gemini', 'codex', 'claude', 'kimi', 'ollama']
-  if (experimentalGrokProviderEnabled()) ids.push('grok')
-  if (experimentalCursorProviderEnabled()) ids.push('cursor')
-  return ids
+  return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']
 }
 
 function assertAgenticServiceId(value: unknown): AgenticServiceId {

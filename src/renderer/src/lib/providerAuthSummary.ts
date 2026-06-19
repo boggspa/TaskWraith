@@ -99,7 +99,7 @@ export function summariseGeminiStatus(status: GeminiAuthStatus | null): Provider
  * only knows whether the provider is *enabled* (adapter registered), not
  * whether the CLI is signed in. Surface an honest "available · finish
  * sign-in" state that deep-links to Settings, or "disabled" when the
- * provider was force-disabled (e.g. `TASKWRAITH_DISABLE_CURSOR/GROK=1`).
+ * provider's adapter isn't registered.
  */
 export function summariseCliProviderEnabled(
   enabled: boolean,

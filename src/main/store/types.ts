@@ -151,11 +151,15 @@ export type ComposerStyle =
    * Pairs natively with the `alabaster` theme.
    */
   | 'alabaster'
-// 'grok' is now first-class (gate lifted). 'cursor' (Composer 2.5) is gated
-// behind TASKWRAITH_EXPERIMENTAL_CURSOR (default OFF) — a real ProviderId at the
-// type level (so adapters/records compile), but kept OUT of every user-visible
-// array + validation Set unless the gate is on, so the gate-off state is
-// structurally inert (the same discipline Grok used at G2).
+// All seven providers below are FIRST-CLASS and permanent. There is no
+// experimental/eligibility gate for any of them: Grok and Cursor are accepted
+// unconditionally at every trust boundary (validation Sets, IPC, adapter
+// registry), exactly like gemini/codex/claude/kimi/ollama. The old per-provider
+// eligibility flags and their TASKWRAITH_DISABLE_* / TASKWRAITH_EXPERIMENTAL_*
+// kill-switches were removed 2026-06 once Grok + Cursor matured — do NOT
+// reintroduce a gate that hides a ProviderId from the accept-sets. (Per-provider
+// CAPABILITY differences — e.g. Cursor running read-only until CR6 — are
+// enforced elsewhere, never by membership in this union.)
 export type ProviderId =
   | 'gemini'
   | 'codex'

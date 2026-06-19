@@ -1,7 +1,5 @@
 import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
-import { experimentalCursorProviderEnabled } from '../cursorGate'
-import { experimentalGrokProviderEnabled } from '../grokGate'
 import type {
   AppSettings,
   AuditOrchestrationSettings,
@@ -22,7 +20,8 @@ import type {
 } from '../store/types'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 
-const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'ollama'])
+// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
 const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   shellCommands: 'workspace',
   fileChanges: 'ask',
@@ -135,20 +134,11 @@ export function assertProviderId(value: unknown): ProviderId {
   if (typeof value === 'string' && PROVIDER_IDS.has(value as ProviderId)) {
     return value as ProviderId
   }
-  if (value === 'grok' && experimentalGrokProviderEnabled()) {
-    return 'grok'
-  }
-  if (value === 'cursor' && experimentalCursorProviderEnabled()) {
-    return 'cursor'
-  }
   throw new Error('Provider is invalid.')
 }
 
 export function availableProviderIds(): ProviderId[] {
-  const ids: ProviderId[] = ['gemini', 'codex', 'claude', 'kimi', 'ollama']
-  if (experimentalGrokProviderEnabled()) ids.push('grok')
-  if (experimentalCursorProviderEnabled()) ids.push('cursor')
-  return ids
+  return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']
 }
 
 export function requireNonEmptyString(value: unknown, label: string): string {

@@ -42,7 +42,6 @@ import { join } from 'node:path'
 import { promises as fs } from 'node:fs'
 
 import type { ProviderId } from '../store/types'
-import { experimentalGrokProviderEnabled } from '../grokGate'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
@@ -119,8 +118,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
   // subscription (a credit pool — see GrokUsage's "Subscription credits"
   // meter), NOT the xAI per-token API. These rates are therefore a PROJECTED
   // API-equivalent ("what this run would have cost on the xAI API"), not actual
-  // billing. Captured from console.x.ai 2026-05-29. The grok probe is still
-  // gated off when TASKWRAITH_EXPERIMENTAL_GROK is unset (see probeAllProviderRates).
+  // billing. Captured from console.x.ai 2026-05-29.
   grok: {
     provider: 'grok',
     pricingUrl: 'https://docs.x.ai/docs/models',
@@ -937,16 +935,9 @@ export async function probeAllProviderRates(
     return cachedSnapshot
   }
 
-  // Skip providers with no baked-in models, and keep Grok's xAI pricing fetch
-  // gated behind the experimental flag — so a gate-off install never reaches
-  // out to x.ai. (Grok's baked rates stay available for projected cost display
-  // regardless; only the network verification probe is gated.)
-  const grokProbeAllowed = experimentalGrokProviderEnabled()
+  // Skip providers with no baked-in models or a non-HTTP pricing URL.
   const providers = (Object.values(baseline) as ProviderRateTable[]).filter(
-    (table) =>
-      table.models.length > 0 &&
-      /^https?:\/\//i.test(table.pricingUrl) &&
-      (table.provider !== 'grok' || grokProbeAllowed)
+    (table) => table.models.length > 0 && /^https?:\/\//i.test(table.pricingUrl)
   )
   const results = await Promise.all(providers.map(probeOneProvider))
   const resultsMap: Record<ProviderId, ProviderRateProbeResult> = {} as Record<

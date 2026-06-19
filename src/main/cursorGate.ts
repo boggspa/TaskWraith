@@ -1,42 +1,22 @@
-// 1.0.6-CR — Single source of truth for the Cursor (Composer 2.5) provider gate.
+// Cursor (Composer 2.5) provider sub-gates (raw-stream debug + web bridge).
 //
-// Pure (reads only process.env), so it can be imported by both the
-// Electron-heavy index.ts AND the lower-level validation modules
-// (IpcValidation, ChatService, ComposerService) without an import cycle.
+// Pure (reads only process.env), so it can be imported by the Electron-heavy
+// index.ts without an import cycle.
 //
-// FIRST-CLASS (gate lifted): Cursor is accepted at every trust boundary and
-// appears in the normal provider surfaces by default — this is an internal
-// dev-team build, so there's no exposure risk in hiding it. An emergency
-// kill-switch remains: set TASKWRAITH_DISABLE_CURSOR=1 (or
-// TASKWRAITH_EXPERIMENTAL_CURSOR=0) to force it off for triage. Mirrors grokGate.
+// NO PROVIDER-ELIGIBILITY GATE LIVES HERE ANYMORE. Cursor is a permanent
+// first-class member of `ProviderId` (src/main/store/types.ts) and is accepted
+// unconditionally at every trust boundary, exactly like gemini/codex/claude/
+// kimi/ollama. The old `experimentalCursorProviderEnabled()` flag and its
+// `TASKWRAITH_DISABLE_CURSOR` / `TASKWRAITH_EXPERIMENTAL_CURSOR` kill-switch were
+// removed 2026-06 once Cursor matured — do NOT reintroduce an eligibility gate.
 //
-// NOTE: provider visibility is independent of write SAFETY. The load-bearing
-// containment lives in CursorCliArgs (never bare `-p`: read-only uses
-// `--mode plan`; write mode is contained by a workspace-local deny-list) — see
-// the CR3 spike verdict in the blueprint. runCursorProvider runs read-only
-// until CR6 wires the write-mode deny-list + approval-ledger path.
-//
-// READ-ONLY COORDINATION GAP (1.0.72 — deliberately out-of-scope): unlike Codex /
-// Claude / Kimi (and the 1.0.72-prepped Gemini), a read-only Cursor seat keeps NO
-// TaskWraith MCP coordination tools (ask_user_question / ensemble_yield). This is a
-// cursor-agent limitation, not TaskWraith wiring: read-only == `--mode plan`, and
-// plan mode REJECTS ALL TOOLS including MCP (see CursorCliArgs / CursorMcpBridge /
-// CursorWorkspaceConfig + the CR3 spike), so there is no per-run MCP channel to
-// advertise a safe subset over — the web bridge below is write-mode-only for the
-// same reason. Closure depends on cursor-agent shipping a plan-mode-with-allowlisted-
-// MCP capability upstream (analogous to Gemini's --allowed-tools). Mirrors the
-// per-provider parity note at the Gemini sandbox choke in index.ts.
-export function experimentalCursorProviderEnabled(): boolean {
-  if (isOptOut(process.env.TASKWRAITH_DISABLE_CURSOR)) return false
-  // Legacy var, now interpreted as an explicit opt-OUT only (=0/false/no).
-  const legacy = process.env.TASKWRAITH_EXPERIMENTAL_CURSOR
-  if (legacy === '0' || legacy === 'false' || legacy === 'no') return false
-  return true
-}
-
-function isOptOut(value: string | undefined): boolean {
-  return value === '1' || value === 'true' || value === 'yes'
-}
+// Provider eligibility is independent of write SAFETY (which is unchanged): the
+// load-bearing containment lives in CursorCliArgs (never bare `-p`: read-only
+// uses `--mode plan`; write mode is contained by a workspace-local deny-list).
+// runCursorProvider runs read-only until CR6 wires the write-mode deny-list +
+// approval-ledger path. A read-only Cursor seat still keeps no TaskWraith MCP
+// coordination tools (plan mode rejects all tools incl. MCP — a cursor-agent
+// upstream limitation), but that is a capability gap, not an eligibility gate.
 
 /**
  * Opt-in raw-stream capture for Cursor (mirrors TASKWRAITH_GROK_DEBUG). When set,
