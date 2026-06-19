@@ -2124,7 +2124,14 @@ public struct MarkdownLite: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .top, spacing: 7) {
                         Text("•").foregroundStyle(TWTheme.textTertiary)
-                        inlineText(item).font(TWFont.transcript())
+                        // A Text beside a sibling in an HStack truncates to one
+                        // line unless told it may grow vertically — without this
+                        // long list items clipped with an ellipsis instead of
+                        // wrapping (paragraphs, a bare Text, were never affected).
+                        inlineText(item)
+                            .font(TWFont.transcript())
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
@@ -2135,7 +2142,10 @@ public struct MarkdownLite: View {
                         Text("\(index + 1).")
                             .font(TWFont.transcript(14))
                             .foregroundStyle(TWTheme.textTertiary)
-                        inlineText(item).font(TWFont.transcript())
+                        inlineText(item)
+                            .font(TWFont.transcript())
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
@@ -2166,6 +2176,8 @@ public struct MarkdownLite: View {
                 inlineText(text)
                     .font(TWFont.transcript())
                     .foregroundStyle(TWTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         case .paragraph(let text):
             inlineText(text).font(TWFont.transcript())
