@@ -1000,6 +1000,39 @@ public final class RemoteSessionModel: ObservableObject {
         name == "Demo Mac" ? "" : name
     }
 
+    /// Demo-only: append the user's prompt + a canned assistant reply to a thread
+    /// so the composer feels interactive with no network. Rows are built via JSON
+    /// so they decode through the same Codable path as real rows.
+    private func appendDemoTurn(card: RemoteTaskCard, prompt: String) {
+        guard let thread = card.threadId else { return }
+        let existing = threadSnapshots[thread]
+        let base = existing?.rows ?? []
+        let n = base.count
+        let speaker = card.provider.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Assistant"
+        let reply =
+            "Demo reply — connect TaskWraith on your Mac to run this for real. Live, I'd plan the change, edit files behind your approval, and stream the results back here."
+        guard
+            let userRow = Self.demoRow(id: "demo-u-\(n)", role: "user", speaker: nil, preview: prompt),
+            let replyRow = Self.demoRow(
+                id: "demo-a-\(n)", role: "assistant", speaker: speaker, preview: reply)
+        else { return }
+        let rows = base + [userRow, replyRow]
+        threadSnapshots[thread] = RemoteThreadSnapshot(
+            threadId: thread, workspaceId: existing?.workspaceId, provider: existing?.provider,
+            rows: rows, totalRows: rows.count)
+    }
+
+    private static func demoRow(id: String, role: String, speaker: String?, preview: String)
+        -> RemoteThreadSnapshot.Row?
+    {
+        var dict: [String: Any] = ["id": id, "role": role, "kind": "message", "preview": preview]
+        if let speaker { dict["speaker"] = speaker }
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+            let row = try? JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: data)
+        else { return nil }
+        return row
+    }
+
     public func forgetPairing() {
         pairingStore.clear()
         hasStoredPairing = false
@@ -2697,6 +2730,10 @@ public final class RemoteSessionModel: ObservableObject {
         extraWorkspaceIds: [String]? = nil,
         navigateOnAck: Bool = true
     ) {
+        if isDemo {
+            appendDemoTurn(card: card, prompt: prompt)
+            return
+        }
         guard let thread = card.threadId else { return }
         // Scope-global chats present the reserved 'global' scope; the Mac
         // clamps their turns to plan mode (no file mutation).
