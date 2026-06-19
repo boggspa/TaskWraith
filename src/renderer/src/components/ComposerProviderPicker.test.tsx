@@ -52,7 +52,6 @@ describe('ComposerProviderPicker trigger', () => {
 describe('resolveProviderRows (gated visibility + option order)', () => {
   it('hides grok + cursor unless their availability flags are set', () => {
     expect(resolveProviderRows(false, false).map((r) => r.id)).toEqual([
-      'gemini',
       'codex',
       'claude',
       'kimi',
@@ -62,7 +61,6 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
 
   it('appends grok then cursor when both are available (preserving option order)', () => {
     expect(resolveProviderRows(true, true).map((r) => r.id)).toEqual([
-      'gemini',
       'codex',
       'claude',
       'kimi',
@@ -74,7 +72,6 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
 
   it('can append cursor without grok', () => {
     expect(resolveProviderRows(false, true).map((r) => r.id)).toEqual([
-      'gemini',
       'codex',
       'claude',
       'kimi',
@@ -85,9 +82,14 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
 
   it('labels each row with the provider display name + a descriptor', () => {
     const rows = resolveProviderRows(true, true)
-    const gemini = rows.find((r) => r.id === 'gemini')
-    expect(gemini?.label).toBe('Gemini')
-    expect(gemini?.description).toBeTruthy()
+    const claude = rows.find((r) => r.id === 'claude')
+    expect(claude?.label).toBe('Claude')
+    expect(claude?.description).toBeTruthy()
+  })
+
+  it('never offers the retired gemini provider', () => {
+    expect(resolveProviderRows(true, true).map((r) => r.id)).not.toContain('gemini')
+    expect(resolveProviderRows(false, false).map((r) => r.id)).not.toContain('gemini')
   })
 
   it('annotates paused providers with their saved reroute target', () => {
@@ -114,8 +116,8 @@ describe('ComposerProviderPickerRows (popover body)', () => {
       />
     )
 
-    // A row per gated provider...
-    expect(html).toContain('data-provider-value="gemini"')
+    // A row per live provider (gemini retired)...
+    expect(html).not.toContain('data-provider-value="gemini"')
     expect(html).toContain('data-provider-value="codex"')
     expect(html).toContain('data-provider-value="claude"')
     expect(html).toContain('data-provider-value="kimi"')
@@ -148,7 +150,7 @@ describe('ComposerProviderPickerRows (popover body)', () => {
     const html = renderToStaticMarkup(
       <ComposerProviderPickerRows
         rows={resolveProviderRows(false, false)}
-        activeProvider="gemini"
+        activeProvider="codex"
         onSelect={() => undefined}
       />
     )

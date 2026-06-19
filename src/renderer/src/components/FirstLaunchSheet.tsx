@@ -16,6 +16,7 @@ import {
 } from '../lib/providerAuthSummary'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
 import { ProviderGlyph } from './icons/ProviderGlyph'
+import { isRetiredProvider } from '../../../shared/retiredProviders'
 import {
   ArrowUpSendIcon,
   ClaudeReturnSymbolIcon,
@@ -548,7 +549,11 @@ export function FirstLaunchSheet({
   ]
   // Flip any signed-in provider whose quota window is maxed to the
   // explicit "out of usage" state — the tester-confusion fix.
-  const providerRows = baseProviderRows.map((row) => applyOutOfUsage(row, usageSummary))
+  // gemini is RETIRED — keep it in baseProviderRows (so its status summary stays
+  // wired) but never offer it as an onboarding sign-in card.
+  const providerRows = baseProviderRows
+    .map((row) => applyOutOfUsage(row, usageSummary))
+    .filter((row) => !isRetiredProvider(row.id))
 
   return (
     <div

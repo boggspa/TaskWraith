@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { isSubThreadChat } from '../lib/chatScope'
+import { isRetiredProvider } from '../../../shared/retiredProviders'
 
 /**
  * SubThreadCreator — Phase F1 modal for delegating to a sub-thread.
@@ -22,7 +23,7 @@ import { isSubThreadChat } from '../lib/chatScope'
  * the parent provider to draft a delegation prompt).
  */
 
-const PROVIDER_OPTIONS: Array<{ value: ProviderId; label: string; helper: string }> = [
+const PROVIDER_OPTIONS: Array<{ value: ProviderId; label: string; helper: string }> = ([
   {
     value: 'gemini',
     label: 'Gemini',
@@ -39,7 +40,9 @@ const PROVIDER_OPTIONS: Array<{ value: ProviderId; label: string; helper: string
     helper: 'Deep reasoning, tool use, careful code edits with strong safety.'
   },
   { value: 'kimi', label: 'Kimi', helper: 'Wire-protocol-driven runs, structured tool calls.' }
-]
+] as Array<{ value: ProviderId; label: string; helper: string }>).filter(
+  (opt) => !isRetiredProvider(opt.value)
+)
 
 interface SubThreadCreatorProps {
   /** Parent chat. The new sub-thread will inherit its workspace and

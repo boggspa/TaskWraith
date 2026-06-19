@@ -222,7 +222,7 @@ describe('FirstLaunchSheet', () => {
     )
   })
 
-  it('Gemini card is marked optional but not de-emphasised', () => {
+  it('does not offer the retired Gemini provider as an onboarding sign-in card', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -234,10 +234,12 @@ describe('FirstLaunchSheet', () => {
         geminiAuthStatus={null}
       />
     )
-    // Five cards are optional (Gemini, Kimi, Cursor, Grok, Ollama).
+    // Gemini is RETIRED — its sign-in card is no longer rendered. The four
+    // remaining optional cards are Kimi, Cursor, Grok, Ollama.
+    expect(html).not.toContain('Google Gemini CLI')
     const badges = html.match(/first-launch-sheet-provider-card-optional-badge/g)
     expect(badges).toBeTruthy()
-    expect(badges!.length).toBe(5)
+    expect(badges!.length).toBe(4)
   })
 
   it('renders Ollama as a local-only optional provider without sign-in copy', () => {
@@ -406,7 +408,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('CLI not found')
   })
 
-  it('Gemini card surfaces the active profile label when set', () => {
+  it('does not surface a Gemini profile card even when a gemini profile is active (retired)', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -421,7 +423,8 @@ describe('FirstLaunchSheet', () => {
         })}
       />
     )
-    expect(html).toContain('Active profile: work-gemini')
+    expect(html).not.toContain('Active profile: work-gemini')
+    expect(html).not.toContain('Google Gemini CLI')
   })
 
   it('§3 preview composer renders the rich settings-style card (1.0.5-EW32)', () => {

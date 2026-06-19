@@ -35,6 +35,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { AppSettings, ComposerStyle, ProviderId } from '../../../main/store/types'
+import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { ProviderBadgeIcon, getProviderName } from './Sidebar'
 
 interface ComposerProviderPickerProps {
@@ -103,7 +104,7 @@ export function resolveProviderRows(
   cursorAvailable: boolean,
   providerRunPauses?: AppSettings['providerRunPauses']
 ): ProviderRow[] {
-  const ids: ProviderId[] = [
+  const ids: ProviderId[] = ([
     'gemini',
     'codex',
     'claude',
@@ -111,7 +112,7 @@ export function resolveProviderRows(
     ...(grokAvailable ? (['grok'] as ProviderId[]) : []),
     ...(cursorAvailable ? (['cursor'] as ProviderId[]) : []),
     'ollama'
-  ]
+  ] as ProviderId[]).filter((id) => !isRetiredProvider(id))
   return ids.map((id) => {
     const pauseInfo = getProviderPauseInfo(providerRunPauses, id)
     return {

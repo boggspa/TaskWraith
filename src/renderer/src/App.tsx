@@ -13,6 +13,7 @@ import {
 import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
+import { isRetiredProvider } from '../../shared/retiredProviders'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { formatCost, setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
@@ -20368,7 +20369,7 @@ function App(): React.JSX.Element {
                       <div className="composer-inline-pickers-left">
                         {(() => {
                           const workspaceActionDisabled = !currentWorkspace || !currentChat
-                          const guestProviderOptions: ProviderId[] = [
+                          const guestProviderOptions: ProviderId[] = ([
                             'gemini',
                             'codex',
                             'claude',
@@ -20376,7 +20377,7 @@ function App(): React.JSX.Element {
                             ...(grokProviderAvailable ? (['grok'] as ProviderId[]) : []),
                             ...(cursorProviderAvailable ? (['cursor'] as ProviderId[]) : []),
                             'ollama'
-                          ]
+                          ] as ProviderId[]).filter((id) => !isRetiredProvider(id))
                           const plusSections: ComposerPlusPickerSection[] = [
                             {
                               id: 'add',
