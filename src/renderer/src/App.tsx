@@ -4999,9 +4999,10 @@ function App(): React.JSX.Element {
     const now = Date.now()
     const effectiveCodexStatus = codexStatusHint ?? codexStatus
 
-    const [geminiSnap, codexSnap, claudeSnap, kimiSnap, cursorSnap, allUsageRecords] =
+    // gemini retired — no live quota fetch, and omitted from the Model Usage
+    // card's quota meters below (its historical token usage is still shown).
+    const [codexSnap, claudeSnap, kimiSnap, cursorSnap, allUsageRecords] =
       await Promise.all([
-        window.api.getAgentRateLimits('gemini').catch(() => null),
         typeof window.api.getCodexUsageSnapshot === 'function'
           ? window.api.getCodexUsageSnapshot().catch(() => null)
           : Promise.resolve(null),
@@ -5155,20 +5156,7 @@ function App(): React.JSX.Element {
       return lastUsageWindowsByProviderRef.current[provider] || []
     }
 
-    // Gemini — only Pro 3.1 (preview), Flash 3 (preview), Flash Lite 3.1 (preview)
-    const geminiAllowed = new Set([
-      'Pro 3.1 (preview)',
-      'Flash 3 (preview)',
-      'Flash Lite 3.1 (preview)'
-    ])
-    const geminiFresh = (Array.isArray(geminiSnap?.windows) ? geminiSnap.windows : [])
-      .filter((w: any) => geminiAllowed.has(String(w?.label || '').trim()))
-      .map((w: any, i: number) => normalizeQuotaWindow('gemini', w, `gemini-quota-${i}`))
-      .filter((w): w is UsageWindowAggregate => Boolean(w))
-    const geminiWindows = resolveWithCache('gemini', geminiFresh)
-    if (geminiWindows.length > 0 || hasUsageBalances(geminiSnap?.balances)) {
-      ordered.push(buildQuotaAggregate('gemini', geminiWindows, geminiSnap))
-    }
+    // Gemini retired — no live quota meter (see the Promise.all above).
 
     // Codex — 5H + weekly + (Pro only) GPT-5.3-Codex-Spark windows, real quotas only
     const effectiveCodexUsage =
