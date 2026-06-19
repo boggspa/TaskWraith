@@ -2692,6 +2692,32 @@ export class AppStore {
     })
   }
 
+  static recoverInterruptedScheduledTasksAfterStartup(
+    nowMs: number = Date.now()
+  ): ScheduledTask[] {
+    const tasks = this.getScheduledTasks()
+    const recoveredAt = new Date(nowMs).toISOString()
+    const recovered: ScheduledTask[] = []
+    const nextTasks = tasks.map((task) => {
+      if (task.status !== 'running') return task
+      const updated: ScheduledTask = {
+        ...task,
+        status: 'failed',
+        completedAt: task.completedAt || recoveredAt,
+        lastError: task.lastError || 'TaskWraith restarted before this scheduled run completed.',
+        updatedAt: recoveredAt
+      }
+      recovered.push(updated)
+      return updated
+    })
+    if (recovered.length === 0) return []
+    writeJson(scheduledTasksPath, nextTasks)
+    for (const task of recovered) {
+      this.syncWorkflowFromScheduledTask(task)
+    }
+    return recovered
+  }
+
   // Run queue
   static getRunQueueJobs(filter: RunQueueJobFilter = {}): RunQueueJob[] {
     const jobs = readJson<RunQueueJob[]>(runQueuePath, [])

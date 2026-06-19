@@ -18350,6 +18350,7 @@ if (isGeminiMcpBridgeProcess) {
 
     const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()
     recordStartupRecoveryEvents(startupRecoveryRecords)
+    AppStore.recoverInterruptedScheduledTasksAfterStartup()
     AppStore.recoverExpiredApprovalLedger()
     void getGeminiMcpBridgeStatus({
       autoRepairIfEnabled: AppStore.getSettings().geminiMcpBridgeEnabled

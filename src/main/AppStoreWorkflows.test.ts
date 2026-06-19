@@ -202,6 +202,61 @@ describe('AppStore workflows', () => {
     expect(workflow?.lastStatus).toBe('failed')
   })
 
+  it('recovers interrupted running scheduled workflow tasks on startup', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    AppStore.updateScheduledTask(task.id, {
+      status: 'running',
+      runId: 'run-1',
+      firedAt: '2026-06-07T20:00:01.000Z'
+    })
+
+    const recovered = AppStore.recoverInterruptedScheduledTasksAfterStartup(
+      Date.parse('2026-06-07T20:02:00.000Z')
+    )
+
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0]).toMatchObject({
+      id: task.id,
+      status: 'failed',
+      runId: 'run-1',
+      completedAt: '2026-06-07T20:02:00.000Z',
+      lastError: 'TaskWraith restarted before this scheduled run completed.'
+    })
+    const scheduledTask = AppStore.getScheduledTasks().find((item) => item.id === task.id)
+    expect(scheduledTask?.status).toBe('failed')
+    const workflow = AppStore.getWorkflowDefinition(saved.id)
+    expect(workflow?.activeExecutionId).toBeUndefined()
+    expect(workflow?.lastStatus).toBe('failed')
+    expect(workflow?.failureStreak).toBe(1)
+    expect(workflow?.nextRunAt).toBe(new Date(Date.parse(plannedFor) + intervalMs).toISOString())
+    expect(workflow?.history[0]).toMatchObject({
+      runId: 'run-1',
+      status: 'failed',
+      completedAt: '2026-06-07T20:02:00.000Z'
+    })
+  })
+
+  it('leaves non-running scheduled tasks unchanged during startup recovery', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    AppStore.updateScheduledTask(task.id, {
+      status: 'cancelled',
+      completedAt: '2026-06-07T20:01:00.000Z',
+      lastError: 'Cancelled by user.'
+    })
+
+    const recovered = AppStore.recoverInterruptedScheduledTasksAfterStartup(
+      Date.parse('2026-06-07T20:02:00.000Z')
+    )
+
+    expect(recovered).toHaveLength(0)
+    const scheduledTask = AppStore.getScheduledTasks().find((item) => item.id === task.id)
+    expect(scheduledTask?.status).toBe('cancelled')
+    const workflow = AppStore.getWorkflowDefinition(saved.id)
+    expect(workflow?.lastStatus).toBe('cancelled')
+  })
+
   it('keeps manual workflows unscheduled after the daily run limit is reached', () => {
     const saved = AppStore.saveWorkflowDefinition(
       workflowInput({
