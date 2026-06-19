@@ -1189,8 +1189,8 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex
-              GPT-5.5 / 5.4, Claude Opus 4.7 / 4.6) expose a Fast tier — useful when you want
-              snappier turns at higher cost.
+              GPT-5.5 / 5.4, Claude Opus 4.8, with Fable returning soon) expose a Fast tier —
+              useful when you want snappier turns at higher cost.
             </li>
             <li>
               <strong>Audit tools and shortcuts.</strong> Settings includes MCP and Keyboard
