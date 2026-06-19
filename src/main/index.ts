@@ -21222,10 +21222,12 @@ if (isGeminiMcpBridgeProcess) {
     // hierarchical provider→model picker. Async (the Codex live list +
     // Ollama tags can take seconds); fires on establish and pushes through
     // the broadcaster whenever it lands.
+    // gemini retired — excluded so it never appears in any iOS picker. Historical
+    // iOS cards still render via RemoteThreadProjection PROVIDER_LABELS + the
+    // Swift Theme gemini accent/label fallback.
     const REMOTE_MODEL_PROVIDERS: ProviderId[] = [
       'claude',
       'codex',
-      'gemini',
       'kimi',
       'grok',
       'cursor',
