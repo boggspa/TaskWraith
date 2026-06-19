@@ -13,7 +13,7 @@ import {
 import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
-import { isRetiredProvider } from '../../shared/retiredProviders'
+import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../shared/retiredProviders'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { formatCost, setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
@@ -1400,7 +1400,9 @@ function App(): React.JSX.Element {
   const [showCockpit, setShowCockpit] = useState(false)
 
   // Model & Mode Selectors
-  const [activeProvider, setActiveProvider] = useState<ProviderId>('gemini')
+  // Seed the user-facing default to a live provider; sticky last-used (persisted
+  // via updateSettings on provider change) takes over after the first selection.
+  const [activeProvider, setActiveProvider] = useState<ProviderId>(DEFAULT_PROVIDER)
   // Grok is a permanent first-class provider. We learn its availability from the
   // get-provider-adapters descriptor list on init: the main process always
   // registers the Grok adapter, so this resolves true once that list arrives.
@@ -3774,7 +3776,7 @@ function App(): React.JSX.Element {
         .catch(() => {})
     }
     setSettings(s)
-    setActiveProvider(s.activeProvider || 'gemini')
+    setActiveProvider(coerceLiveProvider(s.activeProvider))
     setClaudeBinaryPath(s.claudeBinaryPath || '')
     setKimiBinaryPath(s.kimiBinaryPath || '')
     setOllamaBaseUrl(s.ollamaBaseUrl || 'http://127.0.0.1:11434')
@@ -3824,7 +3826,7 @@ function App(): React.JSX.Element {
         ? s.geminiApiRuntime
         : 'auto'
     )
-    void refreshProviderMetadata(s.activeProvider || 'gemini')
+    void refreshProviderMetadata(coerceLiveProvider(s.activeProvider))
     // 1.0.6-G3d — derive Grok availability from the registered adapters (the
     // registry includes 'grok' only when the experimental gate is on).
     if (typeof window.api.getProviderAdapters === 'function') {
