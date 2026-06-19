@@ -438,7 +438,7 @@ public final class RemoteSessionModel: ObservableObject {
         self.pairingStore = pairingStore
         let stored = pairingStore.load()
         self.hasStoredPairing = stored != nil
-        if let stored { self.macDisplayName = stored.macDisplayName }
+        if let stored { self.macDisplayName = Self.sanitizedMacName(stored.macDisplayName) }
         startPathMonitor()
     }
 
@@ -734,6 +734,7 @@ public final class RemoteSessionModel: ObservableObject {
     /// from the relay directory, no QR. The Mac pinned this phone's identity
     /// at first pairing, so it accepts silently (and denies anyone else).
     public func reconnectTrusted() {
+        guard !isDemo else { return }  // demo is standalone — never auto-redial
         guard let record = pairingStore.load() else { return }
         guard identityReady() else { return }
         // A fresh walk supersedes any queued auto-retry (attempt count keeps
@@ -746,7 +747,7 @@ public final class RemoteSessionModel: ObservableObject {
             preferRemoteFirst: preferRemoteRelayFirst())
         cancelSocketHealthCheck()
         teardown()
-        macDisplayName = record.macDisplayName
+        macDisplayName = Self.sanitizedMacName(record.macDisplayName)
         pinnedMacIdentityB64 = record.macIdentityPubKey
         lastRelayUrls = record.relayUrls
         relayUrl = record.relayUrl
@@ -892,6 +893,12 @@ public final class RemoteSessionModel: ObservableObject {
     /// network client is connected (so `send(_:)` is inert) and `isDemo` drives a
     /// banner. `exitDemoMode()` restores the pairing screen.
     public func enterDemoMode() {
+        // Sever any live session FIRST so the demo is truly standalone — no real
+        // projection can bleed in, and the auto-reconnect lifecycle can't redial
+        // the Mac under the demo banner (reconnectTrusted + persistCurrentPairing
+        // are also guarded on !isDemo).
+        disconnect()
+        clearCachedProjectionState()
         let workspacesJSON = """
         [{"workspaceId":"demo-ws","displayName":"Demo Project","path":"~/Developer/taskwraith-demo","chatCount":3}]
         """
@@ -938,22 +945,49 @@ public final class RemoteSessionModel: ObservableObject {
         phase = .connected
     }
 
-    /// Leave the demo and return to the pairing screen, clearing canned data.
+    /// Leave the demo and clear its canned data. Reconnects the trusted Mac if
+    /// one is paired; otherwise returns to the pairing screen.
     public func exitDemoMode() {
-        isDemo = false
-        phase = .idle
-        workspaces = []
-        taskCards = []
-        threadSnapshots = [:]
-        providerModels = [:]
+        isDemo = false  // re-open the reconnect guards before reconnecting
+        disconnect()    // clears live lists + cancels timers; phase → .idle
+        clearCachedProjectionState()
         selectedTaskId = nil
         macDisplayName = ""
-        projectionHydrated = false
+        if hasStoredPairing { reconnectTrusted() }
     }
 
     private static func decodeDemo<T: Decodable>(_ type: T.Type, _ json: String) -> T? {
         guard let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(type, from: data)
+    }
+
+    /// Clears cached projection/render state (snapshots, streaming buffers, usage
+    /// panels, git/diff caches) so real and demo data never bleed together.
+    /// Mirrors forgetPairing's cache wipe; used by demo enter/exit.
+    private func clearCachedProjectionState() {
+        threadSnapshots = [:]
+        streamingTexts = [:]
+        streamingSegments = [:]
+        streamingRunIds = [:]
+        streamingProviders = [:]
+        streamingItemIds = [:]
+        providerModels = [:]
+        projectionHydrated = false
+        usageRollup = nil
+        taskwraithTokenDaily = nil
+        externalTokenDaily = nil
+        modelUsage = nil
+        welcomeDashboard = nil
+        gitSnapshots = [:]
+        navigationTarget = nil
+        visibleThreadId = nil
+        lastActionMessage = nil
+    }
+
+    /// One-time self-heal: a build-30 bug could persist the synthetic "Demo Mac"
+    /// name into the stored pairing. Never surface it for a real Mac.
+    private static func sanitizedMacName(_ name: String) -> String {
+        name == "Demo Mac" ? "" : name
     }
 
     public func forgetPairing() {
@@ -1017,6 +1051,7 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func persistCurrentPairing() {
+        guard !isDemo else { return }  // never persist the demo's synthetic name
         guard let relayUrl, let macId = pinnedMacIdentityB64 else { return }
         pairingStore.save(
             PairedMacRecord(
