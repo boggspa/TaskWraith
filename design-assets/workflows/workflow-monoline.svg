@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-monoline-title workflow-monoline-desc" style="color: currentColor; --workflow-accent: currentColor;">
+  <title id="workflow-monoline-title">TaskWraith workflow glyph</title>
+  <desc id="workflow-monoline-desc">Original monoline automation route with trigger step, decision node, run block, and return path.</desc>
+  <style>
+    .line {
+      fill: none;
+      stroke: var(--workflow-accent);
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .fine {
+      stroke-width: 1.25;
+      opacity: 0.76;
+    }
+
+    .dot {
+      fill: var(--workflow-accent);
+      stroke: none;
+    }
+  </style>
+
+  <path class="line" d="M5.1 4.9h5.2c.85 0 1.4.55 1.4 1.4v2c0 .85-.55 1.4-1.4 1.4H5.1c-.85 0-1.4-.55-1.4-1.4v-2c0-.85.55-1.4 1.4-1.4Z"/>
+  <path class="line" d="m16.4 4.6 3.35 3.35-3.35 3.35-3.35-3.35Z"/>
+  <path class="line" d="M7.35 14.3h8.95c.9 0 1.45.55 1.45 1.45v2.05c0 .9-.55 1.45-1.45 1.45H7.35c-.9 0-1.45-.55-1.45-1.45v-2.05c0-.9.55-1.45 1.45-1.45Z"/>
+
+  <path class="line fine" d="M6.4 7.3h2.9"/>
+  <path class="line fine" d="M8.25 16.8h6.9"/>
+  <circle class="dot" cx="5.2" cy="7.3" r=".55"/>
+  <path class="line fine" d="m15.45 7.95.65.65 1.25-1.5"/>
+
+  <path class="line" d="M11.7 7.3h1.35"/>
+  <path class="line" d="M16.4 11.3v.95c0 1.25-.72 1.9-2.05 2.05"/>
+  <path class="line" d="M5.9 16.75H4.5c-1.2 0-2.05-.85-2.05-2.05V9.65"/>
+  <path class="line" d="m1.35 10.9 1.1-1.25 1.25 1.1"/>
+  <path class="line" d="M17.75 16.75h1.75c1.2 0 2.05-.85 2.05-2.05V9.45"/>
+  <path class="line" d="m20.45 10.65 1.1-1.2 1.1 1.2"/>
+</svg>
