@@ -873,6 +873,21 @@ struct ThreadDetailView: View {
                     // flag, not the focus-derived `tuckedTab`. (`tuckedTab` still drives
                     // the focus-gated tab geometry/spacing, which don't change identity.)
                     let tuckedShell = resolved.layout.tuckedAboveTab
+                    // Blurred + active changes: the compact diff pill FLOATS above
+                    // the composer for EVERY shell. It lives here in the outer
+                    // (never-shelled) stack so the TaskWraith Native shell — whose
+                    // surface wraps the VStack below — can't nest it inside the
+                    // composer's above-section the way it used to. (Detached shells
+                    // already floated it; this just makes Native match.)
+                    if !composerFocused, hasDiff {
+                        ComposerDiffPill(
+                            filesChanged: changedFileCount,
+                            additions: diff?.additions ?? 0,
+                            deletions: diff?.deletions ?? 0,
+                            onTap: { openComposerDiff(workspaceId: primaryWorkspaceId) }
+                        )
+                        .padding(.horizontal, 10)
+                    }
                     VStack(spacing: tuckedTab ? -10 : (detached ? 6 : 0)) {
                         // Above-rows group: inner VStack spacing matches the outer so
                         // non-tuck stays identical; the grok tuck makes it the inset,
@@ -968,19 +983,9 @@ struct ThreadDetailView: View {
                         // renders behind an explicit-zIndex sibling on insertion — which
                         // ate grok's tucked tab when it returned on focus. Make it explicit.
                         .zIndex(0)
-                        } else if hasDiff {
-                            // Blurred + active changes: a generic mini diff pill stands in
-                            // for the full (composer-specific) changes row, which only
-                            // returns on focus. Same pill for every shell.
-                            ComposerDiffPill(
-                                filesChanged: changedFileCount,
-                                additions: diff?.additions ?? 0,
-                                deletions: diff?.deletions ?? 0,
-                                onTap: { openComposerDiff(workspaceId: primaryWorkspaceId) }
-                            )
-                            .padding(.bottom, 8)
-                            .zIndex(0)
                         }  // end focus-gated above-rows group
+                        // (the blurred diff pill now floats above the shell — see
+                        // the outer stack above)
                         // Composer core (input + telemetry rail). In detached
                         // mode this is its OWN card under the floating above-rows;
                         // merged mode keeps it as the final segments of the one

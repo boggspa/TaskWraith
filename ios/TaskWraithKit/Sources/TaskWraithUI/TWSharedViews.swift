@@ -5275,7 +5275,7 @@ public struct ComposerDiffPill: View {
         Button { onTap?() } label: {
             HStack(spacing: 8) {
                 Text("\(filesChanged) file\(filesChanged == 1 ? "" : "s")")
-                    .foregroundStyle(TWTheme.textMuted)
+                    .foregroundStyle(TWTheme.textSecondary)
                 Text("+\(compact(additions))")
                     .foregroundStyle(TWTheme.statusSuccess)
                 Text("−\(compact(deletions))")
@@ -5284,8 +5284,18 @@ public struct ComposerDiffPill: View {
             .font(.caption.weight(.semibold).monospacedDigit())
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(TWTheme.surface3, in: Capsule())
-            .overlay(Capsule().strokeBorder(TWTheme.border.opacity(0.6)))
+            // Liquid Glass where the OS has it; ultra-thin material capsule below.
+            .modifier(GlassPillBackground())
+            // Rim highlight: a bright top-edge specular fading down, so the pill
+            // reads as a floating glass chip above the composer.
+            .overlay(
+                Capsule().strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.34), Color.white.opacity(0.06)],
+                        startPoint: .top, endPoint: .bottom),
+                    lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.28), radius: 6, y: 2)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
