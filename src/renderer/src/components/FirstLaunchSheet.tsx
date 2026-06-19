@@ -1077,11 +1077,6 @@ export function FirstLaunchSheet({
               <span className="first-launch-sheet-usage-mock-pct">42%</span>
             </div>
             <div className="first-launch-sheet-usage-mock-row">
-              <span className="first-launch-sheet-usage-mock-label">Gemini</span>
-              <QuotaProgressBar fraction={0.31} accent="var(--provider-gemini-color)" />
-              <span className="first-launch-sheet-usage-mock-pct">31%</span>
-            </div>
-            <div className="first-launch-sheet-usage-mock-row">
               <span className="first-launch-sheet-usage-mock-label">Kimi</span>
               <QuotaProgressBar fraction={0.56} accent="var(--provider-kimi-color)" />
               <span className="first-launch-sheet-usage-mock-pct">56%</span>
