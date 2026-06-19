@@ -648,6 +648,23 @@ struct ThreadDetailView: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                     }
+                    // Tail anchor — keeps a "still working" mark pinned below the
+                    // last tool/segment row while the run is live (tool bursts
+                    // otherwise read as idle). Thinking-only runs use ThinkingRow.
+                    if isRunning {
+                        LiveActivityAnchor(
+                            accent: threadAgentIdentity?.accent
+                                ?? TWTheme.providerAccent(liveProvider)
+                        )
+                        // Stable identity so the recycling List keeps ONE instance
+                        // (preserving @State + the repeatForever pulse) as the live
+                        // ForEach above it rebuilds each token — otherwise .onAppear
+                        // re-fires and the pulse hitches.
+                        .id("live-activity-anchor")
+                        .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    }
                 } else if isRunning {
                     ThinkingRow(
                         provider: thinkingProvider,
@@ -2285,6 +2302,40 @@ struct ThinkingRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 5)
+    }
+}
+
+/// Bottom-of-transcript activity anchor shown during a live run once content or
+/// tools are flowing. Reasoning has its own anchor (ThinkingRow); but a burst of
+/// tool rows otherwise leaves the transcript looking idle below the last row —
+/// you can't tell if it's still working. This pins a TaskWraith-native "still
+/// working" mark to the tail (the ghost + dots — deliberately our own brand
+/// anchor, not a sparkle) so the eye lands on the most-recent activity. iOS-only
+/// (it lives in the iOS transcript).
+struct LiveActivityAnchor: View {
+    var accent: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            GhostMonolineMarkView(size: 18, glow: true)
+                .opacity(reduceMotion || pulsing ? 1 : 0.45)
+                .animation(
+                    reduceMotion
+                        ? nil
+                        : .easeInOut(duration: 0.85).repeatForever(autoreverses: true),
+                    value: pulsing)
+            Text("Working")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(accent)
+            StreamingDots(color: accent)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+        .onAppear { pulsing = true }
+        .accessibilityLabel("Working")
     }
 }
 

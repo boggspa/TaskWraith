@@ -82,7 +82,7 @@ public struct GhostMonolineMarkView: View {
                     .scaleEffect(1.08)
             }
             Group {
-                if let image = Self.loadImage() {
+                if let image = Self.cachedImage {
                     image
                         .renderingMode(.template)
                         .resizable()
@@ -109,7 +109,9 @@ public struct GhostMonolineMarkView: View {
             ? Color.white.opacity(0.4) : Color.black.opacity(0.24)
     }
 
-    private static func loadImage() -> Image? {
+    /// Loaded once (disk read + decode), not per `body` — the mark now renders
+    /// inside the live transcript's activity anchor, a hot re-render path.
+    private static let cachedImage: Image? = {
         #if canImport(UIKit)
         if let url = Bundle.module.url(forResource: "ghost-mark-monoline", withExtension: "png"),
             let data = try? Data(contentsOf: url),
@@ -122,7 +124,7 @@ public struct GhostMonolineMarkView: View {
         }
         #endif
         return nil
-    }
+    }()
 }
 
 public struct TaskWraithMonolineBrandView: View {
