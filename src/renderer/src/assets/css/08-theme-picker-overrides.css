@@ -2287,7 +2287,7 @@
       120deg,
       color-mix(in srgb, var(--provider-codex-color) 10%, transparent),
       color-mix(in srgb, var(--provider-claude-color) 8%, transparent),
-      color-mix(in srgb, var(--provider-gemini-color) 8%, transparent)
+      color-mix(in srgb, var(--provider-ollama-color) 8%, transparent)
     ),
     rgba(255, 255, 255, 0.025);
 }
@@ -2343,6 +2343,9 @@
 }
 .first-launch-sheet-ensemble-chip[data-provider='grok'] {
   border-color: color-mix(in srgb, var(--provider-grok-color) 46%, transparent);
+}
+.first-launch-sheet-ensemble-chip[data-provider='ollama'] {
+  border-color: color-mix(in srgb, var(--provider-ollama-color) 46%, transparent);
 }
 .first-launch-sheet-ensemble-arrow {
   color: var(--text-tertiary);

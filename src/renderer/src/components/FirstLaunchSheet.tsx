@@ -1125,13 +1125,6 @@ export function FirstLaunchSheet({
               <span className="first-launch-sheet-ensemble-arrow" aria-hidden>
                 →
               </span>
-              <span className="first-launch-sheet-ensemble-chip" data-provider="gemini">
-                <strong>Researcher</strong>
-                <em>Gemini</em>
-              </span>
-              <span className="first-launch-sheet-ensemble-arrow" aria-hidden>
-                →
-              </span>
               <span className="first-launch-sheet-ensemble-chip" data-provider="kimi">
                 <strong>Reviewer</strong>
                 <em>Kimi</em>
@@ -1149,6 +1142,13 @@ export function FirstLaunchSheet({
               <span className="first-launch-sheet-ensemble-chip" data-provider="grok">
                 <strong>Scout</strong>
                 <em>Grok</em>
+              </span>
+              <span className="first-launch-sheet-ensemble-arrow" aria-hidden>
+                →
+              </span>
+              <span className="first-launch-sheet-ensemble-chip" data-provider="ollama">
+                <strong>Local</strong>
+                <em>Ollama</em>
               </span>
             </div>
             <div className="first-launch-sheet-ensemble-footer">

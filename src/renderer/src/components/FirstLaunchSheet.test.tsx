@@ -146,11 +146,13 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('New Ensemble puts multiple provider participants')
     expect(html).toContain('data-provider="codex"')
     expect(html).toContain('data-provider="claude"')
-    expect(html).toContain('data-provider="gemini"')
     expect(html).toContain('data-provider="kimi"')
-    // Cursor + Grok complete the CLI/cloud ensemble preview roster (the chips use <em>).
+    expect(html).toContain('data-provider="ollama"')
+    // Cursor, Grok, and Ollama complete the CLI/cloud/local preview roster.
     expect(html).toContain('<em>Cursor</em>')
     expect(html).toContain('<em>Grok</em>')
+    expect(html).toContain('<em>Ollama</em>')
+    expect(html).not.toContain('<em>Gemini</em>')
     expect(html).toContain('Turn / Continuous in the composer')
   })
 
