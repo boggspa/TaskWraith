@@ -879,11 +879,25 @@ struct ThreadDetailView: View {
                     // surface wraps the VStack below — can't nest it inside the
                     // composer's above-section the way it used to. (Detached shells
                     // already floated it; this just makes Native match.)
-                    if !composerFocused, hasDiff {
+                    //
+                    // Source mirrors ChangesAttachedRow (the focused row): the
+                    // working-tree git status is primary, the per-run diffSummary is
+                    // the fallback. Gating on `hasDiff` (diffSummary) alone made the
+                    // pill appear ONLY after an iOS-initiated run — never for the
+                    // workspace's own uncommitted changes (which arrive as a git
+                    // snapshot). That's why it only showed in demo (both seeded).
+                    let pillFilesChanged = primaryGitSnapshot?.counts?.changed ?? changedFileCount
+                    let pillAdditions =
+                        primaryGitSnapshot?.lineStats?.additions ?? diff?.additions ?? 0
+                    let pillDeletions =
+                        primaryGitSnapshot?.lineStats?.deletions ?? diff?.deletions ?? 0
+                    if !composerFocused,
+                        pillFilesChanged > 0 || pillAdditions > 0 || pillDeletions > 0
+                    {
                         ComposerDiffPill(
-                            filesChanged: changedFileCount,
-                            additions: diff?.additions ?? 0,
-                            deletions: diff?.deletions ?? 0,
+                            filesChanged: pillFilesChanged,
+                            additions: pillAdditions,
+                            deletions: pillDeletions,
                             onTap: { openComposerDiff(workspaceId: primaryWorkspaceId) }
                         )
                         .padding(.horizontal, 10)
