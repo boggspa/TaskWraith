@@ -5925,7 +5925,8 @@ struct UsagePanel: View {
     private static let providerOrder = ["gemini", "codex", "claude", "kimi", "cursor", "grok"]
 
     private var providers: [ModelUsageMessage.ProviderUsage] {
-        let entries = model.modelUsage?.providers ?? []
+        let entries = (model.modelUsage?.providers ?? [])
+            .filter { !TWTheme.isRetiredProvider($0.provider) }
         return entries.sorted {
             (Self.providerOrder.firstIndex(of: $0.provider) ?? 99)
                 < (Self.providerOrder.firstIndex(of: $1.provider) ?? 99)

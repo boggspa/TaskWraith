@@ -904,29 +904,73 @@ public final class RemoteSessionModel: ObservableObject {
         """
         let cardsJSON = """
         [
-          {"id":"demo-1","title":"Refactor the auth module","provider":"claude","workspaceId":"demo-ws","threadId":"demo-1","status":"idle","chatKind":"single","updatedAt":"2026-06-19T10:42:00Z"},
+          {"id":"demo-1","title":"Refactor the auth module","provider":"claude","workspaceId":"demo-ws","threadId":"demo-1","status":"idle","chatKind":"single","updatedAt":"2026-06-19T10:42:00Z","pendingApprovalCount":1},
           {"id":"demo-2","title":"Plan the v2 public API","provider":"claude","workspaceId":"demo-ws","threadId":"demo-2","status":"idle","chatKind":"ensemble","updatedAt":"2026-06-19T09:30:00Z"},
-          {"id":"demo-3","title":"Fix the flaky upload test","provider":"codex","workspaceId":"demo-ws","threadId":"demo-3","status":"idle","chatKind":"single","updatedAt":"2026-06-18T17:05:00Z"}
+          {"id":"demo-3","title":"Fix the flaky upload test","provider":"codex","workspaceId":"demo-ws","threadId":"demo-3","status":"idle","chatKind":"single","updatedAt":"2026-06-18T17:05:00Z"},
+          {"id":"demo-1-sub1","title":"Map the auth call sites","provider":"claude","workspaceId":"demo-ws","threadId":"demo-1-sub1","parentChatId":"demo-1","parentChatRelation":"subThread","agentName":"Scout","agentSlug":"scout","agentAccent":"#6E8BFF","status":"done","chatKind":"single","updatedAt":"2026-06-19T10:38:00Z"},
+          {"id":"demo-1-sub2","title":"Write refresh + expiry tests","provider":"codex","workspaceId":"demo-ws","threadId":"demo-1-sub2","parentChatId":"demo-1","parentChatRelation":"subThread","agentName":"Tester","agentSlug":"tester","agentAccent":"#37C8A8","status":"done","chatKind":"single","updatedAt":"2026-06-19T10:41:00Z"},
+          {"id":"demo-2-sub1","title":"Survey REST pagination patterns","provider":"claude","workspaceId":"demo-ws","threadId":"demo-2-sub1","parentChatId":"demo-2","parentChatRelation":"subThread","agentName":"Researcher","agentSlug":"researcher","agentAccent":"#C77DFF","status":"done","chatKind":"single","updatedAt":"2026-06-19T09:24:00Z"},
+          {"id":"demo-3-sub1","title":"Bisect the flaky run","provider":"codex","workspaceId":"demo-ws","threadId":"demo-3-sub1","parentChatId":"demo-3","parentChatRelation":"subThread","agentName":"Bisector","agentSlug":"bisector","agentAccent":"#F2A33C","status":"done","chatKind":"single","updatedAt":"2026-06-18T16:58:00Z"},
+          {"id":"demo-1-sc1","title":"jose vs jsonwebtoken?","provider":"codex","workspaceId":"demo-ws","threadId":"demo-1-sc1","parentChatId":"demo-1","parentChatRelation":"sideChat","status":"idle","chatKind":"single","updatedAt":"2026-06-19T10:39:00Z"},
+          {"id":"demo-2-sc1","title":"Cursor vs offset pagination?","provider":"claude","workspaceId":"demo-ws","threadId":"demo-2-sc1","parentChatId":"demo-2","parentChatRelation":"sideChat","status":"idle","chatKind":"single","updatedAt":"2026-06-19T09:26:00Z"},
+          {"id":"demo-3-sc1","title":"Is the flush race in the S3 client?","provider":"claude","workspaceId":"demo-ws","threadId":"demo-3-sc1","parentChatId":"demo-3","parentChatRelation":"sideChat","status":"idle","chatKind":"single","updatedAt":"2026-06-18T17:02:00Z"}
         ]
         """
         let snap1JSON = """
-        {"threadId":"demo-1","workspaceId":"demo-ws","provider":"claude","totalRows":3,"rows":[
+        {"threadId":"demo-1","workspaceId":"demo-ws","provider":"claude","totalRows":4,
+         "notes":"## Auth refactor\\n- Migrate call sites to `TokenService`\\n- Cover refresh + expiry with unit tests\\n- Keep the public `login()` signature stable",
+         "runSummary":{"runId":"demo-run-1","provider":"claude","model":"cli-default","status":"done","durationMs":84000,"totalTokens":18420,"tokensIn":12010,"tokensOut":6410,"costText":"$0.21","fileChanges":{"filesChanged":3,"additions":178,"deletions":42,"createdFiles":1,"modifiedFiles":2,"deletedFiles":0,"files":[{"path":"auth/TokenService.ts","status":"modified","additions":96,"deletions":12},{"path":"auth/index.ts","status":"modified","additions":18,"deletions":30},{"path":"auth/TokenService.test.ts","status":"added","additions":64,"deletions":0}]}},
+         "blackboardEntries":[
+           {"id":"bb-1-1","key":"Token strategy","value":"Use the new TokenService for all auth refresh paths.","category":"decision","scope":"thread","createdAt":"2026-06-19T10:41:30Z"},
+           {"id":"bb-1-2","key":"Refresh window","value":"Access tokens expire in 15m; refresh tokens in 30d.","category":"fact","scope":"thread","createdAt":"2026-06-19T10:41:40Z"},
+           {"id":"bb-1-3","key":"Clock skew","value":"Allow 60s skew when validating exp to avoid false expiries.","category":"risk","scope":"thread","createdAt":"2026-06-19T10:41:50Z"}
+         ],
+         "pinnedRows":[
+           {"id":"r2","role":"assistant","kind":"message","speaker":"Claude","preview":"I'll split auth into a TokenService, migrate the call sites, and add unit tests for refresh + expiry. Starting with the service.","timestamp":"2026-06-19T10:41:00Z"}
+         ],
+         "rows":[
           {"id":"r1","role":"user","kind":"message","preview":"Refactor the auth module to use the new TokenService and add tests.","timestamp":"2026-06-19T10:40:00Z"},
           {"id":"r2","role":"assistant","kind":"message","speaker":"Claude","preview":"I'll split auth into a TokenService, migrate the call sites, and add unit tests for refresh + expiry. Starting with the service.","timestamp":"2026-06-19T10:41:00Z"},
+          {"id":"r2b","role":"assistant","kind":"message","speaker":"Claude","preview":"Added to blackboard — Decision: Use the new TokenService for all auth refresh paths.","timestamp":"2026-06-19T10:41:35Z"},
           {"id":"r3","role":"assistant","kind":"tool","preview":"Edited 2 files (+114 −42)","timestamp":"2026-06-19T10:42:00Z","toolSummary":{"activityCount":2,"status":"done","tools":[{"name":"Edit auth/TokenService.ts","category":"file","status":"done","file":"auth/TokenService.ts","additions":96,"deletions":12},{"name":"Edit auth/index.ts","category":"file","status":"done","file":"auth/index.ts","additions":18,"deletions":30}]}}
         ]}
         """
         let snap2JSON = """
-        {"threadId":"demo-2","workspaceId":"demo-ws","provider":"claude","totalRows":3,"rows":[
+        {"threadId":"demo-2","workspaceId":"demo-ws","provider":"claude","totalRows":4,
+         "notes":"## v2 API plan\\n- Resource-oriented endpoints\\n- Cursor pagination across list endpoints\\n- Typed error envelope\\n- Idempotency keys on POST",
+         "runSummary":{"runId":"demo-run-2","provider":"claude","model":"cli-default","status":"done","durationMs":146000,"totalTokens":31200,"tokensIn":19800,"tokensOut":11400,"costText":"$0.38","fileChanges":{"filesChanged":2,"additions":286,"deletions":4,"createdFiles":2,"modifiedFiles":0,"deletedFiles":0,"files":[{"path":"docs/api-v2.md","status":"added","additions":132,"deletions":0},{"path":"openapi/v2.yaml","status":"added","additions":154,"deletions":4}]}},
+         "blackboardEntries":[
+           {"id":"bb-2-1","key":"Versioning","value":"Version in the path: /v2/…","category":"decision","scope":"ensemble","createdAt":"2026-06-19T09:27:10Z"},
+           {"id":"bb-2-2","key":"Pagination","value":"Cursor-based pagination across all list endpoints.","category":"decision","scope":"ensemble","createdAt":"2026-06-19T09:27:20Z"},
+           {"id":"bb-2-3","key":"Idempotency","value":"Require an Idempotency-Key header on every POST.","category":"decision","scope":"ensemble","participantId":"p-codex","createdAt":"2026-06-19T09:29:10Z"},
+           {"id":"bb-2-4","key":"v1 envelope","value":"v1 error shape differs — do not reuse the v1 envelope in v2.","category":"do-not-repeat","scope":"ensemble","createdAt":"2026-06-19T09:29:20Z"}
+         ],
+         "pinnedRows":[
+           {"id":"e2","role":"assistant","kind":"message","speaker":"Claude / Architect","preview":"Resource-oriented endpoints, cursor pagination, and explicit versioning in the path.","timestamp":"2026-06-19T09:27:00Z"}
+         ],
+         "rows":[
           {"id":"e1","role":"user","kind":"message","preview":"Draft the v2 public API surface — two perspectives, please.","timestamp":"2026-06-19T09:25:00Z"},
           {"id":"e2","role":"assistant","kind":"message","speaker":"Claude / Architect","preview":"Resource-oriented endpoints, cursor pagination, and explicit versioning in the path.","timestamp":"2026-06-19T09:27:00Z"},
-          {"id":"e3","role":"assistant","kind":"message","speaker":"Codex / Implementer","preview":"Agreed — add idempotency keys on POST and a typed error envelope so clients can branch safely.","timestamp":"2026-06-19T09:29:00Z"}
+          {"id":"e3","role":"assistant","kind":"message","speaker":"Codex / Implementer","preview":"Agreed — add idempotency keys on POST and a typed error envelope so clients can branch safely.","timestamp":"2026-06-19T09:29:00Z"},
+          {"id":"e3b","role":"assistant","kind":"message","speaker":"Codex / Implementer","preview":"Added to blackboard — Decision: Require an Idempotency-Key header on every POST.","timestamp":"2026-06-19T09:29:30Z"}
         ]}
         """
         let snap3JSON = """
-        {"threadId":"demo-3","workspaceId":"demo-ws","provider":"codex","totalRows":2,"rows":[
+        {"threadId":"demo-3","workspaceId":"demo-ws","provider":"codex","totalRows":3,
+         "notes":"## Flaky upload test\\n- Race between assert and buffer flush\\n- Fix: await flush + deterministic clock\\n- Verified green across 200 runs",
+         "runSummary":{"runId":"demo-run-3","provider":"codex","model":"cli-default","status":"done","durationMs":52000,"totalTokens":9600,"tokensIn":6400,"tokensOut":3200,"costText":"$0.09","fileChanges":{"filesChanged":2,"additions":40,"deletions":10,"createdFiles":0,"modifiedFiles":2,"deletedFiles":0,"files":[{"path":"src/upload/uploader.ts","status":"modified","additions":12,"deletions":4},{"path":"test/upload.test.ts","status":"modified","additions":28,"deletions":6}]}},
+         "blackboardEntries":[
+           {"id":"bb-3-1","key":"Root cause","value":"Test asserted before the upload buffer drained.","category":"fact","scope":"thread","createdAt":"2026-06-18T17:04:30Z"},
+           {"id":"bb-3-2","key":"Fix","value":"Await the flush promise; inject a deterministic clock.","category":"decision","scope":"thread","createdAt":"2026-06-18T17:04:40Z"},
+           {"id":"bb-3-3","key":"Flake guard","value":"Never assert on wall-clock timing in CI.","category":"do-not-repeat","scope":"thread","createdAt":"2026-06-18T17:04:50Z"}
+         ],
+         "pinnedRows":[
+           {"id":"s2","role":"assistant","kind":"message","speaker":"Codex","preview":"The test asserted before the buffer drained. I awaited the flush promise and used a deterministic clock — green across 200 runs.","timestamp":"2026-06-18T17:05:00Z"}
+         ],
+         "rows":[
           {"id":"s1","role":"user","kind":"message","preview":"The upload test fails intermittently in CI. Find and fix the race.","timestamp":"2026-06-18T17:00:00Z"},
-          {"id":"s2","role":"assistant","kind":"message","speaker":"Codex","preview":"The test asserted before the buffer drained. I awaited the flush promise and used a deterministic clock — green across 200 runs.","timestamp":"2026-06-18T17:05:00Z"}
+          {"id":"s2","role":"assistant","kind":"message","speaker":"Codex","preview":"The test asserted before the buffer drained. I awaited the flush promise and used a deterministic clock — green across 200 runs.","timestamp":"2026-06-18T17:05:00Z"},
+          {"id":"s2b","role":"assistant","kind":"message","speaker":"Codex","preview":"Added to blackboard — Fact: Test asserted before the upload buffer drained.","timestamp":"2026-06-18T17:05:10Z"}
         ]}
         """
         let providerModelsJSON = """
@@ -946,6 +990,74 @@ public final class RemoteSessionModel: ObservableObject {
         """
         if let appr = Self.decodeDemo([MobileApprovalCard].self, approvalsJSON) { approvals = appr }
         if let ens = Self.decodeDemo(RemoteEnsembleState.self, ensembleJSON) { ensembleStates["demo-2"] = ens }
+
+        // — Inspector · Changes tab — per-thread diff summaries —
+        let diffsJSON = """
+        {
+         "demo-1":{"threadId":"demo-1","runId":"demo-run-1","filesChanged":3,"additions":178,"deletions":42,"createdFiles":1,"modifiedFiles":2,"deletedFiles":0,"files":[{"path":"auth/TokenService.ts","status":"modified","additions":96,"deletions":12},{"path":"auth/index.ts","status":"modified","additions":18,"deletions":30},{"path":"auth/TokenService.test.ts","status":"added","additions":64,"deletions":0}]},
+         "demo-2":{"threadId":"demo-2","runId":"demo-run-2","filesChanged":2,"additions":286,"deletions":4,"createdFiles":2,"modifiedFiles":0,"deletedFiles":0,"files":[{"path":"docs/api-v2.md","status":"added","additions":132,"deletions":0},{"path":"openapi/v2.yaml","status":"added","additions":154,"deletions":4}]},
+         "demo-3":{"threadId":"demo-3","runId":"demo-run-3","filesChanged":2,"additions":40,"deletions":10,"createdFiles":0,"modifiedFiles":2,"deletedFiles":0,"files":[{"path":"src/upload/uploader.ts","status":"modified","additions":12,"deletions":4},{"path":"test/upload.test.ts","status":"modified","additions":28,"deletions":6}]}
+        }
+        """
+        if let diffs = Self.decodeDemo([String: MobileDiffSummary].self, diffsJSON) { diffSummaries = diffs }
+
+        // — Inspector · Agents + Side-chats — child thread snapshots so any
+        //   sub-agent / side chat opens inline with real content. —
+        let childSnapsJSON: [String: String] = [
+          "demo-1-sub1": #"{"threadId":"demo-1-sub1","workspaceId":"demo-ws","provider":"claude","totalRows":2,"rows":[{"id":"a11","role":"user","kind":"message","preview":"Map every call site that builds or verifies a JWT."},{"id":"a12","role":"assistant","kind":"message","speaker":"Scout","preview":"Found 7 call sites across auth/, api/middleware/ and jobs/ — each listed with a line reference."}]}"#,
+          "demo-1-sub2": #"{"threadId":"demo-1-sub2","workspaceId":"demo-ws","provider":"codex","totalRows":2,"rows":[{"id":"a21","role":"user","kind":"message","preview":"Write unit tests for token refresh and expiry."},{"id":"a22","role":"assistant","kind":"message","speaker":"Tester","preview":"Added 9 tests covering refresh rotation, expiry and 60s clock skew. All green locally."}]}"#,
+          "demo-2-sub1": #"{"threadId":"demo-2-sub1","workspaceId":"demo-ws","provider":"claude","totalRows":2,"rows":[{"id":"a31","role":"user","kind":"message","preview":"Survey how Stripe, GitHub and Linear paginate their list APIs."},{"id":"a32","role":"assistant","kind":"message","speaker":"Researcher","preview":"All three use cursor pagination with opaque tokens; GitHub also exposes RFC-5988 Link headers."}]}"#,
+          "demo-3-sub1": #"{"threadId":"demo-3-sub1","workspaceId":"demo-ws","provider":"codex","totalRows":2,"rows":[{"id":"a41","role":"user","kind":"message","preview":"Bisect to the commit that introduced the flake."},{"id":"a42","role":"assistant","kind":"message","speaker":"Bisector","preview":"First flaky at a3f9c1 — the change that moved the assert ahead of the awaited flush."}]}"#,
+          "demo-1-sc1": #"{"threadId":"demo-1-sc1","workspaceId":"demo-ws","provider":"codex","totalRows":2,"rows":[{"id":"c11","role":"user","kind":"message","preview":"jose vs jsonwebtoken for ES256 — which should we standardize on?"},{"id":"c12","role":"assistant","kind":"message","speaker":"Codex","preview":"Prefer jose: native ES256, actively maintained and tree-shakeable. jsonwebtoken needs extra deps for ECDSA."}]}"#,
+          "demo-2-sc1": #"{"threadId":"demo-2-sc1","workspaceId":"demo-ws","provider":"claude","totalRows":2,"rows":[{"id":"c21","role":"user","kind":"message","preview":"Cursor vs offset pagination for the list endpoints?"},{"id":"c22","role":"assistant","kind":"message","speaker":"Claude","preview":"Cursor pagination — stable under inserts and cheap at depth. Encode the cursor as an opaque base64 token."}]}"#,
+          "demo-3-sc1": #"{"threadId":"demo-3-sc1","workspaceId":"demo-ws","provider":"claude","totalRows":2,"rows":[{"id":"c31","role":"user","kind":"message","preview":"Could the flush race actually be inside the S3 client, not our code?"},{"id":"c32","role":"assistant","kind":"message","speaker":"Claude","preview":"Unlikely — the SDK resolves upload() only after the body stream ends. The race is the test asserting before awaiting it."}]}"#,
+        ]
+        for (key, json) in childSnapsJSON {
+            if let snap = Self.decodeDemo(RemoteThreadSnapshot.self, json) { threadSnapshots[key] = snap }
+        }
+
+        // — Inspector · Usage tab — per-provider quota windows (no gemini) —
+        let modelUsageJSON = """
+        {"generatedAt":"2026-06-19T10:45:00Z","providers":[
+          {"provider":"claude","windows":[
+            {"id":"claude-5h","label":"Current session (5h)","usedPercent":42,"limitLabel":"resets 1 PM","resetAt":"2026-06-19T13:00:00Z"},
+            {"id":"claude-week","label":"Weekly quota","usedPercent":61,"limitLabel":"of weekly limit","resetAt":"2026-06-23T00:00:00Z"}]},
+          {"provider":"codex","windows":[
+            {"id":"codex-5h","label":"Current session (5h)","usedPercent":28,"limitLabel":"resets 2 PM","resetAt":"2026-06-19T14:00:00Z"},
+            {"id":"codex-week","label":"Weekly quota","usedPercent":47,"limitLabel":"of weekly limit","resetAt":"2026-06-24T00:00:00Z"}]},
+          {"provider":"kimi","windows":[{"id":"kimi-day","label":"Daily quota","usedPercent":12,"limitLabel":"of daily limit","resetAt":"2026-06-20T00:00:00Z"}]},
+          {"provider":"grok","windows":[{"id":"grok-day","label":"Daily quota","usedPercent":7,"limitLabel":"of daily limit","resetAt":"2026-06-20T00:00:00Z"}]},
+          {"provider":"cursor","windows":[{"id":"cursor-month","label":"Monthly requests","usedPercent":34,"limitLabel":"500 / month","resetAt":"2026-07-01T00:00:00Z"}]}
+        ]}
+        """
+        let rollupJSON = """
+        {"providers":[
+          {"provider":"claude","h24":182000,"d7":1240000,"d90":9800000},
+          {"provider":"codex","h24":96000,"d7":610000,"d90":4100000},
+          {"provider":"kimi","h24":14000,"d7":120000,"d90":880000},
+          {"provider":"grok","h24":8000,"d7":54000,"d90":420000},
+          {"provider":"cursor","h24":4000,"d7":31000,"d90":260000}
+        ],"totals":{"h24":304000,"d7":2055000,"d90":15460000}}
+        """
+        if let usage = Self.decodeDemo(ModelUsageMessage.Usage.self, modelUsageJSON) { modelUsage = usage }
+        if let rollup = Self.decodeDemo(UsageRollupMessage.Rollup.self, rollupJSON) { usageRollup = rollup }
+
+        // 30-day token bar charts — deterministic synthetic series (no gemini).
+        let twProviders = ["claude", "codex", "kimi"]
+        let twValues = (0..<30).map { i in 26_000 + ((i * 17) % 11) * 5_500 + (i % 4) * 3_200 }
+        let twBars = twValues.enumerated().map { (i, v) in
+            #"{"tokens":\#(v),"provider":"\#(twProviders[i % twProviders.count])"}"#
+        }.joined(separator: ",")
+        let twDailyJSON = #"{"totalTokens":\#(twValues.reduce(0, +)),"startLabel":"21 May","endLabel":"19 Jun","buckets":[\#(twBars)]}"#
+        if let series = Self.decodeDemo(DailyTokenSeries.self, twDailyJSON) { taskwraithTokenDaily = series }
+        let extProviders = ["cursor", "grok"]
+        let extValues = (0..<30).map { i in 8_000 + ((i * 13) % 9) * 2_400 + (i % 3) * 1_500 }
+        let extBars = extValues.enumerated().map { (i, v) in
+            #"{"tokens":\#(v),"provider":"\#(extProviders[i % extProviders.count])"}"#
+        }.joined(separator: ",")
+        let extDailyJSON = #"{"totalTokens":\#(extValues.reduce(0, +)),"startLabel":"21 May","endLabel":"19 Jun","buckets":[\#(extBars)]}"#
+        if let series = Self.decodeDemo(DailyTokenSeries.self, extDailyJSON) { externalTokenDaily = series }
+
         macDisplayName = "Demo Mac"
         selectedTaskId = "demo-1"
         projectionHydrated = true
@@ -989,6 +1101,7 @@ public final class RemoteSessionModel: ObservableObject {
         gitSnapshots = [:]
         ensembleStates = [:]
         diffSummaries = [:]
+        threadWorkspaceHints = [:]
         navigationTarget = nil
         visibleThreadId = nil
         lastActionMessage = nil
@@ -1000,14 +1113,67 @@ public final class RemoteSessionModel: ObservableObject {
         name == "Demo Mac" ? "" : name
     }
 
+    /// Demo-only: a mutable mirror of the immutable `RemoteThreadSnapshot` so
+    /// local edits (appended turns, saved notes, pinned rows) can rebuild it
+    /// while preserving every other field.
+    private struct DemoSnapshotDraft {
+        var threadId: String?
+        var taskId: String?
+        var workspaceId: String?
+        var provider: String?
+        var rows: [RemoteThreadSnapshot.Row]?
+        var totalRows: Int?
+        var runSummary: RemoteThreadSnapshot.RunSummary?
+        var notes: String?
+        var pinnedRows: [RemoteThreadSnapshot.Row]?
+        var blackboardEntries: [RemoteThreadSnapshot.BlackboardEntry]?
+        var runSummaries: [RemoteThreadSnapshot.RunSummary]?
+        var windowStartIndex: Int?
+        var hasMoreAbove: Bool?
+        var hasMoreBelow: Bool?
+        init(_ s: RemoteThreadSnapshot) {
+            threadId = s.threadId
+            taskId = s.taskId
+            workspaceId = s.workspaceId
+            provider = s.provider
+            rows = s.rows
+            totalRows = s.totalRows
+            runSummary = s.runSummary
+            notes = s.notes
+            pinnedRows = s.pinnedRows
+            blackboardEntries = s.blackboardEntries
+            runSummaries = s.runSummaries
+            windowStartIndex = s.windowStartIndex
+            hasMoreAbove = s.hasMoreAbove
+            hasMoreBelow = s.hasMoreBelow
+        }
+        func build() -> RemoteThreadSnapshot {
+            RemoteThreadSnapshot(
+                threadId: threadId, taskId: taskId, workspaceId: workspaceId,
+                provider: provider, rows: rows, totalRows: totalRows,
+                runSummary: runSummary, notes: notes, pinnedRows: pinnedRows,
+                blackboardEntries: blackboardEntries, runSummaries: runSummaries,
+                windowStartIndex: windowStartIndex, hasMoreAbove: hasMoreAbove,
+                hasMoreBelow: hasMoreBelow)
+        }
+    }
+
+    /// Demo-only: apply an in-place edit to a thread snapshot (no-op if absent).
+    private func editDemoSnapshot(
+        _ thread: String, _ edit: (inout DemoSnapshotDraft) -> Void
+    ) {
+        guard let existing = threadSnapshots[thread] else { return }
+        var draft = DemoSnapshotDraft(existing)
+        edit(&draft)
+        threadSnapshots[thread] = draft.build()
+    }
+
     /// Demo-only: append the user's prompt + a canned assistant reply to a thread
     /// so the composer feels interactive with no network. Rows are built via JSON
     /// so they decode through the same Codable path as real rows.
     private func appendDemoTurn(card: RemoteTaskCard, prompt: String) {
         guard let thread = card.threadId else { return }
-        let existing = threadSnapshots[thread]
-        let base = existing?.rows ?? []
-        let n = base.count
+        let n = threadSnapshots[thread]?.rows?.count ?? 0
         let speaker = card.provider.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Assistant"
         let reply =
             "Demo reply — connect TaskWraith on your Mac to run this for real. Live, I'd plan the change, edit files behind your approval, and stream the results back here."
@@ -1016,10 +1182,18 @@ public final class RemoteSessionModel: ObservableObject {
             let replyRow = Self.demoRow(
                 id: "demo-a-\(n)", role: "assistant", speaker: speaker, preview: reply)
         else { return }
-        let rows = base + [userRow, replyRow]
-        threadSnapshots[thread] = RemoteThreadSnapshot(
-            threadId: thread, workspaceId: existing?.workspaceId, provider: existing?.provider,
-            rows: rows, totalRows: rows.count)
+        if threadSnapshots[thread] != nil {
+            editDemoSnapshot(thread) { draft in
+                let rows = (draft.rows ?? []) + [userRow, replyRow]
+                draft.rows = rows
+                draft.totalRows = rows.count
+            }
+        } else {
+            let rows = [userRow, replyRow]
+            threadSnapshots[thread] = RemoteThreadSnapshot(
+                threadId: thread, workspaceId: card.workspaceId, provider: card.provider,
+                rows: rows, totalRows: rows.count)
+        }
     }
 
     private static func demoRow(id: String, role: String, speaker: String?, preview: String)
@@ -2136,6 +2310,25 @@ public final class RemoteSessionModel: ObservableObject {
         reasoningEffort: String? = nil, navigateOnAck: Bool = true,
         onCreated: ((String?) -> Void)? = nil
     ) {
+        if isDemo {
+            guard let thread = card.threadId else { return }
+            let prov = provider ?? card.provider ?? "claude"
+            let ws = card.workspaceId ?? "demo-ws"
+            let newId = "demo-sc-" + UUID().uuidString.prefix(8).lowercased()
+            let label = TWTheme.providerLabel(prov)
+            let cardJSON =
+                #"{"id":"\#(newId)","title":"Side chat — \#(label) exploration","provider":"\#(prov)","workspaceId":"\#(ws)","threadId":"\#(newId)","parentChatId":"\#(thread)","parentChatRelation":"sideChat","status":"idle","chatKind":"single"}"#
+            let snapJSON =
+                #"{"threadId":"\#(newId)","workspaceId":"\#(ws)","provider":"\#(prov)","totalRows":1,"rows":[{"id":"\#(newId)-1","role":"assistant","kind":"message","speaker":"\#(label)","preview":"New side chat ready. In a live session this isolated thread runs independently of its parent — ask it anything."}]}"#
+            if let newCard = Self.decodeDemo(RemoteTaskCard.self, cardJSON) { taskCards.append(newCard) }
+            if let snap = Self.decodeDemo(RemoteThreadSnapshot.self, snapJSON) {
+                threadSnapshots[newId] = snap
+            }
+            rememberThreadWorkspace(newId, workspaceId: ws)
+            lastActionMessage = "Side chat created."
+            onCreated?(newId)
+            return
+        }
         guard let ws = card.workspaceId, let thread = card.threadId else { return }
         send(
             BridgeAction.createSideChat(
@@ -2215,6 +2408,13 @@ public final class RemoteSessionModel: ObservableObject {
 
     /// Save thread notes (markdown; empty clears).
     public func setThreadNotes(_ card: RemoteTaskCard, notes: String) {
+        if isDemo {
+            guard let thread = card.threadId else { return }
+            let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            editDemoSnapshot(thread) { $0.notes = trimmed.isEmpty ? nil : notes }
+            lastActionMessage = "Notes saved."
+            return
+        }
         guard let ws = card.workspaceId, let thread = card.threadId else { return }
         send(
             BridgeAction.setThreadNotes(workspaceId: ws, threadId: thread, notes: notes),
@@ -2238,6 +2438,24 @@ public final class RemoteSessionModel: ObservableObject {
 
     /// Pin or unpin a transcript message.
     public func toggleMessagePin(_ card: RemoteTaskCard, messageId: String, pinned: Bool) {
+        if isDemo {
+            guard let thread = card.threadId else { return }
+            editDemoSnapshot(thread) { draft in
+                var pins = draft.pinnedRows ?? []
+                if pinned {
+                    if !pins.contains(where: { $0.id == messageId }),
+                        let row = (draft.rows ?? []).first(where: { $0.id == messageId })
+                    {
+                        pins.append(row)
+                    }
+                } else {
+                    pins.removeAll { $0.id == messageId }
+                }
+                draft.pinnedRows = pins.isEmpty ? nil : pins
+            }
+            lastActionMessage = pinned ? "Pinned." : "Unpinned."
+            return
+        }
         guard let ws = card.workspaceId, let thread = card.threadId else { return }
         send(
             BridgeAction.toggleMessagePin(
@@ -2272,6 +2490,7 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     public func requestThreadSnapshot(_ threadId: String, limit: Int = 40, beforeRowId: String? = nil) {
+        guard !isDemo else { return }  // demo snapshots are pre-seeded; never hit the wire
         guard let workspaceId = remoteScopeForThread(threadId)
         else { return }
         let params = BridgeAction.threadSnapshotRequest(
