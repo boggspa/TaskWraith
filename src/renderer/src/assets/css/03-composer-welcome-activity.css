@@ -9290,9 +9290,10 @@ button.diff-file-row {
   max-width: 640px;
   margin: 20px auto;
   padding: 11px 14px;
-  border: 1px solid var(--panel-border, rgba(127, 127, 127, 0.25));
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
   border-radius: 12px;
-  background: var(--panel-bg, rgba(127, 127, 127, 0.06));
+  background: color-mix(in srgb, var(--danger) 7%, var(--panel-bg, rgba(127, 127, 127, 0.06)));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--text-secondary, inherit);
   font-size: 13px;
   line-height: 1.45;
@@ -9301,7 +9302,7 @@ button.diff-file-row {
   flex: 0 0 auto;
   margin-top: 1px;
   font-size: 14px;
-  color: var(--text-muted, currentColor);
+  color: var(--danger);
 }
 .gemini-retirement-banner-text {
   flex: 1 1 auto;
