@@ -8,7 +8,7 @@
       <path d="M7.35 14.3h8.95c.9 0 1.45.55 1.45 1.45v2.05c0 .9-.55 1.45-1.45 1.45H7.35c-.9 0-1.45-.55-1.45-1.45v-2.05c0-.9.55-1.45 1.45-1.45Z"/>
       <path class="fine" d="M6.4 7.3h2.9"/>
       <path class="fine" d="M8.25 16.8h6.9"/>
-      <circle class="dot" cx="5.2" cy="7.3" r=".55"/>
+      <circle class="dot" cx="5.2" cy="7.3" r=".48"/>
       <path class="fine" d="m15.45 7.95.65.65 1.25-1.5"/>
       <path d="M11.7 7.3h1.35"/>
       <path d="M16.4 11.3v.95c0 1.25-.72 1.9-2.05 2.05"/>
@@ -34,13 +34,13 @@
     .glyph {
       fill: none;
       stroke: currentColor;
-      stroke-width: 1.7;
+      stroke-width: 1.45;
       stroke-linecap: round;
       stroke-linejoin: round;
     }
 
     .glyph .fine {
-      stroke-width: 1.25;
+      stroke-width: 1.05;
       opacity: 0.76;
     }
 

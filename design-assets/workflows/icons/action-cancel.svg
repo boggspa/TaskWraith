@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-action-cancel-title workflow-action-cancel-desc" style="color: currentColor; --workflow-accent: currentColor;">
   <title id="workflow-action-cancel-title">Cancel workflow run</title>
   <desc id="workflow-action-cancel-desc">Original monoline stop glyph with an interrupt slash.</desc>
-  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round">
     <path d="M6.1 6.1h11.8v11.8H6.1Z"/>
     <path d="M5 19 19 5"/>
   </g>

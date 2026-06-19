@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-action-pause-title workflow-action-pause-desc" style="color: currentColor; --workflow-accent: currentColor;">
   <title id="workflow-action-pause-title">Pause workflow</title>
   <desc id="workflow-action-pause-desc">Original monoline pause glyph with a queued cadence bead.</desc>
-  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round">
     <path d="M7.2 5.3v13.4"/>
     <path d="M14.2 5.3v13.4"/>
     <path d="M18.4 7.3c1.2 1.25 1.85 2.85 1.85 4.7s-.65 3.45-1.85 4.7"/>

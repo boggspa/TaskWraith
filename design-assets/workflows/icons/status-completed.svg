@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-status-completed-title workflow-status-completed-desc" style="color: currentColor; --workflow-accent: currentColor;">
   <title id="workflow-status-completed-title">Completed workflow runs</title>
   <desc id="workflow-status-completed-desc">Original monoline completion check for workflow counters.</desc>
-  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">
+  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
     <path d="M4.2 12.3 9.2 17.2 19.8 6.8"/>
     <path d="M5.1 5.2h13.8v13.6H5.1Z" opacity=".34"/>
   </g>

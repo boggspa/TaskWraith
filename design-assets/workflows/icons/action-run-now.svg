@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-action-run-title workflow-action-run-desc" style="color: currentColor; --workflow-accent: currentColor;">
   <title id="workflow-action-run-title">Run workflow now</title>
   <desc id="workflow-action-run-desc">Original monoline play glyph with a small instant-run spark.</desc>
-  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round">
     <path d="M6.2 5.2 17.9 12 6.2 18.8Z"/>
     <path d="M17.4 4.2 16.1 6.3"/>
     <path d="M20.1 7.1 17.8 8.1"/>

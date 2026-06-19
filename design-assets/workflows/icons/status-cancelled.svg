@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-status-cancelled-title workflow-status-cancelled-desc" style="color: currentColor; --workflow-accent: currentColor;">
   <title id="workflow-status-cancelled-title">Cancelled workflow runs</title>
   <desc id="workflow-status-cancelled-desc">Original monoline stop-sign slash for workflow counters.</desc>
-  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round">
     <path d="M8.4 4.3h7.2l4.1 4.1v7.2l-4.1 4.1H8.4l-4.1-4.1V8.4Z"/>
     <path d="M7.5 16.5 16.5 7.5"/>
   </g>
