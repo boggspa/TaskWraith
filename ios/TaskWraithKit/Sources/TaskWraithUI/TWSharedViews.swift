@@ -3644,7 +3644,7 @@ public struct EditableRosterStrip: View {
     let workspaceId: String
 
     @State private var draft: [RemoteSessionModel.RosterDraftEntry] = []
-    @State private var editingId: String? = nil
+    @State private var editingEntry: RemoteSessionModel.RosterDraftEntry? = nil
     @State private var draggingId: String? = nil
     /// Id-order we last committed; suppress reconcile until the Mac echoes a
     /// matching order so an in-flight snapshot can't snap a reorder back.
@@ -3764,7 +3764,7 @@ public struct EditableRosterStrip: View {
         .onAppear { if draft.isEmpty { draft = remoteRoster } }
         .onChange(of: remoteRoster) { _, fresh in
             // Reconcile from the Mac unless mid-edit (popover open / drag).
-            guard editingId == nil, draggingId == nil else { return }
+            guard editingEntry == nil, draggingId == nil else { return }
             // Don't let an in-flight snapshot clobber a just-committed reorder:
             // hold the optimistic order until the Mac echoes a matching id-order
             // (it force-broadcasts it). Adopt immediately if membership changed.
@@ -3778,12 +3778,11 @@ public struct EditableRosterStrip: View {
             }
             draft = fresh
         }
-        .sheet(
-            item: Binding(
-                get: { editingId.flatMap { id in draft.first { $0.id == id } } },
-                set: { if $0 == nil { editingId = nil } }
-            )
-        ) { entry in
+        // Present from a stable @State entry, NOT a binding re-derived from
+        // `draft` every render — that computed binding collapsed to nil on the
+        // keyboard-driven re-render when the role field was focused, dismissing
+        // the sheet. @State survives parent re-renders.
+        .sheet(item: $editingEntry) { entry in
             RosterChipEditor(
                 entry: entry,
                 catalogs: catalogs,
@@ -3792,7 +3791,7 @@ public struct EditableRosterStrip: View {
                     if let index = draft.firstIndex(where: { $0.id == updated.id }) {
                         draft[index] = updated
                     }
-                    editingId = nil
+                    editingEntry = nil
                     commit()
                 },
                 onMove: { direction in
@@ -3806,7 +3805,7 @@ public struct EditableRosterStrip: View {
                 },
                 onRemove: {
                     draft.removeAll { $0.id == entry.id }
-                    editingId = nil
+                    editingEntry = nil
                     commit()
                 }
             )
@@ -3830,7 +3829,7 @@ public struct EditableRosterStrip: View {
         let title =
             entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
         return Button {
-            editingId = entry.id
+            editingEntry = entry
         } label: {
             HStack(spacing: 5) {
                 if retired {
