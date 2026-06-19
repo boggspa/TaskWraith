@@ -1197,6 +1197,67 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    /// Demo-only: fabricate a brand-new empty chat locally (workspace / ensemble
+    /// / global) so the New-Chat canvas resolves to a usable welcome screen
+    /// instead of spinning on "Creating…" forever (send() is inert in demo).
+    /// Built via JSONSerialization → Codable, the same path as the live wire.
+    private func createDemoThread(
+        workspaceId: String, variant: String, provider: String?, title: String,
+        onCreated: ((String?) -> Void)?
+    ) {
+        let newId = "demo-new-" + UUID().uuidString.prefix(8).lowercased()
+        let isEnsemble = variant == "ensemble"
+        let isGlobal = variant == "global"
+        let prov = provider ?? "claude"
+        let ws = isGlobal ? "global" : workspaceId
+
+        var cardDict: [String: Any] = [
+            "id": newId, "title": title, "workspaceId": ws, "threadId": newId,
+            "status": "idle", "chatKind": isEnsemble ? "ensemble" : "single",
+        ]
+        if !isEnsemble { cardDict["provider"] = prov }
+        let snapDict: [String: Any] = [
+            "threadId": newId, "workspaceId": ws, "provider": prov,
+            "totalRows": 0, "rows": [],
+        ]
+        guard
+            let cardData = try? JSONSerialization.data(withJSONObject: cardDict),
+            let card = try? JSONDecoder().decode(RemoteTaskCard.self, from: cardData),
+            let snapData = try? JSONSerialization.data(withJSONObject: snapDict),
+            let snap = try? JSONDecoder().decode(RemoteThreadSnapshot.self, from: snapData)
+        else {
+            onCreated?(nil)
+            return
+        }
+        taskCards.append(card)
+        threadSnapshots[newId] = snap
+        if isEnsemble {
+            let ensDict: [String: Any] = [
+                "threadId": newId, "status": "idle",
+                "participants": [
+                    ["participantId": "p-claude", "provider": "claude", "role": "Architect",
+                        "order": 1, "status": "idle"],
+                    ["participantId": "p-codex", "provider": "codex", "role": "Implementer",
+                        "order": 2, "status": "idle"],
+                ],
+                "roster": [
+                    ["id": "p-claude", "provider": "claude", "role": "Architect", "enabled": true,
+                        "order": 1, "model": "cli-default"],
+                    ["id": "p-codex", "provider": "codex", "role": "Implementer", "enabled": true,
+                        "order": 2, "model": "cli-default"],
+                ],
+            ]
+            if let ensData = try? JSONSerialization.data(withJSONObject: ensDict),
+                let ensState = try? JSONDecoder().decode(RemoteEnsembleState.self, from: ensData)
+            {
+                ensembleStates[newId] = ensState
+            }
+        }
+        rememberThreadWorkspace(newId, workspaceId: ws)
+        lastActionMessage = "Chat created."
+        onCreated?(newId)
+    }
+
     private static func demoRow(id: String, role: String, speaker: String?, preview: String)
         -> RemoteThreadSnapshot.Row?
     {
@@ -3095,6 +3156,12 @@ public final class RemoteSessionModel: ObservableObject {
         workspaceId: String, variant: String = "workspace", provider: String? = nil,
         threadId: String? = nil, title: String = "New Chat", onCreated: ((String?) -> Void)? = nil
     ) {
+        if isDemo {
+            createDemoThread(
+                workspaceId: workspaceId, variant: variant, provider: provider, title: title,
+                onCreated: onCreated)
+            return
+        }
         send(
             BridgeAction.createThread(
                 workspaceId: workspaceId, variant: variant, threadId: threadId, provider: provider,
