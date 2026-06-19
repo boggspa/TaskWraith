@@ -900,7 +900,7 @@ public final class RemoteSessionModel: ObservableObject {
         disconnect()
         clearCachedProjectionState()
         let workspacesJSON = """
-        [{"workspaceId":"demo-ws","displayName":"Demo Project","path":"~/Developer/taskwraith-demo","chatCount":3}]
+        [{"workspaceId":"demo-ws","displayName":"Demo Project","path":"~/Developer/taskwraith-demo","chatCount":3,"capabilities":{"diffReview":true,"fileBrowse":true,"fileRead":true,"fileWrite":true}}]
         """
         let cardsJSON = """
         [
@@ -1102,6 +1102,7 @@ public final class RemoteSessionModel: ObservableObject {
         ensembleStates = [:]
         diffSummaries = [:]
         threadWorkspaceHints = [:]
+        demoFileEdits = [:]
         navigationTarget = nil
         visibleThreadId = nil
         lastActionMessage = nil
@@ -1205,6 +1206,216 @@ public final class RemoteSessionModel: ObservableObject {
             let row = try? JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: data)
         else { return nil }
         return row
+    }
+
+    // ── Demo file editor + diff studio ────────────────────────────────────────
+    // Offline canned filesystem so the Files browser, editor save, and Diff
+    // Studio all work without a Mac. Edits live in `demoFileEdits` (in-memory,
+    // wiped on demo exit); reads fall back to the static seed content.
+
+    /// In-session demo file edits (path → content). Cleared on demo exit.
+    private var demoFileEdits: [String: String] = [:]
+
+    /// Flat workspace tree for `listWorkspaceFiles` — the view's
+    /// `immediateChildren`/`searchMatches` filter this by path/query.
+    private static let demoFileTreeJSON = """
+    [
+     {"path":"auth","name":"auth","isDirectory":true,"depth":0,"hasChildren":true},
+     {"path":"src","name":"src","isDirectory":true,"depth":0,"hasChildren":true},
+     {"path":"test","name":"test","isDirectory":true,"depth":0,"hasChildren":true},
+     {"path":"docs","name":"docs","isDirectory":true,"depth":0,"hasChildren":true},
+     {"path":"README.md","name":"README.md","isDirectory":false,"depth":0,"sizeBytes":420},
+     {"path":"package.json","name":"package.json","isDirectory":false,"depth":0,"sizeBytes":260},
+     {"path":"auth/TokenService.ts","name":"TokenService.ts","isDirectory":false,"depth":1,"sizeBytes":980},
+     {"path":"auth/index.ts","name":"index.ts","isDirectory":false,"depth":1,"sizeBytes":360},
+     {"path":"auth/TokenService.test.ts","name":"TokenService.test.ts","isDirectory":false,"depth":1,"sizeBytes":760},
+     {"path":"src/upload","name":"upload","isDirectory":true,"depth":1,"hasChildren":true},
+     {"path":"src/upload/uploader.ts","name":"uploader.ts","isDirectory":false,"depth":2,"sizeBytes":340},
+     {"path":"test/upload.test.ts","name":"upload.test.ts","isDirectory":false,"depth":1,"sizeBytes":320},
+     {"path":"docs/api-v2.md","name":"api-v2.md","isDirectory":false,"depth":1,"sizeBytes":520}
+    ]
+    """
+
+    /// Seed file contents (real newlines; JSONSerialization escapes them when
+    /// building the read result). Edited copies override these via `demoFileEdits`.
+    private static let demoFileContents: [String: String] = [
+        "auth/TokenService.ts": """
+        import { SignJWT, jwtVerify } from 'jose'
+        import type { Clock } from './clock'
+
+        const ACCESS_TTL = 15 * 60          // 15 minutes
+        const REFRESH_TTL = 30 * 24 * 3600  // 30 days
+        const SKEW = 60                     // tolerate 60s clock skew
+
+        export class TokenService {
+          constructor(
+            private readonly clock: Clock,
+            private readonly secret: Uint8Array,
+          ) {}
+
+          async issue(userId: string) {
+            const now = this.clock.now()
+            const access = await new SignJWT({ sub: userId })
+              .setProtectedHeader({ alg: 'ES256' })
+              .setIssuedAt(now)
+              .setExpirationTime(now + ACCESS_TTL)
+              .sign(this.secret)
+            return { access }
+          }
+
+          async verify(token: string) {
+            return jwtVerify(token, this.secret, { clockTolerance: SKEW })
+          }
+        }
+        """,
+        "auth/index.ts": """
+        export { TokenService } from './TokenService'
+        export type { Clock } from './clock'
+
+        import { TokenService } from './TokenService'
+
+        // Keep the public login() signature stable across the refactor.
+        export async function login(userId: string, deps: { tokens: TokenService }) {
+          return deps.tokens.issue(userId)
+        }
+        """,
+        "auth/TokenService.test.ts": """
+        import { describe, it, expect } from 'vitest'
+        import { TokenService } from './TokenService'
+        import { FakeClock } from '../test/FakeClock'
+
+        describe('TokenService', () => {
+          it('issues an access token that verifies', async () => {
+            const svc = new TokenService(new FakeClock(0), KEY)
+            const { access } = await svc.issue('u_1')
+            await expect(svc.verify(access)).resolves.toBeTruthy()
+          })
+
+          it('rejects a token expired beyond the skew window', async () => {
+            const clock = new FakeClock(0)
+            const svc = new TokenService(clock, KEY)
+            const { access } = await svc.issue('u_1')
+            clock.advance(16 * 60)
+            await expect(svc.verify(access)).rejects.toThrow()
+          })
+        })
+        """,
+        "src/upload/uploader.ts": """
+        export async function upload(stream: ReadableStream, sink: Sink) {
+          const writer = sink.writable.getWriter()
+          await stream.pipeTo(sink.writable)
+          // FIX: await the flush before resolving so callers can assert safely.
+          await writer.ready
+          return sink.result()
+        }
+        """,
+        "test/upload.test.ts": """
+        import { it, expect } from 'vitest'
+        import { upload } from '../src/upload/uploader'
+
+        it('resolves only after the buffer has drained', async () => {
+          const sink = new MemorySink()
+          await upload(fixtureStream(), sink)
+          // Previously asserted before the flush — the source of the flake.
+          expect(sink.bytes).toBe(FIXTURE_BYTES)
+        })
+        """,
+        "docs/api-v2.md": """
+        # Public API v2
+
+        ## Principles
+        - Resource-oriented endpoints under `/v2/…`
+        - Cursor pagination on every list endpoint
+        - Typed error envelope (never reuse the v1 shape)
+        - `Idempotency-Key` required on all POST requests
+
+        ## Pagination
+        List endpoints accept `?cursor=` and return `{ items, nextCursor }`.
+        The cursor is an opaque base64 token — clients must not parse it.
+        """,
+        "README.md": """
+        # TaskWraith Demo Project
+
+        A sandbox workspace bundled with the iOS app's demo mode. Connect
+        TaskWraith on your Mac to work with your own repositories.
+
+        - `auth/` — token-service refactor
+        - `src/upload/` — flaky-test fix
+        - `docs/` — v2 API plan
+        """,
+        "package.json": """
+        {
+          "name": "taskwraith-demo",
+          "version": "2.0.0",
+          "private": true,
+          "scripts": {
+            "test": "vitest run",
+            "build": "tsc -p ."
+          },
+          "dependencies": {
+            "jose": "^5.9.0"
+          }
+        }
+        """,
+    ]
+
+    /// The canned `git status` for the demo workspace — powers the composer's
+    /// active-changes diff pill (the Git panel itself is hidden in demo).
+    private static let demoGitSnapshotJSON = """
+    {"repoRoot":"~/Developer/taskwraith-demo","branch":"feat/auth-refactor","commit":"a3f9c1d","detached":false,"upstream":"origin/feat/auth-refactor","remoteName":"origin","ahead":1,"behind":0,"clean":false,"counts":{"changed":3,"staged":0,"unstaged":3,"untracked":0},"lineStats":{"additions":178,"deletions":42},"files":[{"path":"auth/TokenService.ts","kind":"modified","staged":false,"unstaged":true},{"path":"auth/index.ts","kind":"modified","staged":false,"unstaged":true},{"path":"auth/TokenService.test.ts","kind":"created","staged":false,"unstaged":true}],"filesTruncated":false}
+    """
+
+    /// The canned Diff Studio payload for the demo workspace.
+    private static let demoWorkspaceDiffJSON = """
+    {"totalFiles":3,"truncated":false,"files":[
+     {"path":"auth/TokenService.ts","kind":"modified","additions":96,"deletions":12,"truncated":false,"hunks":[
+       {"header":"@@ -1,8 +1,12 @@","lines":[
+         {"type":"ctx","text":"import { SignJWT, jwtVerify } from 'jose'","oldLine":1,"newLine":1},
+         {"type":"del","text":"export function makeToken(userId) {","oldLine":2},
+         {"type":"del","text":"  return sign({ sub: userId })","oldLine":3},
+         {"type":"add","text":"export class TokenService {","newLine":2},
+         {"type":"add","text":"  constructor(private readonly clock: Clock) {}","newLine":3},
+         {"type":"add","text":"  async issue(userId: string) {","newLine":4},
+         {"type":"add","text":"    const now = this.clock.now()","newLine":5},
+         {"type":"ctx","text":"}","oldLine":4,"newLine":6}
+       ]}
+     ]},
+     {"path":"auth/index.ts","kind":"modified","additions":18,"deletions":30,"truncated":false,"hunks":[
+       {"header":"@@ -1,5 +1,4 @@","lines":[
+         {"type":"del","text":"import { makeToken } from './TokenService'","oldLine":1},
+         {"type":"add","text":"import { TokenService } from './TokenService'","newLine":1},
+         {"type":"ctx","text":"","oldLine":2,"newLine":2},
+         {"type":"ctx","text":"export async function login(userId: string) {","oldLine":3,"newLine":3}
+       ]}
+     ]},
+     {"path":"auth/TokenService.test.ts","kind":"created","additions":64,"deletions":0,"truncated":false,"hunks":[
+       {"header":"@@ -0,0 +1,6 @@","lines":[
+         {"type":"add","text":"import { describe, it, expect } from 'vitest'","newLine":1},
+         {"type":"add","text":"import { TokenService } from './TokenService'","newLine":2},
+         {"type":"add","text":"","newLine":3},
+         {"type":"add","text":"describe('TokenService', () => {","newLine":4},
+         {"type":"add","text":"  it('issues a verifiable token', async () => {})","newLine":5},
+         {"type":"add","text":"})","newLine":6}
+       ]}
+     ]}
+    ]}
+    """
+
+    /// Build a `WorkspaceFileReadResult` for the demo editor via JSONSerialization
+    /// (the type has no cross-module init). Etag changes with content length so a
+    /// save round-trips to a fresh, non-empty etag (the editor requires one).
+    private static func demoFileReadResult(path: String, content: String)
+        -> WorkspaceFileReadResult?
+    {
+        let dict: [String: Any] = [
+            "path": path, "content": content,
+            "sizeBytes": content.utf8.count,
+            "etag": "demo-etag-\(content.utf8.count)",
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+            let result = try? JSONDecoder().decode(WorkspaceFileReadResult.self, from: data)
+        else { return nil }
+        return result
     }
 
     public func forgetPairing() {
@@ -2081,6 +2292,11 @@ public final class RemoteSessionModel: ObservableObject {
     ) async throws -> (
         entries: [WorkspaceFileEntry], truncated: Bool
     ) {
+        if isDemo {
+            // Return the whole flat tree; the view's immediateChildren/searchMatches
+            // filter by path/query.
+            return (Self.decodeDemo([WorkspaceFileEntry].self, Self.demoFileTreeJSON) ?? [], false)
+        }
         let ack = try await requestFileAction(
             BridgeAction.workspaceFileList(
                 workspaceId: workspaceId, path: path, query: query, limit: limit))
@@ -2090,6 +2306,15 @@ public final class RemoteSessionModel: ObservableObject {
     public func readWorkspaceFile(
         workspaceId: String, path: String
     ) async throws -> WorkspaceFileReadResult {
+        if isDemo {
+            let content =
+                demoFileEdits[path] ?? Self.demoFileContents[path]
+                ?? "// \(path)\n// Demo file — connect TaskWraith on your Mac to read the real contents.\n"
+            guard let result = Self.demoFileReadResult(path: path, content: content) else {
+                throw RemoteFileActionError.malformedAck
+            }
+            return result
+        }
         let ack = try await requestFileAction(
             BridgeAction.workspaceFileRead(workspaceId: workspaceId, path: path))
         guard let file = ack.data?.file else { throw RemoteFileActionError.malformedAck }
@@ -2099,6 +2324,14 @@ public final class RemoteSessionModel: ObservableObject {
     public func writeWorkspaceFile(
         workspaceId: String, path: String, content: String, baseEtag: String
     ) async throws -> WorkspaceFileReadResult {
+        if isDemo {
+            demoFileEdits[path] = content  // local, in-memory; wiped on demo exit
+            guard let result = Self.demoFileReadResult(path: path, content: content) else {
+                throw RemoteFileActionError.malformedAck
+            }
+            lastActionMessage = "Saved (demo)."
+            return result
+        }
         let ack = try await requestFileAction(
             BridgeAction.workspaceFileWrite(
                 workspaceId: workspaceId, path: path, content: content, baseEtag: baseEtag),
@@ -2110,6 +2343,11 @@ public final class RemoteSessionModel: ObservableObject {
     /// Bounded workspace diff for the Diff Studio — the Mac runs the same
     /// git surface the desktop Diff Studio uses and returns it in the ack.
     public func fetchWorkspaceDiff(workspaceId: String) async throws -> WorkspaceDiffResult {
+        if isDemo {
+            guard let result = Self.decodeDemo(WorkspaceDiffResult.self, Self.demoWorkspaceDiffJSON)
+            else { throw RemoteFileActionError.malformedAck }
+            return result
+        }
         let ack = try await requestFileAction(
             BridgeAction.workspaceDiff(workspaceId: workspaceId), timeoutMs: 16_000)
         guard let diff = ack.data?.diff else { throw RemoteFileActionError.malformedAck }
@@ -2120,6 +2358,12 @@ public final class RemoteSessionModel: ObservableObject {
     //    mutation is an explicit phone UI action, never agent-initiated. ────
 
     public func fetchGitSnapshot(workspaceId: String) async throws -> GitWorkspaceSnapshot {
+        if isDemo {
+            guard let snap = Self.decodeDemo(GitWorkspaceSnapshot.self, Self.demoGitSnapshotJSON)
+            else { throw RemoteFileActionError.malformedAck }
+            gitSnapshots[workspaceId] = snap
+            return snap
+        }
         let ack = try await requestFileAction(
             BridgeAction.gitSnapshot(workspaceId: workspaceId), timeoutMs: 16_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }

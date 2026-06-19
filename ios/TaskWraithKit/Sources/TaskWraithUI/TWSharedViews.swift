@@ -2631,9 +2631,12 @@ public struct ThreadInspector: View {
                             DiffSummaryPanel(diff: diff, isRunning: isRunning)
                             // Git workflows need at least the diffReview read
                             // tier (gitSnapshot); mutations additionally gate
-                            // on fileWrite inside the panel.
-                            if let workspaceId = model.taskCards.first(where: { $0.id == threadId })?
-                                .workspaceId,
+                            // on fileWrite inside the panel. Hidden in demo —
+                            // stage/commit/push has no offline equivalent (the
+                            // diff pill + Diff Studio still work from canned data).
+                            if !model.isDemo,
+                                let workspaceId = model.taskCards.first(where: { $0.id == threadId })?
+                                    .workspaceId,
                                 model.workspaceCanReviewDiffs(workspaceId)
                             {
                                 GitWorkflowPanel(model: model, workspaceId: workspaceId)
