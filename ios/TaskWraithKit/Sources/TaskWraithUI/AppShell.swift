@@ -16,6 +16,25 @@ import TaskWraithKit
     import UIKit
 #endif
 
+/// Slim banner shown atop the shell while in offline demo mode, with an exit.
+private struct DemoModeBanner: View {
+    @ObservedObject var model: RemoteSessionModel
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "play.circle.fill")
+            Text("Demo mode · sample data").font(.footnote.weight(.semibold))
+            Spacer()
+            Button("Exit") { model.exitDemoMode() }
+                .font(.footnote.weight(.semibold))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity)
+        .background(TWTheme.chroma1.opacity(0.16))
+        .foregroundStyle(TWTheme.chroma1)
+    }
+}
+
 public struct RootView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject private var themes = TWThemeStore.shared
@@ -59,6 +78,9 @@ public struct RootView: View {
                 switch model.phase {
                 case .connected:
                     ConnectedShell(model: model)
+                        .safeAreaInset(edge: .top) {
+                            if model.isDemo { DemoModeBanner(model: model) }
+                        }
                 // `where` binds per-pattern in Swift — both arms need the guard
                 // or a fresh pairing's .connecting would show the shell.
                 case .connecting where showShellDuringDrop,

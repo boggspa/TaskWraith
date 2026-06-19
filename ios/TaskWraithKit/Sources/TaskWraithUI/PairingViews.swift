@@ -66,6 +66,17 @@ struct PairingView: View {
                     .disabled(pastedCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
+            Section {
+                Button {
+                    model.enterDemoMode()
+                } label: {
+                    Label("Try the demo", systemImage: "play.circle")
+                }
+            } footer: {
+                Text("Explore TaskWraith with sample data — no Mac required.")
+                    .font(.footnote)
+            }
+
             switch model.phase {
             case .connecting:
                 Section { Label("Connecting…", systemImage: "antenna.radiowaves.left.and.right") }

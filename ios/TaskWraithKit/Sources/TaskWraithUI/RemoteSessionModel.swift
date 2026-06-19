@@ -150,6 +150,9 @@ enum TWSidebarPersistence {
 @MainActor
 public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var phase: SessionPhase = .idle
+    /// True while the offline DEMO session is showing (App Review / first-look):
+    /// no network client, canned data, inert actions. Drives the demo banner.
+    @Published public private(set) var isDemo = false
     @Published public private(set) var macDisplayName: String = ""
     @Published public private(set) var taskCards: [RemoteTaskCard] = []
     @Published public private(set) var approvals: [MobileApprovalCard] = []
@@ -883,6 +886,76 @@ public final class RemoteSessionModel: ObservableObject {
 
     /// Drop the stored pairing entirely (the Mac keeps its pin until the user
     /// revokes it there; re-pairing with the same identity reuses it).
+    // ── Demo mode (App Review / first-look) ───────────────────────────────────
+    /// Enter an OFFLINE demo session populated with canned data so the app can be
+    /// explored — and App Review can exercise it — WITHOUT pairing to a Mac. No
+    /// network client is connected (so `send(_:)` is inert) and `isDemo` drives a
+    /// banner. `exitDemoMode()` restores the pairing screen.
+    public func enterDemoMode() {
+        let workspacesJSON = """
+        [{"workspaceId":"demo-ws","displayName":"Demo Project","path":"~/Developer/taskwraith-demo","chatCount":3}]
+        """
+        let cardsJSON = """
+        [
+          {"id":"demo-1","title":"Refactor the auth module","provider":"claude","workspaceId":"demo-ws","threadId":"demo-1","status":"idle","chatKind":"single","updatedAt":"2026-06-19T10:42:00Z"},
+          {"id":"demo-2","title":"Plan the v2 public API","provider":"claude","workspaceId":"demo-ws","threadId":"demo-2","status":"idle","chatKind":"ensemble","updatedAt":"2026-06-19T09:30:00Z"},
+          {"id":"demo-3","title":"Fix the flaky upload test","provider":"codex","workspaceId":"demo-ws","threadId":"demo-3","status":"idle","chatKind":"single","updatedAt":"2026-06-18T17:05:00Z"}
+        ]
+        """
+        let snap1JSON = """
+        {"threadId":"demo-1","workspaceId":"demo-ws","provider":"claude","totalRows":3,"rows":[
+          {"id":"r1","role":"user","kind":"message","preview":"Refactor the auth module to use the new TokenService and add tests.","timestamp":"2026-06-19T10:40:00Z"},
+          {"id":"r2","role":"assistant","kind":"message","speaker":"Claude","preview":"I'll split auth into a TokenService, migrate the call sites, and add unit tests for refresh + expiry. Starting with the service.","timestamp":"2026-06-19T10:41:00Z"},
+          {"id":"r3","role":"assistant","kind":"tool","preview":"Edited 2 files (+114 −42)","timestamp":"2026-06-19T10:42:00Z","toolSummary":{"activityCount":2,"status":"done","tools":[{"name":"Edit auth/TokenService.ts","category":"file","status":"done","file":"auth/TokenService.ts","additions":96,"deletions":12},{"name":"Edit auth/index.ts","category":"file","status":"done","file":"auth/index.ts","additions":18,"deletions":30}]}}
+        ]}
+        """
+        let snap2JSON = """
+        {"threadId":"demo-2","workspaceId":"demo-ws","provider":"claude","totalRows":3,"rows":[
+          {"id":"e1","role":"user","kind":"message","preview":"Draft the v2 public API surface — two perspectives, please.","timestamp":"2026-06-19T09:25:00Z"},
+          {"id":"e2","role":"assistant","kind":"message","speaker":"Claude / Architect","preview":"Resource-oriented endpoints, cursor pagination, and explicit versioning in the path.","timestamp":"2026-06-19T09:27:00Z"},
+          {"id":"e3","role":"assistant","kind":"message","speaker":"Codex / Implementer","preview":"Agreed — add idempotency keys on POST and a typed error envelope so clients can branch safely.","timestamp":"2026-06-19T09:29:00Z"}
+        ]}
+        """
+        let snap3JSON = """
+        {"threadId":"demo-3","workspaceId":"demo-ws","provider":"codex","totalRows":2,"rows":[
+          {"id":"s1","role":"user","kind":"message","preview":"The upload test fails intermittently in CI. Find and fix the race.","timestamp":"2026-06-18T17:00:00Z"},
+          {"id":"s2","role":"assistant","kind":"message","speaker":"Codex","preview":"The test asserted before the buffer drained. I awaited the flush promise and used a deterministic clock — green across 200 runs.","timestamp":"2026-06-18T17:05:00Z"}
+        ]}
+        """
+        let providerModelsJSON = """
+        {"claude":[{"id":"cli-default","label":"Default"}],"codex":[{"id":"cli-default","label":"Default"}]}
+        """
+        if let ws = Self.decodeDemo([WorkspaceSummary].self, workspacesJSON) { workspaces = ws }
+        if let cards = Self.decodeDemo([RemoteTaskCard].self, cardsJSON) { taskCards = cards }
+        if let s1 = Self.decodeDemo(RemoteThreadSnapshot.self, snap1JSON) { threadSnapshots["demo-1"] = s1 }
+        if let s2 = Self.decodeDemo(RemoteThreadSnapshot.self, snap2JSON) { threadSnapshots["demo-2"] = s2 }
+        if let s3 = Self.decodeDemo(RemoteThreadSnapshot.self, snap3JSON) { threadSnapshots["demo-3"] = s3 }
+        if let pm = Self.decodeDemo([String: [ModelOption]].self, providerModelsJSON) { providerModels = pm }
+        macDisplayName = "Demo Mac"
+        selectedTaskId = "demo-1"
+        projectionHydrated = true
+        isDemo = true
+        phase = .connected
+    }
+
+    /// Leave the demo and return to the pairing screen, clearing canned data.
+    public func exitDemoMode() {
+        isDemo = false
+        phase = .idle
+        workspaces = []
+        taskCards = []
+        threadSnapshots = [:]
+        providerModels = [:]
+        selectedTaskId = nil
+        macDisplayName = ""
+        projectionHydrated = false
+    }
+
+    private static func decodeDemo<T: Decodable>(_ type: T.Type, _ json: String) -> T? {
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
     public func forgetPairing() {
         pairingStore.clear()
         hasStoredPairing = false
@@ -2641,7 +2714,7 @@ public final class RemoteSessionModel: ObservableObject {
         onThreadCreated: ((String?) -> Void)? = nil,
         onAck: ((Bool) -> Void)? = nil
     ) {
-        guard let client else { return }
+        guard !isDemo, let client else { return }
         Task {
             do {
                 let ack = try await client.request(
