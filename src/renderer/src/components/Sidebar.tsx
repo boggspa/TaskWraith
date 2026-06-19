@@ -1237,6 +1237,17 @@ function workflowMatchesSearch(workflow: WorkflowDefinition, query: string): boo
 }
 
 const WORKFLOW_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'skipped'])
+const WORKFLOW_COUNTER_STATUSES = [
+  'running',
+  'queued',
+  'completed',
+  'skipped',
+  'failed',
+  'cancelled'
+] as const
+
+type WorkflowCounterStatus = (typeof WORKFLOW_COUNTER_STATUSES)[number]
+type WorkflowActionIconKind = 'run' | 'pause' | 'resume' | 'cadence' | 'cancel' | 'delete'
 
 function isWorkflowExecutionActive(status?: string): boolean {
   return Boolean(status && !WORKFLOW_TERMINAL_STATUSES.has(status))
@@ -1259,6 +1270,136 @@ function workflowStatusTone(status?: string): 'running' | 'success' | 'warning' 
   if (status === 'failed') return 'danger'
   if (status === 'skipped') return 'warning'
   return 'muted'
+}
+
+function getWorkflowStatusCounters(history: WorkflowDefinition['history']) {
+  const counts = new Map<WorkflowCounterStatus, number>()
+  for (const execution of history) {
+    const status = execution.status
+    if (!WORKFLOW_COUNTER_STATUSES.includes(status as WorkflowCounterStatus)) continue
+    const key = status as WorkflowCounterStatus
+    counts.set(key, (counts.get(key) || 0) + 1)
+  }
+  return WORKFLOW_COUNTER_STATUSES.map((status) => ({
+    status,
+    count: counts.get(status) || 0
+  })).filter((item) => item.count > 0)
+}
+
+function WorkflowActionIcon({ kind }: { kind: WorkflowActionIconKind }) {
+  if (kind === 'run') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M6.2 5.2 17.9 12 6.2 18.8Z" />
+        <path d="M17.4 4.2 16.1 6.3" />
+        <path d="M20.1 7.1 17.8 8.1" />
+        <path d="M19.8 16.9 17.7 15.7" />
+      </svg>
+    )
+  }
+  if (kind === 'pause') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M7.2 5.3v13.4" />
+        <path d="M14.2 5.3v13.4" />
+        <path d="M18.4 7.3c1.2 1.25 1.85 2.85 1.85 4.7s-.65 3.45-1.85 4.7" />
+        <circle cx="19.3" cy="12" r=".75" />
+      </svg>
+    )
+  }
+  if (kind === 'resume') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M7 5.2 17.7 12 7 18.8Z" />
+        <path d="M4.3 7.4C2.9 9.1 2.5 11.3 3.2 13.4c.75 2.25 2.65 3.75 4.95 4.05" />
+        <path d="m6.9 15.2 1.35 2.25-2.35 1.15" />
+      </svg>
+    )
+  }
+  if (kind === 'cadence') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M6.2 6.4A7.7 7.7 0 0 1 19.7 11" />
+        <path d="m17.6 9.6 2.1 1.4 1.15-2.2" />
+        <path d="M17.8 17.6A7.7 7.7 0 0 1 4.3 13" />
+        <path d="m6.4 14.4-2.1-1.4-1.15 2.2" />
+        <path d="M12 7.2v5l3 1.75" />
+      </svg>
+    )
+  }
+  if (kind === 'cancel') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M6.1 6.1h11.8v11.8H6.1Z" />
+        <path d="M5 19 19 5" />
+      </svg>
+    )
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M5.6 7.2h12.8" />
+      <path d="M9.1 7.1 9.8 4.8h4.4l.7 2.3" />
+      <path d="M7.5 9.5 8.35 19h7.3l.85-9.5" />
+      <path d="M10.4 11.5v5" />
+      <path d="M13.6 11.5v5" />
+    </svg>
+  )
+}
+
+function WorkflowStatusCounterIcon({ status }: { status: WorkflowCounterStatus }) {
+  if (status === 'completed') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M4.2 12.3 9.2 17.2 19.8 6.8" />
+        <path d="M5.1 5.2h13.8v13.6H5.1Z" opacity=".34" />
+      </svg>
+    )
+  }
+  if (status === 'skipped') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M5.1 6.2 12 12 5.1 17.8Z" />
+        <path d="M12.4 6.2 19.3 12l-6.9 5.8Z" />
+        <path d="M20.4 6.5v11" />
+      </svg>
+    )
+  }
+  if (status === 'failed') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="m12 3.9 8.1 8.1-8.1 8.1L3.9 12Z" />
+        <path d="m9.2 9.2 5.6 5.6" />
+        <path d="m14.8 9.2-5.6 5.6" />
+      </svg>
+    )
+  }
+  if (status === 'cancelled') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M8.4 4.3h7.2l4.1 4.1v7.2l-4.1 4.1H8.4l-4.1-4.1V8.4Z" />
+        <path d="M7.5 16.5 16.5 7.5" />
+      </svg>
+    )
+  }
+  if (status === 'running') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M5.7 6.7A7.9 7.9 0 0 1 20 11.2" />
+        <path d="m17.8 9.8 2.2 1.4 1.05-2.3" />
+        <path d="M18.3 17.3A7.9 7.9 0 0 1 4 12.8" />
+        <path d="m6.2 14.2-2.2-1.4-1.05 2.3" />
+        <path d="M8.1 12h2.1l1.25-3.2 2.25 6.4 1.25-3.2h1.85" />
+      </svg>
+    )
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden>
+      <path d="M6 6.2h12" />
+      <path d="M6 11.9h12" />
+      <path d="M6 17.6h8.2" />
+      <path d="m16.1 15.4 2.4 2.2-2.4 2.2" />
+    </svg>
+  )
 }
 
 function getWorkspaceMeta(workspace: WorkspaceRecord): string {
@@ -2570,7 +2711,7 @@ export function Sidebar({
                       ? formatWorkflowStatus(status)
                       : 'Paused'
                     const selected = selectedWorkflowId === workflow.id
-                    const lastHistory = workflow.history.slice(-3).reverse()
+                    const statusCounters = getWorkflowStatusCounters(workflow.history)
                     return (
                       <div key={workflow.id} className="sidebar-workflow-block">
                         <button
@@ -2613,65 +2754,86 @@ export function Sidebar({
                                 <strong>{formatWorkflowStatus(latestExecution.status)}</strong>
                               </div>
                             )}
-                            <div className="sidebar-workflow-actions">
-                              <button
-                                type="button"
-                                className="sidebar-workflow-action primary"
-                                onClick={() => onRunWorkflowNow?.(workflow.id)}
-                                disabled={!onRunWorkflowNow}
-                              >
-                                Run now
-                              </button>
-                              <button
-                                type="button"
-                                className="sidebar-workflow-action"
-                                onClick={() => onToggleWorkflowEnabled?.(workflow)}
-                                disabled={!onToggleWorkflowEnabled}
-                              >
-                                {workflow.enabled ? 'Pause' : 'Resume'}
-                              </button>
-                              <button
-                                type="button"
-                                className="sidebar-workflow-action"
-                                onClick={() => onEditWorkflowInterval?.(workflow)}
-                                disabled={!onEditWorkflowInterval}
-                              >
-                                Cadence
-                              </button>
-                              {isActiveExecution && (
+                            <div className="sidebar-workflow-icon-strip">
+                              <div className="sidebar-workflow-actions">
+                                <button
+                                  type="button"
+                                  className="sidebar-workflow-action primary"
+                                  onClick={() => onRunWorkflowNow?.(workflow.id)}
+                                  disabled={!onRunWorkflowNow}
+                                  title="Run now"
+                                  aria-label={`Run ${workflow.name} now`}
+                                >
+                                  <WorkflowActionIcon kind="run" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="sidebar-workflow-action"
+                                  onClick={() => onToggleWorkflowEnabled?.(workflow)}
+                                  disabled={!onToggleWorkflowEnabled}
+                                  title={workflow.enabled ? 'Pause' : 'Resume'}
+                                  aria-label={`${workflow.enabled ? 'Pause' : 'Resume'} ${
+                                    workflow.name
+                                  }`}
+                                >
+                                  <WorkflowActionIcon
+                                    kind={workflow.enabled ? 'pause' : 'resume'}
+                                  />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="sidebar-workflow-action"
+                                  onClick={() => onEditWorkflowInterval?.(workflow)}
+                                  disabled={!onEditWorkflowInterval}
+                                  title="Cadence"
+                                  aria-label={`Edit ${workflow.name} cadence`}
+                                >
+                                  <WorkflowActionIcon kind="cadence" />
+                                </button>
+                                {isActiveExecution && (
+                                  <button
+                                    type="button"
+                                    className="sidebar-workflow-action danger"
+                                    onClick={() => onCancelWorkflowExecution?.(workflow)}
+                                    disabled={!onCancelWorkflowExecution}
+                                    title="Cancel"
+                                    aria-label={`Cancel ${workflow.name} run`}
+                                  >
+                                    <WorkflowActionIcon kind="cancel" />
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   className="sidebar-workflow-action danger"
-                                  onClick={() => onCancelWorkflowExecution?.(workflow)}
-                                  disabled={!onCancelWorkflowExecution}
+                                  onClick={() => onDeleteWorkflow?.(workflow.id)}
+                                  disabled={!onDeleteWorkflow}
+                                  title="Delete"
+                                  aria-label={`Delete ${workflow.name}`}
                                 >
-                                  Cancel
+                                  <WorkflowActionIcon kind="delete" />
                                 </button>
-                              )}
-                              <button
-                                type="button"
-                                className="sidebar-workflow-action danger"
-                                onClick={() => onDeleteWorkflow?.(workflow.id)}
-                                disabled={!onDeleteWorkflow}
-                              >
-                                Delete
-                              </button>
-                            </div>
-                            {lastHistory.length > 0 && (
-                              <div className="sidebar-workflow-history" aria-label="Recent runs">
-                                {lastHistory.map((execution) => (
-                                  <span
-                                    key={execution.id}
-                                    className={`sidebar-workflow-history-chip tone-${workflowStatusTone(
-                                      execution.status
-                                    )}`}
-                                    title={formatWorkflowTime(execution.startedAt || execution.plannedFor)}
-                                  >
-                                    {formatWorkflowStatus(execution.status)}
-                                  </span>
-                                ))}
                               </div>
-                            )}
+                              {statusCounters.length > 0 && (
+                                <div
+                                  className="sidebar-workflow-stats"
+                                  aria-label="Workflow run counters"
+                                >
+                                  {statusCounters.map(({ status, count }) => (
+                                    <span
+                                      key={status}
+                                      className={`sidebar-workflow-stat tone-${workflowStatusTone(
+                                        status
+                                      )}`}
+                                      title={`${formatWorkflowStatus(status)}: ${count}`}
+                                      aria-label={`${formatWorkflowStatus(status)} runs: ${count}`}
+                                    >
+                                      <WorkflowStatusCounterIcon status={status} />
+                                      <span>{count}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>

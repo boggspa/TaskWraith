@@ -621,31 +621,43 @@
   white-space: nowrap;
 }
 
-.sidebar-workflow-status.tone-running,
-.sidebar-workflow-history-chip.tone-running {
+.sidebar-workflow-status.tone-running {
   border-color: color-mix(in srgb, var(--accent) 34%, transparent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
 }
 
-.sidebar-workflow-status.tone-success,
-.sidebar-workflow-history-chip.tone-success {
+.sidebar-workflow-stat.tone-running {
+  color: var(--accent);
+}
+
+.sidebar-workflow-status.tone-success {
   border-color: color-mix(in srgb, var(--success, #34d399) 34%, transparent);
   background: color-mix(in srgb, var(--success, #34d399) 12%, transparent);
   color: color-mix(in srgb, var(--success, #34d399) 88%, var(--sidebar-text));
 }
 
-.sidebar-workflow-status.tone-warning,
-.sidebar-workflow-history-chip.tone-warning {
+.sidebar-workflow-stat.tone-success {
+  color: color-mix(in srgb, var(--success, #34d399) 88%, var(--sidebar-text));
+}
+
+.sidebar-workflow-status.tone-warning {
   border-color: color-mix(in srgb, var(--warning, #fbbf24) 38%, transparent);
   background: color-mix(in srgb, var(--warning, #fbbf24) 12%, transparent);
   color: color-mix(in srgb, var(--warning, #fbbf24) 90%, var(--sidebar-text));
 }
 
-.sidebar-workflow-status.tone-danger,
-.sidebar-workflow-history-chip.tone-danger {
+.sidebar-workflow-stat.tone-warning {
+  color: color-mix(in srgb, var(--warning, #fbbf24) 90%, var(--sidebar-text));
+}
+
+.sidebar-workflow-status.tone-danger {
   border-color: color-mix(in srgb, var(--danger, #f87171) 38%, transparent);
   background: color-mix(in srgb, var(--danger, #f87171) 12%, transparent);
+  color: color-mix(in srgb, var(--danger, #f87171) 88%, var(--sidebar-text));
+}
+
+.sidebar-workflow-stat.tone-danger {
   color: color-mix(in srgb, var(--danger, #f87171) 88%, var(--sidebar-text));
 }
 
@@ -679,20 +691,30 @@
   white-space: nowrap;
 }
 
-.sidebar-workflow-actions,
-.sidebar-workflow-history {
+.sidebar-workflow-icon-strip {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sidebar-workflow-actions,
+.sidebar-workflow-stats {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  min-width: 0;
 }
 
 .sidebar-workflow-action,
-.sidebar-workflow-history-chip {
+.sidebar-workflow-stat {
   appearance: none;
   -webkit-appearance: none;
-  border: 1px solid color-mix(in srgb, var(--sidebar-border) 42%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--sidebar-text) 5%, transparent);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: color-mix(in srgb, var(--sidebar-text) 82%, transparent);
   font: inherit;
   font-size: 10px;
@@ -701,30 +723,56 @@
 }
 
 .sidebar-workflow-action {
-  padding: 4px 7px;
+  width: 19px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
+.sidebar-workflow-action svg,
+.sidebar-workflow-stat svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sidebar-workflow-action svg circle,
+.sidebar-workflow-stat svg circle {
+  fill: currentColor;
+  stroke: none;
+}
+
 .sidebar-workflow-action:hover,
 .sidebar-workflow-action:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--sidebar-text);
+  color: var(--accent);
   outline: 0;
 }
 
 .sidebar-workflow-action.primary {
-  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
+}
+
+.sidebar-workflow-action.danger {
+  color: color-mix(in srgb, var(--danger, #f87171) 76%, var(--sidebar-text));
 }
 
 .sidebar-workflow-action.danger:hover,
 .sidebar-workflow-action.danger:focus-visible {
-  border-color: color-mix(in srgb, var(--danger, #f87171) 45%, transparent);
-  background: color-mix(in srgb, var(--danger, #f87171) 12%, transparent);
   color: color-mix(in srgb, var(--danger, #f87171) 88%, var(--sidebar-text));
+}
+
+.sidebar-workflow-action:focus-visible {
+  border-radius: 6px;
+  outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 2px;
 }
 
 .sidebar-workflow-action:disabled,
@@ -733,8 +781,25 @@
   opacity: 0.48;
 }
 
-.sidebar-workflow-history-chip {
-  padding: 3px 6px;
+.sidebar-workflow-stat {
+  min-width: 20px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-workflow-stat svg {
+  width: 12px;
+  height: 12px;
+}
+
+.sidebar-workflow-stat > span {
+  min-width: 6px;
+  text-align: left;
 }
 
 .sidebar-workflow-empty {
