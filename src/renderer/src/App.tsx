@@ -223,6 +223,7 @@ import { SubThreadCreator } from './components/SubThreadCreator'
 import { FirstLaunchSheet } from './components/FirstLaunchSheet'
 import { BugReportSheet, type BugReportSubmission } from './components/BugReportSheet'
 import { ChangelogSheet } from './components/ChangelogSheet'
+import { AppBootMask } from './components/AppBootMask'
 import {
   WorkSessionSetupSheet,
   type WorkSessionSetupConfirmInput
@@ -511,7 +512,6 @@ import {
   getStoredFirstLaunchSheetDismissed,
   getStoredSkyVisualFxEnabled
 } from './lib/localStorageFlags'
-import { isFunFxMode, getLegacyFunFxSettingsFromLocalStorage } from './lib/funFxSettings'
 // Composer-unification (Phase J1 → slash-picker): the legacy
 // CommandPaletteItem / Action / Group / Source types and the per-provider
 // CORE constants live in src/renderer/src/lib/ComposerSlashCommands.ts
@@ -1550,6 +1550,10 @@ function App(): React.JSX.Element {
 
   // Appearance & Settings
   const appearance = useAppearance()
+  const [initialRouteReady, setInitialRouteReady] = useState(false)
+  const [bootMaskVisible, setBootMaskVisible] = useState(true)
+  const isBootReady = appearance.loaded && initialRouteReady
+  const isBootMaskLeaving = isBootReady && bootMaskVisible
   const openInspectorTab = (tab: InspectorRightTab) => {
     setRightTab(tab)
     appearance.update({ showInspector: true })
@@ -3700,12 +3704,24 @@ function App(): React.JSX.Element {
 
   // Initialize
   useEffect(() => {
+    if (!isBootReady) {
+      setBootMaskVisible(true)
+      return
+    }
+    const timeout = window.setTimeout(() => {
+      setBootMaskVisible(false)
+    }, 760)
+    return () => window.clearTimeout(timeout)
+  }, [isBootReady])
+
+  useEffect(() => {
     loadInitialDataRef.current?.().catch((err) => {
       // Defensive: unhandled rejection here would silently leave the
       // sidebar empty until the user manually performs an action that
       // re-fetches workspaces. Surface the failure so we have a chance
       // to triage instead of presenting a blank app.
       console.error('[loadInitialData] unhandled rejection:', err)
+      setInitialRouteReady(true)
     })
     window.api.getGeminiVersion().then((v) => setGeminiVersion(v))
   }, [])
@@ -3769,22 +3785,6 @@ function App(): React.JSX.Element {
 
   const loadInitialData = async () => {
     const s = await window.api.getSettings()
-    const legacyFunFx = getLegacyFunFxSettingsFromLocalStorage()
-    const nextFunFxEnabled =
-      typeof s.funFxEnabled === 'boolean' ? s.funFxEnabled : legacyFunFx.funFxEnabled
-    const nextFunFxMode = isFunFxMode(s.funFxMode) ? s.funFxMode : legacyFunFx.funFxMode
-    appearance.update({
-      funFxEnabled: nextFunFxEnabled,
-      funFxMode: nextFunFxMode
-    })
-    if (typeof s.funFxEnabled !== 'boolean' || !isFunFxMode(s.funFxMode)) {
-      window.api
-        .updateSettings({
-          funFxEnabled: nextFunFxEnabled,
-          funFxMode: nextFunFxMode
-        })
-        .catch(() => {})
-    }
     setSettings(s)
     setActiveProvider(coerceLiveProvider(s.activeProvider))
     setClaudeBinaryPath(s.claudeBinaryPath || '')
@@ -3973,6 +3973,7 @@ function App(): React.JSX.Element {
           autoFollowRef.current = popoutHandoff.scrollState.atBottom
           restoreChatScrollStateWhenReady(() => transcriptScrollRef.current, popoutHandoff.scrollState)
         }
+        setInitialRouteReady(true)
         return
       }
       console.warn('[chat-popout] requested chat was not found:', chatPopoutChatIdRef.current)
@@ -3980,7 +3981,7 @@ function App(): React.JSX.Element {
     if (wsList.length > 0) {
       // Sort by lastOpenedAt descending
       const sorted = [...wsList].sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
-      handleSelectExistingWorkspace(sorted[0])
+      await handleSelectExistingWorkspace(sorted[0])
     } else {
       // First-launch / zero-workspace case: prefer an existing global chat so
       // the composer is immediately usable in workspace-less mode, falling
@@ -4002,6 +4003,7 @@ function App(): React.JSX.Element {
         }
       }
     }
+    setInitialRouteReady(true)
   }
   loadInitialDataRef.current = loadInitialData
   useEffect(() => {
@@ -17391,10 +17393,13 @@ function App(): React.JSX.Element {
   return (
     <div
       className={`app-root ${fxBurstClass} ${appAgentAuraClass} ${providerShellClass} ${
+        !isBootReady ? 'app-root-booting' : ''
+      } ${isBootMaskLeaving ? 'app-root-boot-revealing' : ''} ${
         isChatPopoutWindow ? 'chat-popout-window' : ''
       }`}
     >
       <div className="window-drag-strip" aria-hidden />
+      {bootMaskVisible && <AppBootMask leaving={isBootMaskLeaving} />}
       <div
         className={`app-main ${isChatExpanded ? 'chat-expanded' : ''} ${providerShellClass} ${
           isChatPopoutWindow ? 'chat-popout-main' : ''

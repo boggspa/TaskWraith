@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback } from 'react'
 import type {
   AppSettings,
   AppearanceMode,
@@ -18,6 +18,7 @@ import {
   normalizeFontFamily,
   resolveComposerFontFamily
 } from '../lib/typefaceOptions'
+import { getLegacyFunFxSettingsFromLocalStorage, isFunFxMode } from '../lib/funFxSettings'
 
 const DEFAULT_ADVANCED_FX: AppSettings['advancedFx'] = {
   agentAura: true,
@@ -141,10 +142,6 @@ function getInitialState(): AppearanceState {
   }
 }
 
-function isFunFxMode(value: unknown): value is AppSettings['funFxMode'] {
-  return value === 'off' || value === 'subtle' || value === 'cinematic' || value === 'epic'
-}
-
 function normalizeAdvancedFx(
   value: Partial<AppSettings['advancedFx']> | undefined,
   fallbackIntensity: AppSettings['advancedFx']['intensity'] = DEFAULT_ADVANCED_FX.intensity
@@ -170,9 +167,14 @@ export function useAppearance() {
     window.api
       .getSettings()
       .then((settings: AppSettings) => {
+        const legacyFunFx = getLegacyFunFxSettingsFromLocalStorage()
         const funFxMode = isFunFxMode(settings.funFxMode)
           ? settings.funFxMode
-          : getInitialState().funFxMode
+          : legacyFunFx.funFxMode
+        const funFxEnabled =
+          typeof settings.funFxEnabled === 'boolean'
+            ? settings.funFxEnabled
+            : legacyFunFx.funFxEnabled
         setState({
           mode: settings.appearanceMode || 'soft_glass',
           visualEffectStyle: settings.visualEffectStyle || 'auto',
@@ -188,10 +190,7 @@ export function useAppearance() {
             FONT_STACKS.taskwraith
           ),
           composerFontFamily: normalizeComposerFontFamily(settings.composerFontFamily),
-          funFxEnabled:
-            typeof settings.funFxEnabled === 'boolean'
-              ? settings.funFxEnabled
-              : getInitialState().funFxEnabled,
+          funFxEnabled,
           funFxMode,
           advancedFx: normalizeAdvancedFx(
             settings.advancedFx,
@@ -219,6 +218,14 @@ export function useAppearance() {
           sidebarOpacityOverride: Boolean(settings.sidebarOpacityOverride),
           mainPaneOpacityOverride: Boolean(settings.mainPaneOpacityOverride)
         })
+        if (typeof settings.funFxEnabled !== 'boolean' || !isFunFxMode(settings.funFxMode)) {
+          window.api
+            .updateSettings({
+              funFxEnabled,
+              funFxMode
+            })
+            .catch(() => {})
+        }
         setLoaded(true)
       })
       .catch(() => setLoaded(true))
@@ -319,7 +326,7 @@ export function useAppearance() {
     root.style.setProperty('--sidebar-width', `${next.sidebarWidth}px`)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (loaded) {
       applyToDocument(state)
     }

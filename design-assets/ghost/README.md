@@ -5,6 +5,7 @@ Private visual asset exports for the small ghost companion.
 Generated files:
 
 - `ghost-guy-mark.svg` and `ghost-guy-mark-*.png`: transparent logo mark, no floor shadow.
+- `ghost-guy-mark-monoline.svg`: theme-aware monoline logo mark for loading masks and compact brand placements.
 - `ghost-guy-sticker.svg` and `ghost-guy-sticker-*.png`: transparent sticker-style mark with glow and floor shadow.
 
 Default PNG sizes: 128, 256, 512, and 1024 px.
