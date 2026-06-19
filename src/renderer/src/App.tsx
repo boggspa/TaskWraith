@@ -18486,8 +18486,6 @@ function App(): React.JSX.Element {
             </div>
           )}
 
-          {isWelcomeChat && <GeminiRetirementBanner />}
-
           {/* Reserve the dashboard's fixed height during the first usage fetch
               so the greeting + composer below don't jump downward when the
               dashboard mounts a moment after launch. Only shown before the
@@ -18518,6 +18516,7 @@ function App(): React.JSX.Element {
               providerShellCapabilityChips computation kept for any
               future use but the row no longer mounts in any shell.
             */}
+            {isWelcomeChat && <GeminiRetirementBanner />}
             {isWelcomeChat &&
               isCurrentEnsembleChat &&
               (() => {

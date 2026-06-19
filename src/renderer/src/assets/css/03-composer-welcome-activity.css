@@ -9288,7 +9288,7 @@ button.diff-file-row {
   gap: 10px;
   width: 100%;
   max-width: 640px;
-  margin: 0 auto 16px;
+  margin: 20px auto;
   padding: 11px 14px;
   border: 1px solid var(--panel-border, rgba(127, 127, 127, 0.25));
   border-radius: 12px;
