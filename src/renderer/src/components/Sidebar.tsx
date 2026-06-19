@@ -1601,8 +1601,16 @@ export function Sidebar({
   // Unstarted iOS welcome-card drafts (0 messages/runs) are real chat records on
   // the Mac but must never surface as chats in the sidebar — the phone keeps one
   // only so its in-progress welcome screen resolves; the Mac never owns it.
+  // Workflow chats live ONLY under the Workflows section — they must never leak
+  // into Pinned / Recents / Workspaces / Global / Ensembles. A workflow's target
+  // chat is an ordinary ChatRecord with no marker, so key off the workflow
+  // list's template.chatId. Excluding at `topLevelChats` covers every downstream
+  // bucket (regular / ensemble / pinned / recents / workspaces all derive here).
+  const workflowChatIds = new Set(workflows.map((workflow) => workflow.template.chatId))
   const displayChats = chats.filter((chat) => !isContentlessRemoteDraftChat(chat))
-  const topLevelChats = displayChats.filter((chat) => !isLinkedChildChat(chat))
+  const topLevelChats = displayChats.filter(
+    (chat) => !isLinkedChildChat(chat) && !workflowChatIds.has(chat.appChatId)
+  )
   const regularChats = topLevelChats.filter((chat) => chat.chatKind !== 'ensemble')
   const ensembleChats = ensembleModeEnabled
     ? topLevelChats.filter((chat) => chat.chatKind === 'ensemble' && !chat.archived)
@@ -2719,11 +2727,22 @@ export function Sidebar({
                           className={`sidebar-workflow-item provider-${workflow.template.provider || 'gemini'} ${
                             selected ? 'active' : ''
                           } ${workflow.enabled ? '' : 'is-paused'}`}
-                          onClick={() =>
+                          onClick={() => {
+                            // Summon the workflow's transcript into the main pane
+                            // AND expand its controls. The chip used to only toggle
+                            // the controls, leaving the main pane on whatever chat
+                            // was open — the source of the "workflows feel detached"
+                            // confusion.
                             setSelectedWorkflowId((current) =>
                               current === workflow.id ? null : workflow.id
                             )
-                          }
+                            const workflowChat = chats.find(
+                              (chat) => chat.appChatId === workflow.template.chatId
+                            )
+                            if (workflowChat && currentChat?.appChatId !== workflowChat.appChatId) {
+                              onSelectChat(workflowChat)
+                            }
+                          }}
                           aria-expanded={selected}
                           title={workflow.name}
                         >

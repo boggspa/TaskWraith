@@ -2517,8 +2517,10 @@ export class AppStore {
     const executionId = randomUUID()
     const task = this.saveScheduledTask({
       ...workflow.template,
-      displayPrompt:
-        workflow.template.displayPrompt || `[workflow: ${workflow.name}] ${workflow.template.prompt}`,
+      // No `[workflow: …]` text prefix — workflows are identified by the
+      // Workflows sidebar section + glyph, not a baked-in title/transcript
+      // string (the prefix used to leak into the chat title everywhere).
+      displayPrompt: workflow.template.displayPrompt || workflow.template.prompt,
       runAt: nowIso,
       timezone: workflow.trigger.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'local',
       status: 'due',
