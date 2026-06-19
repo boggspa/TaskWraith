@@ -17,6 +17,13 @@ import TaskWraithKit
     import UIKit
 #endif
 
+/// Coalesces transcript follow-pin requests (see ThreadDetailView.requestFollowPin).
+/// A reference type so toggling `scheduled` never triggers a View re-render —
+/// during streaming the body already recomputes on every token.
+private final class TranscriptFollowPin {
+    var scheduled = false
+}
+
 struct ThreadDetailView: View {
     @ObservedObject var model: RemoteSessionModel
     let taskId: String
@@ -25,9 +32,12 @@ struct ThreadDetailView: View {
     /// ensemble) so the host hides the secondary rows + telemetry rail when the
     /// composer is idle — i.e. the compact one-line composer.
     @State private var composerFocused = false
-    /// Follow the transcript tail as content streams in — disabled the
-    /// moment the user drags, re-enabled by the jump-to-latest pill.
+    /// Follow the transcript tail as content streams in. Driven by the bottom
+    /// sentinel's visibility (on screen ⇒ follow); the jump-to-latest pill and
+    /// thread-open also re-arm it.
     @State private var autoFollow = true
+    /// One-scroll-per-turn coalescer for the follow-pin (kills stacked scrolls).
+    @State private var followPin = TranscriptFollowPin()
     @State private var keyboardVisible = false
     /// Secondary workspace granted to subsequent runs (rail picker), keyed by
     /// thread so navigation away and back does not drop an unsent choice.
@@ -767,8 +777,7 @@ struct ThreadDetailView: View {
                 agentIdentity: threadAgentIdentity,
                 participants: model.ensembleStates[taskId]?.participants ?? [],
                 onRevealFrame: {
-                    guard autoFollow else { return }
-                    scrollTranscriptToBottom(proxy, animated: false)
+                    requestFollowPin(proxy)
                 })
         }
     }
@@ -1121,7 +1130,7 @@ struct ThreadDetailView: View {
             model.requestThreadSnapshot(taskId)
             autoFollow = true
             try? await Task.sleep(nanoseconds: 350_000_000)
-            scrollTranscriptToBottom(proxy, animated: false)
+            requestFollowPin(proxy, force: true)
         }
         .onDisappear {
             if model.visibleThreadId == taskId { model.visibleThreadId = nil }
@@ -1135,56 +1144,51 @@ struct ThreadDetailView: View {
             // were following, force the re-pin so a transient sentinel flip
             // during a big (cellular-batched) update can't permanently stop it.
             guard autoFollow else { return }
-            pinTranscriptToBottomAfterLayout(proxy, animated: true, force: true)
+            requestFollowPin(proxy, force: true)
         }
         .onChange(of: model.streamingTexts[taskId] ?? "") { _, _ in
             guard autoFollow else { return }
-            pinTranscriptToBottomAfterLayout(proxy, animated: false, force: true)
+            requestFollowPin(proxy, force: true)
         }
     }
 
-    private func scrollTranscriptToBottom(
-        _ proxy: ScrollViewProxy, animated: Bool, force: Bool = false
-    ) {
-        // Defer the scroll to a later main-actor turn so the List's backing
-        // UICollectionView has COMMITTED the latest item set before we scroll.
-        // Callers fire from `.onChange`/a token-reveal callback that run INSIDE
-        // SwiftUI's coalesced update flush (Update.dispatchActions); scrolling
-        // synchronously there asks UIKit to scroll to an item whose index path
-        // isn't valid yet. When a slow link (cellular) batches the live-stream →
-        // run-summary swap into a single update, UICollectionView raises
-        // NSInternalInconsistencyException from
-        // `_validateScrollingTargetIndexPath:` → SIGABRT (the cellular-only crash
-        // at the "Task complete" transition). The "transcript-bottom" anchor is
-        // unconditional, so once the update commits the target is always valid.
-        // `Task { @MainActor }` + `Task.yield()` is the proven, Swift-6-clean
-        // deferral already used for the settle pass (stays on the main actor, so
-        // capturing the non-Sendable `proxy` is fine).
+    /// The single follow-pin path. Every streaming trigger — the pump's reveal
+    /// frame (~24fps), each wire token batch, a new row, an ensemble participant
+    /// switch — routes here, and they COALESCE to one scroll per runloop turn.
+    /// The old code fired up to three concurrent scrolls (an animated 0.2s leap
+    /// racing instant snaps), which is what jittered and skated the view past
+    /// whole messages during fast ensemble passes / big Kimi chunks. Instant +
+    /// coalesced + the pump's small reveal steps reads as a smooth glide.
+    ///
+    /// The scroll is deferred a main-actor turn so the List's backing
+    /// UICollectionView has COMMITTED the new item set first — scrolling to an
+    /// index path that isn't valid yet raised NSInternalInconsistencyException
+    /// from `_validateScrollingTargetIndexPath:` (the cellular-only crash at the
+    /// "Task complete" transition). `force` re-pins through a transient sentinel
+    /// flip during a big (cellular-batched) update so following can't get stuck.
+    private func requestFollowPin(_ proxy: ScrollViewProxy, force: Bool = false) {
+        guard force || autoFollow else { return }
+        guard !followPin.scheduled else { return }
+        followPin.scheduled = true
         Task { @MainActor in
+            // `defer` guarantees the coalescer re-arms no matter how the closure
+            // exits, so the flag can never stick and wedge follow off.
+            defer { followPin.scheduled = false }
             await Task.yield()
             guard force || autoFollow else { return }
-            if animated {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                }
-            } else {
-                var transaction = Transaction(animation: nil)
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
-                }
-            }
+            scrollSentinelToBottomNow(proxy)
+            // Settle pass: a big layout (long message / a new participant's
+            // block) can land the first scroll a hair short.
+            await Task.yield()
+            if force || autoFollow { scrollSentinelToBottomNow(proxy) }
         }
     }
 
-    private func pinTranscriptToBottomAfterLayout(
-        _ proxy: ScrollViewProxy, animated: Bool, force: Bool = false
-    ) {
-        scrollTranscriptToBottom(proxy, animated: animated, force: force)
-        Task { @MainActor in
-            await Task.yield()
-            guard force || autoFollow else { return }
-            scrollTranscriptToBottom(proxy, animated: false, force: force)
+    private func scrollSentinelToBottomNow(_ proxy: ScrollViewProxy) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo("transcript-bottom", anchor: .bottom)
         }
     }
 
