@@ -562,7 +562,7 @@ struct ThreadDetailView: View {
     /// TWBannerGlassBackground.
     @ViewBuilder
     private var topActionBanner: some View {
-        if let message = model.lastActionMessage, message != "Sent." {
+        if let message = model.lastActionMessage, message != "Sent.", !model.isDemo {
             StatusBanner(message: message) {
                 model.clearActionMessage()
             }

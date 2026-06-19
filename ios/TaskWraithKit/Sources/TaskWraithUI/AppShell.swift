@@ -77,10 +77,16 @@ public struct RootView: View {
             } else {
                 switch model.phase {
                 case .connected:
-                    ConnectedShell(model: model)
-                        .safeAreaInset(edge: .top) {
-                            if model.isDemo { DemoModeBanner(model: model) }
+                    if model.isDemo {
+                        // Banner ABOVE the shell (not a safeAreaInset, which
+                        // overlaps the nav bar's back/Exit/title row).
+                        VStack(spacing: 0) {
+                            DemoModeBanner(model: model)
+                            ConnectedShell(model: model)
                         }
+                    } else {
+                        ConnectedShell(model: model)
+                    }
                 // `where` binds per-pattern in Swift — both arms need the guard
                 // or a fresh pairing's .connecting would show the shell.
                 case .connecting where showShellDuringDrop,
