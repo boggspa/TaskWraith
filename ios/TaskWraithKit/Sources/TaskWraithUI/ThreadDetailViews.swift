@@ -683,9 +683,14 @@ struct ThreadDetailView: View {
                 Color.clear
                     .frame(height: 1)
                     .id("transcript-bottom")
-                    .onAppear {
-                        autoFollow = true
-                    }
+                    // The pill's single source of truth: visible ⇒ we're at the
+                    // latest message (hide pill, keep following); off-screen ⇒
+                    // the user scrolled up (show pill, stop following). Driving
+                    // both edges from the sentinel makes the flag self-correct —
+                    // the old drag heuristic set `false` with no way back to
+                    // `true` while already at the bottom, so the pill stuck on.
+                    .onAppear { autoFollow = true }
+                    .onDisappear { autoFollow = false }
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             }
@@ -1126,23 +1131,21 @@ struct ThreadDetailView: View {
     private func followChrome(_ base: AnyView, proxy: ScrollViewProxy) -> some View {
         base
         .onChange(of: snapshot?.rows?.count ?? 0) { _, _ in
+            // `autoFollow` here reflects intent BEFORE this layout commits; if we
+            // were following, force the re-pin so a transient sentinel flip
+            // during a big (cellular-batched) update can't permanently stop it.
             guard autoFollow else { return }
-            pinTranscriptToBottomAfterLayout(proxy, animated: true)
+            pinTranscriptToBottomAfterLayout(proxy, animated: true, force: true)
         }
         .onChange(of: model.streamingTexts[taskId] ?? "") { _, _ in
             guard autoFollow else { return }
-            pinTranscriptToBottomAfterLayout(proxy, animated: false)
+            pinTranscriptToBottomAfterLayout(proxy, animated: false, force: true)
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 14).onChanged { value in
-                // An upward drag = the user is reading history; stop following.
-                if value.translation.height > 0 { autoFollow = false }
-            }
-        )
-        
     }
 
-    private func scrollTranscriptToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+    private func scrollTranscriptToBottom(
+        _ proxy: ScrollViewProxy, animated: Bool, force: Bool = false
+    ) {
         // Defer the scroll to a later main-actor turn so the List's backing
         // UICollectionView has COMMITTED the latest item set before we scroll.
         // Callers fire from `.onChange`/a token-reveal callback that run INSIDE
@@ -1159,7 +1162,7 @@ struct ThreadDetailView: View {
         // capturing the non-Sendable `proxy` is fine).
         Task { @MainActor in
             await Task.yield()
-            guard autoFollow else { return }
+            guard force || autoFollow else { return }
             if animated {
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo("transcript-bottom", anchor: .bottom)
@@ -1174,12 +1177,14 @@ struct ThreadDetailView: View {
         }
     }
 
-    private func pinTranscriptToBottomAfterLayout(_ proxy: ScrollViewProxy, animated: Bool) {
-        scrollTranscriptToBottom(proxy, animated: animated)
+    private func pinTranscriptToBottomAfterLayout(
+        _ proxy: ScrollViewProxy, animated: Bool, force: Bool = false
+    ) {
+        scrollTranscriptToBottom(proxy, animated: animated, force: force)
         Task { @MainActor in
             await Task.yield()
-            guard autoFollow else { return }
-            scrollTranscriptToBottom(proxy, animated: false)
+            guard force || autoFollow else { return }
+            scrollTranscriptToBottom(proxy, animated: false, force: force)
         }
     }
 
