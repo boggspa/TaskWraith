@@ -129,6 +129,24 @@ public struct UserDefaultsPairedMacStore: PairedMacStore {
     public func clear() { UserDefaults.standard.removeObject(forKey: key) }
 }
 
+/// Persists the sidebar expand/collapse layout across launches. The sets stay
+/// @Published on RemoteSessionModel for live SwiftUI updates; this just mirrors
+/// them to UserDefaults so the user's adjustments — and the first-launch iPad
+/// collapse-to-headers — survive a relaunch.
+enum TWSidebarPersistence {
+    enum Key: String {
+        case expandedWorkspaces = "tw.sidebar.expandedWorkspaces"
+        case collapsedSections = "tw.sidebar.collapsedSections"
+        case collapsedParents = "tw.sidebar.collapsedParents"
+    }
+    static func load(_ key: Key) -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: key.rawValue) ?? [])
+    }
+    static func save(_ value: Set<String>, _ key: Key) {
+        UserDefaults.standard.set(Array(value), forKey: key.rawValue)
+    }
+}
+
 @MainActor
 public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var phase: SessionPhase = .idle
@@ -215,9 +233,18 @@ public final class RemoteSessionModel: ObservableObject {
     /// otherwise drop the open chat + reset the sidebar. `selectedTaskId` drives
     /// the iPad detail column and the iPhone `navigationDestination(item:)`.
     @Published public var selectedTaskId: String?
-    @Published public var expandedWorkspaces: Set<String> = []
-    @Published public var collapsedSections: Set<String> = []
-    @Published public var collapsedParents: Set<String> = []
+    // Sidebar layout — persisted across launches (see TWSidebarPersistence). The
+    // paren-wrapped initializer disambiguates the didSet block from a trailing
+    // closure on `load(_:)`.
+    @Published public var expandedWorkspaces: Set<String> = (TWSidebarPersistence.load(.expandedWorkspaces)) {
+        didSet { TWSidebarPersistence.save(expandedWorkspaces, .expandedWorkspaces) }
+    }
+    @Published public var collapsedSections: Set<String> = (TWSidebarPersistence.load(.collapsedSections)) {
+        didSet { TWSidebarPersistence.save(collapsedSections, .collapsedSections) }
+    }
+    @Published public var collapsedParents: Set<String> = (TWSidebarPersistence.load(.collapsedParents)) {
+        didSet { TWSidebarPersistence.save(collapsedParents, .collapsedParents) }
+    }
     /// Settings sheet presentation — hoisted so a theme/composer/font change
     /// made inside it doesn't tear the sheet down with the rest of the tree.
     /// Presented from RootView (above the `.id(revision)` boundary); the sheet

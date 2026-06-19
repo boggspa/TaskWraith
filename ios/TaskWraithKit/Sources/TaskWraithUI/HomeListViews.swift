@@ -26,6 +26,9 @@ struct HomeView: View {
         nonmutating set { model.collapsedParents = newValue }
     }
     @State private var canvasMode: ComposeMode? = nil
+    /// One-time flag: the iPad sidebar collapses its sections to headers on first
+    /// launch (then the user's own choices stick — persisted on the model).
+    @AppStorage("tw.sidebar.ipadCollapseSeeded") private var ipadCollapseSeeded = false
 
     private func openCanvas(_ mode: ComposeMode) {
         if explicitSelection {
@@ -33,6 +36,16 @@ struct HomeView: View {
         } else {
             canvasMode = mode
         }
+    }
+
+    /// Tidy first open on iPad: collapse every top-level section to its header.
+    /// Gated on `explicitSelection` (the iPad NavigationSplitView sidebar —
+    /// horizontalSizeClass is unreliable here, see above) + a persisted flag, so
+    /// it runs once; afterwards the user's collapse/expand choices stick.
+    private func seedSidebarCollapseIfNeeded() {
+        guard explicitSelection, !ipadCollapseSeeded else { return }
+        ipadCollapseSeeded = true
+        collapsedSections = ["activeRuns", "pinned", "recents", "ensembles", "workspaces", "globalChats"]
     }
     /// True when hosted in a NavigationSplitView sidebar — rows select
     /// explicitly instead of pushing NavigationLinks. NOT derivable from
@@ -91,6 +104,7 @@ struct HomeView: View {
         #endif
         .scrollContentBackground(.hidden)
         .background(TWTheme.sidebarBg)
+        .onAppear { seedSidebarCollapseIfNeeded() }
         .onChange(of: model.navigationTarget) { _, threadId in
             guard let threadId else { return }
             selection = threadId
