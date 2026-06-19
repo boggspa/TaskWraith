@@ -495,7 +495,6 @@ import {
   fetchClaudeUsageSnapshot,
   fetchCodexUsageSnapshot,
   fetchCursorUsageSnapshot,
-  fetchGeminiUsageSnapshot,
   fetchKimiUsageSnapshot,
   getDefaultGeminiAuthProfileId,
   getGeminiAuthProfiles,
@@ -19474,7 +19473,7 @@ if (isGeminiMcpBridgeProcess) {
         const entries = await Promise.all(
           (
             [
-              ['gemini', fetchGeminiUsageSnapshot],
+              // gemini retired — no live usage snapshot to broadcast
               ['codex', fetchCodexUsageSnapshot],
               ['claude', fetchClaudeUsageSnapshot],
               ['kimi', fetchKimiUsageSnapshot],
@@ -20271,9 +20270,7 @@ if (isGeminiMcpBridgeProcess) {
 
     ipcMain.handle('get-agent-rate-limits', async (_, provider: ProviderId) => {
       provider = assertProviderId(provider)
-      if (provider === 'gemini') {
-        return fetchGeminiUsageSnapshot()
-      }
+      // gemini retired — no live account to meter (falls through to null below)
       if (provider === 'kimi') {
         return fetchKimiUsageSnapshot()
       }
