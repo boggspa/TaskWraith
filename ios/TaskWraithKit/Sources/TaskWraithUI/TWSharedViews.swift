@@ -5253,14 +5253,17 @@ public struct ComposerDiffPill: View {
     let filesChanged: Int
     let additions: Int
     let deletions: Int
+    let commitsAhead: Int
     var onTap: (() -> Void)? = nil
 
     public init(
-        filesChanged: Int, additions: Int, deletions: Int, onTap: (() -> Void)? = nil
+        filesChanged: Int, additions: Int, deletions: Int, commitsAhead: Int = 0,
+        onTap: (() -> Void)? = nil
     ) {
         self.filesChanged = filesChanged
         self.additions = additions
         self.deletions = deletions
+        self.commitsAhead = max(0, commitsAhead)
         self.onTap = onTap
     }
 
@@ -5271,15 +5274,25 @@ public struct ComposerDiffPill: View {
         return String(format: k >= 10 ? "%.0fk" : "%.1fk", k)
     }
 
+    private var hasFileStats: Bool {
+        filesChanged > 0 || additions > 0 || deletions > 0
+    }
+
     public var body: some View {
         Button { onTap?() } label: {
             HStack(spacing: 8) {
-                Text("\(filesChanged) file\(filesChanged == 1 ? "" : "s")")
-                    .foregroundStyle(TWTheme.textSecondary)
-                Text("+\(compact(additions))")
-                    .foregroundStyle(TWTheme.statusSuccess)
-                Text("−\(compact(deletions))")
-                    .foregroundStyle(TWTheme.statusFailed)
+                if commitsAhead > 0 {
+                    Text("↑ \(compact(commitsAhead))")
+                        .foregroundStyle(TWTheme.statusAttention)
+                }
+                if hasFileStats {
+                    Text("\(filesChanged) file\(filesChanged == 1 ? "" : "s")")
+                        .foregroundStyle(TWTheme.textSecondary)
+                    Text("+\(compact(additions))")
+                        .foregroundStyle(TWTheme.statusSuccess)
+                    Text("−\(compact(deletions))")
+                        .foregroundStyle(TWTheme.statusFailed)
+                }
             }
             .font(.caption.weight(.semibold).monospacedDigit())
             .padding(.horizontal, 12)
@@ -5299,7 +5312,20 @@ public struct ComposerDiffPill: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(
-            "\(filesChanged) files changed, \(additions) added, \(deletions) removed. Open diff.")
+            accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        var parts: [String] = []
+        if commitsAhead > 0 {
+            parts.append("\(commitsAhead) commit\(commitsAhead == 1 ? "" : "s") ahead")
+        }
+        if hasFileStats {
+            parts.append("\(filesChanged) file\(filesChanged == 1 ? "" : "s") changed")
+            parts.append("\(additions) added")
+            parts.append("\(deletions) removed")
+        }
+        return "\(parts.joined(separator: ", ")). Open changes."
     }
 }
 

@@ -891,13 +891,16 @@ struct ThreadDetailView: View {
                         primaryGitSnapshot?.lineStats?.additions ?? diff?.additions ?? 0
                     let pillDeletions =
                         primaryGitSnapshot?.lineStats?.deletions ?? diff?.deletions ?? 0
+                    let pillCommitsAhead = primaryGitSnapshot?.ahead ?? 0
                     if !composerFocused,
                         pillFilesChanged > 0 || pillAdditions > 0 || pillDeletions > 0
+                            || pillCommitsAhead > 0
                     {
                         ComposerDiffPill(
                             filesChanged: pillFilesChanged,
                             additions: pillAdditions,
                             deletions: pillDeletions,
+                            commitsAhead: pillCommitsAhead,
                             onTap: { openComposerDiff(workspaceId: primaryWorkspaceId) }
                         )
                         .padding(.horizontal, 10)
