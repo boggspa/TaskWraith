@@ -432,8 +432,19 @@ export interface RemoteThreadRow {
   speaker?: string
   /** Images attached to this message (desktop file-picker or phone
    * uploads — both land in message.metadata.imagePaths). Count only;
-   * remote clients render an attachment chip. */
+   * remote clients render an attachment chip when no thumbnail is present. */
   imageAttachmentCount?: number
+  /** Small base64 JPEG previews of the attached images, built Mac-side at
+   * message creation. Remote clients can't read the Mac-local `imagePaths`,
+   * so this is the only way they can show the actual image inline. Capped at
+   * 2; absent for historical messages persisted before this field existed
+   * (those fall back to `imageAttachmentCount`). */
+  imageThumbnails?: Array<{
+    dataBase64: string
+    mimeType: string
+    width?: number
+    height?: number
+  }>
   /** Bounded + sanitized one-screen preview of the row body. */
   preview: string
   /** True when `preview` was clipped from a longer body. */
@@ -592,6 +603,34 @@ export interface RemoteProjectionOptions {
 const DEFAULT_PREVIEW_MAX = 280
 const DEFAULT_MAX_ATTENTION_ROWS = 50
 const REMOTE_BLACKBOARD_MAX_ENTRIES = 24
+/** Cumulative caps (base64 chars) on attachment-thumbnail bytes shipped in
+ * ONE snapshot. The relay drops frames over ~1MB (`maxFrameBytes`), so an
+ * image-heavy thread could otherwise lose its entire snapshot. We keep
+ * thumbnails on the most-recent rows (the just-sent image matters most) and
+ * fall back to the count chip on older rows once the budget is spent. */
+const MAX_SNAPSHOT_THUMBNAIL_BASE64 = 600_000
+const MAX_PINNED_THUMBNAIL_BASE64 = 150_000
+
+/** Drop `imageThumbnails` (keeping `imageAttachmentCount`) on the OLDEST rows
+ * once the cumulative thumbnail payload would exceed `budget`. Walks
+ * newest→oldest so recent attachments survive. Mutates + returns `rows`. */
+function capRowThumbnails(
+  rows: RemoteThreadRow[],
+  budget = MAX_SNAPSHOT_THUMBNAIL_BASE64
+): RemoteThreadRow[] {
+  let remaining = budget
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const thumbs = rows[i].imageThumbnails
+    if (!thumbs?.length) continue
+    const cost = thumbs.reduce((sum, t) => sum + (t.dataBase64?.length ?? 0), 0)
+    if (cost <= remaining) {
+      remaining -= cost
+    } else {
+      delete rows[i].imageThumbnails
+    }
+  }
+  return rows
+}
 const BLACKBOARD_CATEGORY_RANK: Record<BlackboardCategory, number> = {
   decision: 0,
   fact: 1,
@@ -871,6 +910,31 @@ function buildRow(
   const imagePaths = metadata?.imagePaths
   if (Array.isArray(imagePaths) && imagePaths.length > 0) {
     row.imageAttachmentCount = imagePaths.length
+  }
+  const imageThumbnails = metadata?.imageThumbnails
+  if (Array.isArray(imageThumbnails) && imageThumbnails.length > 0) {
+    const validThumbs = imageThumbnails
+      .filter(
+        (t): t is { dataBase64: string; mimeType: string; width?: number; height?: number } => {
+          if (!t || typeof t !== 'object') return false
+          const rec = t as Record<string, unknown>
+          return typeof rec.dataBase64 === 'string' && rec.dataBase64.length > 0
+        }
+      )
+      .slice(0, 2)
+      .map((t) => ({
+        dataBase64: t.dataBase64,
+        mimeType: typeof t.mimeType === 'string' ? t.mimeType : 'image/jpeg',
+        ...(typeof t.width === 'number' ? { width: t.width } : {}),
+        ...(typeof t.height === 'number' ? { height: t.height } : {})
+      }))
+    if (validThumbs.length > 0) {
+      row.imageThumbnails = validThumbs
+      // Keep the count consistent even if only thumbnails were persisted.
+      if (row.imageAttachmentCount === undefined) {
+        row.imageAttachmentCount = validThumbs.length
+      }
+    }
   }
   const toolSummary = buildToolSummary(message)
   if (toolSummary) row.toolSummary = toolSummary
@@ -1572,18 +1636,21 @@ export function projectRemoteThread(
     .map((run) => summarizeRun(run, opts.costDisplay, all))
     .filter((entry): entry is RemoteRunSummary => Boolean(entry))
   const blackboardEntries = projectBlackboardEntries(opts.blackboardEntries)
-  const pinnedRows = all
-    .filter(
-      (message) =>
-        typeof (message.metadata as Record<string, unknown> | undefined)?.pinnedAt === 'number'
-    )
-    .sort(
-      (a, b) =>
-        Number((b.metadata as Record<string, unknown>).pinnedAt) -
-        Number((a.metadata as Record<string, unknown>).pinnedAt)
-    )
-    .slice(0, 12)
-    .map((message) => buildRow(message, previewMax, null))
+  const pinnedRows = capRowThumbnails(
+    all
+      .filter(
+        (message) =>
+          typeof (message.metadata as Record<string, unknown> | undefined)?.pinnedAt === 'number'
+      )
+      .sort(
+        (a, b) =>
+          Number((b.metadata as Record<string, unknown>).pinnedAt) -
+          Number((a.metadata as Record<string, unknown>).pinnedAt)
+      )
+      .slice(0, 12)
+      .map((message) => buildRow(message, previewMax, null)),
+    MAX_PINNED_THUMBNAIL_BASE64
+  )
 
   const attentionFor = (message: ChatMessage): RemoteAttentionKind | null => {
     const detected = detectMessageAttention(message)
@@ -1676,7 +1743,7 @@ export function projectRemoteThread(
     const slice = visible.slice(start, end)
     return {
       ...base,
-      rows: slice.map((m) => toRow(m, attentionFor(m))),
+      rows: capRowThumbnails(slice.map((m) => toRow(m, attentionFor(m)))),
       windowStartIndex: start,
       hasMoreAbove: start > 0,
       hasMoreBelow: end < totalRows
@@ -1701,7 +1768,7 @@ export function projectRemoteThread(
     const slice = visible.slice(start, end)
     return {
       ...base,
-      rows: slice.map((m) => toRow(m, attentionFor(m))),
+      rows: capRowThumbnails(slice.map((m) => toRow(m, attentionFor(m)))),
       windowStartIndex: start,
       hasMoreAbove: start > 0,
       hasMoreBelow: end < totalRows
@@ -1714,7 +1781,7 @@ export function projectRemoteThread(
   const slice = visible.slice(start)
   return {
     ...base,
-    rows: slice.map((m) => toRow(m, attentionFor(m))),
+    rows: capRowThumbnails(slice.map((m) => toRow(m, attentionFor(m)))),
     windowStartIndex: start,
     hasMoreAbove: start > 0,
     hasMoreBelow: false

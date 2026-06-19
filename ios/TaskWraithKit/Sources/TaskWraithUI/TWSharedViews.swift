@@ -1261,30 +1261,72 @@ public struct TokenRevealText: View {
     import UIKit
 
     /// Downscale + JPEG-compress a picked image to fit the relay frame
-    /// budget (~300KB binary target; the Mac caps combined base64 at
+    /// budget (~330KB binary per image; the Mac caps combined base64 at
     /// ~900KB for 2 images). Returns the wire dict for composerPrompt.
+    ///
+    /// Never silently drops the image: a dense photo that won't fit 330KB at
+    /// 1280px is retried at smaller dimensions, and the smallest attempt is
+    /// shipped unconditionally (a 768px JPEG is tens of KB, always within the
+    /// Mac cap). The earlier version returned nil here, so detailed images
+    /// vanished from the prompt with no feedback.
     public func twEncodeImageAttachment(_ image: UIImage, name: String) -> [String: Any]? {
-        let maxDimension: CGFloat = 1280
-        let scale = min(1, maxDimension / max(image.size.width, image.size.height))
-        let target = CGSize(
-            width: image.size.width * scale, height: image.size.height * scale)
-        let renderer = UIGraphicsImageRenderer(size: target)
-        let resized = renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: target))
+        func wire(_ data: Data) -> [String: Any] {
+            ["name": name, "mimeType": "image/jpeg", "dataBase64": data.base64EncodedString()]
         }
-        // Walk quality down until it fits the per-image share of the budget.
-        for quality in [0.7, 0.55, 0.4, 0.28] {
-            if let data = resized.jpegData(compressionQuality: quality),
-                data.count <= 330_000
-            {
-                return [
-                    "name": name,
-                    "mimeType": "image/jpeg",
-                    "dataBase64": data.base64EncodedString(),
-                ]
+        var smallest: Data?
+        for maxDimension in [1280.0, 1024.0, 768.0] as [CGFloat] {
+            let scale = min(1, maxDimension / max(image.size.width, image.size.height))
+            let target = CGSize(
+                width: image.size.width * scale, height: image.size.height * scale)
+            let renderer = UIGraphicsImageRenderer(size: target)
+            let resized = renderer.image { _ in
+                image.draw(in: CGRect(origin: .zero, size: target))
+            }
+            // Walk quality down until it fits the per-image share of the budget.
+            for quality in [0.7, 0.55, 0.4, 0.28] {
+                guard let data = resized.jpegData(compressionQuality: quality) else { continue }
+                smallest = data  // monotonically smaller as dimension/quality drop
+                if data.count <= 330_000 {
+                    return wire(data)
+                }
             }
         }
+        // Floor: ship the smallest attempt rather than dropping the attachment.
+        if let smallest { return wire(smallest) }
         return nil
+    }
+
+    /// Inline base64 image previews for one transcript row. The phone can't
+    /// read the Mac-local attachment file paths, so the Mac ships small JPEG
+    /// thumbnails — this renders them the way the desktop transcript shows the
+    /// attached image, instead of a bare "N images attached" chip.
+    struct TranscriptImageThumbnails: View {
+        let thumbnails: [RemoteThreadSnapshot.Row.ImageThumbnail]
+
+        var body: some View {
+            HStack(alignment: .top, spacing: 6) {
+                ForEach(thumbnails) { thumb in
+                    if let image = Self.decode(thumb.dataBase64) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 132, height: 132)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .strokeBorder(Color(UIColor.separator), lineWidth: 0.5)
+                            )
+                            .accessibilityLabel("Attached image")
+                    }
+                }
+            }
+            .padding(.top, 2)
+        }
+
+        private static func decode(_ base64: String) -> UIImage? {
+            guard let data = Data(base64Encoded: base64) else { return nil }
+            return UIImage(data: data)
+        }
     }
 #endif
 

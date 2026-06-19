@@ -1662,6 +1662,48 @@ function requireGlobalChat(chatId: unknown, label = 'Global chat'): ChatRecord {
  * message + run record in App.tsx prior to `run-agent`; the remote
  * bridge skipped that step, so snapshots stayed stale even when the
  * Mac run completed successfully. */
+/** Phone-renderable image previews. Built Mac-side from the decoded image
+ * buffers because iOS can't read the Mac-local `imagePaths` — without a
+ * shipped thumbnail the phone transcript can only show a count chip, so a
+ * sent attachment looks like it vanished. ~256px longest edge, JPEG, size-
+ * capped to stay inside the relay frame budget. Best-effort: an unrenderable
+ * buffer is skipped, never thrown (the dispatch path must not fail on a
+ * decorative preview). */
+function buildBridgeImageThumbnails(
+  buffers: Buffer[]
+): Array<{ dataBase64: string; mimeType: string; width: number; height: number }> {
+  const thumbs: Array<{ dataBase64: string; mimeType: string; width: number; height: number }> = []
+  for (const buf of buffers.slice(0, 2)) {
+    try {
+      const img = nativeImage.createFromBuffer(buf)
+      if (img.isEmpty()) continue
+      const { width, height } = img.getSize()
+      if (!width || !height) continue
+      const maxEdge = 256
+      const longest = Math.max(width, height)
+      const scale = longest > maxEdge ? maxEdge / longest : 1
+      const tw = Math.max(1, Math.round(width * scale))
+      const th = Math.max(1, Math.round(height * scale))
+      const resized = scale < 1 ? img.resize({ width: tw, height: th, quality: 'good' }) : img
+      let quality = 70
+      let jpeg = resized.toJPEG(quality)
+      while (jpeg.length > 60_000 && quality > 30) {
+        quality -= 15
+        jpeg = resized.toJPEG(quality)
+      }
+      thumbs.push({
+        dataBase64: jpeg.toString('base64'),
+        mimeType: 'image/jpeg',
+        width: tw,
+        height: th
+      })
+    } catch {
+      // Skip an image we can't decode/resize — the count chip still renders.
+    }
+  }
+  return thumbs
+}
+
 function prepareIosComposerPromptChat(args: {
   action: {
     threadId: string
@@ -1673,6 +1715,7 @@ function prepareIosComposerPromptChat(args: {
   /** null = a scope-global chat (T72) — no workspace binding. */
   workspace: WorkspaceRecord | null
   imagePaths?: string[]
+  imageThumbnails?: Array<{ dataBase64: string; mimeType: string; width?: number; height?: number }>
 }): ChatRecord {
   const { action, workspace } = args
   const provider = assertProviderId(action.provider)
@@ -1707,8 +1750,15 @@ function prepareIosComposerPromptChat(args: {
     role: 'user',
     content: prompt,
     timestamp,
-    ...(args.imagePaths?.length
-      ? { metadata: { imagePaths: args.imagePaths } }
+    ...(args.imagePaths?.length || args.imageThumbnails?.length
+      ? {
+          metadata: {
+            ...(args.imagePaths?.length ? { imagePaths: args.imagePaths } : {}),
+            ...(args.imageThumbnails?.length
+              ? { imageThumbnails: args.imageThumbnails }
+              : {})
+          }
+        }
       : {})
   }
   const updated: ChatRecord = {
@@ -16967,28 +17017,43 @@ if (isGeminiMcpBridgeProcess) {
           // desktop composer uses (adapters forward per provider). Temp dir
           // is per-run; files are small (phone downscales before sending).
           let iosImagePaths: string[] = []
+          let iosImageThumbnails: Array<{
+            dataBase64: string
+            mimeType: string
+            width: number
+            height: number
+          }> = []
           if (action.imageAttachments?.length) {
             try {
               const dir = join(os.tmpdir(), 'taskwraith-remote-attachments')
               fsSync.mkdirSync(dir, { recursive: true })
+              const buffers: Buffer[] = []
               iosImagePaths = action.imageAttachments.map((attachment, index) => {
                 const ext = attachment.mimeType === 'image/png' ? 'png' : 'jpg'
                 const file = join(
                   dir,
                   `${action.threadId.replace(/[^a-zA-Z0-9-]/g, '')}-${Date.now()}-${index}.${ext}`
                 )
-                fsSync.writeFileSync(file, Buffer.from(attachment.dataBase64, 'base64'))
+                const buf = Buffer.from(attachment.dataBase64, 'base64')
+                buffers.push(buf)
+                fsSync.writeFileSync(file, buf)
                 return file
               })
+              // Transcript previews the phone can actually render (it can't
+              // read these Mac-local paths). Failure here is non-fatal — the
+              // run still dispatches with the attachment, just no thumbnail.
+              iosImageThumbnails = buildBridgeImageThumbnails(buffers)
             } catch (err) {
               console.warn('[remote-bridge] failed to materialize image attachments:', err)
               iosImagePaths = []
+              iosImageThumbnails = []
             }
           }
           let chat = prepareIosComposerPromptChat({
             action,
             workspace: workspaceRecord,
-            imagePaths: iosImagePaths
+            imagePaths: iosImagePaths,
+            imageThumbnails: iosImageThumbnails
           })
           // Desktop runs carry the composer's runtime-profile choice; with no
           // profile at all, providers fall back to raw adapter defaults that

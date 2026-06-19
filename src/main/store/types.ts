@@ -1927,6 +1927,18 @@ export interface ChatMessage {
     pinnedAt?: number
     /** Presentation-only link preview targets extracted from user-visible prompt text. */
     linkPreviews?: Array<{ url: string; origin: string; host: string }>
+    /** Local filesystem paths of images attached to this message (desktop
+     * file-picker or phone upload). Mac-only — remote clients can't read them. */
+    imagePaths?: string[]
+    /** Small base64 JPEG previews of the attached images, built Mac-side so
+     * remote clients (iOS) — which can't read `imagePaths` — can render the
+     * actual attachment inline in the transcript. ~256px, size-capped. */
+    imageThumbnails?: Array<{
+      dataBase64: string
+      mimeType: string
+      width?: number
+      height?: number
+    }>
     [key: string]: unknown
   }
 }

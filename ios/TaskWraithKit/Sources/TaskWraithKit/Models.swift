@@ -846,6 +846,19 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         public let speaker: String?
         /// Images attached to this message (desktop or phone) — chip count.
         public let imageAttachmentCount: Int?
+        /// Downscaled base64 JPEG previews of the attached images, shipped by
+        /// the Mac so the phone can render the actual image inline (it can't
+        /// read the Mac-local file paths behind `imageAttachmentCount`). Absent
+        /// for historical rows persisted before this existed.
+        public let imageThumbnails: [ImageThumbnail]?
+        public struct ImageThumbnail: Codable, Sendable, Hashable, Identifiable {
+            public let dataBase64: String
+            public let mimeType: String?
+            public let width: Int?
+            public let height: Int?
+            /// Stable-enough identity for ForEach within one row (base64 prefix).
+            public var id: String { String(dataBase64.prefix(32)) }
+        }
         /// Bounded one-screen preview of the row body (Mac-side sanitized).
         public let preview: String?
         public let truncated: Bool?

@@ -933,6 +933,90 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('imageThumbnails', () => {
+    it('surfaces metadata.imageThumbnails and derives a count when paths are absent', () => {
+      const messages = [
+        msg(0, {
+          metadata: {
+            imageThumbnails: [
+              { dataBase64: 'AAAA', mimeType: 'image/jpeg', width: 200, height: 120 }
+            ]
+          }
+        }),
+        msg(1)
+      ]
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[0].imageThumbnails).toEqual([
+        { dataBase64: 'AAAA', mimeType: 'image/jpeg', width: 200, height: 120 }
+      ])
+      // Phone renders the actual thumbnail, but the count stays consistent.
+      expect(snapshot.rows[0].imageAttachmentCount).toBe(1)
+      expect(snapshot.rows[1].imageThumbnails).toBeUndefined()
+    })
+
+    it('caps at two thumbnails and keeps the imagePaths-derived count', () => {
+      const messages = [
+        msg(0, {
+          metadata: {
+            imagePaths: ['/tmp/a.jpg', '/tmp/b.png'],
+            imageThumbnails: [
+              { dataBase64: 'AAAA', mimeType: 'image/jpeg' },
+              { dataBase64: 'BBBB', mimeType: 'image/jpeg' },
+              { dataBase64: 'CCCC', mimeType: 'image/jpeg' }
+            ]
+          }
+        })
+      ]
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[0].imageThumbnails).toHaveLength(2)
+      expect(snapshot.rows[0].imageAttachmentCount).toBe(2)
+    })
+
+    it('drops entries without a usable dataBase64 and omits the field when none remain', () => {
+      const messages = [
+        msg(0, {
+          metadata: {
+            // Deliberately malformed wire data — the runtime filter must drop it.
+            imageThumbnails: [
+              { dataBase64: '', mimeType: 'image/jpeg' },
+              { mimeType: 'image/jpeg' },
+              null,
+              'not-an-object'
+            ] as never
+          }
+        })
+      ]
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[0].imageThumbnails).toBeUndefined()
+    })
+
+    it('defaults a missing mimeType to image/jpeg and omits absent dimensions', () => {
+      const messages = [
+        // mimeType omitted on the wire — the projection defaults it.
+        msg(0, { metadata: { imageThumbnails: [{ dataBase64: 'ZZZZ' }] as never } })
+      ]
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[0].imageThumbnails).toEqual([
+        { dataBase64: 'ZZZZ', mimeType: 'image/jpeg' }
+      ])
+    })
+
+    it('caps cumulative thumbnail bytes per snapshot, keeping the newest rows', () => {
+      // Two ~0.4MB thumbnails exceed the per-snapshot budget (relay drops
+      // frames > ~1MB), so the older row must fall back to the count chip.
+      const big = 'A'.repeat(400_000)
+      const messages = [
+        msg(0, { metadata: { imageThumbnails: [{ dataBase64: big, mimeType: 'image/jpeg' }] } }),
+        msg(1, { metadata: { imageThumbnails: [{ dataBase64: big, mimeType: 'image/jpeg' }] } })
+      ]
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[1].imageThumbnails).toHaveLength(1)
+      expect(snapshot.rows[0].imageThumbnails).toBeUndefined()
+      // The count chip survives on the trimmed row so it still shows "1 image".
+      expect(snapshot.rows[0].imageAttachmentCount).toBe(1)
+    })
+  })
+
   describe('soloSpeakerForMessage', () => {
     it('labels solo assistant rows with provider and model', () => {
       const labeler = soloSpeakerForMessage('codex', [

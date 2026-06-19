@@ -1810,13 +1810,14 @@ struct ThreadRowView: View {
                         .foregroundStyle(TWTheme.textTertiary)
                     }
                 }
-                if let count = row.imageAttachmentCount, count > 0 {
-                    HStack(spacing: 5) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                        Text("\(count) image\(count == 1 ? "" : "s") attached")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textTertiary)
+                if let thumbs = row.imageThumbnails, !thumbs.isEmpty {
+                    #if canImport(UIKit)
+                        TranscriptImageThumbnails(thumbnails: thumbs)
+                    #else
+                        imageAttachmentChip(thumbs.count)
+                    #endif
+                } else if let count = row.imageAttachmentCount, count > 0 {
+                    imageAttachmentChip(count)
                 }
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard,
                     let preview = row.preview, !preview.isEmpty
@@ -1875,6 +1876,18 @@ struct ThreadRowView: View {
             return "\(noun) · \(status)"
         }
         return noun
+    }
+
+    /// Count-only attachment chip — the fallback when the Mac didn't ship
+    /// thumbnails (historical rows) or on a non-UIKit build.
+    @ViewBuilder
+    private func imageAttachmentChip(_ count: Int) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "photo.on.rectangle.angled")
+            Text("\(count) image\(count == 1 ? "" : "s") attached")
+        }
+        .font(.caption)
+        .foregroundStyle(TWTheme.textTertiary)
     }
 
     /// "Delivered 22:43" (today) / "Delivered 9 Jun, 22:43" — context-menu
