@@ -938,6 +938,14 @@ public final class RemoteSessionModel: ObservableObject {
         if let s2 = Self.decodeDemo(RemoteThreadSnapshot.self, snap2JSON) { threadSnapshots["demo-2"] = s2 }
         if let s3 = Self.decodeDemo(RemoteThreadSnapshot.self, snap3JSON) { threadSnapshots["demo-3"] = s3 }
         if let pm = Self.decodeDemo([String: [ModelOption]].self, providerModelsJSON) { providerModels = pm }
+        let approvalsJSON = """
+        [{"toolCallId":"demo-appr-1","title":"Run the auth test suite","body":"npm test -- auth/TokenService","provider":"claude","actions":["accept","decline"],"workspaceId":"demo-ws","threadId":"demo-1","runId":"demo-run-1","requestedAt":"2026-06-19T10:43:00Z"}]
+        """
+        let ensembleJSON = """
+        {"threadId":"demo-2","status":"idle","activeParticipantId":"p-claude","participants":[{"participantId":"p-claude","provider":"claude","role":"Architect","order":1,"status":"done"},{"participantId":"p-codex","provider":"codex","role":"Implementer","order":2,"status":"done"},{"participantId":"p-kimi","provider":"kimi","role":"Reviewer","order":3,"status":"idle"}],"roster":[{"id":"p-claude","provider":"claude","role":"Architect","enabled":true,"order":1,"model":"cli-default"},{"id":"p-codex","provider":"codex","role":"Implementer","enabled":true,"order":2,"model":"cli-default"},{"id":"p-kimi","provider":"kimi","role":"Reviewer","enabled":true,"order":3,"model":"cli-default"}]}
+        """
+        if let appr = Self.decodeDemo([MobileApprovalCard].self, approvalsJSON) { approvals = appr }
+        if let ens = Self.decodeDemo(RemoteEnsembleState.self, ensembleJSON) { ensembleStates["demo-2"] = ens }
         macDisplayName = "Demo Mac"
         selectedTaskId = "demo-1"
         projectionHydrated = true
@@ -979,6 +987,8 @@ public final class RemoteSessionModel: ObservableObject {
         modelUsage = nil
         welcomeDashboard = nil
         gitSnapshots = [:]
+        ensembleStates = [:]
+        diffSummaries = [:]
         navigationTarget = nil
         visibleThreadId = nil
         lastActionMessage = nil

@@ -29,6 +29,7 @@ struct HomeView: View {
     /// One-time flag: the iPad sidebar collapses its sections to headers on first
     /// launch (then the user's own choices stick — persisted on the model).
     @AppStorage("tw.sidebar.ipadCollapseSeeded") private var ipadCollapseSeeded = false
+    @State private var showDemoConfirm = false
 
     private func openCanvas(_ mode: ComposeMode) {
         if explicitSelection {
@@ -140,8 +141,18 @@ struct HomeView: View {
                         Image(systemName: "gearshape")
                     }
                     Menu {
-                        Button("Disconnect", role: .destructive) { model.disconnect() }
-                        Button("Forget this Mac", role: .destructive) { model.forgetPairing() }
+                        if model.isDemo {
+                            Button("Exit demo", systemImage: "xmark.circle") {
+                                model.exitDemoMode()
+                            }
+                        } else {
+                            Button("Disconnect", role: .destructive) { model.disconnect() }
+                            Button("Forget this Mac", role: .destructive) { model.forgetPairing() }
+                            Divider()
+                            Button("Enter demo mode", systemImage: "play.circle") {
+                                showDemoConfirm = true
+                            }
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -150,6 +161,16 @@ struct HomeView: View {
         }
         .navigationDestination(item: $canvasMode) { mode in
             NewChatBootstrapView(model: model, mode: mode, initialWorkspaceId: nil)
+        }
+        .confirmationDialog(
+            "Enter demo mode?", isPresented: $showDemoConfirm, titleVisibility: .visible
+        ) {
+            Button("Enter demo") { model.enterDemoMode() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This disconnects \(model.macDisplayName.isEmpty ? "your Mac" : model.macDisplayName) and shows sample data only. Your chats stay private and won't appear in the demo."
+            )
         }
     }
 
@@ -161,7 +182,8 @@ struct HomeView: View {
         // Mac identity header — name + live dot, like the reference apps.
         Section {
             HStack(spacing: 8) {
-                Circle().fill(TWTheme.statusSuccess).frame(width: 8, height: 8)
+                Circle().fill(model.isDemo ? TWTheme.textMuted : TWTheme.statusSuccess)
+                    .frame(width: 8, height: 8)
                 Image(systemName: "desktopcomputer")
                     .foregroundStyle(TWTheme.textSecondary)
                 Text(model.macDisplayName.isEmpty ? "Connected" : model.macDisplayName)
