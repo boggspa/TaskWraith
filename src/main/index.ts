@@ -11773,7 +11773,7 @@ const grokAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent
 ]
 
 // Cursor is a first-class provider — its adapter is always registered.
-// runCursorProvider runs read-only until CR6.
+// Write-capable in default mode; read-only only under plan mode (CR6 landed).
 const cursorAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
   {
     ...defaultProviderDescriptor('cursor'),

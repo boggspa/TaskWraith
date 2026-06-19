@@ -157,9 +157,11 @@ export type ComposerStyle =
 // registry), exactly like gemini/codex/claude/kimi/ollama. The old per-provider
 // eligibility flags and their TASKWRAITH_DISABLE_* / TASKWRAITH_EXPERIMENTAL_*
 // kill-switches were removed 2026-06 once Grok + Cursor matured — do NOT
-// reintroduce a gate that hides a ProviderId from the accept-sets. (Per-provider
-// CAPABILITY differences — e.g. Cursor running read-only until CR6 — are
-// enforced elsewhere, never by membership in this union.)
+// reintroduce a gate that hides a ProviderId from the accept-sets. (All seven
+// are write-capable, gated by approval mode. Per-provider CAPABILITY nuances —
+// e.g. Grok using diff-reviewed writes instead of per-tool approval cards, or
+// Cursor's read-only plan seat carrying no MCP tools — are enforced elsewhere
+// via CLI args / approval posture, never by membership in this union.)
 export type ProviderId =
   | 'gemini'
   | 'codex'

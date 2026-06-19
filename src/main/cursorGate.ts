@@ -12,11 +12,12 @@
 //
 // Provider eligibility is independent of write SAFETY (which is unchanged): the
 // load-bearing containment lives in CursorCliArgs (never bare `-p`: read-only
-// uses `--mode plan`; write mode is contained by a workspace-local deny-list).
-// runCursorProvider runs read-only until CR6 wires the write-mode deny-list +
-// approval-ledger path. A read-only Cursor seat still keeps no TaskWraith MCP
-// coordination tools (plan mode rejects all tools incl. MCP — a cursor-agent
-// upstream limitation), but that is a capability gap, not an eligibility gate.
+// uses `--mode plan`; write mode runs in default mode contained by a workspace-
+// local deny-list config). Cursor is WRITE-CAPABLE like every other provider,
+// gated by approval mode (CR6 landed write mode) — not read-only. Its read-only
+// PLAN seat alone keeps no TaskWraith MCP coordination tools, because cursor-
+// agent plan mode rejects all tools incl. MCP — a per-seat capability nuance,
+// not an eligibility gate.
 
 /**
  * Opt-in raw-stream capture for Cursor (mirrors TASKWRAITH_GROK_DEBUG). When set,
