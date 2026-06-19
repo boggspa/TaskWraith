@@ -5311,8 +5311,8 @@ function clearScheduledTaskTimer() {
 
 function emitDueScheduledTasks() {
   const materialized = AppStore.materializeDueWorkflows()
+  mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
   if (materialized.length > 0) {
-    mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
     mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
   }
   const dueTasks = AppStore.getDueScheduledTasks()
@@ -5332,11 +5332,13 @@ function emitDueScheduledTasks() {
 
 function scheduleNextTaskTimer() {
   clearScheduledTaskTimer()
-  const nextTask = AppStore.getScheduledTasks()
-    .filter((task) => task.status === 'pending')
-    .sort((a, b) => new Date(a.runAt).getTime() - new Date(b.runAt).getTime())[0]
+  const nextTaskMs =
+    AppStore.getScheduledTasks()
+      .filter((task) => task.status === 'pending')
+      .map((task) => new Date(task.runAt).getTime())
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b)[0] ?? Number.NaN
   const nextWorkflowMs = AppStore.getNextWorkflowRunAtMs()
-  const nextTaskMs = nextTask ? new Date(nextTask.runAt).getTime() : Number.NaN
   const candidates = [nextTaskMs, nextWorkflowMs].filter(
     (value): value is number => typeof value === 'number' && Number.isFinite(value)
   )
@@ -19541,7 +19543,6 @@ if (isGeminiMcpBridgeProcess) {
 	        const saved = AppStore.saveScheduledTask(sanitizeScheduledTaskForSave(task))
 	        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
 	        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-	        scheduleNextTaskTimer()
 	        emitDueScheduledTasks()
 	        return saved
 	      }
@@ -19580,7 +19581,6 @@ if (isGeminiMcpBridgeProcess) {
 	      ) => {
 	        const saved = AppStore.saveWorkflowDefinition(sanitizeWorkflowForSave(workflow))
 	        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
-	        scheduleNextTaskTimer()
 	        emitDueScheduledTasks()
 	        return saved
 	      }

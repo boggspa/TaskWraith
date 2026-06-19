@@ -318,6 +318,19 @@ function scheduledTaskStatusToWorkflowStatus(
   return null
 }
 
+function isTerminalScheduledTaskStatus(status: ScheduledTask['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+function isInvalidScheduledTaskStatusTransition(
+  current: ScheduledTask['status'],
+  next: ScheduledTask['status']
+): boolean {
+  if (isTerminalScheduledTaskStatus(current) && next !== current) return true
+  if (current === 'running' && (next === 'pending' || next === 'due')) return true
+  return false
+}
+
 function sameWorkflowPath(a: string | undefined, b: string | undefined): boolean {
   if (!a || !b) return false
   return path.resolve(a) === path.resolve(b)
@@ -2492,7 +2505,10 @@ export class AppStore {
         workflow.history = [...workflow.history, execution].slice(-WORKFLOW_HISTORY_LIMIT)
         workflow.lastStatus = 'skipped'
         workflow.lastError = execution.error
-        workflow.nextRunAt = nextLocalDayBoundaryIso(nowMs)
+        workflow.nextRunAt =
+          workflow.trigger.kind === 'manual' || workflow.trigger.kind === 'once'
+            ? undefined
+            : nextLocalDayBoundaryIso(nowMs)
         workflow.updatedAt = nowIso
         return null
       }
@@ -2557,6 +2573,7 @@ export class AppStore {
     }
     const previous = history[executionIndex]
     const terminal = isTerminalWorkflowExecutionStatus(nextStatus)
+    const wasTerminal = isTerminalWorkflowExecutionStatus(previous.status)
     history[executionIndex] = {
       ...previous,
       scheduledTaskId: task.id,
@@ -2582,17 +2599,27 @@ export class AppStore {
       if (workflow.activeExecutionId === task.workflowExecutionId) {
         workflow.activeExecutionId = undefined
       }
-      workflow.failureStreak = nextStatus === 'failed' ? workflow.failureStreak + 1 : 0
-      const maxFailures = workflow.limits.maxConsecutiveFailures || 3
-      if (nextStatus === 'failed' && workflow.failureStreak >= maxFailures) {
-        workflow.enabled = false
-        workflow.nextRunAt = undefined
-        workflow.lastError =
-          task.lastError || `Workflow auto-disabled after ${workflow.failureStreak} failures.`
-      } else if (workflow.enabled) {
-        workflow.nextRunAt = resolveNextWorkflowRunAt(workflow.trigger, Date.now(), Date.now())
-      } else {
-        workflow.nextRunAt = undefined
+      if (!wasTerminal) {
+        workflow.failureStreak = nextStatus === 'failed' ? workflow.failureStreak + 1 : 0
+        const maxFailures = workflow.limits.maxConsecutiveFailures || 3
+        if (nextStatus === 'failed' && workflow.failureStreak >= maxFailures) {
+          workflow.enabled = false
+          workflow.nextRunAt = undefined
+          workflow.lastError =
+            task.lastError || `Workflow auto-disabled after ${workflow.failureStreak} failures.`
+        } else if (workflow.enabled) {
+          const completedAtMs = task.completedAt ? Date.parse(task.completedAt) : Number.NaN
+          const nowMs = Number.isFinite(completedAtMs) ? completedAtMs : Date.now()
+          const existingNextRunAtMs = workflow.nextRunAt
+            ? Date.parse(workflow.nextRunAt)
+            : Number.NaN
+          workflow.nextRunAt =
+            Number.isFinite(existingNextRunAtMs) && existingNextRunAtMs > nowMs
+              ? workflow.nextRunAt
+              : resolveNextWorkflowRunAt(workflow.trigger, nowMs, nowMs)
+        } else {
+          workflow.nextRunAt = undefined
+        }
       }
     }
     workflows[index] = workflow
@@ -2635,7 +2662,14 @@ export class AppStore {
     const tasks = this.getScheduledTasks()
     const index = tasks.findIndex((task) => task.id === id)
     if (index < 0) return null
-    const updated = { ...tasks[index], ...partial, id, updatedAt: new Date().toISOString() }
+    const current = tasks[index]
+    if (
+      partial.status &&
+      isInvalidScheduledTaskStatusTransition(current.status, partial.status)
+    ) {
+      return current
+    }
+    const updated = { ...current, ...partial, id, updatedAt: new Date().toISOString() }
     tasks[index] = updated
     writeJson(scheduledTasksPath, tasks)
     this.syncWorkflowFromScheduledTask(updated)

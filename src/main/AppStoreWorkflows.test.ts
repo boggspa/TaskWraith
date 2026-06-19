@@ -66,6 +66,7 @@ function workflowInput(
 
 describe('AppStore workflows', () => {
   beforeEach(() => {
+    vi.useRealTimers()
     fs.rmSync(userDataPath, { recursive: true, force: true })
     fs.mkdirSync(userDataPath, { recursive: true })
   })
@@ -143,6 +144,97 @@ describe('AppStore workflows', () => {
       status: 'completed',
       completedAt: '2026-06-07T20:01:00.000Z'
     })
+    expect(workflow?.nextRunAt).toBe(new Date(Date.parse(plannedFor) + intervalMs).toISOString())
+  })
+
+  it('does not resurrect completed scheduled tasks from stale status updates', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+
+    AppStore.updateScheduledTask(task.id, {
+      status: 'running',
+      runId: 'run-1',
+      firedAt: '2026-06-07T20:00:01.000Z'
+    })
+    AppStore.updateScheduledTask(task.id, {
+      status: 'completed',
+      completedAt: '2026-06-07T20:01:00.000Z'
+    })
+
+    const stale = AppStore.updateScheduledTask(task.id, {
+      status: 'running',
+      runId: 'run-stale',
+      firedAt: '2026-06-07T20:02:00.000Z'
+    })
+
+    expect(stale?.status).toBe('completed')
+    const workflow = AppStore.getWorkflowDefinition(saved.id)
+    expect(workflow?.lastStatus).toBe('completed')
+    expect(workflow?.history[0]).toMatchObject({
+      runId: 'run-1',
+      status: 'completed'
+    })
+  })
+
+  it('does not increment failure streak twice for duplicate failed task syncs', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+
+    AppStore.updateScheduledTask(task.id, {
+      status: 'running',
+      runId: 'run-1',
+      firedAt: '2026-06-07T20:00:01.000Z'
+    })
+    AppStore.updateScheduledTask(task.id, {
+      status: 'failed',
+      completedAt: '2026-06-07T20:01:00.000Z',
+      lastError: 'failed once'
+    })
+    AppStore.updateScheduledTask(task.id, {
+      status: 'failed',
+      completedAt: '2026-06-07T20:01:30.000Z',
+      lastError: 'duplicate failed event'
+    })
+
+    const workflow = AppStore.getWorkflowDefinition(saved.id)
+    expect(workflow?.failureStreak).toBe(1)
+    expect(workflow?.enabled).toBe(true)
+    expect(workflow?.lastStatus).toBe('failed')
+  })
+
+  it('keeps manual workflows unscheduled after the daily run limit is reached', () => {
+    const saved = AppStore.saveWorkflowDefinition(
+      workflowInput({
+        trigger: { kind: 'manual' },
+        nextRunAt: undefined,
+        limits: {
+          maxRunsPerDay: 1,
+          maxConsecutiveFailures: 3
+        },
+        history: [
+          {
+            id: 'execution-completed',
+            workflowId: 'workflow-manual',
+            plannedFor: '2026-06-07T10:00:00.000Z',
+            status: 'completed',
+            createdAt: '2026-06-07T10:00:00.000Z',
+            updatedAt: '2026-06-07T10:01:00.000Z',
+            completedAt: '2026-06-07T10:01:00.000Z'
+          }
+        ]
+      })
+    )
+
+    const task = AppStore.materializeWorkflowNow(saved.id, Date.parse(plannedFor))
+
+    expect(task).toBeNull()
+    const workflow = AppStore.getWorkflowDefinition(saved.id)
+    expect(workflow?.lastStatus).toBe('skipped')
+    expect(workflow?.lastError).toMatch(/Daily workflow run limit/)
+    expect(workflow?.nextRunAt).toBeUndefined()
+    expect(AppStore.materializeDueWorkflows(Date.parse('2026-06-08T00:01:00.000Z'))).toHaveLength(
+      0
+    )
   })
 
   it('materializes a workflow immediately for Run now', () => {

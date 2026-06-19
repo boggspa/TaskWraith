@@ -631,6 +631,15 @@ const GUEST_PENDING_RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
   'active',
   'cancelling'
 ])
+const isScheduledTaskReadyToDispatch = (
+  task: ScheduledTask,
+  nowMs: number = Date.now()
+): boolean => {
+  if (task.status === 'due') return true
+  if (task.status !== 'pending') return false
+  const runAtMs = new Date(task.runAt).getTime()
+  return Number.isFinite(runAtMs) && runAtMs <= nowMs
+}
 const isRemoteComposerRunQueueJob = (job: RunQueueJob): boolean =>
   Boolean(job.request?.remoteComposer)
 const isQueuedDesktopRunQueueJob = (job: RunQueueJob): boolean =>
@@ -7259,12 +7268,10 @@ function App(): React.JSX.Element {
   }, [scheduledTasks])
 
   useEffect(() => {
-    const overdueTasks = scheduledTasks.filter((task) => {
-      if (task.status === 'due') return true
-      if (task.status !== 'pending') return false
-      const runAtMs = new Date(task.runAt).getTime()
-      return Number.isFinite(runAtMs) && runAtMs <= Date.now()
-    })
+    const nowMs = Date.now()
+    const overdueTasks = scheduledTasks.filter((task) =>
+      isScheduledTaskReadyToDispatch(task, nowMs)
+    )
     if (overdueTasks.length === 0) return
     setDueScheduledTasks((prev) => {
       const existingIds = new Set(prev.map((task) => task.id))
@@ -8187,6 +8194,7 @@ function App(): React.JSX.Element {
 
     if (typeof window.api.onScheduledTaskDue === 'function') {
       window.api.onScheduledTaskDue((task) => {
+        if (!isScheduledTaskReadyToDispatch(task)) return
         setDueScheduledTasks((prev) =>
           prev.some((item) => item.id === task.id) ? prev : [...prev, task]
         )
@@ -8196,6 +8204,14 @@ function App(): React.JSX.Element {
     if (typeof window.api.onScheduledTasksChanged === 'function') {
       window.api.onScheduledTasksChanged((tasks) => {
         setScheduledTasks(tasks)
+        const taskById = new Map(tasks.map((task) => [task.id, task]))
+        const nowMs = Date.now()
+        setDueScheduledTasks((prev) =>
+          prev.filter((task) => {
+            const latest = taskById.get(task.id)
+            return latest ? isScheduledTaskReadyToDispatch(latest, nowMs) : false
+          })
+        )
       })
     }
 
@@ -11606,7 +11622,9 @@ function App(): React.JSX.Element {
       approvalMode: request.approvalMode,
       sessionTrust: request.sessionTrust,
       imageAttachments: request.imageAttachments,
-      externalPathGrants: request.externalPathGrants,
+      externalPathGrants: request.externalPathGrants?.filter(
+        (grant) => grant.duration === 'workspace'
+      ),
       geminiWorktree: request.geminiWorktree,
       codexReasoningEffort: request.codexReasoningEffort,
       codexServiceTier: request.codexServiceTier,
@@ -11996,16 +12014,24 @@ function App(): React.JSX.Element {
 
   const dispatchScheduledTask = async (task: ScheduledTask) => {
     try {
-      let workspace = workspaces.find((item) => item.id === task.workspaceId)
+      const latestTasks = await window.api.getScheduledTasks(task.workspaceId)
+      const latestTask = latestTasks.find((item) => item.id === task.id)
+      if (!latestTask || !isScheduledTaskReadyToDispatch(latestTask)) {
+        setScheduledTasks(await window.api.getScheduledTasks(currentWorkspace?.id))
+        setDueScheduledTasks((prev) => prev.filter((item) => item.id !== task.id))
+        return
+      }
+      const dispatchTask = latestTask
+      let workspace = workspaces.find((item) => item.id === dispatchTask.workspaceId)
       if (!workspace) {
         const latestWorkspaces = await window.api.getWorkspaces()
         setWorkspaces(latestWorkspaces)
         setWorkspacesHydrated(true)
-        workspace = latestWorkspaces.find((item) => item.id === task.workspaceId)
+        workspace = latestWorkspaces.find((item) => item.id === dispatchTask.workspaceId)
       }
-      let chat = await window.api.getChat(task.chatId)
+      let chat = await window.api.getChat(dispatchTask.chatId)
       if (!workspace || !chat) {
-        await window.api.updateScheduledTask(task.id, {
+        await window.api.updateScheduledTask(dispatchTask.id, {
           status: 'failed',
           lastError: 'Workspace or chat could not be loaded.'
         })
@@ -12019,8 +12045,12 @@ function App(): React.JSX.Element {
       // edits happened between schedule + fire. Persist the snapshot
       // application so the renderer's local cache + main-process
       // store agree on the dispatch-time state.
-      if (task.kind === 'ensemble' && task.ensembleSnapshot && chat.chatKind === 'ensemble') {
-        chat = applyScheduledEnsembleSnapshot(chat, task.ensembleSnapshot)
+      if (
+        dispatchTask.kind === 'ensemble' &&
+        dispatchTask.ensembleSnapshot &&
+        chat.chatKind === 'ensemble'
+      ) {
+        chat = applyScheduledEnsembleSnapshot(chat, dispatchTask.ensembleSnapshot)
         await window.api.saveChat(chat)
       }
 
@@ -12029,59 +12059,70 @@ function App(): React.JSX.Element {
       currentChatIdRef.current = chat.appChatId
       chatByIdRef.current.set(chat.appChatId, chat)
       setCurrentChat(chat)
-      applyChatComposerSelection(chat, task.provider)
-      const taskSelectedModel = isValidModelForProvider(task.provider, task.selectedModelType)
-        ? task.selectedModelType
-        : getDefaultModelForProvider(task.provider)
+      applyChatComposerSelection(chat, dispatchTask.provider)
+      const taskSelectedModel = isValidModelForProvider(
+        dispatchTask.provider,
+        dispatchTask.selectedModelType
+      )
+        ? dispatchTask.selectedModelType
+        : getDefaultModelForProvider(dispatchTask.provider)
       setSelectedModelType(taskSelectedModel)
-      setCustomModel(task.customModel)
-      setApprovalMode(task.approvalMode)
-      setSessionTrust(task.sessionTrust)
-      if (task.provider === 'codex') {
-        setCodexReasoningEffort(task.codexReasoningEffort || 'medium')
-        setCodexServiceTier(task.codexServiceTier || '')
+      setCustomModel(dispatchTask.customModel)
+      setApprovalMode(dispatchTask.approvalMode)
+      setSessionTrust(dispatchTask.sessionTrust)
+      if (dispatchTask.provider === 'codex') {
+        setCodexReasoningEffort(dispatchTask.codexReasoningEffort || 'medium')
+        setCodexServiceTier(dispatchTask.codexServiceTier || '')
       }
-      if (task.provider === 'claude') {
-        setClaudeFastMode(Boolean(task.claudeFastMode))
+      if (dispatchTask.provider === 'claude') {
+        setClaudeFastMode(Boolean(dispatchTask.claudeFastMode))
       }
-      if (task.provider === 'kimi') {
-        setKimiThinkingEnabled(task.kimiThinkingEnabled !== false)
+      if (dispatchTask.provider === 'kimi') {
+        setKimiThinkingEnabled(dispatchTask.kimiThinkingEnabled !== false)
       }
 
-      const scheduledRunId = task.runId || `${task.provider}-scheduled-${Date.now()}`
-      await window.api.updateScheduledTask(task.id, {
+      const scheduledRunId =
+        dispatchTask.runId || `${dispatchTask.provider}-scheduled-${Date.now()}`
+      const runningTask = await window.api.updateScheduledTask(dispatchTask.id, {
         status: 'running',
-        firedAt: task.firedAt || new Date().toISOString(),
+        firedAt: dispatchTask.firedAt || new Date().toISOString(),
         runId: scheduledRunId
       })
+      if (!runningTask || runningTask.status !== 'running') {
+        setScheduledTasks(await window.api.getScheduledTasks(currentWorkspace?.id))
+        setDueScheduledTasks((prev) => prev.filter((item) => item.id !== dispatchTask.id))
+        return
+      }
+      setDueScheduledTasks((prev) => prev.filter((item) => item.id !== dispatchTask.id))
       setScheduledTasks(await window.api.getScheduledTasks(currentWorkspace?.id))
 
       void executeRun({
         appRunId: scheduledRunId,
-        provider: task.provider,
-        prompt: task.prompt,
+        provider: dispatchTask.provider,
+        prompt: dispatchTask.prompt,
         displayPrompt:
-          task.displayPrompt || `[scheduled ${formatScheduledRunTime(task.runAt)}] ${task.prompt}`,
+          dispatchTask.displayPrompt ||
+          `[scheduled ${formatScheduledRunTime(dispatchTask.runAt)}] ${dispatchTask.prompt}`,
         selectedModelType: taskSelectedModel,
-        customModel: task.customModel,
-        approvalMode: task.approvalMode,
-        sessionTrust: task.sessionTrust,
-        imageAttachments: task.imageAttachments,
-        externalPathGrants: task.externalPathGrants,
-        geminiWorktree: task.geminiWorktree,
-        codexReasoningEffort: task.codexReasoningEffort,
-        codexServiceTier: task.codexServiceTier,
-        claudeFastMode: task.claudeFastMode,
-        kimiThinkingEnabled: task.kimiThinkingEnabled,
-        runtimeProfileId: task.runtimeProfileId,
-        geminiAuthProfileId: task.geminiAuthProfileId,
-        handoffSourceRunId: task.handoffSourceRunId,
-        scheduledTaskId: task.id,
+        customModel: dispatchTask.customModel,
+        approvalMode: dispatchTask.approvalMode,
+        sessionTrust: dispatchTask.sessionTrust,
+        imageAttachments: dispatchTask.imageAttachments,
+        externalPathGrants: dispatchTask.externalPathGrants,
+        geminiWorktree: dispatchTask.geminiWorktree,
+        codexReasoningEffort: dispatchTask.codexReasoningEffort,
+        codexServiceTier: dispatchTask.codexServiceTier,
+        claudeFastMode: dispatchTask.claudeFastMode,
+        kimiThinkingEnabled: dispatchTask.kimiThinkingEnabled,
+        runtimeProfileId: dispatchTask.runtimeProfileId,
+        geminiAuthProfileId: dispatchTask.geminiAuthProfileId,
+        handoffSourceRunId: dispatchTask.handoffSourceRunId,
+        scheduledTaskId: dispatchTask.id,
         workspaceRecord: workspace,
         chatRecord: chat,
         preserveComposer: true
       }).catch(async (error) => {
-        await window.api.updateScheduledTask(task.id, {
+        await window.api.updateScheduledTask(dispatchTask.id, {
           status: 'failed',
           lastError: String(error)
         })
@@ -12106,7 +12147,7 @@ function App(): React.JSX.Element {
     const nextIndex = dueScheduledTasks.findIndex((task) => !isChatBusy(task.chatId))
     if (nextIndex < 0) return
     const nextTask = dueScheduledTasks[nextIndex]
-    const remainingTasks = dueScheduledTasks.filter((_, index) => index !== nextIndex)
+    const remainingTasks = dueScheduledTasks.filter((task) => task.id !== nextTask.id)
     setDueScheduledTasks(remainingTasks)
     void dispatchScheduledTaskRef.current(nextTask)
   }, [dueScheduledTasks, runningChatIds, workspacesHydrated, workspaces])
