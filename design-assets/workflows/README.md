@@ -13,4 +13,6 @@ Design constraints:
 Assets:
 
 - `workflow-monoline.svg`: trigger, decision, run block, and return-path mnemonic for Workflows.
+- `icons/action-*.svg`: selected-workflow action glyphs for run, pause/resume, cadence, cancel, and delete.
+- `icons/status-*.svg`: compact status glyphs for workflow execution counters.
 - `workflow-glyphs.catalog.svg`: quick review sheet with dark and light previews.

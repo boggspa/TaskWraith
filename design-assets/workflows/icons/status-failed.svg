@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-status-failed-title workflow-status-failed-desc" style="color: currentColor; --workflow-accent: currentColor;">
+  <title id="workflow-status-failed-title">Failed workflow runs</title>
+  <desc id="workflow-status-failed-desc">Original monoline failure diamond for workflow counters.</desc>
+  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m12 3.9 8.1 8.1-8.1 8.1L3.9 12Z"/>
+    <path d="m9.2 9.2 5.6 5.6"/>
+    <path d="m14.8 9.2-5.6 5.6"/>
+  </g>
+</svg>

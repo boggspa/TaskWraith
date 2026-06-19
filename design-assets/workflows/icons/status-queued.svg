@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-status-queued-title workflow-status-queued-desc" style="color: currentColor; --workflow-accent: currentColor;">
+  <title id="workflow-status-queued-title">Queued workflow runs</title>
+  <desc id="workflow-status-queued-desc">Original monoline queue stack for workflow counters.</desc>
+  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 6.2h12"/>
+    <path d="M6 11.9h12"/>
+    <path d="M6 17.6h8.2"/>
+    <path d="m16.1 15.4 2.4 2.2-2.4 2.2"/>
+  </g>
+</svg>

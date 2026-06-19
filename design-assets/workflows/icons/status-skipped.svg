@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-status-skipped-title workflow-status-skipped-desc" style="color: currentColor; --workflow-accent: currentColor;">
+  <title id="workflow-status-skipped-title">Skipped workflow runs</title>
+  <desc id="workflow-status-skipped-desc">Original monoline skip-forward glyph for workflow counters.</desc>
+  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5.1 6.2 12 12 5.1 17.8Z"/>
+    <path d="M12.4 6.2 19.3 12l-6.9 5.8Z"/>
+    <path d="M20.4 6.5v11"/>
+  </g>
+</svg>

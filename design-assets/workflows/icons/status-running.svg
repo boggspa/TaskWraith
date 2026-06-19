@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-status-running-title workflow-status-running-desc" style="color: currentColor; --workflow-accent: currentColor;">
+  <title id="workflow-status-running-title">Running workflow runs</title>
+  <desc id="workflow-status-running-desc">Original monoline pulse loop for active workflow counters.</desc>
+  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5.7 6.7A7.9 7.9 0 0 1 20 11.2"/>
+    <path d="m17.8 9.8 2.2 1.4 1.05-2.3"/>
+    <path d="M18.3 17.3A7.9 7.9 0 0 1 4 12.8"/>
+    <path d="m6.2 14.2-2.2-1.4-1.05 2.3"/>
+    <path d="M8.1 12h2.1l1.25-3.2 2.25 6.4 1.25-3.2h1.85"/>
+  </g>
+</svg>

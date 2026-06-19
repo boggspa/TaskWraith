@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="workflow-action-resume-title workflow-action-resume-desc" style="color: currentColor; --workflow-accent: currentColor;">
+  <title id="workflow-action-resume-title">Resume workflow</title>
+  <desc id="workflow-action-resume-desc">Original monoline play glyph with a return-to-cadence hook.</desc>
+  <g fill="none" stroke="var(--workflow-accent)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 5.2 17.7 12 7 18.8Z"/>
+    <path d="M4.3 7.4C2.9 9.1 2.5 11.3 3.2 13.4c.75 2.25 2.65 3.75 4.95 4.05"/>
+    <path d="m6.9 15.2 1.35 2.25-2.35 1.15"/>
+  </g>
+</svg>
