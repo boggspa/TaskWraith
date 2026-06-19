@@ -190,7 +190,8 @@ struct Composer: View {
     }
 
     private static let fallbackProviderIds = [
-        "codex", "claude", "gemini", "kimi", "grok", "cursor", "ollama",
+        // gemini retired — never offered as a selectable provider on iOS.
+        "codex", "claude", "kimi", "grok", "cursor", "ollama",
     ]
 
     var body: some View {

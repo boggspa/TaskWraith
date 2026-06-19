@@ -1,4 +1,5 @@
 import type { AgentRunPayload } from '../run/AgentRunTypes'
+import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { composeRunPrompt, type ComposeRunPromptResult } from '../PromptComposition'
 import {
   formatDiscordContextPromptAppendix,
@@ -139,7 +140,9 @@ export class ComposerService {
       settingsSnapshot: undefined
     }
 
-    const requestedProvider = assertProviderId(input.provider || chat.provider || 'gemini')
+    // Live default for a provider-less compose (was `|| 'gemini'`). An explicit
+    // gemini chat still composes its gemini prompt and is blocked at dispatch.
+    const requestedProvider = assertProviderId(input.provider || chat.provider || DEFAULT_PROVIDER)
     const scope: ChatScope =
       input.scope === 'global' || chat.scope === 'global' ? 'global' : 'workspace'
     const settings = this.deps.getSettings()

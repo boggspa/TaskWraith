@@ -4886,7 +4886,7 @@ function App(): React.JSX.Element {
     const emptyChat = workspaceChats.find((chat) =>
       isChatSummaryRecord(chat) ? chat.messageCount === 0 : chat.messages.length === 0
     )
-    let selectedProvider: ProviderId = 'gemini'
+    let selectedProvider: ProviderId = DEFAULT_PROVIDER
     let selectedChat: ChatRecord
     if (emptyChat) {
       const provider = getChatProvider(emptyChat)
@@ -18202,7 +18202,7 @@ function App(): React.JSX.Element {
                 </span>
               )}
             </button>
-            {currentProvider === 'gemini' && hasWorkspaceContext && (
+            {currentProvider === 'gemini' && !isRetiredProvider(currentProvider) && hasWorkspaceContext && (
               <button
                 className={`chat-corner-btn ${showGeminiTerminal ? 'active' : ''}`}
                 type="button"

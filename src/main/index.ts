@@ -161,6 +161,7 @@ import {
   buildBridgeToolActivity
 } from './bridge/BridgeTranscriptActivity'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../shared/runDiffBackfill'
+import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../shared/retiredProviders'
 import { BridgeBroadcaster } from './BridgeBroadcaster'
 import {
   REMOTE_QUESTION_MAX_ANSWER_CHARS,
@@ -16578,8 +16579,10 @@ if (isGeminiMcpBridgeProcess) {
               return { ok: false, reason: 'Ensemble mode is disabled on your Mac.' }
             }
             const configuredProviders = await detectConfiguredProviders(AppStore.getSettings())
-            const provider = assertProviderId(
-              action.provider ?? AppStore.getSettings().activeProvider ?? 'gemini'
+            const provider = coerceLiveProvider(
+              assertProviderId(
+                action.provider ?? AppStore.getSettings().activeProvider ?? DEFAULT_PROVIDER
+              )
             )
             const reusableEnsemble =
               requestedChat ||
@@ -22697,6 +22700,17 @@ if (isGeminiMcpBridgeProcess) {
         resumeSessionId?: string | null,
         worktree: GeminiWorktreeLaunchOption = null
       ) => {
+        // Gemini is retired. This PTY path bypasses normalizeAgentRunPayload, so
+        // it needs its OWN guard — otherwise a historical gemini chat's
+        // persistent-terminal toggle would spawn the retired CLI directly.
+        if (isRetiredProvider('gemini')) {
+          event.sender.send(
+            'gemini-session-data',
+            'Gemini has been retired and can no longer start sessions. Your Gemini chat history is preserved.\r\n'
+          )
+          event.sender.send('gemini-session-exit', -1)
+          return
+        }
         let registeredWorkspace: string
         try {
           registeredWorkspace = requireRegisteredWorkspace(workspace)
