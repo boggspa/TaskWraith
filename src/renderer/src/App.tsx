@@ -476,6 +476,7 @@ import {
 import { EnsembleRosterPresetPicker } from './components/EnsembleRosterPresetPicker'
 import { WelcomeWorkspacePicker } from './components/WelcomeWorkspacePicker'
 import { WelcomeUsageDashboard } from './components/WelcomeUsageDashboard'
+import { GeminiRetirementBanner } from './components/GeminiRetirementBanner'
 import { ComposerWorkspaceSwitcher } from './components/ComposerWorkspaceSwitcher'
 import { TranscriptPanel } from './components/TranscriptPanel'
 import { AuditRunCard } from './components/AuditRunCard'
@@ -18496,6 +18497,8 @@ function App(): React.JSX.Element {
               />
             </div>
           )}
+
+          {isWelcomeChat && <GeminiRetirementBanner />}
 
           {/* Reserve the dashboard's fixed height during the first usage fetch
               so the greeting + composer below don't jump downward when the
