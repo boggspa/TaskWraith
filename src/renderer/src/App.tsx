@@ -43,7 +43,6 @@ import {
   ProviderApiKeyStatus,
   GeminiAuthStatus,
   GeminiAuthProfileSummary,
-  GeminiOAuthLoginStatus,
   RunQueueJob,
   RunQueueJobSource,
   RunQueueJobStatus,
@@ -1491,7 +1490,7 @@ function App(): React.JSX.Element {
   // same default the main store applies on first load). The actual
   // API-vs-CLI dispatch lives in main; this state is only used by the
   // Settings UI to surface the picker and the runtime status row.
-  const [geminiApiRuntime, setGeminiApiRuntime] = useState<GeminiApiRuntimeMode>('auto')
+  const [, setGeminiApiRuntime] = useState<GeminiApiRuntimeMode>('auto')
 
   // Diff & Logs
   const [rawLogs, setRawLogs] = useState<RawLogEntry[]>([])
@@ -4423,82 +4422,6 @@ function App(): React.JSX.Element {
       setProviderUpgradeState(provider, 'error')
       setTimeout(() => setProviderUpgradeState(provider, 'idle'), 5000)
     }
-  }
-
-  const handleSaveGeminiAuthProfile = async (profile: {
-    id?: string
-    label?: string
-    kind: 'api-key' | 'vertex-ai' | 'google-oauth'
-    apiKey?: string
-    vertexProject?: string
-    vertexLocation?: string
-    makeDefault?: boolean
-  }) => {
-    if (typeof window.api.saveGeminiAuthProfile !== 'function') return
-    await window.api.saveGeminiAuthProfile(profile).catch((error) => {
-      setRawLogs((prev) => [
-        ...prev,
-        {
-          type: 'stderr',
-          content: `Failed to save Gemini auth profile: ${redactLog(String(error))}`
-        }
-      ])
-    })
-    await refreshGeminiAuthStatus()
-  }
-
-  const handleStartGeminiOAuthLogin = async (input: {
-    profileId?: string
-    label?: string
-    makeDefault?: boolean
-  }): Promise<GeminiOAuthLoginStatus | null> => {
-    if (typeof window.api.startGeminiOAuthLogin !== 'function') return null
-    const status = await window.api.startGeminiOAuthLogin(input).catch((error) => {
-      setRawLogs((prev) => [
-        ...prev,
-        {
-          type: 'stderr',
-          content: `Failed to start Gemini Google login: ${redactLog(String(error))}`
-        }
-      ])
-      return null
-    })
-    await refreshGeminiAuthStatus()
-    markPersistentSessionRestartNeeded(
-      'Gemini auth profile changed. Restart the persistent session to apply the selected account.'
-    )
-    return status
-  }
-
-  const handleCancelGeminiOAuthLogin = async (profileId?: string | null) => {
-    if (typeof window.api.cancelGeminiOAuthLogin !== 'function') return
-    await window.api.cancelGeminiOAuthLogin(profileId).catch((error) => {
-      setRawLogs((prev) => [
-        ...prev,
-        {
-          type: 'stderr',
-          content: `Failed to cancel Gemini Google login: ${redactLog(String(error))}`
-        }
-      ])
-    })
-    await refreshGeminiAuthStatus()
-  }
-
-  const handleSetDefaultGeminiAuthProfile = async (profileId: string | null) => {
-    if (typeof window.api.setDefaultGeminiAuthProfile !== 'function') return
-    await window.api.setDefaultGeminiAuthProfile(profileId).catch((error) => {
-      setRawLogs((prev) => [
-        ...prev,
-        {
-          type: 'stderr',
-          content: `Failed to select Gemini auth profile: ${redactLog(String(error))}`
-        }
-      ])
-    })
-    await refreshGeminiAuthStatus()
-    markPersistentSessionRestartNeeded(
-      'Gemini auth profile changed. Restart the persistent session to apply the selected account.'
-    )
   }
 
   const handleDeleteGeminiAuthProfile = async (profileId: string) => {
@@ -19441,7 +19364,6 @@ function App(): React.JSX.Element {
               sidebarOpacity={appearance.sidebarOpacity}
               mainPaneOpacity={appearance.mainPaneOpacity}
               geminiCheckpointingEnabled={geminiCheckpointingEnabled}
-              geminiApiRuntime={geminiApiRuntime}
               chatContextTurns={chatContextTurns}
               currency={displayCurrency}
               currencyOverestimatePercent={overestimatePercent}
@@ -19487,8 +19409,6 @@ function App(): React.JSX.Element {
               updateChannel={updateChannel}
               approvalTimeouts={approvalTimeouts}
               productOperationsStatus={productOperationsStatus}
-              geminiAuthStatus={geminiAuthStatus}
-              geminiAuthProfiles={geminiAuthProfiles}
               codexStatus={codexStatus}
               claudeAuthStatus={claudeAuthStatus}
               kimiAuthStatus={kimiAuthStatus}
@@ -19505,9 +19425,6 @@ function App(): React.JSX.Element {
               onStoreKimiApiKey={(key) => void handleStoreKimiApiKey(key)}
               onClearKimiApiKey={() => void handleClearKimiApiKey()}
               onProviderUpgrade={(provider) => void handleUpgradeProviderCli(provider)}
-              onSaveGeminiAuthProfile={(profile) => void handleSaveGeminiAuthProfile(profile)}
-              onStartGeminiOAuthLogin={(input) => void handleStartGeminiOAuthLogin(input)}
-              onCancelGeminiOAuthLogin={(profileId) => void handleCancelGeminiOAuthLogin(profileId)}
               onProviderLogin={(provider) => {
                 void window.api.openProviderLoginTerminal(provider).then((r) => {
                   if (!r?.ok) console.warn('[provider sign-in] could not open Terminal:', r?.error)
@@ -19518,12 +19435,6 @@ function App(): React.JSX.Element {
                   if (!r?.ok) console.warn('[provider sign-out] could not open Terminal:', r?.error)
                 })
               }}
-              onSetDefaultGeminiAuthProfile={(profileId) =>
-                void handleSetDefaultGeminiAuthProfile(profileId)
-              }
-              onDeleteGeminiAuthProfile={(profileId) =>
-                void handleDeleteGeminiAuthProfile(profileId)
-              }
               onRemoveAgenticWorkspaceGrant={(provider, workspacePath, service) =>
                 void handleRemoveAgenticWorkspaceGrant(provider, workspacePath, service)
               }

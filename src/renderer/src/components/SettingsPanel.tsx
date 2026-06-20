@@ -22,8 +22,6 @@ import type {
   AppSettings,
   GeminiApiRuntimeMode,
   GeminiMcpBridgeStatus,
-  GeminiAuthStatus,
-  GeminiAuthProfileSummary,
   NativeSubAgentRequestPolicy,
   ProviderApiKeyStatus,
   ProviderCapabilityContract,
@@ -129,10 +127,6 @@ interface SettingsPanelProps {
   sidebarOpacity: number
   mainPaneOpacity: number
   geminiCheckpointingEnabled: boolean
-  /** Phase M1 — Gemini API vs CLI runtime selection. `'auto'` is the
-   * default (use API when an API key is configured, else CLI). See
-   * {@link GeminiApiRuntimeMode} in store/types.ts. */
-  geminiApiRuntime: GeminiApiRuntimeMode
   chatContextTurns: number
   /** 1.0.5-EW25 — User-selected display currency for cost / token-
    * spend chips. The underlying value still comes verbatim from
@@ -190,16 +184,6 @@ interface SettingsPanelProps {
   updateChannel: ProductUpdateChannel
   approvalTimeouts: AppSettings['approvalTimeouts']
   productOperationsStatus: ProductOperationsStatus | null
-  // RETIRED (inert): these Gemini auth/runtime props — plus geminiApiRuntime
-  // above and the on*GeminiAuthProfile / onStart+onCancelGeminiOAuthLogin
-  // handlers below — fed the Settings Providers UI that was removed when Gemini
-  // was retired. They stay in the contract so App.tsx's existing pass-site keeps
-  // compiling; the props + their App.tsx wiring are removed in a follow-up once
-  // App.tsx is uncontended. NOTE: the geminiMcpBridge* props (and onInstall/
-  // onRefreshGeminiMcpBridgeStatus) are NOT inert — they drive the shared
-  // TaskWraith MCP bridge control that serves every provider.
-  geminiAuthStatus?: GeminiAuthStatus | null
-  geminiAuthProfiles?: GeminiAuthProfileSummary[]
   codexStatus?: any
   claudeAuthStatus?: ProviderApiKeyStatus | null
   kimiAuthStatus?: ProviderApiKeyStatus | null
@@ -219,27 +203,10 @@ interface SettingsPanelProps {
   onStoreKimiApiKey?: (key: string) => void
   onClearKimiApiKey?: () => void
   onProviderUpgrade?: (provider: ProviderId) => void
-  onSaveGeminiAuthProfile?: (profile: {
-    id?: string
-    label?: string
-    kind: 'api-key' | 'vertex-ai' | 'google-oauth'
-    apiKey?: string
-    vertexProject?: string
-    vertexLocation?: string
-    makeDefault?: boolean
-  }) => void
-  onStartGeminiOAuthLogin?: (input: {
-    profileId?: string
-    label?: string
-    makeDefault?: boolean
-  }) => void
-  onCancelGeminiOAuthLogin?: (profileId?: string | null) => void
   // 1.0.6-CRUX42 — open a Terminal running the provider's interactive CLI login
   // (Cursor / Grok). The host wires this to window.api.openProviderLoginTerminal.
   onProviderLogin?: (provider: ProviderId) => void
   onProviderLogout?: (provider: ProviderId) => void
-  onSetDefaultGeminiAuthProfile?: (profileId: string | null) => void
-  onDeleteGeminiAuthProfile?: (profileId: string) => void
   onRemoveAgenticWorkspaceGrant?: (
     provider: ProviderId,
     workspacePath: string,

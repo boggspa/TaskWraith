@@ -27,7 +27,6 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     sidebarOpacity: 100,
     mainPaneOpacity: 100,
     geminiCheckpointingEnabled: false,
-    geminiApiRuntime: 'auto',
     chatContextTurns: 6,
     currency: 'USD',
     currencyOverestimatePercent: 0,
@@ -72,7 +71,6 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
       mainAuthorityMs: 60_000
     },
     productOperationsStatus: null,
-    geminiAuthStatus: null,
     codexStatus: null,
     claudeAuthStatus: null,
     kimiAuthStatus: null,
