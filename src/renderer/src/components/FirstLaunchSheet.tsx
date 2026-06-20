@@ -607,9 +607,9 @@ export function FirstLaunchSheet({
         <section className="first-launch-sheet-section">
           <p className="first-launch-sheet-prose">
             TaskWraith is a multi-provider AI CLI manager. It wraps <strong>Codex</strong>,{' '}
-            <strong>Claude</strong>, <strong>Gemini</strong>, <strong>Kimi</strong>,{' '}
-            <strong>Cursor</strong>, <strong>Grok</strong>, and local{' '}
-            <strong>Ollama</strong> models inside one consistent chrome so you can run and compare
+            <strong>Claude</strong>, <strong>Kimi</strong>, <strong>Cursor</strong>,{' '}
+            <strong>Grok</strong>, and local <strong>Ollama</strong> models inside one consistent
+            chrome so you can run and compare
             them side-by-side in the same UI. Each provider keeps its own auth — sign in to the
             ones you want to use, skip the rest. Goals, approvals, audit runs, and usage history stay
             in TaskWraith&apos;s local ledger so each provider shares the same operating context.
@@ -663,7 +663,7 @@ export function FirstLaunchSheet({
           <p className="first-launch-sheet-section-helper">
             Providers sign in three ways: <strong>Codex</strong>, <strong>Cursor</strong>, and{' '}
             <strong>Grok</strong> log in through their own CLI in a Terminal;{' '}
-            <strong>Claude</strong> and <strong>Gemini</strong> use in-app OAuth or an API key;{' '}
+            <strong>Claude</strong> uses in-app OAuth or an API key;{' '}
             <strong>Kimi</strong> takes an API key. <strong>Ollama</strong> is local-only: install
             Ollama, pull a model, and no cloud account is needed. Cursor and Grok auth stays inside
             their CLIs, so TaskWraith marks those cards ready when the provider adapter is available;

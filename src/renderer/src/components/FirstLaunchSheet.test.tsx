@@ -107,6 +107,26 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('7. Power-user shortcuts')
   })
 
+  it('intro prose advertises live providers but not the retired Gemini', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        geminiAuthStatus={null}
+      />
+    )
+    // The "It wraps …" sentence is an OFFER surface, so the retired Gemini must
+    // not appear there even though its chat history is preserved elsewhere.
+    expect(html).toContain('multi-provider AI CLI manager')
+    expect(html).toContain('<strong>Codex</strong>')
+    expect(html).toContain('<strong>Ollama</strong>')
+    expect(html).not.toContain('<strong>Gemini</strong>')
+  })
+
   it('renders the Appearance preference controls and preview surfaces', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
