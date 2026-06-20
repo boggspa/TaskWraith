@@ -6167,6 +6167,11 @@ function App(): React.JSX.Element {
     if (!attachedWindow) return
     if (!ownerChatId) return
     if (ownerChatId === currentChatId) return
+    // Multiview: the owner chat can still be visible in a non-focused pane even
+    // when another pane takes focus. Only tear down its live capture once the
+    // chat is no longer shown anywhere — otherwise a stray pane click kills a
+    // capture the user is still watching.
+    if (multiview.paneChatIds.includes(ownerChatId)) return
     // Different chat is active — stash for resume, then detach. The detach
     // clears React state + the ref + sends the IPC; stashing first preserves
     // what the owner chat was watching.
@@ -6182,7 +6187,7 @@ function App(): React.JSX.Element {
     attachedWindowOwnerChatIdRef.current = null
     void window.api.attachWindowDetach().catch(() => undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentChat?.appChatId])
+  }, [currentChat?.appChatId, multiview.paneChatIds])
 
   // M11 (1.0.7) — resume loader. On switching TO a chat, fetch its remembered
   // sticky-AppWatch snapshot (if any) so the composer can offer to resume.
@@ -18394,8 +18399,13 @@ function App(): React.JSX.Element {
         onPickWorkspace={handleMultiviewPanePickWorkspace}
         onAddWorkspace={handleMultiviewPaneAddWorkspace}
         onSelectNoWorkspace={handleMultiviewPaneSelectNoWorkspace}
-        screenWatchActive={Boolean(attachedWindow)}
-        screenWatchStreaming={Boolean(attachedWindow?.streaming)}
+        screenWatchActive={
+          attachedWindowOwnerChatIdRef.current === viewerChatId && Boolean(attachedWindow)
+        }
+        screenWatchStreaming={
+          attachedWindowOwnerChatIdRef.current === viewerChatId &&
+          Boolean(attachedWindow?.streaming)
+        }
         screenWatchTitle={viewerScreenWatchTitle}
         screenWatchDisabled={Boolean(screenWatchUnavailableReason)}
         onToggleScreenWatch={handleMultiviewPaneToggleScreenWatch}
