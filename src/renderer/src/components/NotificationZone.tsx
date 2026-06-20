@@ -144,6 +144,13 @@ export function NotificationZone({
     return () => window.clearTimeout(id)
   }, [outgoingIndex])
 
+  // Re-anchor if the active list shrank out from under activeIndex without a
+  // dismiss (e.g. a timed notice expired). safeIndex already clamps the render;
+  // this keeps activeIndex itself valid so the rotation tick can't no-op.
+  useEffect(() => {
+    if (activeIndex > count - 1) setActiveIndex(0)
+  }, [count, activeIndex])
+
   if (count === 0) return null
 
   if (count === 1) {
@@ -184,14 +191,13 @@ export function NotificationZone({
           <NotificationCard notification={current} onDismiss={dismiss} />
         </div>
       </div>
-      <div className="notification-zone-dots" role="tablist" aria-label="Notifications">
+      <div className="notification-zone-dots" role="group" aria-label="Notifications">
         {active.map((notification, index) => (
           <button
             key={notification.id}
             type="button"
-            role="tab"
             className={`notification-zone-dot ${index === safeIndex ? 'is-active' : ''}`}
-            aria-selected={index === safeIndex}
+            aria-current={index === safeIndex ? 'true' : undefined}
             aria-label={`Show notification ${index + 1} of ${count}`}
             onClick={() => goTo(index, index > safeIndex ? 'next' : 'prev')}
           />
