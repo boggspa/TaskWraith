@@ -21,7 +21,11 @@ describe('MultiviewPaneGrid', () => {
     expect(out).not.toContain('multiview-grid')
   })
 
-  it('single layout ignores the ambientBackdrop (fragment passthrough, zero-diff)', () => {
+  it('renders no shared ambient backdrop — FX are now per-pane (single layout)', () => {
+    // The shared backdrop was removed: each pane paints its OWN sky/ghost/living
+    // INLINE (focused cell via App, viewer cells via ChatViewPane), so the grid
+    // never mounts a `.multiview-ambient-backdrop` and the single layout is a
+    // byte-identical fragment passthrough.
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="single"
@@ -29,17 +33,15 @@ describe('MultiviewPaneGrid', () => {
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
-        ambientBackdrop={<div id="ambient" />}
       />
     )
-    // Single stays byte-identical to the no-backdrop case — the shared backdrop
-    // is split-only (the focused cell keeps its own inline FX in single).
     expect(out).toBe('<div id="focused-cell"></div>')
     expect(out).not.toContain('multiview-ambient-backdrop')
-    expect(out).not.toContain('id="ambient"')
   })
 
-  it('split layout renders the shared ambientBackdrop once, behind the cells', () => {
+  it('renders no shared ambient backdrop in a split layout (per-pane inline FX)', () => {
+    // The focused cell is the FIRST grid child (no backdrop layer precedes it),
+    // and no `.multiview-ambient-backdrop` is emitted anywhere.
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="quad"
@@ -47,27 +49,11 @@ describe('MultiviewPaneGrid', () => {
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
-        ambientBackdrop={<div id="ambient" />}
-      />
-    )
-    // Exactly one shared backdrop layer for the whole grid (not per-cell).
-    expect((out.match(/multiview-ambient-backdrop/g) || []).length).toBe(1)
-    expect((out.match(/id="ambient"/g) || []).length).toBe(1)
-    // The backdrop is the first child of the grid (painted beneath the cells).
-    expect(out).toMatch(/multiview-grid[^>]*><div class="multiview-ambient-backdrop"/)
-  })
-
-  it('split layout omits the backdrop wrapper when no ambientBackdrop is given', () => {
-    const out = renderToStaticMarkup(
-      <MultiviewPaneGrid
-        layout="vertical-2"
-        paneChatIds={['a', 'b']}
-        focusedPaneIndex={0}
-        renderFocusedCell={focused}
-        renderViewerCell={viewer}
       />
     )
     expect(out).not.toContain('multiview-ambient-backdrop')
+    // The first grid child is a cell (the focused one), not a backdrop wrapper.
+    expect(out).toMatch(/multiview-grid[^>]*><div class="multiview-cell/)
   })
 
   it('multiview lays out a grid with the focused cell + viewer cells by area', () => {

@@ -9,9 +9,12 @@ import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData, WelcomeUsageTab } from '../lib/welcomeUsageDashboard'
 import {
   AgentAuraLayer,
+  LivingWorkspaceLayer,
+  SkyWeatherVisual,
   type AgentAuraProviderKey,
   type AgentAuraStatus,
-  type AdvancedFxIntensity
+  type AdvancedFxIntensity,
+  type HostWeatherVisualState
 } from './FxLayers'
 
 /**
@@ -58,6 +61,17 @@ export interface ChatViewPaneProps extends Omit<
   auraProvider?: AgentAuraProviderKey
   auraStatus?: AgentAuraStatus
   auraIntensity?: AdvancedFxIntensity
+  // ── Per-pane sky + living-workspace FX ────────────────────────────────────
+  // Each pane paints its OWN sky/living-workspace INLINE (behind its content,
+  // on top of its own slab) so the FX show at ANY opacity (incl. fully-opaque
+  // panes). App resolves these from the pane's effective sky toggle
+  // (`paneFx[i]?.sky ?? globalSky`) — `showLivingWorkspace` additionally follows
+  // the global living-workspace flag. `weather` is App's shared host weather and
+  // `intensity` reuses the aura intensity. Optional so test fixtures stay light.
+  showSky?: boolean
+  showLivingWorkspace?: boolean
+  weather?: HostWeatherVisualState | null
+  intensity?: AdvancedFxIntensity
   welcomeWorkspaceName?: string | null
   welcomeIsGlobalChat?: boolean
   // ── Welcome usage dashboard (rendered by the pane shell, above the
@@ -132,6 +146,12 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.auraProvider === b.auraProvider &&
     a.auraStatus === b.auraStatus &&
     a.auraIntensity === b.auraIntensity &&
+    // Per-pane sky + living-workspace — MUST be compared or a pane won't toggle
+    // its own sky/ghost FX or re-paint when the weather/intensity changes.
+    a.showSky === b.showSky &&
+    a.showLivingWorkspace === b.showLivingWorkspace &&
+    a.weather === b.weather &&
+    a.intensity === b.intensity &&
     a.welcomeWorkspaceName === b.welcomeWorkspaceName &&
     a.welcomeIsGlobalChat === b.welcomeIsGlobalChat &&
     // Welcome usage dashboard (pane-shell-owned).
@@ -298,6 +318,18 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
           hasHandoff={false}
         />
       )}
+      {/* Per-pane ambient FX — INLINE behind this pane's content (the layers are
+       * `position:absolute; inset:0; pointer-events:none`), painted on top of
+       * the pane's own slab so they show at ANY opacity. Gated by this pane's
+       * effective sky toggle (living-workspace additionally follows the global
+       * living flag). Replaces the old shared backdrop. */}
+      {props.showLivingWorkspace && (
+        <LivingWorkspaceLayer
+          weather={props.weather ?? null}
+          intensity={props.intensity ?? 'cinematic'}
+        />
+      )}
+      {props.showSky && <SkyWeatherVisual weather={props.weather ?? null} />}
       <ChatViewPaneChrome {...props} />
       {props.isWelcomeChat &&
         props.showWelcomeUsageDashboard &&

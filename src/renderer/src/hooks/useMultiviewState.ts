@@ -35,6 +35,17 @@ export interface MultiviewLayoutTracks {
  */
 export type MultiviewTrackSizes = Partial<Record<MultiviewLayout, MultiviewLayoutTracks>>
 
+/**
+ * Per-pane FX overrides keyed by pane index. A missing entry (or a missing
+ * `sky`/`ghost` field) means "follow the app-global FX flag" — App resolves the
+ * effective value as `paneFx[i]?.sky ?? globalSky`. In-memory / session-only:
+ * NOT persisted (cross-session Multiview persistence is a deliberate follow-up).
+ * Keyed by index, so entries left behind by a close/reorder are harmless — they
+ * are simply re-resolved against the new `paneChatIds` on the next render.
+ */
+export type MultiviewPaneFxOverride = { sky?: boolean; ghost?: boolean }
+export type MultiviewPaneFxFlag = keyof MultiviewPaneFxOverride
+
 export interface MultiviewCoreState {
   layout: MultiviewLayout
   /** index = grid cell; null = an empty cell. Length always === paneCount. */
@@ -379,6 +390,19 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   resizeTrack: (args: ApplyResizeTrackArgs) => void
   /** Double-click a gutter: reset a layout's fractions to the spec defaults. */
   resetTrackSizes: (layout?: MultiviewLayout) => void
+  /**
+   * Per-pane FX overrides keyed by pane index. A missing entry/field => follow
+   * the app-global flag (App resolves `paneFx[i]?.sky ?? globalSky`). Session-
+   * only (not persisted).
+   */
+  paneFx: Record<number, MultiviewPaneFxOverride>
+  /**
+   * Set a pane's sky/ghost override to an EXPLICIT boolean. Because a missing
+   * entry means "follow global", callers pass the next effective value (e.g.
+   * `!effectiveSky`) so the first toggle visibly flips state regardless of where
+   * the global currently sits.
+   */
+  setPaneFxFlag: (paneIndex: number, flag: MultiviewPaneFxFlag, value: boolean) => void
 }
 
 export function useMultiviewState(
@@ -387,6 +411,9 @@ export function useMultiviewState(
   const [state, setState] = useState<MultiviewCoreState>(() =>
     createInitialMultiviewState(options.initialPaneChatId ?? null)
   )
+  // Per-pane FX overrides (session-only; NOT part of the persisted/unit-tested
+  // core state). Keyed by pane index; missing entry/field => follow the global.
+  const [paneFx, setPaneFx] = useState<Record<number, MultiviewPaneFxOverride>>({})
 
   // Keep the latest state reachable synchronously so assignToNextPane can
   // return the chosen index without depending on a setState callback's timing.
@@ -438,6 +465,15 @@ export function useMultiviewState(
   const resetTrackSizes = useCallback((layout?: MultiviewLayout) => {
     setState((s) => applyResetTrackSizes(s, layout ?? s.layout))
   }, [])
+  const setPaneFxFlag = useCallback(
+    (paneIndex: number, flag: MultiviewPaneFxFlag, value: boolean) => {
+      setPaneFx((prev) => ({
+        ...prev,
+        [paneIndex]: { ...prev[paneIndex], [flag]: value }
+      }))
+    },
+    []
+  )
 
   const focusedChatId = state.paneChatIds[state.focusedPaneIndex] ?? null
   const tracks = useMemo(
@@ -459,6 +495,8 @@ export function useMultiviewState(
     assignToNextPane,
     openInNewPane,
     resizeTrack,
-    resetTrackSizes
+    resetTrackSizes,
+    paneFx,
+    setPaneFxFlag
   }
 }

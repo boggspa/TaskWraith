@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+import { useId, type CSSProperties } from 'react'
 import type { AppSettings, ProviderId } from '../../../main/store/types'
 
 export type SkyWeatherKind =
@@ -27,6 +27,49 @@ export interface HostWeatherVisualState {
 
 type SkyTimePhase = 'dawn' | 'day' | 'evening' | 'night'
 
+/**
+ * The SVG filter the fog/mist sky variants warp their glow through. Referenced
+ * from CSS by a FIXED id (`02-transcript-messages-fx.css`:
+ * `filter: url(#sky-fog-mist-warp)` on `.sky-day.sky-mist .sky-glow` and the
+ * `.sky-day.sky-fog::after` pseudo-element — the latter can't take an inline
+ * per-instance filter), so the id CANNOT be namespaced per-instance.
+ *
+ * Multiview can mount up to 4 `SkyWeatherVisual`s at once; emitting this filter
+ * inside each would create duplicate `id="sky-fog-mist-warp"` nodes. Instead the
+ * defs live in ONE shared element (`<SkyFogFilterDefs>`, rendered once by App),
+ * which every sky instance — focused or pane — references via the CSS url(). */
+export function SkyFogFilterDefs() {
+  return (
+    <svg className="sky-fog-filter" width="0" height="0" aria-hidden focusable="false">
+      <filter
+        id="sky-fog-mist-warp"
+        x="-12%"
+        y="-24%"
+        width="124%"
+        height="148%"
+        colorInterpolationFilters="sRGB"
+      >
+        <feTurbulence
+          type="fractalNoise"
+          baseFrequency="0.012 0.056"
+          numOctaves="2"
+          seed="19"
+          result="fogNoise"
+        />
+        <feDisplacementMap
+          in="SourceGraphic"
+          in2="fogNoise"
+          scale="16"
+          xChannelSelector="R"
+          yChannelSelector="G"
+          result="warpedFog"
+        />
+        <feGaussianBlur in="warpedFog" stdDeviation="4.8" />
+      </filter>
+    </svg>
+  )
+}
+
 export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState | null }) {
   const localHour = new Date().getHours()
   const skyKind = weather?.kind || 'unknown'
@@ -46,33 +89,10 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
       className={`sky-visual-fx sky-${skyKind} ${isNightBase ? 'sky-night' : 'sky-day'} sky-phase-${timePhase}`}
       aria-hidden
     >
-      <svg className="sky-fog-filter" width="0" height="0" aria-hidden focusable="false">
-        <filter
-          id="sky-fog-mist-warp"
-          x="-12%"
-          y="-24%"
-          width="124%"
-          height="148%"
-          colorInterpolationFilters="sRGB"
-        >
-          <feTurbulence
-            type="fractalNoise"
-            baseFrequency="0.012 0.056"
-            numOctaves="2"
-            seed="19"
-            result="fogNoise"
-          />
-          <feDisplacementMap
-            in="SourceGraphic"
-            in2="fogNoise"
-            scale="16"
-            xChannelSelector="R"
-            yChannelSelector="G"
-            result="warpedFog"
-          />
-          <feGaussianBlur in="warpedFog" stdDeviation="4.8" />
-        </filter>
-      </svg>
+      {/* The fog/mist warp filter is defined ONCE globally via <SkyFogFilterDefs>
+        * (rendered by App) — the CSS that applies it references a FIXED id, which
+        * can't be namespaced per-instance, so emitting it here would duplicate the
+        * id across the up-to-4 panes that can mount this layer at once. */}
       <div className="sky-glow" />
       <div className="sky-orb" />
       {isNightBase && (
@@ -115,6 +135,17 @@ export function GhostCompanion() {
   // ALIVE: the eye <g>s carry the `ghost-eye` class so the existing `ghostBlink`
   // squash animates them, while `.ghost-avatar` keeps the float/gesture. viewBox is
   // cropped to the mark's content bounds so he fills the avatar box.
+  //
+  // Multiview can mount up to 4 ghosts at once (one inline per pane). The fill/rim
+  // gradient ids MUST be unique per instance — `fill="url(#id)"` resolves to the
+  // FIRST element with that id in document order, so a fixed id would make every
+  // ghost reference the first one's gradient (collision). `useId()` namespaces them.
+  // Strip the colons React puts in `useId()` output (e.g. `:r0:`) — they break
+  // `url(#…)` fragment resolution; same sanitization the codebase uses elsewhere
+  // (TerminalPanel.tsx). The result is a valid, unique, collision-free id stem.
+  const idPrefix = useId().replace(/:/g, '')
+  const fillId = `ghostCompanionFill-${idPrefix}`
+  const rimId = `ghostCompanionRim-${idPrefix}`
   return (
     <div className="ghost-companion" aria-hidden>
       <div className="ghost-avatar">
@@ -127,7 +158,7 @@ export function GhostCompanion() {
         >
           <defs>
             <linearGradient
-              id="ghostCompanionFill"
+              id={fillId}
               x1="38"
               y1="30"
               x2="98"
@@ -140,7 +171,7 @@ export function GhostCompanion() {
               <stop offset="1" stopColor="#9fc6de" stopOpacity="0.76" />
             </linearGradient>
             <linearGradient
-              id="ghostCompanionRim"
+              id={rimId}
               x1="32"
               y1="24"
               x2="104"
@@ -154,8 +185,8 @@ export function GhostCompanion() {
           </defs>
           <g shapeRendering="crispEdges">
             <polygon
-              fill="url(#ghostCompanionFill)"
-              stroke="url(#ghostCompanionRim)"
+              fill={`url(#${fillId})`}
+              stroke={`url(#${rimId})`}
               strokeWidth="5"
               strokeLinejoin="miter"
               points="56 30 80 30 92 36 98 48 98 84 92 84 86 90 80 84 74 96 68 84 56 96 50 84 38 84 38 48 44 36"

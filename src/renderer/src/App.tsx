@@ -418,9 +418,9 @@ import {
 } from './lib/welcomeUsageDashboard'
 import {
   AgentAuraLayer,
-  GhostCompanion,
   LivingWorkspaceLayer,
   RunDataVizLayer,
+  SkyFogFilterDefs,
   SkyWeatherVisual,
   type AgentAuraProviderKey,
   type AgentAuraStatus
@@ -6402,14 +6402,17 @@ function App(): React.JSX.Element {
       resizeObserver.disconnect()
       window.removeEventListener('resize', updateComposerReservation)
     }
-    // Mount-once: ResizeObserver natively responds to every size change
-    // (typing, attachments, approvals, terminal toggles) without us needing
-    // to tear down + reinstall the observer on each state change. The previous
-    // dependency array included `prompt`, which re-ran this effect on every
-    // keystroke — each remount fired the observer callback, which mutated
-    // a CSS var that the transcript layout reads, which fed back into the
-    // composer's measured height. That was a primary source of UI flicker.
-  }, [])
+    // Re-attach when the focused transcript/composer ELEMENT is replaced. The
+    // observer + the captured `transcript`/`composerArea` locals are bound to
+    // specific DOM nodes; multiview remounts the keyed cell
+    // (`${paneIndex}:${chatId}`) on thread-switch / focus-change / layout-change,
+    // so a mount-once effect kept observing the OLD (detached) nodes and never
+    // wrote `--composer-reserved-height` onto the NEW transcript — the composer
+    // buried the transcript tail, worsening per switch until a full restart.
+    // These deps re-run ONLY on switch/focus/layout — NOT per keystroke
+    // (`prompt` is deliberately excluded; including it caused the old flicker
+    // feedback loop) — and the ResizeObserver still handles all in-thread resizes.
+  }, [currentChat?.appChatId, multiview.focusedPaneIndex, multiview.layout])
 
   // ----- Transcript auto-follow scrolling -------------------------------
   // Pins the transcript to the bottom while messages stream in, *unless*
@@ -15864,6 +15867,23 @@ function App(): React.JSX.Element {
   // the active provider's single-brand aura, so the glow reads as the
   // whole ensemble rather than (e.g.) Codex.
   const auraProviderKey = isCurrentEnsembleChat ? 'ensemble' : currentProvider
+  // ── Per-pane FX resolution (Multiview) ─────────────────────────────────────
+  // Each pane renders its OWN sky/ghost/living-workspace INLINE (so FX show at
+  // any pane opacity, incl. fully-opaque). A pane's override
+  // (`multiview.paneFx[i]`) wins; a missing entry/field follows the app-global
+  // flag. Living-workspace additionally follows the (effective) sky toggle, and
+  // every global is already gated by `isFxEnabled`, so these inherit that gate.
+  // In the single layout `paneFx` is empty and `focusedPaneIndex` is the only
+  // pane, so the focused effective values collapse to the globals (zero diff).
+  const paneSkyEnabled = (paneIndex: number): boolean =>
+    multiview.paneFx[paneIndex]?.sky ?? shouldShowSkyVisualFxInFxMode
+  const paneGhostEnabled = (paneIndex: number): boolean =>
+    multiview.paneFx[paneIndex]?.ghost ?? shouldShowGhostCompanion
+  const paneLivingWorkspaceEnabled = (paneIndex: number): boolean =>
+    paneSkyEnabled(paneIndex) && showLivingWorkspaceFx
+  const focusedPaneSkyEnabled = paneSkyEnabled(multiview.focusedPaneIndex)
+  const focusedPaneGhostEnabled = paneGhostEnabled(multiview.focusedPaneIndex)
+  const focusedPaneLivingWorkspaceEnabled = paneLivingWorkspaceEnabled(multiview.focusedPaneIndex)
   const appAgentAuraClass = showAgentAuraFx
     ? `fx-agent-aura-root fx-provider-${auraProviderKey} fx-status-${runFxStatus} fx-intensity-${advancedFxIntensity}`
     : ''
@@ -17738,29 +17758,32 @@ function App(): React.JSX.Element {
       await handleSelectChatRef.current(paneChat)
       void openCurrentSideChatPresentation('split')
     }
+    // This pane's EFFECTIVE sky/ghost flags (its own override, else the global).
+    // The corner toggles flip THIS pane's override only — a resting pane's FX
+    // are independent and toggling them does not steal focus.
+    const viewerPaneSkyEnabled = paneSkyEnabled(viewerPaneIndex)
+    const viewerPaneGhostEnabled = paneGhostEnabled(viewerPaneIndex)
     const viewerChromeActions: ChatViewPaneChromeAction[] = [
       {
         id: 'sky-weather',
-        title: `${shouldShowSkyVisualFxInFxMode ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} sky weather effects${hostWeather?.description ? ` · ${hostWeather.description}` : ''}`,
+        title: `${viewerPaneSkyEnabled ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} sky weather effects${hostWeather?.description ? ` · ${hostWeather.description}` : ''}`,
         ariaLabel: 'Toggle sky weather effects',
         icon: <SkyWeatherIcon />,
-        active: shouldShowSkyVisualFxInFxMode,
+        active: viewerPaneSkyEnabled,
         disabled: !isFxEnabled,
-        onClick: (paneIndex, chatId) => {
-          focusPaneForChromeAction(paneIndex, chatId)
-          setShowSkyVisualFx((current) => !current)
+        onClick: (paneIndex) => {
+          multiview.setPaneFxFlag(paneIndex, 'sky', !paneSkyEnabled(paneIndex))
         }
       },
       {
         id: 'ghost-companion',
-        title: `${shouldShowGhostCompanion ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} ghost companion`,
+        title: `${viewerPaneGhostEnabled ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} ghost companion`,
         ariaLabel: 'Toggle ghost companion',
         icon: <GhostCompanionIcon />,
-        active: shouldShowGhostCompanion,
+        active: viewerPaneGhostEnabled,
         disabled: !isFxEnabled,
-        onClick: (paneIndex, chatId) => {
-          focusPaneForChromeAction(paneIndex, chatId)
-          setShowGhostCompanion((current) => !current)
+        onClick: (paneIndex) => {
+          multiview.setPaneFxFlag(paneIndex, 'ghost', !paneGhostEnabled(paneIndex))
         }
       },
       {
@@ -17972,6 +17995,10 @@ function App(): React.JSX.Element {
       // Non-focused panes only exist when multiview is split, so always hide the
       // welcome starter cards here (they'd overlap the composer in a short cell).
       isMultiviewSplit: true,
+      // Per-pane ghost: this pane's EFFECTIVE ghost flag (its override, else the
+      // global). The inherited `composerCtx.shouldShowGhostCompanion` is the
+      // FOCUSED pane's flag, so override it with THIS pane's.
+      shouldShowGhostCompanion: paneGhostEnabled(viewerPaneIndex),
       currentChat: viewerChat,
       currentComposerChatId: viewerChatId,
       currentProvider: viewerProvider,
@@ -18126,6 +18153,10 @@ function App(): React.JSX.Element {
         auraProvider={viewerAuraProviderKey}
         auraStatus={viewerRunFxStatus}
         auraIntensity={advancedFxIntensity}
+        showSky={paneSkyEnabled(viewerPaneIndex)}
+        showLivingWorkspace={paneLivingWorkspaceEnabled(viewerPaneIndex)}
+        weather={hostWeather}
+        intensity={advancedFxIntensity}
         welcomeWorkspaceName={viewerWorkspaceName}
         welcomeIsGlobalChat={viewerIsGlobalChat}
         isWelcomeChat={viewerIsWelcomeChat}
@@ -18448,11 +18479,12 @@ function App(): React.JSX.Element {
     setWorkflowDraft,
     setYoloBannerDismissed,
     settings,
-    // In a SPLIT, the ghost companion is rendered ONCE in the shared
-    // ambientBackdrop behind all panes — so suppress it in EVERY per-cell
-    // composer (the focused composer here, and every pane composer, which
-    // inherits this via `...composerCtx`). Single layout is unchanged.
-    shouldShowGhostCompanion: shouldShowGhostCompanion && !isMultiviewSplit,
+    // The ghost companion is now rendered INLINE per-pane (inside each pane's
+    // <Composer>), gated by that pane's EFFECTIVE ghost flag. This is the FOCUSED
+    // composer, so it uses the focused pane's effective flag (its override, else
+    // the global). In single layout that collapses to the global. Each pane
+    // composer overrides this in `paneComposerCtx` with its own pane flag.
+    shouldShowGhostCompanion: focusedPaneGhostEnabled,
     shouldShowWelcomeStandaloneHeatmaps,
     showComposerChips,
     steerIndicatorMessage,
@@ -18850,6 +18882,11 @@ function App(): React.JSX.Element {
           style={chatSplitStyle}
         >
           <div className="chat-split-main">
+            {/* The fog/mist sky warp filter — defined ONCE for the whole region
+              * (CSS references it by a fixed id, so it can't be per-instance).
+              * Present whenever FX is on so any sky (focused or pane, single or
+              * split) can reference it. */}
+            {isFxEnabled && <SkyFogFilterDefs />}
             <MultiviewPaneGrid
               layout={multiview.layout}
               paneChatIds={multiview.paneChatIds}
@@ -18859,29 +18896,6 @@ function App(): React.JSX.Element {
               rowFractions={multiview.tracks.rows}
               onResizeTrack={multiview.resizeTrack}
               onResetTracks={multiview.resetTrackSizes}
-              ambientBackdrop={
-                isMultiviewSplit ? (
-                  // ONE shared environment behind ALL panes (SPLIT only — the grid
-                  // ignores this prop in the single layout). Same inputs the inline
-                  // focused-cell FX use: `hostWeather` (computed once in App via
-                  // useHostWeather — do NOT call the hook again, it owns an IPC
-                  // poll), the global FX-enabled flags, and `advancedFxIntensity`.
-                  // The sky/living layers self-read the global `data-fx-*`
-                  // attributes on documentElement, so they render correctly here.
-                  // ONE ghost only (it has fixed SVG ids; per-cell composers
-                  // suppress theirs in split via `shouldShowGhostCompanion: false`).
-                  <>
-                    {showLivingWorkspaceFx && (
-                      <LivingWorkspaceLayer
-                        weather={hostWeather}
-                        intensity={advancedFxIntensity}
-                      />
-                    )}
-                    {shouldShowSkyVisualFxInFxMode && <SkyWeatherVisual weather={hostWeather} />}
-                    {shouldShowGhostCompanion && <GhostCompanion />}
-                  </>
-                ) : undefined
-              }
               renderEmptyCell={(emptyPaneIndex) => (
                 <div className="multiview-empty-pane" data-pane-index={emptyPaneIndex}>
                   <span className="multiview-empty-pane-label">Select a chat for this pane</span>
@@ -18922,23 +18936,42 @@ function App(): React.JSX.Element {
           {!isChatPopoutWindow && (
             <div className="chat-corner-controls chat-corner-controls-right">
             <button
-              className={`chat-corner-btn ${shouldShowSkyVisualFxInFxMode ? 'active' : ''}`}
+              className={`chat-corner-btn ${focusedPaneSkyEnabled ? 'active' : ''}`}
               type="button"
-              onClick={() => setShowSkyVisualFx((current) => !current)}
-              title={`${shouldShowSkyVisualFxInFxMode ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} sky weather effects${hostWeather?.description ? ` · ${hostWeather.description}` : ''}`}
+              onClick={() => {
+                // Single: toggle the persisted global. Split: toggle THIS (focused)
+                // pane's override to the negation of its current effective value
+                // (so the first click flips visibly even when no override exists).
+                if (isMultiviewSplit) {
+                  multiview.setPaneFxFlag(multiview.focusedPaneIndex, 'sky', !focusedPaneSkyEnabled)
+                } else {
+                  setShowSkyVisualFx((current) => !current)
+                }
+              }}
+              title={`${focusedPaneSkyEnabled ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} sky weather effects${hostWeather?.description ? ` · ${hostWeather.description}` : ''}`}
               aria-label="Toggle sky weather effects"
-              aria-pressed={shouldShowSkyVisualFxInFxMode}
+              aria-pressed={focusedPaneSkyEnabled}
               disabled={!isFxEnabled}
             >
               <SkyWeatherIcon />
             </button>
             <button
-              className={`chat-corner-btn ${shouldShowGhostCompanion ? 'active' : ''}`}
+              className={`chat-corner-btn ${focusedPaneGhostEnabled ? 'active' : ''}`}
               type="button"
-              onClick={() => setShowGhostCompanion((current) => !current)}
-              title={`${shouldShowGhostCompanion ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} ghost companion`}
+              onClick={() => {
+                if (isMultiviewSplit) {
+                  multiview.setPaneFxFlag(
+                    multiview.focusedPaneIndex,
+                    'ghost',
+                    !focusedPaneGhostEnabled
+                  )
+                } else {
+                  setShowGhostCompanion((current) => !current)
+                }
+              }}
+              title={`${focusedPaneGhostEnabled ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} ghost companion`}
               aria-label="Toggle ghost companion"
-              aria-pressed={shouldShowGhostCompanion}
+              aria-pressed={focusedPaneGhostEnabled}
               disabled={!isFxEnabled}
             >
               <GhostCompanionIcon />
@@ -19390,17 +19423,17 @@ function App(): React.JSX.Element {
             onClose={() => setPreviewChatMediaRef(null)}
           />
 
-          {/* AMBIENT FX (sky weather + living workspace) — focused-cell-inline
-            * ONLY in the single layout. In a SPLIT, these move to the shared
-            * `ambientBackdrop` rendered ONCE behind every pane (see the
-            * <MultiviewPaneGrid ambientBackdrop=…> below), so no pane is
-            * privileged and the sky no longer jumps to whichever cell is
-            * focused. The ghost companion is likewise single-in-the-backdrop in
-            * a split (suppressed in every per-cell composer via
-            * `shouldShowGhostCompanion: false`). The per-chat AgentAuraLayer +
-            * RunDataVizLayer stay focused-inline (the aura is also rendered
-            * per-pane by ChatViewPane — it's a per-CHAT provider signal). */}
-          {showLivingWorkspaceFx && !isMultiviewSplit && (
+          {/* AMBIENT FX (sky weather + living workspace) — rendered INLINE in the
+            * focused pane, gated by the FOCUSED pane's EFFECTIVE flags (its
+            * per-pane override, else the global). In a SPLIT every OTHER pane
+            * paints its own sky/living inline too (via ChatViewPane), so the FX
+            * are per-pane and show at any opacity — no shared backdrop. In single
+            * layout `focusedPaneIndex` is the only pane and there are no overrides,
+            * so the focused effective flags collapse to the globals. Per-pane
+            * living-workspace follows the (effective) sky toggle. The per-chat
+            * AgentAuraLayer + RunDataVizLayer stay focused-inline (the aura is also
+            * rendered per-pane by ChatViewPane — it's a per-CHAT provider signal). */}
+          {focusedPaneLivingWorkspaceEnabled && (
             <LivingWorkspaceLayer weather={hostWeather} intensity={advancedFxIntensity} />
           )}
           {showAgentAuraFx && (
@@ -19421,9 +19454,7 @@ function App(): React.JSX.Element {
               status={runFxStatus}
             />
           )}
-          {shouldShowSkyVisualFxInFxMode && !isMultiviewSplit && (
-            <SkyWeatherVisual weather={hostWeather} />
-          )}
+          {focusedPaneSkyEnabled && <SkyWeatherVisual weather={hostWeather} />}
 
           {currentProvider === 'gemini' && isOldVersion && (
             <div className="version-warning">

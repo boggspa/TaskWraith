@@ -217,3 +217,38 @@ describe('ChatViewPane per-pane agent aura', () => {
     expect(chatViewPanePropsEqual(auraProps(), auraProps({ showAura: false }))).toBe(false)
   })
 })
+
+describe('ChatViewPane per-pane sky + living-workspace FX', () => {
+  const fxProps = (over: Partial<ChatViewPaneProps> = {}): ChatViewPaneProps =>
+    makeProps({
+      chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
+      composerProps: stubComposerProps(),
+      weather: null,
+      intensity: 'cinematic',
+      ...over
+    })
+
+  it('renders the inline sky layer when showSky is true', () => {
+    const html = renderToStaticMarkup(<ChatViewPane {...fxProps({ showSky: true })} />)
+    expect(html).toContain('sky-visual-fx')
+  })
+
+  it('renders the inline living-workspace layer when showLivingWorkspace is true', () => {
+    const html = renderToStaticMarkup(<ChatViewPane {...fxProps({ showLivingWorkspace: true })} />)
+    expect(html).toContain('living-workspace-layer')
+  })
+
+  it('renders neither sky nor living-workspace when both flags are off', () => {
+    const html = renderToStaticMarkup(<ChatViewPane {...fxProps()} />)
+    expect(html).not.toContain('sky-visual-fx')
+    expect(html).not.toContain('living-workspace-layer')
+  })
+
+  it('re-renders (comparator) when a pane FX flag, weather, or intensity changes', () => {
+    expect(chatViewPanePropsEqual(fxProps(), fxProps({ showSky: true }))).toBe(false)
+    expect(chatViewPanePropsEqual(fxProps(), fxProps({ showLivingWorkspace: true }))).toBe(false)
+    const weather = { kind: 'rain' } as unknown as ChatViewPaneProps['weather']
+    expect(chatViewPanePropsEqual(fxProps(), fxProps({ weather }))).toBe(false)
+    expect(chatViewPanePropsEqual(fxProps(), fxProps({ intensity: 'epic' }))).toBe(false)
+  })
+})

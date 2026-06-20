@@ -21,31 +21,15 @@
   gap: 8px;
   padding: 6px;
   box-sizing: border-box;
-  /* Positioning context + own stacking context for the shared ambient
-     backdrop (z-index:0) that sits behind every cell (z-index:1). */
+  /* Positioning context + own stacking context so the draggable gutters
+     (z-index:2) stay above the cells (z-index:1). */
   position: relative;
   isolation: isolate;
 }
 
-/* SHARED AMBIENT BACKDROP — one sky / living-workspace / ghost environment
-   rendered ONCE behind ALL split cells (App passes the JSX via
-   `ambientBackdrop`). Split-only: the single layout is a fragment passthrough
-   that never mounts the grid, so this never applies there. The cells (and the
-   8px gaps + 6px padding) sit ABOVE it; split cell backgrounds are made
-   transparent below so the backdrop reads through as one continuous scene. */
-.multiview-ambient-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden;
-  border-radius: 14px;
-}
-
 .multiview-cell {
   position: relative;
-  /* Above the shared ambient backdrop (which is z-index:0 in the grid's own
-     stacking context). */
+  /* Above the grid background; the resize gutters (z-index:2) sit above this. */
   z-index: 1;
   min-width: 0;
   min-height: 0;
@@ -54,69 +38,24 @@
   flex-direction: column;
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--surface-border) 70%, transparent);
-  /* Semi-transparent so the shared backdrop shows through the cell chrome. */
-  background: color-mix(in srgb, var(--surface-1) 28%, transparent);
+  /* Transparent — each pane's own `.app-transcript` paints the per-theme
+     reading slab that HONORS the Main-pane-opacity latch (--main-pane-opacity-*),
+     exactly like the single pane. Per-pane sky/ghost/living FX paint on top of
+     that slab (rendered INLINE inside each pane), so they show at any opacity. */
+  background: transparent;
   container-type: size;
 }
 
 /* The transcript (focused content or a viewer) fills its cell and
    keeps its own internal scroll. min-height:0 lets it shrink inside
-   the grid track instead of forcing the row taller. */
+   the grid track instead of forcing the row taller. Its per-theme reading
+   slab paints normally here (honoring the Main-pane-opacity latch), exactly
+   like the single pane — no split-scoped transparency override. */
 .multiview-cell > .app-transcript {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   border-radius: inherit;
-}
-
-/* SPLIT-SCOPED TRANSPARENCY — reveal the shared ambient backdrop through every
-   cell. `.app-transcript` carries a deliberately OPAQUE per-theme "reading slab"
-   background (e.g. `:is([data-theme="system"],[data-theme="dark"]) .app-transcript`
-   paints solid `#161616` with `!important`). In single-pane that's fine — the
-   inline sky/ghost are CHILD layers that paint on top of the slab. In a SPLIT
-   the shared backdrop is BEHIND the grid, so the slab would hide it; drop the
-   slab to a faint scrim that keeps message text readable while the sky/ghost
-   behind the grid show through.
-
-   The `:root` prefix raises this to specificity (0,3,0) — above the unconditional
-   opaque `!important` slabs (system/dark + grok/cursor interface shells, which
-   stay opaque even with FX on) so they don't re-hide the backdrop. The ambient
-   backdrop only renders with Epic-FX enabled, under which most other themes are
-   already non-opaque (their solid-slab rules are `:not([data-fx-enabled="true"])`).
-   Edge combos that out-specify this (user-dialed pane opacity, native-glass+light,
-   alabaster) keep their denser slab — an acceptable, readability-preserving
-   degradation. Targets BOTH the focused cell's inline `.app-transcript` and a
-   non-focused `.multiview-pane-transcript`; single-pane (no `.multiview-cell`
-   ancestor) is untouched. */
-:root .multiview-cell > .app-transcript {
-  /* Base the scrim on the canonical per-pane colour the slab system uses
-     (`--main-pane-opacity-override-bg`: system/dark→#161616, grok→--grok-bg,
-     etc.; falls back to --content-bg, then a neutral) so the tint is sensible
-     in every theme rather than vanishing where --content-bg is `transparent`
-     (the bare system/dark default). ~36% alpha = backdrop reads through, text
-     stays legible. */
-  background: color-mix(
-    in srgb,
-    var(--main-pane-opacity-override-bg, var(--content-bg, #161616)) 36%,
-    transparent
-  ) !important;
-  background-image: none !important;
-}
-
-/* The scrim rule above only wins where it out-specifies the per-theme slab. But
-   EVERY slab variant (system/dark, grok/cursor/gemini/kimi interface shells,
-   user-dialed pane-opacity, alabaster) paints
-   `color-mix(..., var(--main-pane-opacity-100), transparent)`, and some out-
-   specify (0,3,0) — notably the user-dialed-opacity slab (0,5,0), which kept the
-   pane opaque and hid the shared backdrop entirely. Rather than chase each with
-   higher specificity, lower the ONE variable they all read for split panes, so
-   every slab computes translucent. Reset it on the composer so the composer
-   surface stays fully opaque (readable over the sky). */
-:root .multiview-cell > .app-transcript {
-  --main-pane-opacity-100: 36%;
-}
-:root .multiview-cell > .app-transcript .composer-area {
-  --main-pane-opacity-100: 100%;
 }
 
 .multiview-pane-transcript {
@@ -393,9 +332,8 @@
    boundaries (geometry computed in multiviewLayouts.ts). A gutter
    is placed on the track AFTER its boundary line and translated
    back by half the 8px grid gap so its hit area straddles the gap.
-   It sits above the ambient backdrop (z-index:0) and level with the
-   cells (z-index:2 > the cells' z-index:1) so the handle is always
-   grabbable; the cells themselves keep full pointer access because
+   It sits above the cells (z-index:2 > the cells' z-index:1) so the
+   handle is always grabbable; the cells themselves keep full pointer access because
    the gutter only covers the ~6px gap strip, not the cell bodies.
    ============================================================ */
 .multiview-gutter {
