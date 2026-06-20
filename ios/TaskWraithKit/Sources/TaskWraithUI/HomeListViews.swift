@@ -46,7 +46,7 @@ struct HomeView: View {
     private func seedSidebarCollapseIfNeeded() {
         guard explicitSelection, !ipadCollapseSeeded else { return }
         ipadCollapseSeeded = true
-        collapsedSections = ["activeRuns", "pinned", "recents", "ensembles", "workspaces", "globalChats"]
+        collapsedSections = ["activeRuns", "pinned", "recents", "ensembles", "workflows", "workspaces", "globalChats"]
     }
     /// True when hosted in a NavigationSplitView sidebar — rows select
     /// explicitly instead of pushing NavigationLinks. NOT derivable from
@@ -90,6 +90,16 @@ struct HomeView: View {
         let known = Set(model.workspaces.map(\.workspaceId))
         return listedCards.filter {
             $0.parentChatId == nil && !known.contains($0.workspaceId ?? "")
+        }
+    }
+    /// Workflows scoped to workspaces the phone already knows (allowlisted) —
+    /// mirrors the workspace-folder gating so a workflow never references a
+    /// workspace the user can't see. Workflows with no workspaceId are kept.
+    private var listedWorkflows: [RemoteWorkflow] {
+        let known = Set(model.workspaces.map(\.workspaceId))
+        return model.workflows.filter {
+            guard let ws = $0.workspaceId else { return true }
+            return known.contains(ws)
         }
     }
 
@@ -305,6 +315,26 @@ struct HomeView: View {
                     count: ensembleCards.count,
                     collapsed: collapsedSections.contains("ensembles")
                 ) { toggleSection("ensembles") }
+            }
+        }
+
+        // ── Workflows — scheduled / recurring runs (desktop parity). Like
+        //    Ensembles, a cross-cutting view; read-only on the phone for now
+        //    (tapping a row opens the workflow's chat). ────────────────────
+        let workflowRows = listedWorkflows
+        if !workflowRows.isEmpty {
+            Section {
+                if !collapsedSections.contains("workflows") {
+                    ForEach(workflowRows, id: \.id) { workflow in
+                        workflowRow(workflow)
+                    }
+                }
+            } header: {
+                GlassPillHeader(
+                    title: "Workflows", systemImage: "arrow.triangle.branch",
+                    count: workflowRows.count,
+                    collapsed: collapsedSections.contains("workflows")
+                ) { toggleSection("workflows") }
             }
         }
 
@@ -545,6 +575,114 @@ struct HomeView: View {
             .listRowInsets(rowInsets)
             .listRowSeparator(.hidden)
             .listRowBackground(rowChrome)
+        }
+    }
+
+    /// A scheduled-workflow row (read-only). Tapping opens the workflow's chat
+    /// via the same `selection` binding the thread rows use; a workflow with no
+    /// threadId is inert (nothing to open). Mirrors the satellite-row chrome:
+    /// faint accent wash only when running or (on iPad) selected.
+    @ViewBuilder
+    private func workflowRow(_ workflow: RemoteWorkflow) -> some View {
+        let accent = TWTheme.providerAccent(workflow.provider)
+        let rowInsets = EdgeInsets(top: 3, leading: 16, bottom: 3, trailing: 16)
+        let isSelected = explicitSelection && selection == workflow.threadId
+        let chrome = Group {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(accent.opacity(0.16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(accent.opacity(0.5))
+                    )
+                    .padding(.vertical, 2)
+            } else if workflow.isRunning {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(accent.opacity(0.10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(accent.opacity(0.35))
+                    )
+                    .padding(.vertical, 2)
+            } else {
+                Color.clear
+            }
+        }
+        Button {
+            // Read-only slice: tap opens the workflow's chat. No-op if there's
+            // no thread yet (run-now / pause actions land in a later slice).
+            guard let threadId = workflow.threadId else { return }
+            selection = threadId
+        } label: {
+            HStack(spacing: 6) {
+                WorkflowRowContent(workflow: workflow)
+                if workflow.threadId != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(workflow.threadId == nil)
+        .listRowInsets(rowInsets)
+        .listRowSeparator(.hidden)
+        .listRowBackground(chrome)
+    }
+}
+
+/// The visual content of a Workflows sidebar row: provider glyph + name, then a
+/// subtitle line "provider · schedule · status". A paused (disabled) workflow is
+/// dimmed and tagged so it reads as inactive at a glance.
+struct WorkflowRowContent: View {
+    let workflow: RemoteWorkflow
+
+    private var subtitleParts: [String] {
+        var parts: [String] = [TWTheme.providerLabel(workflow.provider)]
+        if let schedule = workflow.schedule, !schedule.isEmpty {
+            parts.append(schedule)
+        }
+        if let status = workflow.status, !status.isEmpty {
+            parts.append(status.capitalized)
+        }
+        return parts
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            ProviderGlyphIcon(provider: workflow.provider, size: 16)
+                .padding(.top, 2)
+                .opacity(workflow.isPaused ? 0.5 : 1)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(workflow.name ?? workflow.id)
+                    .font(.body)
+                    .foregroundStyle(
+                        workflow.isPaused ? TWTheme.textSecondary : TWTheme.textPrimary)
+                    .lineLimit(2)
+                HStack(spacing: 6) {
+                    Text(subtitleParts.joined(separator: " · "))
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textTertiary)
+                        .lineLimit(1)
+                    if workflow.isPaused {
+                        Text("Paused")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .background(TWTheme.surface3, in: Capsule())
+                            .foregroundStyle(TWTheme.textTertiary)
+                    } else if workflow.isRunning {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(TWTheme.statusColor("running"))
+                                .frame(width: 6, height: 6)
+                            Text("Running")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(TWTheme.statusColor("running"))
+                        }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
         }
     }
 }

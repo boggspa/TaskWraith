@@ -336,6 +336,48 @@ public struct WorkspaceSummary: Codable, Sendable, Identifiable, Hashable {
     public var id: String { workspaceId }
 }
 
+/// A scheduled / recurring workflow projected from the Mac (sidebar "Workflows"
+/// section). Read-only on the phone for now — tapping a row opens the workflow's
+/// chat (`threadId`). Every field except `id` is optional per the additive-decode
+/// convention so older/newer Mac builds still decode.
+public struct RemoteWorkflow: Codable, Sendable, Identifiable, Hashable {
+    public let id: String
+    public let name: String?
+    public let workspaceId: String?
+    /// The workflow's chat id — tapping a row opens this thread.
+    public let threadId: String?
+    public let provider: String?
+    public let enabled: Bool?
+    /// Human label, e.g. "Every 60 min" or "Manual".
+    public let schedule: String?
+    /// lastStatus: "idle" | "running" | "completed" | "failed" | "cancelled" | "skipped".
+    public let status: String?
+    public let nextRunAt: String?
+    public let lastRunAt: String?
+
+    public var isRunning: Bool { status == "running" }
+    /// A paused workflow is one the Mac has explicitly disabled.
+    public var isPaused: Bool { enabled == false }
+
+    public init(
+        id: String, name: String? = nil, workspaceId: String? = nil,
+        threadId: String? = nil, provider: String? = nil, enabled: Bool? = nil,
+        schedule: String? = nil, status: String? = nil,
+        nextRunAt: String? = nil, lastRunAt: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.workspaceId = workspaceId
+        self.threadId = threadId
+        self.provider = provider
+        self.enabled = enabled
+        self.schedule = schedule
+        self.status = status
+        self.nextRunAt = nextRunAt
+        self.lastRunAt = lastRunAt
+    }
+}
+
 /// The locked envelope shape: `{schemaVersion:1, source:'mac', kind, payload}`.
 /// `payload` is kept as raw JSON and decoded on demand by `kind`.
 public struct RemoteProjectionEnvelope: Codable, Sendable {

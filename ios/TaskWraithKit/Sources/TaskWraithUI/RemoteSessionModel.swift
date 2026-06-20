@@ -167,6 +167,10 @@ public final class RemoteSessionModel: ObservableObject {
     /// Allowlist-visible workspaces (the compose surface). Empty until the Mac
     /// has at least one entry in Settings → Devices → workspace access.
     @Published public private(set) var workspaces: [WorkspaceSummary] = []
+    /// Scheduled / recurring workflows projected from the Mac (sidebar
+    /// "Workflows" section). Read-only on the phone — tapping opens the
+    /// workflow's chat. One `workflows` envelope per workflow, like `taskCard`.
+    @Published public private(set) var workflows: [RemoteWorkflow] = []
     /// Latest thread snapshot per taskId/threadId (drives the detail view).
     @Published public private(set) var threadSnapshots: [String: RemoteThreadSnapshot] = [:]
     /// Run summaries the phone hid when the user sent a follow-up turn. The Mac
@@ -976,8 +980,15 @@ public final class RemoteSessionModel: ObservableObject {
         let providerModelsJSON = """
         {"claude":[{"id":"cli-default","label":"Default"}],"codex":[{"id":"cli-default","label":"Default"}]}
         """
+        let workflowsJSON = """
+        [
+          {"id":"demo-wf-1","name":"Nightly test sweep","workspaceId":"demo-ws","threadId":"demo-3","provider":"codex","enabled":true,"schedule":"Daily 02:00","status":"completed","nextRunAt":"2026-06-20T02:00:00Z","lastRunAt":"2026-06-19T02:00:00Z"},
+          {"id":"demo-wf-2","name":"Auth audit on demand","workspaceId":"demo-ws","threadId":"demo-1","provider":"claude","enabled":false,"schedule":"Manual","status":"idle"}
+        ]
+        """
         if let ws = Self.decodeDemo([WorkspaceSummary].self, workspacesJSON) { workspaces = ws }
         if let cards = Self.decodeDemo([RemoteTaskCard].self, cardsJSON) { taskCards = cards }
+        if let wf = Self.decodeDemo([RemoteWorkflow].self, workflowsJSON) { workflows = wf }
         if let s1 = Self.decodeDemo(RemoteThreadSnapshot.self, snap1JSON) { threadSnapshots["demo-1"] = s1 }
         if let s2 = Self.decodeDemo(RemoteThreadSnapshot.self, snap2JSON) { threadSnapshots["demo-2"] = s2 }
         if let s3 = Self.decodeDemo(RemoteThreadSnapshot.self, snap3JSON) { threadSnapshots["demo-3"] = s3 }
@@ -1101,6 +1112,7 @@ public final class RemoteSessionModel: ObservableObject {
         gitSnapshots = [:]
         ensembleStates = [:]
         diffSummaries = [:]
+        workflows = []
         threadWorkspaceHints = [:]
         demoFileEdits = [:]
         navigationTarget = nil
@@ -1861,6 +1873,14 @@ public final class RemoteSessionModel: ObservableObject {
                     taskCards[index] = card
                 } else {
                     taskCards.insert(card, at: 0)
+                }
+            }
+        case "workflows":
+            if let workflow = envelope.decodePayload(RemoteWorkflow.self) {
+                if let index = workflows.firstIndex(where: { $0.id == workflow.id }) {
+                    workflows[index] = workflow
+                } else {
+                    workflows.append(workflow)
                 }
             }
         case "shellAppearance":
@@ -2841,10 +2861,15 @@ public final class RemoteSessionModel: ObservableObject {
         var snapshots: [String: RemoteThreadSnapshot] = [:]
         var ensembleSnapshots: [String: RemoteEnsembleState] = [:]
         var diffSnapshots: [String: MobileDiffSummary] = [:]
+        var workflowCards: [RemoteWorkflow] = []
         for envelope in snapshot.projections {
             switch envelope.kind {
             case "taskCard":
                 if let card = envelope.decodePayload(RemoteTaskCard.self) { tasks.append(card) }
+            case "workflows":
+                if let workflow = envelope.decodePayload(RemoteWorkflow.self) {
+                    workflowCards.append(workflow)
+                }
             case "approvalCard":
                 if let card = envelope.decodePayload(MobileApprovalCard.self) {
                     approvalCards.append(card)
@@ -2888,6 +2913,18 @@ public final class RemoteSessionModel: ObservableObject {
             print("[tw] ignoring empty snapshot (have \(taskCards.count) cards)")
         } else {
             taskCards = tasks
+        }
+        // Non-destructive empty guard for workflows — but only treat an empty
+        // workflow set as "settling" when the WHOLE snapshot is empty (no task
+        // cards either). A snapshot that carries task cards yet no workflows is
+        // authoritative: the user deleted their last workflow, so we must clear
+        // rather than keep a ghost row that dead-ends on tap. (Workflows + tasks
+        // are projected together in one Mac-side pass, so populated-tasks +
+        // empty-workflows never means "workflows still hydrating".)
+        if workflowCards.isEmpty, !workflows.isEmpty, tasks.isEmpty {
+            // Settling snapshot — keep cached workflows.
+        } else {
+            workflows = workflowCards
         }
         // Real content ends the first-connect "Syncing…" state immediately;
         // an empty settling snapshot does NOT (the grace timer or the Mac's
