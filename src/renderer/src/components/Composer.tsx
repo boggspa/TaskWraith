@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useLayoutEffect, useRef, useState } from 'react'
 import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
 import { AgenticWorkspaceGrant, EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
@@ -48,7 +48,13 @@ import { buildParticipantToolGrantPatch, getParticipantToolGrantIds } from '../l
 import { getDefaultEnsembleParticipantConfig, resolveEnsembleParticipantSettings } from '../lib/ensembleProviderDefaults'
 import { formatBytes } from '../lib/formatBytes'
 import { getMemoryPreviewText } from '../lib/geminiCommandDiscovery'
-import { MAX_IMAGE_ATTACHMENTS, getImagePreviewSrc } from '../lib/imageAttachments'
+import {
+  MAX_IMAGE_ATTACHMENTS,
+  collectClipboardAttachmentPaths,
+  collectDroppedAttachmentPaths,
+  getImagePreviewSrc
+} from '../lib/imageAttachments'
+import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
 import { getProviderLabel } from '../lib/providerLabels'
 import { CLAUDE_DEFAULT_MODELS, CLAUDE_THINKING_EFFORTS } from '../lib/providerModelDefaults'
@@ -73,6 +79,7 @@ export interface ComposerProps {
   acknowledgedElevationDefaults: any
   activeEnsembleConcurrentMode: any
   activeEnsembleOrchestrationMode: any
+  addImageAttachments: any
   addImageAttachmentsToChat: any
   agentModelsByProvider: Partial<Record<ProviderId, CodexModelOption[]>>
   agentStatusByProvider: any
@@ -102,13 +109,11 @@ export interface ComposerProps {
   composerAgentAuraClass: any
   composerAreaRef: any
   composerAriaLabel: any
-  composerCaretRestoreEpochRef: any
   composerContextMenu: any
   composerFileAttachments: any
   composerImageAttachments: any
   composerPlaceholder: any
   composerRunTimecodeStartedAt: any
-  composerSelectionRef: any
   composerSlashCommands: any
   composerTextareaRef: any
   composerTokenTally: any
@@ -187,11 +192,6 @@ export interface ComposerProps {
   handleBridgeCommand: any
   handleCancel: any
   handleClearDiscordContext: any
-  handleComposerDragEnter: any
-  handleComposerDragLeave: any
-  handleComposerDragOver: any
-  handleComposerDrop: any
-  handleComposerPaste: any
   handleComposerSlash: any
   handleCopyCurrentTranscript: any
   handleCreateGithubPr: any
@@ -235,7 +235,6 @@ export interface ComposerProps {
   interfaceStyle: any
   isAttachingWindow: any
   isCommandPaletteOpen: any
-  isComposerDragOver: any
   isCurrentChatBusyForSteer: any
   isCurrentChatProviderLocked: any
   isCurrentChatRunning: any
@@ -247,7 +246,6 @@ export interface ComposerProps {
   isEnsembleModeEnabled: any
   isMemoryInspectorOpen: any
   isPreparingDiffReview: any
-  isSendConfirming: any
   isSteerBusyForCurrentChat: any
   isWelcomeChat: any
   isWorkflowChatWelcome: any
@@ -257,17 +255,13 @@ export interface ComposerProps {
   liveRunOutputTokens: any
   markCurrentGoalBlocked: any
   markPersistentSessionRestartNeeded: any
-  mentionAnchorIndexRef: any
-  mentionMenuOpen: any
-  mentionQuery: any
-  mentionTriggerKind: any
-  mentionTriggerLengthRef: any
   multiview: any
   ollamaProviderParityActiveForCurrentWorkspace: any
   ollamaToolControlTier: any
   openDiscordContextPicker: any
   openGoalPopover: any
   openInspectorTab: any
+  openPlanImportReview: any
   overestimatePercent: any
   patchEnsembleParticipantById: any
   pendingAgentApproval: any
@@ -326,14 +320,10 @@ export interface ComposerProps {
   setIsCommandPaletteOpen: any
   setKimiThinkingEnabled: any
   setLastNonCustomModelType: any
-  setMentionMenuOpen: any
-  setMentionQuery: any
-  setMentionTriggerKind: any
   setPendingElevation: any
   setPendingPlanImport: any
   setPlanImportPolicy: any
   setPrimaryGitSnapshot: any
-  setPrompt: any
   setRawLogs: any
   setSelectedModelType: any
   setSessionTrust: any
@@ -354,7 +344,6 @@ export interface ComposerProps {
   syncPersistentModelSelection: any
   threadTokenTallyHasValue: any
   threadTokenTallyTooltip: any
-  triggerSendConfirmation: any
   trustResult: any
   trustSelectValue: any
   tryHandleActionSlashSubmit: any
@@ -387,6 +376,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     acknowledgedElevationDefaults,
     activeEnsembleConcurrentMode,
     activeEnsembleOrchestrationMode,
+    addImageAttachments,
     addImageAttachmentsToChat,
     agentModelsByProvider,
     agentStatusByProvider,
@@ -416,13 +406,11 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     composerAgentAuraClass,
     composerAreaRef,
     composerAriaLabel,
-    composerCaretRestoreEpochRef,
     composerContextMenu,
     composerFileAttachments,
     composerImageAttachments,
     composerPlaceholder,
     composerRunTimecodeStartedAt,
-    composerSelectionRef,
     composerSlashCommands,
     composerTextareaRef,
     composerTokenTally,
@@ -501,11 +489,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     handleBridgeCommand,
     handleCancel,
     handleClearDiscordContext,
-    handleComposerDragEnter,
-    handleComposerDragLeave,
-    handleComposerDragOver,
-    handleComposerDrop,
-    handleComposerPaste,
     handleComposerSlash,
     handleCopyCurrentTranscript,
     handleCreateGithubPr,
@@ -549,7 +532,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     interfaceStyle,
     isAttachingWindow,
     isCommandPaletteOpen,
-    isComposerDragOver,
     isCurrentChatBusyForSteer,
     isCurrentChatProviderLocked,
     isCurrentChatRunning,
@@ -561,7 +543,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     isEnsembleModeEnabled,
     isMemoryInspectorOpen,
     isPreparingDiffReview,
-    isSendConfirming,
     isSteerBusyForCurrentChat,
     isWelcomeChat,
     isWorkflowChatWelcome,
@@ -571,17 +552,13 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     liveRunOutputTokens,
     markCurrentGoalBlocked,
     markPersistentSessionRestartNeeded,
-    mentionAnchorIndexRef,
-    mentionMenuOpen,
-    mentionQuery,
-    mentionTriggerKind,
-    mentionTriggerLengthRef,
     multiview,
     ollamaProviderParityActiveForCurrentWorkspace,
     ollamaToolControlTier,
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
+    openPlanImportReview,
     overestimatePercent,
     patchEnsembleParticipantById,
     pendingAgentApproval,
@@ -640,14 +617,10 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     setIsCommandPaletteOpen,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
-    setMentionMenuOpen,
-    setMentionQuery,
-    setMentionTriggerKind,
     setPendingElevation,
     setPendingPlanImport,
     setPlanImportPolicy,
     setPrimaryGitSnapshot,
-    setPrompt,
     setRawLogs,
     setSelectedModelType,
     setSessionTrust,
@@ -668,7 +641,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     syncPersistentModelSelection,
     threadTokenTallyHasValue,
     threadTokenTallyTooltip,
-    triggerSendConfirmation,
     trustResult,
     trustSelectValue,
     tryHandleActionSlashSubmit,
@@ -691,6 +663,187 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     workspaces,
     yoloBannerDismissed
   } = props
+
+  // ---------------------------------------------------------------------------
+  // Composer-local editor state (Slice B of the multiview composer-parity fix).
+  //
+  // These were hoisted out of App.tsx and made component-local so multiple
+  // <Composer> instances (one per multiview pane) own independent editor state
+  // instead of clobbering a single shared App-level textarea ref / menu-open
+  // booleans. Behavior-preserving for the focused composer (the only instance
+  // today): each moved piece references the same external deps via props.
+  //
+  // NOTE: the SLASH cluster (slashMenuOpen / slashQuery / slashAnchorIndexRef /
+  // composerTextareaRef / handleComposerSlash) deliberately stays App-owned and
+  // is still passed in as props — App's command-registry `run()` closures
+  // (consumeSlashTokenFromPrompt / promptWithoutCurrentSlashToken /
+  // tryHandleSideSlashSubmit / tryHandleActionSlashSubmit) read those same
+  // refs/state, so isolating them is a separate slice.
+  // ---------------------------------------------------------------------------
+
+  // Composer textarea @-mention popover state. AgentMentionMenu can insert
+  // agent markdown mentions or plain path text at the caret.
+  const [mentionMenuOpen, setMentionMenuOpen] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState('')
+  // Caret position of the `@` (or `-` of `-@`) that opened the menu —
+  // used to splice the picked mention back over the trigger.
+  const mentionAnchorIndexRef = useRef<number | null>(null)
+  /**
+   * 1.0.4-AQ3 — composer textarea selection ref + epoch.
+   *
+   * Captures `{ start, end }` immediately on every `onChange` so a
+   * post-commit layout effect can restore the caret if React's
+   * controlled-input caret preservation didn't fire correctly. The
+   * preservation glitches when the textarea's className flips
+   * mid-keystroke — specifically when `composerHasMention` flips
+   * `false → true` once an `@token` resolves, adding the
+   * `has-mention-overlay` class AND mounting the
+   * `ComposerHighlightOverlay` sibling in the same commit.
+   */
+  const composerSelectionRef = useRef<{ start: number; end: number } | null>(null)
+  const composerCaretRestoreEpochRef = useRef(0)
+  // Which trigger fired the popover. `'mention'` (`@`) → sub-agents
+  // (normal chats) or participants (ensemble); `'file-mention'`
+  // (`-@`) → workspace files + external grants.
+  const [mentionTriggerKind, setMentionTriggerKind] = useState<'mention' | 'file-mention'>(
+    'mention'
+  )
+  const mentionTriggerLengthRef = useRef<number>(1)
+  const [isSendConfirming, setIsSendConfirming] = useState(false)
+  const [isComposerDragOver, setIsComposerDragOver] = useState(false)
+  const imageDragCounterRef = useRef(0)
+  const sendConfirmationTimeoutRef = useRef<number | null>(null)
+
+  // 1.0.4-AQ3 — caret-restore layout effect. Snapshots the caret in
+  // `onChange` (before React reconciles), then re-applies it post-commit
+  // if it doesn't already match. Only runs when the textarea is focused
+  // (otherwise we'd hijack the caret from other inputs that share renders).
+  useLayoutEffect(() => {
+    const ta = composerTextareaRef.current
+    const stored = composerSelectionRef.current
+    if (!ta || !stored) return
+    // Only restore when the textarea is the active element. If
+    // focus moved elsewhere (slash-picker click, mention popover,
+    // send button), the snapshot is stale and we'd jump the caret
+    // into a backgrounded input on next focus.
+    if (typeof document !== 'undefined' && document.activeElement !== ta) return
+    // Skip if React already preserved the caret correctly.
+    if (ta.selectionStart === stored.start && ta.selectionEnd === stored.end) return
+    try {
+      ta.setSelectionRange(stored.start, stored.end)
+    } catch {
+      // Some browsers throw if the textarea is disabled/readonly
+      // at the moment of restore. The user re-typed; they can
+      // retry. Better than a thrown error breaking the round.
+    }
+  }, [prompt])
+
+  const triggerSendConfirmation = () => {
+    if (!currentChat || (!isCurrentGlobalChat && !currentWorkspace) || !prompt.trim()) return
+    if (sendConfirmationTimeoutRef.current) {
+      window.clearTimeout(sendConfirmationTimeoutRef.current)
+      sendConfirmationTimeoutRef.current = null
+    }
+    setIsSendConfirming(false)
+    window.requestAnimationFrame(() => {
+      setIsSendConfirming(true)
+      sendConfirmationTimeoutRef.current = window.setTimeout(() => {
+        setIsSendConfirming(false)
+        sendConfirmationTimeoutRef.current = null
+      }, 620)
+    })
+  }
+
+  const handleComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    imageDragCounterRef.current += 1
+    const hasAttachmentPaths = collectDroppedAttachmentPaths(event.dataTransfer).length > 0
+    if (hasAttachmentPaths) {
+      setIsComposerDragOver(true)
+    }
+  }
+
+  const handleComposerDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+
+  const handleComposerDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    imageDragCounterRef.current -= 1
+    if (imageDragCounterRef.current <= 0) {
+      setIsComposerDragOver(false)
+      imageDragCounterRef.current = 0
+    }
+  }
+
+  const handleComposerDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    imageDragCounterRef.current = 0
+    setIsComposerDragOver(false)
+
+    const paths = collectDroppedAttachmentPaths(event.dataTransfer)
+    if (paths.length === 0) {
+      return
+    }
+
+    // TODO(per-pane): thread chatId — addImageAttachments targets the
+    // current chat; per-pane chatId threading is a later slice.
+    addImageAttachments(paths)
+    if (imageAttachments.length + paths.length > MAX_IMAGE_ATTACHMENTS) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'info',
+          content: `Attachment limit reached (${MAX_IMAGE_ATTACHMENTS}); oldest files were removed.`
+        }
+      ])
+    }
+  }
+
+  const handleComposerPaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedText = event.clipboardData?.getData('text/plain') || ''
+    if (shouldOfferPlanImport(pastedText)) {
+      const target = event.currentTarget
+      const selectionStart = target.selectionStart ?? target.value.length
+      const selectionEnd = target.selectionEnd ?? selectionStart
+      const nextDraft = `${target.value.slice(0, selectionStart)}${pastedText}${target.value.slice(selectionEnd)}`
+      openPlanImportReview(nextDraft, { silentUnsupported: true })
+    }
+
+    let paths = collectClipboardAttachmentPaths(event.clipboardData)
+    if (paths.length === 0) {
+      const hasImageItem = Array.from(event.clipboardData?.items || []).some((item) =>
+        item.type.startsWith('image/')
+      )
+      if (!hasImageItem) {
+        return
+      }
+      const saved = await window.api.saveClipboardImageAttachment()
+      paths = saved || []
+    }
+    if (paths.length === 0) {
+      return
+    }
+    event.preventDefault()
+    // TODO(per-pane): thread chatId — addImageAttachments targets the
+    // current chat; per-pane chatId threading is a later slice.
+    addImageAttachments(paths)
+    if (imageAttachments.length + paths.length > MAX_IMAGE_ATTACHMENTS) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'info',
+          content: `Attachment limit reached (${MAX_IMAGE_ATTACHMENTS}); oldest files were removed.`
+        }
+      ])
+    }
+  }
+
   return (
           <div className={`composer-area interface-${interfaceStyle}`} ref={composerAreaRef}>
             {shouldShowGhostCompanion && <GhostCompanion />}
@@ -1570,7 +1723,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
                             end: e.target.selectionEnd ?? nextValue.length
                           }
                           composerCaretRestoreEpochRef.current += 1
-                          setPrompt(nextValue)
+                          setChatPromptDraft(currentComposerChatId, nextValue)
                           clearPlanImportIfDraftChanged(nextValue)
                           // Composer popover coordinator: scan the text before the
                           // caret for a leading `/<query>` token (start-of-line or
@@ -1771,7 +1924,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
                       return formatComposerPathMention(mention.path || mention.name)
                     })()
                     const next = `${before}${insertion}${afterQuery}`
-                    setPrompt(next)
+                    setChatPromptDraft(currentComposerChatId, next)
                     setMentionMenuOpen(false)
                     setMentionQuery('')
                     mentionAnchorIndexRef.current = null

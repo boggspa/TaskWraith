@@ -333,7 +333,6 @@ import {
   groundPlanImportFileMentions,
   planImportEnabledChipsForPolicy,
   planImportApprovalModeForPolicy,
-  shouldOfferPlanImport,
   type PlanImportAssumptionStatus,
   type PlanImportChipId,
   type PlanImportExecutionEstimate,
@@ -386,8 +385,6 @@ import type {
   DiscordContextTargets
 } from '../../main/channels/DiscordContextService'
 import {
-  collectClipboardAttachmentPaths,
-  collectDroppedAttachmentPaths,
   dedupePaths,
   getImageName,
   isImageAttachmentPath,
@@ -1888,7 +1885,6 @@ function App(): React.JSX.Element {
   // string suffices; it's cleared whenever an approval resolves so the
   // next queued request starts blank.
   const [intentNote, setIntentNote] = useState('')
-  const [isSendConfirming, setIsSendConfirming] = useState(false)
   // 1.0.6-EW66-1d — Create-PR state is now keyed by workspace PATH
   // so the primary workspace and each WRITE-access additional
   // workspace track their own pending/success/error independently.
@@ -1985,7 +1981,6 @@ function App(): React.JSX.Element {
       window.removeEventListener('focus', onFocus)
     }
   }, [currentWorkspacePath, runCompleteNotice?.timestamp])
-  const [isComposerDragOver, setIsComposerDragOver] = useState(false)
   type AttachedWindowSnapshot = {
     handleID: string
     windowMeta: {
@@ -2116,9 +2111,6 @@ function App(): React.JSX.Element {
   // Multiview: split the central pane into 1-4 panes. Inert until a layout is
   // chosen — single layout renders byte-identically to before Multiview.
   const multiview = useMultiviewState()
-
-  const imageDragCounterRef = useRef(0)
-  const sendConfirmationTimeoutRef = useRef<number | null>(null)
 
   // Error handling & Fallback
   const [showFallbackUX, setShowFallbackUX] = useState(false)
@@ -2262,49 +2254,18 @@ function App(): React.JSX.Element {
   const composerAreaRef = useRef<HTMLDivElement>(null)
   const welcomeDashboardRegionRef = useRef<HTMLDivElement>(null)
   const [welcomeDashboardHiddenByFit, setWelcomeDashboardHiddenByFit] = useState(false)
-  // Composer textarea + @-mention popover state. AgentMentionMenu can insert
-  // agent markdown mentions or plain path text at the caret.
+  // Composer textarea ref. Kept App-owned because the slash-command
+  // registry's `run()` closures (consumeSlashTokenFromPrompt /
+  // handleImportPlanSlashCommand) re-focus this textarea after dispatch.
+  // Passed to <Composer> as a prop. The @-mention popover state + caret
+  // selection/epoch refs + the caret-restore layout effect moved INTO
+  // Composer (Slice B) so multiview panes own them independently.
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const composerContextMenu = useComposerTextareaContextMenu()
   const [welcomeParticipantOverflow, setWelcomeParticipantOverflow] = useState<{
     participantId: string
     anchor: HTMLElement
   } | null>(null)
-  const [mentionMenuOpen, setMentionMenuOpen] = useState(false)
-  const [mentionQuery, setMentionQuery] = useState('')
-  // Caret position of the `@` (or `-` of `-@`) that opened the menu —
-  // used to splice the picked mention back over the trigger.
-  const mentionAnchorIndexRef = useRef<number | null>(null)
-  /**
-   * 1.0.4-AQ3 — composer textarea selection ref + epoch.
-   *
-   * Captures `{ start, end }` immediately on every `onChange` so a
-   * post-commit layout effect can restore the caret if React's
-   * controlled-input caret preservation didn't fire correctly. The
-   * preservation glitches when the textarea's className flips
-   * mid-keystroke — specifically when `composerHasMention` flips
-   * `false → true` once an `@token` resolves, adding the
-   * `has-mention-overlay` class AND mounting the
-   * `ComposerHighlightOverlay` sibling in the same commit. The
-   * class-change + sibling-mount race against React's caret-keep
-   * heuristic and the caret can land at the end of the text instead
-   * of where the user was typing.
-   *
-   * The epoch ensures we only attempt restoration when the user
-   * actually changed the value (not on unrelated re-renders triggered
-   * by other state).
-   */
-  const composerSelectionRef = useRef<{ start: number; end: number } | null>(null)
-  const composerCaretRestoreEpochRef = useRef(0)
-  // Which trigger fired the popover. `'mention'` (`@`) → sub-agents
-  // (normal chats) or participants (ensemble); `'file-mention'`
-  // (`-@`) → workspace files + external grants. Tracked alongside
-  // the anchor so the pick handler knows how many characters to
-  // strip (1 for `@`, 2 for `-@`).
-  const [mentionTriggerKind, setMentionTriggerKind] = useState<'mention' | 'file-mention'>(
-    'mention'
-  )
-  const mentionTriggerLengthRef = useRef<number>(1)
   // Slash-command picker state. Same shape as the mention menu — visibility
   // flag, current filter substring (what comes after the leading `/`), and
   // an anchor index pointing at the `/` we'll later replace on pick.
@@ -2680,41 +2641,9 @@ function App(): React.JSX.Element {
       setPendingPlanImport(null)
     }
   }
-  // 1.0.4-AQ3 — restore the composer textarea's caret position
-  // after each `prompt` change. React's controlled-input caret
-  // preservation glitches when the textarea's className flips
-  // mid-keystroke (specifically when `composerHasMention` flips
-  // `false → true` once an `@token` resolves to a participant).
-  // The class change adds `position: relative` + `color: transparent`
-  // and the `ComposerHighlightOverlay` sibling mounts in the same
-  // commit; both happen in React's commit phase BEFORE the
-  // browser has a chance to keep the caret where the user was
-  // typing, and the caret can land at the end of the text instead.
-  //
-  // The fix: snapshot the caret position in `onChange` (before
-  // React reconciles), then this layout effect re-applies it
-  // post-commit if it doesn't already match. Only runs when the
-  // textarea is focused (otherwise we'd hijack the caret from
-  // other inputs that share renders).
-  useLayoutEffect(() => {
-    const ta = composerTextareaRef.current
-    const stored = composerSelectionRef.current
-    if (!ta || !stored) return
-    // Only restore when the textarea is the active element. If
-    // focus moved elsewhere (slash-picker click, mention popover,
-    // send button), the snapshot is stale and we'd jump the caret
-    // into a backgrounded input on next focus.
-    if (typeof document !== 'undefined' && document.activeElement !== ta) return
-    // Skip if React already preserved the caret correctly.
-    if (ta.selectionStart === stored.start && ta.selectionEnd === stored.end) return
-    try {
-      ta.setSelectionRange(stored.start, stored.end)
-    } catch {
-      // Some browsers throw if the textarea is disabled/readonly
-      // at the moment of restore. The user re-typed; they can
-      // retry. Better than a thrown error breaking the round.
-    }
-  }, [prompt])
+  // 1.0.4-AQ3 caret-restore layout effect moved INTO <Composer> (Slice B)
+  // alongside composerSelectionRef / composerCaretRestoreEpochRef so each
+  // multiview pane restores its own textarea caret independently.
   const getCurrentComposerStateChatId = (): string | null =>
     currentChatIdRef.current || currentComposerChatId
   const setImageAttachments = (
@@ -2965,21 +2894,9 @@ function App(): React.JSX.Element {
     }
   }, [])
 
-  const triggerSendConfirmation = () => {
-    if (!currentChat || (!isCurrentGlobalChat && !currentWorkspace) || !prompt.trim()) return
-    if (sendConfirmationTimeoutRef.current) {
-      window.clearTimeout(sendConfirmationTimeoutRef.current)
-      sendConfirmationTimeoutRef.current = null
-    }
-    setIsSendConfirming(false)
-    window.requestAnimationFrame(() => {
-      setIsSendConfirming(true)
-      sendConfirmationTimeoutRef.current = window.setTimeout(() => {
-        setIsSendConfirming(false)
-        sendConfirmationTimeoutRef.current = null
-      }, 620)
-    })
-  }
+  // triggerSendConfirmation moved INTO <Composer> (Slice B) with its
+  // sendConfirmationTimeoutRef + isSendConfirming state, so each pane runs
+  // its own send-confirm animation. It was never called from App-level code.
 
   const setThreadRawLogs = (chatId: string | null | undefined, logs: RawLogEntry[]) => {
     const nextLogs = logs.slice(-1000)
@@ -6214,91 +6131,11 @@ function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChat?.appChatId, attachedWindow])
 
-  const handleComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
-    imageDragCounterRef.current += 1
-    const hasAttachmentPaths = collectDroppedAttachmentPaths(event.dataTransfer).length > 0
-    if (hasAttachmentPaths) {
-      setIsComposerDragOver(true)
-    }
-  }
-
-  const handleComposerDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
-    event.dataTransfer.dropEffect = 'copy'
-  }
-
-  const handleComposerDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
-    imageDragCounterRef.current -= 1
-    if (imageDragCounterRef.current <= 0) {
-      setIsComposerDragOver(false)
-      imageDragCounterRef.current = 0
-    }
-  }
-
-  const handleComposerDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.stopPropagation()
-    imageDragCounterRef.current = 0
-    setIsComposerDragOver(false)
-
-    const paths = collectDroppedAttachmentPaths(event.dataTransfer)
-    if (paths.length === 0) {
-      return
-    }
-
-    addImageAttachments(paths)
-    if (imageAttachments.length + paths.length > MAX_IMAGE_ATTACHMENTS) {
-      setRawLogs((prev) => [
-        ...prev,
-        {
-          type: 'info',
-          content: `Attachment limit reached (${MAX_IMAGE_ATTACHMENTS}); oldest files were removed.`
-        }
-      ])
-    }
-  }
-
-  const handleComposerPaste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const pastedText = event.clipboardData?.getData('text/plain') || ''
-    if (shouldOfferPlanImport(pastedText)) {
-      const target = event.currentTarget
-      const selectionStart = target.selectionStart ?? target.value.length
-      const selectionEnd = target.selectionEnd ?? selectionStart
-      const nextDraft = `${target.value.slice(0, selectionStart)}${pastedText}${target.value.slice(selectionEnd)}`
-      openPlanImportReview(nextDraft, { silentUnsupported: true })
-    }
-
-    let paths = collectClipboardAttachmentPaths(event.clipboardData)
-    if (paths.length === 0) {
-      const hasImageItem = Array.from(event.clipboardData?.items || []).some((item) =>
-        item.type.startsWith('image/')
-      )
-      if (!hasImageItem) {
-        return
-      }
-      const saved = await window.api.saveClipboardImageAttachment()
-      paths = saved || []
-    }
-    if (paths.length === 0) {
-      return
-    }
-    event.preventDefault()
-    addImageAttachments(paths)
-    if (imageAttachments.length + paths.length > MAX_IMAGE_ATTACHMENTS) {
-      setRawLogs((prev) => [
-        ...prev,
-        {
-          type: 'info',
-          content: `Attachment limit reached (${MAX_IMAGE_ATTACHMENTS}); oldest files were removed.`
-        }
-      ])
-    }
-  }
+  // handleComposerDragEnter/Over/Leave/Drop + handleComposerPaste moved INTO
+  // <Composer> (Slice B) with their imageDragCounterRef + isComposerDragOver
+  // state, so each multiview pane owns its own drag/paste editor surface.
+  // They reference addImageAttachments / openPlanImportReview / setRawLogs via
+  // Composer props.
 
   const handleRemoveImageAttachment = (id: string) => {
     setImageAttachments((prev) => prev.filter((item) => item.id !== id))
@@ -18481,6 +18318,7 @@ function App(): React.JSX.Element {
     acknowledgedElevationDefaults,
     activeEnsembleConcurrentMode,
     activeEnsembleOrchestrationMode,
+    addImageAttachments,
     addImageAttachmentsToChat,
     agentModelsByProvider,
     agentStatusByProvider,
@@ -18510,13 +18348,11 @@ function App(): React.JSX.Element {
     composerAgentAuraClass,
     composerAreaRef,
     composerAriaLabel,
-    composerCaretRestoreEpochRef,
     composerContextMenu,
     composerFileAttachments,
     composerImageAttachments,
     composerPlaceholder,
     composerRunTimecodeStartedAt,
-    composerSelectionRef,
     composerSlashCommands,
     composerTextareaRef,
     composerTokenTally,
@@ -18595,11 +18431,6 @@ function App(): React.JSX.Element {
     handleBridgeCommand,
     handleCancel,
     handleClearDiscordContext,
-    handleComposerDragEnter,
-    handleComposerDragLeave,
-    handleComposerDragOver,
-    handleComposerDrop,
-    handleComposerPaste,
     handleComposerSlash,
     handleCopyCurrentTranscript,
     handleCreateGithubPr,
@@ -18643,7 +18474,6 @@ function App(): React.JSX.Element {
     interfaceStyle,
     isAttachingWindow,
     isCommandPaletteOpen,
-    isComposerDragOver,
     isCurrentChatBusyForSteer,
     isCurrentChatProviderLocked,
     isCurrentChatRunning,
@@ -18655,7 +18485,6 @@ function App(): React.JSX.Element {
     isEnsembleModeEnabled,
     isMemoryInspectorOpen,
     isPreparingDiffReview,
-    isSendConfirming,
     isSteerBusyForCurrentChat,
     isWelcomeChat,
     isWorkflowChatWelcome,
@@ -18665,17 +18494,13 @@ function App(): React.JSX.Element {
     liveRunOutputTokens,
     markCurrentGoalBlocked,
     markPersistentSessionRestartNeeded,
-    mentionAnchorIndexRef,
-    mentionMenuOpen,
-    mentionQuery,
-    mentionTriggerKind,
-    mentionTriggerLengthRef,
     multiview,
     ollamaProviderParityActiveForCurrentWorkspace,
     ollamaToolControlTier,
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
+    openPlanImportReview,
     overestimatePercent,
     patchEnsembleParticipantById,
     pendingAgentApproval,
@@ -18734,14 +18559,10 @@ function App(): React.JSX.Element {
     setIsCommandPaletteOpen,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
-    setMentionMenuOpen,
-    setMentionQuery,
-    setMentionTriggerKind,
     setPendingElevation,
     setPendingPlanImport,
     setPlanImportPolicy,
     setPrimaryGitSnapshot,
-    setPrompt,
     setRawLogs,
     setSelectedModelType,
     setSessionTrust,
@@ -18762,7 +18583,6 @@ function App(): React.JSX.Element {
     syncPersistentModelSelection,
     threadTokenTallyHasValue,
     threadTokenTallyTooltip,
-    triggerSendConfirmation,
     trustResult,
     trustSelectValue,
     tryHandleActionSlashSubmit,
