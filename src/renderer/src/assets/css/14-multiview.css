@@ -21,10 +21,32 @@
   gap: 8px;
   padding: 6px;
   box-sizing: border-box;
+  /* Positioning context + own stacking context for the shared ambient
+     backdrop (z-index:0) that sits behind every cell (z-index:1). */
+  position: relative;
+  isolation: isolate;
+}
+
+/* SHARED AMBIENT BACKDROP — one sky / living-workspace / ghost environment
+   rendered ONCE behind ALL split cells (App passes the JSX via
+   `ambientBackdrop`). Split-only: the single layout is a fragment passthrough
+   that never mounts the grid, so this never applies there. The cells (and the
+   8px gaps + 6px padding) sit ABOVE it; split cell backgrounds are made
+   transparent below so the backdrop reads through as one continuous scene. */
+.multiview-ambient-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 14px;
 }
 
 .multiview-cell {
   position: relative;
+  /* Above the shared ambient backdrop (which is z-index:0 in the grid's own
+     stacking context). */
+  z-index: 1;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -32,6 +54,7 @@
   flex-direction: column;
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--surface-border) 70%, transparent);
+  /* Semi-transparent so the shared backdrop shows through the cell chrome. */
   background: color-mix(in srgb, var(--surface-1) 28%, transparent);
   container-type: size;
 }
@@ -44,6 +67,40 @@
   min-height: 0;
   min-width: 0;
   border-radius: inherit;
+}
+
+/* SPLIT-SCOPED TRANSPARENCY — reveal the shared ambient backdrop through every
+   cell. `.app-transcript` carries a deliberately OPAQUE per-theme "reading slab"
+   background (e.g. `:is([data-theme="system"],[data-theme="dark"]) .app-transcript`
+   paints solid `#161616` with `!important`). In single-pane that's fine — the
+   inline sky/ghost are CHILD layers that paint on top of the slab. In a SPLIT
+   the shared backdrop is BEHIND the grid, so the slab would hide it; drop the
+   slab to a faint scrim that keeps message text readable while the sky/ghost
+   behind the grid show through.
+
+   The `:root` prefix raises this to specificity (0,3,0) — above the unconditional
+   opaque `!important` slabs (system/dark + grok/cursor interface shells, which
+   stay opaque even with FX on) so they don't re-hide the backdrop. The ambient
+   backdrop only renders with Epic-FX enabled, under which most other themes are
+   already non-opaque (their solid-slab rules are `:not([data-fx-enabled="true"])`).
+   Edge combos that out-specify this (user-dialed pane opacity, native-glass+light,
+   alabaster) keep their denser slab — an acceptable, readability-preserving
+   degradation. Targets BOTH the focused cell's inline `.app-transcript` and a
+   non-focused `.multiview-pane-transcript`; single-pane (no `.multiview-cell`
+   ancestor) is untouched. */
+:root .multiview-cell > .app-transcript {
+  /* Base the scrim on the canonical per-pane colour the slab system uses
+     (`--main-pane-opacity-override-bg`: system/dark→#161616, grok→--grok-bg,
+     etc.; falls back to --content-bg, then a neutral) so the tint is sensible
+     in every theme rather than vanishing where --content-bg is `transparent`
+     (the bare system/dark default). ~36% alpha = backdrop reads through, text
+     stays legible. */
+  background: color-mix(
+    in srgb,
+    var(--main-pane-opacity-override-bg, var(--content-bg, #161616)) 36%,
+    transparent
+  ) !important;
+  background-image: none !important;
 }
 
 .multiview-pane-transcript {

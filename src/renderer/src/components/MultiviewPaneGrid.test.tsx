@@ -21,6 +21,55 @@ describe('MultiviewPaneGrid', () => {
     expect(out).not.toContain('multiview-grid')
   })
 
+  it('single layout ignores the ambientBackdrop (fragment passthrough, zero-diff)', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="single"
+        paneChatIds={['a']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+        ambientBackdrop={<div id="ambient" />}
+      />
+    )
+    // Single stays byte-identical to the no-backdrop case — the shared backdrop
+    // is split-only (the focused cell keeps its own inline FX in single).
+    expect(out).toBe('<div id="focused-cell"></div>')
+    expect(out).not.toContain('multiview-ambient-backdrop')
+    expect(out).not.toContain('id="ambient"')
+  })
+
+  it('split layout renders the shared ambientBackdrop once, behind the cells', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="quad"
+        paneChatIds={['a', 'b', 'c', 'd']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+        ambientBackdrop={<div id="ambient" />}
+      />
+    )
+    // Exactly one shared backdrop layer for the whole grid (not per-cell).
+    expect((out.match(/multiview-ambient-backdrop/g) || []).length).toBe(1)
+    expect((out.match(/id="ambient"/g) || []).length).toBe(1)
+    // The backdrop is the first child of the grid (painted beneath the cells).
+    expect(out).toMatch(/multiview-grid[^>]*><div class="multiview-ambient-backdrop"/)
+  })
+
+  it('split layout omits the backdrop wrapper when no ambientBackdrop is given', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        paneChatIds={['a', 'b']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    expect(out).not.toContain('multiview-ambient-backdrop')
+  })
+
   it('multiview lays out a grid with the focused cell + viewer cells by area', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid

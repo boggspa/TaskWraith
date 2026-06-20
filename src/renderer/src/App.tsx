@@ -418,6 +418,7 @@ import {
 } from './lib/welcomeUsageDashboard'
 import {
   AgentAuraLayer,
+  GhostCompanion,
   LivingWorkspaceLayer,
   RunDataVizLayer,
   SkyWeatherVisual,
@@ -18447,7 +18448,11 @@ function App(): React.JSX.Element {
     setWorkflowDraft,
     setYoloBannerDismissed,
     settings,
-    shouldShowGhostCompanion,
+    // In a SPLIT, the ghost companion is rendered ONCE in the shared
+    // ambientBackdrop behind all panes — so suppress it in EVERY per-cell
+    // composer (the focused composer here, and every pane composer, which
+    // inherits this via `...composerCtx`). Single layout is unchanged.
+    shouldShowGhostCompanion: shouldShowGhostCompanion && !isMultiviewSplit,
     shouldShowWelcomeStandaloneHeatmaps,
     showComposerChips,
     steerIndicatorMessage,
@@ -18850,6 +18855,29 @@ function App(): React.JSX.Element {
               paneChatIds={multiview.paneChatIds}
               focusedPaneIndex={multiview.focusedPaneIndex}
               onClosePane={multiview.closePane}
+              ambientBackdrop={
+                isMultiviewSplit ? (
+                  // ONE shared environment behind ALL panes (SPLIT only — the grid
+                  // ignores this prop in the single layout). Same inputs the inline
+                  // focused-cell FX use: `hostWeather` (computed once in App via
+                  // useHostWeather — do NOT call the hook again, it owns an IPC
+                  // poll), the global FX-enabled flags, and `advancedFxIntensity`.
+                  // The sky/living layers self-read the global `data-fx-*`
+                  // attributes on documentElement, so they render correctly here.
+                  // ONE ghost only (it has fixed SVG ids; per-cell composers
+                  // suppress theirs in split via `shouldShowGhostCompanion: false`).
+                  <>
+                    {showLivingWorkspaceFx && (
+                      <LivingWorkspaceLayer
+                        weather={hostWeather}
+                        intensity={advancedFxIntensity}
+                      />
+                    )}
+                    {shouldShowSkyVisualFxInFxMode && <SkyWeatherVisual weather={hostWeather} />}
+                    {shouldShowGhostCompanion && <GhostCompanion />}
+                  </>
+                ) : undefined
+              }
               renderEmptyCell={(emptyPaneIndex) => (
                 <div className="multiview-empty-pane" data-pane-index={emptyPaneIndex}>
                   <span className="multiview-empty-pane-label">Select a chat for this pane</span>
@@ -19358,7 +19386,17 @@ function App(): React.JSX.Element {
             onClose={() => setPreviewChatMediaRef(null)}
           />
 
-          {showLivingWorkspaceFx && (
+          {/* AMBIENT FX (sky weather + living workspace) — focused-cell-inline
+            * ONLY in the single layout. In a SPLIT, these move to the shared
+            * `ambientBackdrop` rendered ONCE behind every pane (see the
+            * <MultiviewPaneGrid ambientBackdrop=…> below), so no pane is
+            * privileged and the sky no longer jumps to whichever cell is
+            * focused. The ghost companion is likewise single-in-the-backdrop in
+            * a split (suppressed in every per-cell composer via
+            * `shouldShowGhostCompanion: false`). The per-chat AgentAuraLayer +
+            * RunDataVizLayer stay focused-inline (the aura is also rendered
+            * per-pane by ChatViewPane — it's a per-CHAT provider signal). */}
+          {showLivingWorkspaceFx && !isMultiviewSplit && (
             <LivingWorkspaceLayer weather={hostWeather} intensity={advancedFxIntensity} />
           )}
           {showAgentAuraFx && (
@@ -19379,7 +19417,9 @@ function App(): React.JSX.Element {
               status={runFxStatus}
             />
           )}
-          {shouldShowSkyVisualFxInFxMode && <SkyWeatherVisual weather={hostWeather} />}
+          {shouldShowSkyVisualFxInFxMode && !isMultiviewSplit && (
+            <SkyWeatherVisual weather={hostWeather} />
+          )}
 
           {currentProvider === 'gemini' && isOldVersion && (
             <div className="version-warning">

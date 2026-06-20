@@ -29,6 +29,18 @@ export interface MultiviewPaneGridProps {
   renderEmptyCell?: (paneIndex: number) => ReactNode
   /** Close a pane — non-focused cells get a close affordance. */
   onClosePane?: (paneIndex: number) => void
+  /**
+   * Shared ambient FX (sky weather + living-workspace + a SINGLE ghost
+   * companion) rendered ONCE behind ALL split cells, so every pane reads as an
+   * equal workbench in one environment instead of the focused pane owning the
+   * sky/ghost. SPLIT-ONLY: ignored in the single layout (which is a byte-
+   * identical fragment passthrough — the focused `.app-transcript` keeps its own
+   * inline FX there). App owns the JSX (it has the host weather + FX flags in
+   * scope); the grid just slots it into a `position:absolute; inset:0;
+   * pointer-events:none` layer beneath the cells. Per-pane `<AgentAuraLayer>`
+   * stays per-pane (it's a per-CHAT provider signal) and is NOT part of this.
+   */
+  ambientBackdrop?: ReactNode
 }
 
 export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
@@ -55,6 +67,11 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
         gridTemplateRows: spec.gridTemplateRows
       }}
     >
+      {props.ambientBackdrop && (
+        <div className="multiview-ambient-backdrop" aria-hidden>
+          {props.ambientBackdrop}
+        </div>
+      )}
       {spec.cellAreas.map((area, paneIndex) => (
         <div
           key={paneIndex}
