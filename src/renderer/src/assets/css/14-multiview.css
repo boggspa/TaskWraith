@@ -103,6 +103,22 @@
   background-image: none !important;
 }
 
+/* The scrim rule above only wins where it out-specifies the per-theme slab. But
+   EVERY slab variant (system/dark, grok/cursor/gemini/kimi interface shells,
+   user-dialed pane-opacity, alabaster) paints
+   `color-mix(..., var(--main-pane-opacity-100), transparent)`, and some out-
+   specify (0,3,0) — notably the user-dialed-opacity slab (0,5,0), which kept the
+   pane opaque and hid the shared backdrop entirely. Rather than chase each with
+   higher specificity, lower the ONE variable they all read for split panes, so
+   every slab computes translucent. Reset it on the composer so the composer
+   surface stays fully opaque (readable over the sky). */
+:root .multiview-cell > .app-transcript {
+  --main-pane-opacity-100: 36%;
+}
+:root .multiview-cell > .app-transcript .composer-area {
+  --main-pane-opacity-100: 100%;
+}
+
 .multiview-pane-transcript {
   height: 100%;
   --composer-reserved-height: 150px;
