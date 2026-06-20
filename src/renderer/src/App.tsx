@@ -499,6 +499,23 @@ const WORKSPACE_ADD_POINTER_DURATION_MS = 6000
 // clampContextTurns moved to `src/main/PromptComposition.ts` and re-exported below.
 
 const EMPTY_AGENT_QUESTION_QUEUE: readonly AgentQuestionState[] = Object.freeze([])
+// Slice H: the command-palette group order is a fixed constant — hoisted to
+// module scope so its identity is stable (it was a per-render array literal,
+// which churned `composerCtx`/pane composer ctxs and blocked React.memo).
+const COMPOSER_COMMAND_PALETTE_GROUPS: readonly CommandPaletteGroup[] = Object.freeze([
+  'Core',
+  'Discovery',
+  'Memory',
+  'Inspectors',
+  'Custom'
+])
+// Slice H: stable empty placeholders for the focused-only guest-participant
+// pickers when projected into a (non-focused) Multiview pane — see
+// paneComposerCtx. Frozen module-scope arrays so their identity never changes.
+const EMPTY_GUEST_MODEL_OPTIONS: readonly CombinedModelPickerModelOption[] = Object.freeze([])
+const EMPTY_GUEST_REASONING_OPTIONS: readonly CombinedModelPickerReasoningOption[] = Object.freeze(
+  []
+)
 const EMPTY_WELCOME_USAGE_DASHBOARD_DATA = buildWelcomeUsageDashboardData([], [], '30d', 0)
 
 function enqueueAgentQuestion(
@@ -17185,13 +17202,8 @@ function App(): React.JSX.Element {
           .includes(commandPaletteSearch)
       )
     : commandPaletteItems
-  const commandPaletteGroups: CommandPaletteGroup[] = [
-    'Core',
-    'Discovery',
-    'Memory',
-    'Inspectors',
-    'Custom'
-  ]
+  // Slice H: command-palette groups are the module-scope constant
+  // COMPOSER_COMMAND_PALETTE_GROUPS (referenced directly in composerStableBase).
   const isLinkedChatPopout = Boolean(
     isChatPopoutWindow &&
       currentChat?.parentChatId &&
@@ -17989,7 +18001,26 @@ function App(): React.JSX.Element {
     // UI still reflects the persisted selection on the next render.
     const paneNoopSetter = (): void => {}
     const paneComposerCtx: ComposerProps = {
-      ...composerCtx,
+      // Slice H: spread the MEMOISED stable base (chat-independent props + bagged
+      // handlers) instead of the focused `composerCtx`. The base is referentially
+      // stable across App renders that didn't change its inputs, so — combined
+      // with the per-pane overrides below being built inside a memoised array —
+      // this pane's composer ctx keeps a stable identity when only ANOTHER pane
+      // (or a background chat) changed, letting `chatViewPanePropsEqual`'s
+      // `composerProps ===` check bail and skip re-rendering this pane's Composer.
+      ...composerStableBase,
+      // Focused-only churny fields NOT in the stable base: panes get stable
+      // placeholders (consistent with the focused-only placeholders further
+      // below — pendingAgentApproval/queued/palette/etc.). These are above-bar
+      // schedule/runtime controls and guest-participant pickers that operate on
+      // FOCUSED state; rendering the focused chat's into a resting pane was an
+      // acknowledged harmless-placeholder leak. Empty/null keeps the base stable
+      // (memoising the focused JSX/guest computations would re-introduce churn).
+      guestComposerModelOptions: EMPTY_GUEST_MODEL_OPTIONS,
+      guestComposerReasoningOptions: EMPTY_GUEST_REASONING_OPTIONS,
+      handleGuestToggleFastMode: undefined,
+      runtimeProfileControl: null,
+      scheduleControls: null,
       // ── per-chat identity / display ──
       prompt: composerDraftsByChatId[viewerChatId] || '',
       // Non-focused panes only exist when multiview is split, so always hide the
@@ -18140,7 +18171,12 @@ function App(): React.JSX.Element {
       <ChatViewPane
         key={`${viewerPaneIndex}:${viewerChatId}`}
         paneIndex={viewerPaneIndex}
-        composerProps={paneComposerCtx}
+        composerProps={
+          // Slice H: prefer the memoized pane ctx (stable identity → pane bails
+          // when its inputs are unchanged); fall back to the inline build for
+          // safety (e.g. a chat id absent from the memo's snapshot).
+          paneComposerCtxByKey[`${viewerPaneIndex}:${viewerChatId}`] ?? paneComposerCtx
+        }
         refs={multiview.paneRefs[viewerPaneIndex]}
         chat={viewerChat}
         messages={viewerChat.messages || EMPTY_CHAT_MESSAGES}
@@ -18215,123 +18251,29 @@ function App(): React.JSX.Element {
   // picker; provider identity → theme tokens + sidebar tile;
   // approvals → the approval-ledger panel; usage → welcome dashboard.
 
-  const composerCtx: ComposerProps = {
-    prompt,
-    // Hide welcome starter cards when multiview is split (they overlap the
-    // composer in short cells). The focused cell uses this ctx in both single
-    // and split layouts.
-    isMultiviewSplit,
-    PLAN_IMPORT_CHIP_LABELS,
-    PLAN_IMPORT_RISK_LABELS,
-    PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
-    acknowledgedElevationDefaults,
-    activeEnsembleConcurrentMode,
-    activeEnsembleOrchestrationMode,
+  // ── Slice H: stable composer handler bag ───────────────────────────────────
+  // The composer receives ~63 callback props that are plain function
+  // declarations recreated every App render. Passing those directly defeats
+  // `React.memo(Composer)` (their identities differ every frame) and would
+  // churn both `composerCtx` and every pane's composer ctx. We stabilise them
+  // ONCE via a latest-impl ref + referentially-stable wrappers: the wrappers
+  // never change identity, but always invoke the CURRENT closure, so behaviour
+  // is byte-identical to passing the raw handler. The ref is reassigned every
+  // render (cheap) so the wrappers see the latest captured state.
+  //
+  // Typo-safety: the latest-impl object uses shorthand properties (a misspelled
+  // name is a compile error because the function must exist), and the wrappers
+  // are generated by enumerating that object's own keys — so a wrapper can
+  // never be missing or mis-keyed relative to the impls.
+  const composerHandlerImpls = {
     addImageAttachments,
-    addImageAttachmentsToChat,
-    agentModelsByProvider,
-    agentStatusByProvider,
-    agenticServices,
-    agenticWorkspaceGrants,
-    appearance,
-    applyEnsemblePermissionsToAllParticipants,
-    applyEnsembleRosterPreset,
-    approvalMode,
-    attachedWindow,
-    chatByIdRef,
-    claudeFastMode,
-    claudeReasoningEffort,
-    claudeReasoningOptions,
     clearCurrentGoal,
     clearExternalPathGrantPrompt,
     clearImagePermissions,
     clearPlanImportIfDraftChanged,
-    codexModels,
-    codexReasoningEffort,
-    codexReasoningOptions,
-    codexServiceTier,
-    commandDiscoveryStatus,
-    commandPaletteGroups,
-    commandPaletteQuery,
-    composerAboveBarStackAuraClass,
-    composerAgentAuraClass,
-    composerAreaRef,
-    composerAriaLabel,
-    composerContextMenu,
-    composerFileAttachments,
-    composerImageAttachments,
-    composerPlaceholder,
-    composerRunTimecodeStartedAt,
-    composerSlashCommands,
-    composerTokenTally,
-    contextLabel,
-    contextModelId,
-    contextUsedPercent,
-    cumulativeRunBaseMs,
-    currentActiveGoal,
-    currentChat,
-    currentChatIdRef,
-    currentComposerChatId,
-    currentComposerMentionParticipants,
-    currentDiscordContextSelection,
-    currentEnsembleConcurrentMode,
-    currentEnsembleContinuationHops,
-    currentEnsembleMaxContinuationHops,
-    currentEnsembleOrchestrationMode,
-    currentGoalButtonTitle,
-    currentGoalModeLabel,
-    currentGoalStatus,
-    currentGuestParticipant,
-    currentProvider,
-    currentProviderCapabilityWarning,
-    currentProviderLabel,
-    currentProviderModelOptions,
-    currentWorkspace,
-    currentWorkspacePath,
-    cursorProviderAvailable,
-    customModel,
-    diffActionMenuOpen,
-    displayCurrency,
-    dualComposerTelemetry,
-    effectiveSelectedParticipantId,
-    ensembleBlendStyle,
-    ensembleConcurrentLanesAvailable,
-    ensembleEnabledParticipantsForCurrent,
-    ensembleOllamaContextWarning,
-    externalGitSnapshots,
-    externalPathGrantPrompt,
-    externalPathGrantPromptBusy,
-    externalPathGrants,
-    externalPathRepoMetadata,
-    externalWorkspaceGroups,
-    formatPlanImportCostEstimate,
-    formatPlanImportRunConstraintValue,
-    formatPlanImportTokenEstimate,
-    geminiMemoryFiles,
-    geminiMemoryStatus,
-    geminiTrustWriteBusy,
-    geminiTrustWriteError,
-    geminiWorkspaceTrustReady,
     getCreatePrState,
     getDefaultModelForProvider,
     getProviderModelOptions,
-    goalButtonRef,
-    goalDraft,
-    goalEditing,
-    goalPopoverOpen,
-    goalPopoverPosition,
-    goalPopoverRef,
-    grokProviderAvailable,
-    guestClaudeReasoning,
-    guestCodexReasoning,
-    guestComposerModelOptions,
-    guestComposerProvider,
-    guestComposerReasoningOptions,
-    guestComposerSelectedModel,
-    guestComposerSelectedReasoning,
-    guestFastModeCapableModelIds,
-    guestFastModeEnabled,
-    guestKimiThinking,
     handleAddKnownWorkspaceAsSecondary,
     handleAddWorkspaceFolder,
     handleAgentApprovalAction,
@@ -18339,16 +18281,12 @@ function App(): React.JSX.Element {
     handleBridgeCommand,
     handleCancel,
     handleClearDiscordContext,
-    handleCopyCurrentTranscript,
     handleCreateGithubPr,
-    handleDeleteQueuedMessage,
     handleDetachWindow,
-    handleEditQueuedMessage,
     handleGroundImportedPlanFiles,
     handleGuestModelChange,
     handleGuestProviderChange,
     handleGuestReasoningChange,
-    handleGuestToggleFastMode,
     handleNewGlobalChat,
     handlePaletteCommand,
     handlePermissionRetry,
@@ -18359,126 +18297,947 @@ function App(): React.JSX.Element {
     handleRemoveGuestParticipant,
     handleRemoveImageAttachment,
     handleReorderExternalPathGrants,
-    handleReorderQueuedMessages,
     handleReviewCurrentDiff,
     handleRun,
     handleRunImportedPlan,
     handleSelectExistingWorkspace,
-    handleSelectMultiviewLayout,
-    handleSelectParticipant,
     handleSelectWelcomeWorkspace,
     handleSelectWelcomeWorkspaceDialog,
     handleSelectWorkspace,
     handleSetAgenticWorkspaceGrant,
     handleSteer,
-    handleSteerToQueuedMessage,
-    handleStopWorkSession,
     handleToggleWorkflowEnsemble,
     handleTrustWorkspaceClick,
     handleWelcomeSuggestion,
+    markCurrentGoalBlocked,
+    markPersistentSessionRestartNeeded,
+    openDiscordContextPicker,
+    openGoalPopover,
+    openInspectorTab,
+    openPlanImportReview,
+    openSideChatFromSlashCommand,
+    persistExternalPathGrantPrompt,
+    refreshCodexThreads,
+    refreshProviderMetadata,
+    refreshWorkflowState,
+    rememberCurrentChatComposerSelection,
+    setCommandPaletteQuery,
+    setGoalFromObjective,
+    setGuestParticipantForCurrentChat,
+    setIsCommandPaletteOpen,
+    setPendingPlanImport,
+    setPlanImportPolicy,
+    syncPersistentModelSelection,
+    updateCurrentGoalStatus
+  }
+  const composerHandlerImplsRef = useRef(composerHandlerImpls)
+  composerHandlerImplsRef.current = composerHandlerImpls
+  // Stable wrappers — created once. Each forwards to the latest impl via the
+  // ref, preserving `this`-free call semantics and all argument/return values.
+  const composerHandlers = useMemo(() => {
+    const ref = composerHandlerImplsRef
+    type ImplKey = keyof typeof composerHandlerImpls
+    const wrapped = {} as Record<ImplKey, (...args: unknown[]) => unknown>
+    for (const key of Object.keys(ref.current) as ImplKey[]) {
+      wrapped[key] = (...args: unknown[]) =>
+        (ref.current[key] as (...a: unknown[]) => unknown)(...args)
+    }
+    // Intentionally stable: wrappers read the latest impls through
+    // composerHandlerImplsRef (reassigned every render), so empty deps keep the
+    // wrapper identities constant — that's what lets React.memo(Composer) bail.
+    return wrapped as typeof composerHandlerImpls
+  }, [])
+
+  // ── Slice H: stable pane-ctx helper bag ────────────────────────────────────
+  // `buildPaneComposerCtx` (below) calls a few component-scope helper functions
+  // that are recreated every render (getChatComposerSelection / getWorkspaceForChat
+  // / getProviderModelOptions / paneGhostEnabled). Referencing them directly would
+  // make the builder's useCallback change identity every render, defeating the
+  // pane-ctx memo. We stabilise them with the SAME latest-impl-ref pattern as the
+  // composer handler bag (behaviour-identical, identity-stable). These are NOT
+  // composer props — kept in their own bag so they don't leak onto <Composer>.
+  const paneCtxHelperImpls = {
+    getChatComposerSelection,
+    getWorkspaceForChat,
+    getProviderModelOptions,
+    paneGhostEnabled
+  }
+  const paneCtxHelperImplsRef = useRef(paneCtxHelperImpls)
+  paneCtxHelperImplsRef.current = paneCtxHelperImpls
+  const paneCtxHelpers = useMemo(() => {
+    const ref = paneCtxHelperImplsRef
+    type ImplKey = keyof typeof paneCtxHelperImpls
+    const wrapped = {} as Record<ImplKey, (...args: unknown[]) => unknown>
+    for (const key of Object.keys(ref.current) as ImplKey[]) {
+      wrapped[key] = (...args: unknown[]) =>
+        (ref.current[key] as (...a: unknown[]) => unknown)(...args)
+    }
+    return wrapped as typeof paneCtxHelperImpls
+  }, [])
+
+  // ── Slice H: memoized stable composer base ────────────────────────────────
+  // The chat-INDEPENDENT composer props (settings/appearance/workspaces/static
+  // registries/bagged handlers/etc.) that BOTH the focused composer AND every
+  // pane composer share verbatim. Memoised so its identity is stable across
+  // App renders that did not change any of these inputs — that stability is
+  // what lets each pane’s memoized composer ctx (and thus React.memo(Composer))
+  // bail when a token/keystroke lands in a DIFFERENT pane. Excludes the per-chat
+  // display fields (focused/pane ctxs add their own) and the handful of
+  // inline-derived churny fields (kept in the focused literal; panes pass stable
+  // placeholders/overrides). Dep array is 1:1 with the non-module-scope members.
+  const composerStableBase = useMemo(
+    () => ({
+      ...composerHandlers,
+      PLAN_IMPORT_CHIP_LABELS,
+      PLAN_IMPORT_RISK_LABELS,
+      PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
+      // Slice H: reference the module-scope constant directly so it needs no dep
+      // (the local `commandPaletteGroups` is just an alias to this).
+      commandPaletteGroups: COMPOSER_COMMAND_PALETTE_GROUPS,
+      acknowledgedElevationDefaults,
+      activeEnsembleConcurrentMode,
+      activeEnsembleOrchestrationMode,
+      addImageAttachmentsToChat,
+      agentModelsByProvider,
+      agentStatusByProvider,
+      agenticServices,
+      agenticWorkspaceGrants,
+      appearance,
+      applyEnsemblePermissionsToAllParticipants,
+      applyEnsembleRosterPreset,
+      chatByIdRef,
+      codexModels,
+      commandDiscoveryStatus,
+      commandPaletteQuery,
+      composerAboveBarStackAuraClass,
+      composerAgentAuraClass,
+      composerContextMenu,
+      composerSlashCommands,
+      contextLabel,
+      contextUsedPercent,
+      currentChatIdRef,
+      currentComposerMentionParticipants,
+      currentDiscordContextSelection,
+      currentEnsembleConcurrentMode,
+      currentEnsembleContinuationHops,
+      currentEnsembleMaxContinuationHops,
+      currentEnsembleOrchestrationMode,
+      currentGoalModeLabel,
+      currentGuestParticipant,
+      currentProviderCapabilityWarning,
+      cursorProviderAvailable,
+      diffActionMenuOpen,
+      displayCurrency,
+      effectiveSelectedParticipantId,
+      ensembleBlendStyle,
+      ensembleConcurrentLanesAvailable,
+      ensembleEnabledParticipantsForCurrent,
+      ensembleOllamaContextWarning,
+      externalGitSnapshots,
+      externalPathGrants,
+      externalPathRepoMetadata,
+      externalWorkspaceGroups,
+      formatPlanImportCostEstimate,
+      formatPlanImportRunConstraintValue,
+      formatPlanImportTokenEstimate,
+      geminiMemoryFiles,
+      geminiMemoryStatus,
+      geminiTrustWriteBusy,
+      geminiTrustWriteError,
+      geminiWorkspaceTrustReady,
+      goalButtonRef,
+      goalDraft,
+      goalEditing,
+      goalPopoverPosition,
+      goalPopoverRef,
+      grokProviderAvailable,
+      guestClaudeReasoning,
+      guestCodexReasoning,
+      guestComposerProvider,
+      guestComposerSelectedModel,
+      guestComposerSelectedReasoning,
+      guestFastModeCapableModelIds,
+      guestFastModeEnabled,
+      guestKimiThinking,
+      handleDeleteQueuedMessage,
+      handleEditQueuedMessage,
+      handleReorderQueuedMessages,
+      handleSelectMultiviewLayout,
+      handleSelectParticipant,
+      handleSteerToQueuedMessage,
+      handleStopWorkSession,
+      intentNote,
+      interfaceStyle,
+      isCurrentChatBusyForSteer,
+      isCurrentEnsembleRoundRunning,
+      isCurrentGuestParticipantRunning,
+      isEnsembleModeEnabled,
+      isPreparingDiffReview,
+      isSteerBusyForCurrentChat,
+      multiview,
+      ollamaProviderParityActiveForCurrentWorkspace,
+      ollamaToolControlTier,
+      overestimatePercent,
+      patchEnsembleParticipantById,
+      pendingApprovalQueueByChatId,
+      persistentSessionNeedsRestart,
+      planImportExecutionEstimate,
+      planImportGroundingBusy,
+      planImportGroundingDisabledReason,
+      primaryModifierLabel,
+      providerRates,
+      queuedRunQueueCount,
+      refreshCommandDiscovery,
+      refreshGeminiMemory,
+      renderPlanImportFileGroundings,
+      renderPlanImportItems,
+      resumeAppWatchSnapshot,
+      screenWatchUnavailableReason,
+      selectedParticipant,
+      sessionRestartReason,
+      sessionTrust,
+      sessionYoloMode,
+      setChatPromptDraft,
+      setChats,
+      setCurrentChat,
+      setDiffActionMenuOpen,
+      setGoalDraft,
+      setGoalEditing,
+      setGoalPopoverOpen,
+      setIntentNote,
+      setPendingElevation,
+      setPrimaryGitSnapshot,
+      setRawLogs,
+      setSessionTrust,
+      setShowWorkSessionSheet,
+      setWelcomeParticipantOverflow,
+      setWorkflowDraft,
+      setYoloBannerDismissed,
+      settings,
+      showComposerChips,
+      steerIndicatorMessage,
+      threadTokenTallyTooltip,
+      trustResult,
+      trustSelectValue,
+      updateCurrentEnsembleConcurrentMode,
+      updateCurrentEnsembleContextChars,
+      updateCurrentEnsembleMaxContinuationHops,
+      updateCurrentEnsembleOrchestrationMode,
+      updateSelectedParticipant,
+      visibleCommandPaletteItems,
+      visibleScheduledTasks,
+      welcomeParticipantOverflow,
+      workflowDraft,
+      workflowIntervalMinutes,
+      workspaceDiffStats,
+      workspaces,
+      yoloBannerDismissed,
+    }),
+    [
+      composerHandlers,
+      acknowledgedElevationDefaults,
+      activeEnsembleConcurrentMode,
+      activeEnsembleOrchestrationMode,
+      addImageAttachmentsToChat,
+      agentModelsByProvider,
+      agentStatusByProvider,
+      agenticServices,
+      agenticWorkspaceGrants,
+      appearance,
+      applyEnsemblePermissionsToAllParticipants,
+      applyEnsembleRosterPreset,
+      chatByIdRef,
+      codexModels,
+      commandDiscoveryStatus,
+      commandPaletteQuery,
+      composerAboveBarStackAuraClass,
+      composerAgentAuraClass,
+      composerContextMenu,
+      composerSlashCommands,
+      contextLabel,
+      contextUsedPercent,
+      currentChatIdRef,
+      currentComposerMentionParticipants,
+      currentDiscordContextSelection,
+      currentEnsembleConcurrentMode,
+      currentEnsembleContinuationHops,
+      currentEnsembleMaxContinuationHops,
+      currentEnsembleOrchestrationMode,
+      currentGoalModeLabel,
+      currentGuestParticipant,
+      currentProviderCapabilityWarning,
+      cursorProviderAvailable,
+      diffActionMenuOpen,
+      displayCurrency,
+      effectiveSelectedParticipantId,
+      ensembleBlendStyle,
+      ensembleConcurrentLanesAvailable,
+      ensembleEnabledParticipantsForCurrent,
+      ensembleOllamaContextWarning,
+      externalGitSnapshots,
+      externalPathGrants,
+      externalPathRepoMetadata,
+      externalWorkspaceGroups,
+      geminiMemoryFiles,
+      geminiMemoryStatus,
+      geminiTrustWriteBusy,
+      geminiTrustWriteError,
+      geminiWorkspaceTrustReady,
+      goalButtonRef,
+      goalDraft,
+      goalEditing,
+      goalPopoverPosition,
+      goalPopoverRef,
+      grokProviderAvailable,
+      guestClaudeReasoning,
+      guestCodexReasoning,
+      guestComposerProvider,
+      guestComposerSelectedModel,
+      guestComposerSelectedReasoning,
+      guestFastModeCapableModelIds,
+      guestFastModeEnabled,
+      guestKimiThinking,
+      handleDeleteQueuedMessage,
+      handleEditQueuedMessage,
+      handleReorderQueuedMessages,
+      handleSelectMultiviewLayout,
+      handleSelectParticipant,
+      handleSteerToQueuedMessage,
+      handleStopWorkSession,
+      intentNote,
+      interfaceStyle,
+      isCurrentChatBusyForSteer,
+      isCurrentEnsembleRoundRunning,
+      isCurrentGuestParticipantRunning,
+      isEnsembleModeEnabled,
+      isPreparingDiffReview,
+      isSteerBusyForCurrentChat,
+      multiview,
+      ollamaProviderParityActiveForCurrentWorkspace,
+      ollamaToolControlTier,
+      overestimatePercent,
+      patchEnsembleParticipantById,
+      pendingApprovalQueueByChatId,
+      persistentSessionNeedsRestart,
+      planImportExecutionEstimate,
+      planImportGroundingBusy,
+      planImportGroundingDisabledReason,
+      primaryModifierLabel,
+      providerRates,
+      queuedRunQueueCount,
+      refreshCommandDiscovery,
+      refreshGeminiMemory,
+      resumeAppWatchSnapshot,
+      screenWatchUnavailableReason,
+      selectedParticipant,
+      sessionRestartReason,
+      sessionTrust,
+      sessionYoloMode,
+      setChatPromptDraft,
+      setChats,
+      setCurrentChat,
+      setDiffActionMenuOpen,
+      setGoalDraft,
+      setGoalEditing,
+      setGoalPopoverOpen,
+      setIntentNote,
+      setPendingElevation,
+      setPrimaryGitSnapshot,
+      setRawLogs,
+      setSessionTrust,
+      setShowWorkSessionSheet,
+      setWelcomeParticipantOverflow,
+      setWorkflowDraft,
+      setYoloBannerDismissed,
+      settings,
+      showComposerChips,
+      steerIndicatorMessage,
+      threadTokenTallyTooltip,
+      trustResult,
+      trustSelectValue,
+      updateCurrentEnsembleConcurrentMode,
+      updateCurrentEnsembleContextChars,
+      updateCurrentEnsembleMaxContinuationHops,
+      updateCurrentEnsembleOrchestrationMode,
+      updateSelectedParticipant,
+      visibleCommandPaletteItems,
+      visibleScheduledTasks,
+      welcomeParticipantOverflow,
+      workflowDraft,
+      workflowIntervalMinutes,
+      workspaceDiffStats,
+      workspaces,
+      yoloBannerDismissed,
+    ]
+  )
+
+  // ── Slice H: memoized per-pane composer ctx ───────────────────────────────
+  // The pane composer ctx is the heavy prop driving each pane’s <Composer>.
+  // Built inline in `renderMultiviewPaneCell` it was a fresh object every App
+  // render, so `chatViewPanePropsEqual`’s `composerProps ===` ALWAYS failed and
+  // every pane re-rendered its full Composer on every App render (the multiview
+  // thread-switch / load freeze). Here each pane’s ctx is built in ONE top-level
+  // useMemo keyed on the pane chat ids + the ctx’s real inputs, so its identity
+  // stays STABLE across App renders that did not change THIS pane’s inputs (e.g.
+  // a thread switch that left this pane untouched) — letting the pane bail.
+  // useCallback so eslint exhaustive-deps verifies the dep set is COMPLETE.
+  const buildPaneComposerCtx = useCallback(
+    (viewerChatId: string, viewerPaneIndex: number): ComposerProps | null => {
+      const viewerChat = chatByIdRef.current.get(viewerChatId)
+      if (!viewerChat) return null
+      const viewerProvider = getChatProvider(viewerChat)
+      const viewerIsGlobalChat = isGlobalChat(viewerChat)
+      const viewerWorkspace = paneCtxHelpers.getWorkspaceForChat(viewerChat)
+      const viewerWorkspaceName = viewerIsGlobalChat
+        ? 'Global Chat'
+        : viewerWorkspace?.displayName ||
+          viewerChat.workspacePath?.split(/[\\/]/).filter(Boolean).pop() ||
+          'TaskWraith'
+      const viewerIsRunning = deriveChatIsRunning({
+        chat: viewerChat,
+        runningChatIds,
+        runQueueJobs
+      })
+      const viewerIsWelcomeChat = (viewerChat.messages?.length || 0) === 0
+      const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
+      // (Per-pane agent-aura inputs are shell-only and live in
+      // `renderMultiviewPaneCell`; the composer ctx doesn't need them.)
+      const viewerSelection = paneCtxHelpers.getChatComposerSelection(viewerChat, viewerProvider)
+      // The pane model picker's option list (incl. the synthetic "Custom…" entry)
+      // is now built inside the shared <Composer> from `currentProviderModelOptions`
+      // (overridden per-pane in paneComposerCtx), mirroring the focused composer.
+      const viewerSelectedModel = viewerSelection.selectedModelType
+      const viewerCodexModelOption =
+        viewerProvider === 'codex'
+          ? codexModels.find((model) => model.id === viewerSelectedModel)
+          : undefined
+      const viewerClaudeModelOption =
+        viewerProvider === 'claude'
+          ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+              (model) => model.id === viewerSelectedModel
+            )
+          : undefined
+      const viewerCodexReasoning =
+        viewerSelection.codexReasoningEffort ||
+        viewerCodexModelOption?.defaultReasoningEffort ||
+        'medium'
+      const viewerClaudeReasoning = viewerSelection.claudeReasoningEffort || 'off'
+      const viewerKimiThinking = viewerSelection.kimiThinkingEnabled ?? true
+      // RAW per-pane reasoning option lists ({ reasoningEffort }[]) for the shared
+      // <Composer>. The composer does its OWN mapping to picker shape from
+      // codex/claudeReasoningOptions, so it must receive the RAW shape — passing
+      // picker-shaped { value, label } here crashed it (it read
+      // option.reasoningEffort.charAt(0) on undefined). Kimi builds its own list
+      // internally, so no raw list is needed for it.
+      const viewerCodexReasoningOptionsRaw = viewerCodexModelOption?.supportedReasoningEfforts?.length
+        ? viewerCodexModelOption.supportedReasoningEfforts
+        : [
+            { reasoningEffort: 'low' },
+            { reasoningEffort: 'medium' },
+            { reasoningEffort: 'high' },
+            { reasoningEffort: 'xhigh' }
+          ]
+      const viewerClaudeReasoningOptionsRaw = viewerClaudeModelOption?.supportedReasoningEfforts
+        ?.length
+        ? viewerClaudeModelOption.supportedReasoningEfforts
+        : CLAUDE_THINKING_EFFORTS
+      // Fast-mode capability/state, the permission option list, and the
+      // enabled-grant set are all derived inside the shared <Composer> (from the
+      // per-pane provider/model/selection fields in paneComposerCtx), mirroring
+      // the focused composer — so they no longer need pane-local copies here.
+      const viewerProviderLocked = Boolean(
+        viewerChat.chatKind === 'ensemble' ||
+          (viewerChat.messages?.length || 0) > 0 ||
+          (viewerChat.runs?.length || 0) > 0 ||
+          viewerChat.linkedGeminiSessionId ||
+          viewerChat.linkedProviderSessionId
+      )
+      const viewerComposerLocked = Boolean(viewerIsRunning && viewerChat.chatKind !== 'ensemble')
+      const viewerRunStartedAt = viewerIsRunning
+        ? viewerChat.ensemble?.activeRound?.startedAt || viewerRun?.startedAt || null
+        : null
+      const viewerCumulativeRunBaseMs = computeCumulativeRunBaseMs(viewerChat.runs)
+      const viewerShouldShowWelcomeUsageDashboard =
+        viewerIsWelcomeChat &&
+        usageInitialized &&
+        welcomeUsageDashboardData.lifetimeHasActivity &&
+        !isMultiviewSplit
+      const viewerWorkspaceActivityPath =
+        viewerIsWelcomeChat && !viewerIsGlobalChat && welcomeWorkspaceHeatmapEnabled
+          ? viewerWorkspace?.path || viewerChat.workspacePath || ''
+          : ''
+      const viewerShouldShowWelcomeStandaloneHeatmaps =
+        !isMultiviewSplit &&
+        (Boolean(viewerWorkspaceActivityPath) || viewerShouldShowWelcomeUsageDashboard)
+      const viewerWelcomeHeatmapSlots: WelcomeHeatmapSlot[] = []
+      if (viewerWorkspaceActivityPath) {
+        viewerWelcomeHeatmapSlots.push({
+          key: 'workspace',
+          node: (
+            <WorkspaceActivityHeatmap
+              workspacePath={viewerWorkspaceActivityPath}
+              dayCount={90}
+              refreshKey={welcomeHeatmapRefreshKey}
+              className="usage-heatmap--welcome-standalone"
+            />
+          )
+        })
+      }
+      if (viewerShouldShowWelcomeUsageDashboard && welcomeTaskWraithHeatmapEnabled) {
+        viewerWelcomeHeatmapSlots.push({
+          key: 'taskwraith',
+          node: (
+            <UsageHeatmap
+              dayCount={90}
+              refreshKey={welcomeHeatmapRefreshKey}
+              title="TaskWraith Activity"
+              showProviderFilter
+              className="usage-heatmap--welcome-standalone"
+            />
+          )
+        })
+      }
+      if (viewerShouldShowWelcomeUsageDashboard && welcomeExternalHeatmapEnabled) {
+        viewerWelcomeHeatmapSlots.push({
+          key: 'external',
+          node: (
+            <UsageHeatmap
+              dayCount={90}
+              refreshKey={welcomeHeatmapRefreshKey}
+              usageSource="external"
+              title="External Activity"
+              showProviderFilter
+              className="usage-heatmap--welcome-standalone"
+            />
+          )
+        })
+      }
+      if (viewerShouldShowWelcomeUsageDashboard) {
+        viewerWelcomeHeatmapSlots.push({
+          key: 'taskwraith-tokens',
+          node: (
+            <TokenUsageChart
+              title="TaskWraith Tokens"
+              records={usageRecords}
+              dayCount={90}
+              refreshKey={welcomeHeatmapRefreshKey}
+              showProviderFilter
+              className="token-usage-chart--welcome"
+            />
+          )
+        })
+        viewerWelcomeHeatmapSlots.push({
+          key: 'external-tokens',
+          node: (
+            <TokenUsageChart
+              title="External Tokens"
+              source="external"
+              dayCount={90}
+              refreshKey={welcomeHeatmapRefreshKey}
+              showProviderFilter
+              className="token-usage-chart--welcome"
+            />
+          )
+        })
+      }
+      const viewerTokenTally = buildChatTokenTally(viewerChat.runs || [])
+      const viewerLiveOutputTokens = (() => {
+        if (!viewerIsRunning) return 0
+        const activeRunIds = new Set(
+          (viewerChat.runs || [])
+            .filter((run) => !run.endedAt || run.status === 'running' || run.status === 'queued')
+            .map((run) => run.runId)
+            .filter((runId): runId is string => Boolean(runId))
+        )
+        if (activeRunIds.size === 0 && viewerRun?.runId) {
+          activeRunIds.add(viewerRun.runId)
+        }
+        const activeRoundStartedAt =
+          viewerChat.ensemble?.activeRound?.status === 'running'
+            ? Date.parse(viewerChat.ensemble.activeRound.startedAt || '')
+            : Number.NaN
+        let liveChars = 0
+        for (const message of viewerChat.messages || []) {
+          if (message.role !== 'assistant') continue
+          if (message.runId && activeRunIds.has(message.runId)) {
+            liveChars += message.content?.length || 0
+            continue
+          }
+          if (Number.isFinite(activeRoundStartedAt)) {
+            const messageTime = Date.parse(message.timestamp || '')
+            if (Number.isFinite(messageTime) && messageTime >= activeRoundStartedAt) {
+              liveChars += message.content?.length || 0
+            }
+          }
+        }
+        return estimateLiveOutputTokensFromChars(liveChars)
+      })()
+      const viewerContextModelId =
+        viewerRun?.actualModel || viewerRun?.requestedModel || viewerSelectedModel
+      const viewerDualTelemetry = Boolean(
+        viewerChat.chatKind === 'ensemble' ||
+          viewerChat.guestParticipant ||
+          getSideChatMode(viewerChat) === 'guestParticipant'
+      )
+      // (Screen-watch title, media refs, pinned count, and the pane chrome/dock
+      // helpers are shell-only and live in `renderMultiviewPaneCell`.)
+      const viewerGoalStatus = viewerChat.activeGoal?.status || 'empty'
+      const viewerGoalTitle = viewerChat.activeGoal
+        ? `${viewerChat.activeGoal.status}: ${viewerChat.activeGoal.objective}`
+        : 'Set active goal'
+      const paneViewerSelection = viewerSelection
+      const viewerProviderLabel = getProviderLabel(viewerProvider)
+      const paneComposerImageAttachments = (
+        imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS
+      ).filter((attachment) => isImageAttachmentPath(attachment.path))
+      const paneComposerFileAttachments = (
+        imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS
+      ).filter((attachment) => !isImageAttachmentPath(attachment.path))
+      const paneIsEnsembleChat = viewerChat.chatKind === 'ensemble'
+      const paneComposerPlaceholder = paneIsEnsembleChat
+        ? 'Ask the ensemble. @ to direct a participant.'
+        : viewerProvider === 'codex'
+          ? 'Ask Codex anything. @ to mention files'
+          : viewerProvider === 'claude'
+            ? 'Describe a task or ask a question'
+            : viewerProvider === 'gemini'
+              ? 'Ask Gemini'
+              : viewerProvider === 'kimi'
+                ? 'Type "/" to quickly access skills'
+                : `Enter prompt for ${viewerProviderLabel}…`
+      const paneComposerAriaLabel = paneIsEnsembleChat
+        ? 'Prompt for Ensemble'
+        : `Prompt for ${viewerProviderLabel}`
+      const paneWelcomeCopy = buildWelcomeCopy({
+        workspaceName: viewerWorkspaceName,
+        providerLabel: viewerProviderLabel,
+        permissionModeLabel: 'Default Approval',
+        isGlobalChat: viewerIsGlobalChat,
+        hasDiff: false,
+        diffCount: 0,
+        scheduledTaskCount: 0
+      })
+      const paneThreadTokenTallyHasValue =
+        viewerTokenTally.totalTokens > 0 || viewerLiveOutputTokens > 0
+      const paneIsWorkflowComposeChat =
+        workflowDraft != null && workflowDraft.chatId === viewerChatId
+      const paneWorkflowForChat =
+        workflowDefinitions.find((wf) => wf.template.chatId === viewerChatId) ?? null
+      const paneIsWorkflowChatWelcome = paneIsWorkflowComposeChat || paneWorkflowForChat != null
+      // Adapter: <Composer> calls handleRun()/handleRun(_, _, dmTarget) with no
+      // chat context (it operates on `currentComposerChatId` in the focused case).
+      // For a pane we delegate to the pane runner scoped to this pane's chat. The
+      // ensemble dmTarget arg is a focused-only nicety here (TODO(per-pane)).
+      const paneHandleRun = (): void => handleRunMultiviewPane(viewerPaneIndex, viewerChatId)
+      const paneHandleCancel = (): void => handleCancelMultiviewPane(viewerPaneIndex, viewerChatId)
+      const paneHandleProviderChange = (provider: ProviderId): void =>
+        handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider)
+      const paneRememberComposerSelection = (patch: Record<string, unknown>): void =>
+        rememberMultiviewPaneComposerSelection(viewerChatId, patch)
+      // Model/reasoning/fast/permission setters: <Composer>'s internal wrappers
+      // call the chat-level setState setters (which drive the FOCUSED composer's
+      // UI) AND `rememberCurrentChatComposerSelection`. For a pane, the focused
+      // setState would steer the wrong chat, so we no-op the setState half and
+      // route persistence through `rememberMultiviewPaneComposerSelection`. The
+      // pane's CombinedModelPicker reads its selected values from the per-chat
+      // display fields below (selectedModelType/codexReasoningEffort/etc.), so the
+      // UI still reflects the persisted selection on the next render.
+      const paneNoopSetter = (): void => {}
+      const paneComposerCtx: ComposerProps = {
+        // Slice H: spread the MEMOISED stable base (chat-independent props + bagged
+        // handlers) instead of the focused `composerCtx`. The base is referentially
+        // stable across App renders that didn't change its inputs, so — combined
+        // with the per-pane overrides below being built inside a memoised array —
+        // this pane's composer ctx keeps a stable identity when only ANOTHER pane
+        // (or a background chat) changed, letting `chatViewPanePropsEqual`'s
+        // `composerProps ===` check bail and skip re-rendering this pane's Composer.
+        ...composerStableBase,
+        // Focused-only churny fields NOT in the stable base: panes get stable
+        // placeholders (consistent with the focused-only placeholders further
+        // below — pendingAgentApproval/queued/palette/etc.). These are above-bar
+        // schedule/runtime controls and guest-participant pickers that operate on
+        // FOCUSED state; rendering the focused chat's into a resting pane was an
+        // acknowledged harmless-placeholder leak. Empty/null keeps the base stable
+        // (memoising the focused JSX/guest computations would re-introduce churn).
+        guestComposerModelOptions: EMPTY_GUEST_MODEL_OPTIONS,
+        guestComposerReasoningOptions: EMPTY_GUEST_REASONING_OPTIONS,
+        handleGuestToggleFastMode: undefined,
+        runtimeProfileControl: null,
+        scheduleControls: null,
+        // ── per-chat identity / display ──
+        prompt: composerDraftsByChatId[viewerChatId] || '',
+        // Non-focused panes only exist when multiview is split, so always hide the
+        // welcome starter cards here (they'd overlap the composer in a short cell).
+        isMultiviewSplit: true,
+        // Per-pane ghost: this pane's EFFECTIVE ghost flag (its override, else the
+        // global). The inherited `composerCtx.shouldShowGhostCompanion` is the
+        // FOCUSED pane's flag, so override it with THIS pane's.
+        shouldShowGhostCompanion: paneCtxHelpers.paneGhostEnabled(viewerPaneIndex),
+        currentChat: viewerChat,
+        currentComposerChatId: viewerChatId,
+        currentProvider: viewerProvider,
+        currentProviderLabel: viewerProviderLabel,
+        currentProviderModelOptions: paneCtxHelpers.getProviderModelOptions(viewerProvider),
+        currentWorkspace: viewerWorkspace,
+        currentWorkspacePath: viewerWorkspace?.path,
+        isCurrentGlobalChat: viewerIsGlobalChat,
+        isCurrentChatRunning: viewerIsRunning,
+        isCurrentEnsembleChat: paneIsEnsembleChat,
+        isWelcomeChat: viewerIsWelcomeChat,
+        isCurrentChatProviderLocked: viewerProviderLocked,
+        isCurrentComposerLocked: viewerComposerLocked,
+        composerPlaceholder: paneComposerPlaceholder,
+        composerAriaLabel: paneComposerAriaLabel,
+        welcomeCopy: paneWelcomeCopy,
+        // welcome surfaces (display) — pane-scoped so a pane never inherits the
+        // focused chat's workflow/heatmap welcome state.
+        isWorkflowComposeChat: paneIsWorkflowComposeChat,
+        isWorkflowChatWelcome: paneIsWorkflowChatWelcome,
+        workflowForCurrentChat: paneWorkflowForChat,
+        welcomeHeatmapSlots: viewerWelcomeHeatmapSlots,
+        shouldShowWelcomeStandaloneHeatmaps: viewerShouldShowWelcomeStandaloneHeatmaps,
+        // model + reasoning + fast-mode selection (display)
+        selectedModelType: viewerSelectedModel,
+        selectedComposerModelType: viewerSelectedModel,
+        customModel: paneViewerSelection.customModel || '',
+        codexReasoningEffort: viewerCodexReasoning,
+        codexReasoningOptions: viewerCodexReasoningOptionsRaw,
+        claudeReasoningOptions: viewerClaudeReasoningOptionsRaw,
+        claudeReasoningEffort: viewerClaudeReasoning,
+        kimiThinkingEnabled: viewerKimiThinking,
+        codexServiceTier: paneViewerSelection.codexServiceTier || '',
+        claudeFastMode: Boolean(paneViewerSelection.claudeFastMode),
+        // permission (display). NOTE: <Composer> derives `enabledGrantIds`
+        // internally from `agenticWorkspaceGrants` + `currentProvider` +
+        // `currentWorkspace(Path)` (all overridden above), so the pane's grant set
+        // is already pane-correct — there is no `enabledGrantIds` prop to set.
+        approvalMode: paneViewerSelection.approvalMode,
+        // attachments (display)
+        imageAttachments: imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS,
+        composerImageAttachments: paneComposerImageAttachments,
+        composerFileAttachments: paneComposerFileAttachments,
+        // goal (display)
+        currentActiveGoal: viewerChat.activeGoal || null,
+        currentGoalStatus: viewerGoalStatus,
+        currentGoalButtonTitle: viewerGoalTitle,
+        // telemetry (display)
+        composerTokenTally: viewerTokenTally,
+        threadTokenTallyHasValue: paneThreadTokenTallyHasValue,
+        contextModelId: viewerContextModelId,
+        liveRunOutputTokens: viewerLiveOutputTokens,
+        composerRunTimecodeStartedAt: viewerRunStartedAt,
+        cumulativeRunBaseMs: viewerCumulativeRunBaseMs,
+        dualComposerTelemetry: viewerDualTelemetry,
+        // ── pane-scoped action handlers ──
+        handleRun: paneHandleRun,
+        handleCancel: paneHandleCancel,
+        handleProviderChange: paneHandleProviderChange,
+        rememberCurrentChatComposerSelection: paneRememberComposerSelection,
+        handlePickImages: () => handleMultiviewPanePickAttachments(viewerPaneIndex, viewerChatId),
+        handleRemoveImageAttachment: (id: string) =>
+          handleMultiviewPaneRemoveAttachment(viewerPaneIndex, viewerChatId, id),
+        handleCopyCurrentTranscript: () =>
+          handleMultiviewPaneCopyTranscript(viewerPaneIndex, viewerChatId),
+        handleSetAgenticWorkspaceGrant: (
+          service: AgenticServiceId,
+          enabled: boolean,
+          _provider?: ProviderId
+        ) => handleMultiviewPaneToggleGrant(viewerPaneIndex, viewerChatId, service, enabled),
+        handleSelectExistingWorkspace: (workspace: WorkspaceRecord) =>
+          handleMultiviewPanePickWorkspace(viewerPaneIndex, viewerChatId, workspace),
+        handleSelectWorkspace: () => handleMultiviewPaneAddWorkspace(viewerPaneIndex, viewerChatId),
+        handleNewGlobalChat: () => handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
+        handleWelcomeSuggestion: (suggestion: string) =>
+          handleMultiviewPaneWelcomeSuggestion(viewerPaneIndex, viewerChatId, suggestion),
+        // setState setters (focused-only) → no-op for panes; persistence routed
+        // through rememberCurrentChatComposerSelection (overridden above). Each
+        // matching display field above keeps the picker's selection accurate.
+        setSelectedModelType: paneNoopSetter,
+        setLastNonCustomModelType: paneNoopSetter,
+        setCustomModel: (value: string) =>
+          paneRememberComposerSelection({ customModel: value }),
+        setCodexReasoningEffort: paneNoopSetter,
+        setClaudeReasoningEffort: paneNoopSetter,
+        setKimiThinkingEnabled: paneNoopSetter,
+        setCodexServiceTier: paneNoopSetter,
+        setClaudeFastMode: paneNoopSetter,
+        setApprovalMode: paneNoopSetter,
+        // ── focused-only singleton refs / state: avoid clobbering the focused
+        //    composer or stacking portals. ──
+        composerAreaRef: paneComposerAreaDiscardRef,
+        // TODO(per-pane): goal popover is portal'd off the focused `goalPopoverOpen`
+        // state; force it closed so a pane never renders a duplicate stacked
+        // popover. The goal BUTTON still renders for parity (clicking focuses the
+        // pane via the chrome action; deep goal editing remains focused-only).
+        goalPopoverOpen: false,
+        // TODO(per-pane): command palette + memory inspector are focused-only
+        // portals — keep them closed in panes to avoid duplicate overlays.
+        isCommandPaletteOpen: false,
+        isMemoryInspectorOpen: false,
+        // ── focused-only state that would otherwise LEAK into resting panes
+        //    (adversarial review D1/D2): these fields are keyed to the FOCUSED chat
+        //    in composerCtx, so rendering them in a non-focused pane shows that
+        //    chat's pending-approval card (was even actionable-wrong), queued-
+        //    message bubbles, git/PR branch+CI, and plan-import/path-grant cards in
+        //    the WRONG pane. Force empty for panes — the focused/active pane still
+        //    surfaces them via composerCtx. Per-pane derivations are a later slice.
+        pendingAgentApproval: null,
+        permissionRequestPaths: [],
+        permissionRequestTitle: '',
+        permissionRequestSource: undefined,
+        permissionRequestMessage: '',
+        queuedMessagesAboveRowEntries: [],
+        // primaryGitSnapshot/Pr null → the git above-bar falls back to the pane's
+        // own currentWorkspace.branch (already overridden), so it stays pane-correct.
+        primaryGitSnapshot: null,
+        primaryPr: null,
+        pendingPlanImport: null,
+        externalPathGrantPrompt: null,
+        externalPathGrantPromptBusy: false,
+        // custom-model "clear" reverts to THIS pane's model, not the focused chat's.
+        lastNonCustomModelType: viewerSelectedModel,
+        // screen-watch: the composer-row button reflects THIS pane's ownership; the
+        // pane chrome's corner-action remains the pane-scoped toggle.
+        attachedWindow:
+          attachedWindowOwnerChatIdRef.current === viewerChatId ? attachedWindow : null,
+        isAttachingWindow:
+          attachedWindowOwnerChatIdRef.current === viewerChatId ? isAttachingWindow : false
+        // TODO(per-pane): the remaining focused-only concepts (gemini memory/trust,
+        // ensemble roster editing, steer-to-queued, queued-message editing) are
+        // reused from `composerCtx` as harmless placeholders — they operate on
+        // focused state, not this pane's chat. A later slice plumbs per-pane
+        // variants where they prove worth the cost.
+        // TODO(per-pane): duplicate-chat shares draft — `setChatPromptDraft` is
+        // keyed by chatId, so the same chat shown in two panes shares one draft.
+      }
+      return paneComposerCtx
+    },
+    [
+      paneCtxHelpers,
+      agentModelsByProvider.claude,
+      attachedWindow,
+      codexModels,
+      composerDraftsByChatId,
+      composerStableBase,
+      handleCancelMultiviewPane,
+      handleMultiviewPaneAddWorkspace,
+      handleMultiviewPaneCopyTranscript,
+      handleMultiviewPanePickAttachments,
+      handleMultiviewPanePickWorkspace,
+      handleMultiviewPaneProviderChange,
+      handleMultiviewPaneRemoveAttachment,
+      handleMultiviewPaneSelectNoWorkspace,
+      handleMultiviewPaneToggleGrant,
+      handleMultiviewPaneWelcomeSuggestion,
+      handleRunMultiviewPane,
+      imageAttachmentsByChatId,
+      isAttachingWindow,
+      isMultiviewSplit,
+      rememberMultiviewPaneComposerSelection,
+      runQueueJobs,
+      runningChatIds,
+      usageInitialized,
+      usageRecords,
+      welcomeExternalHeatmapEnabled,
+      welcomeHeatmapRefreshKey,
+      welcomeTaskWraithHeatmapEnabled,
+      welcomeUsageDashboardData.lifetimeHasActivity,
+      welcomeWorkspaceHeatmapEnabled,
+      workflowDefinitions,
+      workflowDraft,
+    ]
+  )
+  const paneComposerCtxByKey = useMemo(() => {
+    const map: Record<string, ComposerProps> = {}
+    multiview.paneChatIds.forEach((paneChatId, paneIndex) => {
+      if (!paneChatId || paneIndex === multiview.focusedPaneIndex) return
+      const ctx = buildPaneComposerCtx(paneChatId, paneIndex)
+      if (ctx) map[`${paneIndex}:${paneChatId}`] = ctx
+    })
+    return map
+  }, [multiview.paneChatIds, multiview.focusedPaneIndex, buildPaneComposerCtx])
+
+  const composerCtx: ComposerProps = {
+    // Slice H: shared stable base (handlers + chat-independent props).
+    ...composerStableBase,
+    prompt,
+    // Hide welcome starter cards when multiview is split (they overlap the
+    // composer in short cells). The focused cell uses this ctx in both single
+    // and split layouts.
+    isMultiviewSplit,
+    approvalMode,
+    attachedWindow,
+    claudeFastMode,
+    claudeReasoningEffort,
+    claudeReasoningOptions,
+    codexReasoningEffort,
+    codexReasoningOptions,
+    codexServiceTier,
+    composerAreaRef,
+    composerAriaLabel,
+    composerFileAttachments,
+    composerImageAttachments,
+    composerPlaceholder,
+    composerRunTimecodeStartedAt,
+    composerTokenTally,
+    contextModelId,
+    cumulativeRunBaseMs,
+    currentActiveGoal,
+    currentChat,
+    currentComposerChatId,
+    currentGoalButtonTitle,
+    currentGoalStatus,
+    currentProvider,
+    currentProviderLabel,
+    currentProviderModelOptions,
+    currentWorkspace,
+    currentWorkspacePath,
+    customModel,
+    dualComposerTelemetry,
+    externalPathGrantPrompt,
+    externalPathGrantPromptBusy,
+    goalPopoverOpen,
+    guestComposerModelOptions,
+    guestComposerReasoningOptions,
+    handleCopyCurrentTranscript,
+    handleGuestToggleFastMode,
     imageAttachments,
-    intentNote,
-    interfaceStyle,
     isAttachingWindow,
     isCommandPaletteOpen,
-    isCurrentChatBusyForSteer,
     isCurrentChatProviderLocked,
     isCurrentChatRunning,
     isCurrentComposerLocked,
     isCurrentEnsembleChat,
-    isCurrentEnsembleRoundRunning,
     isCurrentGlobalChat,
-    isCurrentGuestParticipantRunning,
-    isEnsembleModeEnabled,
     isMemoryInspectorOpen,
-    isPreparingDiffReview,
-    isSteerBusyForCurrentChat,
     isWelcomeChat,
     isWorkflowChatWelcome,
     isWorkflowComposeChat,
     kimiThinkingEnabled,
     lastNonCustomModelType,
     liveRunOutputTokens,
-    markCurrentGoalBlocked,
-    markPersistentSessionRestartNeeded,
-    multiview,
-    ollamaProviderParityActiveForCurrentWorkspace,
-    ollamaToolControlTier,
-    openDiscordContextPicker,
-    openGoalPopover,
-    openInspectorTab,
-    openPlanImportReview,
-    openSideChatFromSlashCommand,
-    overestimatePercent,
-    patchEnsembleParticipantById,
     pendingAgentApproval,
-    pendingApprovalQueueByChatId,
     pendingPlanImport,
     permissionRequestMessage,
     permissionRequestPaths,
     permissionRequestSource,
     permissionRequestTitle,
-    persistExternalPathGrantPrompt,
-    persistentSessionNeedsRestart,
-    planImportExecutionEstimate,
-    planImportGroundingBusy,
-    planImportGroundingDisabledReason,
     primaryGitSnapshot,
-    primaryModifierLabel,
     primaryPr,
-    providerRates,
     queuedMessagesAboveRowEntries,
-    queuedRunQueueCount,
-    refreshCodexThreads,
-    refreshCommandDiscovery,
-    refreshGeminiMemory,
-    refreshProviderMetadata,
-    refreshWorkflowState,
-    rememberCurrentChatComposerSelection,
-    renderPlanImportFileGroundings,
-    renderPlanImportItems,
-    resumeAppWatchSnapshot,
     runtimeProfileControl,
     scheduleControls,
-    screenWatchUnavailableReason,
     selectedComposerModelType,
     selectedModelType,
-    selectedParticipant,
-    sessionRestartReason,
-    sessionTrust,
-    sessionYoloMode,
     setApprovalMode,
-    setChatPromptDraft,
-    setChats,
     setClaudeFastMode,
     setClaudeReasoningEffort,
     setCodexReasoningEffort,
     setCodexServiceTier,
-    setCommandPaletteQuery,
-    setCurrentChat,
     setCustomModel,
-    setDiffActionMenuOpen,
-    setGoalDraft,
-    setGoalEditing,
-    setGoalFromObjective,
-    setGoalPopoverOpen,
-    setGuestParticipantForCurrentChat,
-    setIntentNote,
-    setIsCommandPaletteOpen,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
-    setPendingElevation,
-    setPendingPlanImport,
-    setPlanImportPolicy,
-    setPrimaryGitSnapshot,
-    setRawLogs,
     setSelectedModelType,
-    setSessionTrust,
-    setShowWorkSessionSheet,
-    setWelcomeParticipantOverflow,
-    setWorkflowDraft,
-    setYoloBannerDismissed,
-    settings,
     // The ghost companion is now rendered INLINE per-pane (inside each pane's
     // <Composer>), gated by that pane's EFFECTIVE ghost flag. This is the FOCUSED
     // composer, so it uses the focused pane's effective flag (its override, else
@@ -18486,30 +19245,10 @@ function App(): React.JSX.Element {
     // composer overrides this in `paneComposerCtx` with its own pane flag.
     shouldShowGhostCompanion: focusedPaneGhostEnabled,
     shouldShowWelcomeStandaloneHeatmaps,
-    showComposerChips,
-    steerIndicatorMessage,
-    syncPersistentModelSelection,
     threadTokenTallyHasValue,
-    threadTokenTallyTooltip,
-    trustResult,
-    trustSelectValue,
-    updateCurrentEnsembleConcurrentMode,
-    updateCurrentEnsembleContextChars,
-    updateCurrentEnsembleMaxContinuationHops,
-    updateCurrentEnsembleOrchestrationMode,
-    updateCurrentGoalStatus,
-    updateSelectedParticipant,
-    visibleCommandPaletteItems,
-    visibleScheduledTasks,
     welcomeCopy,
     welcomeHeatmapSlots,
-    welcomeParticipantOverflow,
-    workflowDraft,
     workflowForCurrentChat,
-    workflowIntervalMinutes,
-    workspaceDiffStats,
-    workspaces,
-    yoloBannerDismissed
   }
 
   return (

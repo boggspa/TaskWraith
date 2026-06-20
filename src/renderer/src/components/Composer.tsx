@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
 import { AgenticWorkspaceGrant, EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
@@ -371,7 +371,7 @@ export interface ComposerProps {
   yoloBannerDismissed: any
 }
 
-export function Composer(props: ComposerProps): React.JSX.Element {
+function ComposerInner(props: ComposerProps): React.JSX.Element {
   const {
     prompt,
     isMultiviewSplit,
@@ -4553,3 +4553,15 @@ export function Composer(props: ComposerProps): React.JSX.Element {
           </div>
   )
 }
+
+/**
+ * Slice H — `React.memo` boundary. `Composer` receives ~290 spread props
+ * (`<Composer {...composerProps} />`), so the default shallow comparator bails
+ * only when EVERY prop value is referentially equal frame-to-frame. App.tsx
+ * makes that achievable by (a) stabilising all callback props through a
+ * ref-backed handler bag and (b) memoising both the focused `composerCtx` and
+ * each pane's composer ctx so their field values stay referentially stable when
+ * their real inputs are unchanged. The named export `Composer` + `ComposerProps`
+ * type are preserved so every existing import + SSR test keeps working.
+ */
+export const Composer = memo(ComposerInner)
