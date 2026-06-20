@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { TranscriptPanel } from './TranscriptPanel'
 import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildChatViewProps'
+import { buildWelcomeCopy } from '../lib/welcomeCopy'
 
 /**
  * ChatViewPane — a single NON-FOCUSED Multiview pane: a live, read-only
@@ -22,6 +23,8 @@ export interface ChatViewPaneProps extends BuildChatViewPropsInput {
   /** Provider (or Ollama brand) class for the `provider-*` tint. */
   providerClass: string
   isEnsemble?: boolean
+  welcomeWorkspaceName?: string | null
+  welcomeIsGlobalChat?: boolean
   /** Focus this pane (the single sidebar/composer then drive it). */
   onFocusPane?: (paneIndex: number, chatId: string) => void
   ariaLabel?: string
@@ -50,6 +53,8 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.interfaceStyle === b.interfaceStyle &&
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&
+    a.welcomeWorkspaceName === b.welcomeWorkspaceName &&
+    a.welcomeIsGlobalChat === b.welcomeIsGlobalChat &&
     a.refs === b.refs &&
     a.paneIndex === b.paneIndex &&
     a.onFocusPane === b.onFocusPane &&
@@ -57,8 +62,69 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
   )
 }
 
+const fallbackWorkspaceName = (workspacePath?: string | null): string => {
+  if (!workspacePath) return 'TaskWraith'
+  return workspacePath.split(/[\\/]/).filter(Boolean).pop() || 'TaskWraith'
+}
+
+function ChatViewWelcomePane(props: ChatViewPaneProps) {
+  const isGlobalChat = props.welcomeIsGlobalChat ?? props.chat?.scope === 'global'
+  const workspaceName = isGlobalChat
+    ? 'Global Chat'
+    : props.welcomeWorkspaceName || fallbackWorkspaceName(props.chat?.workspacePath)
+  const copy = buildWelcomeCopy({
+    workspaceName,
+    providerLabel: props.providerLabel,
+    permissionModeLabel: 'Default Approval',
+    isGlobalChat,
+    hasDiff: false,
+    diffCount: 0,
+    scheduledTaskCount: 0
+  })
+  const heading = props.isEnsemble
+    ? {
+        beforeWorkspace: 'New Ensemble chat in ',
+        workspaceName,
+        afterWorkspace: isGlobalChat ? '.' : ' Workspace.'
+      }
+    : copy.heading
+  const subheading = props.isEnsemble
+    ? 'Multiple providers are ready to work in one shared transcript.'
+    : copy.subheading
+
+  return (
+    <div className="multiview-pane-welcome">
+      <div className="welcome-hero multiview-pane-welcome-hero">
+        <h1>
+          <span>{heading.beforeWorkspace}</span>
+          <strong className={`workspace-name-glow provider-${props.providerClass}`}>
+            {heading.workspaceName}
+          </strong>
+          <span>{heading.afterWorkspace}</span>
+        </h1>
+        <p>{subheading}</p>
+      </div>
+      {!props.isEnsemble && (
+        <div className="multiview-pane-welcome-starters" aria-hidden>
+          {copy.starters.slice(0, 3).map((starter) => (
+            <div
+              key={starter.id}
+              className="multiview-pane-welcome-starter"
+              data-intent={starter.intent}
+            >
+              <span className="multiview-pane-welcome-starter-label">{starter.label}</span>
+              <span className="multiview-pane-welcome-starter-description">
+                {starter.description}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ChatViewPaneInner(props: ChatViewPaneProps) {
-  const viewProps = buildChatViewProps(props)
   const className = [
     'app-transcript',
     'multiview-pane-transcript',
@@ -81,7 +147,11 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
         if (chatId) props.onFocusPane?.(props.paneIndex, chatId)
       }}
     >
-      <TranscriptPanel {...viewProps} />
+      {props.isWelcomeChat ? (
+        <ChatViewWelcomePane {...props} />
+      ) : (
+        <TranscriptPanel {...buildChatViewProps(props)} />
+      )}
     </div>
   )
 }

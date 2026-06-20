@@ -17891,6 +17891,14 @@ function App(): React.JSX.Element {
                   )
                 }
                 const viewerProvider = getChatProvider(viewerChat)
+                const viewerIsGlobalChat = isGlobalChat(viewerChat)
+                const viewerWorkspace = getWorkspaceForChat(viewerChat)
+                const viewerWorkspaceName =
+                  viewerIsGlobalChat
+                    ? 'Global Chat'
+                    : viewerWorkspace?.displayName ||
+                      viewerChat.workspacePath?.split(/[\\/]/).filter(Boolean).pop() ||
+                      'TaskWraith'
                 const viewerIsRunning = deriveChatIsRunning({
                   chat: viewerChat,
                   runningChatIds,
@@ -17908,6 +17916,8 @@ function App(): React.JSX.Element {
                     providerClass={viewerProvider}
                     interfaceStyle={interfaceStyle}
                     isEnsemble={viewerChat.chatKind === 'ensemble'}
+                    welcomeWorkspaceName={viewerWorkspaceName}
+                    welcomeIsGlobalChat={viewerIsGlobalChat}
                     isWelcomeChat={(viewerChat.messages?.length || 0) === 0}
                     isThinking={viewerIsRunning}
                     runCompleteNotice={deriveChatRunCompleteNotice(viewerChat, viewerIsRunning)}

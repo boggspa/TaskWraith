@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { chatViewPanePropsEqual, type ChatViewPaneProps } from './ChatViewPane'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { ChatViewPane, chatViewPanePropsEqual, type ChatViewPaneProps } from './ChatViewPane'
 
 const ref = () => ({ current: null }) as ChatViewPaneProps['refs']['scrollRef']
 
@@ -37,6 +38,8 @@ const makeProps = (over: Partial<ChatViewPaneProps> = {}): ChatViewPaneProps => 
   onPreviewImage: sharedPreview,
   interfaceStyle: 'cursor',
   providerClass: 'codex',
+  welcomeWorkspaceName: 'AGBench',
+  welcomeIsGlobalChat: false,
   onFocusPane: sharedFocus,
   ...over
 })
@@ -80,5 +83,41 @@ describe('chatViewPanePropsEqual', () => {
 
   it('re-renders when a viewer is reused for a different pane index', () => {
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ paneIndex: 2 }))).toBe(false)
+  })
+
+  it('re-renders when welcome context changes', () => {
+    expect(chatViewPanePropsEqual(makeProps(), makeProps({ welcomeWorkspaceName: 'Other' }))).toBe(
+      false
+    )
+    expect(chatViewPanePropsEqual(makeProps(), makeProps({ welcomeIsGlobalChat: true }))).toBe(
+      false
+    )
+  })
+})
+
+describe('ChatViewPane welcome viewer', () => {
+  it('renders a read-only welcome surface instead of an empty transcript', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: {
+            appChatId: 'chat-1',
+            scope: 'workspace',
+            title: 'New Chat',
+            workspacePath: '/tmp/AGBench'
+          } as unknown as ChatViewPaneProps['chat'],
+          isWelcomeChat: true,
+          messages: [],
+          provider: 'codex',
+          providerLabel: 'Codex',
+          providerClass: 'codex',
+          welcomeWorkspaceName: 'AGBench'
+        })}
+      />
+    )
+    expect(html).toContain('multiview-pane-welcome')
+    expect(html).toContain('New Codex thread for')
+    expect(html).toContain('AGBench')
+    expect(html).not.toContain('transcript-scroll')
   })
 })
