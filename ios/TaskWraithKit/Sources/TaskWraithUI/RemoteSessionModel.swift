@@ -3357,7 +3357,7 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func send(
-        _ params: [String: Any], timeoutMs: Int = 12_000, successLabel: String = "Sent.",
+        _ params: [String: Any], timeoutMs: Int = 16_000, successLabel: String = "Sent.",
         navigateToThreadId: String? = nil,
         navigateOnAck: Bool = true,
         onThreadCreated: ((String?) -> Void)? = nil,
@@ -3378,8 +3378,21 @@ public final class RemoteSessionModel: ObservableObject {
                         onThreadCreated?(threadId)
                     }
                     onAck?(accepted)
-                    self.lastActionMessage = Self.interpretAck(
-                        ack, successLabel: successLabel)
+                    // Connection-aware copy. A request ack can time out even while the
+                    // session is fully ESTABLISHED — a momentarily slow Mac, a heavy op
+                    // right after connect, or a dropped ack on a live socket. The Mac is
+                    // NOT "busy or asleep" then, so the alarming interpretAck/twFriendlyMessage
+                    // copy (which re-maps ANY "timed out" string to that banner) is wrong.
+                    // While still .connected, surface calm, accurate text with no
+                    // "timeout"/"timed out" wording so it isn't re-mapped and the banner
+                    // stays a neutral .info instead of a red "asleep" warning.
+                    if !ack.ok, ack.error == "timeout", case .connected = self.phase {
+                        self.lastActionMessage =
+                            "Your Mac is taking longer than usual to respond — it's still connected."
+                    } else {
+                        self.lastActionMessage = Self.interpretAck(
+                            ack, successLabel: successLabel)
+                    }
                 }
             } catch {
                 await MainActor.run {
