@@ -107,6 +107,28 @@ describe('SettingsPanel provider cards', () => {
     expect(html).not.toContain('TASKWRAITH_DISABLE_GROK')
   })
 
+  it('does not render the retired Gemini sign-in card on the Providers tab', () => {
+    const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
+
+    // Gemini is RETIRED — its sign-in offer surface is gone (its chat history
+    // and the deeper shared-bridge wiring stay preserved).
+    expect(html).not.toContain('Google Gemini profiles for OAuth')
+    // Live providers still render their sign-in cards.
+    expect(html).toContain('Login with Claude')
+  })
+
+  it('does not render the retired Gemini card in the MCP connected surfaces', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
+    )
+
+    // The connected-surfaces grid is an offer surface — no Gemini card, and it
+    // drops out of the "providers reporting MCP/bridge status" denominator too.
+    expect(html).not.toContain('settings-mcp-server-card provider-gemini')
+    // Live providers still get their connected-surface cards.
+    expect(html).toContain('settings-mcp-server-card provider-claude')
+  })
+
   it('renders the General auto-update checkbox enabled by default', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior' })} />

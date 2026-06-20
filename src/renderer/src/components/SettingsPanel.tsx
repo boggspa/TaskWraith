@@ -50,10 +50,10 @@ import { getDashboardStatsByGroup, isDashboardStatVisible } from '../lib/dashboa
 import {
   summariseCliProviderEnabled,
   summariseCodexStatus,
-  summariseGeminiStatus,
   summariseProviderApiKeyStatus,
   type ProviderAuthSummary
 } from '../lib/providerAuthSummary'
+import { isRetiredProvider } from '../../../shared/retiredProviders'
 import {
   COMPOSER_FONT_MATCH_TRANSCRIPT,
   COMPOSER_FONT_OPTIONS,
@@ -1684,7 +1684,6 @@ export function SettingsPanel({
   onClearKimiApiKey,
   onProviderUpgrade,
   onSaveGeminiAuthProfile,
-  onStartGeminiOAuthLogin,
   onCancelGeminiOAuthLogin,
   onProviderLogin,
   onProviderLogout,
@@ -1910,11 +1909,6 @@ export function SettingsPanel({
     summariseProviderApiKeyStatus(claudeAuthStatus ?? null, 'Claude'),
     usageSummary
   )
-  const geminiSetupSummary = applyOutOfUsage(
-    'gemini',
-    summariseGeminiStatus(geminiAuthStatus ?? null),
-    usageSummary
-  )
   const kimiSetupSummary = applyOutOfUsage(
     'kimi',
     summariseProviderApiKeyStatus(kimiAuthStatus ?? null, 'Kimi'),
@@ -1960,7 +1954,12 @@ export function SettingsPanel({
       onChange={onChange}
     />
   )
-  const providerMcpSummaries = SETTINGS_PROVIDER_ORDER.map((provider) => {
+  // gemini is RETIRED — drop it from the connected-surfaces grid AND the
+  // "providers reporting MCP/bridge status" stat (offer surface). Its bridge
+  // wiring stays below for the shared TaskWraith MCP bridge control.
+  const providerMcpSummaries = SETTINGS_PROVIDER_ORDER.filter(
+    (provider) => !isRetiredProvider(provider)
+  ).map((provider) => {
     const contract =
       providerCapabilitiesByProvider?.[provider] ??
       (provider === activeProvider ? providerCapabilities : null)
@@ -4030,67 +4029,6 @@ export function SettingsPanel({
                       {renderProviderUpgradeHint('claude')}
                     </p>
                     {renderProviderPauseControls('claude')}
-                  </SettingsProviderAuthCard>
-
-                  <SettingsProviderAuthCard
-                    provider="gemini"
-                    label="Gemini"
-                    summary={geminiSetupSummary}
-                    description="Google Gemini profiles for OAuth, API-key, or Vertex-backed runs."
-                    optional
-                  >
-                    <div className="settings-provider-auth-action-row">
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        disabled={isGeminiOAuthLoginRunning}
-                        onClick={() => {
-                          onStartGeminiOAuthLogin?.({
-                            profileId:
-                              selectedGeminiAuthProfile?.kind === 'google-oauth'
-                                ? selectedGeminiAuthProfile.id
-                                : undefined,
-                            label: geminiProfileLabel.trim() || 'Google login',
-                            makeDefault: true
-                          })
-                          setGeminiProfileLabel('')
-                        }}
-                      >
-                        {selectedGeminiAuthProfile?.kind === 'google-oauth'
-                          ? 'Refresh Google login'
-                          : 'Add Google login'}
-                      </button>
-                      {isGeminiOAuthLoginRunning && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
-                          onClick={() =>
-                            onCancelGeminiOAuthLogin?.(
-                              selectedGeminiAuthProfile?.id ||
-                                geminiAuthStatus?.activeProfileId ||
-                                null
-                            )
-                          }
-                        >
-                          Cancel
-                        </button>
-                      )}
-                      {selectedGeminiAuthProfile && onDeleteGeminiAuthProfile && (
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-ghost"
-                          onClick={() => onDeleteGeminiAuthProfile(selectedGeminiAuthProfile.id)}
-                        >
-                          Sign out active profile
-                        </button>
-                      )}
-                      {renderProviderUpgradeButton('gemini')}
-                    </div>
-                    <p className="settings-provider-auth-footnote">
-                      API key, Vertex, and runtime controls are below.
-                      {renderProviderUpgradeHint('gemini')}
-                    </p>
-                    {renderProviderPauseControls('gemini')}
                   </SettingsProviderAuthCard>
 
                   <SettingsProviderAuthCard
