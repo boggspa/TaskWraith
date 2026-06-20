@@ -20,7 +20,6 @@ import type {
   AppearanceMode,
   CodexSandboxFallbackMode,
   AppSettings,
-  GeminiApiRuntimeMode,
   GeminiMcpBridgeStatus,
   NativeSubAgentRequestPolicy,
   ProviderApiKeyStatus,
@@ -241,7 +240,6 @@ interface SettingsPanelProps {
     sidebarOpacityOverride?: boolean
     mainPaneOpacityOverride?: boolean
     geminiCheckpointingEnabled?: boolean
-    geminiApiRuntime?: GeminiApiRuntimeMode
     chatContextTurns?: number
     /** 1.0.5-EW25 — Display currency for cost / token-spend chips. */
     currency?: 'USD' | 'GBP' | 'EUR'

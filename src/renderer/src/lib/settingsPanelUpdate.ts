@@ -2,7 +2,6 @@ import type {
   AppSettings,
   AgenticServicesSettings,
   NativeSubAgentRequestPolicy,
-  GeminiApiRuntimeMode,
   CodexSandboxFallbackMode,
   ProductUpdateChannel
 } from '../../../main/store/types'
@@ -32,9 +31,6 @@ export type SettingsPanelUpdate = {
   sidebarOpacityOverride?: AppSettings['sidebarOpacityOverride']
   mainPaneOpacityOverride?: AppSettings['mainPaneOpacityOverride']
   geminiCheckpointingEnabled?: boolean
-  // Phase M1 Step 6 — Gemini API vs CLI runtime selection. See
-  // GeminiApiRuntimeMode in main/store/types.ts. Defaults to 'auto'.
-  geminiApiRuntime?: GeminiApiRuntimeMode
   chatContextTurns?: number
   /** 1.0.5-EW25 — Display currency for cost / token-spend chips. */
   currency?: AppSettings['currency']

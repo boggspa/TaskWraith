@@ -36,7 +36,6 @@ import {
   AgenticServicesSettings,
   AgenticWorkspaceGrant,
   AgenticServiceId,
-  GeminiApiRuntimeMode,
   GeminiMcpBridgeStatus,
   CodexSandboxFallbackMode,
   ProviderCapabilityContract,
@@ -1486,11 +1485,6 @@ function App(): React.JSX.Element {
     useState<PersistentSessionStatus>('idle')
   const [persistentSessionNeedsRestart, setPersistentSessionNeedsRestart] = useState(false)
   const [geminiCheckpointingEnabled, setGeminiCheckpointingEnabled] = useState(false)
-  // Phase M1 Step 6 — Gemini API runtime mode. Defaults to 'auto' (the
-  // same default the main store applies on first load). The actual
-  // API-vs-CLI dispatch lives in main; this state is only used by the
-  // Settings UI to surface the picker and the runtime status row.
-  const [, setGeminiApiRuntime] = useState<GeminiApiRuntimeMode>('auto')
 
   // Diff & Logs
   const [rawLogs, setRawLogs] = useState<RawLogEntry[]>([])
@@ -3751,13 +3745,6 @@ function App(): React.JSX.Element {
     }
     setChatContextTurns(clampContextTurns(s.chatContextTurns))
     setGeminiCheckpointingEnabled(Boolean(s.geminiCheckpointingEnabled))
-    setGeminiApiRuntime(
-      s.geminiApiRuntime === 'auto' ||
-        s.geminiApiRuntime === 'always' ||
-        s.geminiApiRuntime === 'never'
-        ? s.geminiApiRuntime
-        : 'auto'
-    )
     void refreshProviderMetadata(coerceLiveProvider(s.activeProvider))
     // 1.0.6-G3d — derive Grok availability from the registered adapters (the
     // registry includes 'grok' only when the experimental gate is on).
@@ -4138,16 +4125,6 @@ function App(): React.JSX.Element {
           }
         ])
       }
-    }
-    if (next.geminiApiRuntime !== undefined) {
-      setGeminiApiRuntime(next.geminiApiRuntime)
-      settingsPatch.geminiApiRuntime = next.geminiApiRuntime
-      // Refresh the Gemini provider metadata so any cached capability /
-      // status reflects the new runtime intent on the next render. The
-      // actual dispatch logic in main reads the setting at run time, so
-      // no extra IPC call is needed beyond the standard updateSettings
-      // below.
-      if (currentProvider === 'gemini') providersToRefresh.push('gemini')
     }
     if (next.claudeBinaryPath !== undefined) {
       setClaudeBinaryPath(next.claudeBinaryPath)
