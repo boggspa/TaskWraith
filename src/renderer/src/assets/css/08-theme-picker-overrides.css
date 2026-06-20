@@ -1567,6 +1567,19 @@
   max-width: 220px;
 }
 
+/* Inline cluster under the composer on the Workflows welcome screen (replaces
+   the starter-prompt grid). Reuses the .workflow-creator-* field styles; this
+   wrapper just lays them out as a wrapping row rather than a modal column. */
+.workflow-compose-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  width: 100%;
+  max-width: min(100%, var(--composer-content-max-width));
+  margin-top: 12px;
+}
+
 .workflow-creator-segmented {
   display: inline-flex;
   width: fit-content;
