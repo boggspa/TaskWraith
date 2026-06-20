@@ -44,7 +44,6 @@ import type {
   PinnedMessageGroup,
   UsageRecord
 } from '../../../main/store/types'
-import { resolveGeminiRuntimeStatus } from '../lib/GeminiRuntimeStatus'
 import { humaniseModelId } from '../lib/modelDisplayName'
 import { getDashboardStatsByGroup, isDashboardStatVisible } from '../lib/dashboardStatRegistry'
 import {
@@ -685,30 +684,6 @@ const PRODUCT_UPDATE_CHANNEL_OPTIONS: Array<{ value: ProductUpdateChannel; label
   { value: 'stable', label: 'Stable' },
   { value: 'nightly', label: 'Nightly' }
 ]
-// Phase M1 Step 6 — three-way runtime picker. `helper` is shown inline
-// in the radio label so the user can read the per-mode semantics without
-// hovering or expanding any disclosure.
-const GEMINI_API_RUNTIME_OPTIONS: Array<{
-  value: GeminiApiRuntimeMode
-  label: string
-  helper: string
-}> = [
-  {
-    value: 'auto',
-    label: 'Auto',
-    helper: 'Use the API when an API key is configured, else CLI.'
-  },
-  {
-    value: 'always',
-    label: 'Always API',
-    helper: 'Require the in-process API path (fails if no API key).'
-  },
-  {
-    value: 'never',
-    label: 'Always CLI',
-    helper: 'Force the legacy CLI path.'
-  }
-]
 const FUN_FX_MODES: Array<{ value: AppSettings['funFxMode']; label: string; helper: string }> = [
   { value: 'off', label: 'Off', helper: 'No cinematic effects.' },
   { value: 'subtle', label: 'Subtle', helper: 'One effect layer with gentle motion.' },
@@ -1201,85 +1176,6 @@ type LocalFontData = {
 
 type LocalFontWindow = Window & {
   queryLocalFonts?: () => Promise<LocalFontData[]>
-}
-
-// Phase M1 Step 6 — exported so the renderer unit test can mount the
-// runtime picker in isolation (the full SettingsPanel is too large to
-// instantiate from a test fixture). Kept as a small presentational
-// component: it does NOT touch IPC or settings persistence directly;
-// the parent panel converts `onSelect` into a regular settings change
-// dispatch.
-export interface GeminiRuntimePickerProps {
-  value: GeminiApiRuntimeMode
-  profiles: GeminiAuthProfileSummary[] | undefined
-  activeProfileId: string | null
-  onSelect: (mode: GeminiApiRuntimeMode) => void
-}
-
-export function GeminiRuntimePicker({
-  value,
-  profiles,
-  activeProfileId,
-  onSelect
-}: GeminiRuntimePickerProps): React.JSX.Element {
-  const status = resolveGeminiRuntimeStatus({ mode: value, profiles, activeProfileId })
-  const statusColor =
-    status.kind === 'api'
-      ? 'var(--color-success, #3fb950)'
-      : status.kind === 'api-misconfigured'
-        ? 'var(--color-warning, #d29922)'
-        : 'var(--text-secondary)'
-  const activeOption = GEMINI_API_RUNTIME_OPTIONS.find((option) => option.value === value)
-  return (
-    <div className="settings-service-row" style={{ alignItems: 'flex-start' }}>
-      <span>
-        Gemini runtime
-        <small>
-          The Gemini CLI is being deprecated in ~30 days. The API path runs in-process and supports
-          the full MCP tool surface — recommended for new chats. The CLI path stays available for
-          OAuth profiles until a follow-up.
-        </small>
-      </span>
-      <div
-        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)', minWidth: 0 }}
-      >
-        <div
-          className="settings-option-list settings-option-list-inline"
-          role="radiogroup"
-          aria-label="Gemini runtime"
-        >
-          {GEMINI_API_RUNTIME_OPTIONS.map((option) => {
-            const checked = value === option.value
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={checked}
-                title={option.helper}
-                data-testid={`gemini-runtime-option-${option.value}`}
-                className={`settings-radio-option ${checked ? 'active' : ''}`}
-                onClick={() => onSelect(option.value)}
-              >
-                <span className="settings-radio-dot" />
-                <span>{option.label}</span>
-              </button>
-            )
-          })}
-        </div>
-        <p className="settings-hint" style={{ margin: 0 }}>
-          {activeOption?.helper}
-        </p>
-        <span
-          data-testid="gemini-runtime-status"
-          data-kind={status.kind}
-          style={{ fontSize: '0.78rem', color: statusColor }}
-        >
-          ● {status.message}
-        </span>
-      </div>
-    </div>
-  )
 }
 
 function SettingsProviderAuthCard({
