@@ -177,3 +177,43 @@ describe('ChatViewPane shared composer', () => {
     expect(html).not.toContain('data-testid="pane-composer-stub"')
   })
 })
+
+describe('ChatViewPane per-pane agent aura', () => {
+  const auraProps = (over: Partial<ChatViewPaneProps> = {}): ChatViewPaneProps =>
+    makeProps({
+      chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
+      composerProps: stubComposerProps(),
+      showAura: true,
+      auraProvider: 'codex',
+      auraStatus: 'running',
+      auraIntensity: 'cinematic',
+      ...over
+    })
+
+  it('renders the AgentAuraLayer keyed to the pane provider + status when FX is on', () => {
+    const html = renderToStaticMarkup(<ChatViewPane {...auraProps()} />)
+    expect(html).toContain('agent-aura-layer')
+    expect(html).toContain('fx-provider-codex')
+    expect(html).toContain('fx-status-running')
+    expect(html).toContain('fx-intensity-cinematic')
+  })
+
+  it('keys the aura to the ensemble palette for ensemble panes', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane {...auraProps({ auraProvider: 'ensemble', auraStatus: 'idle' })} />
+    )
+    expect(html).toContain('fx-provider-ensemble')
+  })
+
+  it('renders no aura layer when FX is globally off', () => {
+    const html = renderToStaticMarkup(<ChatViewPane {...auraProps({ showAura: false })} />)
+    expect(html).not.toContain('agent-aura-layer')
+  })
+
+  it('re-renders (comparator) when the pane aura status/provider/intensity changes', () => {
+    expect(chatViewPanePropsEqual(auraProps(), auraProps({ auraStatus: 'approval' }))).toBe(false)
+    expect(chatViewPanePropsEqual(auraProps(), auraProps({ auraProvider: 'claude' }))).toBe(false)
+    expect(chatViewPanePropsEqual(auraProps(), auraProps({ auraIntensity: 'epic' }))).toBe(false)
+    expect(chatViewPanePropsEqual(auraProps(), auraProps({ showAura: false }))).toBe(false)
+  })
+})

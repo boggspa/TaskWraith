@@ -7,6 +7,12 @@ import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildCh
 import { FileMenuSelectionIcon } from './AppChromeSymbols'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData, WelcomeUsageTab } from '../lib/welcomeUsageDashboard'
+import {
+  AgentAuraLayer,
+  type AgentAuraProviderKey,
+  type AgentAuraStatus,
+  type AdvancedFxIntensity
+} from './FxLayers'
 
 /**
  * ChatViewPane — a pane-scoped Multiview chat surface. It renders the same
@@ -38,6 +44,20 @@ export interface ChatViewPaneProps extends Omit<
   /** Provider (or Ollama brand) class for the `provider-*` tint. */
   providerClass: string
   isEnsemble?: boolean
+  // ── Per-pane agent-aura (provider glow) ───────────────────────────────────
+  // A non-focused pane renders its OWN `<AgentAuraLayer>` (the focused pane
+  // already glows via App's inline `.app-transcript` FX layers). These mirror
+  // App's app-global aura inputs but scoped to THIS pane's chat: `auraProvider`
+  // is the pane's `auraProviderKey` ('ensemble' for ensemble chats, else the
+  // provider); `auraStatus` is a per-pane `runFxStatus`; `auraIntensity` is the
+  // app-global advanced-fx intensity. `showAura` gates on the same global
+  // FX-enabled flag App uses for the focused aura — when false, no layer renders.
+  // Optional so prop-comparator/test fixtures stay light; the live Multiview
+  // path always supplies them.
+  showAura?: boolean
+  auraProvider?: AgentAuraProviderKey
+  auraStatus?: AgentAuraStatus
+  auraIntensity?: AdvancedFxIntensity
   welcomeWorkspaceName?: string | null
   welcomeIsGlobalChat?: boolean
   // ── Welcome usage dashboard (rendered by the pane shell, above the
@@ -106,6 +126,12 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.interfaceStyle === b.interfaceStyle &&
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&
+    // Per-pane agent-aura — MUST be compared or the pane won't re-tint when its
+    // own run/approval/queue state (auraStatus) or provider/intensity changes.
+    a.showAura === b.showAura &&
+    a.auraProvider === b.auraProvider &&
+    a.auraStatus === b.auraStatus &&
+    a.auraIntensity === b.auraIntensity &&
     a.welcomeWorkspaceName === b.welcomeWorkspaceName &&
     a.welcomeIsGlobalChat === b.welcomeIsGlobalChat &&
     // Welcome usage dashboard (pane-shell-owned).
@@ -256,6 +282,22 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
         if (focusChatId) props.onFocusPane?.(props.paneIndex, focusChatId)
       }}
     >
+      {/* Per-pane provider glow. First child so it sits behind pane content
+       * (it's `position:absolute; inset:0; pointer-events:none`). The focused
+       * pane glows via App's inline FX layers; this gives resting panes the
+       * same aura keyed to THEIR chat. `.multiview-cell` is `overflow:hidden`
+       * so the outer glow is clipped at the cell edge — same as the focused
+       * pane's aura, so it's consistent.
+       * TODO(per-pane): run-data-viz — a per-pane <RunDataVizLayer> needs this
+       * pane's queue/raw-event counts, which aren't plumbed per-pane yet. */}
+      {props.showAura && props.auraProvider && props.auraStatus && props.auraIntensity && (
+        <AgentAuraLayer
+          provider={props.auraProvider}
+          status={props.auraStatus}
+          intensity={props.auraIntensity}
+          hasHandoff={false}
+        />
+      )}
       <ChatViewPaneChrome {...props} />
       {props.isWelcomeChat &&
         props.showWelcomeUsageDashboard &&

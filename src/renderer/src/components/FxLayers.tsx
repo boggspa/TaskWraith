@@ -192,13 +192,24 @@ export type AgentAuraStatus =
   | 'complete'
   | 'handoff'
 
+/**
+ * `provider` accepts the synthetic `'ensemble'` key in addition to a real
+ * `ProviderId`: the aura colour is keyed off this class (`fx-provider-${provider}`)
+ * via the var declarations in 05-polish-fx-layouts.css, and ensemble chats use a
+ * dedicated multi-provider palette (`fx-provider-ensemble`) rather than any single
+ * participant's brand. App passes `auraProviderKey` (= 'ensemble' for ensemble
+ * chats, else the provider); each non-focused Multiview pane passes its own
+ * per-pane equivalent so the layer self-colours from its OWN class.
+ */
+export type AgentAuraProviderKey = ProviderId | 'ensemble'
+
 export function AgentAuraLayer({
   provider,
   status,
   intensity,
   hasHandoff
 }: {
-  provider: ProviderId
+  provider: AgentAuraProviderKey
   status: AgentAuraStatus
   intensity: AdvancedFxIntensity
   hasHandoff: boolean

@@ -2603,7 +2603,17 @@
   animation: none;
 }
 /* FX Labs: opt-in ambience, workspace atmosphere, and passive run visualization */
-.app-root.fx-agent-aura-root {
+/* The aura colour/opacity custom-props are declared on BOTH `.app-root` (the
+ * app-global focused aura, keyed off `auraProviderKey`/`runFxStatus`) AND on
+ * `.agent-aura-layer` itself, so a per-pane `<AgentAuraLayer>` (Multiview
+ * non-focused panes) SELF-COLOURS from its own `fx-provider/status/intensity`
+ * classes instead of inheriting the focused chat's colour from `.app-root`.
+ * For the focused/app-root layer this is identical: it just self-defines the
+ * same value it used to inherit (and the focused layer carries the SAME
+ * `fx-provider-${auraProviderKey}` class as `.app-root`, so ensemble stays
+ * the multi-provider palette rather than its single participant's brand). */
+.app-root.fx-agent-aura-root,
+.agent-aura-layer {
   --agent-aura-rgb: 87 148 255;
   --agent-aura-rgb-2: 78 220 186;
   --agent-aura-danger-rgb: 255 92 108;
@@ -2611,22 +2621,22 @@
   --agent-aura-opacity: 0.34;
 }
 
-.app-root.fx-provider-gemini {
+:is(.app-root, .agent-aura-layer).fx-provider-gemini {
   --agent-aura-rgb: 75 142 255;
   --agent-aura-rgb-2: 88 231 190;
 }
 
-.app-root.fx-provider-codex {
+:is(.app-root, .agent-aura-layer).fx-provider-codex {
   --agent-aura-rgb: 255 154 85;
   --agent-aura-rgb-2: 255 218 112;
 }
 
-.app-root.fx-provider-claude {
+:is(.app-root, .agent-aura-layer).fx-provider-claude {
   --agent-aura-rgb: 255 123 94;
   --agent-aura-rgb-2: 227 176 125;
 }
 
-.app-root.fx-provider-kimi {
+:is(.app-root, .agent-aura-layer).fx-provider-kimi {
   --agent-aura-rgb: 103 225 255;
   --agent-aura-rgb-2: 157 121 255;
 }
@@ -2635,24 +2645,24 @@
  * a teal -> violet 2-tone distinct from every single-provider palette,
  * signalling "many agents" rather than one brand. Driven by
  * `fx-provider-ensemble` (App.tsx aura class for ensemble chats). */
-.app-root.fx-provider-ensemble {
+:is(.app-root, .agent-aura-layer).fx-provider-ensemble {
   --agent-aura-rgb: 116 214 198;
   --agent-aura-rgb-2: 168 134 255;
 }
 
-.app-root.fx-intensity-subtle {
+:is(.app-root, .agent-aura-layer).fx-intensity-subtle {
   --agent-aura-opacity: 0.2;
 }
 
-.app-root.fx-intensity-epic {
+:is(.app-root, .agent-aura-layer).fx-intensity-epic {
   --agent-aura-opacity: 0.48;
 }
 
-.app-root.fx-status-approval {
+:is(.app-root, .agent-aura-layer).fx-status-approval {
   --agent-aura-rgb: var(--agent-aura-warn-rgb);
 }
 
-.app-root.fx-status-failed {
+:is(.app-root, .agent-aura-layer).fx-status-failed {
   --agent-aura-rgb: var(--agent-aura-danger-rgb);
 }
 

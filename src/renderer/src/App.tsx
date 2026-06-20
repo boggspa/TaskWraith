@@ -421,6 +421,7 @@ import {
   LivingWorkspaceLayer,
   RunDataVizLayer,
   SkyWeatherVisual,
+  type AgentAuraProviderKey,
   type AgentAuraStatus
 } from './components/FxLayers'
 import { ComposerCumulativeTimecode, ComposerRunTimecode } from './components/ComposerTimecodes'
@@ -17448,6 +17449,36 @@ function App(): React.JSX.Element {
     })
     const viewerIsWelcomeChat = (viewerChat.messages?.length || 0) === 0
     const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
+    // ── Per-pane agent-aura inputs ─────────────────────────────────────────
+    // Mirror App's app-global `auraProviderKey` + `runFxStatus` (see ~15834)
+    // but scoped to THIS pane's chat, so a non-focused pane self-tints from its
+    // own provider + run/approval/queue state. All inputs are cheaply available
+    // per-chat (approval/queue maps are chatId-keyed), so no approximation is
+    // needed. `hasHandoff` is left false on the pane layer (handoff is focused-
+    // only decoration), so the handoff status is computed only for parity (it
+    // doesn't change the aura colour — there's no `fx-status-handoff` var rule).
+    const viewerPendingApproval = Boolean(pendingAgentApprovalByChatId[viewerChatId])
+    const viewerQueuedRunCount = runQueueJobs.filter(
+      (job) => job.chatId === viewerChatId && job.status === 'queued'
+    ).length
+    const viewerHasHandoffDraft = handoffCards.some(
+      (card) => card.status === 'draft' && card.sourceChatId === viewerChatId
+    )
+    const viewerAuraProviderKey: AgentAuraProviderKey =
+      viewerChat.chatKind === 'ensemble' ? 'ensemble' : viewerProvider
+    const viewerRunFxStatus: AgentAuraStatus = viewerPendingApproval
+      ? 'approval'
+      : viewerIsRunning
+        ? 'running'
+        : viewerQueuedRunCount > 0
+          ? 'queued'
+          : viewerRun?.status === 'failed'
+            ? 'failed'
+            : viewerRun?.status === 'completed'
+              ? 'complete'
+              : viewerHasHandoffDraft
+                ? 'handoff'
+                : 'idle'
     const viewerSelection = getChatComposerSelection(viewerChat, viewerProvider)
     // The pane model picker's option list (incl. the synthetic "Custom…" entry)
     // is now built inside the shared <Composer> from `currentProviderModelOptions`
@@ -18065,6 +18096,10 @@ function App(): React.JSX.Element {
         providerClass={viewerProvider}
         interfaceStyle={interfaceStyle}
         isEnsemble={viewerChat.chatKind === 'ensemble'}
+        showAura={showAgentAuraFx}
+        auraProvider={viewerAuraProviderKey}
+        auraStatus={viewerRunFxStatus}
+        auraIntensity={advancedFxIntensity}
         welcomeWorkspaceName={viewerWorkspaceName}
         welcomeIsGlobalChat={viewerIsGlobalChat}
         isWelcomeChat={viewerIsWelcomeChat}
@@ -19296,7 +19331,7 @@ function App(): React.JSX.Element {
           )}
           {showAgentAuraFx && (
             <AgentAuraLayer
-              provider={currentProvider}
+              provider={auraProviderKey}
               status={runFxStatus}
               intensity={advancedFxIntensity}
               hasHandoff={hasCurrentHandoffDraft}
