@@ -3353,29 +3353,33 @@ export function Composer(props: ComposerProps): React.JSX.Element {
                                   { reasoningEffort: 'xhigh' }
                                 ]
                               : codexReasoningOptions
-                            combinedReasoningOptions = sourceOptions.map((option) => ({
-                              value: option.reasoningEffort,
-                              label:
-                                option.reasoningEffort === 'xhigh'
-                                  ? 'Extra High'
-                                  : option.reasoningEffort.charAt(0).toUpperCase() +
-                                    option.reasoningEffort.slice(1)
-                            }))
+                            combinedReasoningOptions = sourceOptions
+                              .filter((option) => option?.reasoningEffort)
+                              .map((option) => ({
+                                value: option.reasoningEffort,
+                                label:
+                                  option.reasoningEffort === 'xhigh'
+                                    ? 'Extra High'
+                                    : option.reasoningEffort.charAt(0).toUpperCase() +
+                                      option.reasoningEffort.slice(1)
+                              }))
                             combinedSelectedReasoning = effectiveCodexReasoning
                           } else if (effectiveProvider === 'claude') {
                             const sourceOptions = ensembleBinding
                               ? CLAUDE_THINKING_EFFORTS
                               : claudeReasoningOptions
-                            combinedReasoningOptions = sourceOptions.map((option) => ({
-                              value: option.reasoningEffort,
-                              label:
-                                option.reasoningEffort === 'off'
-                                  ? 'Thinking off'
-                                  : option.reasoningEffort === 'high'
-                                    ? 'Max'
-                                    : option.reasoningEffort.charAt(0).toUpperCase() +
-                                      option.reasoningEffort.slice(1)
-                            }))
+                            combinedReasoningOptions = sourceOptions
+                              .filter((option) => option?.reasoningEffort)
+                              .map((option) => ({
+                                value: option.reasoningEffort,
+                                label:
+                                  option.reasoningEffort === 'off'
+                                    ? 'Thinking off'
+                                    : option.reasoningEffort === 'high'
+                                      ? 'Max'
+                                      : option.reasoningEffort.charAt(0).toUpperCase() +
+                                        option.reasoningEffort.slice(1)
+                              }))
                             combinedSelectedReasoning = effectiveClaudeReasoning
                           } else if (effectiveProvider === 'kimi') {
                             combinedReasoningOptions = [

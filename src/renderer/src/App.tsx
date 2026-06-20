@@ -17500,42 +17500,24 @@ function App(): React.JSX.Element {
       'medium'
     const viewerClaudeReasoning = viewerSelection.claudeReasoningEffort || 'off'
     const viewerKimiThinking = viewerSelection.kimiThinkingEnabled ?? true
-    let viewerReasoningOptions: CombinedModelPickerReasoningOption[] = []
-    if (viewerProvider === 'codex') {
-      const sourceOptions = viewerCodexModelOption?.supportedReasoningEfforts?.length
-        ? viewerCodexModelOption.supportedReasoningEfforts
-        : [
-            { reasoningEffort: 'low' },
-            { reasoningEffort: 'medium' },
-            { reasoningEffort: 'high' },
-            { reasoningEffort: 'xhigh' }
-          ]
-      viewerReasoningOptions = sourceOptions.map((option) => ({
-        value: option.reasoningEffort,
-        label:
-          option.reasoningEffort === 'xhigh'
-            ? 'Extra High'
-            : option.reasoningEffort.charAt(0).toUpperCase() + option.reasoningEffort.slice(1)
-      }))
-    } else if (viewerProvider === 'claude') {
-      const sourceOptions = viewerClaudeModelOption?.supportedReasoningEfforts?.length
-        ? viewerClaudeModelOption.supportedReasoningEfforts
-        : CLAUDE_THINKING_EFFORTS
-      viewerReasoningOptions = sourceOptions.map((option) => ({
-        value: option.reasoningEffort,
-        label:
-          option.reasoningEffort === 'off'
-            ? 'Thinking off'
-            : option.reasoningEffort === 'high'
-              ? 'Max'
-              : option.reasoningEffort.charAt(0).toUpperCase() + option.reasoningEffort.slice(1)
-      }))
-    } else if (viewerProvider === 'kimi') {
-      viewerReasoningOptions = [
-        { value: 'on', label: 'Thinking on' },
-        { value: 'off', label: 'Thinking off' }
-      ]
-    }
+    // RAW per-pane reasoning option lists ({ reasoningEffort }[]) for the shared
+    // <Composer>. The composer does its OWN mapping to picker shape from
+    // codex/claudeReasoningOptions, so it must receive the RAW shape — passing
+    // picker-shaped { value, label } here crashed it (it read
+    // option.reasoningEffort.charAt(0) on undefined). Kimi builds its own list
+    // internally, so no raw list is needed for it.
+    const viewerCodexReasoningOptionsRaw = viewerCodexModelOption?.supportedReasoningEfforts?.length
+      ? viewerCodexModelOption.supportedReasoningEfforts
+      : [
+          { reasoningEffort: 'low' },
+          { reasoningEffort: 'medium' },
+          { reasoningEffort: 'high' },
+          { reasoningEffort: 'xhigh' }
+        ]
+    const viewerClaudeReasoningOptionsRaw = viewerClaudeModelOption?.supportedReasoningEfforts
+      ?.length
+      ? viewerClaudeModelOption.supportedReasoningEfforts
+      : CLAUDE_THINKING_EFFORTS
     // Fast-mode capability/state, the permission option list, and the
     // enabled-grant set are all derived inside the shared <Composer> (from the
     // per-pane provider/model/selection fields in paneComposerCtx), mirroring
@@ -18003,7 +17985,8 @@ function App(): React.JSX.Element {
       selectedComposerModelType: viewerSelectedModel,
       customModel: paneViewerSelection.customModel || '',
       codexReasoningEffort: viewerCodexReasoning,
-      codexReasoningOptions: viewerReasoningOptions,
+      codexReasoningOptions: viewerCodexReasoningOptionsRaw,
+      claudeReasoningOptions: viewerClaudeReasoningOptionsRaw,
       claudeReasoningEffort: viewerClaudeReasoning,
       kimiThinkingEnabled: viewerKimiThinking,
       codexServiceTier: paneViewerSelection.codexServiceTier || '',
