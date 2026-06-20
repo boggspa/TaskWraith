@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  buildGrokAcpCliArgs,
   buildGrokCliArgs,
   buildGrokProviderCliArgs,
   buildGrokProviderPrompt,
@@ -109,6 +110,34 @@ describe('buildGrokCliArgs', () => {
     expect(buildGrokCliArgs({ ...base, model: 'claude-opus-4-7' })).not.toContain('--model')
     const args = buildGrokCliArgs({ ...base, model: 'grok-code-fast-1' })
     expect(args[args.indexOf('--model') + 1]).toBe('grok-code-fast-1')
+    const composerArgs = buildGrokCliArgs({ ...base, model: 'grok-composer-2.5-fast' })
+    expect(composerArgs[composerArgs.indexOf('--model') + 1]).toBe('grok-composer-2.5-fast')
+  })
+
+  it('builds ACP stdio args with selected Grok model and effort before the subcommand', () => {
+    const args = buildGrokAcpCliArgs({
+      model: 'grok-composer-2.5-fast',
+      reasoningEffort: 'high',
+      readOnlySeat: true
+    })
+
+    expect(args[0]).toBe('--no-auto-update')
+    expect(args[args.indexOf('--model') + 1]).toBe('grok-composer-2.5-fast')
+    expect(args[args.indexOf('--effort') + 1]).toBe('high')
+    expect(args.slice(-2)).toEqual(['agent', 'stdio'])
+    expect(args.indexOf('--model')).toBeLessThan(args.indexOf('agent'))
+    expect(args.indexOf('--effort')).toBeLessThan(args.indexOf('agent'))
+    expect(
+      args
+        .map((value, index) => (value === '--deny' ? args[index + 1] : null))
+        .filter(Boolean)
+    ).toEqual([...GROK_READ_ONLY_DENY_RULES])
+  })
+
+  it('does not forward foreign model ids to ACP stdio', () => {
+    expect(buildGrokAcpCliArgs({ model: 'composer-2.5-fast' })).not.toContain('--model')
+    expect(buildGrokAcpCliArgs({ model: 'flash-lite' })).not.toContain('--model')
+    expect(buildGrokAcpCliArgs({ model: 'grok-build' })).toContain('--model')
   })
 
   it('preserves Discord context prompt text as the Grok print prompt', () => {

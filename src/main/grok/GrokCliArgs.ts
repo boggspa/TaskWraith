@@ -147,6 +147,29 @@ export interface BuildGrokCliArgsInput {
   approvalMode?: string | null
 }
 
+export interface BuildGrokAcpCliArgsInput {
+  model?: string | null
+  reasoningEffort?: string | null
+  readOnlySeat?: boolean
+}
+
+function appendGrokModelAndEffortArgs(
+  args: string[],
+  input: { model?: string | null; reasoningEffort?: string | null }
+): void {
+  // Only forward genuine Grok model ids (e.g. grok-composer-2.5-fast). The
+  // composer's CLI-default option — and any model id that leaked in from another
+  // provider's picker (e.g. Gemini's 'flash-lite') — must NOT be passed: Grok
+  // rejects unknown ids and the whole run fails.
+  if (input.model && input.model.startsWith('grok')) {
+    args.push('--model', input.model)
+  }
+  const effort = normalizeGrokEffortFlag(input.reasoningEffort)
+  if (effort) {
+    args.push('--effort', effort)
+  }
+}
+
 export function buildGrokCliArgs(input: BuildGrokCliArgsInput): string[] {
   const writeCapable = grokWriteCapable(input.approvalMode)
   const args: string[] = [
@@ -174,17 +197,17 @@ export function buildGrokCliArgs(input: BuildGrokCliArgsInput): string[] {
   if (resumeId) {
     args.push('--resume', resumeId)
   }
-  // Only forward genuine Grok model ids (e.g. grok-code-fast-1). The composer's
-  // CLI-default option — and any model id that leaked in from another provider's
-  // picker (e.g. Gemini's 'flash-lite') — must NOT be passed: Grok rejects
-  // unknown ids and the whole run fails. Real Grok model wiring is a later slice.
-  if (input.model && input.model.startsWith('grok')) {
-    args.push('--model', input.model)
+  appendGrokModelAndEffortArgs(args, input)
+  return args
+}
+
+export function buildGrokAcpCliArgs(input: BuildGrokAcpCliArgsInput): string[] {
+  const args = ['--no-auto-update']
+  if (input.readOnlySeat) {
+    for (const rule of GROK_READ_ONLY_DENY_RULES) args.push('--deny', rule)
   }
-  const effort = normalizeGrokEffortFlag(input.reasoningEffort)
-  if (effort) {
-    args.push('--effort', effort)
-  }
+  appendGrokModelAndEffortArgs(args, input)
+  args.push('agent', 'stdio')
   return args
 }
 

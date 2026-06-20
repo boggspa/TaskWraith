@@ -580,9 +580,9 @@ import { ProviderPreflightService } from './ProviderPreflightService'
 import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from './grokGate'
 import {
   grokWriteCapable,
+  buildGrokAcpCliArgs,
   buildGrokProviderCliArgs,
-  buildGrokProviderPrompt,
-  GROK_READ_ONLY_DENY_RULES
+  buildGrokProviderPrompt
 } from './grok/GrokCliArgs'
 import { grokToolKindToService } from './grok/GrokAcpProtocol'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
@@ -7475,11 +7475,11 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
   // gate stays as defense-in-depth. Reads stay available. NOTE: deliberately NOT
   // --permission-mode plan here — over ACP that can route exit_plan_mode through
   // a permission request our read-only gate would deny, re-triggering the cancel.
-  const grokAcpArgs = ['--no-auto-update']
-  if (grokReadOnlySeat) {
-    for (const rule of GROK_READ_ONLY_DENY_RULES) grokAcpArgs.push('--deny', rule)
-  }
-  grokAcpArgs.push('agent', 'stdio')
+  const grokAcpArgs = buildGrokAcpCliArgs({
+    model,
+    reasoningEffort: payload.reasoningEffort,
+    readOnlySeat: grokReadOnlySeat
+  })
 
   runGrokAcpTurn({
     // Read-only seat: prepend the read-only steer so Grok answers from
