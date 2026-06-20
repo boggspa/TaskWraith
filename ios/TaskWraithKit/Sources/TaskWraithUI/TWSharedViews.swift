@@ -4209,6 +4209,47 @@ public struct AgentIdentityBadge: View {
     }
 }
 
+/// Compact context-window usage ring — the phone port of the desktop
+/// `ContextWheel`. A thin track with an arc that fills clockwise from the top
+/// as the thread approaches the model's context limit. Non-interactive; sits
+/// just left of the composer send button. The ink color is supplied by the
+/// caller (the composer passes its shell's text color) so the ring inherits
+/// each shell's palette, mirroring the desktop's `currentColor` inheritance.
+public struct ContextDonut: View {
+    /// 0...100 — percent of the context window consumed (clamped on render).
+    let percent: Double
+    let color: Color
+    var size: CGFloat = 15
+    private let lineWidth: CGFloat = 2
+
+    public init(percent: Double, color: Color, size: CGFloat = 15) {
+        self.percent = percent
+        self.color = color
+        self.size = size
+    }
+
+    private var fraction: CGFloat { CGFloat(max(0, min(100, percent)) / 100) }
+
+    public var body: some View {
+        ZStack {
+            Circle()
+                .inset(by: lineWidth / 2)
+                .stroke(color.opacity(0.16), lineWidth: lineWidth)
+            // Arc fills clockwise from 12 o'clock: trim() starts at 3 o'clock,
+            // so -90° rotates the start up to the top (matches the desktop wheel).
+            Circle()
+                .inset(by: lineWidth / 2)
+                .trim(from: 0, to: fraction)
+                .stroke(
+                    color.opacity(0.62),
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: size, height: size)
+        .accessibilityLabel(Text("Context \(Int(percent.rounded()))% used"))
+    }
+}
+
 /// Masthead logo — the WWDC26 ghost until 9 Jul 2026, then the sticker.
 /// (Date gate per the 28-day request from 11 Jun 2026; revert = this view
 /// flips automatically, no code change needed.)

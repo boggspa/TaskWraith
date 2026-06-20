@@ -1,5 +1,10 @@
 import type { ProviderId } from '../../../main/store/types'
 
+// NOTE: the iOS companion hand-mirrors these two tables in
+// ios/TaskWraithKit/Sources/TaskWraithKit/ContextWindows.swift (the phone has no
+// TS→Swift codegen). When you add or change a model/provider window here, update
+// that Swift file too, or the composer context donut on iOS will drift.
+
 const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Gemini
   pro: 1_048_576,

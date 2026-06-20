@@ -469,6 +469,9 @@ struct Composer: View {
                 if canQueueCurrentPrompt {
                     queueButton
                 }
+                if let pct = contextUsedPercent {
+                    ContextDonut(percent: pct, color: shell.palette.textPrimary)
+                }
                 primaryActionButton
             }
             .padding(.horizontal, 10)
@@ -499,6 +502,31 @@ struct Composer: View {
             .foregroundStyle(TWTheme.statusAttention)
         }
         .buttonStyle(.plain)
+    }
+
+    /// Context-window fill for the donut left of the send button — the phone
+    /// port of the desktop ContextWheel. `nil` until the thread has real token
+    /// usage (the ring only surfaces once a run has consumed context), so a
+    /// fresh composer stays clean. Window size comes from the model-id →
+    /// provider-fallback table; usage is the latest run summary's total tokens.
+    private var contextUsedPercent: Double? {
+        guard let snapshot = model.threadSnapshots[card.id] else { return nil }
+        // Cumulative thread tokens — desktop parity: the renderer's
+        // buildChatTokenTally sums EVERY run's total, not just the latest, so a
+        // long thread reads its true fill rather than only the last turn.
+        // runSummaries is bounded (~12 runs), so very long threads under-count
+        // slightly vs desktop, but the ring is clamped to 100% there anyway.
+        let summaries = snapshot.runSummaries ?? [snapshot.runSummary].compactMap { $0 }
+        let used = summaries.reduce(0) { acc, run in
+            acc + (run.totalTokens ?? ((run.tokensIn ?? 0) + (run.tokensOut ?? 0)))
+        }
+        guard used > 0 else { return nil }
+        // Window is set by the active (latest) model.
+        let active = snapshot.runSummary ?? summaries.last
+        let window = ContextWindows.resolve(
+            provider: active?.provider ?? card.provider, model: active?.model)
+        guard window > 0 else { return nil }
+        return min(100, Double(used) / Double(window) * 100)
     }
 
     private var primaryActionButton: some View {
