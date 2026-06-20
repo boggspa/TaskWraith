@@ -312,6 +312,9 @@ interface EnsembleParticipantsAboveRowProps {
   composerStyle?: ComposerStyle
   grokAvailable?: boolean
   cursorAvailable?: boolean
+  /** Slide the row up from behind the composer on mount (workflow Run-as-ensemble
+   *  toggle) — scoped so the row doesn't animate on every ensemble chat. */
+  animateEntrance?: boolean
 }
 
 interface ChipDragGhostState {
@@ -392,7 +395,8 @@ export function EnsembleParticipantsAboveRow({
   onCancelWakeupParticipant,
   composerStyle = 'default',
   grokAvailable = false,
-  cursorAvailable = false
+  cursorAvailable = false,
+  animateEntrance = false
 }: EnsembleParticipantsAboveRowProps): React.JSX.Element | null {
   const chipsContainerRef = useRef<HTMLDivElement | null>(null)
   const [overflowOpenId, setOverflowOpenId] = useState<string | null>(null)
@@ -608,7 +612,11 @@ export function EnsembleParticipantsAboveRow({
   })()
 
   return (
-    <div className="ensemble-above-row" role="region" aria-label="Ensemble participants">
+    <div
+      className={`ensemble-above-row${animateEntrance ? ' ensemble-above-row-entering' : ''}`}
+      role="region"
+      aria-label="Ensemble participants"
+    >
       {showWorkSessionStrip && workSession && (
         <div
           className="work-session-strip"

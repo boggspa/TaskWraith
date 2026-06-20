@@ -2156,7 +2156,11 @@ function App(): React.JSX.Element {
     cadence: 'manual' | 'interval'
     intervalMinutes: number
     maxRunsPerDay: number
+    ensembleEnabled: boolean
   } | null>(null)
+  // Guards the async chat-recreate in handleToggleWorkflowEnsemble so a fast
+  // double-click can't spawn (and orphan) a second ensemble draft chat.
+  const workflowEnsembleTogglingRef = useRef(false)
   const [scheduleRunAtByChatId, setScheduleRunAtForChat] = usePerChatState('')
   const [dueScheduledTasks, setDueScheduledTasks] = useState<ScheduledTask[]>([])
   const [runningChatIds, setRunningChatIds] = useState<Set<string>>(new Set())
@@ -11729,7 +11733,50 @@ function App(): React.JSX.Element {
     await handleNewChat(currentWorkspace.id, currentWorkspace.path)
     const chatId = currentChatIdRef.current
     if (!chatId) return
-    setWorkflowDraft({ chatId, cadence: 'manual', intervalMinutes: 60, maxRunsPerDay: 24 })
+    setWorkflowDraft({
+      chatId,
+      cadence: 'manual',
+      intervalMinutes: 60,
+      maxRunsPerDay: 24,
+      ensembleEnabled: false
+    })
+  }
+
+  // Run-as-ensemble toggle on the workflow welcome. A chat's kind is fixed at
+  // creation, so flipping ensemble RECREATES the draft chat (single↔ensemble)
+  // and carries the typed prompt across; the EnsembleParticipantsAboveRow then
+  // appears/disappears (it gates on chatKind === 'ensemble'). The abandoned
+  // empty draft chat is cleaned up.
+  const handleToggleWorkflowEnsemble = async (enabled: boolean) => {
+    const draft = workflowDraft
+    if (!draft || !currentWorkspace || draft.ensembleEnabled === enabled) return
+    if (workflowEnsembleTogglingRef.current) return
+    workflowEnsembleTogglingRef.current = true
+    try {
+      const oldChatId = draft.chatId
+      const carriedPrompt = prompt
+      if (enabled) {
+        await handleNewEnsemble()
+      } else {
+        await handleNewChat(currentWorkspace.id, currentWorkspace.path)
+      }
+      const newChatId = currentChatIdRef.current
+      if (!newChatId || newChatId === oldChatId) return
+      setWorkflowDraft({ ...draft, chatId: newChatId, ensembleEnabled: enabled })
+      if (carriedPrompt.trim()) {
+        setChatPromptDraft(newChatId, carriedPrompt)
+        setPrompt(carriedPrompt)
+      }
+      setChats((prev) => prev.filter((chat) => chat.appChatId !== oldChatId))
+      chatByIdRef.current.delete(oldChatId)
+      try {
+        await window.api.deleteChat(oldChatId)
+      } catch {
+        /* best-effort cleanup of the abandoned empty draft chat */
+      }
+    } finally {
+      workflowEnsembleTogglingRef.current = false
+    }
   }
 
   // First send on a workflow-compose chat: capture the prompt + run settings into
@@ -19576,6 +19623,7 @@ function App(): React.JSX.Element {
             {isWelcomeChat && <GeminiRetirementBanner />}
             {isWelcomeChat &&
               isCurrentEnsembleChat &&
+              !isWorkflowChatWelcome &&
               (() => {
                 /*
                 Ensemble welcome hero (1.0.3 Slice F follow-up). Replaces
@@ -20094,6 +20142,7 @@ function App(): React.JSX.Element {
                 {currentChat?.chatKind === 'ensemble' && (
                   <EnsembleParticipantsAboveRow
                     chat={currentChat}
+                    animateEntrance={isWorkflowComposeChat}
                     selectedParticipantId={effectiveSelectedParticipantId}
                     onSelectParticipant={handleSelectParticipant}
                     onChatChange={(updatedChat) => {
@@ -23013,9 +23062,9 @@ function App(): React.JSX.Element {
                 onMaxRunsPerDayChange={(maxRunsPerDay) =>
                   setWorkflowDraft((prev) => (prev ? { ...prev, maxRunsPerDay } : prev))
                 }
-                ensembleEnabled={false}
-                onEnsembleEnabledChange={() => {}}
-                showEnsembleToggle={false}
+                ensembleEnabled={workflowDraft.ensembleEnabled}
+                onEnsembleEnabledChange={handleToggleWorkflowEnsemble}
+                showEnsembleToggle={isEnsembleModeEnabled}
               />
             )}
             {isWelcomeChat && !isCurrentEnsembleChat && !isWorkflowChatWelcome && (

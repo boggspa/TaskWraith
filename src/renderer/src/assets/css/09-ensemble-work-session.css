@@ -413,6 +413,28 @@
   color: var(--text-primary);
 }
 
+/* Workflow Run-as-ensemble toggle: the row slides up from behind the composer
+   when ensemble is enabled (scoped via `.ensemble-above-row-entering`, set only
+   in the workflow-compose context — see EnsembleParticipantsAboveRow). */
+@keyframes ensembleAboveRowSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.ensemble-above-row-entering {
+  animation: ensembleAboveRowSlideUp 0.28s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ensemble-above-row-entering {
+    animation: none;
+  }
+}
+
 .ensemble-above-row {
   display: flex;
   align-items: center;
