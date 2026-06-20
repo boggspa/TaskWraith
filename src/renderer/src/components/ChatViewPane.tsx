@@ -1,4 +1,4 @@
-import { memo, useRef, type FormEvent, type KeyboardEvent } from 'react'
+import { memo, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import type { ReactNode } from 'react'
 import type {
   AgenticServiceId,
@@ -15,24 +15,14 @@ import { hasResolvedMention } from '../lib/mentionHighlight'
 import type { WorkspacePolicyService } from '../lib/workspacePolicyServices'
 import {
   ArrowUpSendIcon,
-  ChatMediaIcon,
   ClaudeReturnSymbolIcon,
-  ExclamationShieldIcon,
   FileMenuSelectionIcon,
-  GhostCompanionIcon,
   GoalSymbolIcon,
-  InfoCircleIcon,
   LinkCircleSymbolIcon,
-  ModelSymbolIcon,
-  PinnedMessagesIcon,
   PlusSymbolIcon,
-  QuestionCircleIcon,
   QueueSymbolIcon,
-  ReviewSymbolIcon,
   RunSymbolIcon,
   ScreenWatchSymbolIcon,
-  SidebarCornerIcon,
-  SkyWeatherIcon,
   StopSymbolIcon,
   XSymbolIcon
 } from './AppChromeSymbols'
@@ -178,11 +168,24 @@ export interface ChatViewPaneProps
   onWelcomeSuggestion?: (prompt: string) => void
   topLeftChrome?: ReactNode
   topRightChrome?: ReactNode
+  topLeftChromeAction?: ChatViewPaneChromeAction
+  topRightChromeActions?: ChatViewPaneChromeAction[]
   onDeleteMessage?: (paneIndex: number, chatId: string, messageId: string) => void
   onTogglePinMessage?: (paneIndex: number, chatId: string, messageId: string) => void
   /** Optional visual-focus callback for pane selection affordances. */
   onFocusPane?: (paneIndex: number, chatId: string) => void
   ariaLabel?: string
+}
+
+export interface ChatViewPaneChromeAction {
+  id: string
+  title: string
+  icon: ReactNode
+  ariaLabel?: string
+  active?: boolean
+  disabled?: boolean
+  count?: number
+  onClick?: (paneIndex: number, chatId: string) => void
 }
 
 /**
@@ -271,6 +274,8 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.dashboardAutoCycleSeconds === b.dashboardAutoCycleSeconds &&
     a.topLeftChrome === b.topLeftChrome &&
     a.topRightChrome === b.topRightChrome &&
+    a.topLeftChromeAction === b.topLeftChromeAction &&
+    a.topRightChromeActions === b.topRightChromeActions &&
     a.onPromptChange === b.onPromptChange &&
     a.onRun === b.onRun &&
     a.onCancel === b.onCancel &&
@@ -353,61 +358,51 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
       </>
     )
   }
+  const chatId = props.chat?.appChatId ?? ''
   const title = props.chat?.title || props.welcomeWorkspaceName || 'New Chat'
+  const defaultLeftAction: ChatViewPaneChromeAction = {
+    id: 'pane-chat',
+    title: 'Pane chat',
+    ariaLabel: 'Pane chat',
+    icon: <FileMenuSelectionIcon />,
+    onClick: props.onFocusPane
+  }
+  const leftAction = props.topLeftChromeAction || defaultLeftAction
+  const renderAction = (action: ChatViewPaneChromeAction) => (
+    <button
+      key={action.id}
+      className={`chat-corner-btn${action.active ? ' active' : ''}`}
+      type="button"
+      title={action.title}
+      aria-label={action.ariaLabel || action.title}
+      aria-pressed={typeof action.active === 'boolean' ? action.active : undefined}
+      disabled={action.disabled || !action.onClick || !chatId}
+      onClick={(event) => {
+        event.stopPropagation()
+        if (!chatId || action.disabled) return
+        action.onClick?.(props.paneIndex, chatId)
+      }}
+    >
+      {action.icon}
+      {typeof action.count === 'number' && action.count > 0 && (
+        <span className="chat-corner-count">{action.count > 99 ? '99+' : action.count}</span>
+      )}
+    </button>
+  )
+
   return (
     <>
       <div className="chat-corner-controls chat-corner-controls-left multiview-pane-corner-controls">
-        <button
-          className="chat-corner-btn"
-          type="button"
-          title="Pane chat"
-          aria-label="Pane chat"
-          onClick={() => props.chat?.appChatId && props.onFocusPane?.(props.paneIndex, props.chat.appChatId)}
-        >
-          <FileMenuSelectionIcon />
-        </button>
+        {renderAction(leftAction)}
         <span className="chat-corner-thread-title" title={title}>
           {title}
         </span>
       </div>
-      <div className="chat-corner-controls chat-corner-controls-right multiview-pane-corner-controls">
-        <button className="chat-corner-btn" type="button" title="Sky weather effects" aria-label="Sky weather effects">
-          <SkyWeatherIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Ghost companion" aria-label="Ghost companion">
-          <GhostCompanionIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Thread info" aria-label="Thread info">
-          <InfoCircleIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Help" aria-label="Help">
-          <QuestionCircleIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Report issue" aria-label="Report issue">
-          <ExclamationShieldIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Permissions" aria-label="Permissions">
-          <ReviewSymbolIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Models" aria-label="Models">
-          <ModelSymbolIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Run rail" aria-label="Run rail">
-          <RunSymbolIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Screen watch" aria-label="Screen watch">
-          <ScreenWatchSymbolIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Media" aria-label="Media">
-          <ChatMediaIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Pinned messages" aria-label="Pinned messages">
-          <PinnedMessagesIcon />
-        </button>
-        <button className="chat-corner-btn" type="button" title="Inspector" aria-label="Inspector">
-          <SidebarCornerIcon direction="right" isOpen={false} />
-        </button>
-      </div>
+      {props.topRightChromeActions && props.topRightChromeActions.length > 0 && (
+        <div className="chat-corner-controls chat-corner-controls-right multiview-pane-corner-controls">
+          {props.topRightChromeActions.map(renderAction)}
+        </div>
+      )}
     </>
   )
 }
@@ -486,7 +481,10 @@ function ChatViewWelcomeSuggestions(props: ChatViewPaneProps) {
 }
 
 function ChatViewPaneInner(props: ChatViewPaneProps) {
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const [welcomeSizeClass, setWelcomeSizeClass] =
+    useState<'normal' | 'compact' | 'tight'>('normal')
   const composerContextMenu = useComposerTextareaContextMenu()
   const chatId = props.chat?.appChatId ?? ''
   const hasLocalComposer = Boolean(chatId && props.onRun && props.onPromptChange)
@@ -552,7 +550,9 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
     `provider-${props.providerClass}`,
     `interface-${props.interfaceStyle}`,
     props.isEnsemble ? 'chat-kind-ensemble' : '',
-    props.isWelcomeChat ? 'welcome-mode' : ''
+    props.isWelcomeChat ? 'welcome-mode' : '',
+    props.isWelcomeChat && welcomeSizeClass === 'compact' ? 'welcome-compact-height' : '',
+    props.isWelcomeChat && welcomeSizeClass === 'tight' ? 'welcome-tight-height' : ''
   ]
     .filter(Boolean)
     .join(' ')
@@ -562,8 +562,33 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
   )
   const goalStatus = props.goalStatus || 'empty'
 
+  useLayoutEffect(() => {
+    if (!props.isWelcomeChat) {
+      setWelcomeSizeClass('normal')
+      return
+    }
+    const target = rootRef.current
+    if (
+      !target ||
+      typeof window === 'undefined' ||
+      typeof window.ResizeObserver !== 'function'
+    ) {
+      return
+    }
+    const updateSizeClass = () => {
+      const height = target.getBoundingClientRect().height
+      const nextClass = height <= 560 ? 'tight' : height <= 900 ? 'compact' : 'normal'
+      setWelcomeSizeClass((current) => (current === nextClass ? current : nextClass))
+    }
+    updateSizeClass()
+    const observer = new window.ResizeObserver(updateSizeClass)
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [props.isWelcomeChat])
+
   return (
     <div
+      ref={rootRef}
       className={className}
       data-multiview-pane-chat-id={props.chat?.appChatId ?? undefined}
       role="group"

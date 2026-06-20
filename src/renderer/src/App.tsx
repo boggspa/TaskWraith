@@ -488,7 +488,7 @@ import { ComposerWorkspaceSwitcher } from './components/ComposerWorkspaceSwitche
 import { TranscriptPanel } from './components/TranscriptPanel'
 import { AuditRunCard } from './components/AuditRunCard'
 import { AuditRunNotice } from './components/AuditRunNotice'
-import { ChatViewPane } from './components/ChatViewPane'
+import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
 import { MultiviewLayoutPicker } from './components/MultiviewLayoutPicker'
 import { MultiviewPaneGrid } from './components/MultiviewPaneGrid'
 import { useMultiviewState } from './hooks/useMultiviewState'
@@ -18166,6 +18166,223 @@ function App(): React.JSX.Element {
     const viewerGoalTitle = viewerChat.activeGoal
       ? `${viewerChat.activeGoal.status}: ${viewerChat.activeGoal.objective}`
       : 'Set active goal'
+    const viewerMediaRefs = collectChatMediaRefs(
+      viewerChat,
+      imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS,
+      []
+    )
+    const viewerPinnedMessageCount = (viewerChat.messages || []).filter(
+      (message) => typeof message.metadata?.pinnedAt === 'number'
+    ).length
+    const focusPaneForChromeAction = (paneIndex: number, chatId: string): void => {
+      handleFocusMultiviewPane(paneIndex, chatId)
+    }
+    const focusPaneAndSelectDock = (
+      paneIndex: number,
+      chatId: string,
+      panelId: Exclude<RightDockTab, 'chat'>
+    ): void => {
+      focusPaneForChromeAction(paneIndex, chatId)
+      switch (panelId) {
+        case 'run':
+          setShowCockpit((open) => !open)
+          break
+        case 'media':
+          setIsChatMediaPanelOpen((open) => !open)
+          break
+        case 'pins':
+          setIsPinnedMessagesPanelOpen((open) => !open)
+          break
+        case 'files':
+          if (!viewerWorkspace || viewerIsGlobalChat) return
+          setShowFileEditor((open) => !open)
+          break
+        case 'inspector': {
+          const nextShowInspector = !appearance.showInspector
+          appearance.update({ showInspector: nextShowInspector })
+          break
+        }
+        case 'terminal':
+          setShowGeminiTerminal((open) => !open)
+          break
+      }
+      setRightDockTab(panelId)
+    }
+    const openPaneChatPopout = (paneIndex: number, chatId: string): void => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      focusPaneForChromeAction(paneIndex, chatId)
+      writeChatPopoutHandoff(chatId, {
+        draft: composerDraftsByChatIdRef.current[chatId] || '',
+        scrollState: undefined
+      })
+      void window.api.openWorkspacePopout({
+        kind: 'chat',
+        chatId,
+        workspacePath: paneChat.workspacePath
+      })
+    }
+    const openPaneSideChat = async (paneIndex: number, chatId: string): Promise<void> => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      focusPaneForChromeAction(paneIndex, chatId)
+      await handleSelectChatRef.current(paneChat)
+      void openCurrentSideChatPresentation('split')
+    }
+    const viewerChromeActions: ChatViewPaneChromeAction[] = [
+      {
+        id: 'sky-weather',
+        title: `${shouldShowSkyVisualFxInFxMode ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} sky weather effects${hostWeather?.description ? ` · ${hostWeather.description}` : ''}`,
+        ariaLabel: 'Toggle sky weather effects',
+        icon: <SkyWeatherIcon />,
+        active: shouldShowSkyVisualFxInFxMode,
+        disabled: !isFxEnabled,
+        onClick: (paneIndex, chatId) => {
+          focusPaneForChromeAction(paneIndex, chatId)
+          setShowSkyVisualFx((current) => !current)
+        }
+      },
+      {
+        id: 'ghost-companion',
+        title: `${shouldShowGhostCompanion ? 'Hide' : isFxEnabled ? 'Show' : 'Enable Epic FX'} ghost companion`,
+        ariaLabel: 'Toggle ghost companion',
+        icon: <GhostCompanionIcon />,
+        active: shouldShowGhostCompanion,
+        disabled: !isFxEnabled,
+        onClick: (paneIndex, chatId) => {
+          focusPaneForChromeAction(paneIndex, chatId)
+          setShowGhostCompanion((current) => !current)
+        }
+      },
+      {
+        id: 'changelog',
+        title: showChangelogSheet ? 'Hide changelog sheet' : 'Open changelog sheet',
+        ariaLabel: 'Toggle changelog sheet',
+        icon: <InfoCircleIcon />,
+        active: showChangelogSheet,
+        onClick: (paneIndex, chatId) => {
+          focusPaneForChromeAction(paneIndex, chatId)
+          handleOpenChangelogSheet()
+        }
+      },
+      {
+        id: 'help',
+        title: showFirstLaunchSheet ? 'Hide onboarding sheet' : 'Open onboarding sheet',
+        ariaLabel: 'Toggle onboarding sheet',
+        icon: <QuestionCircleIcon />,
+        active: showFirstLaunchSheet,
+        onClick: (paneIndex, chatId) => {
+          focusPaneForChromeAction(paneIndex, chatId)
+          setShowFirstLaunchSheet((current) => !current)
+        }
+      },
+      {
+        id: 'bug-report',
+        title: 'Report a bug or issue',
+        ariaLabel: 'Report a bug or issue',
+        icon: <ExclamationShieldIcon />,
+        active: showBugReportSheet,
+        onClick: (paneIndex, chatId) => {
+          focusPaneForChromeAction(paneIndex, chatId)
+          setShowBugReportSheet((current) => !current)
+        }
+      },
+      {
+        id: 'popout-chat',
+        title: 'Pop out pane chat',
+        ariaLabel: 'Pop out pane chat',
+        icon: <ChatPopoutIcon />,
+        disabled: !viewerChat,
+        onClick: openPaneChatPopout
+      },
+      {
+        id: 'side-chat',
+        title: isSideSplitOpen ? 'Hide linked chat pane' : 'Open isolated side chat',
+        ariaLabel: isSideSplitOpen ? 'Hide linked chat pane' : 'Open isolated side chat',
+        icon: <SplitChatIcon />,
+        active: isSideSplitOpen,
+        disabled: !viewerChat,
+        onClick: (paneIndex, chatId) => {
+          if (isSideSplitOpen) {
+            focusPaneForChromeAction(paneIndex, chatId)
+            hideSideChatPane()
+            return
+          }
+          void openPaneSideChat(paneIndex, chatId)
+        }
+      },
+      {
+        id: 'run-rail',
+        title: showCockpit ? 'Hide Run rail' : 'Open Run rail',
+        ariaLabel: 'Toggle Run rail',
+        icon: <RunSymbolIcon />,
+        active: showCockpit,
+        onClick: (paneIndex, chatId) => focusPaneAndSelectDock(paneIndex, chatId, 'run')
+      },
+      {
+        id: 'screen-watch',
+        title: viewerScreenWatchTitle,
+        ariaLabel: viewerScreenWatchTitle,
+        icon: <ScreenWatchSymbolIcon />,
+        active: Boolean(attachedWindow),
+        disabled: Boolean(screenWatchUnavailableReason),
+        onClick: (paneIndex, chatId) => {
+          focusPaneForChromeAction(paneIndex, chatId)
+          handleMultiviewPaneToggleScreenWatch(paneIndex, chatId)
+        }
+      },
+      {
+        id: 'media',
+        title: isChatMediaPanelOpen ? 'Hide chat uploads and paths' : 'Show chat uploads and paths',
+        ariaLabel: 'Show chat uploads and paths',
+        icon: <ChatMediaIcon />,
+        active: isChatMediaPanelOpen,
+        count: viewerMediaRefs.length,
+        onClick: (paneIndex, chatId) => focusPaneAndSelectDock(paneIndex, chatId, 'media')
+      },
+      {
+        id: 'pins',
+        title: isPinnedMessagesPanelOpen
+          ? 'Hide notes and pinned messages'
+          : 'Show notes and pinned messages',
+        ariaLabel: 'Toggle notes and pinned messages',
+        icon: <PinnedMessagesIcon />,
+        active: isPinnedMessagesPanelOpen,
+        disabled: !viewerChat,
+        count: viewerPinnedMessageCount,
+        onClick: (paneIndex, chatId) => focusPaneAndSelectDock(paneIndex, chatId, 'pins')
+      },
+      ...(viewerProvider === 'gemini' && !isRetiredProvider(viewerProvider) && viewerWorkspace
+        ? [
+            {
+              id: 'terminal',
+              title: `${showGeminiTerminal ? 'Hide' : 'Show'} Gemini terminal`,
+              ariaLabel: 'Toggle Gemini terminal',
+              icon: <AppleTerminalIcon />,
+              active: showGeminiTerminal,
+              onClick: (paneIndex: number, chatId: string) =>
+                focusPaneAndSelectDock(paneIndex, chatId, 'terminal')
+            } satisfies ChatViewPaneChromeAction
+          ]
+        : []),
+      {
+        id: 'files',
+        title: `${showFileEditor ? 'Hide' : 'Show'} file editor`,
+        ariaLabel: 'Toggle file editor',
+        icon: <FileMenuSelectionIcon />,
+        active: showFileEditor,
+        disabled: !viewerWorkspace || viewerIsGlobalChat,
+        onClick: (paneIndex, chatId) => focusPaneAndSelectDock(paneIndex, chatId, 'files')
+      },
+      {
+        id: 'inspector',
+        title: `${appearance.showInspector ? 'Hide' : 'Show'} inspector`,
+        ariaLabel: 'Toggle inspector',
+        icon: <SidebarCornerIcon direction="right" isOpen={appearance.showInspector} />,
+        active: appearance.showInspector,
+        onClick: (paneIndex, chatId) => focusPaneAndSelectDock(paneIndex, chatId, 'inspector')
+      }
+    ]
     return (
       <ChatViewPane
         key={`${viewerPaneIndex}:${viewerChatId}`}
@@ -18263,6 +18480,7 @@ function App(): React.JSX.Element {
         dashboardWorkspacesShown={settings?.dashboardStatPrefs?.workspacesShown}
         dashboardProvidersTabEnabled={settings?.dashboardStatPrefs?.providersTabEnabled}
         dashboardAutoCycleSeconds={settings?.dashboardStatPrefs?.autoCycleSeconds}
+        topRightChromeActions={viewerChromeActions}
         onWelcomeSuggestion={(suggestion) =>
           handleMultiviewPaneWelcomeSuggestion(viewerPaneIndex, viewerChatId, suggestion)
         }

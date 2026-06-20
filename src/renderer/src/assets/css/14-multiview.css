@@ -33,6 +33,7 @@
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--surface-border) 70%, transparent);
   background: color-mix(in srgb, var(--surface-1) 28%, transparent);
+  container-type: size;
 }
 
 /* The transcript (focused content or a viewer) fills its cell and
@@ -82,6 +83,11 @@
   flex: 0 0 auto;
 }
 
+.multiview-pane-transcript.welcome-mode .multiview-pane-composer-area.composer-area {
+  flex: 0 0 auto;
+  min-height: auto;
+}
+
 .multiview-pane-composer.composer-surface {
   position: relative;
   z-index: 9;
@@ -118,6 +124,22 @@
   margin-bottom: 0;
 }
 
+.multiview-pane-transcript.welcome-compact-height {
+  padding-top: clamp(32px, 5vh, 54px);
+}
+
+.multiview-pane-transcript.welcome-tight-height {
+  padding-top: clamp(24px, 4vh, 38px);
+}
+
+.multiview-pane-transcript.welcome-compact-height .multiview-pane-content {
+  flex-basis: clamp(18px, 10vh, 58px);
+}
+
+.multiview-pane-transcript.welcome-tight-height .multiview-pane-content {
+  flex-basis: clamp(8px, 5vh, 26px);
+}
+
 .multiview-pane-composer-area .welcome-hero {
   margin-bottom: clamp(6px, 1.3vh, 16px);
 }
@@ -146,6 +168,31 @@
 .multiview-pane-composer-area .welcome-standalone-heatmaps {
   max-width: min(100%, var(--composer-content-max-width));
   margin-top: clamp(24px, 4vh, 64px);
+}
+
+.multiview-pane-transcript.welcome-compact-height .welcome-usage-region-small,
+.multiview-pane-transcript.welcome-tight-height .welcome-usage-region-small {
+  display: none;
+}
+
+.multiview-pane-transcript.welcome-compact-height .welcome-hero,
+.multiview-pane-transcript.welcome-tight-height .welcome-hero {
+  margin-bottom: 2px;
+}
+
+.multiview-pane-transcript.welcome-compact-height .welcome-hero p,
+.multiview-pane-transcript.welcome-tight-height .welcome-hero p,
+.multiview-pane-transcript.welcome-compact-height .welcome-suggestions,
+.multiview-pane-transcript.welcome-tight-height .welcome-suggestions {
+  display: none;
+}
+
+.multiview-pane-transcript.welcome-compact-height .welcome-standalone-heatmaps {
+  margin-top: clamp(18px, 4vh, 36px);
+}
+
+.multiview-pane-transcript.welcome-tight-height .welcome-standalone-heatmaps {
+  display: none;
 }
 
 .multiview-pane-corner-controls.chat-corner-controls-right {
@@ -280,9 +327,9 @@
 /* Per-pane close (non-focused cells). Quiet until the cell is hovered. */
 .multiview-pane-close {
   position: absolute;
-  top: 6px;
+  top: 38px;
   right: 6px;
-  z-index: 3;
+  z-index: 20;
   width: 20px;
   height: 20px;
   display: flex;
@@ -297,6 +344,7 @@
   line-height: 1;
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
   transition:
     opacity 0.12s ease,
     background 0.12s ease,
@@ -307,6 +355,7 @@
 .multiview-cell:hover .multiview-pane-close,
 .multiview-pane-close:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .multiview-pane-close:hover {
