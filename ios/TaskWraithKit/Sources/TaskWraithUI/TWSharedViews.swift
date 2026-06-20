@@ -5292,6 +5292,12 @@ public struct ComposerDiffPill: View {
         filesChanged > 0 || additions > 0 || deletions > 0
     }
 
+    /// Softer rounded-rect (not a full capsule) so the chip reads as a glass
+    /// panel rather than a tablet — single source for the background + rim.
+    private var pillShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+    }
+
     public var body: some View {
         Button { onTap?() } label: {
             HStack(spacing: 8) {
@@ -5311,12 +5317,25 @@ public struct ComposerDiffPill: View {
             .font(.caption.weight(.semibold).monospacedDigit())
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            // Liquid Glass where the OS has it; ultra-thin material capsule below.
-            .modifier(GlassPillBackground())
+            // Liquid Glass where the OS has it; ultra-thin material below. The
+            // frost is dialed back a touch so the glass refracts the composer
+            // behind it more naturalistically instead of reading as a fill.
+            .background {
+                if #available(iOS 26.0, macOS 26.0, *) {
+                    Color.clear
+                        .glassEffect(.regular, in: pillShape)
+                        .opacity(0.9)
+                } else {
+                    pillShape
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.85)
+                        .overlay(pillShape.strokeBorder(TWTheme.border))
+                }
+            }
             // Rim highlight: a bright top-edge specular fading down, so the pill
             // reads as a floating glass chip above the composer.
             .overlay(
-                Capsule().strokeBorder(
+                pillShape.strokeBorder(
                     LinearGradient(
                         colors: [Color.white.opacity(0.34), Color.white.opacity(0.06)],
                         startPoint: .top, endPoint: .bottom),
