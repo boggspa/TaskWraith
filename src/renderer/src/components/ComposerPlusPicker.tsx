@@ -158,7 +158,7 @@ export function ComposerPlusPicker({
         ref={triggerRef}
         className={triggerHintLabel ? `${triggerClassName} composer-hint-pill` : triggerClassName}
         type="button"
-        title={triggerLabel}
+        title={triggerHintLabel ? undefined : triggerLabel}
         aria-label={triggerLabel}
         aria-haspopup="dialog"
         aria-expanded={open}

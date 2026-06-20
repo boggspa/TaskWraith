@@ -99,7 +99,7 @@ export function MultiviewLayoutPicker(props: MultiviewLayoutPickerProps): ReactE
       sections={buildMultiviewLayoutSections(props.layout, props.onSelectLayout, props.disabledLayouts)}
       disabled={props.disabled}
       triggerIcon={<MultiviewSymbolIcon />}
-      triggerClassName="composer-multiview-trigger"
+      triggerClassName="composer-multiview-trigger composer-hint-pill--left"
       triggerControl="multiview"
       triggerLabel="Multiview layout"
       triggerHintLabel="Multiview"

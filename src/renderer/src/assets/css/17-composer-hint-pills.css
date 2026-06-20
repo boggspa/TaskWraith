@@ -5,11 +5,17 @@
    resting space.
 
    The label is a CSS ::after fed by `data-hint-label` — it's decorative and
-   absolutely positioned, so (a) it NEVER reflows the row (it floats over the
-   free space / neighbour during the hover only) and (b) it does NOT affect the
-   button's accessible name: every hint button keeps its real `aria-label`,
-   which takes precedence over pseudo-content in the name computation, so screen
-   readers announce the aria-label and ignore this decorative pill. */
+   absolutely positioned, so (a) it NEVER reflows the row and (b) it does NOT
+   affect the button's accessible name: every hint button keeps its real
+   `aria-label`, which takes precedence over pseudo-content, so screen readers
+   announce the aria-label and ignore this decorative pill.
+
+   Direction: by default the pill opens to the RIGHT (left:100%). The two
+   right-of-cluster buttons (Copy, Multiview) opt into `composer-hint-pill--left`
+   so their pill opens LEFT instead — otherwise the rightmost pill is clipped by
+   the `.composer-surface { overflow: hidden }` ancestor at narrow widths / in
+   split multiview panes. Both directions point INTO the interior cluster, never
+   toward an outer edge. */
 .composer-hint-pill {
   position: relative;
 }
@@ -32,14 +38,15 @@
   background: color-mix(in srgb, var(--panel-bg, rgba(22, 22, 26, 0.92)) 86%, transparent);
   -webkit-backdrop-filter: blur(14px) saturate(1.5);
   backdrop-filter: blur(14px) saturate(1.5);
-  /* Shiny contrast-aware rim (the chat-corner-pill idiom: keyed on --text-primary
-     so it adapts light/dark) + a soft drop shadow to lift it off the row. */
+  /* Shiny contrast-aware rim (chat-corner-pill idiom: keyed on --text-primary so
+     it adapts light/dark; fallback so a missing token never voids the shadow) +
+     a tight drop shadow — kept small so the surface's overflow:hidden bottom edge
+     doesn't clip a large halo. */
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 20%, transparent),
-    0 6px 18px rgba(0, 0, 0, 0.32);
+    inset 0 0 0 1px color-mix(in srgb, var(--text-primary, #fff) 20%, transparent),
+    0 3px 10px rgba(0, 0, 0, 0.28);
   /* Rest: tucked back toward the icon + invisible. Stage 1 = fade in (no delay);
-     stage 2 = slide out to the side (delayed) — reads as "pill appears behind
-     the icon, then animates to the side". */
+     stage 2 = slide out to the side (delayed) — "pill appears, then slides out". */
   opacity: 0;
   transform: translate(-8px, -50%);
   transition:
@@ -51,18 +58,28 @@
   opacity: 1;
   transform: translate(0, -50%);
 }
+/* Left-opening variant for the right-of-cluster buttons (Copy, Multiview). */
+.composer-hint-pill--left::after {
+  left: auto;
+  right: 100%;
+  margin-left: 0;
+  margin-right: 4px;
+  transform: translate(8px, -50%);
+}
 /* Defensive: a hint-pill with no label renders no pill. */
 .composer-hint-pill:not([data-hint-label])::after {
   content: none;
 }
-/* Honour reduced-motion: fade in place, no slide. */
+/* Honour reduced-motion: fade in place, no slide (both directions). */
 @media (prefers-reduced-motion: reduce) {
-  .composer-hint-pill::after {
+  .composer-hint-pill::after,
+  .composer-hint-pill--left::after {
     transition: opacity 120ms ease;
     transform: translate(0, -50%);
   }
 }
-[data-reduce-motion="true"] .composer-hint-pill::after {
+[data-reduce-motion="true"] .composer-hint-pill::after,
+[data-reduce-motion="true"] .composer-hint-pill--left::after {
   transition: opacity 120ms ease;
   transform: translate(0, -50%);
 }

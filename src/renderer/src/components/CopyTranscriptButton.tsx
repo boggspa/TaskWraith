@@ -203,14 +203,13 @@ export function CopyTranscriptButton({
       <button
         ref={triggerRef}
         type="button"
-        className={`composer-copy-transcript-button composer-hint-pill${open ? ' is-open' : ''}${copied ? ' is-copied' : ''}`}
+        className={`composer-copy-transcript-button composer-hint-pill composer-hint-pill--left${open ? ' is-open' : ''}${copied ? ' is-copied' : ''}`}
         data-hint-label="Copy transcript"
         onClick={() => {
           if (disabled) return
           if (open) closePopover(false)
           else openPopover()
         }}
-        title={copied ? 'Copied transcript as Markdown' : 'Copy transcript as Markdown'}
         aria-label={copied ? 'Copied transcript as Markdown' : 'Copy transcript as Markdown'}
         aria-haspopup="dialog"
         aria-expanded={open}
