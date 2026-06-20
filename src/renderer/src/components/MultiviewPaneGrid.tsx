@@ -4,10 +4,15 @@ import { getMultiviewLayoutSpec, type MultiviewLayout } from '../../../shared/mu
 /**
  * MultiviewPaneGrid — arranges the central chat pane into a CSS grid of panes.
  *
- * Design: single layout returns App.tsx's legacy inline focused cell unchanged.
- * Once Multiview is active, every populated cell renders through the same
- * pane-scoped chat surface. Focus is visual/selection state only; it must not
- * decide which panes get a first-class composer.
+ * Design: the FOCUSED pane is rendered by the host (App.tsx) exactly as today
+ * via `renderFocusedCell` — same inline `.app-transcript` + composer subtree,
+ * same refs, same singleton wiring (FX layers + GhostCompanion + the shared
+ * `<Composer>`) — and is simply placed into its grid cell. Non-focused
+ * populated cells render a `<ChatViewPane>` (`renderViewerCell`), which now
+ * hosts the SAME `<Composer>` component (pane-scoped props) rather than a
+ * hand-written clone; empty cells render a placeholder. In single layout we
+ * return the focused content with NO wrapper at all, so the single-pane DOM is
+ * byte-identical to before Multiview existed.
  *
  * Grid cells are placed by `grid-area` name, so DOM order is irrelevant — the
  * focused cell can occupy any area regardless of where it sits in the markup.
@@ -18,7 +23,7 @@ export interface MultiviewPaneGridProps {
   focusedPaneIndex: number
   /** The existing inline main-pane content (transcript + composer). */
   renderFocusedCell: () => ReactNode
-  /** A pane-scoped ChatViewPane for any populated Multiview cell. */
+  /** A pane-scoped ChatViewPane (hosting the shared Composer) for a non-focused, populated cell. */
   renderViewerCell: (chatId: string, paneIndex: number) => ReactNode
   /** Placeholder for a non-focused empty cell. */
   renderEmptyCell?: (paneIndex: number) => ReactNode
@@ -35,6 +40,7 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
   const spec = getMultiviewLayoutSpec(props.layout)
 
   const renderCell = (paneIndex: number): ReactNode => {
+    if (paneIndex === props.focusedPaneIndex) return props.renderFocusedCell()
     const chatId = props.paneChatIds[paneIndex] ?? null
     if (chatId) return props.renderViewerCell(chatId, paneIndex)
     return props.renderEmptyCell ? props.renderEmptyCell(paneIndex) : null

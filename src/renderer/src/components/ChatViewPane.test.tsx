@@ -2,6 +2,23 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChatViewPane, chatViewPanePropsEqual, type ChatViewPaneProps } from './ChatViewPane'
 
+// The pane composer is now the SAME first-class <Composer> the focused main
+// pane renders (built by App from `composerCtx` with per-pane overrides). It
+// needs ~290 props, so rather than recreate that surface here we stub the
+// module and assert ChatViewPane DELEGATES to it: the sentinel renders iff a
+// `composerProps` context is supplied. Composer's own markup is covered by its
+// dedicated tests.
+vi.mock('./Composer', () => ({
+  Composer: (props: { prompt?: string }) => (
+    <div data-testid="pane-composer-stub">{`pane-composer:${props.prompt ?? ''}`}</div>
+  )
+}))
+
+// Minimal stand-in for the (huge) ComposerProps object. ChatViewPane only
+// forwards it untouched to <Composer>, so a cast is faithful here.
+const stubComposerProps = (prompt = ''): ChatViewPaneProps['composerProps'] =>
+  ({ prompt }) as unknown as ChatViewPaneProps['composerProps']
+
 const ref = () => ({ current: null }) as ChatViewPaneProps['refs']['scrollRef']
 
 const sharedRefs = { scrollRef: ref(), contentRef: ref(), endRef: ref() }
@@ -10,9 +27,6 @@ const sharedOpenSub = vi.fn()
 const sharedCopyMsg = vi.fn()
 const sharedPreview = vi.fn()
 const sharedFocus = vi.fn()
-const sharedPromptChange = vi.fn()
-const sharedRun = vi.fn()
-const sharedCancel = vi.fn()
 // Shared empties so two makeProps() calls are reference-identical where the
 // comparator actually looks (messages, pendingAgentQuestions).
 const EMPTY_MESSAGES = [] as ChatViewPaneProps['messages']
@@ -97,15 +111,19 @@ describe('chatViewPanePropsEqual', () => {
     )
   })
 
-  it('re-renders when writable pane controls change', () => {
-    expect(chatViewPanePropsEqual(makeProps(), makeProps({ prompt: 'hello' }))).toBe(false)
-    expect(chatViewPanePropsEqual(makeProps(), makeProps({ canRun: true }))).toBe(false)
-    expect(chatViewPanePropsEqual(makeProps(), makeProps({ onRun: sharedRun }))).toBe(false)
+  it('re-renders when the pane composer context identity changes', () => {
+    // The writable composer (prompt/run/model/permission/…) now lives entirely
+    // in the shared <Composer>, driven by `composerProps`. App rebuilds that
+    // context object per render with this pane's values, so a new identity must
+    // reconcile the pane — this replaces the old per-control comparator checks.
+    expect(
+      chatViewPanePropsEqual(makeProps(), makeProps({ composerProps: stubComposerProps('x') }))
+    ).toBe(false)
   })
 })
 
 describe('ChatViewPane welcome viewer', () => {
-  it('renders the first-class welcome chrome and composer instead of an empty transcript', () => {
+  it('renders the pane chrome + welcome spacer (not an empty transcript) and hosts the shared composer', () => {
     const html = renderToStaticMarkup(
       <ChatViewPane
         {...makeProps({
@@ -121,40 +139,41 @@ describe('ChatViewPane welcome viewer', () => {
           providerLabel: 'Codex',
           providerClass: 'codex',
           welcomeWorkspaceName: 'AGBench',
-          prompt: '',
-          canRun: true,
-          onPromptChange: sharedPromptChange,
-          onRun: sharedRun,
-          onCancel: sharedCancel
+          composerProps: stubComposerProps()
         })}
       />
     )
+    // ChatViewPane still owns the pane chrome + the welcome spacer (the
+    // transcript is replaced, not rendered, on a welcome chat).
     expect(html).toContain('multiview-pane-corner-controls')
-    expect(html).toContain('multiview-pane-welcome-hero')
-    expect(html).toContain('multiview-pane-composer-area')
-    expect(html).toContain('New Codex thread for')
-    expect(html).toContain('AGBench')
-    expect(html).toContain('welcome-suggestions')
+    expect(html).toContain('multiview-pane-welcome-spacer')
     expect(html).not.toContain('transcript-scroll')
+    // The welcome hero / starters / composer now belong to the shared
+    // <Composer> (stubbed here) — the pane simply hosts it.
+    expect(html).toContain('data-testid="pane-composer-stub"')
   })
 })
 
-describe('ChatViewPane writable composer', () => {
-  it('renders a compact composer when pane run handlers are supplied', () => {
+describe('ChatViewPane shared composer', () => {
+  it('renders the shared <Composer> (forwarding the pane context) when composerProps is supplied', () => {
     const html = renderToStaticMarkup(
       <ChatViewPane
         {...makeProps({
           chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
-          prompt: 'Pane prompt',
-          canRun: true,
-          onPromptChange: sharedPromptChange,
-          onRun: sharedRun,
-          onCancel: sharedCancel
+          composerProps: stubComposerProps('Pane prompt')
         })}
       />
     )
-    expect(html).toContain('multiview-pane-composer')
-    expect(html).toContain('Pane prompt')
-    expect(html).toContain('Run pane prompt')
+    expect(html).toContain('data-testid="pane-composer-stub"')
+    expect(html).toContain('pane-composer:Pane prompt') // pane context forwarded verbatim
+  })
+
+  it('renders no composer when composerProps is absent (read-only fallback)', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({ chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'] })}
+      />
+    )
+    expect(html).not.toContain('data-testid="pane-composer-stub"')
   })
 })
