@@ -1626,6 +1626,9 @@
   width: 100%;
   max-width: min(100%, var(--composer-content-max-width));
   margin-top: 12px;
+  pointer-events: auto;
+  position: relative;
+  z-index: 3;
 }
 
 .workflow-creator-segmented {
