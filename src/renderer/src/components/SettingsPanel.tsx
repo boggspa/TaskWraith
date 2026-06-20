@@ -191,6 +191,14 @@ interface SettingsPanelProps {
   updateChannel: ProductUpdateChannel
   approvalTimeouts: AppSettings['approvalTimeouts']
   productOperationsStatus: ProductOperationsStatus | null
+  // RETIRED (inert): these Gemini auth/runtime props — plus geminiApiRuntime
+  // above and the on*GeminiAuthProfile / onStart+onCancelGeminiOAuthLogin
+  // handlers below — fed the Settings Providers UI that was removed when Gemini
+  // was retired. They stay in the contract so App.tsx's existing pass-site keeps
+  // compiling; the props + their App.tsx wiring are removed in a follow-up once
+  // App.tsx is uncontended. NOTE: the geminiMcpBridge* props (and onInstall/
+  // onRefreshGeminiMcpBridgeStatus) are NOT inert — they drive the shared
+  // TaskWraith MCP bridge control that serves every provider.
   geminiAuthStatus?: GeminiAuthStatus | null
   geminiAuthProfiles?: GeminiAuthProfileSummary[]
   codexStatus?: any
@@ -805,18 +813,6 @@ const AUDIT_ARTIFACT_PROVIDER_OPTIONS: Array<{
     helper: 'Artifact-backed role runs when a Kimi API key is configured.'
   }
 ]
-
-/** Human labels for a Gemini auth profile's `kind` (the raw values read
- * as opaque slugs in the profile dropdown). */
-const GEMINI_PROFILE_KIND_LABELS: Record<GeminiAuthProfileSummary['kind'], string> = {
-  'google-oauth': 'Google login',
-  'api-key': 'API key',
-  'vertex-ai': 'Vertex AI'
-}
-
-function geminiProfileKindLabel(kind: string): string {
-  return GEMINI_PROFILE_KIND_LABELS[kind as GeminiAuthProfileSummary['kind']] ?? kind
-}
 
 type McpToolGroup =
   | 'workspace'
@@ -1627,7 +1623,6 @@ export function SettingsPanel({
   sidebarOpacity,
   mainPaneOpacity,
   geminiCheckpointingEnabled,
-  geminiApiRuntime,
   chatContextTurns,
   currency,
   currencyOverestimatePercent,
@@ -1665,8 +1660,6 @@ export function SettingsPanel({
   updateChannel,
   approvalTimeouts,
   productOperationsStatus,
-  geminiAuthStatus,
-  geminiAuthProfiles = [],
   codexStatus,
   claudeAuthStatus,
   kimiAuthStatus,
@@ -1683,12 +1676,8 @@ export function SettingsPanel({
   onStoreKimiApiKey,
   onClearKimiApiKey,
   onProviderUpgrade,
-  onSaveGeminiAuthProfile,
-  onCancelGeminiOAuthLogin,
   onProviderLogin,
   onProviderLogout,
-  onSetDefaultGeminiAuthProfile,
-  onDeleteGeminiAuthProfile,
   onRemoveAgenticWorkspaceGrant,
   onInstallGeminiMcpBridge,
   onRefreshGeminiMcpBridgeStatus,
@@ -1715,10 +1704,6 @@ export function SettingsPanel({
 }: SettingsPanelProps): React.JSX.Element {
   const [claudeKeyInput, setClaudeKeyInput] = useState('')
   const [kimiKeyInput, setKimiKeyInput] = useState('')
-  const [geminiProfileLabel, setGeminiProfileLabel] = useState('')
-  const [geminiApiKeyInput, setGeminiApiKeyInput] = useState('')
-  const [geminiVertexProject, setGeminiVertexProject] = useState('')
-  const [geminiVertexLocation, setGeminiVertexLocation] = useState('us-central1')
   // Uncontrolled fallback state. Used only when the caller doesn't
   // pass `activeTab`/`onTabChange` — i.e. when SettingsPanel is mounted
   // without the surrounding sidebar takeover (legacy / future tests).
@@ -1764,11 +1749,6 @@ export function SettingsPanel({
   const [showDeleteHistoryConfirm, setShowDeleteHistoryConfirm] = useState(false)
   const [deleteHistoryPending, setDeleteHistoryPending] = useState(false)
   const [deleteHistoryError, setDeleteHistoryError] = useState('')
-  // TaskWraith MCP bridge "Test" feedback. `onRefreshGeminiMcpBridgeStatus`
-  // is fire-and-forget (void), so capture the status `checkedAt` at click
-  // time; we're "testing" until a fresh status (new `checkedAt`) lands.
-  // Deriving from the captured value avoids a reset-in-effect.
-  const [geminiBridgeTestStartedAt, setGeminiBridgeTestStartedAt] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -1808,11 +1788,6 @@ export function SettingsPanel({
     }
   }, [])
 
-  // Derived: still "testing" while the captured pre-click `checkedAt`
-  // matches the current status (i.e. no fresh status has landed yet).
-  const geminiBridgeTesting =
-    geminiBridgeTestStartedAt !== null &&
-    geminiBridgeTestStartedAt === (geminiMcpBridgeStatus?.checkedAt ?? '')
   const sidebarOpacityValue = clampPaneOpacity(sidebarOpacity)
   const mainPaneOpacityValue = clampPaneOpacity(mainPaneOpacity)
 
@@ -1867,12 +1842,6 @@ export function SettingsPanel({
     transcriptFontFamily
   )
   const composerPreviewMeta = getComposerPreviewMeta(composerStyle)
-  const selectedGeminiAuthProfile = geminiAuthProfiles.find(
-    (profile) => profile.id === geminiAuthStatus?.activeProfileId
-  )
-  const selectedGeminiOAuthLogin =
-    selectedGeminiAuthProfile?.oauthLogin || geminiAuthStatus?.oauthLogin
-  const isGeminiOAuthLoginRunning = selectedGeminiOAuthLogin?.status === 'running'
   const canLoadInstalledFonts =
     typeof window !== 'undefined' &&
     typeof (window as LocalFontWindow).queryLocalFonts === 'function'
@@ -4443,298 +4412,6 @@ export function SettingsPanel({
                   />
                 </label>
 
-                <div className="settings-service-row" style={{ alignItems: 'flex-start' }}>
-                  <span>
-                    Gemini auth profile
-                    <small>
-                      Selected profiles are injected into Gemini runs and override inherited
-                      Gemini/Google auth env for that run.
-                    </small>
-                  </span>
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 'var(--space-xs)',
-                      minWidth: 0
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-sm)',
-                        flexWrap: 'wrap'
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: '0.78rem',
-                          color: geminiAuthStatus?.activeProfileId
-                            ? 'var(--color-success, #3fb950)'
-                            : 'var(--text-secondary)'
-                        }}
-                      >
-                        ●{' '}
-                        {geminiAuthStatus?.activeProfileLabel ||
-                          (geminiAuthStatus?.authState === 'google-oauth'
-                            ? 'Local Gemini login'
-                            : 'Default CLI auth')}
-                      </span>
-                      {geminiAuthStatus?.version && (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                          {geminiAuthStatus.version}
-                        </span>
-                      )}
-                    </div>
-                    <select
-                      className="settings-select"
-                      value={geminiAuthStatus?.activeProfileId || ''}
-                      onChange={(event) =>
-                        onSetDefaultGeminiAuthProfile?.(event.target.value || null)
-                      }
-                    >
-                      <option value="">Use local Gemini CLI login/env</option>
-                      {geminiAuthProfiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.label} ({geminiProfileKindLabel(profile.kind)}
-                          {profile.configured ? '' : ', incomplete'})
-                        </option>
-                      ))}
-                    </select>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.4fr) auto',
-                        gap: 'var(--space-xs)',
-                        alignItems: 'center'
-                      }}
-                    >
-                      <input
-                        className="settings-select"
-                        value={geminiProfileLabel}
-                        onChange={(event) => setGeminiProfileLabel(event.target.value)}
-                        placeholder="Profile name"
-                      />
-                      <input
-                        className="settings-select"
-                        type="password"
-                        value={geminiApiKeyInput}
-                        onChange={(event) => setGeminiApiKeyInput(event.target.value)}
-                        placeholder="GEMINI_API_KEY"
-                      />
-                      <button
-                        className="btn btn-sm"
-                        type="button"
-                        disabled={!geminiApiKeyInput.trim()}
-                        onClick={() => {
-                          onSaveGeminiAuthProfile?.({
-                            label: geminiProfileLabel.trim() || 'Gemini API key',
-                            kind: 'api-key',
-                            apiKey: geminiApiKeyInput,
-                            makeDefault: true
-                          })
-                          setGeminiProfileLabel('')
-                          setGeminiApiKeyInput('')
-                        }}
-                      >
-                        Save key
-                      </button>
-                    </div>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
-                        gap: 'var(--space-xs)',
-                        alignItems: 'center'
-                      }}
-                    >
-                      <input
-                        className="settings-select"
-                        value={geminiVertexProject}
-                        onChange={(event) => setGeminiVertexProject(event.target.value)}
-                        placeholder="Vertex project id"
-                      />
-                      <input
-                        className="settings-select"
-                        value={geminiVertexLocation}
-                        onChange={(event) => setGeminiVertexLocation(event.target.value)}
-                        placeholder="Location"
-                      />
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        type="button"
-                        disabled={!geminiVertexProject.trim()}
-                        onClick={() => {
-                          onSaveGeminiAuthProfile?.({
-                            label:
-                              geminiProfileLabel.trim() || `Vertex ${geminiVertexProject.trim()}`,
-                            kind: 'vertex-ai',
-                            vertexProject: geminiVertexProject.trim(),
-                            vertexLocation: geminiVertexLocation.trim() || 'us-central1',
-                            makeDefault: true
-                          })
-                          setGeminiProfileLabel('')
-                          setGeminiVertexProject('')
-                        }}
-                      >
-                        Save Vertex
-                      </button>
-                    </div>
-                    {/* Google login lives in the "Provider sign-in" checklist
-                        above; this row keeps the cancel control + shared OAuth
-                        login feedback (status message + signed-in email). */}
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-xs)',
-                        flexWrap: 'wrap'
-                      }}
-                    >
-                      {isGeminiOAuthLoginRunning && (
-                        <button
-                          className="btn btn-sm btn-ghost"
-                          type="button"
-                          onClick={() =>
-                            onCancelGeminiOAuthLogin?.(
-                              selectedGeminiAuthProfile?.id ||
-                                geminiAuthStatus?.activeProfileId ||
-                                null
-                            )
-                          }
-                        >
-                          Cancel login
-                        </button>
-                      )}
-                      {selectedGeminiOAuthLogin?.message && (
-                        <span
-                          style={{
-                            fontSize: '0.75rem',
-                            color:
-                              selectedGeminiOAuthLogin.status === 'error'
-                                ? 'var(--color-danger, #f85149)'
-                                : 'var(--text-tertiary)'
-                          }}
-                        >
-                          {selectedGeminiOAuthLogin.message}
-                        </span>
-                      )}
-                      {selectedGeminiAuthProfile?.oauthEmail && (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                          {selectedGeminiAuthProfile.oauthEmail}
-                        </span>
-                      )}
-                    </div>
-                    {geminiAuthStatus?.activeProfileId && (
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        type="button"
-                        onClick={() =>
-                          onDeleteGeminiAuthProfile?.(geminiAuthStatus.activeProfileId!)
-                        }
-                        style={{ alignSelf: 'flex-start' }}
-                      >
-                        Delete selected profile
-                      </button>
-                    )}
-                    <p className="settings-hint" style={{ margin: 0 }}>
-                      Google login profiles use isolated Gemini CLI homes under TaskWraith, so browser
-                      OAuth persists across app restarts without using your host ~/.gemini account.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Phase M1 Step 6 — Gemini API vs CLI runtime picker. The
-	            'auto' default matches the persisted store default and is a
-	            no-op for existing CLI users. 'always' forces the new
-	            in-process API path; 'never' pins to the legacy CLI. The
-	            status row below reflects which path a fresh run will
-	            actually take given the currently-selected auth profile.
-	            Extracted into GeminiRuntimePicker so we can render and
-	            assert it in isolation without spinning up the full panel. */}
-                <GeminiRuntimePicker
-                  value={geminiApiRuntime}
-                  profiles={geminiAuthProfiles}
-                  activeProfileId={geminiAuthStatus?.activeProfileId ?? null}
-                  onSelect={(value) => onChange({ geminiApiRuntime: value })}
-                />
-
-                <div className="settings-service-row" style={{ alignItems: 'flex-start' }}>
-                  <span>TaskWraith MCP bridge</span>
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 'var(--space-xs)',
-                      minWidth: 0
-                    }}
-                  >
-                    <label
-                      className="settings-label"
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 'var(--space-sm)',
-                        cursor: 'pointer',
-                        margin: 0
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={geminiMcpBridgeEnabled}
-                        onChange={(e) => onChange({ geminiMcpBridgeEnabled: e.target.checked })}
-                      />
-                      Enabled
-                    </label>
-                    <div className="settings-option-list settings-option-list-inline">
-                      <button
-                        className="btn btn-sm"
-                        type="button"
-                        onClick={onInstallGeminiMcpBridge}
-                      >
-                        Install / repair
-                      </button>
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        type="button"
-                        disabled={geminiBridgeTesting}
-                        onClick={() => {
-                          setGeminiBridgeTestStartedAt(geminiMcpBridgeStatus?.checkedAt ?? '')
-                          onRefreshGeminiMcpBridgeStatus()
-                        }}
-                      >
-                        {geminiBridgeTesting ? 'Testing…' : 'Test'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                {geminiBridgeTesting ? (
-                  <p className="settings-hint" style={{ color: 'var(--text-secondary)' }}>
-                    ● Testing the TaskWraith MCP bridge…
-                  </p>
-                ) : geminiMcpBridgeStatus ? (
-                  <p
-                    className="settings-hint"
-                    style={{
-                      color: geminiMcpBridgeStatus.error
-                        ? 'var(--color-danger, #f85149)'
-                        : geminiMcpBridgeStatus.available
-                          ? 'var(--color-success, #3fb950)'
-                          : 'var(--color-warning, #d29922)'
-                    }}
-                  >
-                    ●{' '}
-                    {geminiMcpBridgeStatus.error
-                      ? `Test failed — ${geminiMcpBridgeStatus.error}`
-                      : geminiMcpBridgeStatus.available
-                        ? geminiMcpBridgeStatus.message || 'Bridge reachable — MCP tools available.'
-                        : geminiMcpBridgeStatus.message ||
-                          'Bridge not reachable yet — install / repair, then test again.'}
-                  </p>
-                ) : (
-                  <p className="settings-hint">Bridge status has not been checked yet.</p>
-                )}
               </div>
 
               <div className="settings-group">
@@ -5348,7 +5025,7 @@ export function SettingsPanel({
                     TaskWraith MCP bridge
                     <small>
                       Enables the bundled TaskWraith MCP server for supported CLI/provider
-                      runtimes. API-key Gemini runs call the same host tools directly.
+                      runtimes.
                     </small>
                   </span>
                 </label>

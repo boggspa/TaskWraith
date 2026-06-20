@@ -129,6 +129,23 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('settings-mcp-server-card provider-claude')
   })
 
+  it('does not render the retired deeper Gemini auth/runtime config, but keeps the shared MCP bridge', () => {
+    const providersHtml = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
+
+    // The deeper Gemini offer surface (auth profiles, API-key/Vertex inputs, the
+    // runtime picker, and the duplicate bridge row) is gone now Gemini is retired.
+    expect(providersHtml).not.toContain('Gemini auth profile')
+    expect(providersHtml).not.toContain('GEMINI_API_KEY')
+    expect(providersHtml).not.toContain('Gemini runtime')
+
+    // The shared TaskWraith MCP bridge control (legacy gemini-named props, serves
+    // every provider) still lives on the MCP tab and must NOT be removed.
+    const mcpHtml = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
+    )
+    expect(mcpHtml).toContain('Enables the bundled TaskWraith MCP server')
+  })
+
   it('renders the General auto-update checkbox enabled by default', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior' })} />
