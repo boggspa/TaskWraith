@@ -2807,7 +2807,9 @@
   letter-spacing: -0.01em;
   text-align: center;
 }
-[data-interface-style="cursor"] .welcome-hero h1 strong {
+/* Workspace-name accent follows the PROVIDER theme, not the composer shell;
+ * exclude `.workspace-name-glow` so it matches native rendering in every shell. */
+[data-interface-style="cursor"] .welcome-hero h1 strong:not(.workspace-name-glow) {
   font-weight: 600;
   color: var(--cursor-shell-fg) !important;
   text-shadow: none !important;

@@ -3587,7 +3587,9 @@
   letter-spacing: -0.01em;
   text-align: center;
 }
-[data-interface-style="gemini"] .welcome-hero h1 strong {
+/* Workspace-name accent follows the PROVIDER theme, not the composer shell;
+ * exclude `.workspace-name-glow` so it matches native rendering in every shell. */
+[data-interface-style="gemini"] .welcome-hero h1 strong:not(.workspace-name-glow) {
   font-weight: 500;
   color: color-mix(in srgb, #5a8cff 90%, transparent);
   text-shadow: 0 0 24px color-mix(in srgb, #5a8cff 30%, transparent);
@@ -3666,7 +3668,9 @@
   letter-spacing: -0.01em;
   text-align: center;
 }
-[data-interface-style="kimi"] .welcome-hero h1 strong {
+/* Workspace-name accent follows the PROVIDER theme, not the composer shell;
+ * exclude `.workspace-name-glow` so it matches native rendering in every shell. */
+[data-interface-style="kimi"] .welcome-hero h1 strong:not(.workspace-name-glow) {
   font-weight: 500;
   color: color-mix(in srgb, #a9bd55 95%, transparent);
   text-shadow: 0 0 24px color-mix(in srgb, #a9bd55 28%, transparent);
