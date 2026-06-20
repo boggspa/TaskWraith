@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
 import { AgenticWorkspaceGrant, EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
@@ -722,6 +722,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   const [isComposerDragOver, setIsComposerDragOver] = useState(false)
   const imageDragCounterRef = useRef(0)
   const sendConfirmationTimeoutRef = useRef<number | null>(null)
+  const sendConfirmationRafRef = useRef<number | null>(null)
 
   // 1.0.4-AQ3 — caret-restore layout effect. Snapshots the caret in
   // `onChange` (before React reconciles), then re-applies it post-commit
@@ -753,8 +754,13 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       window.clearTimeout(sendConfirmationTimeoutRef.current)
       sendConfirmationTimeoutRef.current = null
     }
+    if (sendConfirmationRafRef.current) {
+      window.cancelAnimationFrame(sendConfirmationRafRef.current)
+      sendConfirmationRafRef.current = null
+    }
     setIsSendConfirming(false)
-    window.requestAnimationFrame(() => {
+    sendConfirmationRafRef.current = window.requestAnimationFrame(() => {
+      sendConfirmationRafRef.current = null
       setIsSendConfirming(true)
       sendConfirmationTimeoutRef.current = window.setTimeout(() => {
         setIsSendConfirming(false)
@@ -762,6 +768,22 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       }, 620)
     })
   }
+
+  // Clear the send-confirmation rAF/timer on unmount. A multiview pane can
+  // unmount mid-animation (the focus-steal swaps the focused cell from
+  // <ChatViewPane> to the inline render within the 620ms window), and
+  // setIsSendConfirming must not fire on an unmounted <Composer> instance.
+  useEffect(
+    () => () => {
+      if (sendConfirmationTimeoutRef.current) {
+        window.clearTimeout(sendConfirmationTimeoutRef.current)
+      }
+      if (sendConfirmationRafRef.current) {
+        window.cancelAnimationFrame(sendConfirmationRafRef.current)
+      }
+    },
+    []
+  )
 
   const handleComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()

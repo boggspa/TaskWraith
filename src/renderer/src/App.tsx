@@ -18074,12 +18074,40 @@ function App(): React.JSX.Element {
       // TODO(per-pane): command palette + memory inspector are focused-only
       // portals — keep them closed in panes to avoid duplicate overlays.
       isCommandPaletteOpen: false,
-      isMemoryInspectorOpen: false
-      // TODO(per-pane): the remaining focused-only concepts (plan import, gemini
-      // memory/trust, git/PR controls, ensemble roster editing, steer-to-queued,
-      // queued-message editing) are reused from `composerCtx` as harmless
-      // placeholders — they operate on focused state, not this pane's chat. A
-      // later slice plumbs per-pane variants where they prove worth the cost.
+      isMemoryInspectorOpen: false,
+      // ── focused-only state that would otherwise LEAK into resting panes
+      //    (adversarial review D1/D2): these fields are keyed to the FOCUSED chat
+      //    in composerCtx, so rendering them in a non-focused pane shows that
+      //    chat's pending-approval card (was even actionable-wrong), queued-
+      //    message bubbles, git/PR branch+CI, and plan-import/path-grant cards in
+      //    the WRONG pane. Force empty for panes — the focused/active pane still
+      //    surfaces them via composerCtx. Per-pane derivations are a later slice.
+      pendingAgentApproval: null,
+      permissionRequestPaths: [],
+      permissionRequestTitle: '',
+      permissionRequestSource: undefined,
+      permissionRequestMessage: '',
+      queuedMessagesAboveRowEntries: [],
+      // primaryGitSnapshot/Pr null → the git above-bar falls back to the pane's
+      // own currentWorkspace.branch (already overridden), so it stays pane-correct.
+      primaryGitSnapshot: null,
+      primaryPr: null,
+      pendingPlanImport: null,
+      externalPathGrantPrompt: null,
+      externalPathGrantPromptBusy: false,
+      // custom-model "clear" reverts to THIS pane's model, not the focused chat's.
+      lastNonCustomModelType: viewerSelectedModel,
+      // screen-watch: the composer-row button reflects THIS pane's ownership; the
+      // pane chrome's corner-action remains the pane-scoped toggle.
+      attachedWindow:
+        attachedWindowOwnerChatIdRef.current === viewerChatId ? attachedWindow : null,
+      isAttachingWindow:
+        attachedWindowOwnerChatIdRef.current === viewerChatId ? isAttachingWindow : false
+      // TODO(per-pane): the remaining focused-only concepts (gemini memory/trust,
+      // ensemble roster editing, steer-to-queued, queued-message editing) are
+      // reused from `composerCtx` as harmless placeholders — they operate on
+      // focused state, not this pane's chat. A later slice plumbs per-pane
+      // variants where they prove worth the cost.
       // TODO(per-pane): duplicate-chat shares draft — `setChatPromptDraft` is
       // keyed by chatId, so the same chat shown in two panes shares one draft.
     }
