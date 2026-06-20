@@ -1,0 +1,58 @@
+/* ── Composer footer icon hint pills ──────────────────────────────────────
+   The telemetry-row icon buttons (Screen Watch / Goal / Copy / Multiview) stay
+   icon-only to keep the row compact. On hover/focus a frosted glass pill slides
+   out to the side revealing the label, so they're discoverable without taking
+   resting space. The label is an aria-hidden <span> (the button keeps its real
+   aria-label) and is absolutely positioned, so it NEVER reflows the row — it
+   floats over the free space / neighbour during the hover only. */
+.composer-hint-pill {
+  position: relative;
+}
+.composer-hint-pill-label {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  margin-left: 4px;
+  z-index: 40;
+  pointer-events: none;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: var(--text-primary, #fff);
+  background: color-mix(in srgb, var(--panel-bg, rgba(22, 22, 26, 0.92)) 86%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
+  /* Shiny contrast-aware rim (the chat-corner-pill idiom: keyed on --text-primary
+     so it adapts light/dark) + a soft drop shadow to lift it off the row. */
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 20%, transparent),
+    0 6px 18px rgba(0, 0, 0, 0.32);
+  /* Rest: tucked back toward the icon + invisible. Stage 1 = fade in (no delay);
+     stage 2 = slide out to the side (delayed) — reads as "pill appears behind the
+     icon, then animates to the side". */
+  opacity: 0;
+  transform: translate(-8px, -50%);
+  transition:
+    opacity 140ms ease,
+    transform 240ms cubic-bezier(0.22, 0.61, 0.36, 1) 70ms;
+}
+.composer-hint-pill:hover .composer-hint-pill-label,
+.composer-hint-pill:focus-visible .composer-hint-pill-label {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+/* Honour reduced-motion: fade in place, no slide. */
+@media (prefers-reduced-motion: reduce) {
+  .composer-hint-pill-label {
+    transition: opacity 120ms ease;
+    transform: translate(0, -50%);
+  }
+}
+[data-reduce-motion="true"] .composer-hint-pill-label {
+  transition: opacity 120ms ease;
+  transform: translate(0, -50%);
+}
