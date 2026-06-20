@@ -4,6 +4,64 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.6.0 - Unreleased
+
+### Added
+- **Multiview — split the workbench into up to four live panes.** Open several
+  chats side by side over one shared environment, each with its own composer,
+  agent aura, and ambient FX; drag the dividers to resize. Welcome and split
+  states render correctly per pane.
+- **Workflows are now a first-class chat type.** A dedicated Workflows welcome
+  screen with its own compose controls and a "Run as ensemble" toggle, plus a
+  Workflows sidebar section. Scheduled workflows recover after a restart, and
+  workflows project to paired iOS devices (read/view).
+- **Reusable notification area.** The welcome and first-launch screens now host
+  a dismissable notice card for significant changes — provider deprecations, new
+  models or providers, shipped features — rotating through more than one with the
+  same swipe effect as the activity heatmaps.
+- **Hover labels on the composer footer icons.** Screen Watch, Goal, Copy
+  transcript, and Multiview reveal a frosted glass label on hover/focus, so the
+  icon-only buttons are discoverable without taking up resting space.
+- **Grok Composer 2.5 Fast.** Grok now runs on Composer 2.5 Fast — the new
+  default — selectable from the Grok model picker.
+- **iOS — offline Demo Mode.** Explore the companion with no paired Mac:
+  interactive sample replies, a populated Inspector (Changes / Agents / Side
+  chats / Notes / Usage), an offline File Editor + Diff Studio, and demo chat
+  creation. Also new on iOS: a Workflows section, an iPad sidebar that opens
+  collapsed to headers, a live "still working" anchor during tool calls, and
+  attached images that render inline in the transcript.
+
+### Changed
+- **Gemini has been retired.** Google ended the Gemini CLI sign-in, so Gemini is
+  no longer available for new runs and is removed from every picker, the sidebar
+  usage meter, Settings (Providers + MCP), onboarding, and the iOS app. Existing
+  Gemini chats, transcripts, and usage history are preserved; new chats default
+  to Claude with sticky last-used.
+- **Grok and Cursor are full first-class providers.** The experimental
+  eligibility gate has been removed — both are accepted everywhere like the other
+  providers, write-capable and gated by approval mode.
+- **Cleaner startup.** The window stays masked until the renderer finishes
+  hydrating, so there is no flash of half-loaded UI.
+- **Readability + performance polish.** Slash / mention / context / palette
+  popovers are frosted; welcome heading sizing is consistent across composer
+  shells; the iOS Pair-with-Mac screen was rebuilt in TaskWraith chrome;
+  re-visiting a chat reuses its cached hydrated state to skip a redundant render;
+  and iOS streaming auto-follow is smoother.
+
+### Fixed
+- **iOS image attachments work end to end.** Attached photos now reach the agent
+  and render inline in the transcript, and the encoder no longer silently drops a
+  dense image.
+- **iOS Grok composer keeps focus.** The composer shell no longer flips its
+  layout — losing the tucked tabs and focus — when you tap in.
+- **Multiview robustness.** Per-pane composer parity and routing, a
+  reasoning-options crash, focused-state leaking into resting panes, per-pane
+  Screen Watch gating, and welcome cards/dashboard hiding when the view is split.
+- **iOS polish.** The roster editor no longer dismisses when you focus the role
+  field, the jump-to-latest pill stops sticking, long markdown list/quote items
+  wrap instead of truncating, and demo mode can't contaminate a real paired
+  session.
+
 ## 1.5.9 - 2026-06-18
 
 ### Changed
