@@ -9294,55 +9294,6 @@ button.diff-file-row {
   color: color-mix(in srgb, var(--warning) 55%, var(--text-primary));
 }
 
-/* Gemini retirement notice — one-time dismissable banner shown on the welcome
-   screen (below dashboard, above greeting) and atop the first-launch sheet.
-   See components/GeminiRetirementBanner.tsx. */
-.gemini-retirement-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  max-width: 640px;
-  margin: 20px auto;
-  padding: 11px 14px;
-  border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--danger) 7%, var(--panel-bg, rgba(127, 127, 127, 0.06)));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
-  color: var(--text-secondary, inherit);
-  font-size: 13px;
-  line-height: 1.45;
-}
-.gemini-retirement-banner-icon {
-  flex: 0 0 auto;
-  margin-top: 1px;
-  font-size: 14px;
-  color: var(--danger);
-}
-.gemini-retirement-banner-text {
-  flex: 1 1 auto;
-  margin: 0;
-}
-.gemini-retirement-banner-text strong {
-  color: var(--text-primary, inherit);
-}
-.gemini-retirement-banner-dismiss {
-  flex: 0 0 auto;
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--text-muted, currentColor);
-  font-size: 18px;
-  line-height: 1;
-  padding: 0 2px;
-  cursor: pointer;
-  opacity: 0.7;
-}
-.gemini-retirement-banner-dismiss:hover {
-  opacity: 1;
-  color: var(--text-primary, inherit);
-}
-
 /* ── Reusable notification zone ───────────────────────────────────────────
    App/dev notices (provider deprecation/sunset, new provider, models
    added/removed, shipped features) shown on the welcome screen + first-launch

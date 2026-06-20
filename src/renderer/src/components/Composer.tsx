@@ -27,7 +27,7 @@ import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
 import { ExternalPathGrantPromptCard } from '../components/ExternalPathGrantPromptCard'
 import { FileTypeIcon } from '../components/FileTypeIcon'
 import { GhostCompanion } from '../components/FxLayers'
-import { GeminiRetirementBanner } from '../components/GeminiRetirementBanner'
+import { NotificationZone } from '../components/NotificationZone'
 import { GitCommitControls } from '../components/GitCommitControls'
 import { GitCiChip, GitMergeBadge, GitSyncChip, branchTone } from '../components/GitStatusChips'
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
@@ -1069,7 +1069,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
               providerShellCapabilityChips computation kept for any
               future use but the row no longer mounts in any shell.
             */}
-            {isWelcomeChat && <GeminiRetirementBanner />}
+            {isWelcomeChat && <NotificationZone />}
             {isWelcomeChat &&
               isCurrentEnsembleChat &&
               !isWorkflowChatWelcome &&

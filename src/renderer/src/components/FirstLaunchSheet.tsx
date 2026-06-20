@@ -17,7 +17,7 @@ import {
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
-import { GeminiRetirementBanner } from './GeminiRetirementBanner'
+import { NotificationZone } from './NotificationZone'
 import {
   ArrowUpSendIcon,
   ClaudeReturnSymbolIcon,
@@ -602,7 +602,7 @@ export function FirstLaunchSheet({
           </button>
         </header>
 
-        <GeminiRetirementBanner />
+        <NotificationZone />
 
         <section className="first-launch-sheet-section">
           <p className="first-launch-sheet-prose">
