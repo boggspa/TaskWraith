@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyAssignToNextPane,
   applyClosePane,
+  applyFocusPane,
   applyOpenInNewPane,
   applySetFocusedPane,
   applySetLayout,
@@ -36,6 +37,23 @@ describe('applySetLayout', () => {
     const next = applySetLayout(state({ paneChatIds: ['a'] }), 'quad')
     expect(next.layout).toBe('quad')
     expect(next.paneChatIds).toEqual(['a', null, null, null])
+  })
+
+  it('pins and duplicates the visible chat into new panes when seeded', () => {
+    const next = applySetLayout(state({ paneChatIds: ['old'] }), 'quad', {
+      seedChatId: 'current'
+    })
+    expect(next.layout).toBe('quad')
+    expect(next.paneChatIds).toEqual(['current', 'current', 'current', 'current'])
+  })
+
+  it('fills existing empty panes on seeded growth while preserving occupied panes', () => {
+    const next = applySetLayout(
+      state({ layout: 'vertical-2', paneChatIds: ['a', null], focusedPaneIndex: 0 }),
+      'quad',
+      { seedChatId: 'a' }
+    )
+    expect(next.paneChatIds).toEqual(['a', 'a', 'a', 'a'])
   })
 
   it('truncates and clamps focus when shrinking', () => {
@@ -87,6 +105,18 @@ describe('applySetFocusedPane', () => {
   it('returns the same reference when focus is unchanged', () => {
     const s = state({ layout: 'vertical-2', paneChatIds: ['a', 'b'], focusedPaneIndex: 1 })
     expect(applySetFocusedPane(s, 1)).toBe(s)
+  })
+})
+
+describe('applyFocusPane', () => {
+  it('pins the outgoing visible chat before focusing another pane', () => {
+    const next = applyFocusPane(
+      state({ layout: 'vertical-2', paneChatIds: ['stale', 'b'], focusedPaneIndex: 0 }),
+      1,
+      'current'
+    )
+    expect(next.paneChatIds).toEqual(['current', 'b'])
+    expect(next.focusedPaneIndex).toBe(1)
   })
 })
 
@@ -165,10 +195,11 @@ describe('applyOpenInNewPane', () => {
   it('grows single -> vertical-2 and fills the spare pane, keeping focus', () => {
     const next = applyOpenInNewPane(
       state({ layout: 'single', paneChatIds: ['a'], focusedPaneIndex: 0 }),
-      'b'
+      'b',
+      'current'
     )
     expect(next.layout).toBe('vertical-2')
-    expect(next.paneChatIds).toEqual(['a', 'b'])
+    expect(next.paneChatIds).toEqual(['current', 'b'])
     expect(next.focusedPaneIndex).toBe(0)
   })
 

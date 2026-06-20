@@ -16,13 +16,14 @@ import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildCh
  * may lag a beat behind another chat's run, which is an accepted v1 tradeoff.
  */
 export interface ChatViewPaneProps extends BuildChatViewPropsInput {
+  paneIndex: number
   /** appearance.composerStyle / interface style for the `interface-*` class. */
   interfaceStyle: string
   /** Provider (or Ollama brand) class for the `provider-*` tint. */
   providerClass: string
   isEnsemble?: boolean
   /** Focus this pane (the single sidebar/composer then drive it). */
-  onFocusPane?: () => void
+  onFocusPane?: (paneIndex: number, chatId: string) => void
   ariaLabel?: string
 }
 
@@ -50,6 +51,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&
     a.refs === b.refs &&
+    a.paneIndex === b.paneIndex &&
     a.onFocusPane === b.onFocusPane &&
     a.ariaLabel === b.ariaLabel
   )
@@ -74,7 +76,10 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
       data-multiview-pane-chat-id={props.chat?.appChatId ?? undefined}
       role="group"
       aria-label={props.ariaLabel}
-      onMouseDownCapture={props.onFocusPane}
+      onMouseDownCapture={() => {
+        const chatId = props.chat?.appChatId
+        if (chatId) props.onFocusPane?.(props.paneIndex, chatId)
+      }}
     >
       <TranscriptPanel {...viewProps} />
     </div>

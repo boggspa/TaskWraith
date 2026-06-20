@@ -14,6 +14,7 @@ import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
 import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../shared/retiredProviders'
+import type { MultiviewLayout } from '../../shared/multiviewLayouts'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { formatCost, setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
@@ -17472,6 +17473,27 @@ function App(): React.JSX.Element {
   const providerShellClass = providerShellEnabled
     ? `provider-shell provider-shell-${interfaceStyle}`
     : 'provider-shell-default'
+  const handleOpenInMultiview = useCallback(
+    (chat: ChatRecord) => {
+      multiview.openInNewPane(chat.appChatId, currentChatIdRef.current || null)
+    },
+    [multiview.openInNewPane]
+  )
+  const handleFocusMultiviewPane = useCallback(
+    (paneIndex: number, chatId: string) => {
+      const viewerChat = chatByIdRef.current.get(chatId)
+      if (!viewerChat) return
+      multiview.focusPane(paneIndex, currentChatIdRef.current || null)
+      void handleSelectChatRef.current(viewerChat)
+    },
+    [multiview.focusPane]
+  )
+  const handleSelectMultiviewLayout = useCallback(
+    (layout: MultiviewLayout) => {
+      multiview.setLayout(layout, currentChatIdRef.current || null)
+    },
+    [multiview.setLayout]
+  )
   // Phase K-followup — `providerShellCapabilityChips` removed
   // alongside its consumer (the `provider-shell-status-row` chips).
   // The chips presented as buttons but never carried interaction.
@@ -17550,7 +17572,7 @@ function App(): React.JSX.Element {
                 onOpenChatInSidePanel={(chat, presentation) =>
                   void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
                 }
-                onOpenInMultiview={(chat) => multiview.openInNewPane(chat.appChatId)}
+                onOpenInMultiview={handleOpenInMultiview}
                 onOpenSettings={() => setShowSettings(true)}
                 updateSnapshot={updateStatus.snapshot}
                 onQuickUpdate={handleSidebarQuickUpdate}
@@ -17877,6 +17899,7 @@ function App(): React.JSX.Element {
                 return (
                   <ChatViewPane
                     key={viewerChatId}
+                    paneIndex={viewerPaneIndex}
                     refs={multiview.paneRefs[viewerPaneIndex]}
                     chat={viewerChat}
                     messages={viewerChat.messages || EMPTY_CHAT_MESSAGES}
@@ -17904,19 +17927,7 @@ function App(): React.JSX.Element {
                     currency={displayCurrency}
                     currencyOverestimatePercent={overestimatePercent}
                     providerRates={providerRates}
-                    onFocusPane={() => {
-                      // Focus routing: pin the outgoing chat into the currently
-                      // focused slot, move focus to this pane, then switch
-                      // currentChat to this pane's chat. Because the focused
-                      // cell renders currentChat inline and the composer /
-                      // sidebar / Copy / Goal all key off currentChat, they
-                      // follow the focused pane with no extra retargeting.
-                      if (currentChat?.appChatId) {
-                        multiview.setPaneChat(multiview.focusedPaneIndex, currentChat.appChatId)
-                      }
-                      multiview.setFocusedPane(viewerPaneIndex)
-                      void handleSelectChat(viewerChat)
-                    }}
+                    onFocusPane={handleFocusMultiviewPane}
                   />
                 )
               }}
@@ -21957,7 +21968,7 @@ function App(): React.JSX.Element {
 	                />
 	                <MultiviewLayoutPicker
 	                  layout={multiview.layout}
-	                  onSelectLayout={multiview.setLayout}
+	                  onSelectLayout={handleSelectMultiviewLayout}
 	                  provider={currentProvider}
 	                  composerStyle={appearance.composerStyle}
 	                />

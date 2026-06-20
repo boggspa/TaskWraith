@@ -66,15 +66,37 @@ export function createInitialMultiviewState(
   }
 }
 
+export interface ApplySetLayoutOptions {
+  /**
+   * When supplied by the interactive layout picker, pin the currently visible
+   * chat into the focused pane and use it to hydrate newly-created panes.
+   */
+  seedChatId?: string | null
+}
+
 /** Switch layout, re-clamping pane assignments and the focused index to fit. */
 export function applySetLayout(
   state: MultiviewCoreState,
-  next: MultiviewLayout
+  next: MultiviewLayout,
+  options: ApplySetLayoutOptions = {}
 ): MultiviewCoreState {
-  if (next === state.layout) return state
+  const seedChatId = options.seedChatId ?? null
+  if (next === state.layout) {
+    return seedChatId ? applySetPaneChat(state, state.focusedPaneIndex, seedChatId) : state
+  }
+  const previousPaneCount = paneCountForLayout(state.layout)
+  const nextPaneCount = paneCountForLayout(next)
+  const sourcePaneChatIds = state.paneChatIds.slice()
+  if (seedChatId) sourcePaneChatIds[state.focusedPaneIndex] = seedChatId
+  const paneChatIds = clampPaneChatIds(sourcePaneChatIds, next)
+  if (seedChatId && nextPaneCount > previousPaneCount) {
+    for (let i = 0; i < paneChatIds.length; i += 1) {
+      if (paneChatIds[i] == null) paneChatIds[i] = seedChatId
+    }
+  }
   return {
     layout: next,
-    paneChatIds: clampPaneChatIds(state.paneChatIds, next),
+    paneChatIds,
     focusedPaneIndex: clampFocusedPaneIndex(state.focusedPaneIndex, next)
   }
 }
@@ -97,6 +119,22 @@ export function applySetFocusedPane(state: MultiviewCoreState, index: number): M
   const focusedPaneIndex = clampFocusedPaneIndex(index, state.layout)
   if (focusedPaneIndex === state.focusedPaneIndex) return state
   return { ...state, focusedPaneIndex }
+}
+
+/**
+ * Focus a pane while first recording the chat currently visible in the outgoing
+ * focused pane. This keeps the pane map in sync with App.tsx's singleton
+ * currentChat/composer state.
+ */
+export function applyFocusPane(
+  state: MultiviewCoreState,
+  index: number,
+  outgoingFocusedChatId: string | null = null
+): MultiviewCoreState {
+  const pinnedState = outgoingFocusedChatId
+    ? applySetPaneChat(state, state.focusedPaneIndex, outgoingFocusedChatId)
+    : state
+  return applySetFocusedPane(pinnedState, index)
 }
 
 /**
@@ -151,8 +189,14 @@ export function applyAssignToNextPane(
  * no spare non-focused cell; once at quad, overwrites a non-focused cell. The
  * focused (interactive) pane is never disturbed.
  */
-export function applyOpenInNewPane(state: MultiviewCoreState, chatId: string): MultiviewCoreState {
-  let next = state
+export function applyOpenInNewPane(
+  state: MultiviewCoreState,
+  chatId: string,
+  outgoingFocusedChatId: string | null = null
+): MultiviewCoreState {
+  let next = outgoingFocusedChatId
+    ? applySetPaneChat(state, state.focusedPaneIndex, outgoingFocusedChatId)
+    : state
   const hasSpare = next.paneChatIds.some((id, i) => i !== next.focusedPaneIndex && id == null)
   if (!hasSpare) {
     const grown = UPGRADE_LAYOUT[next.layout]
@@ -183,14 +227,15 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   isMultiview: boolean
   /** Stable per-pane ref pool (length MAX_MULTIVIEW_PANES) for the grid panes. */
   paneRefs: MultiviewPaneRefs[]
-  setLayout: (next: MultiviewLayout) => void
+  setLayout: (next: MultiviewLayout, seedChatId?: string | null) => void
   setPaneChat: (index: number, chatId: string | null) => void
   setFocusedPane: (index: number) => void
+  focusPane: (index: number, outgoingFocusedChatId?: string | null) => void
   closePane: (index: number) => void
   /** Place + focus a chat; returns the pane index it landed in. */
   assignToNextPane: (chatId: string) => number
   /** Open a chat in a non-focused pane (grows the layout if needed); keeps focus. */
-  openInNewPane: (chatId: string) => void
+  openInNewPane: (chatId: string, outgoingFocusedChatId?: string | null) => void
 }
 
 export function useMultiviewState(
@@ -217,10 +262,9 @@ export function useMultiviewState(
     []
   )
 
-  const setLayout = useCallback(
-    (next: MultiviewLayout) => setState((s) => applySetLayout(s, next)),
-    []
-  )
+  const setLayout = useCallback((next: MultiviewLayout, seedChatId: string | null = null) => {
+    setState((s) => applySetLayout(s, next, { seedChatId }))
+  }, [])
   const setPaneChat = useCallback(
     (index: number, chatId: string | null) => setState((s) => applySetPaneChat(s, index, chatId)),
     []
@@ -229,6 +273,9 @@ export function useMultiviewState(
     (index: number) => setState((s) => applySetFocusedPane(s, index)),
     []
   )
+  const focusPane = useCallback((index: number, outgoingFocusedChatId: string | null = null) => {
+    setState((s) => applyFocusPane(s, index, outgoingFocusedChatId))
+  }, [])
   const closePane = useCallback((index: number) => setState((s) => applyClosePane(s, index)), [])
   const assignToNextPane = useCallback((chatId: string) => {
     const result = applyAssignToNextPane(stateRef.current, chatId)
@@ -236,9 +283,12 @@ export function useMultiviewState(
     setState(result.state)
     return result.index
   }, [])
-  const openInNewPane = useCallback((chatId: string) => {
-    setState((s) => applyOpenInNewPane(s, chatId))
-  }, [])
+  const openInNewPane = useCallback(
+    (chatId: string, outgoingFocusedChatId: string | null = null) => {
+      setState((s) => applyOpenInNewPane(s, chatId, outgoingFocusedChatId))
+    },
+    []
+  )
 
   const focusedChatId = state.paneChatIds[state.focusedPaneIndex] ?? null
 
@@ -250,6 +300,7 @@ export function useMultiviewState(
     setLayout,
     setPaneChat,
     setFocusedPane,
+    focusPane,
     closePane,
     assignToNextPane,
     openInNewPane

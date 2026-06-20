@@ -19,6 +19,7 @@ const EMPTY_RUNNING = [] as ChatViewPaneProps['runningChatIds']
 const makeProps = (over: Partial<ChatViewPaneProps> = {}): ChatViewPaneProps => ({
   refs: sharedRefs,
   chat: null,
+  paneIndex: 1,
   messages: EMPTY_MESSAGES,
   provider: 'codex',
   providerLabel: 'Codex',
@@ -75,5 +76,9 @@ describe('chatViewPanePropsEqual', () => {
   it('re-renders when the chat record identity changes', () => {
     const chat = { appChatId: 'c2' } as unknown as ChatViewPaneProps['chat']
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ chat }))).toBe(false)
+  })
+
+  it('re-renders when a viewer is reused for a different pane index', () => {
+    expect(chatViewPanePropsEqual(makeProps(), makeProps({ paneIndex: 2 }))).toBe(false)
   })
 })
