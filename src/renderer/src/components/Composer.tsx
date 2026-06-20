@@ -39,7 +39,16 @@ import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
 import { WelcomeWorkspacePicker } from '../components/WelcomeWorkspacePicker'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
 import { extractFirstEnsembleDmTarget, formatComposerPathMention, parseComposerMentionTrigger } from '../lib/ComposerMentionTrigger'
-import { GEMINI_PALETTE_CORE as COMMAND_PALETTE_CORE } from '../lib/ComposerSlashCommands'
+import {
+  GEMINI_PALETTE_CORE as COMMAND_PALETTE_CORE,
+  matchLeadingActionCommand
+} from '../lib/ComposerSlashCommands'
+import type {
+  ComposerSlashCommand,
+  SlashCommandRunContext
+} from '../lib/ComposerSlashCommands'
+import { parseSideSlashCommand } from '../lib/SideSlashCommand'
+import type { SideSlashCommand } from '../lib/SideSlashCommand'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
@@ -114,8 +123,7 @@ export interface ComposerProps {
   composerImageAttachments: any
   composerPlaceholder: any
   composerRunTimecodeStartedAt: any
-  composerSlashCommands: any
-  composerTextareaRef: any
+  composerSlashCommands: ComposerSlashCommand[]
   composerTokenTally: any
   contextLabel: any
   contextModelId: any
@@ -192,7 +200,6 @@ export interface ComposerProps {
   handleBridgeCommand: any
   handleCancel: any
   handleClearDiscordContext: any
-  handleComposerSlash: any
   handleCopyCurrentTranscript: any
   handleCreateGithubPr: any
   handleDeleteQueuedMessage: any
@@ -262,6 +269,7 @@ export interface ComposerProps {
   openGoalPopover: any
   openInspectorTab: any
   openPlanImportReview: any
+  openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => void
   overestimatePercent: any
   patchEnsembleParticipantById: any
   pendingAgentApproval: any
@@ -328,8 +336,6 @@ export interface ComposerProps {
   setSelectedModelType: any
   setSessionTrust: any
   setShowWorkSessionSheet: any
-  setSlashMenuOpen: any
-  setSlashQuery: any
   setWelcomeParticipantOverflow: any
   setWorkflowDraft: any
   setYoloBannerDismissed: any
@@ -337,17 +343,12 @@ export interface ComposerProps {
   shouldShowGhostCompanion: any
   shouldShowWelcomeStandaloneHeatmaps: any
   showComposerChips: any
-  slashAnchorIndexRef: any
-  slashMenuOpen: any
-  slashQuery: any
   steerIndicatorMessage: any
   syncPersistentModelSelection: any
   threadTokenTallyHasValue: any
   threadTokenTallyTooltip: any
   trustResult: any
   trustSelectValue: any
-  tryHandleActionSlashSubmit: any
-  tryHandleSideSlashSubmit: any
   updateCurrentEnsembleConcurrentMode: any
   updateCurrentEnsembleContextChars: any
   updateCurrentEnsembleMaxContinuationHops: any
@@ -412,7 +413,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     composerPlaceholder,
     composerRunTimecodeStartedAt,
     composerSlashCommands,
-    composerTextareaRef,
     composerTokenTally,
     contextLabel,
     contextModelId,
@@ -489,7 +489,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     handleBridgeCommand,
     handleCancel,
     handleClearDiscordContext,
-    handleComposerSlash,
     handleCopyCurrentTranscript,
     handleCreateGithubPr,
     handleDeleteQueuedMessage,
@@ -559,6 +558,7 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     openGoalPopover,
     openInspectorTab,
     openPlanImportReview,
+    openSideChatFromSlashCommand,
     overestimatePercent,
     patchEnsembleParticipantById,
     pendingAgentApproval,
@@ -625,8 +625,6 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     setSelectedModelType,
     setSessionTrust,
     setShowWorkSessionSheet,
-    setSlashMenuOpen,
-    setSlashQuery,
     setWelcomeParticipantOverflow,
     setWorkflowDraft,
     setYoloBannerDismissed,
@@ -634,17 +632,12 @@ export function Composer(props: ComposerProps): React.JSX.Element {
     shouldShowGhostCompanion,
     shouldShowWelcomeStandaloneHeatmaps,
     showComposerChips,
-    slashAnchorIndexRef,
-    slashMenuOpen,
-    slashQuery,
     steerIndicatorMessage,
     syncPersistentModelSelection,
     threadTokenTallyHasValue,
     threadTokenTallyTooltip,
     trustResult,
     trustSelectValue,
-    tryHandleActionSlashSubmit,
-    tryHandleSideSlashSubmit,
     updateCurrentEnsembleConcurrentMode,
     updateCurrentEnsembleContextChars,
     updateCurrentEnsembleMaxContinuationHops,
@@ -665,7 +658,8 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   } = props
 
   // ---------------------------------------------------------------------------
-  // Composer-local editor state (Slice B of the multiview composer-parity fix).
+  // Composer-local editor state (Slices B + C of the multiview composer-parity
+  // fix).
   //
   // These were hoisted out of App.tsx and made component-local so multiple
   // <Composer> instances (one per multiview pane) own independent editor state
@@ -673,13 +667,28 @@ export function Composer(props: ComposerProps): React.JSX.Element {
   // booleans. Behavior-preserving for the focused composer (the only instance
   // today): each moved piece references the same external deps via props.
   //
-  // NOTE: the SLASH cluster (slashMenuOpen / slashQuery / slashAnchorIndexRef /
-  // composerTextareaRef / handleComposerSlash) deliberately stays App-owned and
-  // is still passed in as props — App's command-registry `run()` closures
-  // (consumeSlashTokenFromPrompt / promptWithoutCurrentSlashToken /
-  // tryHandleSideSlashSubmit / tryHandleActionSlashSubmit) read those same
-  // refs/state, so isolating them is a separate slice.
+  // Slice C — the SLASH cluster moved here too: composerTextareaRef + the
+  // slash-menu state (slashMenuOpen / slashQuery / slashAnchorIndexRef) + the
+  // slash dispatch/submit handlers (handleComposerSlash / tryHandleSideSlashSubmit
+  // / tryHandleActionSlashSubmit) + the token helpers
+  // (promptWithoutCurrentSlashToken / consumeSlashTokenFromPrompt). They all
+  // operate on THIS composer's textarea + `currentComposerChatId` (written via
+  // the setChatPromptDraft prop). App-level slash `run()` closures receive a
+  // SlashCommandRunContext built here (see buildSlashRunContext below) instead
+  // of reaching into App's single shared composer globals.
   // ---------------------------------------------------------------------------
+
+  // Composer textarea ref. The live <textarea> element for THIS composer
+  // instance. Used by the caret-restore layout effect, the mention/slash
+  // popovers (anchor), the context menu, and the slash-token machinery.
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  // Slash-command picker state. Same shape as the mention menu — visibility
+  // flag, current filter substring (what comes after the leading `/`), and an
+  // anchor index pointing at the `/` we'll later replace on pick. Mutually
+  // exclusive with mentionMenuOpen — only one popover at a time.
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false)
+  const [slashQuery, setSlashQuery] = useState('')
+  const slashAnchorIndexRef = useRef<number | null>(null)
 
   // Composer textarea @-mention popover state. AgentMentionMenu can insert
   // agent markdown mentions or plain path text at the caret.
@@ -842,6 +851,179 @@ export function Composer(props: ComposerProps): React.JSX.Element {
         }
       ])
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Slash-command machinery (Slice C — moved verbatim from App.tsx).
+  //
+  // All of these operate on THIS composer's textarea ref + slash state +
+  // `currentComposerChatId` (written via the setChatPromptDraft prop). The
+  // only change from the App originals is `setPrompt(x)` →
+  // `setChatPromptDraft(currentComposerChatId, x)`, which is equivalent for the
+  // focused composer (currentChat === focused pane) and instance-correct per
+  // pane. App-level action `run()` closures receive a SlashCommandRunContext
+  // built by buildSlashRunContext() so they never touch App composer globals.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Strip the slash token (`/<query>`) the user typed to open the picker
+   * from the composer prompt, leaving the caret at the position where
+   * the slash used to be. Used after a slash-command dispatches so the
+   * picker's trigger character doesn't end up sent to the provider.
+   */
+  const promptWithoutCurrentSlashToken = (): string => {
+    const anchor = slashAnchorIndexRef.current
+    if (anchor === null) return prompt
+    const tokenLength = 1 + slashQuery.length // `/` + query chars
+    const before = prompt.slice(0, anchor)
+    const after = prompt.slice(anchor + tokenLength)
+    return `${before}${after}`
+  }
+
+  const consumeSlashTokenFromPrompt = (): void => {
+    const anchor = slashAnchorIndexRef.current
+    if (anchor === null) return
+    const before = prompt.slice(0, anchor)
+    const next = promptWithoutCurrentSlashToken()
+    setChatPromptDraft(currentComposerChatId, next)
+    requestAnimationFrame(() => {
+      const ta = composerTextareaRef.current
+      if (!ta) return
+      ta.focus()
+      ta.setSelectionRange(before.length, before.length)
+    })
+  }
+
+  /** Focus this composer's textarea, optionally placing the caret at `caret`
+   * (defaults to leaving the current selection in place). */
+  const focusComposerTextarea = (caret?: number): void => {
+    requestAnimationFrame(() => {
+      const ta = composerTextareaRef.current
+      if (!ta) return
+      ta.focus()
+      if (caret !== undefined) {
+        ta.setSelectionRange(caret, caret)
+      }
+    })
+  }
+
+  /** Build the context handed to an action command's `run()`. Computed against
+   * THIS composer's draft + slash state so App-level closures operate on the
+   * invoking pane. */
+  const buildSlashRunContext = (): SlashCommandRunContext => ({
+    promptWithoutSlashToken: promptWithoutCurrentSlashToken(),
+    consumeSlashToken: consumeSlashTokenFromPrompt,
+    setDraft: (value: string) => setChatPromptDraft(currentComposerChatId, value),
+    focusComposer: focusComposerTextarea
+  })
+
+  const tryHandleSideSlashSubmit = (): boolean => {
+    const sideCommand = parseSideSlashCommand(prompt)
+    if (!sideCommand) return false
+    openSideChatFromSlashCommand(sideCommand)
+    setSlashMenuOpen(false)
+    setSlashQuery('')
+    slashAnchorIndexRef.current = null
+    return true
+  }
+
+  /**
+   * Slash-picker dispatch — discriminated by command `kind`. Reuses the
+   * existing handlePaletteCommand for palette-passthrough kinds so the
+   * dispatch shape doesn't fork. Strips the slash trigger token from
+   * the prompt in every branch so the literal `/whatever` characters
+   * never reach the provider.
+   */
+  const handleComposerSlash = (command: ComposerSlashCommand): void => {
+    setSlashMenuOpen(false)
+    setSlashQuery('')
+    const dispatch = () => {
+      switch (command.kind) {
+        case 'palette-passthrough':
+          handlePaletteCommand(command.paletteItem)
+          return
+        case 'gemini-pty':
+          // PTY pass-through — only viable on Gemini (Codex/Claude/Kimi
+          // run-process invocations don't surface a live CLI). Bridge
+          // command failure (no persistent session) surfaces via the
+          // existing raw-events logging that handleBridgeCommand owns.
+          void handleBridgeCommand(command.command)
+          return
+        case 'action':
+          void command.run(buildSlashRunContext())
+          return
+        case 'prompt-template':
+          // Insert the template at the slash position; caller can keep
+          // typing to fill in template-specific arguments.
+
+          {
+            const anchor = slashAnchorIndexRef.current ?? 0
+            const tokenLength = 1 + slashQuery.length
+            const before = prompt.slice(0, anchor)
+            const after = prompt.slice(anchor + tokenLength)
+            const next = `${before}${command.template}${after}`
+            setChatPromptDraft(currentComposerChatId, next)
+            const caretBase = before.length + (command.cursorOffset ?? command.template.length)
+            requestAnimationFrame(() => {
+              const ta = composerTextareaRef.current
+              if (!ta) return
+              ta.focus()
+              ta.setSelectionRange(caretBase, caretBase)
+            })
+            slashAnchorIndexRef.current = null
+          }
+          return
+        case 'insert':
+          {
+            const anchor = slashAnchorIndexRef.current ?? 0
+            const tokenLength = 1 + slashQuery.length
+            const before = prompt.slice(0, anchor)
+            const after = prompt.slice(anchor + tokenLength)
+            const next = `${before}${command.insertText}${after}`
+            setChatPromptDraft(currentComposerChatId, next)
+            const caretBase = before.length + command.insertText.length
+            requestAnimationFrame(() => {
+              const ta = composerTextareaRef.current
+              if (!ta) return
+              ta.focus()
+              ta.setSelectionRange(caretBase, caretBase)
+            })
+            slashAnchorIndexRef.current = null
+          }
+          return
+      }
+    }
+    // For dispatch kinds that consume the token themselves (insert /
+    // template), skip the generic strip. For everything else (palette-
+    // passthrough / gemini-pty / action), strip the slash token first
+    // so the next user prompt starts clean.
+    if (command.kind !== 'insert' && command.kind !== 'prompt-template') {
+      consumeSlashTokenFromPrompt()
+    }
+    dispatch()
+    slashAnchorIndexRef.current = null
+  }
+
+  /**
+   * Submit-time dispatch for ACTION slash commands (e.g. /audit, /clear). The
+   * slash MENU fires command.run() on selection, but typing the full command +
+   * a space (e.g. "/audit quick") CLOSES the menu, so Enter would otherwise send
+   * the literal "/audit quick" to the provider. Mirror tryHandleSideSlashSubmit:
+   * if the prompt LEADS with a registered action command's token, run it and
+   * clear the prompt instead of sending. Case-insensitive; trailing args (parsed
+   * by the command's own run()) are allowed.
+   */
+  const tryHandleActionSlashSubmit = (): boolean => {
+    const command = matchLeadingActionCommand(prompt, composerSlashCommands)
+    if (!command) return false
+    setSlashMenuOpen(false)
+    setSlashQuery('')
+    slashAnchorIndexRef.current = null
+    // run() reads the current `prompt` (e.g. to parse "/audit deep"); clear it
+    // AFTER so the literal command text never reaches the provider as a message.
+    void command.run(buildSlashRunContext())
+    setChatPromptDraft(currentComposerChatId, '')
+    return true
   }
 
   return (

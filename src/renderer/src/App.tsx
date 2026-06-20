@@ -96,7 +96,7 @@ import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentAppro
 import { toDateTimeLocalValue, formatScheduledRunTime } from './lib/dateTimeFormat'
 import { buildReviewCurrentDiffPrompt } from './lib/reviewDiffPrompt'
 import { normalizeExternalPathGrants } from './lib/normalizeExternalPathGrants'
-import { parseSideSlashCommand, type SideSlashCommand } from './lib/SideSlashCommand'
+import type { SideSlashCommand } from './lib/SideSlashCommand'
 import { selectVisibleAuditRun } from './lib/auditRunVisibility'
 import {
   buildHiddenSideChatInitialPrompt,
@@ -180,8 +180,7 @@ import type {
 import {
   CODEX_PALETTE_CORE as CODEX_COMMAND_PALETTE_CORE,
   CLI_PROVIDER_PALETTE_CORE as CLI_PROVIDER_COMMAND_PALETTE_CORE,
-  buildComposerSlashCommandRegistry,
-  matchLeadingActionCommand
+  buildComposerSlashCommandRegistry
 } from './lib/ComposerSlashCommands'
 import { CreativeActionApprovalModal } from './components/CreativeActionApprovalModal'
 import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
@@ -2254,25 +2253,20 @@ function App(): React.JSX.Element {
   const composerAreaRef = useRef<HTMLDivElement>(null)
   const welcomeDashboardRegionRef = useRef<HTMLDivElement>(null)
   const [welcomeDashboardHiddenByFit, setWelcomeDashboardHiddenByFit] = useState(false)
-  // Composer textarea ref. Kept App-owned because the slash-command
-  // registry's `run()` closures (consumeSlashTokenFromPrompt /
-  // handleImportPlanSlashCommand) re-focus this textarea after dispatch.
-  // Passed to <Composer> as a prop. The @-mention popover state + caret
-  // selection/epoch refs + the caret-restore layout effect moved INTO
-  // Composer (Slice B) so multiview panes own them independently.
-  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  // Composer textarea ref + slash-command picker state moved INTO <Composer>
+  // (Slice C) so each multiview pane owns them independently. The
+  // composerTextareaRef, slashMenuOpen / slashQuery / slashAnchorIndexRef, and
+  // the slash dispatch/submit handlers (handleComposerSlash /
+  // tryHandleSideSlashSubmit / tryHandleActionSlashSubmit /
+  // promptWithoutCurrentSlashToken / consumeSlashTokenFromPrompt /
+  // handleImportPlanSlashCommand) all live in <Composer> now. App-level slash
+  // `run()` closures that need to read or mutate the composer receive a
+  // SlashCommandRunContext at dispatch time instead of reaching into globals.
   const composerContextMenu = useComposerTextareaContextMenu()
   const [welcomeParticipantOverflow, setWelcomeParticipantOverflow] = useState<{
     participantId: string
     anchor: HTMLElement
   } | null>(null)
-  // Slash-command picker state. Same shape as the mention menu — visibility
-  // flag, current filter substring (what comes after the leading `/`), and
-  // an anchor index pointing at the `/` we'll later replace on pick.
-  // Mutually exclusive with mentionMenuOpen — only one popover at a time.
-  const [slashMenuOpen, setSlashMenuOpen] = useState(false)
-  const [slashQuery, setSlashQuery] = useState('')
-  const slashAnchorIndexRef = useRef<number | null>(null)
   const [goalPopoverOpen, setGoalPopoverOpen] = useState(false)
   const [goalDraft, setGoalDraft] = useState('')
   const [goalEditing, setGoalEditing] = useState(false)
@@ -12374,53 +12368,12 @@ function App(): React.JSX.Element {
     void handleBridgeCommand(item.command)
   }
 
-  /**
-   * Strip the slash token (`/<query>`) the user typed to open the picker
-   * from the composer prompt, leaving the caret at the position where
-   * the slash used to be. Used after a slash-command dispatches so the
-   * picker's trigger character doesn't end up sent to the provider.
-   */
-  const promptWithoutCurrentSlashToken = (): string => {
-    const anchor = slashAnchorIndexRef.current
-    if (anchor === null) return prompt
-    const tokenLength = 1 + slashQuery.length // `/` + query chars
-    const before = prompt.slice(0, anchor)
-    const after = prompt.slice(anchor + tokenLength)
-    return `${before}${after}`
-  }
-
-  const consumeSlashTokenFromPrompt = (): void => {
-    const anchor = slashAnchorIndexRef.current
-    if (anchor === null) return
-    const before = prompt.slice(0, anchor)
-    const next = promptWithoutCurrentSlashToken()
-    setPrompt(next)
-    requestAnimationFrame(() => {
-      const ta = composerTextareaRef.current
-      if (!ta) return
-      ta.focus()
-      ta.setSelectionRange(before.length, before.length)
-    })
-  }
-
-  const handleImportPlanSlashCommand = (): void => {
-    const candidate = promptWithoutCurrentSlashToken()
-      .replace(/^\s*\/import-plan\b/i, '')
-      .trim()
-    if (!candidate) {
-      consumeSlashTokenFromPrompt()
-      window.alert('Paste or type a plan in the composer, then run /import-plan.')
-      return
-    }
-    openPlanImportReview(candidate)
-    setPrompt(candidate)
-    requestAnimationFrame(() => {
-      const ta = composerTextareaRef.current
-      if (!ta) return
-      ta.focus()
-      ta.setSelectionRange(candidate.length, candidate.length)
-    })
-  }
+  // promptWithoutCurrentSlashToken / consumeSlashTokenFromPrompt /
+  // handleImportPlanSlashCommand moved INTO <Composer> (Slice C). App-level
+  // slash `run()` closures now receive a SlashCommandRunContext
+  // ({ promptWithoutSlashToken, consumeSlashToken, setDraft, focusComposer })
+  // so they operate on the INVOKING composer instead of the old single shared
+  // textarea ref + App `prompt`/`setPrompt`.
 
   const currentActiveGoal = currentChat?.activeGoal || null
   const currentGoalModeOptions = {
@@ -12759,10 +12712,10 @@ function App(): React.JSX.Element {
     setGoalPopoverOpen(true)
   }
 
-  const handleGoalSlashCommand = (): void => {
+  const handleGoalSlashCommand = (promptWithoutSlashToken: string): void => {
     const trimmed = prompt.trim()
     if (trimmed && !/^\/goal\b/i.test(trimmed)) {
-      openGoalPopover(false, promptWithoutCurrentSlashToken().trim())
+      openGoalPopover(false, promptWithoutSlashToken.trim())
       return
     }
     const args = trimmed.replace(/^\/goal\b/i, '').trim()
@@ -12817,95 +12770,11 @@ function App(): React.JSX.Element {
     })
   }
 
-  const tryHandleSideSlashSubmit = (): boolean => {
-    const sideCommand = parseSideSlashCommand(prompt)
-    if (!sideCommand) return false
-    openSideChatFromSlashCommand(sideCommand)
-    setSlashMenuOpen(false)
-    setSlashQuery('')
-    slashAnchorIndexRef.current = null
-    return true
-  }
-
-  /**
-   * Slash-picker dispatch — discriminated by command `kind`. Reuses the
-   * existing handlePaletteCommand for palette-passthrough kinds so the
-   * dispatch shape doesn't fork. Strips the slash trigger token from
-   * the prompt in every branch so the literal `/whatever` characters
-   * never reach the provider.
-   *
-   * Kinds covered in L4: palette-passthrough, gemini-pty. The remaining
-   * kinds (action, prompt-template, insert) land in L5+.
-   */
-  const handleComposerSlash = (command: ComposerSlashCommand): void => {
-    setSlashMenuOpen(false)
-    setSlashQuery('')
-    const dispatch = () => {
-      switch (command.kind) {
-        case 'palette-passthrough':
-          handlePaletteCommand(command.paletteItem)
-          return
-        case 'gemini-pty':
-          // PTY pass-through — only viable on Gemini (Codex/Claude/Kimi
-          // run-process invocations don't surface a live CLI). Bridge
-          // command failure (no persistent session) surfaces via the
-          // existing raw-events logging that handleBridgeCommand owns.
-          void handleBridgeCommand(command.command)
-          return
-        case 'action':
-          void command.run()
-          return
-        case 'prompt-template':
-          // Insert the template at the slash position; caller can keep
-          // typing to fill in template-specific arguments.
-
-          {
-            const anchor = slashAnchorIndexRef.current ?? 0
-            const tokenLength = 1 + slashQuery.length
-            const before = prompt.slice(0, anchor)
-            const after = prompt.slice(anchor + tokenLength)
-            const next = `${before}${command.template}${after}`
-            setPrompt(next)
-            const caretBase = before.length + (command.cursorOffset ?? command.template.length)
-            requestAnimationFrame(() => {
-              const ta = composerTextareaRef.current
-              if (!ta) return
-              ta.focus()
-              ta.setSelectionRange(caretBase, caretBase)
-            })
-            slashAnchorIndexRef.current = null
-          }
-          return
-        case 'insert':
-          {
-            const anchor = slashAnchorIndexRef.current ?? 0
-            const tokenLength = 1 + slashQuery.length
-            const before = prompt.slice(0, anchor)
-            const after = prompt.slice(anchor + tokenLength)
-            const next = `${before}${command.insertText}${after}`
-            setPrompt(next)
-            const caretBase = before.length + command.insertText.length
-            requestAnimationFrame(() => {
-              const ta = composerTextareaRef.current
-              if (!ta) return
-              ta.focus()
-              ta.setSelectionRange(caretBase, caretBase)
-            })
-            slashAnchorIndexRef.current = null
-          }
-          return
-      }
-    }
-    // For dispatch kinds that consume the token themselves (insert /
-    // template), skip the generic strip. For everything else (palette-
-    // passthrough / gemini-pty / action), strip the slash token first
-    // so the next user prompt starts clean.
-    if (command.kind !== 'insert' && command.kind !== 'prompt-template') {
-      consumeSlashTokenFromPrompt()
-    }
-    dispatch()
-    slashAnchorIndexRef.current = null
-  }
+  // tryHandleSideSlashSubmit / handleComposerSlash moved INTO <Composer>
+  // (Slice C). They drive the composer-local slash-token machinery and build
+  // the SlashCommandRunContext handed to each action command's run(). The
+  // App-level openSideChatFromSlashCommand (above) is passed to <Composer> as a
+  // prop so the side-slash submit path keeps working from any pane.
 
   const handleRestoreCheckpoint = async () => {
     const confirmed = window.confirm(
@@ -16989,7 +16858,7 @@ function App(): React.JSX.Element {
       description:
         'Run a multi-agent strengths/weaknesses audit of this workspace. Optional mode: quick (default), deep, release.',
       group: 'Custom',
-      run: () => {
+      run: (ctx) => {
         const chat = currentChat
         if (!chat) return
         const workspacePath = chat.workspacePath
@@ -17006,7 +16875,7 @@ function App(): React.JSX.Element {
         const mode = (match?.[1]?.toLowerCase() as 'quick' | 'deep' | 'release') || 'quick'
         // v1: no card UI yet — clear the slash token, log, and kick off the run.
         // Live phase/finding updates arrive via window.api.onAuditRunChanged.
-        consumeSlashTokenFromPrompt()
+        ctx.consumeSlashToken()
         setAuditRunNotice(null)
         console.log(`[slash:/audit] starting ${mode} audit for ${workspacePath}`)
         void window.api
@@ -17039,8 +16908,8 @@ function App(): React.JSX.Element {
       description:
         'Set or manage this chat’s persistent objective. Usage: /goal <objective>, /goal pause, /goal resume, /goal block, /goal complete.',
       group: 'Custom',
-      run: () => {
-        handleGoalSlashCommand()
+      run: (ctx) => {
+        handleGoalSlashCommand(ctx.promptWithoutSlashToken)
       }
     },
     {
@@ -17051,8 +16920,21 @@ function App(): React.JSX.Element {
       description:
         'Review a pasted plan as untrusted input, pick a safe run policy, then run it through the normal queue.',
       group: 'Custom',
-      run: () => {
-        handleImportPlanSlashCommand()
+      run: (ctx) => {
+        // Was `handleImportPlanSlashCommand()` (App-level). The composer-side
+        // token machinery moved into <Composer>; this closure now drives it
+        // through `ctx` so it operates on the INVOKING composer's draft.
+        const candidate = ctx.promptWithoutSlashToken
+          .replace(/^\s*\/import-plan\b/i, '')
+          .trim()
+        if (!candidate) {
+          ctx.consumeSlashToken()
+          window.alert('Paste or type a plan in the composer, then run /import-plan.')
+          return
+        }
+        openPlanImportReview(candidate)
+        ctx.setDraft(candidate)
+        ctx.focusComposer(candidate.length)
       }
     },
     {
@@ -17062,7 +16944,7 @@ function App(): React.JSX.Element {
       label: 'Clear conversation',
       description: 'Wipe this chat’s transcript + draft. Keeps the provider session id.',
       group: 'Custom',
-      run: () => {
+      run: (ctx) => {
         const chat = currentChat
         if (!chat) return
         const confirmed = window.confirm(
@@ -17072,7 +16954,7 @@ function App(): React.JSX.Element {
             'next prompt continues with the same provider context.'
         )
         if (!confirmed) return
-        setPrompt('')
+        ctx.setDraft('')
         // Optimistic local clear, then persist via the IPC. We refresh
         // the chat list right after so the new (empty) transcript is the
         // source of truth across the renderer.
@@ -17110,10 +16992,10 @@ function App(): React.JSX.Element {
       label: 'Open isolated side chat',
       description: 'Open an isolated sidecar with a copied parent snapshot.',
       group: 'Custom',
-      run: () => {
+      run: (ctx) => {
         openSideChatFromSlashCommand({
           presentation: 'split',
-          seedPrompt: promptWithoutCurrentSlashToken().trim()
+          seedPrompt: ctx.promptWithoutSlashToken.trim()
         })
       }
     },
@@ -17124,10 +17006,10 @@ function App(): React.JSX.Element {
       label: 'Open isolated side drawer',
       description: 'Open the isolated sidecar as the right drawer presentation.',
       group: 'Custom',
-      run: () => {
+      run: (ctx) => {
         openSideChatFromSlashCommand({
           presentation: 'drawer',
-          seedPrompt: promptWithoutCurrentSlashToken().trim()
+          seedPrompt: ctx.promptWithoutSlashToken.trim()
         })
       }
     },
@@ -17138,10 +17020,10 @@ function App(): React.JSX.Element {
       label: 'Pop out linked chat',
       description: 'Open the linked chat in a separate chat window.',
       group: 'Custom',
-      run: () => {
+      run: (ctx) => {
         openSideChatFromSlashCommand({
           presentation: 'popout',
-          seedPrompt: promptWithoutCurrentSlashToken().trim()
+          seedPrompt: ctx.promptWithoutSlashToken.trim()
         })
       }
     },
@@ -17152,10 +17034,10 @@ function App(): React.JSX.Element {
       label: 'Open linked chat as main',
       description: 'Navigate the main pane to the linked chat.',
       group: 'Custom',
-      run: () => {
+      run: (ctx) => {
         openSideChatFromSlashCommand({
           presentation: 'main',
-          seedPrompt: promptWithoutCurrentSlashToken().trim()
+          seedPrompt: ctx.promptWithoutSlashToken.trim()
         })
       }
     },
@@ -17254,25 +17136,11 @@ function App(): React.JSX.Element {
     capabilities: currentProviderCapabilities
   })
 
-  // Submit-time dispatch for ACTION slash commands (e.g. /audit, /clear). The
-  // slash MENU fires command.run() on selection, but typing the full command +
-  // a space (e.g. "/audit quick") CLOSES the menu, so Enter would otherwise send
-  // the literal "/audit quick" to the provider. Mirror tryHandleSideSlashSubmit:
-  // if the prompt LEADS with a registered action command's token, run it and
-  // clear the prompt instead of sending. Case-insensitive; trailing args (parsed
-  // by the command's own run()) are allowed.
-  const tryHandleActionSlashSubmit = (): boolean => {
-    const command = matchLeadingActionCommand(prompt, composerSlashCommands)
-    if (!command) return false
-    setSlashMenuOpen(false)
-    setSlashQuery('')
-    slashAnchorIndexRef.current = null
-    // run() reads the current `prompt` (e.g. to parse "/audit deep"); clear it
-    // AFTER so the literal command text never reaches the provider as a message.
-    void command.run()
-    setPrompt('')
-    return true
-  }
+  // tryHandleActionSlashSubmit moved INTO <Composer> (Slice C). It matches a
+  // leading action command in the invoking composer's draft and dispatches it
+  // with a SlashCommandRunContext, clearing that pane's draft. The built
+  // `composerSlashCommands` registry stays App-owned (its action `run()`
+  // closures reference App handlers) and is passed to <Composer> as a prop.
   const commandPaletteSearch = commandPaletteQuery.trim().toLowerCase()
   const visibleCommandPaletteItems = commandPaletteSearch
     ? commandPaletteItems.filter((item) =>
@@ -18354,7 +18222,6 @@ function App(): React.JSX.Element {
     composerPlaceholder,
     composerRunTimecodeStartedAt,
     composerSlashCommands,
-    composerTextareaRef,
     composerTokenTally,
     contextLabel,
     contextModelId,
@@ -18431,7 +18298,6 @@ function App(): React.JSX.Element {
     handleBridgeCommand,
     handleCancel,
     handleClearDiscordContext,
-    handleComposerSlash,
     handleCopyCurrentTranscript,
     handleCreateGithubPr,
     handleDeleteQueuedMessage,
@@ -18501,6 +18367,7 @@ function App(): React.JSX.Element {
     openGoalPopover,
     openInspectorTab,
     openPlanImportReview,
+    openSideChatFromSlashCommand,
     overestimatePercent,
     patchEnsembleParticipantById,
     pendingAgentApproval,
@@ -18567,8 +18434,6 @@ function App(): React.JSX.Element {
     setSelectedModelType,
     setSessionTrust,
     setShowWorkSessionSheet,
-    setSlashMenuOpen,
-    setSlashQuery,
     setWelcomeParticipantOverflow,
     setWorkflowDraft,
     setYoloBannerDismissed,
@@ -18576,17 +18441,12 @@ function App(): React.JSX.Element {
     shouldShowGhostCompanion,
     shouldShowWelcomeStandaloneHeatmaps,
     showComposerChips,
-    slashAnchorIndexRef,
-    slashMenuOpen,
-    slashQuery,
     steerIndicatorMessage,
     syncPersistentModelSelection,
     threadTokenTallyHasValue,
     threadTokenTallyTooltip,
     trustResult,
     trustSelectValue,
-    tryHandleActionSlashSubmit,
-    tryHandleSideSlashSubmit,
     updateCurrentEnsembleConcurrentMode,
     updateCurrentEnsembleContextChars,
     updateCurrentEnsembleMaxContinuationHops,

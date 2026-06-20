@@ -285,13 +285,40 @@ export interface GeminiPtyCommand extends ComposerSlashCommandBase {
   kind: 'gemini-pty'
 }
 
+/**
+ * Context handed to an `action` command's `run()` at dispatch time.
+ *
+ * The dispatcher ( `handleComposerSlash` / `tryHandleActionSlashSubmit` ) lives
+ * inside the INVOKING `<Composer>` instance and owns the slash-token machinery
+ * (anchor index, query, the live textarea ref). Action `run()` closures are
+ * defined at the App level and must NOT reach into composer globals — they
+ * receive everything they need to read or mutate the invoking composer through
+ * this context, so the same closure works no matter which pane fired it.
+ */
+export interface SlashCommandRunContext {
+  /** The composer draft with the leading `/<query>` token removed (read-only
+   * snapshot). Equivalent to the old `promptWithoutCurrentSlashToken()`. */
+  promptWithoutSlashToken: string
+  /** Strip the `/<query>` token from the invoking composer's draft and
+   * re-focus its textarea with the caret where the slash used to be.
+   * Equivalent to the old `consumeSlashTokenFromPrompt()`. */
+  consumeSlashToken: () => void
+  /** Write the invoking composer's draft (per-chat). Equivalent to the old
+   * `setPrompt(value)` for the focused composer. */
+  setDraft: (value: string) => void
+  /** Focus the invoking composer's textarea, optionally placing the caret at
+   * `caret` (defaults to the current selection). */
+  focusComposer: (caret?: number) => void
+}
+
 /** Renderer-side action — invokes an arbitrary side-effect (open a panel,
  * trigger a modal, fire an existing IPC). The picker dispatcher will
- * receive a `run` callback resolved at registry-build time. */
+ * receive a `run` callback resolved at registry-build time. The dispatcher
+ * passes a {@link SlashCommandRunContext} so closures that read or mutate the
+ * composer do so through the invoking instance rather than App-level globals. */
 export interface ActionCommand extends ComposerSlashCommandBase {
   kind: 'action'
-  /** Optional caret offset relative to start of inserted template. */
-  run: () => void | Promise<void>
+  run: (ctx: SlashCommandRunContext) => void | Promise<void>
 }
 
 /** Inserts a canned prompt template at the slash position, leaving the
