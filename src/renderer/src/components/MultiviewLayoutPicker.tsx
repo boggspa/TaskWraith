@@ -102,6 +102,7 @@ export function MultiviewLayoutPicker(props: MultiviewLayoutPickerProps): ReactE
       triggerClassName="composer-multiview-trigger"
       triggerControl="multiview"
       triggerLabel="Multiview layout"
+      triggerHintLabel="Multiview"
     />
   )
 }

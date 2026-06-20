@@ -2,13 +2,19 @@
    The telemetry-row icon buttons (Screen Watch / Goal / Copy / Multiview) stay
    icon-only to keep the row compact. On hover/focus a frosted glass pill slides
    out to the side revealing the label, so they're discoverable without taking
-   resting space. The label is an aria-hidden <span> (the button keeps its real
-   aria-label) and is absolutely positioned, so it NEVER reflows the row — it
-   floats over the free space / neighbour during the hover only. */
+   resting space.
+
+   The label is a CSS ::after fed by `data-hint-label` — it's decorative and
+   absolutely positioned, so (a) it NEVER reflows the row (it floats over the
+   free space / neighbour during the hover only) and (b) it does NOT affect the
+   button's accessible name: every hint button keeps its real `aria-label`,
+   which takes precedence over pseudo-content in the name computation, so screen
+   readers announce the aria-label and ignore this decorative pill. */
 .composer-hint-pill {
   position: relative;
 }
-.composer-hint-pill-label {
+.composer-hint-pill::after {
+  content: attr(data-hint-label);
   position: absolute;
   left: 100%;
   top: 50%;
@@ -32,27 +38,31 @@
     inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 20%, transparent),
     0 6px 18px rgba(0, 0, 0, 0.32);
   /* Rest: tucked back toward the icon + invisible. Stage 1 = fade in (no delay);
-     stage 2 = slide out to the side (delayed) — reads as "pill appears behind the
-     icon, then animates to the side". */
+     stage 2 = slide out to the side (delayed) — reads as "pill appears behind
+     the icon, then animates to the side". */
   opacity: 0;
   transform: translate(-8px, -50%);
   transition:
     opacity 140ms ease,
     transform 240ms cubic-bezier(0.22, 0.61, 0.36, 1) 70ms;
 }
-.composer-hint-pill:hover .composer-hint-pill-label,
-.composer-hint-pill:focus-visible .composer-hint-pill-label {
+.composer-hint-pill:hover::after,
+.composer-hint-pill:focus-visible::after {
   opacity: 1;
   transform: translate(0, -50%);
 }
+/* Defensive: a hint-pill with no label renders no pill. */
+.composer-hint-pill:not([data-hint-label])::after {
+  content: none;
+}
 /* Honour reduced-motion: fade in place, no slide. */
 @media (prefers-reduced-motion: reduce) {
-  .composer-hint-pill-label {
+  .composer-hint-pill::after {
     transition: opacity 120ms ease;
     transform: translate(0, -50%);
   }
 }
-[data-reduce-motion="true"] .composer-hint-pill-label {
+[data-reduce-motion="true"] .composer-hint-pill::after {
   transition: opacity 120ms ease;
   transform: translate(0, -50%);
 }

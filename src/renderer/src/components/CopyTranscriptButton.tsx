@@ -203,7 +203,8 @@ export function CopyTranscriptButton({
       <button
         ref={triggerRef}
         type="button"
-        className={`composer-copy-transcript-button${open ? ' is-open' : ''}${copied ? ' is-copied' : ''}`}
+        className={`composer-copy-transcript-button composer-hint-pill${open ? ' is-open' : ''}${copied ? ' is-copied' : ''}`}
+        data-hint-label="Copy transcript"
         onClick={() => {
           if (disabled) return
           if (open) closePopover(false)

@@ -28,6 +28,10 @@ interface ComposerPlusPickerProps {
   triggerClassName?: string
   triggerControl?: string
   triggerLabel?: string
+  /** When set, the trigger shows a hover/focus glass label pill
+   *  (composer-hint-pill) revealing this text. The button keeps triggerLabel as
+   *  its aria-label, so the pill is purely a decorative discoverability hint. */
+  triggerHintLabel?: string
 }
 
 export function ComposerPlusPicker({
@@ -38,7 +42,8 @@ export function ComposerPlusPicker({
   triggerIcon,
   triggerClassName = 'composer-image-picker-btn composer-plus-picker-trigger',
   triggerControl = 'attach',
-  triggerLabel = 'Composer tools'
+  triggerLabel = 'Composer tools',
+  triggerHintLabel
 }: ComposerPlusPickerProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -151,7 +156,7 @@ export function ComposerPlusPicker({
     <>
       <button
         ref={triggerRef}
-        className={triggerClassName}
+        className={triggerHintLabel ? `${triggerClassName} composer-hint-pill` : triggerClassName}
         type="button"
         title={triggerLabel}
         aria-label={triggerLabel}
@@ -160,6 +165,7 @@ export function ComposerPlusPicker({
         onClick={() => setOpen((current) => !current)}
         disabled={disabled || visibleSections.length === 0}
         data-composer-control={triggerControl}
+        data-hint-label={triggerHintLabel}
       >
         {triggerIcon}
       </button>

@@ -4194,7 +4194,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     "live capture" cue from the old pill). */}
                 <button
                   type="button"
-                  className={`composer-screen-watch-button${attachedWindow ? ' is-attached' : ''}${attachedWindow?.streaming ? ' is-streaming' : ''}${!attachedWindow && resumeAppWatchSnapshot ? ' is-resumable' : ''}`}
+                  className={`composer-screen-watch-button composer-hint-pill${attachedWindow ? ' is-attached' : ''}${attachedWindow?.streaming ? ' is-streaming' : ''}${!attachedWindow && resumeAppWatchSnapshot ? ' is-resumable' : ''}`}
+                  data-hint-label="Screen Watch"
                   onClick={() => {
                     if (screenWatchUnavailableReason) return
                     // M11 — both "attach fresh" and "resume" route through the
@@ -4242,7 +4243,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  <button
 	                    ref={goalButtonRef}
 	                    type="button"
-	                    className={`composer-goal-button is-${currentGoalStatus}${goalPopoverOpen ? ' is-open' : ''}`}
+	                    className={`composer-goal-button composer-hint-pill is-${currentGoalStatus}${goalPopoverOpen ? ' is-open' : ''}`}
+                    data-hint-label="Goal"
 	                    onClick={() => {
 	                      if (!currentChat) return
 	                      if (goalPopoverOpen) {
