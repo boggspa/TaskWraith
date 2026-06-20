@@ -70,6 +70,14 @@
 .composer-hint-pill:not([data-hint-label])::after {
   content: none;
 }
+/* Disabled buttons (e.g. Copy transcript on an empty chat) dim via `opacity`,
+   which cascades to this ::after and turns the glass translucent — letting the
+   row behind it (timecodes, neighbours) bleed through as a garbled overlay.
+   Suppress the pill while disabled: a button you can't use needs no hover label
+   (the real aria-label still serves screen readers). */
+.composer-hint-pill:disabled::after {
+  content: none;
+}
 /* Honour reduced-motion: fade in place, no slide (both directions). */
 @media (prefers-reduced-motion: reduce) {
   .composer-hint-pill::after,
