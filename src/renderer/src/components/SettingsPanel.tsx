@@ -20,7 +20,6 @@ import type {
   AppearanceMode,
   CodexSandboxFallbackMode,
   AppSettings,
-  GeminiMcpBridgeStatus,
   NativeSubAgentRequestPolicy,
   ProviderApiKeyStatus,
   ProviderCapabilityContract,
@@ -174,7 +173,6 @@ interface SettingsPanelProps {
   providerCapabilitiesByProvider?: Partial<Record<ProviderId, ProviderCapabilityContract | null>>
   mcpStatusByProvider?: Partial<Record<ProviderId, any>>
   geminiMcpBridgeEnabled: boolean
-  geminiMcpBridgeStatus: GeminiMcpBridgeStatus | null
   codexSandboxFallback: CodexSandboxFallbackMode
   funFxEnabled: boolean
   funFxMode: AppSettings['funFxMode']
@@ -720,7 +718,6 @@ const OLLAMA_RUN_PROFILE_OPTIONS: Array<{
 const SETTINGS_PROVIDER_ORDER: ProviderId[] = [
   'codex',
   'claude',
-  'gemini',
   'kimi',
   'cursor',
   'grok',
@@ -1512,7 +1509,6 @@ export function SettingsPanel({
   providerCapabilitiesByProvider,
   mcpStatusByProvider,
   geminiMcpBridgeEnabled,
-  geminiMcpBridgeStatus,
   codexSandboxFallback,
   funFxEnabled,
   funFxMode,
@@ -1784,9 +1780,9 @@ export function SettingsPanel({
       onChange={onChange}
     />
   )
-  // gemini is RETIRED — drop it from the connected-surfaces grid AND the
-  // "providers reporting MCP/bridge status" stat (offer surface). Its bridge
-  // wiring stays below for the shared TaskWraith MCP bridge control.
+  // Retired providers are excluded from SETTINGS_PROVIDER_ORDER above; this
+  // filter is a defensive backstop so a future retirement never surfaces an
+  // offer card or counts toward the "providers reporting MCP/bridge status" stat.
   const providerMcpSummaries = SETTINGS_PROVIDER_ORDER.filter(
     (provider) => !isRetiredProvider(provider)
   ).map((provider) => {
@@ -1794,16 +1790,6 @@ export function SettingsPanel({
       providerCapabilitiesByProvider?.[provider] ??
       (provider === activeProvider ? providerCapabilities : null)
     const status = mcpStatusByProvider?.[provider]
-    const bridge =
-      provider === 'gemini'
-        ? {
-            available: geminiMcpBridgeStatus?.available,
-            enabled: geminiMcpBridgeEnabled,
-            installed: geminiMcpBridgeStatus?.installed,
-            serverName: geminiMcpBridgeStatus?.serverName,
-            message: geminiMcpBridgeStatus?.message || geminiMcpBridgeStatus?.error
-          }
-        : null
     // Cursor + Grok get the brokered TaskWraith MCP bridge through their
     // provider-native MCP surfaces. The accurate per-provider state/source/tools
     // message comes from the capability contract; these blocks only seed the card
@@ -1842,20 +1828,19 @@ export function SettingsPanel({
       mcp?.source === 'taskwraith web bridge' ||
       mcp?.source === 'unsupported' ||
       Boolean(provisionalFallback?.providerManaged)
-    const available = Boolean(mcp?.available ?? status?.available ?? bridge?.available)
-    const enabled = Boolean(mcp?.enabled ?? bridge?.enabled ?? available)
+    const available = Boolean(mcp?.available ?? status?.available)
+    const enabled = Boolean(mcp?.enabled ?? available)
     // HARD RULE: never fabricate "installed" from mere availability for a
     // provider-managed fallback surface. Bridge-backed providers report installed
     // from their capability contract.
     const installed = providerManaged
-      ? Boolean(mcp?.installed ?? bridge?.installed)
-      : Boolean(mcp?.installed ?? bridge?.installed ?? available)
+      ? Boolean(mcp?.installed)
+      : Boolean(mcp?.installed ?? available)
     const state = mcp?.state ?? provisionalFallback?.state ?? (available ? 'available' : 'gated')
     const rawToolCount = countMcpStatusTools(status)
     const toolCount = Math.max(
       rawToolCount,
       Array.isArray(mcp?.tools) ? mcp.tools.length : 0,
-      provider === 'gemini' && available ? TASKWRAITH_MCP_TOOLS.length : 0,
       provisionalFallback?.toolCount ?? 0
     )
     return {
@@ -1869,16 +1854,14 @@ export function SettingsPanel({
       source:
         mcp?.source ||
         provisionalFallback?.source ||
-        (provider === 'gemini' ? 'bridge' : provider === 'codex' ? 'provider' : 'taskwraith'),
+        (provider === 'codex' ? 'provider' : 'taskwraith'),
       serverName:
         mcp?.serverName ||
-        bridge?.serverName ||
         provisionalFallback?.serverName ||
         (available ? 'TaskWraith' : 'not connected'),
       toolCount,
       message:
         mcp?.message ||
-        bridge?.message ||
         provisionalFallback?.message ||
         status?.message ||
         status?.error ||

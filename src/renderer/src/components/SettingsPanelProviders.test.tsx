@@ -48,7 +48,6 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     providerCapabilitiesByProvider: {},
     mcpStatusByProvider: {},
     geminiMcpBridgeEnabled: false,
-    geminiMcpBridgeStatus: null,
     codexSandboxFallback: 'ask_rerun',
     funFxEnabled: false,
     funFxMode: 'off',

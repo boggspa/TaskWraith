@@ -19360,7 +19360,6 @@ function App(): React.JSX.Element {
                 ollama: agentMcpStatusByProvider.ollama
               }}
               geminiMcpBridgeEnabled={geminiMcpBridgeEnabled}
-              geminiMcpBridgeStatus={geminiMcpBridgeStatus}
               codexSandboxFallback={codexSandboxFallback}
               funFxEnabled={appearance.funFxEnabled}
               funFxMode={appearance.funFxMode}
