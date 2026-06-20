@@ -2111,6 +2111,10 @@ function App(): React.JSX.Element {
   // Multiview: split the central pane into 1-4 panes. Inert until a layout is
   // chosen — single layout renders byte-identically to before Multiview.
   const multiview = useMultiviewState()
+  // True when the central pane is split (>1 multiview cell). Welcome-state
+  // dashboard/heatmaps/starter cards are suppressed when split — a short cell
+  // can't fit them and they overlap/clip the composer.
+  const isMultiviewSplit = multiview.paneChatIds.length > 1
 
   // Error handling & Fallback
   const [showFallbackUX, setShowFallbackUX] = useState(false)
@@ -16139,7 +16143,10 @@ function App(): React.JSX.Element {
   // Until then we show the reserved placeholder instead of mounting
   // the real dashboard (prevents appear → hide → reappear flicker).
   const shouldShowWelcomeUsageDashboard =
-    isWelcomeChat && usageInitialized && welcomeUsageDashboardData.lifetimeHasActivity
+    isWelcomeChat &&
+    usageInitialized &&
+    welcomeUsageDashboardData.lifetimeHasActivity &&
+    !isMultiviewSplit
   const welcomeWorkspaceHeatmapEnabled =
     settings?.welcomeHeatmapPrefs?.workspaceActivityEnabled !== false
   const welcomeTaskWraithHeatmapEnabled =
@@ -16151,8 +16158,8 @@ function App(): React.JSX.Element {
       ? currentWorkspace?.path || currentChat?.workspacePath
       : ''
   const shouldShowWelcomeStandaloneHeatmaps =
-    Boolean(welcomeWorkspaceActivityPath) ||
-    shouldShowWelcomeUsageDashboard
+    !isMultiviewSplit &&
+    (Boolean(welcomeWorkspaceActivityPath) || shouldShowWelcomeUsageDashboard)
   // Welcome standalone activity panels now always use the uncluttered cycle
   // presentation. Older stored `welcomeHeatmapPrefs.layout` values are ignored
   // so a legacy "stacked" setting cannot crowd the new-chat screen.
@@ -17535,13 +17542,17 @@ function App(): React.JSX.Element {
       : null
     const viewerCumulativeRunBaseMs = computeCumulativeRunBaseMs(viewerChat.runs)
     const viewerShouldShowWelcomeUsageDashboard =
-      viewerIsWelcomeChat && usageInitialized && welcomeUsageDashboardData.lifetimeHasActivity
+      viewerIsWelcomeChat &&
+      usageInitialized &&
+      welcomeUsageDashboardData.lifetimeHasActivity &&
+      !isMultiviewSplit
     const viewerWorkspaceActivityPath =
       viewerIsWelcomeChat && !viewerIsGlobalChat && welcomeWorkspaceHeatmapEnabled
         ? viewerWorkspace?.path || viewerChat.workspacePath || ''
         : ''
     const viewerShouldShowWelcomeStandaloneHeatmaps =
-      Boolean(viewerWorkspaceActivityPath) || viewerShouldShowWelcomeUsageDashboard
+      !isMultiviewSplit &&
+      (Boolean(viewerWorkspaceActivityPath) || viewerShouldShowWelcomeUsageDashboard)
     const viewerWelcomeHeatmapSlots: WelcomeHeatmapSlot[] = []
     if (viewerWorkspaceActivityPath) {
       viewerWelcomeHeatmapSlots.push({
@@ -18128,7 +18139,10 @@ function App(): React.JSX.Element {
           viewerShouldShowWelcomeUsageDashboard && welcomeDashboardCardEnabled
         }
         reserveWelcomeUsageDashboard={
-          viewerIsWelcomeChat && welcomeDashboardCardEnabled && !usageInitialized
+          viewerIsWelcomeChat &&
+          welcomeDashboardCardEnabled &&
+          !usageInitialized &&
+          !isMultiviewSplit
         }
         dashboardStatVisibility={settings?.dashboardStatPrefs?.visibility}
         dashboardWorkspacesTabEnabled={settings?.dashboardStatPrefs?.workspacesTabEnabled}
@@ -18173,8 +18187,8 @@ function App(): React.JSX.Element {
     prompt,
     // Hide welcome starter cards when multiview is split (they overlap the
     // composer in short cells). The focused cell uses this ctx in both single
-    // and split layouts, so derive it live from the pane count.
-    isMultiviewSplit: multiview.paneChatIds.length > 1,
+    // and split layouts.
+    isMultiviewSplit,
     PLAN_IMPORT_CHIP_LABELS,
     PLAN_IMPORT_RISK_LABELS,
     PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
