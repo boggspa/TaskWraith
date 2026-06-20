@@ -5428,18 +5428,34 @@ public struct GuestParticipantControl: View {
     public var body: some View {
         Group {
             if let guest {
+                // The guest card carries the same (name, accent, slug) identity
+                // triple as a subagent, so render the catalog identicon badge and
+                // tint the chip with the identity's accent — matching subagents
+                // instead of a generic person glyph + fixed green. Gate the tint on
+                // the SAME field as the badge (agentName) so the chip ring and the
+                // identicon ring always derive from twAgentAccentColor together
+                // (green stays only as the genuine no-identity fallback), mirroring
+                // childRow's identityAccent above.
+                let identityAccent =
+                    guest.agentName != nil ? twAgentAccentColor(guest.agentAccent) : guestAccent
                 HStack(spacing: 4) {
                     Menu {
                         guestPickerEntries
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "person.crop.circle.badge.plus")
-                                .font(.system(size: 10))
+                            if let agentName = guest.agentName {
+                                AgentIdentityBadge(
+                                    name: agentName, accentHex: guest.agentAccent,
+                                    slug: guest.agentSlug, size: 14)
+                            } else {
+                                Image(systemName: "person.crop.circle.badge.plus")
+                                    .font(.system(size: 10))
+                            }
                             Text(guestLabel(guest))
                                 .font(.caption2.weight(.semibold))
                                 .lineLimit(1)
                         }
-                        .foregroundStyle(guestAccent)
+                        .foregroundStyle(identityAccent)
                     }
                     .buttonStyle(.plain)
                     Button {
@@ -5460,8 +5476,8 @@ public struct GuestParticipantControl: View {
                 .padding(.leading, 7)
                 .padding(.trailing, 1)
                 .padding(.vertical, 3)
-                .background(guestAccent.opacity(0.12), in: Capsule())
-                .overlay(Capsule().strokeBorder(guestAccent.opacity(0.4)))
+                .background(identityAccent.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(identityAccent.opacity(0.4)))
             } else {
                 Menu {
                     guestPickerEntries
