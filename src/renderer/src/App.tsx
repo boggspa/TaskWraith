@@ -6287,14 +6287,30 @@ function App(): React.JSX.Element {
         closeSideChatPresentationRecord(currentMainChat)
       }
     }
-    const selectedChat =
-      !isChatSummaryRecord(chat) &&
-      chat.parentChatRelation === 'sideChat' &&
-      !chat.archived &&
-      !isTerminatedSideChat(chat)
-        ? applySideChatLifecycle(chat, 'active')
+    // (C) Re-visit fast path. The sidebar hands us a lightweight SUMMARY record
+    // (no messages); selecting it renders an EMPTY transcript and then triggers
+    // a getChat + a SECOND full re-render via hydrateSelectedChatAfterPaint —
+    // i.e. two App+Composer reconciles per click, the single-pane switch freeze.
+    // When we already hold a HYDRATED record for this chat (cached from a prior
+    // visit or a live run) that is at least as fresh as the summary, select THAT
+    // instead: render #1 shows the full thread immediately and the hydrate
+    // guard short-circuits — no empty flash, no redundant second render.
+    const cachedHydratedChat = chatByIdRef.current.get(chat.appChatId)
+    const incoming =
+      isChatSummaryRecord(chat) &&
+      cachedHydratedChat &&
+      !isChatSummaryRecord(cachedHydratedChat) &&
+      (cachedHydratedChat.updatedAt ?? 0) >= (chat.updatedAt ?? 0)
+        ? cachedHydratedChat
         : chat
-    if (selectedChat !== chat) {
+    const selectedChat =
+      !isChatSummaryRecord(incoming) &&
+      incoming.parentChatRelation === 'sideChat' &&
+      !incoming.archived &&
+      !isTerminatedSideChat(incoming)
+        ? applySideChatLifecycle(incoming, 'active')
+        : incoming
+    if (selectedChat !== incoming) {
       chatByIdRef.current.set(selectedChat.appChatId, selectedChat)
       setChats((prev) =>
         prev.map((item) => (item.appChatId === selectedChat.appChatId ? selectedChat : item))
