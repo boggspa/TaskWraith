@@ -1,4 +1,5 @@
 import { useState, type ReactElement } from 'react'
+import { isRetiredProvider } from '../../../shared/retiredProviders'
 
 interface ProviderInstallEntry {
   id: string
@@ -34,7 +35,6 @@ interface OllamaModelEntry {
  * Keep these in sync with the vendors' official install pages:
  *   Codex  — OpenAI:    npm i -g @openai/codex                         (developers.openai.com/codex/cli)
  *   Claude — Anthropic: curl -fsSL https://claude.ai/install.sh | bash (code.claude.com/docs/en/setup)
- *   Gemini — Google:    npm i -g @google/gemini-cli                    (geminicli.com/docs)
  *   Kimi   — Moonshot:  curl -LsSf https://code.kimi.com/install.sh    (moonshotai.github.io/kimi-cli)
  *   Cursor — Cursor:    curl https://cursor.com/install -fsS | bash    (cursor.com/docs/cli/installation)
  *   Grok   — xAI:       curl -fsSL https://x.ai/cli/install.sh | bash  (x.ai/cli)
@@ -49,7 +49,6 @@ const PROVIDER_INSTALL_COMMANDS: ProviderInstallEntry[] = [
     command: 'curl -fsSL https://claude.ai/install.sh | bash',
     source: 'Anthropic'
   },
-  { id: 'gemini', label: 'Gemini', command: 'npm i -g @google/gemini-cli', source: 'Google' },
   {
     id: 'kimi',
     label: 'Kimi',
@@ -122,7 +121,9 @@ export function ProviderInstallCommands(): ReactElement {
 
   return (
     <div className="provider-install-commands">
-      {PROVIDER_INSTALL_COMMANDS.map((entry) => {
+      {/* Retired providers (retiredProviders.ts) are never offered an install
+          command — defensive backstop; the list above already omits them. */}
+      {PROVIDER_INSTALL_COMMANDS.filter((entry) => !isRetiredProvider(entry.id)).map((entry) => {
         const rowLabel = entry.platform ? `${entry.label} (${entry.platform})` : entry.label
         return (
           <div

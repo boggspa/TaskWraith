@@ -64,7 +64,9 @@ describe('FirstLaunchSheet', () => {
     )
     expect(html).toContain('data-provider="codex"')
     expect(html).toContain('data-provider="claude"')
-    expect(html).toContain('data-provider="gemini"')
+    // Gemini is retired — no provider card and no install-command row, so its
+    // data-provider marker is absent everywhere in the sheet.
+    expect(html).not.toContain('data-provider="gemini"')
     expect(html).toContain('data-provider="kimi"')
     expect(html).toContain('data-provider="ollama"')
   })
