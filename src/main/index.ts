@@ -182,7 +182,8 @@ import {
   buildRemoteTaskCard,
   type RemoteProjectionEnvelope,
   type RemoteTaskCard,
-  type RemoteTaskCapabilities
+  type RemoteTaskCapabilities,
+  type RemoteWorkflow
 } from './RemoteTaskProjection'
 import {
   projectRemoteThread,
@@ -17711,6 +17712,54 @@ if (isGeminiMcpBridgeProcess) {
           })
         )
       }
+      // Workflows (iOS Workflows tab) — one envelope per allowlist-visible
+      // workflow; the phone lists them + opens the workflow's chat. View-only
+      // for now (run-now/pause from the phone is a separate slice).
+      for (const wf of AppStore.getWorkflowDefinitions()) {
+        // Workflows are always workspace-bound (never global), so require a
+        // concrete, allowlist-visible workspaceId — an empty/malformed id must
+        // NOT fall through remoteWorkspaceIsVisible's global-scope branch.
+        if (!wf.workspaceId || !remoteWorkspaceIsVisible(wf.workspaceId)) continue
+        // Skip orphaned workflows whose chat was deleted — getWorkflowDefinitions
+        // doesn't re-validate on read, and projecting a dangling threadId gives
+        // the phone a row that dead-ends on tap (no thread snapshot to open).
+        if (!AppStore.getChat(wf.template.chatId)) continue
+        const intervalMin =
+          wf.trigger.kind === 'interval'
+            ? Math.max(1, Math.round((wf.trigger.intervalMs || 60_000) / 60_000))
+            : null
+        const schedule =
+          intervalMin != null
+            ? `Every ${intervalMin} min`
+            : wf.trigger.kind === 'manual'
+              ? 'Manual'
+              : wf.trigger.kind === 'once'
+                ? 'Once'
+                : 'Scheduled'
+        const workflowPayload: RemoteWorkflow = {
+          id: wf.id,
+          name: wf.name,
+          workspaceId: wf.workspaceId,
+          threadId: wf.template.chatId,
+          provider: wf.template.provider,
+          enabled: wf.enabled,
+          schedule,
+          status: wf.lastStatus ?? 'idle',
+          nextRunAt: wf.nextRunAt,
+          lastRunAt: wf.lastRunAt
+        }
+        envelopes.push(
+          buildRemoteProjectionEnvelope({
+            kind: 'workflows',
+            payload: workflowPayload,
+            generatedAt,
+            workspaceId: wf.workspaceId,
+            workspacePath: wf.workspacePath,
+            threadId: wf.template.chatId,
+            envelopeId: `remote-workflow:${wf.id}:${wf.updatedAt}`
+          })
+        )
+      }
       return envelopes
     }
 
@@ -19582,6 +19631,7 @@ if (isGeminiMcpBridgeProcess) {
 	      ) => {
 	        const saved = AppStore.saveWorkflowDefinition(sanitizeWorkflowForSave(workflow))
 	        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+	        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
 	        emitDueScheduledTasks()
 	        return saved
 	      }
@@ -19591,6 +19641,7 @@ if (isGeminiMcpBridgeProcess) {
 	      if (!sanitized) return null
 	      const updated = AppStore.updateWorkflowDefinition(id, sanitized)
 	      mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+	      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
 	      scheduleNextTaskTimer()
 	      return updated
 	    })
@@ -19598,6 +19649,7 @@ if (isGeminiMcpBridgeProcess) {
 	      AppStore.deleteWorkflowDefinition(id)
 	      mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
 	      mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+	      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
 	      scheduleNextTaskTimer()
 	    })
 	    ipcMain.handle('run-workflow-now', (_, id: string) => {
@@ -19606,6 +19658,7 @@ if (isGeminiMcpBridgeProcess) {
 	        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
 	        mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
 	        mainWindow?.webContents.send('scheduled-task-due', task)
+	        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
 	      }
 	      scheduleNextTaskTimer()
 	      return task

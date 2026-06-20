@@ -32,6 +32,29 @@ export type RemoteProjectionKind =
   | 'diffSummary'
   | 'ensembleState'
   | 'shellAppearance'
+  | 'workflows'
+
+/**
+ * A workflow projected to paired devices (iOS Workflows tab). Flattened from a
+ * WorkflowDefinition — the phone shows the list + opens the workflow's chat
+ * (`threadId`); run-now/pause actions are a separate slice. One envelope per
+ * workflow, `kind: 'workflows'`.
+ */
+export interface RemoteWorkflow {
+  id: string
+  name: string
+  workspaceId: string
+  /** The workflow's chat (template.chatId) — tap opens this thread. */
+  threadId: string
+  provider: ProviderId
+  enabled: boolean
+  /** Human-readable cadence, e.g. "Every 60 min" / "Manual". */
+  schedule: string
+  /** Last execution status, or "idle" if it hasn't run. */
+  status: RemoteTaskStatus | 'completed' | 'skipped'
+  nextRunAt?: string
+  lastRunAt?: string
+}
 
 export type RemoteTaskStatus =
   | 'idle'
