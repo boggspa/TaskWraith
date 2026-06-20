@@ -4,10 +4,14 @@ import {
   applyClosePane,
   applyFocusPane,
   applyOpenInNewPane,
+  applyResetTrackSizes,
+  applyResizeTrack,
   applySetFocusedPane,
   applySetLayout,
   applySetPaneChat,
   createInitialMultiviewState,
+  getLayoutTracks,
+  MULTIVIEW_MIN_PANE_PX,
   type MultiviewCoreState
 } from './useMultiviewState'
 
@@ -15,6 +19,7 @@ const state = (over: Partial<MultiviewCoreState>): MultiviewCoreState => ({
   layout: 'single',
   paneChatIds: [null],
   focusedPaneIndex: 0,
+  trackSizes: {},
   ...over
 })
 
@@ -23,7 +28,8 @@ describe('createInitialMultiviewState', () => {
     expect(createInitialMultiviewState()).toEqual({
       layout: 'single',
       paneChatIds: [null],
-      focusedPaneIndex: 0
+      focusedPaneIndex: 0,
+      trackSizes: {}
     })
   })
 
@@ -71,7 +77,12 @@ describe('applySetLayout', () => {
       state({ layout: 'vertical-2', paneChatIds: ['a', 'b'], focusedPaneIndex: 1 }),
       'single'
     )
-    expect(next).toEqual({ layout: 'single', paneChatIds: ['a'], focusedPaneIndex: 0 })
+    expect(next).toEqual({
+      layout: 'single',
+      paneChatIds: ['a'],
+      focusedPaneIndex: 0,
+      trackSizes: {}
+    })
   })
 
   it('returns the same reference when the layout is unchanged', () => {
@@ -151,7 +162,12 @@ describe('applyClosePane', () => {
       state({ layout: 'vertical-2', paneChatIds: ['a', 'b'], focusedPaneIndex: 0 }),
       0
     )
-    expect(next).toEqual({ layout: 'single', paneChatIds: ['b'], focusedPaneIndex: 0 })
+    expect(next).toEqual({
+      layout: 'single',
+      paneChatIds: ['b'],
+      focusedPaneIndex: 0,
+      trackSizes: {}
+    })
   })
 })
 
@@ -239,5 +255,176 @@ describe('applyOpenInNewPane', () => {
     expect(next.layout).toBe('quad')
     expect(next.paneChatIds).toEqual(['a', 'z', 'c', 'd'])
     expect(next.focusedPaneIndex).toBe(0)
+  })
+})
+
+describe('getLayoutTracks', () => {
+  it('falls back to the spec defaults (equal tracks) when nothing is stored', () => {
+    expect(getLayoutTracks({}, 'vertical-2')).toEqual({ columns: [1, 1], rows: [1] })
+    expect(getLayoutTracks({}, 'horizontal-2')).toEqual({ columns: [1], rows: [1, 1] })
+    expect(getLayoutTracks({}, 'quad')).toEqual({ columns: [1, 1], rows: [1, 1] })
+  })
+
+  it('returns the stored fractions when present', () => {
+    const tracks = getLayoutTracks({ 'vertical-2': { columns: [2, 1], rows: [1] } }, 'vertical-2')
+    expect(tracks.columns).toEqual([2, 1])
+  })
+
+  it('ignores a stale stored entry whose length no longer matches the layout', () => {
+    // A 3-track columns entry on a 2-column layout is stale -> use defaults.
+    const tracks = getLayoutTracks({ 'vertical-2': { columns: [1, 1, 1], rows: [1] } }, 'vertical-2')
+    expect(tracks.columns).toEqual([1, 1])
+  })
+})
+
+describe('applyResizeTrack', () => {
+  it('moves a px delta between the two adjacent column tracks', () => {
+    // vertical-2: columns [1,1], total fraction 2, axisTotalPx 1000 -> pairPx 1000.
+    // +100px to track0 -> 600px / 400px -> fractions 1.2 / 0.8.
+    const next = applyResizeTrack(state({ layout: 'vertical-2', paneChatIds: ['a', 'b'] }), {
+      orientation: 'column',
+      trackIndex: 0,
+      deltaPx: 100,
+      axisTotalPx: 1000
+    })
+    expect(next.trackSizes['vertical-2']?.columns).toEqual([1.2, 0.8])
+    // Combined fraction of the adjacent pair is conserved.
+    expect(next.trackSizes['vertical-2']!.columns[0] + next.trackSizes['vertical-2']!.columns[1]).toBe(2)
+  })
+
+  it('clamps so neither adjacent pane drops below the 240px minimum', () => {
+    // A huge delta would shrink track1 below 240px; clamp track0 at 1000-240=760.
+    const next = applyResizeTrack(state({ layout: 'vertical-2', paneChatIds: ['a', 'b'] }), {
+      orientation: 'column',
+      trackIndex: 0,
+      deltaPx: 100000,
+      axisTotalPx: 1000
+    })
+    const cols = next.trackSizes['vertical-2']!.columns
+    // track0 -> 760px (1.52fr), track1 -> 240px (0.48fr) at the min.
+    expect(cols[0]).toBeCloseTo(1.52, 6)
+    expect(cols[1]).toBeCloseTo(0.48, 6)
+    // The clamped track1 maps back to exactly MULTIVIEW_MIN_PANE_PX.
+    const pairPx = 1000
+    expect((cols[1] / (cols[0] + cols[1])) * pairPx).toBeCloseTo(MULTIVIEW_MIN_PANE_PX, 6)
+  })
+
+  it('clamps a negative delta symmetrically (track0 cannot go below the min)', () => {
+    const next = applyResizeTrack(state({ layout: 'vertical-2', paneChatIds: ['a', 'b'] }), {
+      orientation: 'column',
+      trackIndex: 0,
+      deltaPx: -100000,
+      axisTotalPx: 1000
+    })
+    const cols = next.trackSizes['vertical-2']!.columns
+    expect(cols[0]).toBeCloseTo(0.48, 6)
+    expect(cols[1]).toBeCloseTo(1.52, 6)
+  })
+
+  it('resizes rows independently of columns on a 2x2 layout', () => {
+    // rows [1,1], pairPx 1000; +200 -> 700/300 -> 1.4/0.6 (both above the 240 min).
+    const next = applyResizeTrack(state({ layout: 'quad', paneChatIds: ['a', 'b', 'c', 'd'] }), {
+      orientation: 'row',
+      trackIndex: 0,
+      deltaPx: 200,
+      axisTotalPx: 1000
+    })
+    expect(next.trackSizes.quad?.rows).toEqual([1.4, 0.6])
+    expect(next.trackSizes.quad?.columns).toEqual([1, 1])
+  })
+
+  it('leaves the pair fixed when it cannot hold two minimums', () => {
+    // pairPx 400 < 2*240; no room to resize without violating a minimum.
+    const s = state({ layout: 'vertical-2', paneChatIds: ['a', 'b'] })
+    const next = applyResizeTrack(s, {
+      orientation: 'column',
+      trackIndex: 0,
+      deltaPx: 50,
+      axisTotalPx: 400
+    })
+    expect(next).toBe(s)
+  })
+
+  it('is a no-op for a zero / non-finite delta or non-positive axis', () => {
+    const s = state({ layout: 'quad', paneChatIds: ['a', 'b', 'c', 'd'] })
+    expect(applyResizeTrack(s, { orientation: 'column', trackIndex: 0, deltaPx: 0, axisTotalPx: 1000 })).toBe(s)
+    expect(applyResizeTrack(s, { orientation: 'column', trackIndex: 0, deltaPx: 10, axisTotalPx: 0 })).toBe(s)
+  })
+
+  it('ignores an out-of-range track index', () => {
+    const s = state({ layout: 'vertical-2', paneChatIds: ['a', 'b'] })
+    // vertical-2 has a single internal column boundary (trackIndex 0); 1 is out.
+    expect(applyResizeTrack(s, { orientation: 'column', trackIndex: 1, deltaPx: 50, axisTotalPx: 1000 })).toBe(s)
+  })
+
+  it('resizing one layout does not affect another layout’s fractions', () => {
+    const resized = applyResizeTrack(state({ layout: 'vertical-2', paneChatIds: ['a', 'b'] }), {
+      orientation: 'column',
+      trackIndex: 0,
+      deltaPx: 100,
+      axisTotalPx: 1000
+    })
+    // quad was never touched -> still the spec defaults.
+    expect(resized.trackSizes.quad).toBeUndefined()
+    expect(getLayoutTracks(resized.trackSizes, 'quad')).toEqual({ columns: [1, 1], rows: [1, 1] })
+    // ...and vertical-2 keeps its drag.
+    expect(getLayoutTracks(resized.trackSizes, 'vertical-2').columns).toEqual([1.2, 0.8])
+  })
+
+  it('survives switching layout away and back within a session', () => {
+    const resized = applyResizeTrack(state({ layout: 'vertical-2', paneChatIds: ['a', 'b'] }), {
+      orientation: 'column',
+      trackIndex: 0,
+      deltaPx: 100,
+      axisTotalPx: 1000
+    })
+    const switched = applySetLayout(resized, 'quad')
+    const back = applySetLayout(switched, 'vertical-2')
+    expect(getLayoutTracks(back.trackSizes, 'vertical-2').columns).toEqual([1.2, 0.8])
+  })
+})
+
+describe('applyResetTrackSizes', () => {
+  it('drops a dragged layout back to the spec defaults', () => {
+    const resized = applyResizeTrack(state({ layout: 'vertical-2', paneChatIds: ['a', 'b'] }), {
+      orientation: 'column',
+      trackIndex: 0,
+      deltaPx: 120,
+      axisTotalPx: 1000
+    })
+    expect(resized.trackSizes['vertical-2']).toBeDefined()
+    const reset = applyResetTrackSizes(resized, 'vertical-2')
+    expect(reset.trackSizes['vertical-2']).toBeUndefined()
+    expect(getLayoutTracks(reset.trackSizes, 'vertical-2')).toEqual({ columns: [1, 1], rows: [1] })
+  })
+
+  it('resets the current layout when no layout id is passed', () => {
+    const resized = applyResizeTrack(state({ layout: 'quad', paneChatIds: ['a', 'b', 'c', 'd'] }), {
+      orientation: 'row',
+      trackIndex: 0,
+      deltaPx: 120,
+      axisTotalPx: 800
+    })
+    const reset = applyResetTrackSizes(resized)
+    expect(reset.trackSizes.quad).toBeUndefined()
+  })
+
+  it('only resets the targeted layout, leaving others intact', () => {
+    let s = applyResizeTrack(state({ layout: 'vertical-2', paneChatIds: ['a', 'b'] }), {
+      orientation: 'column',
+      trackIndex: 0,
+      deltaPx: 100,
+      axisTotalPx: 1000
+    })
+    s = applySetLayout(s, 'quad')
+    s = applyResizeTrack(s, { orientation: 'row', trackIndex: 0, deltaPx: 100, axisTotalPx: 800 })
+    const reset = applyResetTrackSizes(s, 'quad')
+    expect(reset.trackSizes.quad).toBeUndefined()
+    expect(getLayoutTracks(reset.trackSizes, 'vertical-2').columns).toEqual([1.2, 0.8])
+  })
+
+  it('returns the same reference when there is nothing stored for the layout', () => {
+    const s = state({ layout: 'vertical-2', paneChatIds: ['a', 'b'] })
+    expect(applyResetTrackSizes(s, 'vertical-2')).toBe(s)
   })
 })

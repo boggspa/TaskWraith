@@ -5,7 +5,10 @@ import {
   MAX_MULTIVIEW_PANES,
   clampFocusedPaneIndex,
   clampPaneChatIds,
+  defaultColumnFractions,
+  defaultRowFractions,
   paneCountForLayout,
+  type MultiviewGutterOrientation,
   type MultiviewLayout
 } from '../../../shared/multiviewLayouts'
 
@@ -17,12 +20,32 @@ import {
  * below so they can be unit-tested without a DOM (the repo avoids jsdom).
  */
 
+/** Per-layout column/row track fractions (the `fr` weights the grid uses). */
+export interface MultiviewLayoutTracks {
+  columns: number[]
+  rows: number[]
+}
+
+/**
+ * Stateful track fractions keyed by layout id. Absent entries fall back to the
+ * spec defaults, so an un-dragged layout renders byte-identical to the spec.
+ * Session-only (in-memory): toggling layouts within a session preserves a
+ * layout's dragged sizes; an app restart resets to defaults. Cross-session
+ * persistence is a deliberate follow-up (NOT wired into AppSettings).
+ */
+export type MultiviewTrackSizes = Partial<Record<MultiviewLayout, MultiviewLayoutTracks>>
+
 export interface MultiviewCoreState {
   layout: MultiviewLayout
   /** index = grid cell; null = an empty cell. Length always === paneCount. */
   paneChatIds: (string | null)[]
   focusedPaneIndex: number
+  /** Per-layout dragged track fractions; missing => use the spec defaults. */
+  trackSizes: MultiviewTrackSizes
 }
+
+/** Minimum size (px) any pane may be shrunk to while dragging a gutter. */
+export const MULTIVIEW_MIN_PANE_PX = 240
 
 /**
  * Closing a pane downgrades the layout by exactly one pane. Each step reduces
@@ -62,8 +85,30 @@ export function createInitialMultiviewState(
   return {
     layout: DEFAULT_MULTIVIEW_LAYOUT,
     paneChatIds: clampPaneChatIds([initialPaneChatId], DEFAULT_MULTIVIEW_LAYOUT),
-    focusedPaneIndex: 0
+    focusedPaneIndex: 0,
+    trackSizes: {}
   }
+}
+
+/**
+ * The effective column/row fractions for a layout: the dragged values if the
+ * user has resized this layout in this session, else the spec defaults. The
+ * length always matches the layout's grid (defensive against stale entries).
+ */
+export function getLayoutTracks(
+  trackSizes: MultiviewTrackSizes,
+  layout: MultiviewLayout
+): MultiviewLayoutTracks {
+  const defaults: MultiviewLayoutTracks = {
+    columns: defaultColumnFractions(layout),
+    rows: defaultRowFractions(layout)
+  }
+  const stored = trackSizes[layout]
+  if (!stored) return defaults
+  const columns =
+    stored.columns.length === defaults.columns.length ? stored.columns : defaults.columns
+  const rows = stored.rows.length === defaults.rows.length ? stored.rows : defaults.rows
+  return { columns, rows }
 }
 
 export interface ApplySetLayoutOptions {
@@ -97,7 +142,10 @@ export function applySetLayout(
   return {
     layout: next,
     paneChatIds,
-    focusedPaneIndex: clampFocusedPaneIndex(state.focusedPaneIndex, next)
+    focusedPaneIndex: clampFocusedPaneIndex(state.focusedPaneIndex, next),
+    // Track fractions are keyed by layout id, so they survive switching layouts
+    // within a session (and a return to a previously-dragged layout restores it).
+    trackSizes: state.trackSizes
   }
 }
 
@@ -155,7 +203,8 @@ export function applyClosePane(state: MultiviewCoreState, index: number): Multiv
   return {
     layout: nextLayout,
     paneChatIds,
-    focusedPaneIndex: clampFocusedPaneIndex(nextFocus, nextLayout)
+    focusedPaneIndex: clampFocusedPaneIndex(nextFocus, nextLayout),
+    trackSizes: state.trackSizes
   }
 }
 
@@ -210,6 +259,94 @@ export function applyOpenInNewPane(
   return { ...next, paneChatIds }
 }
 
+export interface ApplyResizeTrackArgs {
+  orientation: MultiviewGutterOrientation
+  /** Index of the track BEFORE the dragged boundary line. */
+  trackIndex: number
+  /** Signed pointer delta in px along the axis since drag start. */
+  deltaPx: number
+  /**
+   * Total px available to the affected axis (the content box of the grid along
+   * that axis, i.e. excluding gaps + padding). Used to convert px<->fraction.
+   */
+  axisTotalPx: number
+  /** Per-pane minimum in px (defaults to MULTIVIEW_MIN_PANE_PX). */
+  minPanePx?: number
+}
+
+/**
+ * Resize the two tracks adjacent to a gutter by a pointer delta. Pure: returns
+ * a new state with this layout's column/row fractions updated.
+ *
+ * Math: tracks are `fr` weights; px(track) = fraction/sumAdjacent * pairPx,
+ * where pairPx is the combined px of the two adjacent tracks (their share of
+ * axisTotalPx). We move `deltaPx` from one to the other, clamp each so neither
+ * drops below `minPanePx` (the pair px is conserved, so the other side can't
+ * exceed pairPx - min either), then convert back to fractions — preserving the
+ * pair's combined fraction so untouched tracks are unaffected.
+ */
+export function applyResizeTrack(
+  state: MultiviewCoreState,
+  args: ApplyResizeTrackArgs
+): MultiviewCoreState {
+  const { orientation, trackIndex, deltaPx, axisTotalPx } = args
+  const minPanePx = args.minPanePx ?? MULTIVIEW_MIN_PANE_PX
+  if (!Number.isFinite(deltaPx) || deltaPx === 0) return state
+  if (!Number.isFinite(axisTotalPx) || axisTotalPx <= 0) return state
+
+  const tracks = getLayoutTracks(state.trackSizes, state.layout)
+  const fractions = orientation === 'column' ? tracks.columns.slice() : tracks.rows.slice()
+  if (trackIndex < 0 || trackIndex + 1 >= fractions.length) return state
+
+  const a = fractions[trackIndex]
+  const b = fractions[trackIndex + 1]
+  const pairFraction = a + b
+  const totalFraction = fractions.reduce((sum, f) => sum + f, 0)
+  if (pairFraction <= 0 || totalFraction <= 0) return state
+
+  // px share of the two adjacent tracks together.
+  const pairPx = (pairFraction / totalFraction) * axisTotalPx
+  // If the pair can't even hold two minimums, leave it fixed.
+  if (pairPx < minPanePx * 2) return state
+
+  let aPx = (a / pairFraction) * pairPx + deltaPx
+  // Clamp so neither side goes below the minimum (pair px is conserved).
+  aPx = Math.max(minPanePx, Math.min(aPx, pairPx - minPanePx))
+  const bPx = pairPx - aPx
+
+  // Back to fractions, conserving the pair's combined fraction.
+  const nextA = (aPx / pairPx) * pairFraction
+  const nextB = (bPx / pairPx) * pairFraction
+  if (nextA === a && nextB === b) return state
+  fractions[trackIndex] = nextA
+  fractions[trackIndex + 1] = nextB
+
+  const prior = state.trackSizes[state.layout]
+  const nextTracks: MultiviewLayoutTracks =
+    orientation === 'column'
+      ? { columns: fractions, rows: prior?.rows ?? tracks.rows }
+      : { columns: prior?.columns ?? tracks.columns, rows: fractions }
+  return {
+    ...state,
+    trackSizes: { ...state.trackSizes, [state.layout]: nextTracks }
+  }
+}
+
+/**
+ * Reset a layout's track fractions to the spec defaults (equal tracks) — the
+ * double-click-a-gutter affordance. Drops the stored entry so subsequent reads
+ * fall back to the spec.
+ */
+export function applyResetTrackSizes(
+  state: MultiviewCoreState,
+  layout: MultiviewLayout = state.layout
+): MultiviewCoreState {
+  if (!state.trackSizes[layout]) return state
+  const trackSizes = { ...state.trackSizes }
+  delete trackSizes[layout]
+  return { ...state, trackSizes }
+}
+
 export interface MultiviewPaneRefs {
   scrollRef: RefObject<HTMLDivElement | null>
   contentRef: RefObject<HTMLDivElement | null>
@@ -227,6 +364,8 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   isMultiview: boolean
   /** Stable per-pane ref pool (length MAX_MULTIVIEW_PANES) for the grid panes. */
   paneRefs: MultiviewPaneRefs[]
+  /** Effective column/row fractions for the CURRENT layout (dragged or spec). */
+  tracks: MultiviewLayoutTracks
   setLayout: (next: MultiviewLayout, seedChatId?: string | null) => void
   setPaneChat: (index: number, chatId: string | null) => void
   setFocusedPane: (index: number) => void
@@ -236,6 +375,10 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   assignToNextPane: (chatId: string) => number
   /** Open a chat in a non-focused pane (grows the layout if needed); keeps focus. */
   openInNewPane: (chatId: string, outgoingFocusedChatId?: string | null) => void
+  /** Drag a gutter: move `deltaPx` between two adjacent tracks (clamped at min). */
+  resizeTrack: (args: ApplyResizeTrackArgs) => void
+  /** Double-click a gutter: reset a layout's fractions to the spec defaults. */
+  resetTrackSizes: (layout?: MultiviewLayout) => void
 }
 
 export function useMultiviewState(
@@ -289,20 +432,33 @@ export function useMultiviewState(
     },
     []
   )
+  const resizeTrack = useCallback((args: ApplyResizeTrackArgs) => {
+    setState((s) => applyResizeTrack(s, args))
+  }, [])
+  const resetTrackSizes = useCallback((layout?: MultiviewLayout) => {
+    setState((s) => applyResetTrackSizes(s, layout ?? s.layout))
+  }, [])
 
   const focusedChatId = state.paneChatIds[state.focusedPaneIndex] ?? null
+  const tracks = useMemo(
+    () => getLayoutTracks(state.trackSizes, state.layout),
+    [state.trackSizes, state.layout]
+  )
 
   return {
     ...state,
     focusedChatId,
     isMultiview: state.layout !== 'single',
     paneRefs,
+    tracks,
     setLayout,
     setPaneChat,
     setFocusedPane,
     focusPane,
     closePane,
     assignToNextPane,
-    openInNewPane
+    openInNewPane,
+    resizeTrack,
+    resetTrackSizes
   }
 }

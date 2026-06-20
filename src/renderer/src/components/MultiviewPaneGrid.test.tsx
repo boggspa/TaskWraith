@@ -162,4 +162,113 @@ describe('MultiviewPaneGrid', () => {
     )
     expect(out).not.toContain('multiview-pane-close')
   })
+
+  it('un-dragged split layout renders byte-identical to today (no fraction override)', () => {
+    // Without columnFractions/rowFractions the grid must apply the spec strings
+    // verbatim, so existing renders are unchanged.
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="quad"
+        paneChatIds={['a', 'b', 'c', 'd']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    expect(out).toContain('grid-template-columns:1fr 1fr')
+    expect(out).toContain('grid-template-rows:1fr 1fr')
+    // No gutters without an onResizeTrack handler.
+    expect(out).not.toContain('multiview-gutter')
+  })
+
+  it('applies stateful track fractions over the spec when provided', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        paneChatIds={['a', 'b']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+        columnFractions={[1.2, 0.8]}
+        rowFractions={[1]}
+      />
+    )
+    expect(out).toContain('grid-template-columns:1.2fr 0.8fr')
+  })
+
+  it('renders draggable gutters for a split layout when resizable', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        paneChatIds={['a', 'b']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+        columnFractions={[1, 1]}
+        rowFractions={[1]}
+        onResizeTrack={() => {}}
+        onResetTracks={() => {}}
+      />
+    )
+    // vertical-2 has exactly one internal column boundary -> one column gutter.
+    expect((out.match(/multiview-gutter /g) || []).length).toBe(1)
+    expect(out).toContain('multiview-gutter-column')
+    expect(out).toContain('role="separator"')
+    expect(out).toContain('grid-column:2')
+  })
+
+  it('renders no gutters in the single layout (fragment passthrough)', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="single"
+        paneChatIds={['a']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+        columnFractions={[1]}
+        rowFractions={[1]}
+        onResizeTrack={() => {}}
+        onResetTracks={() => {}}
+      />
+    )
+    expect(out).toBe('<div id="focused-cell"></div>')
+    expect(out).not.toContain('multiview-gutter')
+  })
+
+  it('renders no gutters when onResizeTrack is absent (non-resizable grid)', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="quad"
+        paneChatIds={['a', 'b', 'c', 'd']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+        columnFractions={[1, 1]}
+        rowFractions={[1, 1]}
+      />
+    )
+    expect(out).not.toContain('multiview-gutter')
+  })
+
+  it('renders area-aware partial gutters for the 1-left-2-right layout', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="one-left-two-right"
+        paneChatIds={['a', 'b', 'c']}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+        columnFractions={[1, 1]}
+        rowFractions={[1, 1]}
+        onResizeTrack={() => {}}
+      />
+    )
+    // Full-height column gutter + a row gutter confined to the right column.
+    expect((out.match(/multiview-gutter-column/g) || []).length).toBe(1)
+    expect((out.match(/multiview-gutter-row/g) || []).length).toBe(1)
+    // The column gutter spans both rows; the row gutter only the right column.
+    // (Component sets gridColumn before gridRow, so that's the serialised order.)
+    expect(out).toMatch(/grid-column:2;grid-row:1 \/ 3/)
+    expect(out).toMatch(/grid-column:2 \/ 3;grid-row:2/)
+  })
 })

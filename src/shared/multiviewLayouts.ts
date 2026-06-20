@@ -157,3 +157,152 @@ export function clampFocusedPaneIndex(index: number, layout: MultiviewLayout): n
   if (!Number.isInteger(index) || index < 0) return 0
   return index >= count ? count - 1 : index
 }
+
+/* ============================================================
+   Gutter geometry — pure, node-free helpers used by the pane
+   grid to draw draggable dividers and by useMultiviewState to
+   seed/clamp per-layout track fractions. All derived from the
+   layout spec's grid-template-areas / -columns / -rows strings.
+   ============================================================ */
+
+/**
+ * Parse a CSS grid-template-areas value into a row-major matrix of area names.
+ * `'"a b" "a c"'` -> `[['a','b'],['a','c']]`. Tolerant of extra whitespace.
+ * Returns `[]` for an empty/unparseable value. Assumes a rectangular grid
+ * (every row has the same column count), which all catalogue layouts satisfy.
+ */
+export function parseGridAreaMatrix(gridTemplateAreas: string): string[][] {
+  const rows = gridTemplateAreas.match(/"([^"]*)"/g)
+  if (!rows) return []
+  return rows
+    .map((row) => row.slice(1, -1).trim().split(/\s+/).filter(Boolean))
+    .filter((cells) => cells.length > 0)
+}
+
+/**
+ * Split a single CSS track list (e.g. `'1fr 1fr'` or `'2fr 1fr'`) into numeric
+ * fractions. Only plain `<number>fr` (or a bare number) tracks are understood;
+ * anything else yields `null` so callers fall back to the literal spec string
+ * rather than guessing. The catalogue only ever uses `fr` tracks.
+ */
+export function parseTrackFractions(trackList: string): number[] | null {
+  const parts = trackList.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return null
+  const fractions: number[] = []
+  for (const part of parts) {
+    const match = /^(\d+(?:\.\d+)?)fr$/.exec(part) ?? /^(\d+(?:\.\d+)?)$/.exec(part)
+    if (!match) return null
+    fractions.push(Number(match[1]))
+  }
+  return fractions
+}
+
+/** Render an array of fractions back into a CSS `fr` track list. */
+export function fractionsToTrackList(fractions: ReadonlyArray<number>): string {
+  return fractions.map((f) => `${f}fr`).join(' ')
+}
+
+/**
+ * The default column / row fractions for a layout, parsed from its spec. Used
+ * as the reset target and the initial stateful value. Falls back to N equal
+ * tracks if the spec string isn't a clean `fr` list.
+ */
+export function defaultColumnFractions(layout: MultiviewLayout): number[] {
+  const spec = MULTIVIEW_LAYOUTS[layout]
+  const matrix = parseGridAreaMatrix(spec.gridTemplateAreas)
+  const cols = matrix[0]?.length ?? 1
+  return parseTrackFractions(spec.gridTemplateColumns) ?? new Array(cols).fill(1)
+}
+
+export function defaultRowFractions(layout: MultiviewLayout): number[] {
+  const spec = MULTIVIEW_LAYOUTS[layout]
+  const matrix = parseGridAreaMatrix(spec.gridTemplateAreas)
+  const rows = matrix.length || 1
+  return parseTrackFractions(spec.gridTemplateRows) ?? new Array(rows).fill(1)
+}
+
+export type MultiviewGutterOrientation = 'column' | 'row'
+
+/**
+ * One draggable divider segment. `trackIndex` is the index of the track BEFORE
+ * the boundary (so a column gutter resizes columns[trackIndex] and
+ * columns[trackIndex+1]). `gridColumn` / `gridRow` are CSS grid-line ranges
+ * (1-based, `start / end` form) that place the segment exactly on the boundary
+ * and span only the cells where it separates two different areas.
+ */
+export interface MultiviewGutterSegment {
+  orientation: MultiviewGutterOrientation
+  /** Index of the track immediately before the boundary line. */
+  trackIndex: number
+  /** Stable key (orientation + boundary + segment span). */
+  key: string
+  /** CSS `grid-column` value placing the segment across the boundary. */
+  gridColumn: string
+  /** CSS `grid-row` value placing the segment across the boundary. */
+  gridRow: string
+}
+
+/**
+ * Compute the draggable gutter segments for a layout from its area matrix.
+ *
+ * For every internal vertical line (between column c and c+1) we walk the rows
+ * and emit a gutter only across the maximal contiguous run(s) of rows where the
+ * left and right cells belong to DIFFERENT areas — so an area that spans the
+ * line (e.g. `a` in `'"a b" "a c"'`) produces no gutter there, while the broken
+ * line on the right yields a segment spanning only its rows. Horizontal lines
+ * are handled symmetrically across columns. A line that never separates two
+ * different areas (an area spans it everywhere) yields no segment and stays
+ * fixed.
+ */
+export function computeGutterSegments(layout: MultiviewLayout): MultiviewGutterSegment[] {
+  const spec = MULTIVIEW_LAYOUTS[layout]
+  const matrix = parseGridAreaMatrix(spec.gridTemplateAreas)
+  const rowCount = matrix.length
+  const colCount = matrix[0]?.length ?? 0
+  if (rowCount === 0 || colCount === 0) return []
+
+  const segments: MultiviewGutterSegment[] = []
+
+  // Vertical lines: between column c (0-based) and c+1, for c in [0, colCount-2].
+  for (let c = 0; c < colCount - 1; c += 1) {
+    let runStart = -1
+    for (let r = 0; r <= rowCount; r += 1) {
+      const separates = r < rowCount && matrix[r][c] !== matrix[r][c + 1]
+      if (separates && runStart === -1) {
+        runStart = r
+      } else if (!separates && runStart !== -1) {
+        // Close the run [runStart, r). Grid lines are 1-based.
+        segments.push({
+          orientation: 'column',
+          trackIndex: c,
+          key: `col-${c}-rows-${runStart}-${r}`,
+          gridColumn: `${c + 2}`,
+          gridRow: `${runStart + 1} / ${r + 1}`
+        })
+        runStart = -1
+      }
+    }
+  }
+
+  // Horizontal lines: between row r and r+1, for r in [0, rowCount-2].
+  for (let r = 0; r < rowCount - 1; r += 1) {
+    let runStart = -1
+    for (let c = 0; c <= colCount; c += 1) {
+      const separates = c < colCount && matrix[r][c] !== matrix[r + 1][c]
+      if (separates && runStart === -1) {
+        runStart = c
+      } else if (!separates && runStart !== -1) {
+        segments.push({
+          orientation: 'row',
+          trackIndex: r,
+          key: `row-${r}-cols-${runStart}-${c}`,
+          gridRow: `${r + 2}`,
+          gridColumn: `${runStart + 1} / ${c + 1}`
+        })
+        runStart = -1
+      }
+    }
+  }
+
+  return segments
+}

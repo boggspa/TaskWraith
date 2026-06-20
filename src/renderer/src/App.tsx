@@ -18855,6 +18855,10 @@ function App(): React.JSX.Element {
               paneChatIds={multiview.paneChatIds}
               focusedPaneIndex={multiview.focusedPaneIndex}
               onClosePane={multiview.closePane}
+              columnFractions={multiview.tracks.columns}
+              rowFractions={multiview.tracks.rows}
+              onResizeTrack={multiview.resizeTrack}
+              onResetTracks={multiview.resetTrackSizes}
               ambientBackdrop={
                 isMultiviewSplit ? (
                   // ONE shared environment behind ALL panes (SPLIT only — the grid

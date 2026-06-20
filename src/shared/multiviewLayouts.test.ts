@@ -6,10 +6,16 @@ import {
   MULTIVIEW_LAYOUT_IDS,
   clampFocusedPaneIndex,
   clampPaneChatIds,
+  computeGutterSegments,
+  defaultColumnFractions,
+  defaultRowFractions,
+  fractionsToTrackList,
   getMultiviewLayoutSpec,
   isMultiviewLayout,
   normalizeMultiviewLayout,
   paneCountForLayout,
+  parseGridAreaMatrix,
+  parseTrackFractions,
   type MultiviewLayout
 } from './multiviewLayouts'
 
@@ -140,6 +146,135 @@ describe('multiviewLayouts helpers', () => {
     const ids: MultiviewLayout[] = [...MULTIVIEW_LAYOUT_IDS]
     for (const id of ids) {
       expect(getMultiviewLayoutSpec(id)).toBe(MULTIVIEW_LAYOUTS[id])
+    }
+  })
+})
+
+describe('grid parsing helpers', () => {
+  it('parseGridAreaMatrix builds a row-major matrix', () => {
+    expect(parseGridAreaMatrix('"a b" "a c"')).toEqual([
+      ['a', 'b'],
+      ['a', 'c']
+    ])
+    expect(parseGridAreaMatrix('"a"')).toEqual([['a']])
+    expect(parseGridAreaMatrix('   ')).toEqual([])
+  })
+
+  it('parseTrackFractions reads fr (and bare number) tracks, rejecting others', () => {
+    expect(parseTrackFractions('1fr 1fr')).toEqual([1, 1])
+    expect(parseTrackFractions('2fr 1fr')).toEqual([2, 1])
+    expect(parseTrackFractions('1.5fr 0.5fr')).toEqual([1.5, 0.5])
+    expect(parseTrackFractions('2 1')).toEqual([2, 1])
+    expect(parseTrackFractions('1fr 200px')).toBeNull()
+    expect(parseTrackFractions('')).toBeNull()
+  })
+
+  it('fractionsToTrackList serialises back to a fr list', () => {
+    expect(fractionsToTrackList([1, 1])).toBe('1fr 1fr')
+    expect(fractionsToTrackList([1.2, 0.8])).toBe('1.2fr 0.8fr')
+  })
+
+  it('default*Fractions derive equal tracks from each spec', () => {
+    expect(defaultColumnFractions('vertical-2')).toEqual([1, 1])
+    expect(defaultRowFractions('vertical-2')).toEqual([1])
+    expect(defaultColumnFractions('horizontal-2')).toEqual([1])
+    expect(defaultRowFractions('horizontal-2')).toEqual([1, 1])
+    expect(defaultColumnFractions('quad')).toEqual([1, 1])
+    expect(defaultRowFractions('quad')).toEqual([1, 1])
+  })
+})
+
+describe('computeGutterSegments', () => {
+  it('single layout has no gutters', () => {
+    expect(computeGutterSegments('single')).toEqual([])
+  })
+
+  it('vertical-2: one full-height column gutter, no row gutters', () => {
+    const segs = computeGutterSegments('vertical-2')
+    expect(segs).toHaveLength(1)
+    expect(segs[0]).toMatchObject({
+      orientation: 'column',
+      trackIndex: 0,
+      gridColumn: '2',
+      gridRow: '1 / 2'
+    })
+  })
+
+  it('horizontal-2: one full-width row gutter, no column gutters', () => {
+    const segs = computeGutterSegments('horizontal-2')
+    expect(segs).toHaveLength(1)
+    expect(segs[0]).toMatchObject({
+      orientation: 'row',
+      trackIndex: 0,
+      gridRow: '2',
+      gridColumn: '1 / 2'
+    })
+  })
+
+  it('quad: a full-height column gutter and a full-width row gutter', () => {
+    const segs = computeGutterSegments('quad')
+    const cols = segs.filter((s) => s.orientation === 'column')
+    const rows = segs.filter((s) => s.orientation === 'row')
+    expect(cols).toHaveLength(1)
+    expect(cols[0]).toMatchObject({ trackIndex: 0, gridColumn: '2', gridRow: '1 / 3' })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ trackIndex: 0, gridRow: '2', gridColumn: '1 / 3' })
+  })
+
+  it('one-left-two-right ("a b" / "a c"): full-height col gutter; row gutter only in the right column', () => {
+    const segs = computeGutterSegments('one-left-two-right')
+    const cols = segs.filter((s) => s.orientation === 'column')
+    const rows = segs.filter((s) => s.orientation === 'row')
+    // Vertical line separates a|b (row1) and a|c (row2) -> full height.
+    expect(cols).toHaveLength(1)
+    expect(cols[0]).toMatchObject({ trackIndex: 0, gridColumn: '2', gridRow: '1 / 3' })
+    // Horizontal line: col1 is a/a (same -> no gutter), col2 is b/c (diff).
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ trackIndex: 0, gridRow: '2', gridColumn: '2 / 3' })
+  })
+
+  it('two-left-one-right ("a c" / "b c"): full-height col gutter; row gutter only in the left column', () => {
+    const segs = computeGutterSegments('two-left-one-right')
+    const cols = segs.filter((s) => s.orientation === 'column')
+    const rows = segs.filter((s) => s.orientation === 'row')
+    expect(cols).toHaveLength(1)
+    expect(cols[0]).toMatchObject({ trackIndex: 0, gridColumn: '2', gridRow: '1 / 3' })
+    // Horizontal line: col1 a/b (diff), col2 c/c (same) -> gutter spans only col1.
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ trackIndex: 0, gridRow: '2', gridColumn: '1 / 2' })
+  })
+
+  it('two-top-one-bottom ("a b" / "c c"): full-width row gutter; col gutter only in the top row', () => {
+    const segs = computeGutterSegments('two-top-one-bottom')
+    const cols = segs.filter((s) => s.orientation === 'column')
+    const rows = segs.filter((s) => s.orientation === 'row')
+    // Vertical line: row1 a|b (diff), row2 c|c (same) -> gutter spans only row1.
+    expect(cols).toHaveLength(1)
+    expect(cols[0]).toMatchObject({ trackIndex: 0, gridColumn: '2', gridRow: '1 / 2' })
+    // Horizontal line: col1 a/c (diff), col2 b/c (diff) -> full width.
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ trackIndex: 0, gridRow: '2', gridColumn: '1 / 3' })
+  })
+
+  it('one-top-two-bottom ("a a" / "b c"): full-width row gutter; col gutter only in the bottom row', () => {
+    const segs = computeGutterSegments('one-top-two-bottom')
+    const cols = segs.filter((s) => s.orientation === 'column')
+    const rows = segs.filter((s) => s.orientation === 'row')
+    // Vertical line: row1 a|a (same), row2 b|c (diff) -> gutter spans only row2.
+    expect(cols).toHaveLength(1)
+    expect(cols[0]).toMatchObject({ trackIndex: 0, gridColumn: '2', gridRow: '2 / 3' })
+    // Horizontal line: col1 a/b (diff), col2 a/c (diff) -> full width.
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ trackIndex: 0, gridRow: '2', gridColumn: '1 / 3' })
+  })
+
+  it('every split layout produces at least one gutter and unique segment keys', () => {
+    for (const id of MULTIVIEW_LAYOUT_IDS) {
+      if (id === 'single') continue
+      const segs = computeGutterSegments(id)
+      expect(segs.length, `${id} should have gutters`).toBeGreaterThan(0)
+      const keys = segs.map((s) => s.key)
+      expect(new Set(keys).size, `${id} segment keys must be unique`).toBe(keys.length)
     }
   })
 })

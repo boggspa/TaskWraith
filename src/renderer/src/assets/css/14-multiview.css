@@ -372,6 +372,82 @@
   }
 }
 
+/* ============================================================
+   Resizable gutters — draggable dividers on internal track
+   boundaries (geometry computed in multiviewLayouts.ts). A gutter
+   is placed on the track AFTER its boundary line and translated
+   back by half the 8px grid gap so its hit area straddles the gap.
+   It sits above the ambient backdrop (z-index:0) and level with the
+   cells (z-index:2 > the cells' z-index:1) so the handle is always
+   grabbable; the cells themselves keep full pointer access because
+   the gutter only covers the ~6px gap strip, not the cell bodies.
+   ============================================================ */
+.multiview-gutter {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  /* Keep the drag smooth — never let the browser start a scroll/zoom. */
+  touch-action: none;
+  background: transparent;
+}
+
+/* Vertical divider between two columns: the segment is placed on the track
+   AFTER its boundary line and stretched to that track's row-span; pin it to the
+   left edge (the line position, just past the gap) and pull left by half the
+   8px gap + half the 6px hit width so the strip is centred on the gap. */
+.multiview-gutter-column {
+  align-self: stretch;
+  justify-self: start;
+  width: 6px;
+  margin-left: -7px; /* -(gap/2 + width/2) = -(4 + 3) */
+  cursor: col-resize;
+}
+
+/* Horizontal divider between two rows: same idea on the vertical axis. */
+.multiview-gutter-row {
+  justify-self: stretch;
+  align-self: start;
+  height: 6px;
+  margin-top: -7px;
+  cursor: row-resize;
+}
+
+/* The visible affordance — a faint hairline that brightens on hover/drag.
+   Pointer events live on the parent .multiview-gutter; the handle is decor. */
+.multiview-gutter-handle {
+  pointer-events: none;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-border) 60%, transparent);
+  opacity: 0;
+  transition:
+    opacity 0.12s ease,
+    background 0.12s ease;
+}
+
+.multiview-gutter-column .multiview-gutter-handle {
+  width: 2px;
+  height: min(46px, 60%);
+}
+
+.multiview-gutter-row .multiview-gutter-handle {
+  height: 2px;
+  width: min(46px, 60%);
+}
+
+.multiview-gutter:hover .multiview-gutter-handle,
+.multiview-gutter:active .multiview-gutter-handle,
+.multiview-gutter:focus-visible .multiview-gutter-handle {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.multiview-gutter:active .multiview-gutter-handle {
+  background: var(--accent);
+}
+
 /* The single sidebar / composer / Copy / Goal all act on the focused
    pane — make it obvious which one that is. */
 .multiview-cell-focused {
