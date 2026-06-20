@@ -9198,6 +9198,10 @@ button.diff-file-row {
   background: color-mix(in srgb, var(--surface-elevated, var(--surface-base)) 96%, transparent);
   box-shadow: 0 12px 32px color-mix(in srgb, var(--text-primary) 16%, transparent);
   -webkit-app-region: no-drag;
+  /* Frost for parity with the other floating transcript/composer menus. */
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  isolation: isolate;
 }
 
 .composer-textarea-context-menu-heading {

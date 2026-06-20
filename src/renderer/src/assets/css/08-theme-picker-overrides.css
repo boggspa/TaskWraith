@@ -322,6 +322,30 @@
   font-size: var(--font-size-xs);
   max-height: 360px;
   overflow-y: auto;
+  /* Frost the transcript behind the popover so text stays legible — the one
+     property this menu lacked vs the working .composer-combined-picker-popover. */
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  isolation: isolate;
+}
+/* Light themes: floor to an opaque surface token + a soft light shadow (mirrors
+   the picker's light variant). backdrop-filter inherits from the base rule. */
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
+  .agent-mention-menu {
+  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  border-color: var(--surface-border);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  color: var(--surface-text);
+}
+/* native_glass dark: --panel-elevated-bg collapses to ~0.02 alpha (see-through
+   even blurred) — floor to a dark surface token so the frost still reads. */
+[data-appearance='native_glass']:not(
+    :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
+  )
+  .agent-mention-menu {
+  background: color-mix(in srgb, var(--surface-2) 64%, transparent);
 }
 .agent-mention-menu-list {
   list-style: none;
@@ -404,6 +428,30 @@
   font-size: var(--font-size-xs);
   max-height: 360px;
   overflow-y: auto;
+  /* Frost the transcript behind the popover so text stays legible — the one
+     property this menu lacked vs the working .composer-combined-picker-popover. */
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  isolation: isolate;
+}
+/* Light themes: floor to an opaque surface token + a soft light shadow (mirrors
+   the picker's light variant). backdrop-filter inherits from the base rule. */
+:is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
+  .composer-slash-menu {
+  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  border-color: var(--surface-border);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  color: var(--surface-text);
+}
+/* native_glass dark: --panel-elevated-bg collapses to ~0.02 alpha (see-through
+   even blurred) — floor to a dark surface token so the frost still reads. */
+[data-appearance='native_glass']:not(
+    :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
+  )
+  .composer-slash-menu {
+  background: color-mix(in srgb, var(--surface-2) 64%, transparent);
 }
 .composer-slash-menu-list {
   display: flex;

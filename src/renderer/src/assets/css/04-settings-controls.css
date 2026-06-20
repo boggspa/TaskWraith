@@ -4924,6 +4924,29 @@ input:disabled, select:disabled, textarea:disabled {
   overflow: hidden;
 }
 
+/* Command palette (the .composer-discovery-card.command-palette-card variant)
+   floats over the transcript — frost it so text behind stays legible. Scoped to
+   the modifier so the standalone discovery card is untouched. */
+.command-palette-card {
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  isolation: isolate;
+}
+/* native_glass floors: --app-bg-elevated collapses to ~0.04-0.06 alpha there,
+   see-through even blurred — floor to an opaque surface token. */
+[data-appearance='native_glass']:is(
+    [data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage']
+  )
+  .command-palette-card {
+  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+}
+[data-appearance='native_glass']:not(
+    :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
+  )
+  .command-palette-card {
+  background: color-mix(in srgb, var(--surface-2) 64%, transparent);
+}
+
 .composer-discovery-header {
   display: flex;
   align-items: flex-start;
