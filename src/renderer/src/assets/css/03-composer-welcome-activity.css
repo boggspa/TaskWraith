@@ -9342,3 +9342,169 @@ button.diff-file-row {
   opacity: 1;
   color: var(--text-primary, inherit);
 }
+
+/* ── Reusable notification zone ───────────────────────────────────────────
+   App/dev notices (provider deprecation/sunset, new provider, models
+   added/removed, shipped features) shown on the welcome screen + first-launch
+   sheet. One card at a time; >1 rotates with the welcome-heatmap swipe effect.
+   Deprecation/sunset is red (--danger); every other kind is a theme-default
+   card with a shiny accent rim. Replaces the bespoke .gemini-retirement-banner.
+   See components/NotificationZone.tsx + shared/appNotifications.ts. */
+.notification-zone {
+  width: 100%;
+  max-width: 640px;
+  margin: 20px auto;
+  position: relative;
+}
+.notification-zone--rotating {
+  position: relative;
+  overflow: hidden;
+}
+.notification-zone-pane {
+  min-width: 0;
+  width: 100%;
+}
+.notification-zone-pane.is-active,
+.notification-zone-pane.is-incoming {
+  position: relative;
+  z-index: 2;
+}
+.notification-zone-pane.is-outgoing {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.notification-zone-pane.is-incoming.from-left {
+  animation: notification-zone-swipe-in-left 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  will-change: transform;
+}
+.notification-zone-pane.is-incoming.from-right {
+  animation-name: notification-zone-swipe-in-right;
+}
+.notification-zone-pane.is-outgoing.to-right {
+  animation: notification-zone-swipe-out-right 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  will-change: transform;
+}
+.notification-zone-pane.is-outgoing.to-left {
+  animation-name: notification-zone-swipe-out-left;
+}
+/* Mirrors the welcome-heatmap swipe keyframes (02-transcript-messages-fx.css)
+   for a consistent feel; kept independent so neither effect couples to the other. */
+@keyframes notification-zone-swipe-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes notification-zone-swipe-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes notification-zone-swipe-out-right {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes notification-zone-swipe-out-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+[data-reduce-motion="true"] .notification-zone-pane.is-incoming,
+[data-reduce-motion="true"] .notification-zone-pane.is-outgoing {
+  animation: none;
+}
+
+.notification-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  border: 1px solid var(--panel-border, rgba(127, 127, 127, 0.18));
+  background: var(--panel-bg, rgba(127, 127, 127, 0.06));
+  color: var(--text-secondary, inherit);
+  /* Shiny accent rim — same idiom as sidebar active items / diff rows, so it is
+     contrast-tested across every theme. */
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, var(--panel-border)),
+    inset 0 0 12px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+/* Red variant — deprecation/sunset only. */
+.notification-card--danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, var(--panel-bg, rgba(127, 127, 127, 0.06)));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.notification-card-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  font-size: 14px;
+  color: var(--accent);
+}
+.notification-card--danger .notification-card-icon {
+  color: var(--danger);
+}
+.notification-card-text {
+  flex: 1 1 auto;
+  margin: 0;
+}
+.notification-card-text strong {
+  color: var(--text-primary, inherit);
+}
+.notification-card-dismiss {
+  flex: 0 0 auto;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, currentColor);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.notification-card-dismiss:hover {
+  opacity: 1;
+  color: var(--text-primary, inherit);
+}
+
+.notification-zone-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.notification-zone-dot {
+  appearance: none;
+  border: none;
+  padding: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-primary) 22%, transparent);
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
+}
+.notification-zone-dot.is-active {
+  background: var(--accent);
+  transform: scale(1.25);
+}
