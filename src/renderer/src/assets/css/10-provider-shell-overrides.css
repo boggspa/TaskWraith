@@ -2023,8 +2023,8 @@
 .composer-combined-picker-popover.shell-grok .composer-combined-picker-row:hover,
 .composer-combined-picker-popover.shell-grok .composer-combined-picker-row.is-highlighted,
 .composer-workspace-popover.shell-grok .composer-workspace-row:hover,
-.agent-mention-menu.shell-grok .agent-mention-item.is-active,
-.composer-slash-menu.shell-grok .composer-slash-item.is-active {
+.agent-mention-menu.shell-grok .agent-mention-menu-item.is-highlighted,
+.composer-slash-menu.shell-grok .composer-slash-menu-item.is-highlighted {
   background: var(--grok-hover) !important;
 }
 
@@ -2852,8 +2852,8 @@
 .composer-combined-picker-popover.shell-cursor .composer-combined-picker-row:hover,
 .composer-combined-picker-popover.shell-cursor .composer-combined-picker-row.is-highlighted,
 .composer-workspace-popover.shell-cursor .composer-workspace-row:hover,
-.agent-mention-menu.shell-cursor .agent-mention-item.is-active,
-.composer-slash-menu.shell-cursor .composer-slash-item.is-active {
+.agent-mention-menu.shell-cursor .agent-mention-menu-item.is-highlighted,
+.composer-slash-menu.shell-cursor .composer-slash-menu-item.is-highlighted {
   background: var(--cursor-shell-hover) !important;
 }
 
