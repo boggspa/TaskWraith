@@ -458,7 +458,7 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     ])
   })
 
-  it('repairs stale Grok/Cursor Gemini fallback model ids and merges them into provider defaults', () => {
+  it('repairs stale Grok/Cursor Gemini fallback model ids into current provider defaults', () => {
     const records: UsageRecord[] = [
       baseRecord({
         id: 'grok-stale',
@@ -502,7 +502,8 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
 
     expect(data.modelBreakdown.map((m) => [m.provider, m.model, m.label, m.totalTokens])).toEqual([
       ['cursor', 'composer-2.5-fast', 'Composer 2.5 Fast', 4_500],
-      ['grok', 'grok-build', 'Grok Build 0.1', 450]
+      ['grok', 'grok-build', 'Grok Build 0.1', 300],
+      ['grok', 'grok-composer-2.5-fast', 'Grok Composer 2.5 Fast', 150]
     ])
   })
 
