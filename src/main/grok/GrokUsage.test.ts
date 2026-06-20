@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { parseGrokUsage, stripGrokAnsi, probeGrokUsage, type GrokPtyLike } from './GrokUsage'
+import {
+  estimateProjectedTokenUsage,
+  parseGrokUsage,
+  stripGrokAnsi,
+  probeGrokUsage,
+  type GrokPtyLike
+} from './GrokUsage'
 
 // ── Pure parser (the fully-tested core; everything else is impure PTY glue) ──
 
@@ -144,6 +150,16 @@ describe('stripGrokAnsi', () => {
 
   it('converts carriage returns to newlines so line scans survive TUI redraws', () => {
     expect(stripGrokAnsi('a\rb')).toBe('a\nb')
+  })
+})
+
+describe('estimateProjectedTokenUsage', () => {
+  it('uses the current Grok CLI default projected Composer rate', () => {
+    const usage = estimateProjectedTokenUsage('a'.repeat(4_000_000), 'b'.repeat(4_000_000))
+
+    expect(usage.input_tokens).toBe(1_000_000)
+    expect(usage.output_tokens).toBe(1_000_000)
+    expect(usage.total_cost_usd).toBe(18)
   })
 })
 

@@ -583,9 +583,7 @@ function getComposerPreviewMeta(style: ComposerStyle): {
     case 'grok':
       return {
         providerLabel: 'Grok',
-        // 1.0.6 — the live Grok composer shows the model as "Grok Build 0.1"
-        // (Fast is a separate mode toggle, not the model name).
-        modelLabel: 'Grok Build 0.1',
+        modelLabel: 'Grok Composer 2.5 Fast',
         permissionLabel: 'Default Approval',
         placeholder: 'What do you want to know?'
       }

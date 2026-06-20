@@ -3240,7 +3240,7 @@ function App(): React.JSX.Element {
     if (provider === 'codex') return codexModels[0]?.id || CODEX_DEFAULT_MODEL
     if (provider === 'claude') return 'default'
     if (provider === 'kimi') return KIMI_DEFAULT_MODEL
-    if (provider === 'grok') return 'grok-build'
+    if (provider === 'grok') return 'grok-composer-2.5-fast'
     if (provider === 'cursor') return 'composer-2.5-fast'
     if (provider === 'ollama') {
       return agentModelsByProvider.ollama?.find((model) => model.isDefault)?.id ||
@@ -3259,9 +3259,9 @@ function App(): React.JSX.Element {
     if (provider === 'codex') return isCodexModelId(modelId)
     if (provider === 'claude') return isClaudeModelId(modelId)
     if (provider === 'kimi') return isKimiModelId(modelId)
-    // Grok (gated, read-only): only a genuine grok* model id is valid — never a
-    // model carried over from another provider. A legacy 'cli-default' coerces
-    // to the default (grok-build) so the picker shows "Grok Build 0.1", not blank.
+    // Grok (gated): only a genuine grok* model id is valid — never a model
+    // carried over from another provider. A legacy 'cli-default' coerces to the
+    // provider default so the picker shows "Grok Composer 2.5 Fast", not blank.
     if (provider === 'grok') return modelId.startsWith('grok')
     if (provider === 'cursor') return modelId.startsWith('composer-')
     if (provider === 'ollama') return isOllamaModelId(modelId)

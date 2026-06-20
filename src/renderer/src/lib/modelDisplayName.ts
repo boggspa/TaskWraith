@@ -87,6 +87,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'kimi-k2-0905-preview': 'Kimi K2 (0905 Preview)',
 
   // ── Grok ─────────────────────────────────────────────────
+  'grok-composer-2.5-fast': 'Grok Composer 2.5 Fast',
   'grok-build': 'Grok Build 0.1',
   'grok-build-0.1': 'Grok Build 0.1',
 
@@ -142,8 +143,22 @@ export function canonicalModelIdForProvider(
   const trimmed = String(modelId || '').trim()
   if (!trimmed) return ''
   const key = trimmed.toLowerCase()
-  if (provider === 'grok' && STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) {
-    return 'grok-build'
+  if (provider === 'grok') {
+    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'grok-composer-2.5-fast'
+    if (!key || key === 'default' || key === 'cli-default' || key === 'grok') {
+      return 'grok-composer-2.5-fast'
+    }
+    if (
+      key === 'grok composer 2.5 fast' ||
+      key === 'grok-composer-2.5-fast' ||
+      key === 'composer 2.5 fast' ||
+      key === 'composer-2.5-fast'
+    ) {
+      return 'grok-composer-2.5-fast'
+    }
+    if (key === 'grok build' || key === 'grok build 0.1' || key === 'grok-build-0.1') {
+      return 'grok-build'
+    }
   }
   if (provider === 'cursor') {
     if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'composer-2.5-fast'

@@ -105,9 +105,10 @@ const KIMI_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code' }
 ]
 
-// Grok — mirrors App.tsx GROK_DEFAULT_MODELS. `grok-build` is the real CLI id =
-// Grok Build 0.1 (NOT "Grok 4.3", which the subscription CLI doesn't expose).
+// Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Keep Grok Composer separate from
+// Cursor's `composer-2.5-fast` because it dispatches through Grok Build CLI auth.
 const GROK_MODELS: CombinedModelPickerModelOption[] = [
+  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' },
   { id: 'grok-build', label: 'Grok Build 0.1' }
 ]
 
@@ -206,8 +207,8 @@ export function getDefaultEnsembleParticipantConfig(
     case 'grok':
       // Grok stays read-only as an ensemble member until G5 (tool mediation
       // via TaskWraith MCP + approval ledger) lands write-capable runs. 'cli-default'
-      // resolves to grok-build at dispatch (buildGrokCliArgs only forwards a
-      // genuine grok* id, so cli-default → Grok's own default).
+      // resolves to Grok's CLI default at dispatch (buildGrokCliArgs only
+      // forwards a genuine grok* id, so cli-default stays provider-native).
       return {
         model: 'cli-default',
         permissionPresetId: 'read_only',
@@ -333,7 +334,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         reasoningOptions: GROK_REASONING,
         defaultReasoning: 'medium',
         fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'grok-build'
+        defaultModelId: 'grok-composer-2.5-fast'
       }
     case 'cursor':
       return {

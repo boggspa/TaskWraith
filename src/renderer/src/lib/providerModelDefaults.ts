@@ -146,14 +146,12 @@ const GEMINI_DEFAULT_MODELS = [
   { id: 'flash', label: 'Flash' },
   { id: 'flash-lite', label: 'Flash Lite' }
 ] satisfies CodexModelOption[]
-// Grok — `grok-build` is the real CLI model id (`grok models` → default). It is
-// Grok Build 0.1 (xAI's agentic-coding model: 256K ctx, $1/$2 per 1M) — NOT
-// "Grok 4.3", a separate xAI API model the subscription Grok Build CLI doesn't
-// expose. (The TUI `/model` confirms "Grok Build (current)".) grok-4.3 /
-// grok-code-fast can be added here if/when `grok -m` exposes them under the
-// cached SuperGrok auth.
+// Grok — keep Grok Build CLI ids provider-native. `grok models` on 0.2.59
+// exposes Composer 2.5 Fast as `grok-composer-2.5-fast` and reports it as the
+// CLI default; Cursor's `composer-2.5-fast` remains a separate provider route.
 const GROK_DEFAULT_MODELS = [
-  { id: 'grok-build', label: 'Grok Build 0.1', isDefault: true }
+  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast', isDefault: true },
+  { id: 'grok-build', label: 'Grok Build 0.1' }
 ] satisfies CodexModelOption[]
 // Cursor (Composer 2.5). Two selectable variants = the model + its Fast mode
 // (the Fast toggle modelled as a second model id, like Cursor's own picker).

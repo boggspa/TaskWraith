@@ -31,7 +31,9 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Kimi
   'kimi-k2.7-code': 256_000,
   'kimi-k2.6': 256_000,
-  // Grok — grok-build (the CLI default) is the 256K build model; grok-4.3 is 1M.
+  // Grok — Composer 2.5 Fast is selected through Grok Build CLI; grok-build is
+  // the 256K build model and grok-4.3 is the 1M API model.
+  'grok-composer-2.5-fast': 200_000,
   'grok-build': 256_000,
   'grok-4.3': 1_000_000,
   // Ollama local defaults. qwen3:4b advertises a large context in Ollama

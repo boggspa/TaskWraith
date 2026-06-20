@@ -53,7 +53,10 @@ describe('shortModelName', () => {
     expect(shortModelName('cursor', '', 'composer-2.5')).toBe('Composer 2.5')
   })
 
-  it('renders the Grok CLI model as Grok Build 0.1', () => {
+  it('renders Grok CLI model ids as Grok model labels', () => {
+    expect(shortModelName('grok', '', 'grok-composer-2.5-fast')).toBe(
+      'Grok Composer 2.5 Fast'
+    )
     expect(shortModelName('grok', '', 'grok-build')).toBe('Grok Build 0.1')
   })
 
@@ -82,7 +85,7 @@ describe('shortModelName', () => {
   it("resolves the cli-default sentinel to each provider's real default", () => {
     // Kimi + Grok dispatch with the bare sentinel → show their actual default.
     expect(shortModelName('kimi', '', 'cli-default')).toBe('K2.7 Code')
-    expect(shortModelName('grok', '', 'cli-default')).toBe('Grok Build 0.1')
+    expect(shortModelName('grok', '', 'cli-default')).toBe('Grok Composer 2.5 Fast')
     // Providers that resolve a concrete id before dispatch keep the neutral label.
     expect(shortModelName('codex', '', 'cli-default')).toBe('CLI Default')
     expect(shortModelName('claude', '', 'cli-default')).toBe('CLI Default')

@@ -37,7 +37,7 @@ export interface ComposerChipContext {
  * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Code`
  * Gemini (`gemini-2.5-pro`)                → `2.5 Pro`
  * Cursor (`composer-2.5-fast`)             → `Composer 2.5 Fast`
- * Grok (`grok-build`)                      → `Grok Build 0.1`
+ * Grok (`grok-composer-2.5-fast`)          → `Grok Composer 2.5 Fast`
  * Ollama (`qwen3:4b-instruct`)             → `Qwen 3 (4B Param)`
  *
  * Falls back to the full label when no provider-specific pattern matches.
@@ -56,13 +56,13 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   //
   // 1.0.6-CRUX37 — resolve the sentinel to each provider's actual CLI default
   // model so the badge reads the real model name. Kimi and Grok dispatch with
-  // bare `cli-default` (they expose a single CLI model, so the picker rarely
-  // changes it); their defaults are K2.7 Code and Grok Build 0.1. Codex / Claude /
-  // Gemini / Cursor resolve a concrete id before dispatch, so they seldom reach
-  // here — keep the neutral 'CLI Default' for them.
+  // bare `cli-default` in older persisted chats; their defaults are K2.7 Code
+  // and Grok Composer 2.5 Fast. Codex / Claude / Gemini / Cursor resolve a
+  // concrete id before dispatch, so they seldom reach here — keep the neutral
+  // 'CLI Default' for them.
   if (id === 'cli-default') {
     if (provider === 'kimi') return 'K2.7 Code'
-    if (provider === 'grok') return 'Grok Build 0.1'
+    if (provider === 'grok') return 'Grok Composer 2.5 Fast'
     return 'CLI Default'
   }
 
@@ -122,7 +122,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   }
 
   if (provider === 'grok') {
-    // grok-build is the only model the subscription CLI exposes (= Grok Build 0.1).
+    if (id === 'grok-composer-2.5-fast') return 'Grok Composer 2.5 Fast'
     if (id === 'grok-build') return 'Grok Build 0.1'
   }
 

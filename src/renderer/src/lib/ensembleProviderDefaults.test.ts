@@ -195,9 +195,10 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     )
   })
 
-  it('exposes grok preferred model id as grok-build with the effort reasoning axis', () => {
+  it('exposes grok preferred model id as Grok Composer with the effort reasoning axis', () => {
     const grok = getEnsembleModelDefaults('grok')
-    expect(grok.defaultModelId).toBe('grok-build')
+    expect(grok.defaultModelId).toBe('grok-composer-2.5-fast')
+    expect(grok.modelOptions.map((o) => o.id)).toEqual(['grok-composer-2.5-fast', 'grok-build'])
     expect(grok.defaultReasoning).toBe('medium')
     expect(grok.reasoningOptions.map((o) => o.value)).toEqual([
       'low',

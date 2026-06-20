@@ -326,8 +326,7 @@ function getOnboardingComposerPreview(style: ComposerStyle): {
       return {
         provider: 'gemini',
         providerLabel: 'Grok',
-        // 1.0.6 — live Grok composer shows "Grok Build 0.1" (Fast is a mode).
-        modelLabel: 'Grok Build 0.1',
+        modelLabel: 'Grok Composer 2.5 Fast',
         permissionLabel: 'Default Approval',
         placeholder: 'What do you want to know?'
       }

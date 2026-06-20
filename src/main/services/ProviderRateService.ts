@@ -130,7 +130,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://docs.x.ai/docs/models',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'xAI API pricing for grok-build-0.1 (256K ctx) — the CLI default model. PROJECTED API-equivalent; CLI auth bills via subscription credits.'
+          'xAI API pricing for grok-build-0.1 (256K ctx). PROJECTED API-equivalent; CLI auth bills via subscription credits.'
+      },
+      {
+        modelId: 'grok-composer-2.5-fast',
+        inputUsdPerMillion: 3.0,
+        outputUsdPerMillion: 15.0,
+        sourceUrl: 'https://cursor.com/docs/models/cursor-composer-2-5',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Composer 2.5 Fast selected through Grok Build CLI. PROJECTED API-equivalent from Cursor Composer pricing; Grok CLI auth bills via SuperGrok/X subscription credits.'
       },
       {
         modelId: 'grok-4.3',

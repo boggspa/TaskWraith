@@ -88,6 +88,9 @@ describe('humaniseModelId', () => {
 
   describe('Grok', () => {
     it('maps Grok CLI ids to the product model name', () => {
+      expect(humaniseModelId('grok', 'grok-composer-2.5-fast')).toBe(
+        'Grok Composer 2.5 Fast'
+      )
       expect(humaniseModelId('grok', 'grok-build')).toBe('Grok Build 0.1')
       expect(humaniseModelId('grok', 'grok-build-0.1')).toBe('Grok Build 0.1')
     })
@@ -155,11 +158,15 @@ describe('humaniseModelId', () => {
     })
 
     it('uses provider context to repair stale Gemini placeholder ids for Grok and Cursor', () => {
-      expect(canonicalModelIdForProvider('grok', 'flash-lite')).toBe('grok-build')
+      expect(canonicalModelIdForProvider('grok', 'flash-lite')).toBe('grok-composer-2.5-fast')
+      expect(canonicalModelIdForProvider('grok', 'composer-2.5-fast')).toBe(
+        'grok-composer-2.5-fast'
+      )
       expect(canonicalModelIdForProvider('cursor', 'flash-lite')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('cursor', 'Composer 2.5 Fast')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('cursor', 'Composer 2.5')).toBe('composer-2.5')
-      expect(humaniseModelId('grok', 'flash-lite')).toBe('Grok Build 0.1')
+      expect(humaniseModelId('grok', 'flash-lite')).toBe('Grok Composer 2.5 Fast')
+      expect(humaniseModelId('grok', 'composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
       expect(humaniseModelId('cursor', 'gemini-3.1-flash-lite')).toBe('Composer 2.5 Fast')
       expect(humaniseModelId('gemini', 'flash-lite')).toBe('Gemini Flash Lite')
     })
@@ -190,6 +197,7 @@ describe('humaniseModelId', () => {
       expect(labels['kimi-k2.7-code']).toBeDefined()
       expect(labels['kimi-k2.6']).toBeDefined()
       expect(labels['kimi-k2.6-thinking']).toBeDefined()
+      expect(labels['grok-composer-2.5-fast']).toBeDefined()
       expect(labels['grok-build']).toBeDefined()
       expect(labels['composer-2.5-fast']).toBeDefined()
       expect(labels['qwen3:4b-instruct']).toBeDefined()
@@ -213,6 +221,9 @@ describe('humaniseModelIdCompact', () => {
     expect(humaniseModelIdCompact('claude', 'claude-opus-4-8')).toBe('Opus 4.8')
     expect(humaniseModelIdCompact('gemini', 'gemini-3-flash-preview')).toBe('3 Flash Preview')
     expect(humaniseModelIdCompact('kimi', 'kimi-k2.6')).toBe('K2.6')
+    expect(humaniseModelIdCompact('grok', 'grok-composer-2.5-fast')).toBe(
+      'Composer 2.5 Fast'
+    )
     expect(humaniseModelIdCompact('grok', 'grok-build')).toBe('Build 0.1')
   })
 

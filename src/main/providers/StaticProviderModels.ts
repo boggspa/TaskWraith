@@ -213,8 +213,10 @@ const GEMINI_STATIC_MODELS = [
   { id: 'flash', label: 'Flash' },
   { id: 'flash-lite', label: 'Flash Lite' }
 ]
+const GROK_DEFAULT_MODEL = 'grok-composer-2.5-fast'
 const GROK_STATIC_MODELS = [
-  { id: 'grok-build', label: 'Grok Build 0.1', isDefault: true }
+  { id: GROK_DEFAULT_MODEL, label: 'Grok Composer 2.5 Fast', isDefault: true },
+  { id: 'grok-build', label: 'Grok Build 0.1' }
 ]
 const CURSOR_STATIC_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
@@ -276,9 +278,9 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
     return trimmed
   }
   if (provider === 'grok') {
-    if (!trimmed || lowered === 'cli-default' || lowered === 'default') return 'grok-build'
+    if (!trimmed || lowered === 'cli-default' || lowered === 'default') return GROK_DEFAULT_MODEL
     if (lowered.startsWith('grok')) return trimmed
-    return 'grok-build'
+    return GROK_DEFAULT_MODEL
   }
   if (provider === 'cursor') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return 'composer-2.5-fast'

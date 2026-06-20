@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CLAUDE_DEFAULT_MODELS,
+  GROK_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODELS,
   isClaudeModelId
 } from './providerModelDefaults'
@@ -34,6 +35,20 @@ describe('Ollama provider model defaults', () => {
       'granite4.1:30b',
       'nemotron3:33b',
       'custom'
+    ])
+  })
+})
+
+describe('Grok provider model defaults', () => {
+  it('keeps Grok Composer native to the Grok provider route', () => {
+    expect(GROK_DEFAULT_MODELS[0]).toMatchObject({
+      id: 'grok-composer-2.5-fast',
+      label: 'Grok Composer 2.5 Fast',
+      isDefault: true
+    })
+    expect(GROK_DEFAULT_MODELS.map((model) => model.id)).toEqual([
+      'grok-composer-2.5-fast',
+      'grok-build'
     ])
   })
 })

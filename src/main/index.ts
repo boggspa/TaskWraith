@@ -6055,10 +6055,9 @@ function handleCursorStreamEvent(state: CliProviderStreamState, event: unknown) 
  */
 // Grok reports no token usage and no cost. We project both so Grok appears in
 // the composer tally + dashboard like the other providers. Tokens are a rough
-// ~4-chars/token estimate; cost mirrors ProviderRateService's PROJECTED
-// grok-build rates ($1/M input, $2/M output) — an xAI API-equivalent
-// projection, NOT a SuperGrok subscription bill. `total_cost_usd` is the field
-// the renderer's extractUsageCostUsd reads, so the `· $x` cost surfaces too.
+// ~4-chars/token estimate; cost mirrors the current Grok CLI default's projected
+// rate constants — NOT a SuperGrok subscription bill. `total_cost_usd` is the
+// field the renderer's extractUsageCostUsd reads, so the `· $x` cost surfaces too.
 
 function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
   if (state.provider === 'grok') {

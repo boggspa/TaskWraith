@@ -111,6 +111,21 @@ describe('BAKED_IN_RATES', () => {
     }
   })
 
+  it('keeps Grok Composer priced as a Grok-provider projection, distinct from Cursor', () => {
+    const grokComposer = BAKED_IN_RATES.grok.models.find(
+      (model) => model.modelId === 'grok-composer-2.5-fast'
+    )
+    const cursorComposer = BAKED_IN_RATES.cursor.models.find(
+      (model) => model.modelId === 'composer-2.5-fast'
+    )
+
+    expect(grokComposer).toMatchObject({
+      inputUsdPerMillion: 3,
+      outputUsdPerMillion: 15
+    })
+    expect(cursorComposer).toBeDefined()
+  })
+
   it('every model entry has positive input/output rates + a sourceUrl', () => {
     for (const table of Object.values(BAKED_IN_RATES)) {
       for (const model of table.models) {

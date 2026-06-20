@@ -40,14 +40,25 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     const grok = getStaticProviderModels('grok').map((m) => m.id)
     const cursor = getStaticProviderModels('cursor').map((m) => m.id)
     expect(gemini).toContain('flash')
-    expect(grok).toEqual(['grok-build'])
+    expect(grok).toEqual(['grok-composer-2.5-fast', 'grok-build'])
     expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5'])
   })
 
   it('normalizes invalid cross-provider model ids back to provider defaults', () => {
-    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-build')
+    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-composer-2.5-fast')
     expect(normalizeCliProviderModel('cursor', 'pro')).toBe('composer-2.5-fast')
     expect(normalizeCliProviderModel('gemini', 'flash')).toBe('flash')
+  })
+
+  it('keeps Grok Composer distinct from Cursor Composer ids', () => {
+    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-composer-2.5-fast')
+    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-composer-2.5-fast')
+    expect(normalizeCliProviderModel('grok', 'grok-composer-2.5-fast')).toBe(
+      'grok-composer-2.5-fast'
+    )
+    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe(
+      'grok-composer-2.5-fast'
+    )
   })
 
   it('exposes the curated optional Ollama model tags', () => {
