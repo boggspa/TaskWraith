@@ -530,6 +530,7 @@ import {
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 
 const FX_BURST_DURATION_MS = 1150
+const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
 /**
  * Lifetime of the post-dismissal pointer animation on the sidebar
  * `+` workspace button. After the sheet closes for the first
@@ -554,6 +555,7 @@ const WORKSPACE_ADD_POINTER_DURATION_MS = 6000
 // clampContextTurns moved to `src/main/PromptComposition.ts` and re-exported below.
 
 const EMPTY_AGENT_QUESTION_QUEUE: readonly AgentQuestionState[] = Object.freeze([])
+const EMPTY_WELCOME_USAGE_DASHBOARD_DATA = buildWelcomeUsageDashboardData([], [], '30d', 0)
 
 function enqueueAgentQuestion(
   queue: readonly AgentQuestionState[] = EMPTY_AGENT_QUESTION_QUEUE,
@@ -1877,6 +1879,7 @@ function App(): React.JSX.Element {
   >(async () => {})
   const usageRefreshInFlightRef = useRef(false)
   const usageRefreshLastFiredAtRef = useRef<number | null>(null)
+  const rawLogHydrationInFlightRef = useRef<Set<string>>(new Set())
   const [imageAttachmentsByChatId, setImageAttachmentsByChatId] = useState<
     Record<string, ImageAttachment[]>
   >({})
@@ -2490,6 +2493,14 @@ function App(): React.JSX.Element {
     setPreviewChatMediaRef(null)
   }, [currentComposerChatId])
   const prompt = currentComposerChatId ? composerDraftsByChatId[currentComposerChatId] || '' : ''
+  const composerDraftsByChatIdRef = useRef(composerDraftsByChatId)
+  useEffect(() => {
+    composerDraftsByChatIdRef.current = composerDraftsByChatId
+  }, [composerDraftsByChatId])
+  const imageAttachmentsByChatIdRef = useRef(imageAttachmentsByChatId)
+  useEffect(() => {
+    imageAttachmentsByChatIdRef.current = imageAttachmentsByChatId
+  }, [imageAttachmentsByChatId])
   const imageAttachments = useMemo(
     () =>
       currentComposerChatId
@@ -3047,8 +3058,13 @@ function App(): React.JSX.Element {
   }
 
   const hydrateThreadRawLogsFromEvents = (chatId: string) => {
-    if (rawLogsByChatIdRef.current.has(chatId) || typeof window.api.getRunEvents !== 'function')
+    if (
+      rawLogsByChatIdRef.current.has(chatId) ||
+      rawLogHydrationInFlightRef.current.has(chatId) ||
+      typeof window.api.getRunEvents !== 'function'
+    )
       return
+    rawLogHydrationInFlightRef.current.add(chatId)
     window.api
       .getRunEvents({ chatId, limit: 1000 })
       .then((events: RunEventRecord[]) => {
@@ -3057,11 +3073,12 @@ function App(): React.JSX.Element {
           .map(rawLogFromRunEvent)
           .filter((log): log is RawLogEntry => Boolean(log))
           .slice(-1000)
-        if (logs.length > 0) {
-          setThreadRawLogs(chatId, logs)
-        }
+        setThreadRawLogs(chatId, logs)
       })
       .catch(() => {})
+      .finally(() => {
+        rawLogHydrationInFlightRef.current.delete(chatId)
+      })
   }
 
   const syncRunningState = () => {
@@ -5366,6 +5383,38 @@ function App(): React.JSX.Element {
     }
   }
 
+  const requestUsageSummaryRefresh = (
+    workspaceId?: string,
+    providerHint?: ProviderId,
+    options: { force?: boolean; codexStatusHint?: any } = {}
+  ) => {
+    const canRefresh =
+      typeof navigator === 'undefined' || navigator.onLine !== false
+    const decision = options.force
+      ? !usageRefreshInFlightRef.current && canRefresh
+      : shouldRunUsageRefresh({
+          msSinceLastRefresh:
+            usageRefreshLastFiredAtRef.current === null
+              ? null
+              : Date.now() - usageRefreshLastFiredAtRef.current,
+          intervalMs: CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS,
+          inFlight: usageRefreshInFlightRef.current,
+          windowFocused:
+            typeof document === 'undefined' ? true : document.visibilityState !== 'hidden',
+          online: canRefresh
+        })
+    if (!decision) return
+    usageRefreshInFlightRef.current = true
+    usageRefreshLastFiredAtRef.current = Date.now()
+    void refreshUsageSummary(workspaceId, providerHint, options.codexStatusHint)
+      .catch(() => {
+        // `refreshUsageSummary` catches expected IPC failures internally.
+      })
+      .finally(() => {
+        usageRefreshInFlightRef.current = false
+      })
+  }
+
   /**
    * Keep a ref to the *latest* `refreshUsageSummary` closure so the
    * autonomous polling effect (below) doesn't need to depend on `codexStatus`
@@ -5763,7 +5812,7 @@ function App(): React.JSX.Element {
           .then(setTrustResult)
           .catch(() => {})
       }
-      void refreshUsageSummary(wsId, provider)
+      requestUsageSummaryRefresh(wsId, provider)
     })
   }
 
@@ -5810,7 +5859,7 @@ function App(): React.JSX.Element {
       syncThinkingForChat(normalizedChat)
     })
     scheduleAfterPaint(() => {
-      void refreshUsageSummary(GLOBAL_USAGE_WORKSPACE_ID, provider)
+      requestUsageSummaryRefresh(GLOBAL_USAGE_WORKSPACE_ID, provider)
       void refreshProviderMetadata(provider, null)
       hydrateThreadRawLogsFromEvents(normalizedChat.appChatId)
     })
@@ -6054,14 +6103,14 @@ function App(): React.JSX.Element {
       name: getImageName(path)
     }))
 
-  const addImageAttachmentsToChat = (chatId: string | null | undefined, paths: string[]) => {
+  const addImageAttachmentsToChat = useCallback((chatId: string | null | undefined, paths: string[]) => {
     if (!chatId || paths.length === 0) return
     const parsed = imageAttachmentsFromPaths(paths)
     setImageAttachmentsByChatId((prev) => ({
       ...prev,
       [chatId]: mergeImageAttachments(prev[chatId] || [], parsed)
     }))
-  }
+  }, [])
 
   const addImageAttachments = (paths: string[]) => {
     addImageAttachmentsToChat(getCurrentComposerStateChatId(), paths)
@@ -6487,7 +6536,7 @@ function App(): React.JSX.Element {
       syncThinkingForChat(selectedChat)
     })
     scheduleAfterPaint(() => {
-      void refreshUsageSummary(getUsageWorkspaceIdForChat(selectedChat), provider)
+      requestUsageSummaryRefresh(getUsageWorkspaceIdForChat(selectedChat), provider)
       hydrateThreadRawLogsFromEvents(selectedChat.appChatId)
     })
     hydrateSelectedChatAfterPaint(selectedChat)
@@ -7037,9 +7086,10 @@ function App(): React.JSX.Element {
       })
       .catch((err) => {
         console.error('[audit] getAuditRuns failed', err)
-        if (!cancelled && currentChat?.appChatId) {
+        const noticeChatId = currentChatIdRef.current
+        if (!cancelled && noticeChatId) {
           setAuditRunNotice({
-            chatId: currentChat.appChatId,
+            chatId: noticeChatId,
             title: 'Could not load audit history',
             message: auditActionErrorMessage('Audit history could not be loaded.', err)
           })
@@ -7056,7 +7106,7 @@ function App(): React.JSX.Element {
       cancelled = true
       unsubscribe?.()
     }
-  }, [auditRunWorkspaceId, currentChat?.appChatId])
+  }, [auditRunWorkspaceId])
 
   const handleCancelAuditRun = useCallback(
     (auditRunId: string) => {
@@ -8947,6 +8997,8 @@ function App(): React.JSX.Element {
       chatRecord: selectedChat || undefined
     }
   }
+  const buildRunRequestRef = useRef(buildRunRequest)
+  buildRunRequestRef.current = buildRunRequest
 
   const queueRunRequest = (
     request: QueuedRunRequest,
@@ -9033,6 +9085,8 @@ function App(): React.JSX.Element {
       }))
     }
   }
+  const queueRunRequestRef = useRef(queueRunRequest)
+  queueRunRequestRef.current = queueRunRequest
 
   const handlePermissionRetry = async () => {
     if (permissionRequestPaths.length === 0 || !currentWorkspace || !currentChat) {
@@ -16399,18 +16453,17 @@ function App(): React.JSX.Element {
   // `usageRecords` is re-fetched on the 90s usage poll AND on ensemble-run
   // completion, so its length is a cheap, monotonic-enough refresh trigger.
   const welcomeHeatmapRefreshKey = usageRecords.length
-  const welcomeUsageDashboardData = useMemo(
-    () =>
-      buildWelcomeUsageDashboardData(
-        usageRecords,
-        chats,
-        '30d',
-        undefined,
-        workspaces,
-        dashboardStatResetAt
-      ),
-    [usageRecords, chats, workspaces, dashboardStatResetAt]
-  )
+  const welcomeUsageDashboardData = useMemo(() => {
+    if (!usageInitialized) return EMPTY_WELCOME_USAGE_DASHBOARD_DATA
+    return buildWelcomeUsageDashboardData(
+      usageRecords,
+      chats,
+      '30d',
+      undefined,
+      workspaces,
+      dashboardStatResetAt
+    )
+  }, [usageInitialized, usageRecords, chats, workspaces, dashboardStatResetAt])
   // Welcome L6 — the outer guard uses `lifetimeHasActivity` so the
   // dashboard (and its range toggle) stay mounted even when the
   // currently-selected window happens to be empty. The empty-state
@@ -17473,20 +17526,359 @@ function App(): React.JSX.Element {
   const providerShellClass = providerShellEnabled
     ? `provider-shell provider-shell-${interfaceStyle}`
     : 'provider-shell-default'
+  const handleFocusMultiviewPane = useCallback(
+    (paneIndex: number, chatId: string) => {
+      const viewerChat = chatByIdRef.current.get(chatId)
+      if (!viewerChat) return
+      multiview.focusPane(paneIndex, currentChatIdRef.current || null)
+      currentChatIdRef.current = viewerChat.appChatId
+      setActiveSidebarChatId(viewerChat.appChatId)
+      const paneWorkspace = getWorkspaceForChat(viewerChat)
+      currentWorkspaceIdRef.current = viewerChat.workspaceId || paneWorkspace?.id || null
+      if (paneWorkspace && currentWorkspace?.id !== paneWorkspace.id) {
+        setCurrentWorkspace(paneWorkspace)
+      }
+      startTransition(() => {
+        setCurrentChat(viewerChat)
+        setRunCompleteNotice(
+          deriveRunCompleteNotice(viewerChat, runningChatIds.has(viewerChat.appChatId))
+        )
+        setRawLogs(rawLogsByChatIdRef.current.get(viewerChat.appChatId) || [])
+        syncThinkingForChat(viewerChat)
+      })
+    },
+    [currentWorkspace?.id, multiview.focusPane, runningChatIds]
+  )
   const handleOpenInMultiview = useCallback(
     (chat: ChatRecord) => {
       multiview.openInNewPane(chat.appChatId, currentChatIdRef.current || null)
     },
     [multiview.openInNewPane]
   )
-  const handleFocusMultiviewPane = useCallback(
-    (paneIndex: number, chatId: string) => {
-      const viewerChat = chatByIdRef.current.get(chatId)
-      if (!viewerChat) return
-      multiview.focusPane(paneIndex, currentChatIdRef.current || null)
-      void handleSelectChatRef.current(viewerChat)
+  const handleMultiviewPanePromptChange = useCallback(
+    (_paneIndex: number, chatId: string, value: string) => {
+      setChatPromptDraft(chatId, value)
     },
-    [multiview.focusPane]
+    [setChatPromptDraft]
+  )
+  const handleMultiviewPaneWelcomeSuggestion = useCallback(
+    (_paneIndex: number, chatId: string, suggestion: string) => {
+      setChatPromptDraft(chatId, suggestion)
+    },
+    [setChatPromptDraft]
+  )
+  const handleMultiviewPanePickAttachments = useCallback(
+    async (_paneIndex: number, chatId: string) => {
+      const selected = await window.api.selectImageFiles()
+      if (!selected || selected.length === 0) return
+      const existing = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
+      addImageAttachmentsToChat(chatId, selected)
+      if (existing.length + selected.length > MAX_IMAGE_ATTACHMENTS) {
+        setRawLogs((prev) => [
+          ...prev,
+          {
+            type: 'info',
+            content: `Attachment limit reached (${MAX_IMAGE_ATTACHMENTS}); oldest files were removed.`
+          }
+        ])
+      }
+    },
+    [addImageAttachmentsToChat]
+  )
+  const handleMultiviewPaneRemoveAttachment = useCallback(
+    (_paneIndex: number, chatId: string, attachmentId: string) => {
+      setImageAttachmentsByChatId((prev) => ({
+        ...prev,
+        [chatId]: (prev[chatId] || EMPTY_IMAGE_ATTACHMENTS).filter(
+          (item) => item.id !== attachmentId
+        )
+      }))
+    },
+    []
+  )
+  const handleMultiviewPanePickWorkspace = useCallback(
+    (_paneIndex: number, chatId: string, workspace: WorkspaceRecord) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      const paneProvider = paneChat ? getChatProvider(paneChat) : DEFAULT_PROVIDER
+      updateChatById(chatId, (source) => ({
+        ...source,
+        scope: 'workspace',
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        updatedAt: Date.now()
+      }))
+      if (currentChatIdRef.current === chatId) {
+        setCurrentWorkspace(workspace)
+        currentWorkspaceIdRef.current = workspace.id
+      }
+      void refreshUsageSummary(workspace.id, paneProvider)
+      void refreshProviderMetadata(paneProvider, workspace.path)
+    },
+    [updateChatById]
+  )
+  const handleMultiviewPaneAddWorkspace = useCallback(
+    (paneIndex: number, chatId: string) => {
+      handleFocusMultiviewPane(paneIndex, chatId)
+      void handleSelectWorkspace()
+    },
+    [handleFocusMultiviewPane, handleSelectWorkspace]
+  )
+  const handleMultiviewPaneSelectNoWorkspace = useCallback(
+    (_paneIndex: number, chatId: string) => {
+      updateChatById(chatId, (source) => {
+        const { workspaceId: _workspaceId, workspacePath: _workspacePath, ...rest } = source
+        return {
+          ...rest,
+          scope: 'global',
+          updatedAt: Date.now()
+        }
+      })
+      if (currentChatIdRef.current === chatId) {
+        currentWorkspaceIdRef.current = null
+        setCurrentWorkspace(null)
+      }
+    },
+    [updateChatById]
+  )
+  const handleMultiviewPaneToggleScreenWatch = useCallback(
+    (_paneIndex: number, _chatId: string) => {
+      if (screenWatchUnavailableReason) return
+      if (attachedWindow) {
+        void handleDetachWindow()
+        return
+      }
+      void handleAttachWindow()
+    },
+    [attachedWindow, handleAttachWindow, handleDetachWindow, screenWatchUnavailableReason]
+  )
+  const handleMultiviewPaneOpenGoal = useCallback(
+    (paneIndex: number, chatId: string) => {
+      handleFocusMultiviewPane(paneIndex, chatId)
+      window.setTimeout(() => openGoalPopover(false), 0)
+    },
+    [handleFocusMultiviewPane, openGoalPopover]
+  )
+  const handleMultiviewPaneCopyTranscript = useCallback(
+    async (_paneIndex: number, chatId: string) => {
+      if (!chatId) return { ok: false as const, reason: 'empty' as const }
+      return window.api.copyChatMarkdownTranscript(chatId)
+    },
+    []
+  )
+  const handleRunMultiviewPane = useCallback(
+    (_paneIndex: number, chatId: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
+      if (!panePrompt.trim()) return
+      const request = buildRunRequestRef.current(undefined, undefined, {
+        chat: paneChat,
+        prompt: panePrompt,
+        imageAttachments: imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
+      })
+      if (isChatBusy(chatId)) {
+        queueRunRequestRef.current(
+          request,
+          `This ${getProviderLabel(request.provider)} chat already has an in-flight run; TaskWraith will dispatch this pane prompt when the chat's previous turn finishes.`
+        )
+        setChatPromptDraft(chatId, '')
+        return
+      }
+      void executeRunRef.current(request)
+    },
+    [setChatPromptDraft]
+  )
+  const handleCancelMultiviewPane = useCallback((_paneIndex: number, chatId: string) => {
+    const paneChat = chatByIdRef.current.get(chatId)
+    if (!paneChat) return
+    void cancelLinkedChatRun(paneChat)
+  }, [])
+  const rememberMultiviewPaneComposerSelection = useCallback(
+    (chatId: string, patch: Record<string, unknown>) => {
+      updateChatById(chatId, (source) => ({
+        ...source,
+        providerMetadata: {
+          ...(source.providerMetadata || {}),
+          ...patch
+        },
+        updatedAt: Date.now()
+      }))
+    },
+    [updateChatById]
+  )
+  const handleMultiviewPaneProviderChange = useCallback(
+    (_paneIndex: number, chatId: string, provider: ProviderId) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat || paneChat.chatKind === 'ensemble' || provider === getChatProvider(paneChat)) {
+        return
+      }
+      const nextModel = getDefaultModelForProvider(provider)
+      const paneWorkspace = getWorkspaceForChat(paneChat)
+      updateChatById(chatId, (source) => ({
+        ...source,
+        provider,
+        providerMetadata: {
+          ...(source.providerMetadata || {}),
+          selectedModelType: nextModel,
+          customModel: '',
+          approvalMode:
+            typeof source.providerMetadata?.approvalMode === 'string'
+              ? source.providerMetadata.approvalMode
+              : 'default',
+          ...(provider === 'kimi' ? { kimiThinkingEnabled: true } : {}),
+          runtimeProfileId: defaultRuntimeProfileIdForProvider(provider)
+        },
+        updatedAt: Date.now()
+      }))
+      void refreshProviderMetadata(provider, paneWorkspace?.path)
+    },
+    [updateChatById]
+  )
+  const handleMultiviewPaneModelChange = useCallback(
+    (_paneIndex: number, chatId: string, nextModel: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      const paneProvider = getChatProvider(paneChat)
+      const metadataPatch: Record<string, unknown> = { selectedModelType: nextModel }
+      if (paneProvider === 'codex') {
+        const modelOption = codexModels.find((model) => model.id === nextModel)
+        if (modelOption?.defaultReasoningEffort) {
+          metadataPatch.codexReasoningEffort = modelOption.defaultReasoningEffort
+        }
+        if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
+          metadataPatch.codexServiceTier = ''
+        }
+      }
+      if (paneProvider === 'claude') {
+        const modelOption = (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+          (model) => model.id === nextModel
+        )
+        if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
+          metadataPatch.claudeFastMode = false
+        }
+      }
+      rememberMultiviewPaneComposerSelection(chatId, metadataPatch)
+    },
+    [agentModelsByProvider.claude, codexModels, rememberMultiviewPaneComposerSelection]
+  )
+  const handleMultiviewPaneReasoningChange = useCallback(
+    (_paneIndex: number, chatId: string, value: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      const paneProvider = getChatProvider(paneChat)
+      if (paneProvider === 'codex') {
+        rememberMultiviewPaneComposerSelection(chatId, { codexReasoningEffort: value })
+      } else if (paneProvider === 'claude') {
+        rememberMultiviewPaneComposerSelection(chatId, { claudeReasoningEffort: value })
+      } else if (paneProvider === 'kimi') {
+        rememberMultiviewPaneComposerSelection(chatId, { kimiThinkingEnabled: value !== 'off' })
+      }
+    },
+    [rememberMultiviewPaneComposerSelection]
+  )
+  const handleMultiviewPaneToggleFastMode = useCallback(
+    (paneIndex: number, chatId: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      const paneProvider = getChatProvider(paneChat)
+      const selection = getChatComposerSelection(paneChat, paneProvider)
+      if (paneProvider === 'codex') {
+        rememberMultiviewPaneComposerSelection(chatId, {
+          codexServiceTier: selection.codexServiceTier === 'fast' ? '' : 'fast'
+        })
+      } else if (paneProvider === 'claude') {
+        rememberMultiviewPaneComposerSelection(chatId, {
+          claudeFastMode: !selection.claudeFastMode
+        })
+      } else if (paneProvider === 'cursor') {
+        handleMultiviewPaneModelChange(
+          paneIndex,
+          chatId,
+          selection.selectedModelType === 'composer-2.5-fast'
+            ? 'composer-2.5'
+            : 'composer-2.5-fast'
+        )
+      }
+    },
+    [handleMultiviewPaneModelChange, rememberMultiviewPaneComposerSelection]
+  )
+  const handleMultiviewPaneCustomModelChange = useCallback(
+    (_paneIndex: number, chatId: string, value: string) => {
+      rememberMultiviewPaneComposerSelection(chatId, { customModel: value })
+    },
+    [rememberMultiviewPaneComposerSelection]
+  )
+  const handleMultiviewPaneClearCustomModel = useCallback(
+    (_paneIndex: number, chatId: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      const paneProvider = paneChat ? getChatProvider(paneChat) : DEFAULT_PROVIDER
+      rememberMultiviewPaneComposerSelection(chatId, {
+        customModel: '',
+        selectedModelType: getDefaultModelForProvider(paneProvider)
+      })
+    },
+    [rememberMultiviewPaneComposerSelection]
+  )
+  const handleMultiviewPanePermissionChange = useCallback(
+    (_paneIndex: number, chatId: string, nextApprovalMode: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat) return
+      const paneProvider = getChatProvider(paneChat)
+      const paneWorkspace = getWorkspaceForChat(paneChat)
+      const selection = getChatComposerSelection(paneChat, paneProvider)
+      const applyPaneSelection = (): void => {
+        rememberMultiviewPaneComposerSelection(chatId, { approvalMode: nextApprovalMode })
+      }
+      const elevation = decideApprovalElevation({
+        from: selection.approvalMode,
+        to: nextApprovalMode,
+        provider: paneProvider,
+        workspacePath: paneWorkspace?.path,
+        acknowledgedDefault: acknowledgedElevationDefaults
+      })
+      if (!elevation) {
+        applyPaneSelection()
+        return
+      }
+      setPendingElevation({
+        tier: elevation.tier,
+        provider: paneProvider,
+        workspaceLabel: paneWorkspace?.displayName ?? null,
+        ackKey: elevation.ackKey,
+        persistAck: elevation.persistAckOnConfirm,
+        toMode: nextApprovalMode,
+        apply: applyPaneSelection
+      })
+    },
+    [acknowledgedElevationDefaults, rememberMultiviewPaneComposerSelection]
+  )
+  const handleMultiviewPaneToggleGrant = useCallback(
+    async (_paneIndex: number, chatId: string, service: AgenticServiceId, enabled: boolean) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      if (!paneChat || isGlobalChat(paneChat)) return
+      const paneWorkspace = getWorkspaceForChat(paneChat)
+      if (!paneWorkspace?.path) return
+      const paneProvider = getChatProvider(paneChat)
+      const nextSettings = enabled
+        ? await window.api.upsertAgenticWorkspaceGrant(paneProvider, paneWorkspace.path, service)
+        : await window.api.removeAgenticWorkspaceGrant(paneProvider, paneWorkspace.path, service)
+      applyAgenticWorkspaceGrantSettings(nextSettings)
+    },
+    []
+  )
+  const handleMultiviewPaneDeleteMessage = useCallback(
+    (_paneIndex: number, chatId: string, messageId: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      deleteMessageFromChat(paneChat, messageId)
+    },
+    [deleteMessageFromChat]
+  )
+  const handleMultiviewPaneTogglePinMessage = useCallback(
+    (_paneIndex: number, chatId: string, messageId: string) => {
+      const paneChat = chatByIdRef.current.get(chatId)
+      togglePinMessageInChat(paneChat, messageId)
+    },
+    [togglePinMessageInChat]
   )
   const handleSelectMultiviewLayout = useCallback(
     (layout: MultiviewLayout) => {
@@ -17494,6 +17886,412 @@ function App(): React.JSX.Element {
     },
     [multiview.setLayout]
   )
+  const renderMultiviewPaneCell = (viewerChatId: string, viewerPaneIndex: number): ReactNode => {
+    const viewerChat = chatByIdRef.current.get(viewerChatId)
+    if (!viewerChat) {
+      return (
+        <div className="multiview-empty-pane" data-pane-index={viewerPaneIndex}>
+          <span className="multiview-empty-pane-label">Chat unavailable</span>
+        </div>
+      )
+    }
+    const viewerProvider = getChatProvider(viewerChat)
+    const viewerIsGlobalChat = isGlobalChat(viewerChat)
+    const viewerWorkspace = getWorkspaceForChat(viewerChat)
+    const viewerWorkspaceName = viewerIsGlobalChat
+      ? 'Global Chat'
+      : viewerWorkspace?.displayName ||
+        viewerChat.workspacePath?.split(/[\\/]/).filter(Boolean).pop() ||
+        'TaskWraith'
+    const viewerIsRunning = deriveChatIsRunning({
+      chat: viewerChat,
+      runningChatIds,
+      runQueueJobs
+    })
+    const viewerIsWelcomeChat = (viewerChat.messages?.length || 0) === 0
+    const viewerRun = viewerChat.runs?.[viewerChat.runs.length - 1] || null
+    const viewerSelection = getChatComposerSelection(viewerChat, viewerProvider)
+    const viewerModelOptionsRaw = getProviderModelOptions(viewerProvider)
+    const viewerSelectedModel = viewerSelection.selectedModelType
+    const viewerModelOptions: CombinedModelPickerModelOption[] = [
+      ...viewerModelOptionsRaw.map((model) => {
+        const retiresAtRaw = (model as { retiresAt?: unknown }).retiresAt
+        const retiresAt = typeof retiresAtRaw === 'string' ? retiresAtRaw : undefined
+        return {
+          id: model.id,
+          label: model.label || model.id,
+          ...(retiresAt ? { retiresAt } : {})
+        }
+      }),
+      ...(viewerProvider !== 'kimi' ? [{ id: 'custom', label: 'Custom…' }] : [])
+    ]
+    const viewerCodexModelOption =
+      viewerProvider === 'codex'
+        ? codexModels.find((model) => model.id === viewerSelectedModel)
+        : undefined
+    const viewerClaudeModelOption =
+      viewerProvider === 'claude'
+        ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+            (model) => model.id === viewerSelectedModel
+          )
+        : undefined
+    const viewerCodexReasoning =
+      viewerSelection.codexReasoningEffort ||
+      viewerCodexModelOption?.defaultReasoningEffort ||
+      'medium'
+    const viewerClaudeReasoning = viewerSelection.claudeReasoningEffort || 'off'
+    const viewerKimiThinking = viewerSelection.kimiThinkingEnabled ?? true
+    let viewerReasoningOptions: CombinedModelPickerReasoningOption[] = []
+    let viewerSelectedReasoning = ''
+    if (viewerProvider === 'codex') {
+      const sourceOptions = viewerCodexModelOption?.supportedReasoningEfforts?.length
+        ? viewerCodexModelOption.supportedReasoningEfforts
+        : [
+            { reasoningEffort: 'low' },
+            { reasoningEffort: 'medium' },
+            { reasoningEffort: 'high' },
+            { reasoningEffort: 'xhigh' }
+          ]
+      viewerReasoningOptions = sourceOptions.map((option) => ({
+        value: option.reasoningEffort,
+        label:
+          option.reasoningEffort === 'xhigh'
+            ? 'Extra High'
+            : option.reasoningEffort.charAt(0).toUpperCase() + option.reasoningEffort.slice(1)
+      }))
+      viewerSelectedReasoning = viewerCodexReasoning
+    } else if (viewerProvider === 'claude') {
+      const sourceOptions = viewerClaudeModelOption?.supportedReasoningEfforts?.length
+        ? viewerClaudeModelOption.supportedReasoningEfforts
+        : CLAUDE_THINKING_EFFORTS
+      viewerReasoningOptions = sourceOptions.map((option) => ({
+        value: option.reasoningEffort,
+        label:
+          option.reasoningEffort === 'off'
+            ? 'Thinking off'
+            : option.reasoningEffort === 'high'
+              ? 'Max'
+              : option.reasoningEffort.charAt(0).toUpperCase() + option.reasoningEffort.slice(1)
+      }))
+      viewerSelectedReasoning = viewerClaudeReasoning
+    } else if (viewerProvider === 'kimi') {
+      viewerReasoningOptions = [
+        { value: 'on', label: 'Thinking on' },
+        { value: 'off', label: 'Thinking off' }
+      ]
+      viewerSelectedReasoning = viewerKimiThinking ? 'on' : 'off'
+    }
+    const viewerFastModeCapableModelIds = (() => {
+      if (viewerProvider === 'codex') {
+        return new Set(
+          codexModels
+            .filter((model) => model.additionalSpeedTiers?.includes('fast'))
+            .map((model) => model.id)
+        )
+      }
+      if (viewerProvider === 'claude') {
+        return new Set(
+          (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS)
+            .filter((model) => model.additionalSpeedTiers?.includes('fast'))
+            .map((model) => model.id)
+        )
+      }
+      if (viewerProvider === 'cursor') {
+        return new Set(['composer-2.5', 'composer-2.5-fast'])
+      }
+      return new Set<string>()
+    })()
+    const viewerFastModeEnabled =
+      viewerProvider === 'codex'
+        ? viewerSelection.codexServiceTier === 'fast'
+        : viewerProvider === 'claude'
+          ? Boolean(viewerSelection.claudeFastMode)
+          : viewerProvider === 'cursor'
+            ? viewerSelectedModel === 'composer-2.5-fast'
+            : false
+    const viewerPermissionOptions: PermissionOption[] = [
+      { value: 'plan', label: 'Plan / Read-only' },
+      { value: 'default', label: 'Default Approval' },
+      { value: 'auto_edit', label: 'Full Workspace Access' }
+    ]
+    const normalizedViewerWorkspacePath = (viewerWorkspace?.path || '').replace(/\/+$/, '')
+    const viewerEnabledGrantIds = new Set(
+      !viewerIsGlobalChat && normalizedViewerWorkspacePath
+        ? agenticWorkspaceGrants
+            .filter((grant) => {
+              if (!grant || grant.provider !== viewerProvider || !grant.workspacePath) return false
+              return grant.workspacePath.replace(/\/+$/, '') === normalizedViewerWorkspacePath
+            })
+            .map((grant) => grant.service)
+        : []
+    )
+    const viewerProviderLocked = Boolean(
+      viewerChat.chatKind === 'ensemble' ||
+        (viewerChat.messages?.length || 0) > 0 ||
+        (viewerChat.runs?.length || 0) > 0 ||
+        viewerChat.linkedGeminiSessionId ||
+        viewerChat.linkedProviderSessionId
+    )
+    const viewerComposerLocked = Boolean(viewerIsRunning && viewerChat.chatKind !== 'ensemble')
+    const viewerRunStartedAt = viewerIsRunning
+      ? viewerChat.ensemble?.activeRound?.startedAt || viewerRun?.startedAt || null
+      : null
+    const viewerCumulativeRunBaseMs = computeCumulativeRunBaseMs(viewerChat.runs)
+    const viewerShouldShowWelcomeUsageDashboard =
+      viewerIsWelcomeChat && usageInitialized && welcomeUsageDashboardData.lifetimeHasActivity
+    const viewerWorkspaceActivityPath =
+      viewerIsWelcomeChat && !viewerIsGlobalChat && welcomeWorkspaceHeatmapEnabled
+        ? viewerWorkspace?.path || viewerChat.workspacePath || ''
+        : ''
+    const viewerShouldShowWelcomeStandaloneHeatmaps =
+      Boolean(viewerWorkspaceActivityPath) || viewerShouldShowWelcomeUsageDashboard
+    const viewerWelcomeHeatmapSlots: WelcomeHeatmapSlot[] = []
+    if (viewerWorkspaceActivityPath) {
+      viewerWelcomeHeatmapSlots.push({
+        key: 'workspace',
+        node: (
+          <WorkspaceActivityHeatmap
+            workspacePath={viewerWorkspaceActivityPath}
+            dayCount={90}
+            refreshKey={welcomeHeatmapRefreshKey}
+            className="usage-heatmap--welcome-standalone"
+          />
+        )
+      })
+    }
+    if (viewerShouldShowWelcomeUsageDashboard && welcomeTaskWraithHeatmapEnabled) {
+      viewerWelcomeHeatmapSlots.push({
+        key: 'taskwraith',
+        node: (
+          <UsageHeatmap
+            dayCount={90}
+            refreshKey={welcomeHeatmapRefreshKey}
+            title="TaskWraith Activity"
+            showProviderFilter
+            className="usage-heatmap--welcome-standalone"
+          />
+        )
+      })
+    }
+    if (viewerShouldShowWelcomeUsageDashboard && welcomeExternalHeatmapEnabled) {
+      viewerWelcomeHeatmapSlots.push({
+        key: 'external',
+        node: (
+          <UsageHeatmap
+            dayCount={90}
+            refreshKey={welcomeHeatmapRefreshKey}
+            usageSource="external"
+            title="External Activity"
+            showProviderFilter
+            className="usage-heatmap--welcome-standalone"
+          />
+        )
+      })
+    }
+    if (viewerShouldShowWelcomeUsageDashboard) {
+      viewerWelcomeHeatmapSlots.push({
+        key: 'taskwraith-tokens',
+        node: (
+          <TokenUsageChart
+            title="TaskWraith Tokens"
+            records={usageRecords}
+            dayCount={90}
+            refreshKey={welcomeHeatmapRefreshKey}
+            showProviderFilter
+            className="token-usage-chart--welcome"
+          />
+        )
+      })
+      viewerWelcomeHeatmapSlots.push({
+        key: 'external-tokens',
+        node: (
+          <TokenUsageChart
+            title="External Tokens"
+            source="external"
+            dayCount={90}
+            refreshKey={welcomeHeatmapRefreshKey}
+            showProviderFilter
+            className="token-usage-chart--welcome"
+          />
+        )
+      })
+    }
+    const viewerTokenTally = buildChatTokenTally(viewerChat.runs || [])
+    const viewerLiveOutputTokens = (() => {
+      if (!viewerIsRunning) return 0
+      const activeRunIds = new Set(
+        (viewerChat.runs || [])
+          .filter((run) => !run.endedAt || run.status === 'running' || run.status === 'queued')
+          .map((run) => run.runId)
+          .filter((runId): runId is string => Boolean(runId))
+      )
+      if (activeRunIds.size === 0 && viewerRun?.runId) {
+        activeRunIds.add(viewerRun.runId)
+      }
+      const activeRoundStartedAt =
+        viewerChat.ensemble?.activeRound?.status === 'running'
+          ? Date.parse(viewerChat.ensemble.activeRound.startedAt || '')
+          : Number.NaN
+      let liveChars = 0
+      for (const message of viewerChat.messages || []) {
+        if (message.role !== 'assistant') continue
+        if (message.runId && activeRunIds.has(message.runId)) {
+          liveChars += message.content?.length || 0
+          continue
+        }
+        if (Number.isFinite(activeRoundStartedAt)) {
+          const messageTime = Date.parse(message.timestamp || '')
+          if (Number.isFinite(messageTime) && messageTime >= activeRoundStartedAt) {
+            liveChars += message.content?.length || 0
+          }
+        }
+      }
+      return estimateLiveOutputTokensFromChars(liveChars)
+    })()
+    const viewerContextModelId =
+      viewerRun?.actualModel || viewerRun?.requestedModel || viewerSelectedModel
+    const viewerDualTelemetry = Boolean(
+      viewerChat.chatKind === 'ensemble' ||
+        viewerChat.guestParticipant ||
+        getSideChatMode(viewerChat) === 'guestParticipant'
+    )
+    const viewerScreenWatchTitle = attachedWindow
+      ? attachedWindow.streaming
+        ? `Watching ${attachedWindow.windowMeta.applicationName || 'window'} · live capture · click to detach`
+        : `Watching ${attachedWindow.windowMeta.applicationName || 'window'}${attachedWindow.windowMeta.title ? ` — ${attachedWindow.windowMeta.title}` : ''} · click to detach`
+      : resumeAppWatchSnapshot
+        ? `Resume watching ${resumeAppWatchSnapshot.windowMeta.applicationName || 'window'}${resumeAppWatchSnapshot.windowMeta.title ? ` — ${resumeAppWatchSnapshot.windowMeta.title}` : ''} · click to re-pick`
+        : screenWatchUnavailableReason || 'Screen Watch — click to pick a window for the AI to see'
+    const viewerGoalStatus = viewerChat.activeGoal?.status || 'empty'
+    const viewerGoalTitle = viewerChat.activeGoal
+      ? `${viewerChat.activeGoal.status}: ${viewerChat.activeGoal.objective}`
+      : 'Set active goal'
+    return (
+      <ChatViewPane
+        key={`${viewerPaneIndex}:${viewerChatId}`}
+        paneIndex={viewerPaneIndex}
+        refs={multiview.paneRefs[viewerPaneIndex]}
+        chat={viewerChat}
+        messages={viewerChat.messages || EMPTY_CHAT_MESSAGES}
+        provider={viewerProvider}
+        providerLabel={getProviderLabel(viewerProvider)}
+        providerClass={viewerProvider}
+        interfaceStyle={interfaceStyle}
+        isEnsemble={viewerChat.chatKind === 'ensemble'}
+        welcomeWorkspaceName={viewerWorkspaceName}
+        welcomeIsGlobalChat={viewerIsGlobalChat}
+        isWelcomeChat={viewerIsWelcomeChat}
+        isThinking={viewerIsRunning}
+        runCompleteNotice={deriveChatRunCompleteNotice(viewerChat, viewerIsRunning)}
+        currentRun={viewerRun}
+        currentWorkspacePath={viewerWorkspace?.path}
+        prompt={composerDraftsByChatId[viewerChatId] || ''}
+        canRun={viewerIsGlobalChat || Boolean(viewerWorkspace)}
+        onPromptChange={handleMultiviewPanePromptChange}
+        onRun={handleRunMultiviewPane}
+        onCancel={handleCancelMultiviewPane}
+        onSelectProvider={handleMultiviewPaneProviderChange}
+        providerPickerDisabled={viewerProviderLocked}
+        providerRunPauses={settings?.providerRunPauses}
+        grokAvailable={grokProviderAvailable}
+        cursorAvailable={cursorProviderAvailable}
+        modelOptions={viewerModelOptions}
+        selectedModelId={viewerSelectedModel}
+        onSelectModel={handleMultiviewPaneModelChange}
+        reasoningOptions={viewerReasoningOptions}
+        selectedReasoning={viewerSelectedReasoning}
+        onSelectReasoning={handleMultiviewPaneReasoningChange}
+        codexReasoningEffort={viewerCodexReasoning}
+        claudeReasoningEffort={viewerClaudeReasoning}
+        kimiThinkingEnabled={viewerKimiThinking}
+        fastModeCapableModelIds={viewerFastModeCapableModelIds}
+        fastModeEnabled={viewerFastModeEnabled}
+        onToggleFastMode={handleMultiviewPaneToggleFastMode}
+        customModelValue={viewerSelection.customModel}
+        onCustomModelChange={handleMultiviewPaneCustomModelChange}
+        onClearCustomModel={handleMultiviewPaneClearCustomModel}
+        permissionOptions={viewerPermissionOptions}
+        selectedPermission={viewerSelection.approvalMode}
+        onSelectPermission={handleMultiviewPanePermissionChange}
+        grantServices={!viewerIsGlobalChat && viewerWorkspace ? WORKSPACE_POLICY_SERVICES : []}
+        enabledGrantIds={viewerEnabledGrantIds}
+        agenticServices={agenticServices}
+        onToggleGrant={handleMultiviewPaneToggleGrant}
+        composerDisabled={!viewerIsGlobalChat && !viewerWorkspace}
+        modelControlsDisabled={viewerComposerLocked}
+        permissionControlsDisabled={viewerComposerLocked}
+        statusLabel={viewerIsRunning ? 'Running' : 'Ready'}
+        runStartedAt={viewerRunStartedAt}
+        cumulativeRunBaseMs={viewerCumulativeRunBaseMs}
+        imageAttachments={imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS}
+        onPickAttachments={handleMultiviewPanePickAttachments}
+        onRemoveAttachment={handleMultiviewPaneRemoveAttachment}
+        workspaces={workspaces}
+        workspace={viewerWorkspace}
+        onPickWorkspace={handleMultiviewPanePickWorkspace}
+        onAddWorkspace={handleMultiviewPaneAddWorkspace}
+        onSelectNoWorkspace={handleMultiviewPaneSelectNoWorkspace}
+        screenWatchActive={Boolean(attachedWindow)}
+        screenWatchStreaming={Boolean(attachedWindow?.streaming)}
+        screenWatchTitle={viewerScreenWatchTitle}
+        screenWatchDisabled={Boolean(screenWatchUnavailableReason)}
+        onToggleScreenWatch={handleMultiviewPaneToggleScreenWatch}
+        goalStatus={viewerGoalStatus}
+        goalTitle={viewerGoalTitle}
+        onOpenGoal={handleMultiviewPaneOpenGoal}
+        onCopyTranscript={handleMultiviewPaneCopyTranscript}
+        multiviewLayout={multiview.layout}
+        onSelectMultiviewLayout={handleSelectMultiviewLayout}
+        tokenTally={viewerTokenTally}
+        tokenTallyModel={viewerContextModelId}
+        tokenTallyLiveOutputTokens={viewerLiveOutputTokens}
+        tokenTallyTitle={`${getProviderLabel(viewerProvider)} pane token tally`}
+        tokenTallyDualCostAndRam={viewerDualTelemetry}
+        welcomeUsageDashboardData={welcomeUsageDashboardData}
+        welcomeUsageTab={welcomeUsageTab}
+        onWelcomeUsageTabChange={setWelcomeUsageTab}
+        showWelcomeUsageDashboard={
+          viewerShouldShowWelcomeUsageDashboard && welcomeDashboardCardEnabled
+        }
+        reserveWelcomeUsageDashboard={
+          viewerIsWelcomeChat && welcomeDashboardCardEnabled && !usageInitialized
+        }
+        welcomeHeatmapSlots={viewerWelcomeHeatmapSlots}
+        showWelcomeHeatmaps={viewerShouldShowWelcomeStandaloneHeatmaps}
+        dashboardStatVisibility={settings?.dashboardStatPrefs?.visibility}
+        dashboardWorkspacesTabEnabled={settings?.dashboardStatPrefs?.workspacesTabEnabled}
+        dashboardWorkspacesShown={settings?.dashboardStatPrefs?.workspacesShown}
+        dashboardProvidersTabEnabled={settings?.dashboardStatPrefs?.providersTabEnabled}
+        dashboardAutoCycleSeconds={settings?.dashboardStatPrefs?.autoCycleSeconds}
+        onWelcomeSuggestion={(suggestion) =>
+          handleMultiviewPaneWelcomeSuggestion(viewerPaneIndex, viewerChatId, suggestion)
+        }
+        pendingPlanChoice={pendingPlanChoiceByChatId[viewerChatId] || null}
+        pendingAgentQuestions={
+          pendingAgentQuestionsByChatId[viewerChatId] || EMPTY_AGENT_QUESTION_QUEUE
+        }
+        onAgentQuestionSubmit={handleAgentQuestionSubmit}
+        onAgentQuestionDismiss={handleAgentQuestionDismiss}
+        chats={chats}
+        runningChatIds={runningChatIdsArray}
+        compactDensity={appearance.compactDensity}
+        liveActivityViewport={appearance.liveActivityViewport}
+        pendingQueuedAppRunIds={pendingQueuedAppRunIds}
+        copiedId={copiedId}
+        copy={copy}
+        onOpenSubThread={handleOpenCockpitThread}
+        onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
+        onCopyMessage={handleCopyMessage}
+        onDeleteMessage={handleMultiviewPaneDeleteMessage}
+        onTogglePinMessage={handleMultiviewPaneTogglePinMessage}
+        onPreviewImage={setPreviewChatMediaRef}
+        currency={displayCurrency}
+        currencyOverestimatePercent={overestimatePercent}
+        providerRates={providerRates}
+        onFocusPane={handleFocusMultiviewPane}
+      />
+    )
+  }
   // Phase K-followup — `providerShellCapabilityChips` removed
   // alongside its consumer (the `provider-shell-status-row` chips).
   // The chips presented as buttons but never carried interaction.
@@ -17881,66 +18679,7 @@ function App(): React.JSX.Element {
                   <span className="multiview-empty-pane-label">Select a chat for this pane</span>
                 </div>
               )}
-              renderViewerCell={(viewerChatId, viewerPaneIndex) => {
-                const viewerChat = chatByIdRef.current.get(viewerChatId)
-                if (!viewerChat) {
-                  return (
-                    <div className="multiview-empty-pane" data-pane-index={viewerPaneIndex}>
-                      <span className="multiview-empty-pane-label">Chat unavailable</span>
-                    </div>
-                  )
-                }
-                const viewerProvider = getChatProvider(viewerChat)
-                const viewerIsGlobalChat = isGlobalChat(viewerChat)
-                const viewerWorkspace = getWorkspaceForChat(viewerChat)
-                const viewerWorkspaceName =
-                  viewerIsGlobalChat
-                    ? 'Global Chat'
-                    : viewerWorkspace?.displayName ||
-                      viewerChat.workspacePath?.split(/[\\/]/).filter(Boolean).pop() ||
-                      'TaskWraith'
-                const viewerIsRunning = deriveChatIsRunning({
-                  chat: viewerChat,
-                  runningChatIds,
-                  runQueueJobs
-                })
-                return (
-                  <ChatViewPane
-                    key={viewerChatId}
-                    paneIndex={viewerPaneIndex}
-                    refs={multiview.paneRefs[viewerPaneIndex]}
-                    chat={viewerChat}
-                    messages={viewerChat.messages || EMPTY_CHAT_MESSAGES}
-                    provider={viewerProvider}
-                    providerLabel={getProviderLabel(viewerProvider)}
-                    providerClass={viewerProvider}
-                    interfaceStyle={interfaceStyle}
-                    isEnsemble={viewerChat.chatKind === 'ensemble'}
-                    welcomeWorkspaceName={viewerWorkspaceName}
-                    welcomeIsGlobalChat={viewerIsGlobalChat}
-                    isWelcomeChat={(viewerChat.messages?.length || 0) === 0}
-                    isThinking={viewerIsRunning}
-                    runCompleteNotice={deriveChatRunCompleteNotice(viewerChat, viewerIsRunning)}
-                    pendingAgentQuestions={
-                      pendingAgentQuestionsByChatId[viewerChatId] || EMPTY_AGENT_QUESTION_QUEUE
-                    }
-                    chats={chats}
-                    runningChatIds={runningChatIdsArray}
-                    compactDensity={appearance.compactDensity}
-                    liveActivityViewport={appearance.liveActivityViewport}
-                    pendingQueuedAppRunIds={pendingQueuedAppRunIds}
-                    copiedId={copiedId}
-                    copy={copy}
-                    onOpenSubThread={handleOpenCockpitThread}
-                    onCopyMessage={handleCopyMessage}
-                    onPreviewImage={setPreviewChatMediaRef}
-                    currency={displayCurrency}
-                    currencyOverestimatePercent={overestimatePercent}
-                    providerRates={providerRates}
-                    onFocusPane={handleFocusMultiviewPane}
-                  />
-                )
-              }}
+              renderViewerCell={renderMultiviewPaneCell}
               renderFocusedCell={() => (
             <div
               ref={appTranscriptRef}
@@ -18491,16 +19230,10 @@ function App(): React.JSX.Element {
           )}
 
           {/*
-           * Keying the transcript on the current chat id guarantees a
-           * full unmount + remount when the user switches chats. Without
-           * the key, React would reconcile the existing
-           * `<TranscriptPanel>` instance: messages from the previous
-           * chat could remain in the DOM for a frame while React diffed
-           * the children, and absolute-positioned welcome / composer
-           * layers would render on top of the stale transcript. The
-           * remount tears the previous chat's DOM tree down
-           * synchronously so the welcome surface paints over a clean
-           * transcript region every time.
+           * Keep a hard remount only at the welcome/transcript boundary.
+           * Keying by chat id made every thread switch discard the
+           * transcript virtualization state and remeasure from cold, which
+           * was visible as a beachball/lag spike on large histories.
            */}
           <>
               {/*
@@ -18511,7 +19244,7 @@ function App(): React.JSX.Element {
                 flyout that replaced the EnsembleSetupSheet modal.
               */}
               <TranscriptPanel
-                key={currentChat?.appChatId || 'no-chat'}
+                key={isWelcomeChat ? 'welcome' : 'transcript'}
                 scrollRef={transcriptScrollRef}
                 contentRef={transcriptContentRef}
                 endRef={logsEndRef}

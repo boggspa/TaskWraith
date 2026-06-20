@@ -8,7 +8,7 @@ import { formatTallySuffix, type ChatTokenTally } from '../lib/threadTokenTally'
 const LIVE_TICK_MS = 1000
 const APPROX_CHARS_PER_TOKEN = 4
 
-type LiveThreadTokenTallyProps = {
+export type LiveThreadTokenTallyProps = {
   baseTally: ChatTokenTally
   currency: DisplayCurrency
   /** Ensemble / guest threads show API cost and Ollama peak RAM together. */

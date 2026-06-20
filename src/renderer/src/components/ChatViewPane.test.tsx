@@ -10,6 +10,9 @@ const sharedOpenSub = vi.fn()
 const sharedCopyMsg = vi.fn()
 const sharedPreview = vi.fn()
 const sharedFocus = vi.fn()
+const sharedPromptChange = vi.fn()
+const sharedRun = vi.fn()
+const sharedCancel = vi.fn()
 // Shared empties so two makeProps() calls are reference-identical where the
 // comparator actually looks (messages, pendingAgentQuestions).
 const EMPTY_MESSAGES = [] as ChatViewPaneProps['messages']
@@ -93,10 +96,16 @@ describe('chatViewPanePropsEqual', () => {
       false
     )
   })
+
+  it('re-renders when writable pane controls change', () => {
+    expect(chatViewPanePropsEqual(makeProps(), makeProps({ prompt: 'hello' }))).toBe(false)
+    expect(chatViewPanePropsEqual(makeProps(), makeProps({ canRun: true }))).toBe(false)
+    expect(chatViewPanePropsEqual(makeProps(), makeProps({ onRun: sharedRun }))).toBe(false)
+  })
 })
 
 describe('ChatViewPane welcome viewer', () => {
-  it('renders a read-only welcome surface instead of an empty transcript', () => {
+  it('renders the first-class welcome chrome and composer instead of an empty transcript', () => {
     const html = renderToStaticMarkup(
       <ChatViewPane
         {...makeProps({
@@ -111,13 +120,41 @@ describe('ChatViewPane welcome viewer', () => {
           provider: 'codex',
           providerLabel: 'Codex',
           providerClass: 'codex',
-          welcomeWorkspaceName: 'AGBench'
+          welcomeWorkspaceName: 'AGBench',
+          prompt: '',
+          canRun: true,
+          onPromptChange: sharedPromptChange,
+          onRun: sharedRun,
+          onCancel: sharedCancel
         })}
       />
     )
-    expect(html).toContain('multiview-pane-welcome')
+    expect(html).toContain('multiview-pane-corner-controls')
+    expect(html).toContain('multiview-pane-welcome-hero')
+    expect(html).toContain('multiview-pane-composer-area')
     expect(html).toContain('New Codex thread for')
     expect(html).toContain('AGBench')
+    expect(html).toContain('welcome-suggestions')
     expect(html).not.toContain('transcript-scroll')
+  })
+})
+
+describe('ChatViewPane writable composer', () => {
+  it('renders a compact composer when pane run handlers are supplied', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
+          prompt: 'Pane prompt',
+          canRun: true,
+          onPromptChange: sharedPromptChange,
+          onRun: sharedRun,
+          onCancel: sharedCancel
+        })}
+      />
+    )
+    expect(html).toContain('multiview-pane-composer')
+    expect(html).toContain('Pane prompt')
+    expect(html).toContain('Run pane prompt')
   })
 })

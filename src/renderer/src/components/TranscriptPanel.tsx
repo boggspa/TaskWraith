@@ -958,6 +958,21 @@ export const TranscriptPanel = memo(
     })
     const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
     const highlightTimerRef = useRef<number | null>(null)
+    const chatId = currentChat?.appChatId ?? null
+    const previousChatIdRef = useRef<string | null>(chatId)
+    useLayoutEffect(() => {
+      if (previousChatIdRef.current === chatId) return
+      previousChatIdRef.current = chatId
+      setMessageContextMenu(null)
+      setExpandedUserMessages(new Set())
+      setActivityExpansionByRow(new Map())
+      setExpandedSubThreadResults(new Set())
+      setHighlightedMessageId(null)
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current)
+        highlightTimerRef.current = null
+      }
+    }, [chatId])
     const focusMessageBlock = useCallback(
       (messageId: string): boolean => {
         const scroller = scrollRef.current

@@ -126,7 +126,7 @@ interface SidebarProps {
   ensembleModeEnabled?: boolean
   onSelectChat: (chat: ChatRecord) => void
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
-  /** Open this chat as a read-only viewer in a Multiview pane (all chat types). */
+  /** Open this chat in a Multiview pane (all chat types). */
   onOpenInMultiview?: (chat: ChatRecord) => void
   onOpenSettings: () => void
   /** Live update snapshot for the one-click pill above the masthead. */

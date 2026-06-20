@@ -47,6 +47,225 @@
 
 .multiview-pane-transcript {
   height: 100%;
+  --composer-reserved-height: 150px;
+  container-type: size;
+}
+
+.multiview-pane-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.multiview-pane-content > .transcript-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.multiview-pane-welcome-spacer {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.multiview-pane-composer-area.composer-area {
+  --composer-content-max-width: min(980px, calc(100% - 28px));
+  position: relative;
+  inset: auto;
+  transform: none;
+  width: 100%;
+  margin: 0;
+  pointer-events: auto;
+  align-items: center;
+  justify-content: flex-start;
+  flex: 0 0 auto;
+}
+
+.multiview-pane-composer.composer-surface {
+  position: relative;
+  z-index: 9;
+  width: 100%;
+  max-width: min(100%, var(--composer-content-max-width));
+  min-height: 0;
+  overflow: visible;
+  pointer-events: auto;
+}
+
+.multiview-pane-welcome-usage {
+  pointer-events: auto;
+}
+
+.multiview-pane-transcript.welcome-mode {
+  padding-top: clamp(44px, 6vh, 86px);
+  padding-bottom: clamp(18px, 3vh, 38px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.multiview-pane-transcript.welcome-mode .multiview-pane-content {
+  flex: 1 1 clamp(24px, 18vh, 180px);
+}
+
+.multiview-pane-transcript.welcome-mode .welcome-usage-region-small {
+  --welcome-usage-dashboard-scale: 0.48;
+}
+
+.multiview-pane-transcript.welcome-mode .composer-area {
+  padding-bottom: clamp(10px, 2.5vh, 28px);
+  gap: clamp(12px, 2vh, 22px);
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.multiview-pane-composer-area .welcome-hero {
+  margin-bottom: clamp(6px, 1.3vh, 16px);
+}
+
+.multiview-pane-composer-area .welcome-hero h1 {
+  font-size: clamp(18px, 2.1vw, 30px);
+  line-height: 1.12;
+}
+
+.multiview-pane-composer-area .welcome-hero p {
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+}
+
+.multiview-pane-composer-area .welcome-suggestions {
+  max-width: min(100%, var(--composer-content-max-width));
+  margin-top: clamp(18px, 3vh, 42px);
+  position: relative;
+  z-index: 1;
+}
+
+.multiview-pane-composer-area .welcome-suggestion-btn {
+  min-height: clamp(54px, 8vh, 72px);
+}
+
+.multiview-pane-composer-area .welcome-standalone-heatmaps {
+  max-width: min(100%, var(--composer-content-max-width));
+  margin-top: clamp(24px, 4vh, 64px);
+}
+
+.multiview-pane-corner-controls.chat-corner-controls-right {
+  max-width: calc(100% - 150px);
+  overflow: hidden;
+}
+
+.multiview-pane-corner-controls .chat-corner-thread-title {
+  min-width: 0;
+}
+
+.multiview-pane-bottom-controls.composer-bottom-controls {
+  min-width: 0;
+}
+
+.multiview-pane-textarea-wrap.composer-textarea-wrap {
+  min-height: 0;
+}
+
+.multiview-pane-textarea.composer-textarea {
+  width: 100%;
+  resize: none;
+}
+
+.multiview-pane-inline-pickers.composer-inline-pickers {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.multiview-pane-inline-pickers .composer-inline-pickers-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.multiview-pane-inline-actions.composer-inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.multiview-pane-custom-model .composer-inline-input {
+  max-width: 130px;
+}
+
+.multiview-pane-send-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.multiview-pane-status {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.multiview-pane-telemetry-row.composer-telemetry-row {
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.multiview-pane-telemetry-row.composer-telemetry-row .composer-run-timecode {
+  min-width: 0;
+}
+
+.multiview-pane-telemetry-row .composer-workspace-button,
+.multiview-pane-telemetry-row .composer-thread-token-tally {
+  min-width: 0;
+}
+
+@container (max-height: 760px) {
+  .multiview-pane-transcript.welcome-mode {
+    padding-top: clamp(32px, 5vh, 54px);
+  }
+
+  .multiview-pane-transcript.welcome-mode .multiview-pane-content {
+    flex-basis: clamp(18px, 10vh, 58px);
+  }
+
+  .multiview-pane-transcript.welcome-mode .welcome-usage-region-small {
+    display: none;
+  }
+
+  .multiview-pane-composer-area .welcome-hero {
+    margin-bottom: 2px;
+  }
+
+  .multiview-pane-composer-area .welcome-hero p {
+    display: none;
+  }
+
+  .multiview-pane-composer-area .welcome-suggestions {
+    display: none;
+  }
+
+  .multiview-pane-composer-area .welcome-standalone-heatmaps {
+    margin-top: clamp(18px, 4vh, 36px);
+  }
+}
+
+@container (max-height: 560px) {
+  .multiview-pane-transcript.welcome-mode {
+    padding-top: clamp(24px, 4vh, 38px);
+  }
+
+  .multiview-pane-transcript.welcome-mode .multiview-pane-content {
+    flex-basis: clamp(8px, 5vh, 26px);
+  }
+
+  .multiview-pane-composer-area .welcome-standalone-heatmaps {
+    display: none;
+  }
 }
 
 /* The single sidebar / composer / Copy / Goal all act on the focused

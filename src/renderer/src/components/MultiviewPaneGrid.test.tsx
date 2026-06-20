@@ -21,7 +21,7 @@ describe('MultiviewPaneGrid', () => {
     expect(out).not.toContain('multiview-grid')
   })
 
-  it('multiview lays out a grid with the focused cell + viewer cells by area', () => {
+  it('multiview lays out a grid with pane-scoped chat cells by area', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="vertical-2"
@@ -34,13 +34,14 @@ describe('MultiviewPaneGrid', () => {
     expect(out).toContain('multiview-grid')
     expect(out).toContain('multiview-layout-vertical-2')
     expect(out).toContain('multiview-cell-focused')
-    expect(out).toContain('id="focused-cell"')
+    expect(out).not.toContain('id="focused-cell"')
+    expect(out).toContain('>a</div>') // viewer cell rendered chat 'a'
     expect(out).toContain('>b</div>') // viewer cell rendered chat 'b'
     expect(out).toContain('grid-area:a') // focused pane in cell area 'a'
     expect(out).toContain('grid-area:b') // viewer pane in cell area 'b'
   })
 
-  it('renders the focused cell in whichever area the focused index maps to', () => {
+  it('marks the focused area without switching to the legacy focused renderer', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="vertical-2"
@@ -50,8 +51,9 @@ describe('MultiviewPaneGrid', () => {
         renderViewerCell={viewer}
       />
     )
-    // Focused content sits in cell area 'b'; the viewer for 'a' in area 'a'.
-    expect(out).toMatch(/grid-area:b[^>]*><div id="focused-cell">/)
+    // Focused pane 'b' is still rendered through the same pane-scoped viewer.
+    expect(out).toMatch(/multiview-cell-focused[^>]*style="grid-area:b"[^>]*><div class="viewer-cell">b<\/div>/)
+    expect(out).not.toContain('id="focused-cell"')
   })
 
   it('renders the empty placeholder for null pane cells', () => {
