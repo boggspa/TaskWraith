@@ -82,6 +82,9 @@ import { createPortal } from 'react-dom'
  */
 export interface ComposerProps {
   prompt: string
+  /** True when multiview is split (>1 pane). Hides the welcome starter cards —
+   * in a short split cell they overlap/clip the floating composer. */
+  isMultiviewSplit: boolean
   PLAN_IMPORT_CHIP_LABELS: any
   PLAN_IMPORT_RISK_LABELS: any
   PLAN_IMPORT_RUN_CONSTRAINT_LABELS: any
@@ -371,6 +374,7 @@ export interface ComposerProps {
 export function Composer(props: ComposerProps): React.JSX.Element {
   const {
     prompt,
+    isMultiviewSplit,
     PLAN_IMPORT_CHIP_LABELS,
     PLAN_IMPORT_RISK_LABELS,
     PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
@@ -4516,13 +4520,16 @@ export function Composer(props: ComposerProps): React.JSX.Element {
                 showEnsembleToggle={isEnsembleModeEnabled}
               />
             )}
-            {isWelcomeChat && !isCurrentEnsembleChat && !isWorkflowChatWelcome && (
+            {isWelcomeChat && !isCurrentEnsembleChat && !isWorkflowChatWelcome && !isMultiviewSplit && (
               /*
-                Solo-provider starter cards. Hidden on ensemble chats
-                per the maintainer's 1.0.3 ship-night call: the hierarchy chain
-                in the ensemble welcome hero teaches the orchestration
-                model, and the user types their own prompt rather than
-                picking from solo-shaped templates.
+                Solo-provider starter cards. Hidden when multiview is split (a
+                short split cell can't fit the hero + starters + composer, so
+                the cards overlap/clip the floating composer — the user types
+                their own prompt instead). Also hidden on ensemble chats per the
+                maintainer's 1.0.3 ship-night call: the hierarchy chain in the
+                ensemble welcome hero teaches the orchestration model, and the
+                user types their own prompt rather than picking from solo-shaped
+                templates.
               */
               <div className="welcome-suggestions">
                 {welcomeCopy.starters.map((starter) => (

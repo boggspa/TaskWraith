@@ -17957,6 +17957,9 @@ function App(): React.JSX.Element {
       ...composerCtx,
       // ── per-chat identity / display ──
       prompt: composerDraftsByChatId[viewerChatId] || '',
+      // Non-focused panes only exist when multiview is split, so always hide the
+      // welcome starter cards here (they'd overlap the composer in a short cell).
+      isMultiviewSplit: true,
       currentChat: viewerChat,
       currentComposerChatId: viewerChatId,
       currentProvider: viewerProvider,
@@ -18168,6 +18171,10 @@ function App(): React.JSX.Element {
 
   const composerCtx: ComposerProps = {
     prompt,
+    // Hide welcome starter cards when multiview is split (they overlap the
+    // composer in short cells). The focused cell uses this ctx in both single
+    // and split layouts, so derive it live from the pane count.
+    isMultiviewSplit: multiview.paneChatIds.length > 1,
     PLAN_IMPORT_CHIP_LABELS,
     PLAN_IMPORT_RISK_LABELS,
     PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
