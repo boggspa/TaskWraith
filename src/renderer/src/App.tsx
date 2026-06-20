@@ -4424,23 +4424,6 @@ function App(): React.JSX.Element {
     }
   }
 
-  const handleDeleteGeminiAuthProfile = async (profileId: string) => {
-    if (typeof window.api.deleteGeminiAuthProfile !== 'function') return
-    await window.api.deleteGeminiAuthProfile(profileId).catch((error) => {
-      setRawLogs((prev) => [
-        ...prev,
-        {
-          type: 'stderr',
-          content: `Failed to delete Gemini auth profile: ${redactLog(String(error))}`
-        }
-      ])
-    })
-    await refreshGeminiAuthStatus()
-    markPersistentSessionRestartNeeded(
-      'Gemini auth profile changed. Restart the persistent session to apply the selected account.'
-    )
-  }
-
   const handleProviderChange = async (provider: ProviderId) => {
     if (currentChat && isCurrentChatProviderLocked && provider !== currentProvider) {
       setRawLogs((prev) => [
@@ -21075,11 +21058,9 @@ function App(): React.JSX.Element {
             if (!r?.ok) console.warn('[provider sign-out] could not open Terminal:', r?.error)
           })
         }}
-        onGeminiLogout={(profileId) => void handleDeleteGeminiAuthProfile(profileId)}
         codexStatus={codexStatus}
         claudeAuthStatus={claudeAuthStatus}
         kimiAuthStatus={kimiAuthStatus}
-        geminiAuthStatus={geminiAuthStatus}
         cursorProviderAvailable={cursorProviderAvailable}
         grokProviderAvailable={grokProviderAvailable}
         ollamaProviderAvailable={

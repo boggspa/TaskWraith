@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { FirstLaunchSheet } from './FirstLaunchSheet'
-import type { GeminiAuthStatus, ProviderApiKeyStatus } from '../../../main/store/types'
+import type { ProviderApiKeyStatus } from '../../../main/store/types'
 import type { ModelUsageAggregate } from '../App'
 
 /**
@@ -30,18 +30,6 @@ function makeProviderApiKeyStatus(
   }
 }
 
-function makeGeminiAuthStatus(overrides: Partial<GeminiAuthStatus> = {}): GeminiAuthStatus {
-  return {
-    available: true,
-    authState: 'authenticated',
-    apiKeyConfigured: false,
-    encryptionAvailable: true,
-    profiles: [],
-    activeProfileId: null,
-    ...overrides
-  }
-}
-
 function providerCardMarkup(html: string, provider: string): string {
   const marker = `data-provider="${provider}"`
   const start = html.indexOf(marker)
@@ -59,9 +47,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     expect(html).toBe('')
   })
@@ -74,9 +60,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     expect(html).toContain('data-provider="codex"')
     expect(html).toContain('data-provider="claude"')
@@ -93,9 +77,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     expect(html).toContain('Welcome to TaskWraith')
     expect(html).toContain('1. Sign in to your providers')
@@ -115,9 +97,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     // The "It wraps …" sentence is an OFFER surface, so the retired Gemini must
     // not appear there even though its chat history is preserved elsewhere.
@@ -135,9 +115,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-        themeAppearance="blue"
+        kimiAuthStatus={null}        themeAppearance="blue"
         composerStyle="claude"
         userBubbleColor="purple"
       />
@@ -159,9 +137,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     expect(html).toContain('New Ensemble puts multiple provider participants')
     expect(html).toContain('data-provider="codex"')
@@ -184,9 +160,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-        cursorProviderAvailable={true}
+        kimiAuthStatus={null}        cursorProviderAvailable={true}
         grokProviderAvailable={false}
       />
     )
@@ -209,9 +183,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-        cursorProviderAvailable={true}
+        kimiAuthStatus={null}        cursorProviderAvailable={true}
         grokProviderAvailable={true}
         ollamaProviderAvailable={true}
       />
@@ -234,9 +206,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     // The kimi card div should appear with both modifier classes.
     expect(html).toMatch(
@@ -252,9 +222,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     // Gemini is RETIRED — its sign-in card is no longer rendered. The four
     // remaining optional cards are Kimi, Cursor, Grok, Ollama.
@@ -272,9 +240,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-        ollamaProviderAvailable={true}
+        kimiAuthStatus={null}        ollamaProviderAvailable={true}
       />
     )
     expect(html).toContain('Local runtime ready')
@@ -298,9 +264,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={codexStatus}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     // Plan label appears in the Codex card status row, AND the
     // signed-in dot variant class is present at least once.
@@ -316,9 +280,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={{ available: false }}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     expect(html).toContain('Codex CLI not found')
   })
@@ -331,9 +293,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={{ available: true, codexUsage: { error: 'no credential' } }}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     expect(html).toContain('Usage credential missing')
   })
@@ -361,9 +321,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={{ available: true, codexUsage: { planType: 'pro', userId: 'u1' } }}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-        usageSummary={usageSummary}
+        kimiAuthStatus={null}        usageSummary={usageSummary}
       />
     )
     // Codex was "signed in (pro)" but the maxed window flips it to the
@@ -390,9 +348,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={{ available: true, codexUsage: { planType: 'pro', userId: 'u1' } }}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-        usageSummary={usageSummary}
+        kimiAuthStatus={null}        usageSummary={usageSummary}
       />
     )
     expect(html).toContain('Signed in (pro)')
@@ -408,9 +364,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={makeProviderApiKeyStatus({ apiKeyConfigured: true })}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     expect(html).toContain('API key saved')
   })
@@ -423,30 +377,9 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={makeProviderApiKeyStatus({ available: false })}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     expect(html).toContain('CLI not found')
-  })
-
-  it('does not surface a Gemini profile card even when a gemini profile is active (retired)', () => {
-    const html = renderToStaticMarkup(
-      <FirstLaunchSheet
-        open={true}
-        onDismiss={() => {}}
-        onOpenSettings={() => {}}
-        codexStatus={null}
-        claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={makeGeminiAuthStatus({
-          activeProfileId: 'profile-1',
-          activeProfileLabel: 'work-gemini'
-        })}
-      />
-    )
-    expect(html).not.toContain('Active profile: work-gemini')
-    expect(html).not.toContain('Google Gemini CLI')
   })
 
   it('§3 preview composer renders the rich settings-style card (1.0.5-EW32)', () => {
@@ -475,9 +408,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-        composerStyle="claude"
+        kimiAuthStatus={null}        composerStyle="claude"
       />
     )
     // The rich preview card with its data-attribute is present.
@@ -495,9 +426,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     expect(html).toContain('Skip for now')
     expect(html).toContain('Got it')
@@ -511,9 +440,7 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}
-        geminiAuthStatus={null}
-      />
+        kimiAuthStatus={null}      />
     )
     expect(html).toContain('npm i -g @openai/codex')
     expect(html).toContain('https://claude.ai/install.sh')

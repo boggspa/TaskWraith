@@ -2,7 +2,6 @@ import React, { useEffect, useRef } from 'react'
 import type {
   AppSettings,
   ComposerStyle,
-  GeminiAuthStatus,
   ProviderApiKeyStatus,
   ThemeAppearance,
   UserBubbleColor
@@ -10,7 +9,6 @@ import type {
 import {
   summariseCliProviderEnabled,
   summariseCodexStatus,
-  summariseGeminiStatus,
   summariseProviderApiKeyStatus,
   type ProviderAuthVariant
 } from '../lib/providerAuthSummary'
@@ -99,7 +97,6 @@ export interface FirstLaunchSheetProps {
   /** 1.0.6-CRUX42 — open a Terminal running provider-owned CLI auth. */
   onProviderLogin?: (provider: OnboardingProviderId) => void
   onProviderLogout?: (provider: OnboardingProviderId) => void
-  onGeminiLogout?: (profileId: string) => void
   /** Codex CLI status. Pulled from `agentStatusByProvider.codex` or
    * the top-level `codexStatus` in App.tsx. Used to decide whether
    * to show "signed in" / "binary not found" / "not authenticated".
@@ -108,9 +105,6 @@ export interface FirstLaunchSheetProps {
   /** Claude / Kimi auth status objects from App.tsx. */
   claudeAuthStatus: ProviderApiKeyStatus | null
   kimiAuthStatus: ProviderApiKeyStatus | null
-  /** Gemini auth status. Carries profile info; we only need the
-   * top-level "is there an active profile" check. */
-  geminiAuthStatus: GeminiAuthStatus | null
   /** Cursor / Grok are CLI-login providers (1.0.6). TaskWraith only knows
    * whether each adapter is registered (enabled) — auth lives in their own
    * CLI — so the cards surface availability + deep-link to Settings.
@@ -385,11 +379,9 @@ export function FirstLaunchSheet({
   onOpenSettings,
   onProviderLogin,
   onProviderLogout,
-  onGeminiLogout,
   codexStatus,
   claudeAuthStatus,
   kimiAuthStatus,
-  geminiAuthStatus,
   cursorProviderAvailable = false,
   grokProviderAvailable = false,
   ollamaProviderAvailable = false,
@@ -469,7 +461,6 @@ export function FirstLaunchSheet({
 
   const codexSummary = summariseCodexStatus(codexStatus)
   const claudeSummary = summariseProviderApiKeyStatus(claudeAuthStatus, 'Claude')
-  const geminiSummary = summariseGeminiStatus(geminiAuthStatus)
   const kimiSummary = summariseProviderApiKeyStatus(kimiAuthStatus, 'Kimi')
   const cursorSummary = summariseCliProviderEnabled(
     cursorProviderAvailable,
@@ -497,14 +488,6 @@ export function FirstLaunchSheet({
       description:
         'Anthropic Claude Code. Strong reasoning and careful edits. Sign-in opens a browser OAuth window, or paste an Anthropic API key in Settings.',
       ...claudeSummary
-    },
-    {
-      id: 'gemini',
-      label: 'Gemini',
-      description:
-        'Google Gemini CLI. Long-context work, image inputs, project-aware planning. Sign in with a Google account that has Gemini access.',
-      ...geminiSummary,
-      optional: true
     },
     {
       id: 'kimi',
@@ -549,8 +532,8 @@ export function FirstLaunchSheet({
   ]
   // Flip any signed-in provider whose quota window is maxed to the
   // explicit "out of usage" state — the tester-confusion fix.
-  // gemini is RETIRED — keep it in baseProviderRows (so its status summary stays
-  // wired) but never offer it as an onboarding sign-in card.
+  // Retired providers (see retiredProviders.ts) are never offered as onboarding
+  // sign-in cards — filtered here defensively even though none are seeded above.
   const providerRows = baseProviderRows
     .map((row) => applyOutOfUsage(row, usageSummary))
     .filter((row) => !isRetiredProvider(row.id))
@@ -677,8 +660,6 @@ export function FirstLaunchSheet({
                 onOpenSettings={onOpenSettings}
                 onProviderLogin={onProviderLogin}
                 onProviderLogout={onProviderLogout}
-                onGeminiLogout={onGeminiLogout}
-                geminiActiveProfileId={geminiAuthStatus?.activeProfileId || null}
               />
             ))}
           </div>
@@ -1252,17 +1233,13 @@ interface ProviderCardProps {
   // 1.0.6-CRUX42 — provider CLI auth opens in Terminal when available.
   onProviderLogin?: (provider: OnboardingProviderId) => void
   onProviderLogout?: (provider: OnboardingProviderId) => void
-  onGeminiLogout?: (profileId: string) => void
-  geminiActiveProfileId?: string | null
 }
 
 function ProviderCard({
   row,
   onOpenSettings,
   onProviderLogin,
-  onProviderLogout,
-  onGeminiLogout,
-  geminiActiveProfileId
+  onProviderLogout
 }: ProviderCardProps): React.JSX.Element {
   const classes = [
     'first-launch-sheet-provider-card',
@@ -1303,7 +1280,7 @@ function ProviderCard({
       <p className="first-launch-sheet-provider-card-description">{row.description}</p>
       <p className="first-launch-sheet-provider-card-hint">{row.hint}</p>
       <div className="first-launch-sheet-provider-card-actions">
-        {row.id !== 'gemini' && !row.localOnly && onProviderLogin && (
+        {!row.localOnly && onProviderLogin && (
           <button
             type="button"
             className="btn btn-sm btn-primary"
@@ -1313,7 +1290,7 @@ function ProviderCard({
             Sign in
           </button>
         )}
-        {row.variant === 'signed-in' && row.id !== 'gemini' && !row.localOnly && onProviderLogout && (
+        {row.variant === 'signed-in' && !row.localOnly && onProviderLogout && (
           <button
             type="button"
             className="btn btn-sm btn-ghost"
@@ -1323,19 +1300,6 @@ function ProviderCard({
             Sign out
           </button>
         )}
-        {row.variant === 'signed-in' &&
-          row.id === 'gemini' &&
-          geminiActiveProfileId &&
-          onGeminiLogout && (
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost"
-              onClick={() => onGeminiLogout(geminiActiveProfileId)}
-              aria-label={`Sign out of ${row.label}`}
-            >
-              Sign out
-            </button>
-          )}
         <button
           type="button"
           className="btn btn-sm"
