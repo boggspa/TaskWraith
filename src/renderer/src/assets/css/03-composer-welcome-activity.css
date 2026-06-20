@@ -170,6 +170,21 @@
   z-index: 2;
 }
 
+/* Workflow welcome — the monoline glyph as a hero mark above the title, so a
+   workflow's thread reads as a workflow (not a generic chat) on its welcome
+   surface. Brand accent (matches the ghost glow); grok/cursor shells that
+   define --accent re-tint it to their provider color. */
+.welcome-hero-workflow .welcome-workflow-mark {
+  display: inline-flex;
+  margin-bottom: var(--space-xs);
+  color: var(--accent, #5a8cff);
+}
+.welcome-hero-workflow .welcome-workflow-mark .sf-symbol-icon,
+.welcome-hero-workflow .welcome-workflow-mark svg {
+  width: 40px;
+  height: 40px;
+}
+
 /* Welcome workspace picker (1.0.3) — recent-workspace chips +
  * "Browse…" button under the welcome subheading. Pointer-events
  * re-enabled here because the parent .welcome-hero is `none` so

@@ -198,7 +198,7 @@ describe('Sidebar workflows', () => {
 
     expect(html).toContain('sidebar-workflows-section')
     expect(html).toContain('sidebar-workflow-create')
-    expect(html).toContain('aria-label="Create workflow from composer"')
+    expect(html).toContain('aria-label="New workflow"')
     expect(html).not.toContain('sidebar-workflow-create" disabled=""')
   })
 

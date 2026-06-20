@@ -192,11 +192,7 @@ import {
 import { ComposerSlashMenu } from './components/ComposerSlashMenu'
 import { CreativeActionApprovalModal } from './components/CreativeActionApprovalModal'
 import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
-import {
-  WorkflowCreator,
-  type WorkflowCreatorSubmitInput,
-  buildWorkflowCreatorTrigger
-} from './components/WorkflowCreator'
+import { buildWorkflowCreatorTrigger } from './components/WorkflowCreator'
 import { WorkflowComposeControls } from './components/WorkflowComposeControls'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
 import { decideApprovalElevation } from './lib/approvalElevation'
@@ -263,6 +259,7 @@ import {
   QueueSymbolIcon,
   ReviewSymbolIcon,
   RunSymbolIcon,
+  WorkflowGlyphIcon,
   ScreenWatchSymbolIcon,
   SidebarCornerIcon,
   SkyWeatherIcon,
@@ -1773,7 +1770,6 @@ function App(): React.JSX.Element {
    * prompt so the user clicks Send to launch (avoids re-implementing
    * the full send-message payload composition here). */
   const [showWorkSessionSheet, setShowWorkSessionSheet] = useState(false)
-  const [workflowCreatorOpen, setWorkflowCreatorOpen] = useState(false)
   // App version for the BugReportSheet's auto-captured row, fetched once on
   // mount; "unknown" until the IPC resolves so the UI never flashes empty. See
   // useAppVersion.
@@ -11725,15 +11721,6 @@ function App(): React.JSX.Element {
     }
   }
 
-  const currentWorkflowTargetChat =
-    currentWorkspace &&
-    currentChat &&
-    !currentChat.archived &&
-    getChatScope(currentChat) !== 'global' &&
-    currentChat.workspaceId === currentWorkspace.id
-      ? currentChat
-      : null
-
   // First-class workflow compose: the Workflows "+" opens a fresh chat in
   // workflow-compose mode (welcome screen with the workflow controls) instead of
   // the old modal. The WorkflowDefinition is saved on first send.
@@ -11790,55 +11777,6 @@ function App(): React.JSX.Element {
         }
       ])
     }
-  }
-
-  const handleCreateWorkflow = async (input: WorkflowCreatorSubmitInput) => {
-    if (!currentWorkspace) {
-      throw new Error('Open a workspace before creating a workflow.')
-    }
-    let workflowChat = currentWorkflowTargetChat
-    if (!workflowChat) {
-      workflowChat = await window.api.createChat(currentWorkspace.id, currentWorkspace.path)
-      const provider = getChatProvider(workflowChat)
-      chatByIdRef.current.set(workflowChat.appChatId, workflowChat)
-      currentChatIdRef.current = workflowChat.appChatId
-      setActiveSidebarChatId(workflowChat.appChatId)
-      setChats((prev) => mergeChatRecord(prev, workflowChat!))
-      setCurrentChat(workflowChat)
-      applyChatComposerSelection(workflowChat, provider)
-    }
-    const request = buildRunRequest(undefined, undefined, {
-      chat: workflowChat,
-      prompt: input.prompt,
-      imageAttachments:
-        workflowChat.appChatId === currentComposerChatId ? imageAttachments : []
-    })
-    const saved = await window.api.saveWorkflowDefinition({
-      name: input.name,
-      workspaceId: currentWorkspace.id,
-      workspacePath: currentWorkspace.path,
-      enabled: input.enabled,
-      trigger: input.trigger,
-      template: buildWorkflowTemplateFromRequest(request, workflowChat, currentWorkspace),
-      missedRunPolicy: 'skip',
-      concurrencyPolicy: 'skip',
-      limits: {
-        maxRunsPerDay: input.maxRunsPerDay,
-        maxConsecutiveFailures: 3
-      }
-    })
-    await refreshWorkflowState(currentWorkspace.id)
-    setWorkflowCreatorOpen(false)
-    setRawLogs((prev) => [
-      ...prev,
-      {
-        type: 'info',
-        content:
-          saved.trigger.kind === 'interval'
-            ? `Workflow "${saved.name}" will run every ${Math.round((saved.trigger.intervalMs || 60_000) / 60_000)} minutes.`
-            : `Workflow "${saved.name}" was created for manual runs.`
-      }
-    ])
   }
 
   const handleRunWorkflowNow = async (workflowId: string) => {
@@ -14178,6 +14116,18 @@ function App(): React.JSX.Element {
     workflowDraft != null &&
     currentChat != null &&
     workflowDraft.chatId === currentChat.appChatId
+  // A saved workflow whose thread is the open chat (post-create / re-opened).
+  const workflowForCurrentChat = currentChat
+    ? (workflowDefinitions.find((wf) => wf.template.chatId === currentChat.appChatId) ?? null)
+    : null
+  // The chat should render the workflow identity surface (instead of the generic
+  // single-chat welcome) when it's a draft being composed OR a saved workflow's
+  // thread sitting empty (no runs yet).
+  const isWorkflowChatWelcome = isWorkflowComposeChat || workflowForCurrentChat != null
+  const workflowIntervalMinutes =
+    workflowForCurrentChat && workflowForCurrentChat.trigger.kind === 'interval'
+      ? Math.round((workflowForCurrentChat.trigger.intervalMs || 60_000) / 60_000)
+      : null
   const isEnsembleModeEnabled = settings?.ensembleModeEnabled !== false
   const isCurrentComposerLocked = isCurrentChatRunning && !isCurrentEnsembleChat
   const planImportGroundingWorkspace = currentChat ? getWorkspaceForChat(currentChat) : currentWorkspace
@@ -19785,29 +19735,49 @@ function App(): React.JSX.Element {
                   </div>
                 )
               })()}
-            {isWelcomeChat && isWorkflowComposeChat && (
-              <div className="welcome-hero">
-                <h1>
-                  <span>New workflow in </span>
-                  <strong className={`workspace-name-glow provider-${currentProvider}`}>
-                    {currentWorkspace?.displayName ?? 'this workspace'}
-                  </strong>
-                </h1>
-                <p>
-                  Describe the recurring task. It captures the current provider and run
-                  settings, then runs on the cadence you set below.
-                </p>
-                <WelcomeWorkspacePicker
-                  workspaces={workspaces}
-                  currentWorkspace={currentWorkspace}
-                  isGlobalChat={false}
-                  onPickExisting={handleSelectExistingWorkspace}
-                  onAddNewWorkspace={handleSelectWorkspace}
-                  onSelectNoWorkspace={handleNewGlobalChat}
-                />
+            {isWelcomeChat && isWorkflowChatWelcome && (
+              <div className="welcome-hero welcome-hero-workflow">
+                <div className="welcome-workflow-mark" aria-hidden>
+                  <WorkflowGlyphIcon />
+                </div>
+                {isWorkflowComposeChat ? (
+                  <>
+                    <h1>
+                      <span>New workflow in </span>
+                      <strong className={`workspace-name-glow provider-${currentProvider}`}>
+                        {currentWorkspace?.displayName ?? 'this workspace'}
+                      </strong>
+                    </h1>
+                    <p>
+                      Describe the recurring task. It captures the current provider and run
+                      settings, then runs on the cadence you set below.
+                    </p>
+                    <WelcomeWorkspacePicker
+                      workspaces={workspaces}
+                      currentWorkspace={currentWorkspace}
+                      isGlobalChat={false}
+                      onPickExisting={handleSelectExistingWorkspace}
+                      onAddNewWorkspace={handleSelectWorkspace}
+                      onSelectNoWorkspace={handleNewGlobalChat}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <h1>
+                      <strong className={`workspace-name-glow provider-${currentProvider}`}>
+                        {workflowForCurrentChat?.name ?? 'Workflow'}
+                      </strong>
+                    </h1>
+                    <p>
+                      {workflowIntervalMinutes != null
+                        ? `Runs every ${workflowIntervalMinutes} minute${workflowIntervalMinutes === 1 ? '' : 's'} — runs will appear here.`
+                        : 'Runs manually — use Run now from the Workflows sidebar; runs will appear here.'}
+                    </p>
+                  </>
+                )}
               </div>
             )}
-            {isWelcomeChat && !isCurrentEnsembleChat && !isWorkflowComposeChat && (
+            {isWelcomeChat && !isCurrentEnsembleChat && !isWorkflowChatWelcome && (
               <div className="welcome-hero">
                 <h1>
                   <span>{welcomeCopy.heading.beforeWorkspace}</span>
@@ -23048,7 +23018,7 @@ function App(): React.JSX.Element {
                 showEnsembleToggle={false}
               />
             )}
-            {isWelcomeChat && !isCurrentEnsembleChat && !isWorkflowComposeChat && (
+            {isWelcomeChat && !isCurrentEnsembleChat && !isWorkflowChatWelcome && (
               /*
                 Solo-provider starter cards. Hidden on ensemble chats
                 per the maintainer's 1.0.3 ship-night call: the hierarchy chain
@@ -23901,15 +23871,6 @@ function App(): React.JSX.Element {
         onRefresh={refreshDiscordContextTargets}
         onSelect={handleSelectDiscordContext}
         onClose={() => setDiscordContextPickerOpen(false)}
-      />
-      <WorkflowCreator
-        open={!isChatPopoutWindow && workflowCreatorOpen}
-        workspace={currentWorkspace}
-        targetChat={currentWorkflowTargetChat}
-        initialPrompt={prompt}
-        localHistoryEnabled={settings?.storeLocalChatHistory !== false}
-        onSubmit={handleCreateWorkflow}
-        onCancel={() => setWorkflowCreatorOpen(false)}
       />
       {/* 1.0.4-AK2 — Work Session setup sheet. z-index 9130 sits
           above BugReportSheet (9120) since opening a Work Session

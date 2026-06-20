@@ -430,6 +430,32 @@ export function RunSymbolIcon() {
   )
 }
 
+// Workflow glyph — the monoline automation route (trigger → decision → run →
+// return), from design-assets/workflows/workflow-monoline.svg. Marks workflow
+// chats on their welcome/identity surfaces. currentColor so the caller tints it.
+export function WorkflowGlyphIcon() {
+  return (
+    <span className="sf-symbol-icon" aria-hidden>
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="3.7" y="4.9" width="8" height="4.8" rx="1.4" />
+        <path d="m16.4 4.6 3.35 3.35-3.35 3.35-3.35-3.35Z" />
+        <rect x="5.9" y="14.3" width="11.8" height="4.95" rx="1.45" />
+        <path d="M11.7 7.3h1.35" />
+        <path d="M16.4 11.3v.95c0 1.25-.72 1.9-2.05 2.05" />
+        <path d="M5.9 16.75H4.5c-1.2 0-2.05-.85-2.05-2.05V9.65" />
+        <path d="M17.75 16.75h1.75c1.2 0 2.05-.85 2.05-2.05V9.45" />
+      </svg>
+    </span>
+  )
+}
+
 // Claude-style send: the native Claude composer uses a "return" arrow glyph
 // (↵) inside the send button instead of a play triangle. Used when
 // appearance.composerStyle === 'claude' so the send/stop pair reads native.

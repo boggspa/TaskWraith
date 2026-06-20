@@ -2677,9 +2677,13 @@ export function Sidebar({
                 type="button"
                 className="sidebar-section-header-action sidebar-workflow-create"
                 onClick={onCreateWorkflow}
-                disabled={!onCreateWorkflow}
-                title="Create workflow from composer"
-                aria-label="Create workflow from composer"
+                disabled={!onCreateWorkflow || workspaces.length === 0}
+                title={
+                  workspaces.length === 0
+                    ? 'Add a workspace first — workflows run inside a workspace'
+                    : 'New workflow'
+                }
+                aria-label="New workflow"
               >
                 <PlusSymbolIcon />
               </button>
