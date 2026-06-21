@@ -476,6 +476,17 @@ export interface BridgeProposedPlanDecisionAction extends BridgeActionMetadata {
   decision: 'dismissed'
 }
 
+/** Phone write-action on an open Canvas preview (P3): close it or reload its page.
+ * The Mac owns the canvas by chatId; `threadId` (== app chat id) flows into the
+ * CanvasService ownership ctx, so a phone can only act on its own chat's canvas. */
+export interface BridgeCanvasActionAction extends BridgeActionMetadata {
+  kind: 'canvasAction'
+  workspaceId: string
+  threadId: string
+  canvasId: string
+  action: 'close' | 'reload'
+}
+
 export interface BridgeSetGuestParticipantAction extends BridgeActionMetadata {
   kind: 'setGuestParticipant'
   workspaceId: string
@@ -604,6 +615,7 @@ export type BridgeActionPayload =
   | BridgeGoalUpdateAction
   | BridgeToggleMessagePinAction
   | BridgeProposedPlanDecisionAction
+  | BridgeCanvasActionAction
   | BridgeRegisterApnsTokenAction
   | BridgeEnsemblePresetMutateAction
   | BridgeDiscoverTailnetHostsAction
@@ -728,6 +740,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
+    case 'canvasAction':
     case 'setYoloMode':
     case 'togglePinChat':
     case 'togglePinWorkspace':
@@ -793,6 +806,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
+    case 'canvasAction':
     case 'setYoloMode':
     case 'togglePinChat':
     case 'togglePinWorkspace':
@@ -864,6 +878,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
+    case 'canvasAction':
     case 'setYoloMode':
     case 'togglePinChat':
     case 'togglePinWorkspace':
@@ -1048,6 +1063,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isProposedPlanDecision(parsed)
         ? (parsed as unknown as BridgeProposedPlanDecisionAction)
         : { kind: 'unknown', rawKind: 'proposedPlanDecision', raw: parsed }
+    case 'canvasAction':
+      return isCanvasAction(parsed)
+        ? (parsed as unknown as BridgeCanvasActionAction)
+        : { kind: 'unknown', rawKind: 'canvasAction', raw: parsed }
     case 'registerApnsToken':
       return isRegisterApnsToken(parsed)
         ? (parsed as unknown as BridgeRegisterApnsTokenAction)
@@ -1468,6 +1487,15 @@ function isProposedPlanDecision(v: Record<string, unknown>): boolean {
     typeof v.messageId === 'string' &&
     v.messageId.trim().length > 0 &&
     v.decision === 'dismissed'
+  )
+}
+
+function isCanvasAction(v: Record<string, unknown>): boolean {
+  return (
+    isWorkspaceThreadAction(v) &&
+    typeof v.canvasId === 'string' &&
+    v.canvasId.trim().length > 0 &&
+    (v.action === 'close' || v.action === 'reload')
   )
 }
 

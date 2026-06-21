@@ -109,6 +109,53 @@ describe('decodeBridgeActionPayload', () => {
       expect(payloadIsMutating(payload)).toBe(true)
     })
 
+    it('decodes a canvasAction close/reload (mutating, workspace-gated)', () => {
+      for (const action of ['close', 'reload'] as const) {
+        const { payload } = decodeBridgeActionPayload(
+          encode({
+            kind: 'canvasAction',
+            actionId: 'a-canvas-1',
+            workspaceId: 'ws-1',
+            threadId: 't-1',
+            canvasId: 'cv1',
+            action
+          })
+        )
+        expect(payload.kind).toBe('canvasAction')
+        if (payload.kind === 'canvasAction') {
+          expect(payload.canvasId).toBe('cv1')
+          expect(payload.action).toBe(action)
+        }
+        expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+        expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+        expect(payloadIsMutating(payload)).toBe(true)
+      }
+    })
+
+    it('rejects a canvasAction with an unknown action or a missing canvasId', () => {
+      const badAction = decodeBridgeActionPayload(
+        encode({
+          kind: 'canvasAction',
+          actionId: 'a',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          canvasId: 'cv1',
+          action: 'open'
+        })
+      )
+      expect(badAction.payload.kind).toBe('unknown')
+      const noId = decodeBridgeActionPayload(
+        encode({
+          kind: 'canvasAction',
+          actionId: 'a',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          action: 'close'
+        })
+      )
+      expect(noId.payload.kind).toBe('unknown')
+    })
+
     it('rejects a proposedPlanDecision whose decision is not dismissed', () => {
       // Approve no longer rides this action (it flips status atomically with the
       // implement run via composerPromptFn), so 'approved' — like 'pending' — is

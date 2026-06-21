@@ -72,6 +72,7 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
       value: `evaluated:${args.script}`,
       truncated: false
     }),
+    reload: async () => {},
     close: async () => {},
     ...over
   }

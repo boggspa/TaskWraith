@@ -215,6 +215,8 @@ export interface CanvasDriver {
   // P2 arbitrary eval (RCE). The driver MUST cut the page's network egress while
   // the script runs so eval cannot be used as an exfiltration channel.
   evaluate(args: { script: string }): Promise<CanvasEvalResult>
+  /** Re-navigate the surface to its current page (web: webContents.reload). */
+  reload(): Promise<void>
   close(): Promise<void>
 }
 
@@ -262,6 +264,7 @@ export type CanvasEventKind =
   | 'interaction'
   | 'annotation'
   | 'eval'
+  | 'reload'
 
 /**
  * Audit event. `detail` is REDACTED, structured metadata only — never pixel
@@ -322,6 +325,7 @@ export interface CanvasController {
     args: { script: string },
     ctx: CanvasCallContext
   ): Promise<CanvasEvalResult>
+  reload(canvasId: string, ctx: CanvasCallContext): Promise<void>
   close(canvasId: string, ctx: CanvasCallContext): Promise<void>
 }
 

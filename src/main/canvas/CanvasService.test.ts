@@ -87,6 +87,10 @@ class FakeDriver implements CanvasDriver {
     this.lastScript = args.script
     return { ok: true, valueType: 'string', value: 'EVAL-RESULT-SENTINEL', truncated: false }
   }
+  reloaded = false
+  async reload(): Promise<void> {
+    this.reloaded = true
+  }
   async close(): Promise<void> {
     this.closed = true
   }
@@ -229,6 +233,17 @@ describe('CanvasService', () => {
       await service.evaluate(c.canvasId, { script: '1' }, {})
     }
     await expect(service.evaluate(c.canvasId, { script: '1' }, {})).rejects.toThrow(/budget/)
+  })
+
+  it('reload re-navigates the driver and emits a reload event (chat-scoped)', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, { chatId: 'A' })
+    await service.reload(c.canvasId, { chatId: 'A' })
+    expect(fake.reloaded).toBe(true)
+    expect(events.map((e) => e.kind)).toContain('reload')
+    // A different chat cannot reload it.
+    fake.reloaded = false
+    await expect(service.reload(c.canvasId, { chatId: 'B' })).rejects.toThrow(/No open canvas/)
+    expect(fake.reloaded).toBe(false)
   })
 
   it('annotate persists an annotation + emits an annotation event', async () => {

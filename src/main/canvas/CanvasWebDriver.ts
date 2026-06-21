@@ -618,6 +618,10 @@ export class CanvasWebDriver implements CanvasDriver {
     return { ...result, url: wc.getURL(), title: surface.getTitle() }
   }
 
+  async reload(): Promise<void> {
+    this.requireSurface().webContents.reload()
+  }
+
   async close(): Promise<void> {
     const surface = this.surface
     this.surface = null

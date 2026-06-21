@@ -261,4 +261,7 @@ export class CanvasDeviceDriver implements CanvasDriver {
   async evaluate(_args: { script: string }): Promise<CanvasEvalResult> {
     return unsupported('eval')
   }
+  async reload(): Promise<void> {
+    return unsupported('reload')
+  }
 }

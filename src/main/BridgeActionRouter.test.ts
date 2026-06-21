@@ -161,6 +161,10 @@ function makeStubExecutor(
       executed: true,
       message: 'proposedPlanDecision done'
     }),
+    executeCanvasAction: make('executeCanvasAction', {
+      executed: true,
+      message: 'canvasAction done'
+    }),
     executeRegisterApnsToken: make('executeRegisterApnsToken', {
       executed: true,
       message: 'registerApnsToken done'
@@ -949,6 +953,30 @@ describe('BridgeActionRouter', () => {
       expect(result.message).toBe('cancelRun done')
       expect(calls).toHaveLength(1)
       expect(calls[0].method).toBe('executeCancelRun')
+    })
+
+    it('dispatches canvasAction to executor.executeCanvasAction', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
+      const wire = Buffer.from(
+        JSON.stringify(
+          withReplayMeta({
+            kind: 'canvasAction',
+            workspaceId: 'ws-allowed',
+            threadId: 't-1',
+            canvasId: 'cv1',
+            action: 'close'
+          })
+        ),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean; message?: string }
+      expect(result.accepted).toBe(true)
+      expect(result.message).toBe('canvasAction done')
+      expect(calls).toHaveLength(1)
+      expect(calls[0].method).toBe('executeCanvasAction')
     })
 
     it('dispatches approvalReply to executor.executeApprovalReply', async () => {

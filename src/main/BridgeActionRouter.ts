@@ -568,6 +568,8 @@ export class BridgeActionRouter {
         return this.executor.executeToggleMessagePin(payload)
       case 'proposedPlanDecision':
         return this.executor.executeProposedPlanDecision(payload)
+      case 'canvasAction':
+        return this.executor.executeCanvasAction(payload)
       case 'registerApnsToken':
         return this.executor.executeRegisterApnsToken(payload)
       case 'ensemblePresetMutate':
@@ -1014,6 +1016,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
+    case 'canvasAction':
     case 'setGuestParticipant':
     case 'removeGuestParticipant':
     case 'createSideChat':

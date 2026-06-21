@@ -395,6 +395,12 @@ export class CanvasService implements CanvasController {
     return result
   }
 
+  async reload(canvasId: string, ctx: CanvasCallContext): Promise<void> {
+    const { driver } = this.require(canvasId, ctx)
+    await driver.reload()
+    this.emit(canvasId, 'reload', ctx)
+  }
+
   async close(canvasId: string, ctx: CanvasCallContext): Promise<void> {
     const session = this.sessions.get(canvasId)
     if (!session || !this.owns(session.record, ctx)) return

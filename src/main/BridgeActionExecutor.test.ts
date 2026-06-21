@@ -30,6 +30,7 @@ import type {
   BridgeGithubCreatePrAction,
   BridgeGoalUpdateAction,
   BridgeProposedPlanDecisionAction,
+  BridgeCanvasActionAction,
   BridgeTogglePinChatAction,
   BridgeTogglePinWorkspaceAction
 } from './BridgeActionPayload'
@@ -149,6 +150,13 @@ const sample = {
     messageId: 'm7',
     decision: 'dismissed'
   } satisfies BridgeProposedPlanDecisionAction,
+  canvasAction: {
+    kind: 'canvasAction',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    canvasId: 'cv1',
+    action: 'close'
+  } satisfies BridgeCanvasActionAction,
   togglePinChat: {
     kind: 'togglePinChat',
     workspaceId: 'ws-1',
@@ -713,6 +721,28 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     expect(result.executed).toBe(false)
     // executeEnsembleAction wraps the fn's error string.
     expect(result.message).toContain('Thread not found')
+  })
+
+  it('runs a canvas close/reload through canvasActionFn', async () => {
+    const canvasActionFn = vi.fn().mockResolvedValue({ ok: true })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, canvasActionFn })
+    const result = await executor.executeCanvasAction(sample.canvasAction)
+    expect(canvasActionFn).toHaveBeenCalledWith(sample.canvasAction)
+    expect(result.executed).toBe(true)
+  })
+
+  it('surfaces canvasActionFn errors', async () => {
+    const canvasActionFn = vi.fn().mockResolvedValue({ ok: false, error: 'No open canvas' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, canvasActionFn })
+    const result = await executor.executeCanvasAction(sample.canvasAction)
+    expect(result.executed).toBe(false)
+    expect(result.message).toContain('No open canvas')
+  })
+
+  it('reports canvasAction not wired when no canvasActionFn is supplied', async () => {
+    const executor = new MainProcessActionExecutor({ cancelRunFn })
+    const result = await executor.executeCanvasAction(sample.canvasAction)
+    expect(result.executed).toBe(false)
   })
 
   it('updates a chat pin through togglePinChatFn', async () => {

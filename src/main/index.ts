@@ -17186,6 +17186,23 @@ if (isGeminiMcpBridgeProcess) {
           // two. This fn only flips the persisted status.
           return { ok: true }
         },
+        canvasActionFn: async (action) => {
+          // P3: phone close/reload of an open Canvas preview. Ownership is enforced
+          // by CanvasService via ctx.chatId (== the action's threadId), so a phone
+          // can only act on its OWN chat's canvas. close() is a silent no-op for an
+          // unowned/already-closed id; reload() throws if not owned/open.
+          const ctx = { chatId: action.threadId }
+          try {
+            if (action.action === 'reload') {
+              await canvasService.reload(action.canvasId, ctx)
+            } else {
+              await canvasService.close(action.canvasId, ctx)
+            }
+            return { ok: true }
+          } catch (err) {
+            return { ok: false, error: err instanceof Error ? err.message : String(err) }
+          }
+        },
         toggleMessagePinFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat) return { ok: false, error: 'Thread not found' }
