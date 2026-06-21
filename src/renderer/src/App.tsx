@@ -17724,7 +17724,7 @@ function App(): React.JSX.Element {
     : undefined
   const chatSplitStyle = rightDockStyle
   const interfaceStyle = appearance.composerStyle
-  const primaryModifierLabel = window.api.hostPlatform === 'darwin' ? '⌘' : 'Ctrl'
+  const primaryModifierLabel = window.api?.hostPlatform === 'darwin' ? '⌘' : 'Ctrl'
   const providerShellEnabled = interfaceStyle === 'codex' || interfaceStyle === 'claude'
   const providerShellClass = providerShellEnabled
     ? `provider-shell provider-shell-${interfaceStyle}`
