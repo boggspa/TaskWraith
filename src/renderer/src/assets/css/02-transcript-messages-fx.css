@@ -4699,6 +4699,147 @@
   cursor: not-allowed;
 }
 
+/* Proposed-plan card — the Codex-style collapsible plan an agent presents in
+   plan mode for approve / edit / dismiss / respond. Sibling of plan-choice. */
+.proposed-plan-card {
+  margin-top: 6px;
+  border-radius: calc(var(--radius-sm) * 2.2);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.045);
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.proposed-plan-header {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 10px var(--space-sm);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.proposed-plan-header:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.proposed-plan-chevron {
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  align-self: center;
+}
+
+.proposed-plan-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.proposed-plan-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposed-plan-body {
+  padding: var(--space-sm);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.proposed-plan-edit {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-primary);
+  padding: 8px;
+  font: var(--font-size-xs) / 1.5 var(--font-mono, monospace);
+}
+
+.proposed-plan-custom {
+  padding: var(--space-sm);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.proposed-plan-custom-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-primary);
+  padding: 8px;
+  font: inherit;
+}
+
+.proposed-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: var(--space-sm);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.proposed-plan-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  padding: 6px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.proposed-plan-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.proposed-plan-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.proposed-plan-primary {
+  border-color: var(--accent, #5d9eff);
+  background: color-mix(in srgb, var(--accent, #5d9eff) 18%, transparent);
+  font-weight: 600;
+}
+
+.proposed-plan-primary:hover {
+  background: color-mix(in srgb, var(--accent, #5d9eff) 28%, transparent);
+}
+
+.proposed-plan-dismiss {
+  margin-right: auto;
+  color: var(--text-secondary);
+}
+
 /* 1.4.2 — goal-step / todo checklist cards (todo_write + provider-native aliases). */
 .todo-checklist-card {
   list-style: none;
