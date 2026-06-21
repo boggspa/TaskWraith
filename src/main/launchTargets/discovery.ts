@@ -405,6 +405,15 @@ async function discoverXcodeTargets(
     }
 
     for (const scheme of schemes) {
+      const schemeEvidence = {
+        path: path.join(
+          xcodePath,
+          'xcshareddata',
+          'xcschemes',
+          `${scheme}.xcscheme`
+        ),
+        reason: 'shared Xcode scheme'
+      }
       targets.push({
         id: stableId('xcode', relativeXcodePath, scheme),
         label: `${scheme} (Xcode build)`,
@@ -416,18 +425,21 @@ async function discoverXcodeTargets(
         platform,
         confidence: 0.8,
         command: command(['xcodebuild', xcodeFlag, xcodePath, '-scheme', scheme, 'build'], workspacePath, false),
-        evidence: [
-          {
-            path: path.join(
-              xcodePath,
-              'xcshareddata',
-              'xcschemes',
-              `${scheme}.xcscheme`
-            ),
-            reason: 'shared Xcode scheme'
-          }
-        ],
+        evidence: [schemeEvidence],
         blockers: []
+      })
+      targets.push({
+        id: stableId('xcode', relativeXcodePath, scheme, 'run'),
+        label: `${scheme} (Xcode run)`,
+        subtitle: `${relativeXcodePath} - destination required`,
+        workspaceId,
+        workspacePath,
+        source: 'xcode',
+        kind: 'run',
+        platform,
+        confidence: 0.72,
+        evidence: [schemeEvidence],
+        blockers: ['Run destination selection is required before launching an Xcode scheme.']
       })
     }
   }

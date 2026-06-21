@@ -222,5 +222,13 @@ let package = Package(
         ]
       }
     })
+    const xcodeRun = snapshot.targets.find((target) => target.label === 'TaskWraith (Xcode run)')
+    expect(xcodeRun).toMatchObject({
+      source: 'xcode',
+      kind: 'run',
+      platform: 'ios',
+      blockers: ['Run destination selection is required before launching an Xcode scheme.']
+    })
+    expect(xcodeRun?.command).toBeUndefined()
   })
 })
