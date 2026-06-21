@@ -424,6 +424,20 @@ export interface RemoteGuestReplySummary {
   guestChatId?: string
 }
 
+/** Structured Codex-style proposed-plan card — the desktop ProposedPlanCard's
+ * persisted state (`metadata.proposedPlan`) projected for remote clients so the
+ * phone renders the same inline collapsible plan card and can round-trip the
+ * decision. The body is bounded INDEPENDENTLY of the row `preview` (which is the
+ * already-block-stripped content) so a multi-paragraph plan isn't clipped to the
+ * one-screen preview cap; `bodyTruncated` lets a client flag an over-long plan
+ * rather than have the user approve a plan they can't fully read. */
+export interface RemoteProposedPlan {
+  title: string
+  bodyPreview: string
+  status: 'pending' | 'approved' | 'dismissed'
+  bodyTruncated?: boolean
+}
+
 export interface RemoteThreadRowMedia {
   id: string
   kind: 'image'
@@ -493,6 +507,10 @@ export interface RemoteThreadRow {
   /** Present for a mirrored guest-participant reply — the guest's identity so
    * remote clients render it inline like the desktop guest bubble. */
   guestReply?: RemoteGuestReplySummary
+  /** Present for a Codex-style proposed plan awaiting (or carrying) a decision —
+   * drives the inline collapsible plan card + approve/respond/dismiss on remote
+   * clients, mirroring the desktop ProposedPlanCard. */
+  proposedPlan?: RemoteProposedPlan
   /** Present for rows that need the user — drives the remote action UI. */
   attention?: {
     kind: RemoteAttentionKind
@@ -924,6 +942,46 @@ function buildGuestReply(
   return { summary, speaker }
 }
 
+/** Generous body cap for a projected plan — large enough that the overwhelming
+ * majority of plans ship whole, bounded so a runaway plan can't bloat the
+ * snapshot. Over-long plans set `bodyTruncated` so the client can offer a full
+ * fetch instead of approving blind. */
+const REMOTE_PROPOSED_PLAN_BODY_MAX = 2000
+const PROPOSED_PLAN_STATUSES = new Set(['pending', 'approved', 'dismissed'])
+
+/**
+ * Project a Codex-style proposed plan from `metadata.proposedPlan`.
+ * PRESENCE-detected on the `proposedPlan` object itself — UNLIKE the
+ * subThreadReturn/guestReply/health builders, the renderer never stamps a
+ * `metadata.kind` for a proposed plan (App.tsx capture), so gating on `kind`
+ * here would silently never fire. Ensemble chats never carry a plan (the
+ * renderer refuses to capture one for chatKind 'ensemble'); the ensembleRoundId
+ * guard keeps the two platforms from diverging even if a future path writes it.
+ */
+function buildProposedPlan(message: ChatMessage): RemoteProposedPlan | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  const raw = metadata?.proposedPlan
+  if (!raw || typeof raw !== 'object') return undefined
+  if (typeof metadata?.ensembleRoundId === 'string' && metadata.ensembleRoundId.trim()) {
+    return undefined
+  }
+  const plan = raw as Record<string, unknown>
+  const status = typeof plan.status === 'string' ? plan.status : undefined
+  if (!status || !PROPOSED_PLAN_STATUSES.has(status)) return undefined
+  const title = stringField(plan.title, 160)
+  const bodyRaw = typeof plan.body === 'string' ? plan.body : ''
+  const { preview: bodyPreview, truncated } = sanitizePreview(bodyRaw, REMOTE_PROPOSED_PLAN_BODY_MAX)
+  // Neither a usable title nor a body — nothing worth a card.
+  if (!title && !bodyPreview) return undefined
+  const result: RemoteProposedPlan = {
+    title: title ?? 'Proposed plan',
+    bodyPreview,
+    status: status as RemoteProposedPlan['status']
+  }
+  if (truncated) result.bodyTruncated = true
+  return result
+}
+
 const REMOTE_MEDIA_SOURCES = new Set<TranscriptMediaSource>([
   'generated',
   'workspace_path',
@@ -1117,6 +1175,8 @@ function buildRow(
     // when its own resolver returns a truthy speaker, never clears this).
     if (guestReply.speaker) row.speaker = guestReply.speaker
   }
+  const proposedPlan = buildProposedPlan(message)
+  if (proposedPlan) row.proposedPlan = proposedPlan
   if (attentionKind) {
     row.attention = {
       kind: attentionKind,
@@ -1741,6 +1801,7 @@ function isPlainAssistantTextMessage(
   if (buildSubThreadReturn(message)) return false
   if (buildGuestReply(message)) return false
   if (buildParticipantHealth(message)) return false
+  if (buildProposedPlan(message)) return false
   const md = message.metadata as Record<string, unknown> | undefined
   const imagePaths = md?.imagePaths
   if (Array.isArray(imagePaths) && imagePaths.length > 0) return false

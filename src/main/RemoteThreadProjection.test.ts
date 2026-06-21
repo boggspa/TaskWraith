@@ -356,6 +356,90 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('proposedPlan', () => {
+    const PLAN_BODY = '## Plan\n\n- Add a smoke test\n- Wire the button\n- Run the suite'
+
+    it('projects metadata.proposedPlan as an inline structured plan row (not attention)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'plan',
+          role: 'assistant',
+          // content was already block-stripped by the renderer before persist.
+          content: 'Here is the plan for your review.',
+          metadata: {
+            proposedPlan: { title: 'Add A Smoke Test', body: PLAN_BODY, status: 'pending' }
+          }
+        })
+      ])
+
+      expect(snap.rows[0]).toMatchObject({
+        id: 'plan',
+        kind: 'assistant', // inline transcript row, NOT 'attention'
+        proposedPlan: { title: 'Add A Smoke Test', bodyPreview: PLAN_BODY, status: 'pending' }
+      })
+      // Card body is sourced from metadata, independent of the row preview; the
+      // raw <proposed_plan> block never reaches the phone, and the plan row is
+      // an inline assistant bubble, not a top-banner attention row.
+      expect(snap.rows[0].preview).not.toContain('<proposed_plan>')
+      expect(snap.rows[0].attention).toBeUndefined()
+      expect(snap.rows[0].proposedPlan?.bodyTruncated).toBeUndefined()
+    })
+
+    it('round-trips a decided (approved) plan status so the card renders read-only', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'plan',
+          role: 'assistant',
+          content: 'Approved.',
+          metadata: { proposedPlan: { title: 'T', body: 'b', status: 'approved' } }
+        })
+      ])
+      expect(snap.rows[0].proposedPlan?.status).toBe('approved')
+    })
+
+    it('does NOT project a proposed plan on an ensemble row (parity with the renderer skip)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'plan',
+          role: 'assistant',
+          content: 'plan',
+          metadata: {
+            ensembleRoundId: 'round-1',
+            proposedPlan: { title: 'T', body: 'b', status: 'pending' }
+          }
+        })
+      ])
+      expect(snap.rows[0].proposedPlan).toBeUndefined()
+    })
+
+    it('bounds an over-long plan body and flags bodyTruncated', () => {
+      const huge = 'x'.repeat(5000)
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'plan',
+          role: 'assistant',
+          content: 'big plan',
+          metadata: { proposedPlan: { title: 'Big', body: huge, status: 'pending' } }
+        })
+      ])
+      const plan = snap.rows[0].proposedPlan
+      expect(plan?.bodyTruncated).toBe(true)
+      expect(plan?.bodyPreview.length ?? 0).toBeLessThanOrEqual(2000)
+    })
+
+    it('ignores a malformed proposed plan (unknown status)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'plan',
+          role: 'assistant',
+          content: 'plan',
+          metadata: { proposedPlan: { title: 'T', body: 'b', status: 'bogus' } as never }
+        })
+      ])
+      expect(snap.rows[0].proposedPlan).toBeUndefined()
+    })
+  })
+
   describe('aroundRow', () => {
     it('windows plus/minus radius around the target, bounded to 2*radius+1', () => {
       const snap = project({ kind: 'aroundRow', rowId: 'm5', radius: 2 })
