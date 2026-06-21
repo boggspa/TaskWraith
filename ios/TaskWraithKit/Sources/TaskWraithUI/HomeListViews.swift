@@ -184,24 +184,56 @@ struct HomeView: View {
         }
     }
 
+    /// The connected-host identity row (live dot + glyph + name). Shown plain
+    /// for a single host; wrapped in a Menu switcher when several are paired.
+    /// The chevron signals the row is tappable in the multi-host case.
+    private func hostIdentityRow(showChevron: Bool) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(model.isDemo ? TWTheme.textMuted : TWTheme.statusSuccess)
+                .frame(width: 8, height: 8)
+            Image(systemName: "desktopcomputer")
+                .foregroundStyle(TWTheme.textSecondary)
+            Text(model.macDisplayName.isEmpty ? "Connected" : model.macDisplayName)
+                .font(.subheadline)
+                .foregroundStyle(TWTheme.textSecondary)
+                .lineLimit(1)
+            if showChevron {
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+            }
+        }
+    }
+
     @ViewBuilder
     private var sections: some View {
         Section {
             MastheadRow()
         }
-        // Mac identity header — name + live dot, like the reference apps.
+        // Host identity header — name + live dot, doubling as a SWITCHER when
+        // more than one host is paired (tap to jump between Macs/PCs/Linux).
         Section {
-            HStack(spacing: 8) {
-                Circle().fill(model.isDemo ? TWTheme.textMuted : TWTheme.statusSuccess)
-                    .frame(width: 8, height: 8)
-                Image(systemName: "desktopcomputer")
-                    .foregroundStyle(TWTheme.textSecondary)
-                Text(model.macDisplayName.isEmpty ? "Connected" : model.macDisplayName)
-                    .font(.subheadline)
-                    .foregroundStyle(TWTheme.textSecondary)
-                    .lineLimit(1)
+            if !model.isDemo && model.pairedHosts.count > 1 {
+                Menu {
+                    ForEach(model.pairedHosts) { host in
+                        Button {
+                            model.switchHost(to: host.macIdentityPubKey)
+                        } label: {
+                            Label(
+                                host.macDisplayName.isEmpty ? "Host" : host.macDisplayName,
+                                systemImage: host.macIdentityPubKey == model.selectedHostId
+                                    ? "checkmark.circle.fill" : "desktopcomputer")
+                        }
+                    }
+                } label: {
+                    hostIdentityRow(showChevron: true)
+                }
+                .listRowBackground(TWTheme.surface1)
+            } else {
+                hostIdentityRow(showChevron: false)
+                    .listRowBackground(TWTheme.surface1)
             }
-            .listRowBackground(TWTheme.surface1)
         }
 
         if !model.approvals.isEmpty {

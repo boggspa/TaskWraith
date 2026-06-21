@@ -5339,54 +5339,185 @@ public struct ComposerDiffPill: View {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
     }
 
-    public var body: some View {
-        Button { onTap?() } label: {
-            HStack(spacing: 8) {
-                if commitsAhead > 0 {
-                    Text("↑ \(compact(commitsAhead))")
-                        .foregroundStyle(TWTheme.statusAttention)
-                }
-                if hasFileStats {
-                    Text("\(filesChanged) file\(filesChanged == 1 ? "" : "s")")
-                        .foregroundStyle(TWTheme.textSecondary)
-                    Text("+\(compact(additions))")
-                        .foregroundStyle(TWTheme.statusSuccess)
-                    Text("−\(compact(deletions))")
-                        .foregroundStyle(TWTheme.statusFailed)
-                }
-            }
-            .font(.caption.weight(.semibold).monospacedDigit())
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            // Liquid Glass where the OS has it; ultra-thin material below. The
-            // frost is dialed back a touch so the glass refracts the composer
-            // behind it more naturalistically instead of reading as a fill.
-            .background {
-                if #available(iOS 26.0, macOS 26.0, *) {
-                    Color.clear
-                        .glassEffect(.regular, in: pillShape)
-                        .opacity(0.9)
-                } else {
-                    pillShape
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.85)
-                        .overlay(pillShape.strokeBorder(TWTheme.border))
-                }
-            }
-            // Rim highlight: a bright top-edge specular fading down, so the pill
-            // reads as a floating glass chip above the composer.
-            .overlay(
-                pillShape.strokeBorder(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.34), Color.white.opacity(0.06)],
-                        startPoint: .top, endPoint: .bottom),
-                    lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.28), radius: 6, y: 2)
+    // Persisted horizontal nudge from centre (points); survives threads + launches.
+    // Touch-and-hold picks the pill up to drag it off-centre; an upward flick
+    // snaps it back. A plain tap still opens the diff (onTap).
+    @AppStorage("tw.diffPill.offsetX") private var persistedOffsetX: Double = 0
+    @GestureState private var dragState: DragState = .inactive
+    @State private var containerWidth: CGFloat = 0
+    @State private var pillWidth: CGFloat = 0
+    @State private var commitTick = 0
+    @State private var resetTick = 0
+
+    /// An upward drag past this — and more vertical than horizontal — recentres
+    /// the pill. The threshold keeps an accidental nudge from snapping it back.
+    private static let resetThreshold: CGFloat = 48
+
+    private enum DragState: Equatable {
+        case inactive
+        case pressing
+        case dragging(translation: CGSize)
+
+        var isActive: Bool { self != .inactive }
+        var isDragging: Bool { if case .dragging = self { return true } else { return false } }
+    }
+
+    /// Half the slack between the pill and its column — how far the pill may
+    /// travel before its edge meets the container. Unbounded until both measure.
+    private var maxOffsetX: CGFloat {
+        guard containerWidth > 0, pillWidth > 0 else { return .greatestFiniteMagnitude }
+        return max(0, (containerWidth - pillWidth) / 2 - 4)
+    }
+
+    private func clampOffset(_ x: Double) -> Double {
+        let limit = Double(maxOffsetX)
+        return Swift.min(limit, Swift.max(-limit, x))
+    }
+
+    /// Intentional upward drag (not an accidental sideways wobble).
+    private func isRecenterDrag(_ t: CGSize) -> Bool {
+        t.height < -Self.resetThreshold && abs(t.height) > abs(t.width)
+    }
+
+    private var liveOffset: CGSize {
+        // Sit centred until the column + pill are measured: applying a persisted
+        // offset against the unbounded pre-measure clamp could flash the pill
+        // off-screen on a narrower column (e.g. an iPad offset restored on iPhone,
+        // and it re-mounts on every keyboard dismiss). 0 is the safe default.
+        guard containerWidth > 0, pillWidth > 0 else { return .zero }
+        let resting = clampOffset(persistedOffsetX)
+        guard case .dragging(let t) = dragState else {
+            return CGSize(width: resting, height: 0)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(
-            accessibilityText)
+        if isRecenterDrag(t) {
+            // Telegraph the recentre: ease back toward centre and lift up.
+            return CGSize(width: resting * 0.25, height: max(t.height, -56))
+        }
+        return CGSize(
+            width: clampOffset(persistedOffsetX + Double(t.width)), height: t.height * 0.1)
+    }
+
+    private var repositionGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.35)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .updating($dragState) { value, state, _ in
+                switch value {
+                case .first(true):
+                    state = .pressing
+                case .second(true, let drag):
+                    state = .dragging(translation: drag?.translation ?? .zero)
+                default:
+                    state = .inactive
+                }
+            }
+            .onEnded { value in
+                guard case .second(true, let drag?) = value else { return }
+                let t = drag.translation
+                if isRecenterDrag(t) {
+                    persistedOffsetX = 0
+                    resetTick += 1
+                } else if abs(t.width) > 3 {
+                    // Ignore a stationary hold-release (no real horizontal move) so
+                    // it neither nudges the pill nor fires a spurious haptic.
+                    persistedOffsetX = clampOffset(persistedOffsetX + Double(t.width))
+                    commitTick += 1
+                }
+            }
+    }
+
+    private var pillBody: some View {
+        HStack(spacing: 8) {
+            if commitsAhead > 0 {
+                Text("↑ \(compact(commitsAhead))")
+                    .foregroundStyle(TWTheme.statusAttention)
+            }
+            if hasFileStats {
+                Text("\(filesChanged) file\(filesChanged == 1 ? "" : "s")")
+                    .foregroundStyle(TWTheme.textSecondary)
+                Text("+\(compact(additions))")
+                    .foregroundStyle(TWTheme.statusSuccess)
+                Text("−\(compact(deletions))")
+                    .foregroundStyle(TWTheme.statusFailed)
+            }
+        }
+        .font(.caption.weight(.semibold).monospacedDigit())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        // Liquid Glass where the OS has it; ultra-thin material below. The
+        // frost is dialed back a touch so the glass refracts the composer
+        // behind it more naturalistically instead of reading as a fill.
+        .background {
+            if #available(iOS 26.0, macOS 26.0, *) {
+                Color.clear
+                    .glassEffect(.regular, in: pillShape)
+                    .opacity(0.9)
+            } else {
+                pillShape
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.85)
+                    .overlay(pillShape.strokeBorder(TWTheme.border))
+            }
+        }
+        // Rim highlight: a bright top-edge specular fading down, so the pill
+        // reads as a floating glass chip above the composer.
+        .overlay(
+            pillShape.strokeBorder(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.34), Color.white.opacity(0.06)],
+                    startPoint: .top, endPoint: .bottom),
+                lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.28), radius: 6, y: 2)
+    }
+
+    public var body: some View {
+        pillBody
+            .background(GeometryReader { proxy in
+                Color.clear
+                    .onAppear { pillWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, w in pillWidth = w }
+            })
+            .scaleEffect(dragState.isActive ? 1.06 : 1)
+            .offset(x: liveOffset.width, y: liveOffset.height)
+            // Lift shadow while repositioning so the pill reads as picked-up.
+            .shadow(
+                color: .black.opacity(dragState.isActive ? 0.3 : 0),
+                radius: dragState.isActive ? 12 : 0, y: dragState.isActive ? 6 : 0)
+            .contentShape(pillShape)
+            // Exclusive so a hold that arms reposition can't ALSO fire the tap:
+            // the long-press takes precedence; a quick tap (long-press fails to
+            // reach 0.35s) opens the diff. A stationary hold-release no longer
+            // opens it — the tap is excluded once the long-press wins.
+            .gesture(ExclusiveGesture(repositionGesture, TapGesture().onEnded { onTap?() }))
+            // Restore the hardware-keyboard / Full-Keyboard-Access activation the
+            // old Button gave (VoiceOver uses the accessibilityAction below).
+            .focusable()
+            .onKeyPress(.return) {
+                onTap?()
+                return .handled
+            }
+            .animation(
+                dragState.isDragging ? nil : .spring(response: 0.32, dampingFraction: 0.72),
+                value: dragState)
+            // Full-width slot keeps the pill centred at rest; the offset shifts it
+            // visually without disturbing layout, and the slot measures the column.
+            .frame(maxWidth: .infinity)
+            .background(GeometryReader { proxy in
+                Color.clear
+                    .onAppear { containerWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, w in containerWidth = w }
+            })
+            .sensoryFeedback(trigger: dragState.isActive) { wasActive, isActive in
+                isActive && !wasActive ? .impact(weight: .medium) : nil
+            }
+            .sensoryFeedback(.selection, trigger: commitTick)
+            .sensoryFeedback(.success, trigger: resetTick)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(accessibilityText)
+            .accessibilityHint("Touch and hold to move the pill; drag up to recentre.")
+            .accessibilityAction { onTap?() }
+            .accessibilityAction(named: Text("Recentre")) { persistedOffsetX = 0 }
     }
 
     private var accessibilityText: String {

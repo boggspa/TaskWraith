@@ -29,7 +29,7 @@ struct PairingView: View {
         ScrollView {
             VStack(spacing: 20) {
                 hero
-                if model.hasStoredPairing { pairedMacSection }
+                if model.hasStoredPairing { pairedHostsSection }
                 pairSection
                 statusSection
                 demoCard
@@ -72,53 +72,67 @@ struct PairingView: View {
         .padding(.bottom, 4)
     }
 
-    // ── Paired Mac (reconnect / forget) ───────────────────────────────────────
-    private var pairedMacSection: some View {
-        labeledSection("Paired Mac") {
+    // ── Paired hosts (switch / reconnect / forget) ────────────────────────────
+    // One row per paired host. Tapping a row connects to (or reconnects) that
+    // host — switchHost() tears down any current session, isolates the outgoing
+    // host's projection, and dials the chosen one. The active host is marked.
+    private var pairedHostsSection: some View {
+        labeledSection(model.pairedHosts.count > 1 ? "Paired hosts" : "Paired host") {
             card {
-                Button { model.reconnectTrusted() } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "arrow.clockwise.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(TWTheme.chroma1)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(
-                                model.macDisplayName.isEmpty
-                                    ? "Reconnect" : "Reconnect to \(model.macDisplayName)"
-                            )
+                ForEach(Array(model.pairedHosts.enumerated()), id: \.element.id) { index, host in
+                    if index > 0 { Rectangle().fill(TWTheme.border).frame(height: 1) }
+                    hostRow(host)
+                }
+            }
+        }
+    }
+
+    private func hostRow(_ host: PairedHostRecord) -> some View {
+        let isActive = host.macIdentityPubKey == model.selectedHostId
+        return HStack(spacing: 12) {
+            Button { model.switchHost(to: host.macIdentityPubKey) } label: {
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(isActive ? TWTheme.statusSuccess : TWTheme.textMuted)
+                        .frame(width: 8, height: 8)
+                    // desktopcomputer for now; Slice 4 makes the glyph per-OS.
+                    Image(systemName: "desktopcomputer")
+                        .font(.title3)
+                        .foregroundStyle(isActive ? TWTheme.chroma1 : TWTheme.textSecondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(host.macDisplayName.isEmpty ? "Host" : host.macDisplayName)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(TWTheme.textPrimary)
                             .lineLimit(1)
-                            Text("Pick up where you left off.")
-                                .font(.caption)
-                                .foregroundStyle(TWTheme.textSecondary)
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(TWTheme.textMuted)
-                    }
-                }
-                .buttonStyle(.plain)
-                Rectangle().fill(TWTheme.border).frame(height: 1)
-                Button(role: .destructive) { model.forgetPairing() } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "trash")
+                        Text(isActive ? "Active · tap to reconnect" : "Tap to connect")
                             .font(.caption)
-                        Text("Forget this Mac")
-                            .font(.footnote.weight(.medium))
-                        Spacer(minLength: 0)
+                            .foregroundStyle(TWTheme.textSecondary)
                     }
-                    .foregroundStyle(TWTheme.statusFailed)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TWTheme.textMuted)
                 }
-                .buttonStyle(.plain)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            Button(role: .destructive) {
+                model.forgetHost(macIdentityPubKey: host.macIdentityPubKey)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.statusFailed)
+                    .padding(.leading, 4)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                "Forget \(host.macDisplayName.isEmpty ? "host" : host.macDisplayName)")
         }
     }
 
     // ── Pair (scan / paste / pair) ────────────────────────────────────────────
     private var pairSection: some View {
-        labeledSection("Pair with your Mac") {
+        labeledSection(model.hasStoredPairing ? "Add another host" : "Pair with a host") {
             card {
                 Text(
                     "In TaskWraith on your Mac, open Settings → Devices, then scan the ghost QR — or paste the pairing code."
