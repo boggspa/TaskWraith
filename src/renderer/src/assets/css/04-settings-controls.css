@@ -2319,10 +2319,6 @@
   color: var(--text-primary);
 }
 
-.settings-provider-auth-card.provider-gemini {
-  color: var(--provider-gemini-color);
-}
-
 .settings-provider-auth-card.provider-codex {
   color: var(--provider-codex-color);
 }
@@ -2341,6 +2337,10 @@
 
 .settings-provider-auth-card.provider-grok {
   color: var(--provider-grok-color);
+}
+
+.settings-provider-auth-card.provider-ollama {
+  color: var(--provider-ollama-color);
 }
 
 .settings-provider-auth-card-header,

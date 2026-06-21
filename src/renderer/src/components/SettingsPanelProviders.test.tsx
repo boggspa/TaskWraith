@@ -104,6 +104,18 @@ describe('SettingsPanel provider cards', () => {
     expect(html).not.toContain('TASKWRAITH_DISABLE_GROK')
   })
 
+  it('renders the Ollama cloud sign-in card in the Providers sign-in grid', () => {
+    const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
+
+    // Ollama now has a sign-in card (filling the retired-Gemini slot) offering the
+    // optional ollama.com cloud auth — local models still need no account.
+    expect(html).toContain('settings-provider-auth-card-partial provider-ollama')
+    expect(html).toContain('ollama signin')
+    expect(html).toContain('ollama signout')
+    expect(html).toContain('Sign in to ollama.com to use Ollama Cloud')
+    expect(html).toContain('Open Terminal to sign in')
+  })
+
   it('does not render the retired Gemini sign-in card on the Providers tab', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 

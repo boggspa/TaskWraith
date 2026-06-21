@@ -1750,6 +1750,21 @@ export function SettingsPanel({
     'Grok',
     'Authenticate the Grok CLI (in `~/.grok/bin`) in your shell, then launch Grok runs.'
   )
+  // Ollama's status reflects the LOCAL runtime; the card's sign-in is the
+  // OPTIONAL ollama.com cloud auth (`ollama signin`), which local models don't
+  // need. Custom summary (not summariseCliProviderEnabled) so "ready" reads as a
+  // green local-runtime dot rather than the CLI-provider "Available · sign-in".
+  const ollamaAuthSummary: ProviderAuthSummary = ollamaStatus?.available
+    ? {
+        variant: 'signed-in',
+        statusText: 'Local runtime ready',
+        hint: 'Local models need no account. Sign in to ollama.com only for Ollama Cloud / Turbo.'
+      }
+    : {
+        variant: 'partial',
+        statusText: 'Local setup optional',
+        hint: 'Install Ollama and pull a model, or sign in to ollama.com to use cloud models.'
+      }
   const providerUpgradeState = (provider: ProviderId): ProviderCliUpgradeState =>
     providerCliUpgradeState[provider] || 'idle'
   const renderProviderUpgradeButton = (provider: ProviderId) => {
@@ -3962,6 +3977,45 @@ export function SettingsPanel({
                       {renderProviderUpgradeHint('grok')}
                     </p>
                     {renderProviderPauseControls('grok')}
+                  </SettingsProviderAuthCard>
+                  <SettingsProviderAuthCard
+                    provider="ollama"
+                    label="Ollama"
+                    summary={ollamaAuthSummary}
+                    description="Local Ollama models run with no account. Sign in to ollama.com to use Ollama Cloud / Turbo and pull private models."
+                    optional
+                  >
+                    <div className="settings-provider-auth-command">
+                      <code>ollama signin</code>
+                      <span>
+                        Run once in Terminal to authorize this machine with ollama.com (opens a
+                        browser). Use <code>ollama signout</code> to revoke it.
+                      </span>
+                    </div>
+                    <div className="settings-provider-auth-action-row">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-primary"
+                        onClick={() => onProviderLogin?.('ollama')}
+                        disabled={!onProviderLogin}
+                      >
+                        Open Terminal to sign in
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => onProviderLogout?.('ollama')}
+                        disabled={!onProviderLogout}
+                      >
+                        Open Terminal to sign out
+                      </button>
+                    </div>
+                    <p className="settings-provider-auth-footnote">
+                      Local models (configured in the Ollama section below) work without signing in
+                      — cloud sign-in only unlocks ollama.com-hosted models. TaskWraith stores no
+                      Ollama credential; auth stays inside the Ollama CLI.
+                    </p>
+                    {renderProviderPauseControls('ollama')}
                   </SettingsProviderAuthCard>
                 </div>
               </div>
