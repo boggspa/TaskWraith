@@ -81,6 +81,16 @@ describe('LaunchManager', () => {
           isRepo: true,
           repoRoot: workspacePath,
           branch: 'feature/run-button'
+        },
+        command: {
+          raw: 'npm run dev',
+          argv: ['npm', 'run', 'dev'],
+          cwd: workspacePath,
+          env: {
+            NODE_ENV: 'development',
+            VITE_PORT: '5173'
+          },
+          longRunning: true
         }
       }),
       chatId: 'chat-1'
@@ -94,7 +104,13 @@ describe('LaunchManager', () => {
       workspacePath,
       expect.objectContaining({
         method: 'launch/start',
-        forcePrompt: true
+        forcePrompt: true,
+        preview: expect.objectContaining({
+          envDeltas: {
+            NODE_ENV: 'development',
+            VITE_PORT: '5173'
+          }
+        })
       })
     )
     expect(fixture.spawnProcess).toHaveBeenCalledWith(
@@ -107,6 +123,12 @@ describe('LaunchManager', () => {
         windowsHide: true
       })
     )
+    expect(fixture.spawnProcess.mock.calls[0]?.[2]?.env).toMatchObject({
+      NODE_ENV: 'development',
+      VITE_PORT: '5173',
+      FORCE_COLOR: '0',
+      NO_COLOR: '1'
+    })
     expect(fixture.tracked[0]).toMatchObject({
       pid: 4321,
       pgid: 4321,

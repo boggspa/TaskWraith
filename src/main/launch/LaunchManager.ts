@@ -128,6 +128,7 @@ export class LaunchManager {
     }
 
     const commandText = command.raw || command.argv.join(' ')
+    const envDeltas = command.env || {}
     const allowed = await this.requestApproval(sender, provider, 'shellCommands', target.workspacePath, {
       method: 'launch/start',
       title: 'Approve launch target',
@@ -143,7 +144,8 @@ export class LaunchManager {
         command: commandText,
         cwd: command.cwd,
         workspacePath: target.workspacePath,
-        git: target.git
+        git: target.git,
+        ...(Object.keys(envDeltas).length > 0 ? { envDeltas } : {})
       }
     })
     if (!allowed) return { ok: false, error: 'Launch denied by TaskWraith approval policy.' }
@@ -185,7 +187,7 @@ export class LaunchManager {
         shell: false,
         detached: this.platform !== 'win32',
         windowsHide: true,
-        env: this.createEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, binary)
+        env: this.createEnv({ ...envDeltas, FORCE_COLOR: '0', NO_COLOR: '1' }, binary)
       })
     } catch (err) {
       const failed = this.store.update(attempt.id, {

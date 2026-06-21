@@ -679,10 +679,15 @@ function vsCodeLaunchCommand(
       : undefined
 
   if (runtimeExecutable) {
-    return command([runtimeExecutable, ...runtimeArgs, ...(program ? [program] : [])], cwd, false)
+    return command(
+      [runtimeExecutable, ...runtimeArgs, ...(program ? [program] : [])],
+      cwd,
+      false,
+      envRecord(config.env)
+    )
   }
   if (program) {
-    return command(['node', program], cwd, false)
+    return command(['node', program], cwd, false, envRecord(config.env))
   }
   return undefined
 }
@@ -696,10 +701,12 @@ function vsCodeTaskCommand(
   const rawCommand = substituteWorkspaceFolder(task.command, workspacePath)
   const isShell = task.type !== 'process'
   const raw = [rawCommand, ...args].join(' ')
+  const env = taskOptionsEnv(task.options)
   return {
     raw,
     ...(isShell ? {} : { argv: [rawCommand, ...args] }),
     cwd: workspacePath,
+    ...(env ? { env } : {}),
     longRunning: vsCodeTaskKind(task) === 'dev-server',
     shell: isShell
   }
@@ -751,11 +758,17 @@ async function xcodeSchemes(xcodePath: string): Promise<string[]> {
   }
 }
 
-function command(argv: string[], cwd: string, longRunning: boolean): LaunchTargetCommand {
+function command(
+  argv: string[],
+  cwd: string,
+  longRunning: boolean,
+  env?: Record<string, string>
+): LaunchTargetCommand {
   return {
     raw: argv.map((part) => (/\s/.test(part) ? JSON.stringify(part) : part)).join(' '),
     argv,
     cwd,
+    ...(env && Object.keys(env).length > 0 ? { env } : {}),
     longRunning
   }
 }
@@ -766,6 +779,18 @@ function substituteWorkspaceFolder(value: string, workspacePath: string): string
 
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+function envRecord(value: unknown): Record<string, string> | undefined {
+  if (!isObject(value)) return undefined
+  const entries = Object.entries(value).filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string'
+  )
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined
+}
+
+function taskOptionsEnv(value: unknown): Record<string, string> | undefined {
+  return isObject(value) ? envRecord(value.env) : undefined
 }
 
 async function readText(filePath: string): Promise<string | null> {

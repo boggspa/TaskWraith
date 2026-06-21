@@ -114,6 +114,11 @@ describe('discoverLaunchTargets', () => {
             "type": "pwa-node",
             "request": "launch",
             "program": "\${workspaceFolder}/server/index.js",
+            "env": {
+              "NODE_ENV": "development",
+              "PORT": "4000",
+              "IGNORED": 42
+            },
           },
           {
             "name": "Attach",
@@ -139,6 +144,12 @@ describe('discoverLaunchTargets', () => {
             "command": "npm",
             "args": ["run", "build"],
             "group": "build",
+            "options": {
+              "cwd": "\${workspaceFolder}/web",
+              "env": {
+                "NODE_ENV": "production"
+              }
+            },
           }
         ]
       }`
@@ -151,7 +162,11 @@ describe('discoverLaunchTargets', () => {
       kind: 'debug',
       platform: 'node',
       command: {
-        argv: ['node', path.join(workspace, 'server/index.js')]
+        argv: ['node', path.join(workspace, 'server/index.js')],
+        env: {
+          NODE_ENV: 'development',
+          PORT: '4000'
+        }
       },
       blockers: []
     })
@@ -170,6 +185,9 @@ describe('discoverLaunchTargets', () => {
       command: {
         raw: 'npm run build',
         argv: ['npm', 'run', 'build'],
+        env: {
+          NODE_ENV: 'production'
+        },
         shell: false
       }
     })
