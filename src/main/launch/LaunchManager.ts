@@ -23,6 +23,7 @@ import type {
 const OUTPUT_TAIL_LIMIT = 32_000
 const DETECTED_URL_LIMIT = 8
 const ACTIVE_STATUSES = new Set<LaunchAttempt['status']>(['starting', 'running', 'stopping'])
+const RECOVERED_STOPPABLE_STATUSES = new Set<LaunchAttempt['status']>(['interrupted'])
 type LaunchListener = (snapshot: LaunchSnapshot) => void
 
 export interface LaunchManagerDeps {
@@ -228,9 +229,20 @@ export class LaunchManager {
   async stopAttempt(attemptId: string): Promise<LaunchStopResult> {
     const attempt = this.store.get(attemptId)
     if (!attempt) return { ok: false, error: 'Launch attempt not found.' }
-    if (!ACTIVE_STATUSES.has(attempt.status)) return { ok: true, attempt }
+    const recoveredStoppable = RECOVERED_STOPPABLE_STATUSES.has(attempt.status) && Boolean(attempt.pid)
+    if (!ACTIVE_STATUSES.has(attempt.status) && !recoveredStoppable) return { ok: true, attempt }
     const child = this.activeChildren.get(attemptId)
-    if (!child || !attempt.pid) {
+    if (!attempt.pid) {
+      const interrupted = this.store.update(attemptId, {
+        status: 'interrupted',
+        endedAt: this.isoNow(),
+        updatedAt: this.isoNow(),
+        lastError: 'Launch process is no longer owned by this TaskWraith session.'
+      })
+      this.publishSoon()
+      return { ok: false, attempt: interrupted || attempt, error: interrupted?.lastError }
+    }
+    if (!child && !recoveredStoppable) {
       const interrupted = this.store.update(attemptId, {
         status: 'interrupted',
         endedAt: this.isoNow(),

@@ -111,6 +111,13 @@ function outputPreview(attempt: LaunchAttempt): string {
   return lines.slice(-8).join('\n')
 }
 
+function canStopAttempt(attempt: LaunchAttempt): boolean {
+  return (
+    STOPPABLE_STATUSES.has(attempt.status) ||
+    (attempt.status === 'interrupted' && Boolean(attempt.pid))
+  )
+}
+
 export function isLaunchAttemptActive(status: LaunchAttempt['status']): boolean {
   return ACTIVE_STATUSES.has(status)
 }
@@ -154,7 +161,7 @@ export function buildLaunchAttemptRows(
           now
         ),
         active,
-        canStop: STOPPABLE_STATUSES.has(attempt.status),
+        canStop: canStopAttempt(attempt),
         outputPreview: outputPreview(attempt),
         outputTruncated: attempt.outputTruncated,
         lastError: attempt.lastError

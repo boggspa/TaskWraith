@@ -176,4 +176,29 @@ describe('buildLaunchAttemptRows', () => {
       duration: '17s'
     })
   })
+
+  it('allows recovered interrupted attempts with a pid to be stopped', () => {
+    const rows = buildLaunchAttemptRows([
+      attempt({
+        id: 'recovered',
+        status: 'interrupted',
+        pid: 9876,
+        pgid: 9876,
+        lastError: 'TaskWraith restarted before this launch finished.'
+      }),
+      attempt({
+        id: 'missing-pid',
+        status: 'interrupted'
+      })
+    ])
+
+    expect(rows.find((row) => row.id === 'recovered')).toMatchObject({
+      statusLabel: 'Interrupted',
+      canStop: true
+    })
+    expect(rows.find((row) => row.id === 'missing-pid')).toMatchObject({
+      statusLabel: 'Interrupted',
+      canStop: false
+    })
+  })
 })

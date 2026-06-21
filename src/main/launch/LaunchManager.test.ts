@@ -53,6 +53,7 @@ function managerFixture(storagePath: string, workspacePath: string) {
     approvals.push(request)
     return true
   })
+  const killProcess = vi.fn(async () => ({ ok: true, escalated: false }))
   const manager = new LaunchManager({
     store: new LaunchAttemptStore(storagePath),
     platform: 'darwin',
@@ -62,9 +63,9 @@ function managerFixture(storagePath: string, workspacePath: string) {
     createEnv: (extra) => ({ PATH: '/usr/bin', ...extra }),
     trackSpawn: (spawn) => tracked.push(spawn),
     untrackSpawn: (pid) => untracked.push(pid),
-    killProcess: vi.fn(async () => ({ ok: true, escalated: false }))
+    killProcess
   })
-  return { manager, child, approvals, tracked, untracked, spawnProcess, requestApproval, workspacePath }
+  return { manager, child, approvals, tracked, untracked, spawnProcess, requestApproval, killProcess, workspacePath }
 }
 
 describe('LaunchManager', () => {
@@ -274,5 +275,53 @@ describe('LaunchManager', () => {
       status: 'interrupted',
       endedAt: '2026-06-21T12:00:00.000Z'
     })
+  })
+
+  it('can stop a recovered interrupted attempt through its persisted pid', async () => {
+    const storagePath = await tempFile()
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
+    const store = new LaunchAttemptStore(storagePath)
+    store.save({
+      schemaVersion: 1,
+      id: 'attempt-recovered',
+      targetId: 'target-1',
+      targetLabel: 'npm run dev',
+      targetSource: 'package-script',
+      targetKind: 'dev-server',
+      targetSnapshot: target(workspacePath),
+      targetSnapshotHash: 'hash',
+      provider: 'codex',
+      workspacePath,
+      cwd: workspacePath,
+      commandRaw: 'npm run dev',
+      argv: ['npm', 'run', 'dev'],
+      pid: 9876,
+      pgid: 9876,
+      status: 'running',
+      startedAt: '2026-06-21T11:00:00.000Z',
+      updatedAt: '2026-06-21T11:00:00.000Z',
+      outputTail: '',
+      outputTailBytes: 0,
+      outputTruncated: false
+    })
+    const killProcess = vi.fn(async () => ({ ok: true, escalated: false }))
+    const untracked: number[] = []
+    const manager = new LaunchManager({
+      store,
+      now: () => new Date('2026-06-21T12:00:00.000Z'),
+      requestApproval: vi.fn(),
+      createEnv: (extra) => extra,
+      killProcess,
+      untrackSpawn: (pid) => untracked.push(pid)
+    })
+
+    expect(store.get('attempt-recovered')).toMatchObject({ status: 'interrupted', pid: 9876 })
+
+    const stopped = await manager.stopAttempt('attempt-recovered')
+
+    expect(stopped.ok).toBe(true)
+    expect(killProcess).toHaveBeenCalledWith(9876, 9876)
+    expect(untracked).toEqual([9876])
+    expect(store.get('attempt-recovered')).toMatchObject({ status: 'cancelled' })
   })
 })
