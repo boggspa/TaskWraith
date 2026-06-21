@@ -154,6 +154,10 @@ struct HomeView: View {
                         Image(systemName: "gearshape")
                     }
                     Menu {
+                        Button("First-launch guide", systemImage: "questionmark.circle") {
+                            model.firstLaunchSheetPresented = true
+                        }
+                        Divider()
                         if model.isDemo {
                             Button("Exit demo", systemImage: "xmark.circle") {
                                 model.exitDemoMode()

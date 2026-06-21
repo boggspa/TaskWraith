@@ -110,6 +110,84 @@ public struct WelcomeDashboardMessage: Codable, Sendable {
     public init(dashboard: WelcomeDashboard) { self.dashboard = dashboard }
 }
 
+/// `bridge.broadcastFirstLaunchState` params. The Mac owns this redacted,
+/// orientation-only snapshot: provider readiness, workspace access counts,
+/// usage windows, notices, and copyable Mac-side setup hints.
+public struct FirstLaunchStateMessage: Codable, Sendable {
+    public let state: FirstLaunchState
+}
+
+public struct FirstLaunchState: Codable, Sendable {
+    public let schemaVersion: Int
+    public let generatedAt: String?
+    public let notifications: [FirstLaunchNotice]
+    public let workspace: FirstLaunchWorkspaceSummary?
+    public let providerCards: [FirstLaunchProviderCard]
+    public let setupCommands: [FirstLaunchSetupCommand]
+    public let ollamaModelCommands: [FirstLaunchOllamaModelCommand]
+}
+
+public struct FirstLaunchNotice: Codable, Sendable, Identifiable, Hashable {
+    public let id: String
+    public let kind: String
+    public let title: String
+    public let body: String
+    public let tone: String
+    public let dismissible: Bool?
+}
+
+public struct FirstLaunchWorkspaceSummary: Codable, Sendable, Hashable {
+    public let visibleCount: Int
+    public let totalCount: Int
+    public let runningCount: Int
+    public let hasVisibleWorkspaces: Bool
+    public let capabilities: Capabilities
+
+    public struct Capabilities: Codable, Sendable, Hashable {
+        public let monitor: Bool
+        public let approve: Bool
+        public let answer: Bool
+        public let startTurn: Bool
+        public let steer: Bool
+        public let fileRead: Bool
+        public let fileWrite: Bool
+    }
+}
+
+public struct FirstLaunchProviderCard: Codable, Sendable, Identifiable, Hashable {
+    public let id: String
+    public let label: String
+    public let optional: Bool
+    public let statusKind: String
+    public let statusText: String
+    public let detail: String
+    public let setupHint: String
+    public let setupCommands: [FirstLaunchSetupCommand]
+    public let usageWindows: [FirstLaunchUsageWindow]
+    public let usageGeneratedAt: String?
+}
+
+public struct FirstLaunchUsageWindow: Codable, Sendable, Identifiable, Hashable {
+    public let id: String
+    public let label: String
+    public let usedPercent: Int?
+    public let resetAt: String?
+}
+
+public struct FirstLaunchSetupCommand: Codable, Sendable, Identifiable, Hashable {
+    public let id: String
+    public let label: String
+    public let command: String
+    public let source: String
+    public let platform: String?
+}
+
+public struct FirstLaunchOllamaModelCommand: Codable, Sendable, Identifiable, Hashable {
+    public let id: String
+    public let label: String
+    public let command: String
+}
+
 public struct WelcomeDashboard: Codable, Sendable {
     // — Statistics tab scalars —
     public let favoriteModel: String

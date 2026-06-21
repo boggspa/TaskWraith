@@ -167,6 +167,9 @@ public final class RemoteSessionModel: ObservableObject {
     /// The Electron welcome stats dashboard (Statistics / Models / Workspaces /
     /// Providers). Rides the usage-rollup cadence; nil until the first push.
     @Published public private(set) var welcomeDashboard: WelcomeDashboard? = nil
+    /// Redacted Mac-authored first-launch orientation state. Cleared on host
+    /// switch/demo exit so provider/readiness data never bleeds between Macs.
+    @Published public private(set) var firstLaunchState: FirstLaunchState? = nil
     /// Token-level live text per thread, accumulated from bridge.runEvent
     /// content deltas — renders as the growing assistant bubble between
     /// snapshot pushes. Cleared when the run exits (the final snapshot row
@@ -233,6 +236,9 @@ public final class RemoteSessionModel: ObservableObject {
     /// Presented from RootView (above the `.id(revision)` boundary); the sheet
     /// re-themes live via its own `@ObservedObject themes`.
     @Published public var settingsPresented = false
+    /// Presented from RootView alongside settings, but root-owned so it can open
+    /// after pairing/demo without being torn down by theme revision rebuilds.
+    @Published public var firstLaunchSheetPresented = false
     /// Deep-link target captured from a notification tap before the session is
     /// established (cold launch); applied to navigationTarget on `.established`.
     private var pendingDeepLinkThreadId: String?
@@ -1170,6 +1176,22 @@ public final class RemoteSessionModel: ObservableObject {
         """
         if let usage = Self.decodeDemo(ModelUsageMessage.Usage.self, modelUsageJSON) { modelUsage = usage }
         if let rollup = Self.decodeDemo(UsageRollupMessage.Rollup.self, rollupJSON) { usageRollup = rollup }
+        let firstLaunchJSON = """
+        {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
+         "notifications":[{"id":"gemini-retired","kind":"provider-retired","title":"Gemini has been retired.","body":"Google ended Gemini CLI sign-in, so Gemini is no longer available for new runs. Existing chats remain visible.","tone":"danger","dismissible":true}],
+         "workspace":{"visibleCount":1,"totalCount":1,"runningCount":0,"hasVisibleWorkspaces":true,"capabilities":{"monitor":true,"approve":true,"answer":true,"startTurn":true,"steer":true,"fileRead":true,"fileWrite":false}},
+         "providerCards":[
+          {"id":"codex","label":"Codex","optional":false,"statusKind":"ready","statusText":"Ready on Mac","detail":"OpenAI Codex CLI is available for fast agentic coding runs from the Mac.","setupHint":"Sign-in happens on the Mac through the Codex CLI.","setupCommands":[{"id":"codex","label":"Codex","command":"npm i -g @openai/codex","source":"OpenAI"}],"usageWindows":[{"id":"codex-5h","label":"Current session (5h)","usedPercent":28,"resetAt":"2026-06-19T14:00:00Z"}],"usageGeneratedAt":"2026-06-19T10:45:00Z"},
+          {"id":"claude","label":"Claude","optional":false,"statusKind":"ready","statusText":"Ready on Mac","detail":"Claude Code is signed in on the paired Mac for careful reasoning and edits.","setupHint":"Manage Claude sign-in on the Mac.","setupCommands":[{"id":"claude","label":"Claude","command":"curl -fsSL https://claude.ai/install.sh | bash","source":"Anthropic"}],"usageWindows":[{"id":"claude-5h","label":"Current session (5h)","usedPercent":42,"resetAt":"2026-06-19T13:00:00Z"}],"usageGeneratedAt":"2026-06-19T10:45:00Z"},
+          {"id":"kimi","label":"Kimi","optional":true,"statusKind":"needsSignIn","statusText":"Needs sign-in on Mac","detail":"Kimi is installed but needs a Moonshot API key on the Mac before runs can start.","setupHint":"Add the API key in TaskWraith Settings on the Mac.","setupCommands":[{"id":"kimi","label":"Kimi","command":"curl -LsSf https://code.kimi.com/install.sh | bash","source":"Moonshot"}],"usageWindows":[{"id":"kimi-day","label":"Daily quota","usedPercent":12,"resetAt":"2026-06-20T00:00:00Z"}]},
+          {"id":"cursor","label":"Cursor","optional":true,"statusKind":"notObservable","statusText":"Not observable","detail":"Cursor CLI is available; it may still ask for sign-in when a run starts on the Mac.","setupHint":"Run cursor-agent login on the Mac if prompted.","setupCommands":[{"id":"cursor","label":"Cursor","command":"curl https://cursor.com/install -fsS | bash","source":"Cursor"}],"usageWindows":[{"id":"cursor-month","label":"Monthly requests","usedPercent":34,"resetAt":"2026-07-01T00:00:00Z"}]},
+          {"id":"grok","label":"Grok","optional":true,"statusKind":"notObservable","statusText":"Not observable","detail":"Grok usage is not observable from this demo snapshot.","setupHint":"Finish Grok CLI sign-in on the Mac.","setupCommands":[{"id":"grok","label":"Grok","command":"curl -fsSL https://x.ai/cli/install.sh | bash","source":"xAI"}],"usageWindows":[]},
+          {"id":"ollama","label":"Ollama","optional":true,"statusKind":"localReady","statusText":"Local Ollama ready","detail":"Local models are served by the paired Mac; no cloud account is required.","setupHint":"Pull a supported model on the Mac before selecting it.","setupCommands":[{"id":"ollama","label":"Ollama","command":"curl -fsSL https://ollama.com/install.sh | sh","source":"Ollama","platform":"macOS / Linux"}],"usageWindows":[]}
+         ],
+         "setupCommands":[{"id":"codex","label":"Codex","command":"npm i -g @openai/codex","source":"OpenAI"},{"id":"claude","label":"Claude","command":"curl -fsSL https://claude.ai/install.sh | bash","source":"Anthropic"}],
+         "ollamaModelCommands":[{"id":"qwen3:4b-instruct","label":"Qwen 3 (4B Param)","command":"ollama run qwen3:4b-instruct"},{"id":"gpt-oss:20b","label":"GPT OSS (20B Param)","command":"ollama run gpt-oss:20b"}]}
+        """
+        if let state = Self.decodeDemo(FirstLaunchState.self, firstLaunchJSON) { firstLaunchState = state }
 
         // 30-day token bar charts — deterministic synthetic series (no gemini).
         let twProviders = ["claude", "codex", "kimi"]
@@ -1232,6 +1254,7 @@ public final class RemoteSessionModel: ObservableObject {
         externalTokenDaily = nil
         modelUsage = nil
         welcomeDashboard = nil
+        firstLaunchState = nil
         gitSnapshots = [:]
         ensembleStates = [:]
         diffSummaries = [:]
@@ -1929,6 +1952,14 @@ public final class RemoteSessionModel: ObservableObject {
                 return
             }
             welcomeDashboard = message.dashboard
+        case "bridge.broadcastFirstLaunchState":
+            guard
+                let message = try? JSONDecoder().decode(FirstLaunchStateMessage.self, from: params)
+            else {
+                print("[tw] DECODE FAILED: first launch state")
+                return
+            }
+            firstLaunchState = message.state
         case "bridge.broadcastProviderModels":
             guard let message = try? JSONDecoder().decode(ProviderModelsMessage.self, from: params)
             else { return }

@@ -39,6 +39,8 @@ public struct RootView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject private var themes = TWThemeStore.shared
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("tw.firstLaunchSheet.dismissed.v1") private var firstLaunchSheetDismissed = false
+    @State private var openingFirstLaunchFromSettings = false
 
     public init(model: RemoteSessionModel) { self.model = model }
 
@@ -50,6 +52,22 @@ public struct RootView: View {
         switch model.phase {
         case .connecting, .error: return true
         default: return false
+        }
+    }
+
+    private var isConnectedForFirstLaunch: Bool {
+        if case .connected = model.phase { return true }
+        return false
+    }
+
+    private func presentFirstLaunchIfNeeded() {
+        guard isConnectedForFirstLaunch else { return }
+        guard !firstLaunchSheetDismissed else { return }
+        guard !openingFirstLaunchFromSettings else { return }
+        guard !model.settingsPresented, !model.firstLaunchSheetPresented else { return }
+        DispatchQueue.main.async {
+            guard !model.settingsPresented, !model.firstLaunchSheetPresented else { return }
+            model.firstLaunchSheetPresented = true
         }
     }
 
@@ -111,7 +129,35 @@ public struct RootView: View {
         // themes. Presented here, not from HomeView, which is inside the
         // `.id(revision)` subtree that rebuilds on every settings change.
         .settingsSurfaceCover(isPresented: $model.settingsPresented) {
-            AppSettingsSheet(model: model)
+            AppSettingsSheet(model: model, onOpenFirstLaunchGuide: {
+                openingFirstLaunchFromSettings = true
+                model.settingsPresented = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    firstLaunchSheetDismissed = false
+                    model.firstLaunchSheetPresented = true
+                    openingFirstLaunchFromSettings = false
+                }
+            })
+        }
+        .sheet(
+            isPresented: $model.firstLaunchSheetPresented,
+            onDismiss: { firstLaunchSheetDismissed = true }
+        ) {
+            FirstLaunchSheetView(
+                model: model,
+                onOpenSettings: {
+                    model.firstLaunchSheetPresented = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        model.settingsPresented = true
+                    }
+                },
+                onDone: {
+                    firstLaunchSheetDismissed = true
+                    model.firstLaunchSheetPresented = false
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .animation(.easeInOut(duration: 0.25), value: showShellDuringDrop)
         // Privacy shield: iOS snapshots the UI for the app switcher —
@@ -126,7 +172,14 @@ public struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: scenePhase)
-        .task { model.resumeIfIdle() }
+        .task {
+            model.resumeIfIdle()
+            presentFirstLaunchIfNeeded()
+        }
+        .onChange(of: model.phase) { _, _ in presentFirstLaunchIfNeeded() }
+        .onChange(of: model.settingsPresented) { _, isPresented in
+            if !isPresented { presentFirstLaunchIfNeeded() }
+        }
         .onChange(of: scenePhase) { _, phase in
             // iOS kills sockets in the background — coming back to the
             // foreground silently re-resolves the stored pairing.
