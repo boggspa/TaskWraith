@@ -169,6 +169,47 @@ function imageBlockFromUnknown(value: unknown): McpImageContentBlock | null {
   return { type: 'image', mimeType, data }
 }
 
+function parseJsonObjectLike(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  const trimmed = value.trim()
+  if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) return value
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return value
+  }
+}
+
+export function extractMcpImageBlocksFromRawResult(raw: unknown): McpImageContentBlock[] {
+  const parsed = parseJsonObjectLike(raw)
+  const blocks: McpImageContentBlock[] = []
+  const visit = (node: unknown): void => {
+    const parsedNode = parseJsonObjectLike(node)
+    if (!parsedNode || typeof parsedNode !== 'object') return
+    if (Array.isArray(parsedNode)) {
+      parsedNode.forEach(visit)
+      return
+    }
+    const block = imageBlockFromUnknown(parsedNode)
+    if (block) {
+      blocks.push(block)
+      return
+    }
+    const record = parsedNode as Record<string, unknown>
+    for (const key of ['content', 'result', 'output']) {
+      visit(record[key])
+    }
+  }
+  visit(parsed)
+  const seen = new Set<string>()
+  return blocks.filter((block) => {
+    const key = `${block.mimeType}:${block.data.length}:${block.data.slice(0, 48)}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function decodedImageBlock(
   block: McpImageContentBlock,
   maxBytes: number
@@ -217,6 +258,14 @@ export function createToolResultMediaRefs({
       continue
     }
     const hash = sha256Base64Url(decoded.buffer)
+    const thumbnail =
+      thumbnailer({ buffer: decoded.buffer, mimeType: decoded.mimeType, maxEdge: 512 }) ??
+      (isTranscriptThumbnailMime(decoded.mimeType) && decoded.buffer.length <= 180_000
+        ? {
+            dataBase64: decoded.buffer.toString('base64'),
+            mimeType: decoded.mimeType
+          }
+        : undefined)
     refs.push({
       id: `${messageId}:tool-image:${hash.slice(0, 16)}`,
       kind: 'image',
@@ -227,7 +276,7 @@ export function createToolResultMediaRefs({
       byteLength: decoded.buffer.length,
       sha256: hash,
       assetId: runId ? `run:${runId}:tool-image:${hash}` : `tool-image:${hash}`,
-      thumbnail: thumbnailer({ buffer: decoded.buffer, mimeType: decoded.mimeType, maxEdge: 512 }) ?? undefined,
+      thumbnail,
       status: 'available'
     })
   }

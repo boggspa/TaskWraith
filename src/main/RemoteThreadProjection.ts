@@ -45,6 +45,10 @@ import type {
   TranscriptMediaThumbnail,
   ToolActivity
 } from './store/types'
+import {
+  createToolResultMediaRefs,
+  extractMcpImageBlocksFromRawResult
+} from './services/TranscriptMediaService'
 
 export type RemoteDisplayCurrency = 'USD' | 'GBP' | 'EUR'
 
@@ -1014,6 +1018,22 @@ function buildRowMedia(metadata: Record<string, unknown> | undefined): RemoteThr
   return media
 }
 
+function buildToolActivityMedia(message: ChatMessage): RemoteThreadRowMedia[] {
+  if (!Array.isArray(message.toolActivities) || message.toolActivities.length === 0) return []
+  const mediaRefs = message.toolActivities.flatMap((activity) => {
+    const blocks = extractMcpImageBlocksFromRawResult(activity.rawResultEvent)
+    if (blocks.length === 0) return []
+    return createToolResultMediaRefs({
+      messageId: `${message.id}:${activity.id}`,
+      runId: message.runId,
+      toolName: activity.displayName || activity.toolName,
+      blocks,
+      maxRefs: REMOTE_MAX_MEDIA_REFS_PER_ROW
+    })
+  })
+  return buildRowMedia({ mediaRefs })
+}
+
 function buildRow(
   message: ChatMessage,
   previewMax: number,
@@ -1032,7 +1052,10 @@ function buildRow(
   }
   if (typeof message.runId === 'string') row.runId = message.runId
   const metadata = message.metadata as Record<string, unknown> | undefined
-  const rowMedia = buildRowMedia(metadata)
+  const rowMedia = [...buildRowMedia(metadata), ...buildToolActivityMedia(message)].slice(
+    0,
+    REMOTE_MAX_MEDIA_REFS_PER_ROW
+  )
   if (rowMedia.length > 0) {
     row.media = rowMedia
   }

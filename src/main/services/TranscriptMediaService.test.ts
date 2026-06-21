@@ -4,6 +4,7 @@ import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   createToolResultMediaRefs,
+  extractMcpImageBlocksFromRawResult,
   sniffImageMime,
   validateWorkspaceImagePath
 } from './TranscriptMediaService'
@@ -61,6 +62,32 @@ describe('TranscriptMediaService', () => {
     })
     expect(refs[0].sha256).toBeTruthy()
     expect(refs[0].assetId).toContain('run:run-1:tool-image:')
+  })
+
+  it('extracts nested MCP image blocks from raw result envelopes', () => {
+    const blocks = extractMcpImageBlocksFromRawResult({
+      result: JSON.stringify({
+        content: [
+          { type: 'text', text: 'ignored' },
+          { type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }
+        ]
+      })
+    })
+
+    expect(blocks).toEqual([{ type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }])
+  })
+
+  it('uses a small safe raster block as its own bounded thumbnail when native thumbnailing is absent', () => {
+    const refs = createToolResultMediaRefs({
+      messageId: 'msg-1',
+      blocks: [{ type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }],
+      thumbnailer: () => null
+    })
+
+    expect(refs[0].thumbnail).toEqual({
+      dataBase64: PNG_BUFFER.toString('base64'),
+      mimeType: 'image/png'
+    })
   })
 
   it('marks tool SVG and oversized tool images as non-renderable instead of exposing data URLs', () => {

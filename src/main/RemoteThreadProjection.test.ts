@@ -32,6 +32,8 @@ function activity(overrides: Partial<ToolActivity> & { id: string }): ToolActivi
 const THREAD = 'app-chat-123'
 const FIXED = '2026-05-28T12:00:00.000Z'
 const MESSAGES: ChatMessage[] = Array.from({ length: 10 }, (_, i) => msg(i))
+const PNG_1X1_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
 
 function project(
   mode: Parameters<typeof projectRemoteThread>[2]['mode'],
@@ -1197,6 +1199,40 @@ describe('RemoteThreadProjection', () => {
 
       const snapshot = project({ kind: 'latestN', n: 5 }, messages)
       expect(snapshot.rows.map((row) => row.id)).toEqual(['m1', 'm3'])
+    })
+
+    it('promotes MCP tool image blocks into row media', () => {
+      const messages = [
+        msg(0, {
+          role: 'tool',
+          content: '',
+          runId: 'run-1',
+          toolActivities: [
+            activity({
+              id: 'capture-1',
+              toolName: 'attached_window_capture',
+              displayName: 'Capture',
+              category: 'read',
+              rawResultEvent: {
+                content: [{ type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }]
+              }
+            })
+          ]
+        })
+      ]
+
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[0].media?.[0]).toMatchObject({
+        kind: 'image',
+        format: 'raster',
+        source: 'tool_result',
+        name: 'Capture image 1',
+        mimeType: 'image/png',
+        status: 'available',
+        thumbnail: { mimeType: 'image/png' }
+      })
+      expect(snapshot.rows[0].imageAttachmentCount).toBe(1)
+      expect(snapshot.rows[0].imageThumbnails?.[0].mimeType).toBe('image/png')
     })
   })
 
