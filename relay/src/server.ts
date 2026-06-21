@@ -12,6 +12,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'http'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
 import { createResolveDirectory, type ResolveDirectoryOptions } from './resolve'
+import type { ApnsGateway } from './apnsGatewayTypes'
 
 type Role = 'mac' | 'iphone'
 
@@ -57,6 +58,22 @@ export interface RelayOptions {
    * (→404).
    */
   beginPair?: () => Promise<Record<string, unknown> | null>
+  /**
+   * Tier-2 APNs push gateway (project-operated standalone relay ONLY). When
+   * injected, the relay owns /v1/apns/* (phone-signed device-token register /
+   * deregister) and /v1/push/trigger (a Mac's signed, routing-only finish-turn
+   * push request) and calls Apple on the phone's behalf with a project-held
+   * .p8 — so a user with no Apple key of their own still gets a closed-app
+   * banner.
+   *
+   * Inverse polarity to hostInfo/beginPair and ABSENT by construction on the
+   * embedded relay (src/main/index.ts passes none) and on self-host relays:
+   * those 404 every gateway path and stay blind forwarders. This is a TYPE-ONLY
+   * import, so the implementation (relay/src/apnsGateway.ts) and the .p8 it
+   * loads never bundle into Electron main. Enforced by
+   * scripts/guard-no-bundled-secrets.cjs + docs/ios-push-gateway-design.md §4.
+   */
+  apnsGateway?: ApnsGateway
 }
 
 export interface RelayServerHandle {
@@ -142,6 +159,11 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
           res.statusCode = 503
           res.end('pairing failed')
         })
+      return
+    }
+    if (options.apnsGateway && options.apnsGateway.handle(req, res)) {
+      // Tier-2 gateway owned this path (apns register/deregister, push trigger).
+      // Absent on the embedded + self-host relay → falls through to the 404.
       return
     }
     res.statusCode = 404
@@ -305,6 +327,7 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
           new Promise<void>((res) => {
             clearInterval(sweeper)
             resolveDirectory.close()
+            void options.apnsGateway?.close()
             for (const room of rooms.values()) {
               room.mac?.terminate()
               room.iphone?.terminate()

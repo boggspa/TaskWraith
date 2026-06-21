@@ -1,0 +1,117 @@
+import { createRequire } from 'module'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { describe, expect, it } from 'vitest'
+
+const require = createRequire(import.meta.url)
+const {
+  parseImports,
+  collectImportViolations,
+  scanBufferForSecrets,
+  PEM_PRIVATE_KEY_BODY,
+  FORBIDDEN_MODULE_MATCHERS,
+  GUARDED_ENTRY
+}: {
+  parseImports: (source: string) => Array<{ specifier: string; typeOnly: boolean }>
+  collectImportViolations: (entry: string, matchers: RegExp[]) => string[]
+  scanBufferForSecrets: (label: string, text: string, fingerprints: string[]) => string[]
+  PEM_PRIVATE_KEY_BODY: RegExp
+  FORBIDDEN_MODULE_MATCHERS: RegExp[]
+  GUARDED_ENTRY: string
+} = require('./guard-no-bundled-secrets.cjs')
+
+describe('guard-no-bundled-secrets: PEM body detection', () => {
+  it('does NOT flag the bare BEGIN marker (the Tier-1 validator literals)', () => {
+    // The exact shape present 3x in the shipped bundle today.
+    const text = `const m = '-----BEGIN PRIVATE KEY-----'; if (pem.startsWith(m)) ok()`
+    expect(PEM_PRIVATE_KEY_BODY.test(text)).toBe(false)
+    expect(scanBufferForSecrets('x', text, [])).toEqual([])
+  })
+
+  it('flags a real PEM private-key body with escaped newlines (as bundled)', () => {
+    const line = `MIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT${'A'.repeat(40)}`
+    const pem = `"-----BEGIN PRIVATE KEY-----\\n${line}\\n${line}\\n-----END PRIVATE KEY-----\\n"`
+    expect(PEM_PRIVATE_KEY_BODY.test(pem)).toBe(true)
+    expect(scanBufferForSecrets('bundle', pem, [])).toContain(
+      'bundle: contains a PEM PRIVATE KEY body'
+    )
+  })
+
+  it('flags an EC private key body too', () => {
+    const line = 'A'.repeat(60)
+    const pem = `-----BEGIN EC PRIVATE KEY-----\n${line}\n${line}\n-----END EC PRIVATE KEY-----`
+    expect(PEM_PRIVATE_KEY_BODY.test(pem)).toBe(true)
+  })
+
+  it('flags a known fingerprint without echoing its value', () => {
+    const findings = scanBufferForSecrets('bundle', 'noise KEYID12345 noise', ['KEYID12345'])
+    expect(findings.length).toBe(1)
+    expect(findings[0]).not.toContain('KEYID12345')
+  })
+})
+
+describe('guard-no-bundled-secrets: import parsing', () => {
+  it('treats `import type`/`export type` as erased and everything else as runtime', () => {
+    const src = [
+      "import type { A } from './types'",
+      "import { b, type C } from './impl'",
+      "import './side'",
+      "export { d } from './reexport'",
+      "export type { E } from './tre'"
+    ].join('\n')
+    const imps = parseImports(src)
+    const by = (s: string): { specifier: string; typeOnly: boolean } | undefined =>
+      imps.find((i) => i.specifier === s)
+    expect(by('./types')?.typeOnly).toBe(true)
+    // inline `type C` → conservatively a value import (we never want even that
+    // from the impl module).
+    expect(by('./impl')?.typeOnly).toBe(false)
+    expect(by('./side')?.typeOnly).toBe(false)
+    expect(by('./reexport')?.typeOnly).toBe(false)
+    expect(by('./tre')?.typeOnly).toBe(true)
+  })
+})
+
+describe('guard-no-bundled-secrets: forbidden-import boundary', () => {
+  it('passes for the real relay server.ts (no gateway impl in its graph)', () => {
+    expect(collectImportViolations(GUARDED_ENTRY, FORBIDDEN_MODULE_MATCHERS)).toEqual([])
+  })
+
+  it('catches a value import of the gateway impl', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-guard-'))
+    fs.writeFileSync(path.join(dir, 'apnsGateway.ts'), 'export const x = 1\n')
+    const entry = path.join(dir, 'server.ts')
+    fs.writeFileSync(entry, "import { x } from './apnsGateway'\n")
+    const violations = collectImportViolations(entry, [/\/apnsGateway\.ts$/])
+    expect(violations.length).toBe(1)
+    expect(violations[0]).toContain('forbidden module')
+  })
+
+  it('catches even a type import of the gateway impl module (types belong elsewhere)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-guard-'))
+    fs.writeFileSync(path.join(dir, 'apnsGateway.ts'), 'export type T = number\n')
+    const entry = path.join(dir, 'server.ts')
+    fs.writeFileSync(entry, "import type { T } from './apnsGateway'\n")
+    expect(collectImportViolations(entry, [/\/apnsGateway\.ts$/]).length).toBe(1)
+  })
+
+  it('allows a type import from the types module', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-guard-'))
+    fs.writeFileSync(path.join(dir, 'apnsGatewayTypes.ts'), 'export interface A { x: number }\n')
+    const entry = path.join(dir, 'server.ts')
+    fs.writeFileSync(entry, "import type { A } from './apnsGatewayTypes'\n")
+    expect(collectImportViolations(entry, [/\/apnsGateway\.ts$/])).toEqual([])
+  })
+
+  it('does NOT traverse into a type-only-imported module to find a deeper violation', () => {
+    // server type-imports mid (erased → never bundled), so mid's value import of
+    // the impl can't bundle it. No violation.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-guard-'))
+    fs.writeFileSync(path.join(dir, 'apnsGateway.ts'), 'export const x = 1\n')
+    fs.writeFileSync(path.join(dir, 'mid.ts'), "import { x } from './apnsGateway'\nexport type M = typeof x\n")
+    const entry = path.join(dir, 'server.ts')
+    fs.writeFileSync(entry, "import type { M } from './mid'\n")
+    expect(collectImportViolations(entry, [/\/apnsGateway\.ts$/])).toEqual([])
+  })
+})

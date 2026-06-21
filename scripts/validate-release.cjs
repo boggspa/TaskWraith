@@ -120,6 +120,14 @@ if (DO_NOTARIZE) {
   })
 }
 
+// Secret-leak / #1-invariant guard. The import-boundary check always runs; the
+// bundle scan runs against out/main + any packaged app.asar produced above.
+step('guard:no-bundled-secrets', {
+  cmd: 'npm',
+  args: ['run', 'guard:no-bundled-secrets'],
+  required: true
+})
+
 const results = []
 
 console.log(`[validate-release] starting (${steps.length} steps)`)
