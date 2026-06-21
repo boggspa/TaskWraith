@@ -61,6 +61,30 @@ function runProfilesForTier(tier: OllamaToolControlTier) {
   return OLLAMA_RUN_PROFILE_OPTIONS.filter((profile) => profile.tier === tier)
 }
 
+/**
+ * The security-critical routing decision: must picking `tier` be gated behind the
+ * Tier-4 acknowledgement flow? Tier 4 (provider parity) grants a LOCAL model the
+ * full tool surface (edits + shell), and only takes effect once the chat's
+ * workspace has been granted parity — without a grant the runtime SILENTLY
+ * downgrades to read_only (MEMORY.md ollama-edit-tiers). So an ungranted (or
+ * global-chat, no-workspace-to-grant) Tier-4 pick must NEVER be written
+ * directly; it routes to the ack/grant flow instead. Exported pure so the gate
+ * is unit-tested directly rather than only through DOM interaction.
+ */
+export function shouldGateOllamaTier4(input: {
+  tier: OllamaToolControlTier
+  tier4Granted?: boolean
+  tier4Unavailable?: boolean
+}): boolean {
+  // Fail closed: only an EXPLICIT grant (tier4Granted === true) lets parity
+  // through. Unknown grant state (undefined) gates too, so the picker can never
+  // write ungranted parity by default.
+  return (
+    input.tier === 'provider_parity' &&
+    (Boolean(input.tier4Unavailable) || !input.tier4Granted)
+  )
+}
+
 export function OllamaTierPicker({
   provider,
   composerStyle,
@@ -97,7 +121,7 @@ export function OllamaTierPicker({
 
   // Tier-4 needs a per-workspace grant to actually take effect.
   const tier4Gated = (value: OllamaToolControlTier): boolean =>
-    value === 'provider_parity' && (Boolean(tier4Unavailable) || tier4Granted === false)
+    shouldGateOllamaTier4({ tier: value, tier4Granted, tier4Unavailable })
 
   // Split "Tier 3 · Approved shell" into a compact chip: primary "Tier 3",
   // suffix "Approved shell". Fall back to the whole label if the separator
@@ -109,15 +133,24 @@ export function OllamaTierPicker({
       : { primary: selectedTierOption.label, suffix: '' }
   }, [selectedTierOption.label])
 
-  // Selecting a tier — gate Tier 4 behind the ack flow when ungranted.
+  // Selecting a tier — gate Tier 4 behind the ack flow when ungranted. A gated
+  // pick is NEVER written through onSelectTier (that would persist ungranted
+  // provider_parity, which silently downgrades at runtime); it routes to the ack
+  // flow, or no-ops if no handler is wired (the inert/standalone case).
   const chooseTier = (tier: OllamaToolControlTier): void => {
-    if (tier4Gated(tier) && onRequestTier4Ack) {
-      onRequestTier4Ack()
+    if (tier4Gated(tier)) {
+      onRequestTier4Ack?.()
       setOpen(false)
       return
     }
     onSelectTier(tier)
   }
+
+  // If the composer locks (e.g. a run starts) while the popover is open, close
+  // it — the rows themselves ignore `disabled`, which only gates the trigger.
+  useEffect(() => {
+    if (disabled) setOpen(false)
+  }, [disabled])
 
   // Position the popover above-left of the chip when opened.
   useEffect(() => {

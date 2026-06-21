@@ -4,6 +4,10 @@ import { AgenticWorkspaceGrant, EnsembleParticipant, PermissionPresetId, Provide
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
+import {
+  OLLAMA_RUN_PROFILE_OPTIONS,
+  OLLAMA_TOOL_CONTROL_TIERS
+} from '../../../shared/ollamaTierTables'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
 import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, ContextWheel, ExclamationShieldIcon, FileMenuSelectionIcon, GoalSymbolIcon, LinkCircleSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, QueueSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
@@ -33,7 +37,9 @@ import { GitCommitControls } from '../components/GitCommitControls'
 import { GitCiChip, GitMergeBadge, GitSyncChip, branchTone } from '../components/GitStatusChips'
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
+import { CanvasComposerButton } from '../components/CanvasComposerButton'
 import { OllamaHealthChip } from '../components/OllamaHealthChip'
+import { OllamaTierPicker } from '../components/OllamaTierPicker'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
 import { ProviderBadgeIcon } from '../components/Sidebar'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
@@ -269,6 +275,7 @@ export interface ComposerProps {
   multiview: any
   ollamaProviderParityActiveForCurrentWorkspace: any
   ollamaToolControlTier: any
+  onRequestOllamaTier4Ack: (chatId?: string | null, workspacePath?: string | null) => void
   openDiscordContextPicker: any
   openGoalPopover: any
   openInspectorTab: any
@@ -557,8 +564,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     markCurrentGoalBlocked,
     markPersistentSessionRestartNeeded,
     multiview,
-    ollamaProviderParityActiveForCurrentWorkspace,
     ollamaToolControlTier,
+    onRequestOllamaTier4Ack,
     openDiscordContextPicker,
     openGoalPopover,
     openInspectorTab,
@@ -661,6 +668,34 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     workspaces,
     yoloBannerDismissed
   } = props
+
+  // Per-chat Ollama tool-control tier + run profile for the composer picker.
+  // Read this chat's choice out of providerMetadata (validated against the shared
+  // tables) and coalesce to the GLOBAL defaults when the chat has never set one —
+  // matching App.tsx getChatComposerSelection, so old chats inherit the global
+  // value with no migration. `currentChat` / `settings` / `currentWorkspacePath`
+  // are already pane-correct (each ctx site sets them), so this is right for both
+  // the focused composer and every multiview pane with no extra prop threading.
+  const chatOllamaRawTier = currentChat?.providerMetadata?.ollamaToolControlTier
+  const chatOllamaTier = OLLAMA_TOOL_CONTROL_TIERS.some((tier) => tier.value === chatOllamaRawTier)
+    ? (chatOllamaRawTier as (typeof OLLAMA_TOOL_CONTROL_TIERS)[number]['value'])
+    : ollamaToolControlTier
+  const chatOllamaRawRunProfile = currentChat?.providerMetadata?.ollamaRunProfile
+  const chatOllamaRunProfile = OLLAMA_RUN_PROFILE_OPTIONS.some(
+    (profile) => profile.value === chatOllamaRawRunProfile
+  )
+    ? (chatOllamaRawRunProfile as (typeof OLLAMA_RUN_PROFILE_OPTIONS)[number]['value'])
+    : settings?.ollamaDefaultRunProfile || 'local_scout'
+  // Tier 4 is only live once THIS workspace has been granted parity (else the
+  // runtime silently downgrades to read_only — see MEMORY.md ollama-edit-tiers).
+  const ollamaTier4GrantedForWorkspace = Boolean(
+    currentWorkspacePath && settings?.ollamaProviderParityWorkspaceGrants?.[currentWorkspacePath]
+  )
+  // Default run profile for a tier (the picker keeps tier↔profile coupled 1:1).
+  const defaultOllamaRunProfileForTier = (
+    tier: (typeof OLLAMA_TOOL_CONTROL_TIERS)[number]['value']
+  ): (typeof OLLAMA_RUN_PROFILE_OPTIONS)[number]['value'] =>
+    OLLAMA_RUN_PROFILE_OPTIONS.find((profile) => profile.tier === tier)?.value || 'local_scout'
 
   // ---------------------------------------------------------------------------
   // Composer-local editor state (Slices B + C of the multiview composer-parity
@@ -1709,7 +1744,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     <OllamaHealthChip
                       status={agentStatusByProvider.ollama}
                       selectedModelId={selectedModelType}
-                      toolControlTier={ollamaToolControlTier}
+                      toolControlTier={chatOllamaTier}
                     />
                   )}
                   {currentProviderCapabilityWarning && (
@@ -3921,18 +3956,28 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <span className="composer-yolo-chip-label">YOLO</span>
                           </button>
                         )}
-                        {ollamaProviderParityActiveForCurrentWorkspace && (
-                          <span
-                            className="composer-yolo-chip composer-ollama-tier4-chip"
-                            data-composer-control="permission"
-                            title="Ollama Tier 4 provider parity is enabled for this workspace. TaskWraith still gates tool use through workspace/path checks and approvals."
-                            aria-label="Ollama Tier 4 provider parity enabled for this workspace"
-                          >
-                            <span className="composer-yolo-chip-icon" aria-hidden>
-                              T4
-                            </span>
-                            <span className="composer-yolo-chip-label">Ollama parity</span>
-                          </span>
+                        {currentProvider === 'ollama' && (
+                          <OllamaTierPicker
+                            provider={currentProvider}
+                            composerStyle={appearance.composerStyle}
+                            selectedTier={chatOllamaTier}
+                            onSelectTier={(tier) =>
+                              rememberCurrentChatComposerSelection({
+                                ollamaToolControlTier: tier,
+                                ollamaRunProfile: defaultOllamaRunProfileForTier(tier)
+                              })
+                            }
+                            selectedRunProfile={chatOllamaRunProfile}
+                            onSelectRunProfile={(profile) =>
+                              rememberCurrentChatComposerSelection({ ollamaRunProfile: profile })
+                            }
+                            tier4Granted={ollamaTier4GrantedForWorkspace}
+                            tier4Unavailable={isCurrentGlobalChat || !currentWorkspacePath}
+                            onRequestTier4Ack={() =>
+                              onRequestOllamaTier4Ack(currentChat?.appChatId, currentWorkspacePath)
+                            }
+                            disabled={isCurrentComposerLocked}
+                          />
                         )}
 
                         {currentProvider === 'gemini' && !isCurrentGlobalChat && (
@@ -4412,6 +4457,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  onSelectLayout={handleSelectMultiviewLayout}
 	                  provider={currentProvider}
 	                  composerStyle={appearance.composerStyle}
+	                />
+	                <CanvasComposerButton
+	                  onOpenCanvas={(url) => {
+	                    // Open a live-embedded web Canvas in a new multiview pane;
+	                    // the driver still enforces the SSRF policy on the url.
+	                    void window.api.canvas
+	                      ?.openEmbedded({ url })
+	                      .then((opened) => multiview.openCanvasInNewPane(opened.canvasId))
+	                      .catch(() => {})
+	                  }}
 	                />
 	                {/* 1.0.5-AR12c — Workspace switcher in its new home.
                      Sits between the timecodes / Screen Watch cluster

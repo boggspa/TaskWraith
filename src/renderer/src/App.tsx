@@ -3529,8 +3529,7 @@ function App(): React.JSX.Element {
     })
   }
 
-  const rememberCurrentChatComposerSelection = (patch: Record<string, unknown>) => {
-    const chatId = currentChatIdRef.current || currentChat?.appChatId
+  const rememberChatComposerSelectionById = (chatId: string, patch: Record<string, unknown>) => {
     if (!chatId) return
     updateChatById(chatId, (source) => ({
       ...source,
@@ -3540,6 +3539,12 @@ function App(): React.JSX.Element {
       },
       updatedAt: Date.now()
     }))
+  }
+
+  const rememberCurrentChatComposerSelection = (patch: Record<string, unknown>) => {
+    const chatId = currentChatIdRef.current || currentChat?.appChatId
+    if (!chatId) return
+    rememberChatComposerSelectionById(chatId, patch)
   }
 
   const getWorkspaceForChat = (chat?: ChatRecord | null): WorkspaceRecord | null => {
@@ -14838,6 +14843,40 @@ function App(): React.JSX.Element {
     Boolean(
       currentWorkspacePath && settings?.ollamaProviderParityWorkspaceGrants?.[currentWorkspacePath]
     )
+  // Composer-side Tier-4 (provider parity) acknowledgement. Picking Tier 4 from a
+  // chat's composer needs the same per-workspace risk ack as Settings → Behavior →
+  // Ollama — without a grant the runtime silently downgrades parity to read_only.
+  // The picker routes an ungranted Tier-4 pick here; we capture the TARGET chat +
+  // workspace, then on confirm grant the WORKSPACE (global setting, per-workspace
+  // keyed) AND set the tier for THAT CHAT only (never the global default).
+  const [ollamaComposerParityAck, setOllamaComposerParityAck] = useState<{
+    chatId: string | null
+    workspacePath: string | null
+  } | null>(null)
+  const requestOllamaComposerTier4Ack = useCallback(
+    (chatId?: string | null, workspacePath?: string | null) => {
+      setOllamaComposerParityAck({ chatId: chatId || null, workspacePath: workspacePath || null })
+    },
+    []
+  )
+  const confirmOllamaComposerTier4 = () => {
+    const target = ollamaComposerParityAck
+    if (!target?.chatId || !target.workspacePath) return
+    const grantedAt = new Date().toISOString()
+    handleSettingsChange({
+      ollamaProviderParityAcknowledgedAt:
+        settings?.ollamaProviderParityAcknowledgedAt || grantedAt,
+      ollamaProviderParityWorkspaceGrants: {
+        ...(settings?.ollamaProviderParityWorkspaceGrants || {}),
+        [target.workspacePath]: grantedAt
+      }
+    })
+    rememberChatComposerSelectionById(target.chatId, {
+      ollamaToolControlTier: 'provider_parity',
+      ollamaRunProfile: 'provider_parity'
+    })
+    setOllamaComposerParityAck(null)
+  }
   const selectedComposerModelType = isValidModelForProvider(currentProvider, selectedModelType)
     ? selectedModelType
     : getDefaultModelForProvider(currentProvider)
@@ -19022,6 +19061,8 @@ function App(): React.JSX.Element {
       workspaceDiffStats,
       workspaces,
       yoloBannerDismissed,
+      // Composer Ollama Tier-4 ack trigger (stable useCallback → no memo churn).
+      onRequestOllamaTier4Ack: requestOllamaComposerTier4Ack,
     }),
     [
       composerHandlers,
@@ -19158,6 +19199,7 @@ function App(): React.JSX.Element {
       workspaceDiffStats,
       workspaces,
       yoloBannerDismissed,
+      requestOllamaComposerTier4Ack,
     ]
   )
 
@@ -21824,6 +21866,67 @@ function App(): React.JSX.Element {
             void next()
           }}
         />
+      )}
+      {ollamaComposerParityAck && (
+        <div
+          className="creative-approval-backdrop"
+          role="presentation"
+          onMouseDown={() => setOllamaComposerParityAck(null)}
+        >
+          <div
+            className="creative-approval-modal approval-elevation-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ollama-composer-parity-ack-title"
+            data-elevation-tier="2"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="creative-approval-modal-header">
+              <span className="creative-approval-modal-eyebrow" aria-hidden>
+                Ollama provider parity
+              </span>
+              <h2
+                id="ollama-composer-parity-ack-title"
+                className="creative-approval-modal-title"
+              >
+                Enable full TaskWraith tools for Ollama?
+              </h2>
+            </header>
+            <p className="creative-approval-modal-description">
+              Tier 4 lets local Ollama models request the full TaskWraith tool surface
+              (edits + shell) for this chat. TaskWraith still enforces workspace
+              boundaries, path checks, approval policy, and audit events, but local
+              models can make poor or prompt-injected tool requests.
+            </p>
+            <p className="creative-approval-modal-description approval-elevation-caution">
+              Use at your own risk. The acknowledgement is recorded per workspace; this
+              chat runs at Tier 4 once enabled. Revoke it per workspace in
+              Settings → Behavior → Ollama.
+            </p>
+            {!ollamaComposerParityAck.workspacePath && (
+              <p className="creative-approval-modal-description approval-elevation-caution">
+                Open a workspace chat before enabling provider parity for Ollama.
+              </p>
+            )}
+            <footer className="creative-approval-modal-actions">
+              <button
+                type="button"
+                className="creative-approval-modal-reject"
+                onClick={() => setOllamaComposerParityAck(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="creative-approval-modal-approve-once"
+                onClick={confirmOllamaComposerTier4}
+                disabled={!ollamaComposerParityAck.workspacePath}
+              >
+                I understand, enable for this workspace
+              </button>
+            </footer>
+          </div>
+        </div>
       )}
       {pendingElevation && (
         <ApprovalModeElevationSheet

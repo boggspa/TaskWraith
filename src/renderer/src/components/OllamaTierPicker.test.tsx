@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { OllamaRunProfileId, OllamaToolControlTier } from '../../../main/store/types'
-import { OllamaTierPicker } from './OllamaTierPicker'
+import { OllamaTierPicker, shouldGateOllamaTier4 } from './OllamaTierPicker'
 
 function renderTrigger(
   selectedTier: OllamaToolControlTier,
@@ -10,7 +10,7 @@ function renderTrigger(
   return renderToStaticMarkup(
     <OllamaTierPicker
       provider="ollama"
-      composerStyle="ollama"
+      composerStyle="codex"
       selectedTier={selectedTier}
       onSelectTier={() => undefined}
       selectedRunProfile={selectedRunProfile}
@@ -41,5 +41,39 @@ describe('OllamaTierPicker', () => {
     const html = renderTrigger('provider_parity', 'provider_parity')
     expect(html).toContain('data-composer-control="ollama-tier"')
     expect(html).toContain('Tier 4')
+  })
+})
+
+describe('shouldGateOllamaTier4 (security gate routing)', () => {
+  it('gates Tier 4 when the workspace grant is missing or unknown (fail closed)', () => {
+    expect(shouldGateOllamaTier4({ tier: 'provider_parity', tier4Granted: false })).toBe(true)
+    // undefined grant state must STILL gate — never write parity by default
+    expect(shouldGateOllamaTier4({ tier: 'provider_parity' })).toBe(true)
+    expect(shouldGateOllamaTier4({ tier: 'provider_parity', tier4Granted: undefined })).toBe(true)
+  })
+
+  it('gates Tier 4 in a global chat even if a grant is somehow present', () => {
+    expect(
+      shouldGateOllamaTier4({
+        tier: 'provider_parity',
+        tier4Granted: true,
+        tier4Unavailable: true
+      })
+    ).toBe(true)
+  })
+
+  it('lets Tier 4 through ONLY with an explicit live workspace grant', () => {
+    expect(
+      shouldGateOllamaTier4({ tier: 'provider_parity', tier4Granted: true, tier4Unavailable: false })
+    ).toBe(false)
+  })
+
+  it('never gates the lower tiers regardless of grant state (downgrade is free)', () => {
+    for (const tier of ['read_only', 'approved_edits', 'approved_shell'] as const) {
+      expect(shouldGateOllamaTier4({ tier })).toBe(false)
+      expect(shouldGateOllamaTier4({ tier, tier4Granted: false, tier4Unavailable: true })).toBe(
+        false
+      )
+    }
   })
 })
