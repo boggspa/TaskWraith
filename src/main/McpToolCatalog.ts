@@ -1927,6 +1927,25 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'canvas_eval',
+      description:
+        'Run arbitrary JavaScript in the Canvas page and return its (size-capped) completion value. The MOST powerful canvas verb: it executes agent-supplied code in the previewed app (RCE). PREFER canvas_snapshot / canvas_inspect / canvas_click / canvas_fill — reach for eval only when a structured tool cannot express the check. Signed-elevated: it PROMPTS EVERY CALL (never auto-allowed by a grant, preset, or session-YOLO), is denied under read-only, and the page network is cut while the script runs. The script text and its result are never written to the audit log.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          script: { type: 'string', description: 'JavaScript evaluated in the page global scope.' }
+        },
+        required: ['canvasId', 'script']
+      }
+    },
+    {
       name: 'canvas_close',
       description: 'Close a Canvas session and free its preview window. Gated.',
       annotations: {

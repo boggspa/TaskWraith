@@ -107,6 +107,30 @@ export interface CanvasActResult {
   title?: string
 }
 
+/**
+ * P2 arbitrary eval result. The model-supplied script runs in the page's global
+ * scope (RCE) — this is the signed-elevated `canvasEval` verb. The completion
+ * value is JSON-stringified and size-capped; the audit trail records only the
+ * script HASH + length, never the script text or the returned value.
+ */
+export interface CanvasEvalResult {
+  ok: boolean
+  /** typeof the raw completion value (e.g. 'object', 'string', 'undefined'). */
+  valueType?: string
+  /** JSON.stringify of the completion value, capped to CANVAS_EVAL_VALUE_CAP. */
+  value?: string
+  /** True when `value` was truncated to the cap. */
+  truncated?: boolean
+  /** Present when the script threw (or the page CSP blocked eval). */
+  error?: string
+  /** URL/title after the script ran (a navigation it triggered may not have settled). */
+  url?: string
+  title?: string
+}
+
+/** Max chars of a stringified eval result returned to the model (and never logged). */
+export const CANVAS_EVAL_VALUE_CAP = 8000
+
 /** A Set-of-Mark annotation cell — agent→human redline by ref or explicit bbox. */
 export interface CanvasMark {
   ref?: string
@@ -170,6 +194,9 @@ export interface CanvasDriver {
   // P1 interaction + annotation.
   act(action: CanvasActionInput): Promise<CanvasActResult>
   annotate(marks: CanvasMark[]): Promise<{ count: number }>
+  // P2 arbitrary eval (RCE). The driver MUST cut the page's network egress while
+  // the script runs so eval cannot be used as an exfiltration channel.
+  evaluate(args: { script: string }): Promise<CanvasEvalResult>
   close(): Promise<void>
 }
 
@@ -216,6 +243,7 @@ export type CanvasEventKind =
   | 'resize'
   | 'interaction'
   | 'annotation'
+  | 'eval'
 
 /**
  * Audit event. `detail` is REDACTED, structured metadata only — never pixel
@@ -271,6 +299,11 @@ export interface CanvasController {
     marks: CanvasMark[],
     ctx: CanvasCallContext
   ): Promise<CanvasAnnotation>
+  evaluate(
+    canvasId: string,
+    args: { script: string },
+    ctx: CanvasCallContext
+  ): Promise<CanvasEvalResult>
   close(canvasId: string, ctx: CanvasCallContext): Promise<void>
 }
 

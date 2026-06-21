@@ -5636,10 +5636,21 @@ function previewForGeminiMcpTool(
     }
   }
 
-  // NB: canvas_eval routing on this Gemini/Kimi preview path is wired in the P2b
-  // slice (where canvas_eval joins the registry and this typed `toolName` union),
-  // alongside the tool itself — so every committed state keeps eval either absent
-  // or fully locked. The string-typed Claude/Codex classifiers route it already.
+  // Arbitrary canvas_eval runs agent-supplied JavaScript in the previewed app
+  // (RCE). Route it to the signed-elevated `canvasEval` service so it can NEVER
+  // be auto-allowed by a grant, preset, or session-YOLO — it prompts every time.
+  if (toolName === 'canvas_eval') {
+    return {
+      title: `Approve ${providerName} canvas eval (runs JavaScript)`,
+      body: toolName,
+      service: 'canvasEval' as AgenticServiceId,
+      preview: {
+        kind: 'tool',
+        toolName,
+        params: args
+      }
+    }
+  }
 
   return {
     title: `Approve ${providerName} tool call`,

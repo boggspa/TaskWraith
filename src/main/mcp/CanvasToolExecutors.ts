@@ -28,6 +28,7 @@ export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_click',
   'canvas_fill',
   'canvas_annotate',
+  'canvas_eval',
   'canvas_close'
 ] as const
 
@@ -265,6 +266,18 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             annotationId: annotation.id,
             count: annotation.marks.length
           })
+        }
+        case 'canvas_eval': {
+          const script = asString(args.script)
+          if (!script.trim()) return fail(toolName, '`script` (JavaScript string) is required.')
+          // Bound the script size before it ever reaches the page (defence-in-depth
+          // alongside the per-session eval budget and the signed-elevated approval).
+          const MAX_SCRIPT = 100000
+          if (script.length > MAX_SCRIPT) {
+            return fail(toolName, `\`script\` too large (max ${MAX_SCRIPT} chars).`)
+          }
+          const result = await controller.evaluate(needsId(), { script }, ctx)
+          return jsonResult({ ...result, tool: toolName })
         }
         case 'canvas_close': {
           await controller.close(needsId(), ctx)

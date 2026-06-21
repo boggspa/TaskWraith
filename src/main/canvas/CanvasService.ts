@@ -12,6 +12,7 @@
  * REDACTED metadata only — a screenshot records `{ frameHash, width, height }`,
  * never the PNG bytes; network/console record counts, not bodies.
  */
+import { createHash } from 'crypto'
 import type {
   CanvasActionInput,
   CanvasActResult,
@@ -23,6 +24,7 @@ import type {
   CanvasDriverKind,
   CanvasElementDetail,
   CanvasElementTree,
+  CanvasEvalResult,
   CanvasEventKind,
   CanvasEventRecord,
   CanvasFrame,
@@ -51,12 +53,16 @@ interface LiveSession {
   driver: CanvasDriver
   record: CanvasSessionRecord
   interactions: number
+  evals: number
 }
 
 const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set(['web'])
 // Defence-in-depth cap so a hijacked agent (or a session-granted approval)
 // cannot machine-gun clicks/fills against a live app. Per live session.
 const MAX_INTERACTIONS_PER_SESSION = 200
+// Eval is RCE and human-approved per call, but cap it anyway so a compromised
+// approve-loop can't run unbounded scripts. Separate, tighter budget.
+const MAX_EVALS_PER_SESSION = 50
 
 function toSummary(record: CanvasSessionRecord): CanvasSessionSummary {
   return {
@@ -172,7 +178,7 @@ export class CanvasService implements CanvasController {
         viewport: handle.viewport,
         updatedAt: this.deps.now()
       }
-      this.sessions.set(canvasId, { driver, record, interactions: 0 })
+      this.sessions.set(canvasId, { driver, record, interactions: 0, evals: 0 })
       this.deps.store.upsertSession(record)
       this.emit(canvasId, 'session.opened', ctx, {
         driver: driverKind,
@@ -289,6 +295,13 @@ export class CanvasService implements CanvasController {
     session.interactions += 1
   }
 
+  private chargeEval(session: LiveSession): void {
+    if (session.evals >= MAX_EVALS_PER_SESSION) {
+      throw new Error(`Canvas eval budget exhausted (${MAX_EVALS_PER_SESSION} per session).`)
+    }
+    session.evals += 1
+  }
+
   async click(
     canvasId: string,
     args: CanvasActionInput,
@@ -345,6 +358,24 @@ export class CanvasService implements CanvasController {
     this.deps.store.appendAnnotation(annotation)
     this.emit(canvasId, 'annotation', ctx, { annotationId: annotation.id, count: marks.length })
     return annotation
+  }
+
+  async evaluate(
+    canvasId: string,
+    args: { script: string },
+    ctx: CanvasCallContext
+  ): Promise<CanvasEvalResult> {
+    const session = this.require(canvasId, ctx)
+    this.chargeEval(session)
+    const result = await session.driver.evaluate(args)
+    // Audit records only the script's sha256 + length + outcome — NEVER the script
+    // text (could embed secrets the agent read) and NEVER the returned value.
+    this.emit(canvasId, 'eval', ctx, {
+      scriptHash: createHash('sha256').update(args.script).digest('hex'),
+      scriptLength: args.script.length,
+      ok: result.ok
+    })
+    return result
   }
 
   async close(canvasId: string, ctx: CanvasCallContext): Promise<void> {

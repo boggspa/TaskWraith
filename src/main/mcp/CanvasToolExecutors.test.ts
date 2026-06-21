@@ -66,6 +66,12 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
       author: 'agent',
       createdAt: 'x'
     }),
+    evaluate: async (_id, args) => ({
+      ok: true,
+      valueType: 'string',
+      value: `evaluated:${args.script}`,
+      truncated: false
+    }),
     close: async () => {},
     ...over
   }
@@ -77,8 +83,8 @@ describe('isCanvasMcpToolName', () => {
   it('matches the canvas tools and nothing else', () => {
     for (const name of CANVAS_MCP_TOOL_NAMES) expect(isCanvasMcpToolName(name)).toBe(true)
     expect(isCanvasMcpToolName('browser_open')).toBe(false)
-    // eval is deferred to P2 — must NOT be a canvas tool name yet
-    expect(isCanvasMcpToolName('canvas_eval')).toBe(false)
+    // P2: canvas_eval is now a first-class (signed-elevated) canvas tool.
+    expect(isCanvasMcpToolName('canvas_eval')).toBe(true)
   })
 })
 
@@ -152,6 +158,38 @@ describe('executeCanvasTool', () => {
     )
     expect(ok.isError).toBeFalsy()
     expect(ok.structuredContent?.annotationId).toBe('ann1')
+  })
+
+  it('canvas_eval requires a non-empty script', async () => {
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
+    expect((await executeCanvasTool('canvas_eval', { canvasId: 'c1' }, ctx, 'claude')).isError).toBe(
+      true
+    )
+    expect(
+      (await executeCanvasTool('canvas_eval', { canvasId: 'c1', script: '   ' }, ctx, 'claude'))
+        .isError
+    ).toBe(true)
+  })
+
+  it('canvas_eval rejects an oversized script before it reaches the page', async () => {
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
+    const huge = 'a'.repeat(100001)
+    const r = await executeCanvasTool('canvas_eval', { canvasId: 'c1', script: huge }, ctx, 'claude')
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('too large')
+  })
+
+  it('canvas_eval runs the script and returns its result', async () => {
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
+    const r = await executeCanvasTool(
+      'canvas_eval',
+      { canvasId: 'c1', script: '1 + 1' },
+      ctx,
+      'claude'
+    )
+    expect(r.isError).toBeFalsy()
+    expect(r.structuredContent?.ok).toBe(true)
+    expect(r.structuredContent?.value).toBe('evaluated:1 + 1')
   })
 
   it('surfaces controller errors as isError', async () => {

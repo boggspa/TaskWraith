@@ -26,6 +26,7 @@ import type {
   CanvasDriver,
   CanvasElementDetail,
   CanvasElementTree,
+  CanvasEvalResult,
   CanvasFrame,
   CanvasMark,
   CanvasNetworkEntry,
@@ -33,7 +34,12 @@ import type {
   CanvasSessionHandle,
   CanvasViewport
 } from './canvasTypes'
-import { isCanvasRequestBlocked, resolveViewport, validateCanvasUrl } from './canvasTypes'
+import {
+  CANVAS_EVAL_VALUE_CAP,
+  isCanvasRequestBlocked,
+  resolveViewport,
+  validateCanvasUrl
+} from './canvasTypes'
 
 const NETWORK_BUFFER = 200
 const CONSOLE_BUFFER = 200
@@ -275,6 +281,11 @@ export class CanvasWebDriver implements CanvasDriver {
   private readonly networkBuffer: CanvasNetworkEntry[] = []
   private readonly networkById = new Map<number, CanvasNetworkEntry>()
   private readonly consoleEntries: CanvasConsoleEntry[] = []
+  // While an arbitrary eval is in flight, ALL page requests are cancelled (not
+  // just SSRF-class) so the model's script can never use fetch/XHR/ws/<img> as an
+  // exfiltration channel during the eval window. Set immediately before, cleared
+  // in a finally immediately after, win.webContents.executeJavaScript.
+  private evalEgressCut = false
 
   constructor(sessionId: string) {
     // In-memory partition (no "persist:" prefix) — isolated, ephemeral session.
@@ -384,7 +395,11 @@ export class CanvasWebDriver implements CanvasDriver {
     // cancel requests to link-local/metadata, or to a private host not in the
     // allowlist. This is the real guard the navigation events cannot provide.
     wr.onBeforeRequest((details, callback) => {
-      callback({ cancel: isCanvasRequestBlocked(details.url, this.allowlist) })
+      // Egress-cut during eval takes precedence over the per-host SSRF policy:
+      // while a script is running, NOTHING leaves the page.
+      callback({
+        cancel: this.evalEgressCut || isCanvasRequestBlocked(details.url, this.allowlist)
+      })
     })
     const push = (entry: CanvasNetworkEntry): void => {
       this.networkById.set(entry.id, entry)
@@ -514,6 +529,39 @@ export class CanvasWebDriver implements CanvasDriver {
     return (await win.webContents.executeJavaScript(annotateScript(marks), true)) as {
       count: number
     }
+  }
+
+  async evaluate(args: { script: string }): Promise<CanvasEvalResult> {
+    const win = this.requireWindow()
+    // Indirect eval `(0, eval)(src)` runs the script in the page's GLOBAL scope and
+    // yields its completion value (supports both expressions and statement blocks).
+    // The wrapper captures the value/error so a throw (or a page CSP that blocks
+    // eval) returns { ok:false } instead of rejecting. JSON.stringify(script) does
+    // all the escaping — no manual backslash handling needed.
+    const cap = CANVAS_EVAL_VALUE_CAP
+    const wrapped =
+      '(() => { try { var __r = (0, eval)(' +
+      JSON.stringify(args.script) +
+      '); var t = typeof __r; var v; try { v = JSON.stringify(__r); } catch (e) { v = String(__r); }' +
+      ' if (typeof v === "undefined") v = String(__r); var s = String(v);' +
+      ' return { ok: true, valueType: t, value: s.slice(0, ' +
+      cap +
+      '), truncated: s.length > ' +
+      cap +
+      ' }; } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } })()'
+    // Cut ALL page egress for the duration of the script, then restore the per-host
+    // SSRF policy in finally — even if the script throws.
+    this.evalEgressCut = true
+    let result: Omit<CanvasEvalResult, 'url' | 'title'>
+    try {
+      result = (await win.webContents.executeJavaScript(wrapped, true)) as Omit<
+        CanvasEvalResult,
+        'url' | 'title'
+      >
+    } finally {
+      this.evalEgressCut = false
+    }
+    return { ...result, url: win.webContents.getURL(), title: win.getTitle() }
   }
 
   async close(): Promise<void> {

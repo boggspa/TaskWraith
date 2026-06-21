@@ -11,6 +11,7 @@ import type {
   CanvasDriver,
   CanvasElementDetail,
   CanvasElementTree,
+  CanvasEvalResult,
   CanvasEventRecord,
   CanvasFrame,
   CanvasMark,
@@ -80,6 +81,11 @@ class FakeDriver implements CanvasDriver {
   }
   async annotate(marks: CanvasMark[]): Promise<{ count: number }> {
     return { count: marks.length }
+  }
+  lastScript?: string
+  async evaluate(args: { script: string }): Promise<CanvasEvalResult> {
+    this.lastScript = args.script
+    return { ok: true, valueType: 'string', value: 'EVAL-RESULT-SENTINEL', truncated: false }
   }
   async close(): Promise<void> {
     this.closed = true
@@ -182,6 +188,32 @@ describe('CanvasService', () => {
     await expect(
       service.annotate(c.canvasId, [{ ref: 'e1', label: 'x' }], {})
     ).rejects.toThrow(/budget/)
+  })
+
+  it('eval emits an event recording only the script hash — never the script text or result', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    const res = await service.evaluate(
+      c.canvasId,
+      { script: 'document.cookie + "SECRET-SCRIPT"' },
+      {}
+    )
+    expect(res.ok).toBe(true)
+    // The driver did receive the real script…
+    expect(fake.lastScript).toContain('SECRET-SCRIPT')
+    const evt = events.find((e) => e.kind === 'eval')
+    expect(typeof evt?.detail?.scriptHash).toBe('string')
+    expect(evt?.detail?.ok).toBe(true)
+    // …but neither the script text NOR the returned value ever enters the audit.
+    expect(JSON.stringify(events)).not.toContain('SECRET-SCRIPT')
+    expect(JSON.stringify(events)).not.toContain('EVAL-RESULT-SENTINEL')
+  })
+
+  it('caps eval per session with its own (separate) budget', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    for (let i = 0; i < 50; i++) {
+      await service.evaluate(c.canvasId, { script: '1' }, {})
+    }
+    await expect(service.evaluate(c.canvasId, { script: '1' }, {})).rejects.toThrow(/budget/)
   })
 
   it('annotate persists an annotation + emits an annotation event', async () => {

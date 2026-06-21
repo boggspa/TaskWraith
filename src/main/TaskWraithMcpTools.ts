@@ -125,7 +125,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   // then snapshot (a stable-ref element tree), screenshot, inspect, and read
   // console/network. Read-only verbs are auto-allowed; open/screenshot/resize/
   // close are gated like browser_open. Interaction (click/fill) + annotation
-  // land in P1; arbitrary `eval` is deferred to P2.
+  // land in P1; arbitrary `eval` (P2) is signed-elevated (canvasEval service).
   'canvas_open',
   'canvas_list',
   'canvas_status',
@@ -140,6 +140,9 @@ export const TASKWRAITH_MCP_TOOLS = [
   'canvas_click',
   'canvas_fill',
   'canvas_annotate',
+  // P2 arbitrary eval (RCE) — runs agent-supplied JS in the page. Signed-elevated:
+  // gated via the canvasEval service (never auto-allowed), egress-cut while running.
+  'canvas_eval',
   'canvas_close'
 ] as const
 

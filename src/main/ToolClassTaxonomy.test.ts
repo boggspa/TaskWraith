@@ -74,6 +74,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'browser_open',
         'browser_screenshot',
         'canvas_click',
+        'canvas_eval',
         'canvas_fill',
         'canvas_open',
         'creative_applescript_dispatch',
