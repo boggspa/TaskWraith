@@ -359,8 +359,14 @@ import {
 import {
   createToolResultMediaRefs,
   createWorkspacePathMediaRefs,
-  extractProviderImageBlocksFromRawEvent
+  extractProviderImageBlocksFromRawEvent,
+  validateWorkspaceImagePath
 } from './services/TranscriptMediaService'
+import {
+  TRANSCRIPT_MEDIA_ASSET_DIR,
+  TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
+  TranscriptMediaAssetStore
+} from './services/TranscriptMediaAssetStore'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
 import {
   clearStickyAppWatch,
@@ -2917,6 +2923,28 @@ function safeSendToWebContents(
   }
 }
 
+let transcriptMediaAssetStore: TranscriptMediaAssetStore | null = null
+
+function getTranscriptMediaAssetStore(): TranscriptMediaAssetStore {
+  if (!transcriptMediaAssetStore) {
+    transcriptMediaAssetStore = new TranscriptMediaAssetStore(
+      join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR)
+    )
+  }
+  return transcriptMediaAssetStore
+}
+
+function writeTranscriptMediaAsset(input: {
+  sha256: string
+  buffer: Buffer
+  mimeType: string
+}): void {
+  const result = getTranscriptMediaAssetStore().write(input)
+  if (!result.ok) {
+    console.warn(`[TranscriptMedia] original persistence skipped: ${result.reason}`)
+  }
+}
+
 function saveAndBroadcastChat(chat: ChatRecord): ChatRecord {
   const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
   const previous = AppStore.getChat(normalized.appChatId)
@@ -3010,6 +3038,73 @@ function normalizeTranscriptMarkdownMediaForChat(chat: ChatRecord): ChatRecord {
     }
   })
   return changed ? { ...chat, messages } : chat
+}
+
+function findTranscriptMediaRef(
+  chat: ChatRecord,
+  rowId: string,
+  mediaId: string
+): { message: ChatMessage; mediaRef: TranscriptMediaRef } | null {
+  const message = chat.messages?.find((candidate) => candidate.id === rowId)
+  if (!message) return null
+  const refs = Array.isArray(message.metadata?.mediaRefs)
+    ? (message.metadata.mediaRefs as TranscriptMediaRef[])
+    : []
+  const mediaRef = refs.find((ref) => ref.id === mediaId)
+  return mediaRef ? { message, mediaRef } : null
+}
+
+function fullTranscriptMediaFromAsset(
+  mediaRef: TranscriptMediaRef,
+  maxBytes: number
+): { ok: true; dataBase64: string; byteLength: number } | { ok: false; reason: string } {
+  if (!mediaRef.sha256) return { ok: false, reason: 'No original asset hash is available' }
+  const read = getTranscriptMediaAssetStore().read({
+    sha256: mediaRef.sha256,
+    mimeType: mediaRef.mimeType,
+    maxBytes
+  })
+  if (!read.ok) {
+    return { ok: false, reason: `Original media asset unavailable: ${read.reason}` }
+  }
+  return {
+    ok: true,
+    dataBase64: read.buffer.toString('base64'),
+    byteLength: read.byteLength
+  }
+}
+
+function fullWorkspaceTranscriptMedia(
+  chat: ChatRecord,
+  mediaRef: TranscriptMediaRef,
+  maxBytes: number
+): { ok: true; dataBase64: string; byteLength: number; mimeType: string } | { ok: false; reason: string } {
+  if (!chat.workspacePath || !mediaRef.path) {
+    return { ok: false, reason: 'Workspace media path is unavailable' }
+  }
+  const validation = validateWorkspaceImagePath({
+    workspaceId: chat.workspaceId,
+    workspacePath: chat.workspacePath,
+    candidatePath: mediaRef.path,
+    externalPathGrants: normalizeExternalPathGrants(
+      collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+    ),
+    maxBytes
+  })
+  if (!validation.ok) {
+    return { ok: false, reason: `Workspace media is no longer readable: ${validation.reason}` }
+  }
+  if (mediaRef.sha256 && validation.sha256 !== mediaRef.sha256) {
+    return { ok: false, reason: 'Workspace media changed after it was attached' }
+  }
+  const buffer = fsSync.readFileSync(validation.realPath)
+  if (buffer.length > maxBytes) return { ok: false, reason: 'Workspace media exceeds requested byte limit' }
+  return {
+    ok: true,
+    dataBase64: buffer.toString('base64'),
+    byteLength: buffer.length,
+    mimeType: validation.mimeType
+  }
 }
 
 const pendingCodexNativeGoalSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -5849,7 +5944,9 @@ function emitCliProviderMediaRefs(state: CliProviderStreamState, event: unknown)
     runId: state.appRunId || state.runId || undefined,
     toolName: `${state.provider} output`,
     source: 'generated',
-    blocks
+    blocks,
+    assetWriter: ({ sha256, buffer, mimeType }) =>
+      writeTranscriptMediaAsset({ sha256, buffer, mimeType })
   })
   if (refs.length === 0) return
   const seen = state.providerMediaRefKeys ?? new Set<string>()
@@ -9440,7 +9537,9 @@ function emitCodexProviderMediaRefs(state: CodexRunState, raw: unknown): void {
     runId: state.appRunId || state.turnId || undefined,
     toolName: 'codex output',
     source: 'generated',
-    blocks
+    blocks,
+    assetWriter: ({ sha256, buffer, mimeType }) =>
+      writeTranscriptMediaAsset({ sha256, buffer, mimeType })
   })
   if (refs.length === 0) return
   const seen = state.providerMediaRefKeys ?? new Set<string>()
@@ -17027,9 +17126,16 @@ if (isGeminiMcpBridgeProcess) {
           if (!chatMatchesRemoteScope(chat, action.workspaceId)) {
             return { ok: false, reason: 'Thread does not belong to the requested workspace' }
           }
+          const requestedVariant = action.variant === 'full' ? 'full' : 'thumbnail'
           const maxBytes = Math.max(
             1,
-            Math.min(1_000_000, Math.floor(action.maxBytes ?? 512_000))
+            Math.min(
+              requestedVariant === 'full' ? TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES : 1_000_000,
+              Math.floor(
+                action.maxBytes ??
+                  (requestedVariant === 'full' ? TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES : 512_000)
+              )
+            )
           )
           const generatedAt = new Date().toISOString()
           const snapshot = projectRemoteThread(chat.messages ?? [], chat.runs ?? [], {
@@ -17052,13 +17158,44 @@ if (isGeminiMcpBridgeProcess) {
           if (!row || !media) {
             return { ok: false, reason: 'Transcript media item not found' }
           }
-          if (media.source === 'workspace_path') {
+          const sourceRef = findTranscriptMediaRef(chat, action.rowId, action.mediaId)
+          if (media.source === 'workspace_path' || sourceRef?.mediaRef.source === 'workspace_path') {
             const decision = bridgeAllowlist.evaluate({
               workspaceId: action.workspaceId,
               capability: 'fileRead'
             })
             if (!decision.allowed) {
               return { ok: false, reason: 'File read capability required for workspace media' }
+            }
+          }
+          if (requestedVariant === 'full') {
+            if (!sourceRef) {
+              return { ok: false, reason: 'Original media ref is not available for this item' }
+            }
+            const { mediaRef } = sourceRef
+            if (mediaRef.status && mediaRef.status !== 'available') {
+              return { ok: false, reason: `Transcript media is not available: ${mediaRef.status}` }
+            }
+            const full =
+              mediaRef.source === 'generated' || mediaRef.source === 'tool_result'
+                ? fullTranscriptMediaFromAsset(mediaRef, maxBytes)
+                : mediaRef.source === 'workspace_path'
+                  ? fullWorkspaceTranscriptMedia(chat, mediaRef, maxBytes)
+                  : { ok: false as const, reason: 'Full fetch is not supported for this media source' }
+            if (!full.ok) return { ok: false, reason: full.reason }
+            return {
+              ok: true,
+              media: {
+                id: media.id,
+                rowId: row.id,
+                threadId: chat.appChatId,
+                name: media.name,
+                source: media.source,
+                mimeType: 'mimeType' in full ? full.mimeType : mediaRef.mimeType,
+                dataBase64: full.dataBase64,
+                byteLength: full.byteLength,
+                variant: 'full'
+              }
             }
           }
           const thumbnail = media.thumbnail

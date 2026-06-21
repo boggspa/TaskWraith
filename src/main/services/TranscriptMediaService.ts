@@ -33,6 +33,16 @@ export interface TranscriptMediaThumbnailer {
   (input: { buffer: Buffer; mimeType: string; maxEdge: number }): TranscriptMediaThumbnail | null
 }
 
+export interface TranscriptMediaAssetWriter {
+  (input: {
+    assetId: string
+    sha256: string
+    buffer: Buffer
+    mimeType: string
+    source: Extract<TranscriptMediaSource, 'generated' | 'tool_result'>
+  }): void
+}
+
 export interface CreateToolResultMediaRefsOptions {
   messageId: string
   runId?: string
@@ -41,6 +51,7 @@ export interface CreateToolResultMediaRefsOptions {
   source?: Extract<TranscriptMediaSource, 'generated' | 'tool_result'>
   namePrefix?: string
   thumbnailer?: TranscriptMediaThumbnailer
+  assetWriter?: TranscriptMediaAssetWriter
   maxBytes?: number
   maxRefs?: number
 }
@@ -399,6 +410,7 @@ export function createToolResultMediaRefs({
   source = 'tool_result',
   namePrefix,
   thumbnailer = defaultTranscriptMediaThumbnailer,
+  assetWriter,
   maxBytes = TRANSCRIPT_MEDIA_MAX_TOOL_IMAGE_BYTES,
   maxRefs = TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE
 }: CreateToolResultMediaRefsOptions): TranscriptMediaRef[] {
@@ -437,6 +449,18 @@ export function createToolResultMediaRefs({
             mimeType: decoded.mimeType
           }
         : undefined)
+    const assetId = runId ? `run:${runId}:${sourceSegment}:${hash}` : `${sourceSegment}:${hash}`
+    try {
+      assetWriter?.({
+        assetId,
+        sha256: hash,
+        buffer: decoded.buffer,
+        mimeType: decoded.mimeType,
+        source
+      })
+    } catch {
+      // Full-size persistence is best-effort; bounded thumbnails remain safe.
+    }
     refs.push({
       id: `${messageId}:${sourceSegment}:${hash.slice(0, 16)}`,
       kind: 'image',
@@ -452,7 +476,7 @@ export function createToolResultMediaRefs({
       mimeType: decoded.mimeType,
       byteLength: decoded.buffer.length,
       sha256: hash,
-      assetId: runId ? `run:${runId}:${sourceSegment}:${hash}` : `${sourceSegment}:${hash}`,
+      assetId,
       thumbnail,
       status: 'available'
     })

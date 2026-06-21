@@ -195,13 +195,22 @@ describe('TranscriptMediaService', () => {
   })
 
   it('creates generated media refs for provider image outputs', () => {
+    const writes: Array<{ assetId: string; sha256: string; buffer: Buffer; mimeType: string }> = []
     const refs = createToolResultMediaRefs({
       messageId: 'msg-1',
       runId: 'run-1',
       source: 'generated',
       namePrefix: 'Provider image',
       blocks: [{ type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }],
-      thumbnailer: () => null
+      thumbnailer: () => null,
+      assetWriter: (input) => {
+        writes.push({
+          assetId: input.assetId,
+          sha256: input.sha256,
+          buffer: input.buffer,
+          mimeType: input.mimeType
+        })
+      }
     })
 
     expect(refs[0]).toMatchObject({
@@ -209,6 +218,13 @@ describe('TranscriptMediaService', () => {
       name: 'Provider image',
       assetId: expect.stringContaining('run:run-1:generated-image:')
     })
+    expect(writes).toHaveLength(1)
+    expect(writes[0]).toMatchObject({
+      assetId: refs[0].assetId,
+      sha256: refs[0].sha256,
+      mimeType: 'image/png'
+    })
+    expect(writes[0].buffer.equals(PNG_BUFFER)).toBe(true)
   })
 
   it('uses a small safe raster block as its own bounded thumbnail when native thumbnailing is absent', () => {
