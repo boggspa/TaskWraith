@@ -108,6 +108,8 @@ export interface ChatViewPaneChromeAction {
   active?: boolean
   disabled?: boolean
   count?: number
+  menu?: ReactNode
+  menuOpen?: boolean
   onClick?: (paneIndex: number, chatId: string) => void
 }
 
@@ -209,8 +211,43 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
     onClick: props.onFocusPane
   }
   const leftAction = props.topLeftChromeAction || defaultLeftAction
-  const renderAction = (action: ChatViewPaneChromeAction) => (
-    <button
+  const renderAction = (action: ChatViewPaneChromeAction) => {
+    const button = (
+      <button
+        className={`chat-corner-btn${action.active ? ' active' : ''}`}
+        type="button"
+        title={action.title}
+        aria-label={action.ariaLabel || action.title}
+        aria-pressed={typeof action.active === 'boolean' ? action.active : undefined}
+        aria-haspopup={action.menu ? 'menu' : undefined}
+        aria-expanded={action.menu ? Boolean(action.menuOpen) : undefined}
+        disabled={action.disabled || !action.onClick || !chatId}
+        onClick={(event) => {
+          event.stopPropagation()
+          if (!chatId || action.disabled) return
+          action.onClick?.(props.paneIndex, chatId)
+        }}
+      >
+        {action.icon}
+        {typeof action.count === 'number' && action.count > 0 && (
+          <span className="chat-corner-count">{action.count > 99 ? '99+' : action.count}</span>
+        )}
+      </button>
+    )
+    if (action.menu) {
+      return (
+        <div
+          key={action.id}
+          className="side-chat-menu-wrap pane-preview-menu-wrap"
+          data-preview-menu-root="true"
+        >
+          {button}
+          {action.menu}
+        </div>
+      )
+    }
+    return (
+      <button
       key={action.id}
       className={`chat-corner-btn${action.active ? ' active' : ''}`}
       type="button"
@@ -229,7 +266,8 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
         <span className="chat-corner-count">{action.count > 99 ? '99+' : action.count}</span>
       )}
     </button>
-  )
+    )
+  }
 
   return (
     <>

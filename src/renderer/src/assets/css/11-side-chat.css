@@ -916,6 +916,10 @@
   width: 210px;
 }
 
+.side-chat-layout-menu.pane-preview-menu {
+  width: 248px;
+}
+
 .side-chat-menu-trigger.chat-corner-btn {
   width: 18px;
   min-width: 18px;

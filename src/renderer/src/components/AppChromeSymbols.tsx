@@ -430,6 +430,43 @@ export function RunSymbolIcon() {
   )
 }
 
+export function PreviewSymbolIcon() {
+  return (
+    <span className="chat-corner-symbol" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M5.8 3.7v8.6L11 8 5.8 3.7z" />
+      </svg>
+    </span>
+  )
+}
+
+export function RunRailSymbolIcon() {
+  return (
+    <span className="chat-corner-symbol" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M8.8 1.9 4.5 8.2h3.1l-0.8 5.9 4.7-7H8.1l0.7-5.2z" />
+        <path d="M12.2 2.5 13.4 1" />
+        <path d="M12.8 5h1.9" />
+        <path d="M11.8 7.2 13.2 8.4" />
+      </svg>
+    </span>
+  )
+}
+
 // Workflow glyph — the monoline automation route (trigger → decision → run →
 // return), from design-assets/workflows/workflow-monoline.svg. Marks workflow
 // chats on their welcome/identity surfaces. currentColor so the caller tints it.

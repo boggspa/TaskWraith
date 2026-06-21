@@ -212,6 +212,10 @@
   overflow: hidden;
 }
 
+.multiview-pane-corner-controls.chat-corner-controls-right:has(.pane-preview-menu) {
+  overflow: visible;
+}
+
 .multiview-pane-corner-controls .chat-corner-thread-title {
   min-width: 0;
 }

@@ -196,6 +196,7 @@ import { useExternalPathRepoMetadata } from './hooks/useExternalPathRepoMetadata
 import { useUpdateStatus } from './hooks/useUpdateStatus'
 import { useHostWeather } from './hooks/useHostWeather'
 import { useAppVersion } from './hooks/useAppVersion'
+import { useLocalServers } from './hooks/useLocalServers'
 import {
   filterDispatchExternalPathGrants,
   findExternalPathGrantGaps,
@@ -234,9 +235,11 @@ import {
   InfoCircleIcon,
   LinkCircleSymbolIcon,
   PinnedMessagesIcon,
+  PreviewSymbolIcon,
   QuestionCircleIcon,
   QueueSymbolIcon,
   ReviewSymbolIcon,
+  RunRailSymbolIcon,
   RunSymbolIcon,
   ScreenWatchSymbolIcon,
   SidebarCornerIcon,
@@ -377,6 +380,7 @@ import {
   type WorkspaceSelectIntent
 } from './lib/workspaceSelection'
 import { buildWelcomeCopy } from './lib/welcomeCopy'
+import { buildPreviewServerTargets, type PreviewServerTarget } from './lib/previewServerTargets'
 import type {
   DiscordContextReadMetadata,
   DiscordContextSelection,
@@ -1314,6 +1318,7 @@ function App(): React.JSX.Element {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
   const [workspacesHydrated, setWorkspacesHydrated] = useState(false)
   const [currentWorkspace, setCurrentWorkspace] = useState<WorkspaceRecord | null>(null)
+  const { servers: localPreviewServers } = useLocalServers()
   // After a NEW workspace is added via the folder picker, offer to grant it
   // remote (iOS) access in the same breath. Navigation into the workspace is
   // deferred until this modal closes (next()).
@@ -2164,6 +2169,10 @@ function App(): React.JSX.Element {
     useState<SidePanelPresentation>('split')
   const [sideChatMenuOpen, setSideChatMenuOpen] = useState(false)
   const [popoutMenuOpen, setPopoutMenuOpen] = useState(false)
+  const [previewMenuTarget, setPreviewMenuTarget] = useState<{
+    paneIndex: number
+    chatId: string
+  } | null>(null)
   const [sideChatSeedMessageId, setSideChatSeedMessageId] = useState<string | null>(null)
 
   // Reset inspector when the user navigates to a chat that doesn't own
@@ -2590,8 +2599,26 @@ function App(): React.JSX.Element {
     }
   }, [popoutMenuOpen])
   useEffect(() => {
+    if (!previewMenuTarget) return
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Element | null
+      if (target?.closest('[data-preview-menu-root="true"]')) return
+      setPreviewMenuTarget(null)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPreviewMenuTarget(null)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [previewMenuTarget])
+  useEffect(() => {
     setSideChatMenuOpen(false)
     setPopoutMenuOpen(false)
+    setPreviewMenuTarget(null)
     setSideChatSeedMessageId(null)
   }, [currentChat?.appChatId])
   const permissionRequestState = currentComposerChatId
@@ -3432,6 +3459,53 @@ function App(): React.JSX.Element {
       createdAt: Date.now(),
       pinned: false
     }
+  }
+  const getPreviewTargetsForChat = (chat?: ChatRecord | null): PreviewServerTarget[] => {
+    const workspace = getWorkspaceForChat(chat)
+    return buildPreviewServerTargets(localPreviewServers, workspace?.path || chat?.workspacePath)
+  }
+  const openPreviewTarget = (target: PreviewServerTarget): void => {
+    setPreviewMenuTarget(null)
+    void window.api.openExternalOrPath(target.url)
+  }
+  const renderPreviewTargetMenu = (
+    targets: PreviewServerTarget[],
+    paneIndex: number,
+    chatId: string
+  ): ReactNode => {
+    if (
+      targets.length <= 1 ||
+      previewMenuTarget?.paneIndex !== paneIndex ||
+      previewMenuTarget.chatId !== chatId
+    ) {
+      return null
+    }
+    return (
+      <div className="side-chat-layout-menu pane-preview-menu" role="menu" aria-label="Preview targets">
+        <div className="side-chat-layout-menu-section" role="presentation">
+          Preview Target
+        </div>
+        {targets.map((target) => (
+          <button
+            key={target.id}
+            type="button"
+            role="menuitem"
+            onClick={() => openPreviewTarget(target)}
+            title={target.url}
+          >
+            <span>{target.label}</span>
+            <small>{target.subtitle || target.url}</small>
+          </button>
+        ))}
+      </div>
+    )
+  }
+  const previewActionTitle = (targets: PreviewServerTarget[], hasWorkspace: boolean): string => {
+    if (!hasWorkspace) return 'Preview unavailable for global chats'
+    if (targets.length === 0) return 'No detected preview target'
+    const firstTarget = targets[0]
+    if (targets.length === 1 && firstTarget) return `Open preview at ${firstTarget.url}`
+    return `Choose preview target (${targets.length})`
   }
   const sideWorkspace = sideChat ? getWorkspaceForChat(sideChat) : null
 
@@ -16506,6 +16580,10 @@ function App(): React.JSX.Element {
       .filter((message): message is PinnedMessageSummary => Boolean(message))
       .sort((a, b) => b.pinnedAt - a.pinnedAt)
   }, [currentChat?.messages])
+  const currentPreviewTargets = getPreviewTargetsForChat(currentChat)
+  const currentPreviewMenuOpen =
+    previewMenuTarget?.paneIndex === multiview.focusedPaneIndex &&
+    previewMenuTarget.chatId === currentChat?.appChatId
   const currentBlackboardEntries = useMemo(
     () => currentChat?.ensemble?.blackboard || [],
     [currentChat?.ensemble?.blackboard]
@@ -16553,7 +16631,7 @@ function App(): React.JSX.Element {
     badge?: number
   }> = [
     { id: 'chat', label: 'Chat', icon: <SplitChatIcon />, enabled: Boolean(sideChat) },
-    { id: 'run', label: 'Run', icon: <RunSymbolIcon />, enabled: true },
+    { id: 'run', label: 'Run', icon: <RunRailSymbolIcon />, enabled: true },
     {
       id: 'media',
       label: 'Media',
@@ -17588,6 +17666,9 @@ function App(): React.JSX.Element {
     const viewerProvider = getChatProvider(viewerChat)
     const viewerIsGlobalChat = isGlobalChat(viewerChat)
     const viewerWorkspace = getWorkspaceForChat(viewerChat)
+    const viewerPreviewTargets = getPreviewTargetsForChat(viewerChat)
+    const viewerPreviewMenuOpen =
+      previewMenuTarget?.paneIndex === viewerPaneIndex && previewMenuTarget.chatId === viewerChatId
     const viewerWorkspaceName = viewerIsGlobalChat
       ? 'Global Chat'
       : viewerWorkspace?.displayName ||
@@ -17967,10 +18048,37 @@ function App(): React.JSX.Element {
         }
       },
       {
+        id: 'preview',
+        title: previewActionTitle(viewerPreviewTargets, Boolean(viewerWorkspace)),
+        ariaLabel: 'Open preview',
+        icon: <PreviewSymbolIcon />,
+        active: viewerPreviewMenuOpen,
+        disabled: viewerPreviewTargets.length === 0,
+        menu: renderPreviewTargetMenu(viewerPreviewTargets, viewerPaneIndex, viewerChatId),
+        menuOpen: viewerPreviewMenuOpen,
+        onClick: (paneIndex, chatId) => {
+          focusPaneForChromeAction(paneIndex, chatId)
+          setSideChatMenuOpen(false)
+          setPopoutMenuOpen(false)
+          if (viewerPreviewTargets.length === 1) {
+            const target = viewerPreviewTargets[0]
+            if (target) openPreviewTarget(target)
+            return
+          }
+          if (viewerPreviewTargets.length > 1) {
+            setPreviewMenuTarget((current) =>
+              current?.paneIndex === paneIndex && current.chatId === chatId
+                ? null
+                : { paneIndex, chatId }
+            )
+          }
+        }
+      },
+      {
         id: 'run-rail',
         title: showCockpit ? 'Hide Run rail' : 'Open Run rail',
         ariaLabel: 'Toggle Run rail',
-        icon: <RunSymbolIcon />,
+        icon: <RunRailSymbolIcon />,
         active: showCockpit,
         onClick: (paneIndex, chatId) => focusPaneAndSelectDock(paneIndex, chatId, 'run')
       },
@@ -20109,6 +20217,45 @@ function App(): React.JSX.Element {
                 </div>
               )}
             </div>
+            <div className="side-chat-menu-wrap pane-preview-menu-wrap" data-preview-menu-root="true">
+              <button
+                className={`chat-corner-btn ${currentPreviewMenuOpen ? 'active' : ''}`}
+                type="button"
+                onClick={() => {
+                  if (!currentChat) return
+                  setSideChatMenuOpen(false)
+                  setPopoutMenuOpen(false)
+                  if (currentPreviewTargets.length === 1) {
+                    const target = currentPreviewTargets[0]
+                    if (target) openPreviewTarget(target)
+                    return
+                  }
+                  if (currentPreviewTargets.length > 1) {
+                    const paneIndex = multiview.focusedPaneIndex
+                    const chatId = currentChat.appChatId
+                    setPreviewMenuTarget((current) =>
+                      current?.paneIndex === paneIndex && current.chatId === chatId
+                        ? null
+                        : { paneIndex, chatId }
+                    )
+                  }
+                }}
+                title={previewActionTitle(currentPreviewTargets, hasWorkspaceContext)}
+                aria-label="Open preview"
+                aria-haspopup={currentPreviewTargets.length > 1 ? 'menu' : undefined}
+                aria-expanded={currentPreviewTargets.length > 1 ? currentPreviewMenuOpen : undefined}
+                aria-pressed={currentPreviewMenuOpen}
+                disabled={currentPreviewTargets.length === 0}
+              >
+                <PreviewSymbolIcon />
+              </button>
+              {currentChat &&
+                renderPreviewTargetMenu(
+                  currentPreviewTargets,
+                  multiview.focusedPaneIndex,
+                  currentChat.appChatId
+                )}
+            </div>
             <button
               className={`chat-corner-btn ${showCockpit ? 'active' : ''}`}
               type="button"
@@ -20120,7 +20267,7 @@ function App(): React.JSX.Element {
               aria-label="Toggle Run rail"
               aria-pressed={showCockpit}
             >
-              <RunSymbolIcon />
+              <RunRailSymbolIcon />
             </button>
             <button
               className={`chat-corner-btn ${isChatMediaPanelOpen ? 'active' : ''}`}

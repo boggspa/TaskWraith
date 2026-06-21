@@ -178,6 +178,41 @@ describe('ChatViewPane shared composer', () => {
   })
 })
 
+describe('ChatViewPane chrome actions', () => {
+  it('renders menu-backed top-right actions for split-pane preview controls', () => {
+    const html = renderToStaticMarkup(
+      <ChatViewPane
+        {...makeProps({
+          chat: { appChatId: 'chat-1' } as unknown as ChatViewPaneProps['chat'],
+          topRightChromeActions: [
+            {
+              id: 'preview',
+              title: 'Choose preview target',
+              icon: <span>preview</span>,
+              active: true,
+              menuOpen: true,
+              menu: (
+                <div className="side-chat-layout-menu pane-preview-menu" role="menu">
+                  <button type="button" role="menuitem">
+                    Preview :5173
+                  </button>
+                </div>
+              ),
+              onClick: vi.fn()
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('data-preview-menu-root="true"')
+    expect(html).toContain('aria-haspopup="menu"')
+    expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain('pane-preview-menu')
+    expect(html).toContain('Preview :5173')
+  })
+})
+
 describe('ChatViewPane per-pane agent aura', () => {
   const auraProps = (over: Partial<ChatViewPaneProps> = {}): ChatViewPaneProps =>
     makeProps({
