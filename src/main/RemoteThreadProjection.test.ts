@@ -1017,6 +1017,189 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('mediaRefs', () => {
+    it('projects canonical media refs and derives legacy thumbnails for older clients', () => {
+      const messages = [
+        msg(1, {
+          metadata: {
+            mediaRefs: [
+              {
+                id: 'media-1',
+                kind: 'image',
+                format: 'raster',
+                source: 'tool_result',
+                name: 'Tool image',
+                mimeType: 'image/png',
+                width: 320,
+                height: 180,
+                byteLength: 2048,
+                thumbnail: {
+                  dataBase64: 'THUMB',
+                  mimeType: 'image/jpeg',
+                  width: 160,
+                  height: 90
+                },
+                status: 'available'
+              }
+            ]
+          }
+        })
+      ]
+
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[0].media).toEqual([
+        {
+          id: 'media-1',
+          kind: 'image',
+          format: 'raster',
+          source: 'tool_result',
+          name: 'Tool image',
+          mimeType: 'image/png',
+          width: 320,
+          height: 180,
+          byteLength: 2048,
+          thumbnail: {
+            dataBase64: 'THUMB',
+            mimeType: 'image/jpeg',
+            width: 160,
+            height: 90
+          },
+          status: 'available'
+        }
+      ])
+      expect(snapshot.rows[0].imageAttachmentCount).toBe(1)
+      expect(snapshot.rows[0].imageThumbnails).toEqual([
+        { dataBase64: 'THUMB', mimeType: 'image/jpeg', width: 160, height: 90 }
+      ])
+    })
+
+    it('keeps unsafe or oversized media as metadata without thumbnail bytes', () => {
+      const messages = [
+        msg(1, {
+          metadata: {
+            mediaRefs: [
+              {
+                id: 'media-svg',
+                kind: 'image',
+                format: 'svg',
+                source: 'tool_result',
+                name: 'SVG output',
+                mimeType: 'image/svg+xml',
+                status: 'unsafe_svg'
+              },
+              {
+                id: 'bad-thumb',
+                kind: 'image',
+                format: 'raster',
+                source: 'tool_result',
+                name: 'Bad thumbnail',
+                mimeType: 'image/png',
+                thumbnail: {
+                  dataBase64: 'AAAA',
+                  mimeType: 'text/plain'
+                },
+                status: 'available'
+              }
+            ]
+          }
+        })
+      ]
+
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[0].media).toEqual([
+        {
+          id: 'media-svg',
+          kind: 'image',
+          format: 'svg',
+          source: 'tool_result',
+          name: 'SVG output',
+          mimeType: 'image/svg+xml',
+          status: 'unsafe_svg'
+        },
+        {
+          id: 'bad-thumb',
+          kind: 'image',
+          format: 'raster',
+          source: 'tool_result',
+          name: 'Bad thumbnail',
+          mimeType: 'image/png',
+          status: 'available'
+        }
+      ])
+      expect(snapshot.rows[0].imageAttachmentCount).toBe(2)
+      expect(snapshot.rows[0].imageThumbnails).toBeUndefined()
+    })
+
+    it('caps cumulative media thumbnail bytes while preserving media metadata', () => {
+      const big = 'A'.repeat(160_000)
+      const messages = [
+        msg(1, {
+          metadata: {
+            mediaRefs: [
+              {
+                id: 'old-media',
+                kind: 'image',
+                format: 'raster',
+                source: 'tool_result',
+                name: 'Old media',
+                mimeType: 'image/png',
+                thumbnail: { dataBase64: big, mimeType: 'image/jpeg' }
+              }
+            ]
+          }
+        }),
+        msg(3, {
+          metadata: {
+            mediaRefs: [
+              {
+                id: 'new-media',
+                kind: 'image',
+                format: 'raster',
+                source: 'tool_result',
+                name: 'New media',
+                mimeType: 'image/png',
+                thumbnail: { dataBase64: big, mimeType: 'image/jpeg' }
+              }
+            ]
+          }
+        })
+      ]
+
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[1].media?.[0].thumbnail).toBeDefined()
+      expect(snapshot.rows[1].imageThumbnails).toHaveLength(1)
+      expect(snapshot.rows[0].media?.[0].thumbnail).toBeUndefined()
+      expect(snapshot.rows[0].imageThumbnails).toBeUndefined()
+      expect(snapshot.rows[0].media?.[0].id).toBe('old-media')
+      expect(snapshot.rows[0].imageAttachmentCount).toBe(1)
+    })
+
+    it('does not collapse assistant restatements that carry media refs', () => {
+      const messages = [
+        msg(1, {
+          content: 'same assistant response',
+          metadata: {
+            mediaRefs: [
+              {
+                id: 'media-1',
+                kind: 'image',
+                format: 'raster',
+                source: 'tool_result',
+                name: 'Preview',
+                mimeType: 'image/png',
+                status: 'available'
+              }
+            ]
+          }
+        }),
+        msg(3, { content: 'same assistant response' })
+      ]
+
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows.map((row) => row.id)).toEqual(['m1', 'm3'])
+    })
+  })
+
   describe('soloSpeakerForMessage', () => {
     it('labels solo assistant rows with provider and model', () => {
       const labeler = soloSpeakerForMessage('codex', [

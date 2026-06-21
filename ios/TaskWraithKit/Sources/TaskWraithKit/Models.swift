@@ -933,6 +933,25 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             /// Stable-enough identity for ForEach within one row (base64 prefix).
             public var id: String { String(dataBase64.prefix(32)) }
         }
+        /// First-class transcript media. Additive to legacy image thumbnails so
+        /// older Mac/iOS pairs keep working while agent/tool media gains a
+        /// structured surface.
+        public let media: [Media]?
+        public struct Media: Codable, Sendable, Hashable, Identifiable {
+            public let id: String
+            public let kind: String
+            public let format: String?
+            public let source: String?
+            public let name: String
+            public let alt: String?
+            public let caption: String?
+            public let mimeType: String?
+            public let width: Int?
+            public let height: Int?
+            public let byteLength: Int?
+            public let status: String?
+            public let thumbnail: ImageThumbnail?
+        }
         /// Bounded one-screen preview of the row body (Mac-side sanitized).
         public let preview: String?
         public let truncated: Bool?

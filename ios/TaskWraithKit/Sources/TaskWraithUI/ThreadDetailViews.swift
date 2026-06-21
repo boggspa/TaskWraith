@@ -1858,7 +1858,16 @@ struct ThreadRowView: View {
                         .foregroundStyle(TWTheme.textTertiary)
                     }
                 }
-                if let thumbs = row.imageThumbnails, !thumbs.isEmpty {
+                let mediaThumbnails = row.media?.compactMap(\.thumbnail) ?? []
+                if !mediaThumbnails.isEmpty {
+                    #if canImport(UIKit)
+                        TranscriptImageThumbnails(thumbnails: mediaThumbnails)
+                    #else
+                        imageAttachmentChip(mediaThumbnails.count)
+                    #endif
+                } else if let media = row.media, !media.isEmpty {
+                    imageAttachmentChip(media.count)
+                } else if let thumbs = row.imageThumbnails, !thumbs.isEmpty {
                     #if canImport(UIKit)
                         TranscriptImageThumbnails(thumbnails: thumbs)
                     #else

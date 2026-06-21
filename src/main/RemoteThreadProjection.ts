@@ -39,6 +39,10 @@ import type {
   DiffFileStatus,
   DiffFileSummary,
   ProviderId,
+  TranscriptMediaFormat,
+  TranscriptMediaSource,
+  TranscriptMediaStatus,
+  TranscriptMediaThumbnail,
   ToolActivity
 } from './store/types'
 
@@ -416,6 +420,22 @@ export interface RemoteGuestReplySummary {
   guestChatId?: string
 }
 
+export interface RemoteThreadRowMedia {
+  id: string
+  kind: 'image'
+  format: TranscriptMediaFormat
+  source: TranscriptMediaSource
+  name: string
+  alt?: string
+  caption?: string
+  mimeType: string
+  width?: number
+  height?: number
+  byteLength?: number
+  status?: TranscriptMediaStatus
+  thumbnail?: TranscriptMediaThumbnail
+}
+
 export interface RemoteThreadRow {
   /** === desktop `message.id`, so remote deep-links resolve exactly. */
   id: string
@@ -445,6 +465,10 @@ export interface RemoteThreadRow {
     width?: number
     height?: number
   }>
+  /** First-class transcript media projected from validated message metadata.
+   * Carries only bounded thumbnail bytes; full media fetch is a separate
+   * capability-gated bridge action. */
+  media?: RemoteThreadRowMedia[]
   /** Bounded + sanitized one-screen preview of the row body. */
   preview: string
   /** True when `preview` was clipped from a longer body. */
@@ -621,12 +645,22 @@ function capRowThumbnails(
   let remaining = budget
   for (let i = rows.length - 1; i >= 0; i--) {
     const thumbs = rows[i].imageThumbnails
-    if (!thumbs?.length) continue
-    const cost = thumbs.reduce((sum, t) => sum + (t.dataBase64?.length ?? 0), 0)
+    const mediaThumbs = rows[i].media?.map((media) => media.thumbnail).filter(Boolean) || []
+    if (!thumbs?.length && mediaThumbs.length === 0) continue
+    const cost =
+      (thumbs || []).reduce((sum, t) => sum + (t.dataBase64?.length ?? 0), 0) +
+      mediaThumbs.reduce((sum, t) => sum + (t?.dataBase64?.length ?? 0), 0)
     if (cost <= remaining) {
       remaining -= cost
     } else {
       delete rows[i].imageThumbnails
+      if (rows[i].media?.length) {
+        rows[i].media = rows[i].media?.map((media) => {
+          if (!media.thumbnail) return media
+          const { thumbnail: _thumbnail, ...rest } = media
+          return rest
+        })
+      }
     }
   }
   return rows
@@ -886,6 +920,100 @@ function buildGuestReply(
   return { summary, speaker }
 }
 
+const REMOTE_MEDIA_SOURCES = new Set<TranscriptMediaSource>([
+  'generated',
+  'workspace_path',
+  'upload',
+  'tool_result'
+])
+const REMOTE_MEDIA_FORMATS = new Set<TranscriptMediaFormat>(['raster', 'svg'])
+const REMOTE_MEDIA_STATUSES = new Set<TranscriptMediaStatus>([
+  'available',
+  'missing',
+  'denied',
+  'unsafe_svg',
+  'too_large',
+  'unsupported'
+])
+const REMOTE_THUMBNAIL_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+const REMOTE_MEDIA_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/bmp',
+  'image/svg+xml'
+])
+const REMOTE_MAX_MEDIA_REFS_PER_ROW = 8
+const REMOTE_MAX_MEDIA_THUMB_BASE64 = 180_000
+
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.trunc(value)
+    : undefined
+}
+
+function validRemoteThumbnail(raw: unknown): TranscriptMediaThumbnail | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const record = raw as Record<string, unknown>
+  const dataBase64 = typeof record.dataBase64 === 'string' ? record.dataBase64 : ''
+  const mimeType = typeof record.mimeType === 'string' ? record.mimeType.toLowerCase() : ''
+  if (!dataBase64 || dataBase64.length > REMOTE_MAX_MEDIA_THUMB_BASE64) return undefined
+  if (!REMOTE_THUMBNAIL_MIME_TYPES.has(mimeType)) return undefined
+  const thumbnail: TranscriptMediaThumbnail = { dataBase64, mimeType }
+  const width = positiveNumber(record.width)
+  const height = positiveNumber(record.height)
+  if (width !== undefined) thumbnail.width = width
+  if (height !== undefined) thumbnail.height = height
+  return thumbnail
+}
+
+function buildRowMedia(metadata: Record<string, unknown> | undefined): RemoteThreadRowMedia[] {
+  const rawRefs = metadata?.mediaRefs
+  if (!Array.isArray(rawRefs)) return []
+  const media: RemoteThreadRowMedia[] = []
+  for (const raw of rawRefs) {
+    if (media.length >= REMOTE_MAX_MEDIA_REFS_PER_ROW) break
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const record = raw as Record<string, unknown>
+    if (record.kind !== 'image') continue
+    const id = typeof record.id === 'string' ? record.id.trim() : ''
+    const name = typeof record.name === 'string' ? record.name.trim() : ''
+    const mimeType = typeof record.mimeType === 'string' ? record.mimeType.trim().toLowerCase() : ''
+    const source = record.source as TranscriptMediaSource
+    const format = record.format as TranscriptMediaFormat
+    if (!id || !name || !REMOTE_MEDIA_SOURCES.has(source)) continue
+    if (!REMOTE_MEDIA_FORMATS.has(format)) continue
+    if (!REMOTE_MEDIA_MIME_TYPES.has(mimeType)) continue
+    const status = record.status as TranscriptMediaStatus | undefined
+    if (status !== undefined && !REMOTE_MEDIA_STATUSES.has(status)) continue
+    const item: RemoteThreadRowMedia = {
+      id,
+      kind: 'image',
+      format,
+      source,
+      name,
+      mimeType,
+      status: status || 'available'
+    }
+    const alt = typeof record.alt === 'string' ? record.alt.trim() : ''
+    const caption = typeof record.caption === 'string' ? record.caption.trim() : ''
+    const width = positiveNumber(record.width)
+    const height = positiveNumber(record.height)
+    const byteLength = positiveNumber(record.byteLength)
+    const thumbnail = validRemoteThumbnail(record.thumbnail)
+    if (alt) item.alt = alt
+    if (caption) item.caption = caption
+    if (width !== undefined) item.width = width
+    if (height !== undefined) item.height = height
+    if (byteLength !== undefined) item.byteLength = byteLength
+    if (thumbnail) item.thumbnail = thumbnail
+    media.push(item)
+  }
+  return media
+}
+
 function buildRow(
   message: ChatMessage,
   previewMax: number,
@@ -904,6 +1032,10 @@ function buildRow(
   }
   if (typeof message.runId === 'string') row.runId = message.runId
   const metadata = message.metadata as Record<string, unknown> | undefined
+  const rowMedia = buildRowMedia(metadata)
+  if (rowMedia.length > 0) {
+    row.media = rowMedia
+  }
   if (typeof metadata?.ensembleRoundId === 'string' && metadata.ensembleRoundId.trim()) {
     row.ensembleRoundId = metadata.ensembleRoundId
   }
@@ -933,6 +1065,20 @@ function buildRow(
       // Keep the count consistent even if only thumbnails were persisted.
       if (row.imageAttachmentCount === undefined) {
         row.imageAttachmentCount = validThumbs.length
+      }
+    }
+  }
+  if (rowMedia.length > 0) {
+    if (row.imageAttachmentCount === undefined) {
+      row.imageAttachmentCount = rowMedia.length
+    }
+    if (!row.imageThumbnails?.length) {
+      const mediaThumbs = rowMedia
+        .map((media) => media.thumbnail)
+        .filter((thumb): thumb is TranscriptMediaThumbnail => Boolean(thumb))
+        .slice(0, 2)
+      if (mediaThumbs.length > 0) {
+        row.imageThumbnails = mediaThumbs
       }
     }
   }
@@ -1575,6 +1721,10 @@ function isPlainAssistantTextMessage(
   const md = message.metadata as Record<string, unknown> | undefined
   const imagePaths = md?.imagePaths
   if (Array.isArray(imagePaths) && imagePaths.length > 0) return false
+  const imageThumbnails = md?.imageThumbnails
+  if (Array.isArray(imageThumbnails) && imageThumbnails.length > 0) return false
+  const mediaRefs = md?.mediaRefs
+  if (Array.isArray(mediaRefs) && mediaRefs.length > 0) return false
   return true
 }
 
