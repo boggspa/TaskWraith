@@ -438,6 +438,18 @@ describe('RemoteThreadProjection', () => {
       ])
       expect(snap.rows[0].proposedPlan).toBeUndefined()
     })
+
+    it('ignores a proposed plan on a non-assistant row (mirrors the single writer)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'plan',
+          role: 'tool',
+          content: 'plan',
+          metadata: { proposedPlan: { title: 'T', body: 'b', status: 'pending' } }
+        })
+      ])
+      expect(snap.rows[0].proposedPlan).toBeUndefined()
+    })
   })
 
   describe('aroundRow', () => {

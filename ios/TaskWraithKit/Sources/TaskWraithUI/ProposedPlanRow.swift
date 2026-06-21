@@ -37,7 +37,16 @@ struct ProposedPlanRow: View {
     }
 
     private var status: String { plan.status ?? "pending" }
-    private var accent: Color { TWTheme.statusAttention }
+    /// Card hue tracks the outcome so a decided plan stops looking like it still
+    /// wants attention: amber while pending, green once approved, muted when
+    /// dismissed. Drives the border, gradient, header icon, and the Pending pill.
+    private var accent: Color {
+        switch status {
+        case "approved": return TWTheme.statusSuccess
+        case "dismissed": return TWTheme.textTertiary
+        default: return TWTheme.statusAttention
+        }
+    }
     private var title: String {
         let value = plan.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? "Proposed plan" : value
@@ -74,6 +83,17 @@ struct ProposedPlanRow: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(accent.opacity(0.5), lineWidth: 1.1)
         )
+        .onChange(of: plan.status) { _, newStatus in
+            // The row's SwiftUI identity is message.id (stable across
+            // re-projection), so @State init runs ONCE — it never re-evaluates
+            // when a decision flips status pending→approved/dismissed. Re-derive
+            // the collapse here so a decided card collapses to its outcome (the
+            // pill already updates; this makes the body follow). Fires only on a
+            // status transition, so a user's manual toggle while pending is kept.
+            withAnimation(.easeInOut(duration: 0.16)) {
+                expanded = (newStatus ?? "pending") == "pending"
+            }
+        }
     }
 
     private var header: some View {

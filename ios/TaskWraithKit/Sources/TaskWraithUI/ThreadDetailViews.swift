@@ -1864,20 +1864,25 @@ struct ThreadRowView: View {
                         .foregroundStyle(TWTheme.textTertiary)
                     }
                 }
-                if let media = row.media, !media.isEmpty {
+                // A proposed-plan row is a focused decision surface: suppress the
+                // media strip too (alongside the label/preview/showExpand guards)
+                // so an image attached to the plan turn can't render orphaned
+                // beneath the card. Guard every branch — gating only the first
+                // would fall through to the else-ifs.
+                if !hasProposedPlanCard, let media = row.media, !media.isEmpty {
                     #if canImport(UIKit)
                         TranscriptMediaStrip(
                             model: model, threadId: threadId, rowId: row.id, media: media)
                     #else
                         imageAttachmentChip(media.count)
                     #endif
-                } else if let thumbs = row.imageThumbnails, !thumbs.isEmpty {
+                } else if !hasProposedPlanCard, let thumbs = row.imageThumbnails, !thumbs.isEmpty {
                     #if canImport(UIKit)
                         TranscriptImageThumbnails(thumbnails: thumbs)
                     #else
                         imageAttachmentChip(thumbs.count)
                     #endif
-                } else if let count = row.imageAttachmentCount, count > 0 {
+                } else if !hasProposedPlanCard, let count = row.imageAttachmentCount, count > 0 {
                     imageAttachmentChip(count)
                 }
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard,

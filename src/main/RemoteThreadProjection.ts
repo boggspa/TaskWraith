@@ -962,6 +962,10 @@ function buildProposedPlan(message: ChatMessage): RemoteProposedPlan | undefined
   const metadata = message.metadata as Record<string, unknown> | undefined
   const raw = metadata?.proposedPlan
   if (!raw || typeof raw !== 'object') return undefined
+  // Mirror the single writer: the renderer only ever stamps metadata.proposedPlan
+  // on an assistant turn, so a plan blob on a tool/system/user row is malformed —
+  // don't render a phantom card from it.
+  if (message.role !== 'assistant') return undefined
   if (typeof metadata?.ensembleRoundId === 'string' && metadata.ensembleRoundId.trim()) {
     return undefined
   }
