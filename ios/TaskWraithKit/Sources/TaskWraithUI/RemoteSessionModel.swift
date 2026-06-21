@@ -80,54 +80,19 @@ public enum SessionPhase: Equatable, Sendable {
     case error(String)
 }
 
-// ── Paired-Mac persistence ──────────────────────────────────────────────────
-// After the first QR pairing the phone remembers WHO it paired with so app
-// relaunches and Mac restarts reconnect silently via the relay's resolve
-// directory (the Mac pins this phone's identity and accepts without a
-// prompt). This is PUBLIC material only — the Mac's identity public key,
-// relay URL, display name; the phone's private identity seed stays in the
-// Keychain via IdentitySeedStore.
-
-public struct PairedMacRecord: Codable, Sendable, Equatable {
-    public let relayUrl: String
-    /// Ordered relay candidates captured at pairing time (LAN first, wss
-    /// front door second). Optional so records persisted before T70 still
-    /// decode; reconnect falls back to the single `relayUrl`.
-    public let relayUrls: [String]?
-    public let macIdentityPubKey: String
-    public let macDisplayName: String
-
-    public init(
-        relayUrl: String, macIdentityPubKey: String, macDisplayName: String,
-        relayUrls: [String]? = nil
-    ) {
-        self.relayUrl = relayUrl
-        self.relayUrls = relayUrls
-        self.macIdentityPubKey = macIdentityPubKey
-        self.macDisplayName = macDisplayName
-    }
-}
-
-public protocol PairedMacStore: Sendable {
-    func load() -> PairedMacRecord?
-    func save(_ record: PairedMacRecord)
-    func clear()
-}
-
-public struct UserDefaultsPairedMacStore: PairedMacStore {
-    private let key = "taskwraith.pairedMac.v1"
-    public init() {}
-    public func load() -> PairedMacRecord? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(PairedMacRecord.self, from: data)
-    }
-    public func save(_ record: PairedMacRecord) {
-        if let data = try? JSONEncoder().encode(record) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
-    }
-    public func clear() { UserDefaults.standard.removeObject(forKey: key) }
-}
+// ── Paired-host persistence ─────────────────────────────────────────────────
+// After the first pairing the phone remembers WHO it paired with so app
+// relaunches and host restarts reconnect silently via the relay's resolve
+// directory (each host pins this phone's identity and accepts without a
+// prompt). This is PUBLIC material only — each host's identity public key,
+// relay URLs, display name; the phone's private identity seed stays in the
+// Keychain via IdentitySeedStore and is the SAME single seed for every host.
+//
+// The phone can pair with MANY hosts. The record/store/migration types live in
+// TaskWraithKit (PairedHostStore.swift) — a pure, exhaustively-tested keyed
+// collection (PairedHostRecord / PairedHostsDocument / PairedHostStore) that
+// mirrors the Mac bridge's v2 RemotePairingStore. `selectedHostId` is the
+// active host this model is connected to / showing.
 
 /// Persists the sidebar expand/collapse layout across launches. The sets stay
 /// @Published on RemoteSessionModel for live SwiftUI updates; this just mirrors
@@ -266,9 +231,16 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var expandingRows: Set<String> = []
     @Published public private(set) var loadingPreviousThreadRows: Set<String> = []
 
-    /// True when a previous pairing is on disk — drives the "Reconnect to
-    /// your Mac" affordance and launch-time auto-resume.
+    /// True when an ACTIVE pairing is on disk — drives the "Reconnect" affordance
+    /// and launch-time auto-resume. Equivalent to `selectedHostId != nil`.
     @Published public private(set) var hasStoredPairing: Bool
+    /// Every paired host (multi-host). The view layer renders this as the host
+    /// switcher / paired-hosts list; the active one is `selectedHostId`. Sorted
+    /// as persisted (insertion order); `pairedAt` is available for display.
+    @Published public private(set) var pairedHosts: [PairedHostRecord] = []
+    /// macIdentityPubKey of the host this model is connected to / showing, or
+    /// nil when none is paired. Reconnect / resume always target this host.
+    @Published public private(set) var selectedHostId: String?
     /// True once a session has established this app launch — drives the
     /// keep-the-shell-during-reconnect behavior (transient drops must NOT
     /// eject the user to the pairing screen).
@@ -412,7 +384,7 @@ public final class RemoteSessionModel: ObservableObject {
 
     private var identitySeed: Data
     private let identityStore: IdentitySeedStore
-    private let pairingStore: PairedMacStore
+    private let pairingStore: PairedHostStore
     private var client: RelayTransportClient?
     private var eventTask: Task<Void, Never>?
     private var pinnedMacIdentityB64: String?
@@ -427,7 +399,7 @@ public final class RemoteSessionModel: ObservableObject {
 
     public init(
         identityStore: IdentitySeedStore,
-        pairingStore: PairedMacStore = UserDefaultsPairedMacStore()
+        pairingStore: PairedHostStore = UserDefaultsPairedHostStore()
     ) {
         self.identityStore = identityStore
         var seed = Data()
@@ -440,9 +412,15 @@ public final class RemoteSessionModel: ObservableObject {
         self.identitySeed = seed
         self.identityError = loadError
         self.pairingStore = pairingStore
-        let stored = pairingStore.load()
-        self.hasStoredPairing = stored != nil
-        if let stored { self.macDisplayName = Self.sanitizedMacName(stored.macDisplayName) }
+        // Loading triggers the one-shot v1→v2 migration on first launch, so an
+        // existing single-host user keeps their host (now the active one).
+        let doc = pairingStore.load()
+        self.pairedHosts = doc.hosts
+        self.selectedHostId = doc.selectedHostId
+        self.hasStoredPairing = doc.selectedHostId != nil
+        if let active = doc.selectedHost {
+            self.macDisplayName = Self.sanitizedMacName(active.macDisplayName)
+        }
         startPathMonitor()
     }
 
@@ -654,6 +632,14 @@ public final class RemoteSessionModel: ObservableObject {
         cancelSocketHealthCheck()
         teardown()
         trustedReconnectAttempt = nil
+        // Connecting to a DIFFERENT host than the active one (e.g. adding a
+        // second host from the pairing screen): wipe the outgoing host's cached
+        // projection so its transcripts/usage/diffs never bleed into the new
+        // host's view. Caches are flat today, so clearing on host change is what
+        // keeps them effectively per-host. Re-pairing the SAME host keeps them.
+        if let current = pinnedMacIdentityB64, current != bootstrap.macIdentityPubKey {
+            wipeProjectionCaches()
+        }
         macDisplayName = bootstrap.macDisplayName
         pinnedMacIdentityB64 = bootstrap.macIdentityPubKey
         lastRelayUrls = bootstrap.relayUrls
@@ -739,7 +725,7 @@ public final class RemoteSessionModel: ObservableObject {
     /// at first pairing, so it accepts silently (and denies anyone else).
     public func reconnectTrusted() {
         guard !isDemo else { return }  // demo is standalone — never auto-redial
-        guard let record = pairingStore.load() else { return }
+        guard let record = pairingStore.load().selectedHost else { return }
         guard identityReady() else { return }
         // A fresh walk supersedes any queued auto-retry (attempt count keeps
         // growing so the backoff curve survives across walks).
@@ -1491,37 +1477,98 @@ public final class RemoteSessionModel: ObservableObject {
         return result
     }
 
+    /// Forget the ACTIVE host. Kept zero-arg so existing "Forget this host"
+    /// affordances (sidebar overflow, pairing screen) keep working; with no
+    /// active host it falls back to a full reset so a stuck state can still be
+    /// cleared.
     public func forgetPairing() {
-        pairingStore.clear()
-        hasStoredPairing = false
+        guard let active = selectedHostId else {
+            forgetAllHosts()
+            return
+        }
+        forgetHost(macIdentityPubKey: active)
+    }
+
+    /// Forget one host by identity. If it's the active host, tear down the live
+    /// session and wipe its projection first; OTHER paired hosts are untouched.
+    /// (Caches are flat today and only ever hold the active host's data — they
+    /// were already cleared when the user switched away from a background host —
+    /// so a non-active forget needs no cache wipe.) The host keeps its own pin
+    /// until the user revokes this phone there.
+    public func forgetHost(macIdentityPubKey id: String) {
+        let wasActive = (id == selectedHostId)
+        pairingStore.remove(macIdentityPubKey: id)
+        refreshPairedHostsPublished()
+        guard wasActive else { return }
         pinnedMacIdentityB64 = nil
         relayUrl = nil
+        lastRelayUrls = nil
+        disconnect()
+        // Security review: forgetting the active host must leave NOTHING
+        // readable — disconnect() clears the live lists, but cached snapshots,
+        // streaming buffers, and usage panels survive it.
+        wipeProjectionCaches()
+        // The store auto-selects the next remaining host (or none); reflect its
+        // name so the reconnect affordance is labeled. Reconnecting to it is
+        // left to the user (no surprise auto-jump on a forget).
+        macDisplayName = pairingStore.load().selectedHost.map {
+            Self.sanitizedMacName($0.macDisplayName)
+        } ?? ""
+    }
+
+    /// Forget EVERY paired host (full reset). Durable: clearAll() persists an
+    /// empty v2 document so the legacy single-host blob can't resurrect a host.
+    public func forgetAllHosts() {
+        pairingStore.clearAll()
+        refreshPairedHostsPublished()
+        pinnedMacIdentityB64 = nil
+        relayUrl = nil
+        lastRelayUrls = nil
         macDisplayName = ""
         disconnect()
-        // Security review: "Forget this Mac" must leave NOTHING readable —
-        // disconnect() clears the live lists, but cached snapshots,
-        // streaming buffers, and usage panels survived it.
-        threadSnapshots = [:]
-        streamingTexts = [:]
-        streamingSegments = [:]
-        streamingRunIds = [:]
-        streamingProviders = [:]
-        streamingItemIds = [:]
-        providerModels = [:]
-        projectionHydrated = false
-        usageRollup = nil
-        taskwraithTokenDaily = nil
-        externalTokenDaily = nil
-        modelUsage = nil
-        welcomeDashboard = nil
-        gitSnapshots = [:]
-        navigationTarget = nil
-        visibleThreadId = nil
+        wipeProjectionCaches()
+    }
+
+    /// Switch the active host: tear down the current session, wipe the outgoing
+    /// host's live + cached projection (no cross-host bleed), select the new
+    /// host, and reconnect to it. No-op for the already-active host except to
+    /// re-drive a stalled connection.
+    public func switchHost(to id: String) {
+        guard !isDemo else { return }
+        guard pairingStore.find(macIdentityPubKey: id) != nil else { return }
+        if id == selectedHostId {
+            switch phase {
+            case .connected, .connecting, .awaitingMacConfirm: return
+            default: reconnectTrusted()
+            }
+            return
+        }
+        cancelAutoReconnect(resetAttempts: true)
+        cancelSocketHealthCheck()
+        pinnedMacIdentityB64 = nil
+        relayUrl = nil
+        lastRelayUrls = nil
+        disconnect()  // teardown + .idle + clear live lists
+        wipeProjectionCaches()  // clear the outgoing host's cached projection
+        pairingStore.setSelectedHostId(id)
+        refreshPairedHostsPublished()
+        reconnectTrusted()
+    }
+
+    /// Clear cached + APNs projection state belonging to the (outgoing/forgotten)
+    /// active host. `clearCachedProjectionState()` covers snapshots, streaming
+    /// buffers, usage/model panels, git/diff/ensemble/workflow caches and
+    /// navigation; the APNs fields are wiped here too.
+    private func wipeProjectionCaches() {
+        clearCachedProjectionState()
+        // The allowlist-visible workspace list isn't part of the demo cache
+        // reset (clearCachedProjectionState), but it IS per-host material — a
+        // forgotten/outgoing host's workspaces must not linger under the next.
+        workspaces = []
         pendingApnsToken = nil
         apnsTokenRegistrationInFlight = false
         apnsTokenRetryTask?.cancel()
         apnsTokenRetryTask = nil
-        lastActionMessage = nil
     }
 
     /// The transport socket died underneath us (background kill, relay
@@ -1554,14 +1601,33 @@ public final class RemoteSessionModel: ObservableObject {
     private func persistCurrentPairing() {
         guard !isDemo else { return }  // never persist the demo's synthetic name
         guard let relayUrl, let macId = pinnedMacIdentityB64 else { return }
-        pairingStore.save(
-            PairedMacRecord(
+        // UPSERT (not overwrite): pairing/reconnecting one host must never drop
+        // the others. Preserve the original pairedAt across reconnects so the
+        // host list ordering doesn't churn; stamp it on first pairing only.
+        let pairedAt = pairingStore.find(macIdentityPubKey: macId)?.pairedAt ?? Self.iso8601Now()
+        pairingStore.upsert(
+            PairedHostRecord(
                 relayUrl: relayUrl, macIdentityPubKey: macId, macDisplayName: macDisplayName,
                 // The full candidate set from the bootstrap (LAN + wss) —
                 // ONE pairing then reconnects from home Wi-Fi or cellular
                 // alike; `relayUrl` holds the door that last worked.
-                relayUrls: lastRelayUrls))
-        hasStoredPairing = true
+                relayUrls: lastRelayUrls, pairedAt: pairedAt))
+        // The host we just connected to is the active one.
+        pairingStore.setSelectedHostId(macId)
+        refreshPairedHostsPublished()
+    }
+
+    /// Mirror the persisted multi-host document into the @Published surface the
+    /// view layer renders. Call after every store mutation.
+    private func refreshPairedHostsPublished() {
+        let doc = pairingStore.load()
+        pairedHosts = doc.hosts
+        selectedHostId = doc.selectedHostId
+        hasStoredPairing = doc.selectedHostId != nil
+    }
+
+    private static func iso8601Now() -> String {
+        ISO8601DateFormatter().string(from: Date())
     }
 
     private func consumeEvents(of client: RelayTransportClient) {
