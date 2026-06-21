@@ -45,6 +45,7 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
+      canvasEval: 'ask',
       networkAccess: 'allow'
     },
     agenticWorkspaceGrants: [],
@@ -105,6 +106,7 @@ describe('resolveEffectiveRunPermissions', () => {
           mcpTools: 'ask',
           subThreadDelegation: 'ask',
           canvasInteraction: 'ask',
+          canvasEval: 'ask',
           networkAccess: 'deny'
         }
       }),
@@ -159,6 +161,53 @@ describe('resolveEffectiveRunPermissions', () => {
 
     expect(resolved.workspaceGrantServiceIds).toEqual(['shellCommands'])
     expect(resolved.agenticServices.shellCommands).toBe('deny')
+  })
+
+  it('denies canvasEval under read-only and never auto-allows it under full access', () => {
+    const readOnly = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'read_only'
+    })
+    // Arbitrary eval (RCE) is denied outright under read-only.
+    expect(readOnly.agenticServices.canvasEval).toBe('deny')
+
+    const fullAccess = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'full_access'
+    })
+    // Full access lifts every OTHER service to allow, but canvasEval must stay at
+    // the 'ask' default — eval is signed-elevated and never auto-allowed.
+    expect(fullAccess.agenticServices.canvasInteraction).toBe('allow')
+    expect(fullAccess.agenticServices.canvasEval).toBe('ask')
+  })
+
+  it('treats canvasEval as non-grantable — a workspace grant cannot promote it', () => {
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings({
+        agenticWorkspaceGrants: [
+          {
+            id: 'workspace-grant-eval',
+            provider: 'codex',
+            workspacePath: '/repo',
+            service: 'canvasEval',
+            createdAt: '2026-05-24T00:00:00.000Z',
+            updatedAt: '2026-05-24T00:00:00.000Z'
+          }
+        ]
+      }),
+      presetId: 'default'
+    })
+
+    // The (stale/forged) workspace grant is dropped: canvasEval is not promoted to
+    // 'workspace', and it is absent from the resolved workspace-grant service ids.
+    expect(resolved.workspaceGrantServiceIds).not.toContain('canvasEval')
+    expect(resolved.agenticServices.canvasEval).toBe('ask')
   })
 
   it('merges workspace grants and provider-scoped external path grants', () => {

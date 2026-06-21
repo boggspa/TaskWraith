@@ -54,6 +54,7 @@ const settings: AppSettings = {
     mcpTools: 'deny',
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
+    canvasEval: 'ask',
     networkAccess: 'allow'
   },
   agenticWorkspaceGrants: [],
@@ -131,6 +132,46 @@ describe('PermissionService', () => {
       service.resolvePermission('codex', 'shellCommands', undefined, undefined, settings).decision
     ).toBe('allow')
     expect(service.hasWorkspaceGrant(settings, 'codex', undefined, 'shellCommands')).toBe(false)
+  })
+
+  it('treats canvasEval (RCE) as non-grantable — no session/workspace grant auto-allows it', () => {
+    const runManager = new RunManager()
+    runManager.create({ runId: 'run-eval', provider: 'gemini', workspacePath: '/repo' })
+    const service = new PermissionService({ runManager, sessionGrants: new Set() })
+
+    // Baseline: canvasEval prompts (settings default 'ask').
+    expect(
+      service.resolvePermission('gemini', 'canvasEval', '/repo', 'run-eval', settings).decision
+    ).toBe('ask')
+
+    // A session grant — which auto-allows shellCommands above — is INERT for eval.
+    service.addSessionGrant('gemini', '/repo', 'canvasEval', 'run-eval')
+    const withSession = service.resolvePermission(
+      'gemini',
+      'canvasEval',
+      '/repo',
+      'run-eval',
+      settings
+    )
+    expect(withSession.sessionGrantAllowed).toBe(false)
+    expect(withSession.decision).toBe('ask')
+
+    // A workspace grant is equally inert — eval always re-prompts.
+    const withWorkspace = service.resolvePermission('gemini', 'canvasEval', '/repo', undefined, {
+      ...settings,
+      agenticWorkspaceGrants: [
+        {
+          id: 'grant-eval',
+          provider: 'gemini',
+          service: 'canvasEval',
+          workspacePath: '/repo',
+          createdAt: '2026-05-08T00:00:00.000Z',
+          updatedAt: '2026-05-08T00:00:00.000Z'
+        }
+      ]
+    })
+    expect(withWorkspace.workspaceGrantAllowed).toBe(false)
+    expect(withWorkspace.decision).toBe('ask')
   })
 
   // Phase I1.b: approval gate on multi-provider delegation.

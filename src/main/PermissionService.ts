@@ -145,9 +145,18 @@ export class PermissionService {
     settings: AppSettings = AppStore.getSettings()
   ): AgenticPermissionResolution {
     const policy = this.getServicePolicy(service, settings)
+    // canvasEval (arbitrary eval = RCE) is SIGNED-ELEVATED: non-grantable, so no
+    // session/workspace grant can ever promote it to an automatic allow — every
+    // eval re-prompts. This is the central half of that guarantee (both the
+    // Gemini/Claude gate and the Codex native gate route through here); the YOLO
+    // bypasses are blocked separately, and read-only denies it via the preset.
+    const grantable = service !== 'canvasEval'
     const workspaceGrantAllowed =
-      policy !== 'deny' && this.hasWorkspaceGrant(settings, provider, workspacePath, service)
-    const sessionGrantAllowed = this.hasSessionGrant(provider, workspacePath, service, runId)
+      grantable &&
+      policy !== 'deny' &&
+      this.hasWorkspaceGrant(settings, provider, workspacePath, service)
+    const sessionGrantAllowed =
+      grantable && this.hasSessionGrant(provider, workspacePath, service, runId)
     const decision =
       policy === 'deny'
         ? 'deny'

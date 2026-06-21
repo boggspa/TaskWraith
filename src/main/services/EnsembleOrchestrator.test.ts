@@ -112,6 +112,7 @@ function makeSettings(): AppSettings {
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
+      canvasEval: 'ask',
       networkAccess: 'allow'
     },
     agenticWorkspaceGrants: [],

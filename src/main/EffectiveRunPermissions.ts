@@ -18,7 +18,8 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'fileChanges',
   'mcpTools',
   'subThreadDelegation',
-  'canvasInteraction'
+  'canvasInteraction',
+  'canvasEval'
 ]
 
 export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPreset> = {
@@ -34,7 +35,9 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // Load-bearing: with canvas_click/fill now on their own service, the gate's
       // mcpTools->shellCommands read-only reroute no longer fires for them, so the
       // read-only DENY must come from THIS preset entry.
-      canvasInteraction: 'deny'
+      canvasInteraction: 'deny',
+      // Arbitrary canvas_eval is RCE — never available under read-only.
+      canvasEval: 'deny'
     },
     networkAccess: 'deny'
   },
@@ -62,6 +65,10 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'allow'
+      // DELIBERATELY no canvasEval here: even Full access must NOT auto-allow
+      // arbitrary eval (RCE). It stays at the settings default ('ask') so every
+      // eval still prompts. Do not add canvasEval: 'allow' — the non-grantable +
+      // never-YOLO guards assume eval never resolves to an automatic allow.
     },
     networkAccess: 'allow'
   },
@@ -150,7 +157,8 @@ function servicesFromSettings(
     fileChanges: normalizePolicy(settings?.fileChanges, 'ask'),
     mcpTools: normalizePolicy(settings?.mcpTools, 'ask'),
     subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask'),
-    canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask')
+    canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask'),
+    canvasEval: normalizePolicy(settings?.canvasEval, 'ask')
   }
 }
 
@@ -178,6 +186,10 @@ function workspaceGrantServiceIdsFor(
     if (grant.provider !== provider) continue
     if (grant.workspacePath !== workspacePath) continue
     if (grant.expiresAt && Date.parse(grant.expiresAt) <= Date.now()) continue
+    // canvasEval (RCE) is non-grantable: a stale/forged workspace grant must never
+    // promote eval to an automatic allow. PermissionService enforces the same for
+    // session grants; this is the workspace-grant half of that guarantee.
+    if (grant.service === 'canvasEval') continue
     serviceIds.add(grant.service)
   }
   return [...serviceIds]

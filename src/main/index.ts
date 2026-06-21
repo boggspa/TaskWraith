@@ -4814,6 +4814,9 @@ function resolveNativeApprovalPreflight(args: {
     externalPathDetected: Boolean(args.externalPathDetection),
     sessionYoloEnabled: sessionYoloState.enabled,
     readOnly: Boolean(effectivePermissions?.readOnly),
+    // canvasEval (RCE) is signed-elevated: clamp to a prompt even under session
+    // YOLO or a (non-existent, but defence-in-depth) grant on the Codex path.
+    neverAutoAllow: args.service === 'canvasEval',
     effectivePermissions
   })
 }
@@ -4926,7 +4929,16 @@ async function requestAgenticServiceApproval(
   // 'ask' services a read-only posture leaves open (mcpTools / subThreadDelegation)
   // — silently widening "read-only" into "trust everything". Skip the bypass for
   // read-only sessions so the posture is never weakened by a global toggle.
-  if (sessionYoloState.enabled && !effectivePermissions?.readOnly && !request.forcePrompt) {
+  // canvasEval (arbitrary eval = RCE) is signed-elevated: NEVER auto-allowed, not
+  // even by session-YOLO or a grant. Every eval is individually human-approved
+  // (deny above still wins). The Codex gate enforces the same via neverAutoAllow.
+  const neverAutoAllow = service === 'canvasEval'
+  if (
+    sessionYoloState.enabled &&
+    !effectivePermissions?.readOnly &&
+    !request.forcePrompt &&
+    !neverAutoAllow
+  ) {
     auditService.recordAutomaticApprovalDecision(
       provider,
       auditRoute,
@@ -4947,7 +4959,8 @@ async function requestAgenticServiceApproval(
   if (
     decision === 'allow' &&
     !request.externalPathDetection &&
-    !request.forcePrompt
+    !request.forcePrompt &&
+    !neverAutoAllow
   ) {
     auditService.recordAutomaticApprovalDecision(
       provider,
@@ -5622,6 +5635,11 @@ function previewForGeminiMcpTool(
       }
     }
   }
+
+  // NB: canvas_eval routing on this Gemini/Kimi preview path is wired in the P2b
+  // slice (where canvas_eval joins the registry and this typed `toolName` union),
+  // alongside the tool itself — so every committed state keeps eval either absent
+  // or fully locked. The string-typed Claude/Codex classifiers route it already.
 
   return {
     title: `Approve ${providerName} tool call`,
@@ -7067,6 +7085,11 @@ function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null 
   // grant can't silently auto-allow app-mutating canvas interactions.
   if (normalized.includes('canvas_click') || normalized.includes('canvas_fill')) {
     return 'canvasInteraction'
+  }
+  // Arbitrary eval (RCE) gets its own signed-elevated bucket on the Claude gate
+  // too — never auto-allowed by a grant/preset/YOLO.
+  if (normalized.includes('canvas_eval')) {
+    return 'canvasEval'
   }
   if (normalized.startsWith('mcp__') || normalized.includes('__')) {
     return 'mcpTools'

@@ -21,7 +21,11 @@ export const WORKSPACE_POLICY_SERVICE_LABELS: Record<AgenticServiceId, string> =
   fileChanges: 'File changes',
   mcpTools: 'Tool calls',
   subThreadDelegation: 'Sub-thread delegation',
-  canvasInteraction: 'Canvas interaction'
+  canvasInteraction: 'Canvas interaction',
+  // canvasEval is NON-GRANTABLE (RCE / signed-elevated), so it is deliberately
+  // ABSENT from WORKSPACE_POLICY_SERVICES below — no per-workspace grant row. The
+  // label still exists for audit/ledger rendering of canvasEval rows.
+  canvasEval: 'Canvas eval'
 }
 
 export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
@@ -29,7 +33,9 @@ export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
   fileChanges: 'Write, replace, or patch workspace files without asking again.',
   mcpTools: 'Use read/search/status tools without asking again.',
   subThreadDelegation: 'Spawn cross-provider sub-threads without asking again.',
-  canvasInteraction: 'Click and fill elements in a Canvas preview without asking again.'
+  canvasInteraction: 'Click and fill elements in a Canvas preview without asking again.',
+  // Non-grantable: shown for completeness only; canvas_eval always re-prompts.
+  canvasEval: 'Arbitrary eval in a Canvas preview always asks (cannot be pre-authorised).'
 }
 
 export function getWorkspacePolicyServiceLabel(service: AgenticServiceId): string {

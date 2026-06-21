@@ -31,7 +31,8 @@ const effectivePermissions = (
     fileChanges: 'deny',
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
-    canvasInteraction: 'deny'
+    canvasInteraction: 'deny',
+    canvasEval: 'deny'
   }
 ): EffectiveRunPermissions => ({
   presetId: readOnly ? 'read_only' : 'default',
@@ -77,6 +78,44 @@ describe('taskWraithToolAgenticService — canvas interaction bucket', () => {
     expect(taskWraithToolAgenticService('canvas_click')).toBe('canvasInteraction')
     expect(taskWraithToolAgenticService('canvas_fill')).toBe('canvasInteraction')
     expect(taskWraithToolAgenticService('canvas_snapshot')).toBe('mcpTools')
+  })
+
+  it('routes canvas_eval to its own stricter canvasEval bucket', () => {
+    // Distinct from canvasInteraction: eval is non-grantable / never-auto-allowed.
+    expect(taskWraithToolAgenticService('canvas_eval')).toBe('canvasEval')
+    expect(taskWraithToolAgenticService('canvas_eval')).not.toBe('canvasInteraction')
+  })
+})
+
+describe('resolveNativeApprovalPreflightDecision — neverAutoAllow (canvas_eval / RCE)', () => {
+  it('clamps an automatic allow down to a prompt', () => {
+    // A workspace/session grant would normally auto-allow (decision: 'allow').
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('allow', 'ask', { sessionGrantAllowed: true }),
+        neverAutoAllow: true
+      })
+    ).toMatchObject({ kind: 'ask' })
+  })
+
+  it('clamps session-YOLO down to a prompt for a non-read-only run', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('ask'),
+        sessionYoloEnabled: true,
+        readOnly: false,
+        neverAutoAllow: true
+      })
+    ).toMatchObject({ kind: 'ask' })
+  })
+
+  it('still lets an explicit deny win over neverAutoAllow', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('deny'),
+        neverAutoAllow: true
+      })
+    ).toMatchObject({ kind: 'deny' })
   })
 })
 
@@ -167,6 +206,8 @@ describe('effectiveAgenticSettings', () => {
     // Read-only canvasInteraction deny must survive the effective-settings merge
     // (it previously got dropped here — P1 review GAP 2).
     expect(merged.agenticServices.canvasInteraction).toBe('deny')
+    // Same guarantee for canvas_eval (RCE): read-only deny must survive the merge.
+    expect(merged.agenticServices.canvasEval).toBe('deny')
   })
 
   it('preserves current explicit deny when merging stale effective permissions', () => {
@@ -184,7 +225,8 @@ describe('effectiveAgenticSettings', () => {
       fileChanges: 'allow',
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
-      canvasInteraction: 'ask'
+      canvasInteraction: 'ask',
+      canvasEval: 'ask'
     })
     effective.networkAccess = 'allow'
 

@@ -4,7 +4,8 @@ export const AGENTIC_SERVICE_LABELS: Record<AgenticServiceId, string> = {
   fileChanges: 'File changes',
   mcpTools: 'Tool calls',
   subThreadDelegation: 'Sub-thread delegation',
-  canvasInteraction: 'Canvas interaction'
+  canvasInteraction: 'Canvas interaction',
+  canvasEval: 'Canvas eval'
 }
 
 export function agenticServiceBlockedMessage(service: AgenticServiceId): string {
@@ -12,7 +13,11 @@ export function agenticServiceBlockedMessage(service: AgenticServiceId): string 
 }
 
 export function agenticServiceDisabledMessage(service: AgenticServiceId): string {
-  if (service === 'subThreadDelegation' || service === 'canvasInteraction') {
+  if (
+    service === 'subThreadDelegation' ||
+    service === 'canvasInteraction' ||
+    service === 'canvasEval'
+  ) {
     return `${AGENTIC_SERVICE_LABELS[service]} is disabled in TaskWraith settings.`
   }
   return `${AGENTIC_SERVICE_LABELS[service]} are disabled in TaskWraith settings.`
@@ -23,7 +28,8 @@ export const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'fileChanges',
   'mcpTools',
   'subThreadDelegation',
-  'canvasInteraction'
+  'canvasInteraction',
+  'canvasEval'
 ])
 
 export function assertAgenticServiceId(value: unknown): AgenticServiceId {

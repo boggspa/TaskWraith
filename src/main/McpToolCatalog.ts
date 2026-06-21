@@ -644,7 +644,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'fileChanges',
               'mcpTools',
               'subThreadDelegation',
-              'canvasInteraction'
+              'canvasInteraction',
+              'canvasEval'
             ],
             description: 'Filter to one approval-service kind. Omit to return all kinds.'
           },

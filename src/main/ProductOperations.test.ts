@@ -55,6 +55,7 @@ const baseSettings: AppSettings = {
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
+    canvasEval: 'ask',
     networkAccess: 'allow'
   },
   agenticWorkspaceGrants: [],

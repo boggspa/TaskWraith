@@ -210,6 +210,10 @@ export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | nu
         base.agenticServices?.canvasInteraction,
         profile.agenticServices.canvasInteraction
       ),
+      canvasEval: stricterServicePolicy(
+        base.agenticServices?.canvasEval,
+        profile.agenticServices.canvasEval
+      ),
       networkAccess:
         base.agenticServices?.networkAccess === 'deny'
           ? 'deny'

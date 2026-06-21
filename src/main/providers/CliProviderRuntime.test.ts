@@ -117,6 +117,7 @@ describe('runtimeSettings', () => {
           mcpTools: 'deny',
           subThreadDelegation: 'allow',
           canvasInteraction: 'ask',
+          canvasEval: 'ask',
           networkAccess: 'allow'
         }
       })

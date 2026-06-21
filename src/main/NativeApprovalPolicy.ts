@@ -58,6 +58,9 @@ export function effectiveAgenticSettings(
         current.canvasInteraction,
         effective.canvasInteraction
       ),
+      // Same as canvasInteraction: the read_only preset's canvasEval:'deny' must
+      // survive this key-by-key rebuild, or read-only eval would only prompt.
+      canvasEval: preserveCurrentDeny(current.canvasEval, effective.canvasEval),
       networkAccess: current.networkAccess === 'deny' ? 'deny' : effectivePermissions.networkAccess
     }
   }
@@ -87,10 +90,18 @@ export function resolveNativeApprovalPreflightDecision(args: {
   externalPathDetected?: boolean
   sessionYoloEnabled?: boolean
   readOnly?: boolean
+  /**
+   * Hard "never automatically allow" flag for signed-elevated services
+   * (canvas_eval / RCE). When set, the decision is clamped to `ask` regardless of
+   * policy, grant, or session-YOLO — only an explicit `deny` short-circuits above
+   * it. The caller (resolveNativeApprovalPreflight) sets this for `canvasEval`.
+   */
+  neverAutoAllow?: boolean
   effectivePermissions?: EffectiveRunPermissions
 }): Exclude<NativeApprovalPreflight, { kind: 'none' }> {
   const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = args.resolution
   if (decision === 'deny') return { kind: 'deny', policy, effectivePermissions: args.effectivePermissions }
+  if (args.neverAutoAllow) return { kind: 'ask', policy, effectivePermissions: args.effectivePermissions }
   if (args.externalPathDetected) return { kind: 'ask', policy, effectivePermissions: args.effectivePermissions }
   if (args.sessionYoloEnabled && !args.readOnly) {
     return {
@@ -139,6 +150,8 @@ export function taskWraithToolAgenticService(toolName: string): AgenticServiceId
   // Dedicated grant bucket (Codex path): keep app-mutating canvas interactions
   // out of the generic mcpTools session/workspace grant.
   if (toolName === 'canvas_click' || toolName === 'canvas_fill') return 'canvasInteraction'
+  // Arbitrary eval gets its OWN, stricter bucket (non-grantable / never-YOLO).
+  if (toolName === 'canvas_eval') return 'canvasEval'
   return 'mcpTools'
 }
 

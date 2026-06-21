@@ -233,6 +233,12 @@ export type AgenticServiceId =
   // the generic `mcpTools` service can't silently auto-allow app-mutating canvas
   // interactions (the P1-review exfil concern).
   | 'canvasInteraction'
+  // Canvas arbitrary `eval` (RCE in the previewed page). Its OWN service so it is
+  // STRICTER than canvasInteraction: signed-elevated — never auto-allowed by any
+  // preset, grant, or session-YOLO (every eval is individually human-approved),
+  // denied outright under read-only, and non-grantable. See PermissionService
+  // (non-grantable), EffectiveRunPermissions (read_only deny), and the YOLO guards.
+  | 'canvasEval'
 export type OllamaToolControlTier =
   | 'read_only'
   | 'approved_edits'
@@ -367,6 +373,7 @@ export interface AgenticServicesSettings {
   mcpTools: AgenticServicePolicy
   subThreadDelegation: AgenticServicePolicy
   canvasInteraction: AgenticServicePolicy
+  canvasEval: AgenticServicePolicy
   networkAccess: AgenticNetworkPolicy
 }
 
@@ -1059,9 +1066,9 @@ export type ProviderCapabilityState =
   | 'unavailable'
 export type ProviderCapabilityWarningSeverity = 'info' | 'warning' | 'error'
 export type ProviderToolingCapabilityId =
-  // canvasInteraction is an approval-grant bucket, not a provider-capability
-  // contract row — excluded like subThreadDelegation.
-  | Exclude<AgenticServiceId, 'subThreadDelegation' | 'canvasInteraction'>
+  // canvasInteraction / canvasEval are approval-grant buckets, not provider-
+  // capability contract rows — excluded like subThreadDelegation.
+  | Exclude<AgenticServiceId, 'subThreadDelegation' | 'canvasInteraction' | 'canvasEval'>
   | 'creativeApps'
   | 'networkAccess'
   | 'elicit'
