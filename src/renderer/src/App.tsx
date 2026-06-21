@@ -448,6 +448,8 @@ import { AuditRunCard } from './components/AuditRunCard'
 import { AuditRunNotice } from './components/AuditRunNotice'
 import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
 import { MultiviewPaneGrid } from './components/MultiviewPaneGrid'
+import { CanvasPane } from './components/CanvasPane'
+import { CanvasPaneLauncher } from './components/CanvasPaneLauncher'
 import { Composer, type ComposerProps } from './components/Composer'
 import { useMultiviewState } from './hooks/useMultiviewState'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
@@ -20094,7 +20096,12 @@ function App(): React.JSX.Element {
               layout={multiview.layout}
               panes={multiview.panes}
               focusedPaneIndex={multiview.focusedPaneIndex}
-              onClosePane={multiview.closePane}
+              onClosePane={(paneIndex) => {
+                // Tear down the embedded canvas (if any) before the pane goes away.
+                const canvasId = multiview.panes[paneIndex]?.canvasId
+                if (canvasId) void window.api.canvas.close(canvasId)
+                multiview.closePane(paneIndex)
+              }}
               columnFractions={multiview.tracks.columns}
               rowFractions={multiview.tracks.rows}
               onResizeTrack={multiview.resizeTrack}
@@ -20102,7 +20109,24 @@ function App(): React.JSX.Element {
               renderEmptyCell={(emptyPaneIndex) => (
                 <div className="multiview-empty-pane" data-pane-index={emptyPaneIndex}>
                   <span className="multiview-empty-pane-label">Select a chat for this pane</span>
+                  <CanvasPaneLauncher
+                    onOpen={(url) => {
+                      void window.api.canvas
+                        .openEmbedded({ url })
+                        .then((opened) => multiview.setPaneCanvas(emptyPaneIndex, opened.canvasId))
+                        .catch(() => {})
+                    }}
+                  />
                 </div>
+              )}
+              renderCanvasCell={(canvasId, paneIndex) => (
+                <CanvasPane
+                  canvasId={canvasId}
+                  onClose={() => {
+                    void window.api.canvas.close(canvasId)
+                    multiview.setPaneCanvas(paneIndex, null)
+                  }}
+                />
               )}
               renderViewerCell={renderMultiviewPaneCell}
               renderFocusedCell={() => (

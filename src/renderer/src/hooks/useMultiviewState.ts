@@ -189,10 +189,30 @@ function withChatAt(
   chatId: string | null
 ): MultiviewPaneRecord[] {
   if (index < 0 || index >= panes.length) return panes
-  if (panes[index].chatId === chatId) return panes
+  const pane = panes[index]
+  // Assigning a chat clears any canvas (the two are mutually exclusive). No-op for
+  // an ordinary canvas-less pane already on this chatId. Canvas-less panes keep the
+  // exact old shape (no canvasId key) so existing records are byte-identical.
+  if (pane.chatId === chatId && !pane.canvasId) return panes
   const next = panes.slice()
-  next[index] = { ...next[index], chatId }
+  next[index] = pane.canvasId ? { ...pane, chatId, canvasId: null } : { ...pane, chatId }
   return next
+}
+
+/** Put a live-embedded canvas in a pane (clears its chat). `null` clears the canvas. */
+export function applySetPaneCanvas(
+  state: MultiviewCoreState,
+  index: number,
+  canvasId: string | null
+): MultiviewCoreState {
+  if (index < 0 || index >= state.panes.length) return state
+  const pane = state.panes[index]
+  if ((pane.canvasId ?? null) === canvasId && (canvasId === null || pane.chatId === null)) {
+    return state
+  }
+  const next = state.panes.slice()
+  next[index] = { ...pane, canvasId, chatId: canvasId ? null : pane.chatId }
+  return { ...state, panes: next }
 }
 
 export function createInitialMultiviewState(
@@ -582,6 +602,7 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   tracks: MultiviewLayoutTracks
   setLayout: (next: MultiviewLayout, seedChatId?: string | null) => void
   setPaneChat: (index: number, chatId: string | null) => void
+  setPaneCanvas: (index: number, canvasId: string | null) => void
   setFocusedPane: (index: number) => void
   focusPane: (index: number, outgoingFocusedChatId?: string | null) => void
   closePane: (index: number) => void
@@ -638,6 +659,11 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
   }, [])
   const setPaneChat = useCallback(
     (index: number, chatId: string | null) => setState((s) => applySetPaneChat(s, index, chatId)),
+    []
+  )
+  const setPaneCanvas = useCallback(
+    (index: number, canvasId: string | null) =>
+      setState((s) => applySetPaneCanvas(s, index, canvasId)),
     []
   )
   const setFocusedPane = useCallback(
@@ -708,6 +734,7 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     tracks,
     setLayout,
     setPaneChat,
+    setPaneCanvas,
     setFocusedPane,
     focusPane,
     closePane,

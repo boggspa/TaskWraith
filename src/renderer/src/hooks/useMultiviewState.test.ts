@@ -9,6 +9,7 @@ import {
   applyResizeTrack,
   applySetFocusedPane,
   applySetLayout,
+  applySetPaneCanvas,
   applySetPaneChat,
   applySetPaneFxFlag,
   createInitialMultiviewState,
@@ -138,6 +139,31 @@ describe('applySetPaneChat', () => {
     const next = applySetPaneChat(s, 1, 'c')
     expect(next.panes[1]).toEqual({ id: 't1', chatId: 'c' })
     expect(next.paneSettings.t1?.fx).toEqual({ sky: false })
+  })
+})
+
+describe('applySetPaneCanvas', () => {
+  it('puts a canvas in a pane and clears its chat (mutually exclusive)', () => {
+    const next = applySetPaneCanvas(
+      state({ layout: 'vertical-2', panes: panesOf(['a', 'b']) }),
+      1,
+      'cv1'
+    )
+    expect(next.panes[1]).toEqual({ id: 't1', chatId: null, canvasId: 'cv1' })
+    expect(next.panes[0]).toEqual({ id: 't0', chatId: 'a' }) // untouched chat pane keeps old shape
+  })
+
+  it('assigning a chat to a canvas pane clears the canvas', () => {
+    let s = applySetPaneCanvas(state({ layout: 'vertical-2', panes: panesOf([null, null]) }), 0, 'cv1')
+    expect(s.panes[0].canvasId).toBe('cv1')
+    s = applySetPaneChat(s, 0, 'chat-x')
+    expect(s.panes[0]).toEqual({ id: 't0', chatId: 'chat-x', canvasId: null })
+  })
+
+  it('ignores out-of-range indices and no-op writes', () => {
+    const s = state({ panes: panesOf(['a']) })
+    expect(applySetPaneCanvas(s, 9, 'cv1')).toBe(s)
+    expect(applySetPaneCanvas(s, 0, null)).toBe(s) // already canvas-less
   })
 })
 
