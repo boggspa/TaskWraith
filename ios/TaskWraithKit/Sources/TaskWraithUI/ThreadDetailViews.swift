@@ -524,6 +524,11 @@ struct ThreadDetailView: View {
         // inline in the transcript (the inline card is now its home). Keep the
         // banner as a fallback for scrolled-off history or older-Mac rows that
         // don't carry the inline field.
+        // INVARIANT: the asking row (role=system / kind=attention) always reaches
+        // ThreadRowView — the visibleRows live-run filter only drops assistant/tool
+        // rows — so "suppressed here" always pairs with "rendered inline". Preserve
+        // that coupling if you ever change which rows are filtered from the list,
+        // or a question could end up shown in NEITHER place.
         let inlinePromptIds = Set(
             (model.threadSnapshots[taskId]?.rows ?? [])
                 .compactMap { $0.agentQuestion?.promptId })
