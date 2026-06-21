@@ -1,23 +1,30 @@
 /**
  * CanvasWebDriver — the P0 `web` driver.
  *
- * Hosts the app-under-test in a sandboxed, VISIBLE Electron BrowserWindow and
- * drives it WITHOUT the CDP `webContents.debugger` (which is mutually exclusive
- * with an open DevTools window and adds attach/version churn). Instead it uses
- * proven Electron primitives:
+ * Hosts the app-under-test on a {@link CanvasHostSurface} (a sandboxed standalone
+ * BrowserWindow by default; a WebContentsView embedded in the app window when the
+ * renderer-pane surface is injected) and drives its `webContents` WITHOUT the CDP
+ * `webContents.debugger` (mutually exclusive with an open DevTools window + adds
+ * attach/version churn). Instead it uses proven Electron primitives:
  *   - snapshot / inspect → `webContents.executeJavaScript` (fixed inspection
- *     scripts, NOT model-supplied JS — arbitrary eval is the deferred P2 verb)
+ *     scripts; arbitrary eval is the separate, signed-elevated canvas_eval verb)
  *   - screenshot         → `webContents.capturePage().toPNG()`
  *   - network            → per-partition `session.webRequest` ring buffer
  *   - console            → `webContents.on('console-message')` ring buffer
- *   - resize             → `setContentSize`
+ *   - resize             → the surface's `setContentSize`
  *
- * Each canvas gets its own in-memory session partition so its network buffer and
- * cookies are isolated. The window blocks popups and enforces the origin
- * allowlist on every page-initiated navigation (server-side SSRF guard).
+ * The surface is injected (`deps.createSurface`) so WHERE the page lives is not the
+ * driver's concern. Each canvas gets its own in-memory session partition so its
+ * network buffer and cookies are isolated; the driver blocks popups, hardens the
+ * session, and enforces the origin allowlist on every request (server-side SSRF).
  */
-import { BrowserWindow } from 'electron'
+import type { WebContents } from 'electron'
 import { createHash } from 'crypto'
+import {
+  createBrowserWindowSurface,
+  type CanvasHostSurface,
+  type CanvasSurfaceOptions
+} from './CanvasHostSurface'
 import type {
   CanvasActionInput,
   CanvasActResult,
@@ -279,10 +286,15 @@ function normalizeConsoleLevel(level: unknown): CanvasConsoleLevel {
   return 'info'
 }
 
+export interface CanvasWebDriverDeps {
+  /** Inject an alternate host surface (e.g. an embedded WebContentsView). */
+  createSurface?: (opts: CanvasSurfaceOptions) => CanvasHostSurface
+}
+
 export class CanvasWebDriver implements CanvasDriver {
   readonly kind = 'web' as const
 
-  private win: BrowserWindow | null = null
+  private surface: CanvasHostSurface | null = null
   private readonly partition: string
   private allowlist: string[] = []
   private readonly networkBuffer: CanvasNetworkEntry[] = []
@@ -293,17 +305,19 @@ export class CanvasWebDriver implements CanvasDriver {
   // exfiltration channel during the eval window. Set immediately before, cleared
   // in a finally immediately after, win.webContents.executeJavaScript.
   private evalEgressCut = false
+  private readonly createSurface: (opts: CanvasSurfaceOptions) => CanvasHostSurface
 
-  constructor(sessionId: string) {
+  constructor(sessionId: string, deps: CanvasWebDriverDeps = {}) {
     // In-memory partition (no "persist:" prefix) — isolated, ephemeral session.
     this.partition = `canvas-${sessionId}`
+    this.createSurface = deps.createSurface ?? createBrowserWindowSurface
   }
 
-  private requireWindow(): BrowserWindow {
-    if (!this.win || this.win.isDestroyed()) {
-      throw new Error('Canvas window is not open (or was closed).')
+  private requireSurface(): CanvasHostSurface {
+    if (!this.surface || this.surface.isDestroyed()) {
+      throw new Error('Canvas surface is not open (or was closed).')
     }
-    return this.win
+    return this.surface
   }
 
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
@@ -318,30 +332,21 @@ export class CanvasWebDriver implements CanvasDriver {
       height: input.viewport?.height
     })
 
-    const win = new BrowserWindow({
+    const surface = this.createSurface({
+      partition: this.partition,
       width: viewport.width,
-      height: viewport.height,
-      title: 'TaskWraith Canvas',
-      backgroundColor: '#111111',
-      show: true,
-      webPreferences: {
-        partition: this.partition,
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        allowRunningInsecureContent: false,
-        experimentalFeatures: false
-      }
+      height: viewport.height
     })
-    this.win = win
+    this.surface = surface
+    const wc = surface.webContents
 
     // Block popups / window.open — no new windows escape the canvas.
-    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-    this.hardenSession(win)
+    wc.setWindowOpenHandler(() => ({ action: 'deny' }))
+    this.hardenSession(wc)
     // The origin allowlist is enforced per-request in attachNetwork via
     // webRequest.onBeforeRequest (covers the main frame, subframes, subresources
     // and websockets — the navigation events only see the main frame).
-    win.webContents.on('console-message', (details) => {
+    wc.on('console-message', (details) => {
       this.pushConsole({
         level: normalizeConsoleLevel((details as { level?: unknown }).level),
         message: String((details as { message?: unknown }).message ?? ''),
@@ -350,28 +355,28 @@ export class CanvasWebDriver implements CanvasDriver {
         at: new Date().toISOString()
       })
     })
-    this.attachNetwork(win)
-    win.on('closed', () => {
-      if (this.win === win) this.win = null
+    this.attachNetwork(wc)
+    surface.onClosed(() => {
+      if (this.surface === surface) this.surface = null
     })
 
-    await this.loadUrl(win, verdict.normalizedUrl)
+    await this.loadUrl(wc, verdict.normalizedUrl)
     return {
-      url: win.webContents.getURL() || verdict.normalizedUrl,
-      title: win.getTitle(),
+      url: wc.getURL() || verdict.normalizedUrl,
+      title: surface.getTitle(),
       viewport
     }
   }
 
-  private loadUrl(win: BrowserWindow, url: string): Promise<void> {
+  private loadUrl(wc: WebContents, url: string): Promise<void> {
     return new Promise<void>((resolvePromise, reject) => {
       let settled = false
       const finish = (err?: Error): void => {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        win.webContents.removeListener('did-finish-load', onLoad)
-        win.webContents.removeListener('did-fail-load', onFail)
+        wc.removeListener('did-finish-load', onLoad)
+        wc.removeListener('did-fail-load', onFail)
         err ? reject(err) : resolvePromise()
       }
       const onLoad = (): void => finish()
@@ -391,9 +396,9 @@ export class CanvasWebDriver implements CanvasDriver {
         }
       }
       const timer = setTimeout(() => finish(new Error(`Canvas load timed out after ${LOAD_TIMEOUT_MS}ms.`)), LOAD_TIMEOUT_MS)
-      win.webContents.on('did-finish-load', onLoad)
-      win.webContents.on('did-fail-load', onFail)
-      win.loadURL(url).catch((err) => finish(err instanceof Error ? err : new Error(String(err))))
+      wc.on('did-finish-load', onLoad)
+      wc.on('did-fail-load', onFail)
+      wc.loadURL(url).catch((err) => finish(err instanceof Error ? err : new Error(String(err))))
     })
   }
 
@@ -409,13 +414,13 @@ export class CanvasWebDriver implements CanvasDriver {
    *  - Downloads flow outside webRequest once the download manager takes over;
    *    refuse them so eval can't stage a remote <a download> egress/side effect.
    */
-  private hardenSession(win: BrowserWindow): void {
+  private hardenSession(wc: WebContents): void {
     try {
-      win.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+      wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
     } catch {
       // Older Electron / unavailable — best effort.
     }
-    const ses = win.webContents.session
+    const ses = wc.session
     ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
     try {
       ses.setPermissionCheckHandler(() => false)
@@ -425,8 +430,8 @@ export class CanvasWebDriver implements CanvasDriver {
     ses.on('will-download', (event) => event.preventDefault())
   }
 
-  private attachNetwork(win: BrowserWindow): void {
-    const wr = win.webContents.session.webRequest
+  private attachNetwork(wc: WebContents): void {
+    const wr = wc.session.webRequest
     // SSRF enforcement for EVERY request (any frame / subresource / websocket):
     // cancel requests to link-local/metadata, or to a private host not in the
     // allowlist. This is the real guard the navigation events cannot provide.
@@ -478,8 +483,8 @@ export class CanvasWebDriver implements CanvasDriver {
   }
 
   async snapshot(): Promise<CanvasElementTree> {
-    const win = this.requireWindow()
-    const result = (await win.webContents.executeJavaScript(SNAPSHOT_SCRIPT, true)) as Omit<
+    const wc = this.requireSurface().webContents
+    const result = (await wc.executeJavaScript(SNAPSHOT_SCRIPT, true)) as Omit<
       CanvasElementTree,
       'capturedAt'
     >
@@ -487,8 +492,8 @@ export class CanvasWebDriver implements CanvasDriver {
   }
 
   async screenshot(): Promise<CanvasFrame> {
-    const win = this.requireWindow()
-    const image = await win.webContents.capturePage()
+    const wc = this.requireSurface().webContents
+    const image = await wc.capturePage()
     const png = image.toPNG()
     const size = image.getSize()
     return {
@@ -507,8 +512,8 @@ export class CanvasWebDriver implements CanvasDriver {
     selector?: string
     styles?: string[]
   }): Promise<CanvasElementDetail> {
-    const win = this.requireWindow()
-    const detail = (await win.webContents.executeJavaScript(
+    const wc = this.requireSurface().webContents
+    const detail = (await wc.executeJavaScript(
       inspectScript(args),
       true
     )) as Omit<CanvasElementDetail, 'ref' | 'selector'>
@@ -516,7 +521,7 @@ export class CanvasWebDriver implements CanvasDriver {
   }
 
   async network(args: { filter?: 'all' | 'failed'; requestId?: number }): Promise<CanvasNetworkEntry[]> {
-    this.requireWindow()
+    this.requireSurface()
     let entries = [...this.networkBuffer]
     if (typeof args.requestId === 'number') {
       entries = entries.filter((entry) => entry.id === args.requestId)
@@ -528,7 +533,7 @@ export class CanvasWebDriver implements CanvasDriver {
   }
 
   async console(args: { level?: 'all' | 'warn' | 'error'; lines?: number }): Promise<CanvasConsoleEntry[]> {
-    this.requireWindow()
+    this.requireSurface()
     let entries = [...this.consoleEntries]
     if (args.level === 'error') entries = entries.filter((entry) => entry.level === 'error')
     else if (args.level === 'warn') entries = entries.filter((entry) => entry.level === 'warn' || entry.level === 'error')
@@ -538,14 +543,14 @@ export class CanvasWebDriver implements CanvasDriver {
   }
 
   async resize(viewport: CanvasViewport): Promise<CanvasViewport> {
-    const win = this.requireWindow()
-    win.setContentSize(viewport.width, viewport.height)
+    this.requireSurface().setContentSize(viewport.width, viewport.height)
     return viewport
   }
 
   async act(action: CanvasActionInput): Promise<CanvasActResult> {
-    const win = this.requireWindow()
-    const result = (await win.webContents.executeJavaScript(actScript(action), true)) as {
+    const surface = this.requireSurface()
+    const wc = surface.webContents
+    const result = (await wc.executeJavaScript(actScript(action), true)) as {
       ok: boolean
       found: boolean
       action: 'click' | 'fill'
@@ -555,20 +560,21 @@ export class CanvasWebDriver implements CanvasDriver {
       ...result,
       ref: action.ref,
       selector: action.selector,
-      url: win.webContents.getURL(),
-      title: win.getTitle()
+      url: wc.getURL(),
+      title: surface.getTitle()
     }
   }
 
   async annotate(marks: CanvasMark[]): Promise<{ count: number }> {
-    const win = this.requireWindow()
-    return (await win.webContents.executeJavaScript(annotateScript(marks), true)) as {
+    const wc = this.requireSurface().webContents
+    return (await wc.executeJavaScript(annotateScript(marks), true)) as {
       count: number
     }
   }
 
   async evaluate(args: { script: string }): Promise<CanvasEvalResult> {
-    const win = this.requireWindow()
+    const surface = this.requireSurface()
+    const wc = surface.webContents
     // Indirect eval `(0, eval)(src)` runs the script in the page's GLOBAL scope and
     // yields its completion value (supports both expressions and statement blocks).
     // The wrapper captures the value/error so a throw (or a page CSP that blocks
@@ -601,7 +607,7 @@ export class CanvasWebDriver implements CanvasDriver {
     this.evalEgressCut = true
     let result: Omit<CanvasEvalResult, 'url' | 'title'>
     try {
-      result = (await win.webContents.executeJavaScript(wrapped, true)) as Omit<
+      result = (await wc.executeJavaScript(wrapped, true)) as Omit<
         CanvasEvalResult,
         'url' | 'title'
       >
@@ -609,15 +615,15 @@ export class CanvasWebDriver implements CanvasDriver {
       await delay(EVAL_EGRESS_HOLD_MS)
       this.evalEgressCut = false
     }
-    return { ...result, url: win.webContents.getURL(), title: win.getTitle() }
+    return { ...result, url: wc.getURL(), title: surface.getTitle() }
   }
 
   async close(): Promise<void> {
-    const win = this.win
-    this.win = null
-    if (!win || win.isDestroyed()) return
+    const surface = this.surface
+    this.surface = null
+    if (!surface || surface.isDestroyed()) return
     try {
-      const wr = win.webContents.session.webRequest
+      const wr = surface.webContents.session.webRequest
       wr.onBeforeRequest(null)
       wr.onSendHeaders(null)
       wr.onCompleted(null)
@@ -625,6 +631,6 @@ export class CanvasWebDriver implements CanvasDriver {
     } catch {
       // Session may already be torn down.
     }
-    win.destroy()
+    surface.destroy()
   }
 }
