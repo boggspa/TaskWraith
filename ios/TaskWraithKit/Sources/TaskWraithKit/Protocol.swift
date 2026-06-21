@@ -241,7 +241,9 @@ public enum RelayCandidates {
         switch comps.scheme?.lowercased() {
         case "wss": comps.scheme = "https"
         case "ws": comps.scheme = "http"
-        default: break
+        // Only ws/wss relay URLs are valid; reject anything else rather than POST
+        // to an unexpected scheme that would skip the ATS cleartext preflight.
+        default: return nil
         }
         comps.path = "/v1/beginpair"
         comps.query = nil

@@ -176,6 +176,10 @@ export interface RemoteBridgeRuntimeOptions {
 }
 
 const DEFAULT_PAIRING_WINDOW_MS = 5 * 60 * 1000
+/** Display label for sessions opened by the unauthenticated /v1/beginpair
+ * discovery path, distinct from a console QR pairing's device name so the two
+ * never alias in the single pending slot. */
+const ON_DEMAND_PAIRING_LABEL = 'Discovered device'
 
 interface EstablishedDevice {
   client: RemoteTransportClient
@@ -368,6 +372,32 @@ export class RemoteBridgeRuntime {
     }
 
     return { ok: true, bootstrap }
+  }
+
+  /** beginPairing for the UNAUTHENTICATED /v1/beginpair discovery path. Unlike
+   * the console QR (`beginPairing`), an anonymous tailnet POST must NEVER evict
+   * a pairing the user started at the desktop, or one already mid-handshake — it
+   * may only use a FREE slot. A still-valid on-demand session is re-issued
+   * verbatim (idempotent retries — so a flood of POSTs can't churn relay
+   * sockets: only the first, slot-free POST mints one). A busy slot returns null
+   * (relay → 503) and the discovered phone retries once it frees. The console QR
+   * path can still evict an on-demand session (its `beginPairing` tears down any
+   * pending) — the asymmetry is deliberate: a human at the desktop outranks an
+   * anonymous POST. */
+  beginPairingOnDemand(): BeginPairingResult | null {
+    const p = this.pending
+    if (p) {
+      const live = p.client.trustedPeerIdentityRaw() != null || p.client.isConnected
+      const fresh = p.bootstrap.bootstrapPayload.expiresAt > Date.now()
+      // Our own still-valid on-demand session → re-issue (idempotent retry).
+      if (!live && fresh && p.controllerDisplayName === ON_DEMAND_PAIRING_LABEL) {
+        return { ok: true, bootstrap: p.bootstrap }
+      }
+      // A live or still-windowed session belongs to someone else (the console
+      // QR, or a handshake in progress) — refuse rather than tear it down.
+      if (live || fresh) return null
+    }
+    return this.beginPairing(ON_DEMAND_PAIRING_LABEL, { force: true })
   }
 
   /** The candidate list a fresh bootstrap advertises: per-call override

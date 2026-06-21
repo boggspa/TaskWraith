@@ -76,7 +76,7 @@ export const defaultFetch: TailscaleFetch = async (url, init) => {
 function redact(text: string, ...secrets: string[]): string {
   let out = text
   for (const s of secrets) {
-    if (s) out = out.split(s).join('tskey-client-…redacted')
+    if (s) out = out.split(s).join('…redacted')
   }
   return out
 }
@@ -170,7 +170,9 @@ export async function listTailnetDevices(input: {
     })
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
-    return { ok: false, message: `Couldn't reach Tailscale: ${detail}` }
+    // Redact the bearer access token in case a transport error echoes the
+    // request (mirrors the token-exchange path's secret redaction).
+    return { ok: false, message: redact(`Couldn't reach Tailscale: ${detail}`, input.accessToken) }
   }
   const raw = await res.text().catch(() => '')
   if (!res.ok) {

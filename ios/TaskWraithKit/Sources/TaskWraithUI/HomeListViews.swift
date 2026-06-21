@@ -842,6 +842,9 @@ struct TaskRow: View {
 struct TailnetDiscoverySheet: View {
     @ObservedObject var model: RemoteSessionModel
     @Environment(\.dismiss) private var dismiss
+    /// macIdentityPubKey of the host currently being paired (POST /v1/beginpair
+    /// in flight), so its row shows a spinner and the others disable.
+    @State private var pairingHostId: String?
 
     var body: some View {
         NavigationStack {
@@ -928,11 +931,17 @@ struct TailnetDiscoverySheet: View {
     }
 
     private func discoveredRow(_ host: DiscoveredHostInfo) -> some View {
-        Button {
-            // Begin on-demand pairing on the target, then leave the sheet — the
-            // SAS confirm surfaces in the main pairing flow.
-            model.pairDiscoveredHost(host)
-            dismiss()
+        let pairing = pairingHostId == host.id
+        return Button {
+            // Begin on-demand pairing on the target. Only leave the sheet once
+            // the connect kicked off (the SAS confirm then surfaces in the main
+            // pairing flow); on failure stay put and show discoveryError.
+            pairingHostId = host.id
+            Task {
+                let ok = await model.pairDiscoveredHost(host)
+                pairingHostId = nil
+                if ok { dismiss() }
+            }
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: twHostGlyph(host.hostPlatform))
@@ -943,19 +952,24 @@ struct TailnetDiscoverySheet: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(TWTheme.textPrimary)
                         .lineLimit(1)
-                    Text("Tap to pair")
+                    Text(pairing ? "Starting pairing…" : "Tap to pair")
                         .font(.caption).foregroundStyle(TWTheme.textSecondary)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(TWTheme.textMuted)
+                if pairing {
+                    ProgressView().controlSize(.small).tint(TWTheme.chroma1)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TWTheme.textMuted)
+                }
             }
             .contentShape(Rectangle())
             .padding(.vertical, 11)
             .padding(.horizontal, 14)
         }
         .buttonStyle(.plain)
+        .disabled(pairingHostId != nil)
     }
 
     private func searchButton(title: String) -> some View {

@@ -16008,11 +16008,17 @@ if (isGeminiMcpBridgeProcess) {
                 'Tailscale discovery is not set up on this host. Add a Tailscale OAuth client (devices:core:read) in Settings → Devices.'
             }
           }
+          // Self-exclusion is mandatory (this host appears in its own tailnet);
+          // a missing identity means the runtime isn't ready — fail rather than
+          // enumerate without dropping self.
           const selfPubKey = iosRemoteRuntime?.describeHost().macIdentityPubKey
+          if (!selfPubKey) {
+            return { ok: false, reason: 'The bridge runtime is not ready yet — try again.' }
+          }
           const result = await discoverTailnetHosts({
             clientId: creds.clientId,
             clientSecret: creds.clientSecret,
-            excludeMacIdentityPubKeys: selfPubKey ? [selfPubKey] : [],
+            excludeMacIdentityPubKeys: [selfPubKey],
             log: (line) => console.log(line)
           })
           if (!result.ok) return { ok: false, reason: result.reason }
@@ -18120,11 +18126,12 @@ if (isGeminiMcpBridgeProcess) {
           : null
       const relayBeginPairProvider = async (): Promise<Record<string, unknown> | null> => {
         if (!iosRemoteRuntime) return null
-        // No advertiseRelayUrls override / display name: the discovered phone
-        // already reached this host (it POSTed), so the static candidate set the
-        // bootstrap advertises is live; the phone walks it LAN-first on connect.
-        const result = iosRemoteRuntime.beginPairing()
-        return result.ok && result.bootstrap
+        // beginPairingOnDemand (not beginPairing): an anonymous tailnet POST may
+        // only open a window in a FREE slot — it must not evict a console QR
+        // pairing or churn sockets. null → relay 503 (busy, retry). The phone
+        // walks the returned candidates LAN-first on connect.
+        const result = iosRemoteRuntime.beginPairingOnDemand()
+        return result
           ? (result.bootstrap.bootstrapPayload as unknown as Record<string, unknown>)
           : null
       }

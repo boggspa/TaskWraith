@@ -145,6 +145,16 @@ describe('listTailnetDevices', () => {
     const out = await listTailnetDevices({ accessToken: 'tok', fetchImpl })
     expect(out.ok).toBe(false)
   })
+
+  it('redacts the access token if a thrown network error echoes it', async () => {
+    const token = 'tskey-access-SECRET123'
+    const fetchImpl: TailscaleFetch = async () => {
+      throw new Error(`connect failed talking to ${token}`)
+    }
+    const out = await listTailnetDevices({ accessToken: token, fetchImpl })
+    expect(out.ok).toBe(false)
+    if (!out.ok) expect(out.message).not.toContain(token)
+  })
 })
 
 describe('enumerateTailnetDevices', () => {

@@ -306,6 +306,41 @@ describe('RemoteBridgeRuntime.describeHost (QR-optional discovery advertisement)
   })
 })
 
+describe('RemoteBridgeRuntime.beginPairingOnDemand (unauthenticated /v1/beginpair)', () => {
+  it('mints a session in a free slot, labelled distinctly from a console QR', () => {
+    const h = harness()
+    const result = h.runtime.beginPairingOnDemand()
+    expect(result?.ok).toBe(true)
+    expect(result?.bootstrap.bootstrapPayload.sessionId).toBeTruthy()
+  })
+
+  it('re-issues the SAME session to repeat POSTs (idempotent — no socket churn)', () => {
+    const h = harness()
+    const first = h.runtime.beginPairingOnDemand()
+    const again = h.runtime.beginPairingOnDemand()
+    expect(again?.bootstrap.pairingSessionID).toBe(first?.bootstrap.pairingSessionID)
+  })
+
+  it('REFUSES (null) rather than evicting a live console QR pairing', () => {
+    const h = harness()
+    // The user starts a QR pairing at the desktop (a real device label)…
+    const qr = h.runtime.beginPairing('My iPad')
+    // …an anonymous tailnet POST must not tear it down.
+    expect(h.runtime.beginPairingOnDemand()).toBeNull()
+    // The console session is untouched.
+    const stillThere = h.runtime.beginPairing('My iPad')
+    expect(stillThere.bootstrap.pairingSessionID).toBe(qr.bootstrap.pairingSessionID)
+  })
+
+  it('lets the console QR path still evict an on-demand session (human outranks POST)', () => {
+    const h = harness()
+    const onDemand = h.runtime.beginPairingOnDemand()
+    // A real console pairing with a different label tears down the on-demand one.
+    const qr = h.runtime.beginPairing('My iPad')
+    expect(qr.bootstrap.pairingSessionID).not.toBe(onDemand?.bootstrap.pairingSessionID)
+  })
+})
+
 describe('RemoteBridgeRuntime established channel', () => {
   async function establish(h: ReturnType<typeof harness>) {
     const { bootstrap } = h.runtime.beginPairing('iPad')

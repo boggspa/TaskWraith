@@ -133,6 +133,13 @@ describe('probeTailnetHost', () => {
     })
     expect(called).toBe(false)
   })
+
+  it('times out (→ null) when a device hangs instead of answering', async () => {
+    // A fetch that never resolves — withTimeout must still settle to null.
+    const hangingFetch: TailscaleFetch = () => new Promise<TailscaleHttpResponse>(() => {})
+    const host = await probeTailnetHost('slow.ts.net', hangingFetch, 20)
+    expect(host).toBeNull()
+  })
 })
 
 describe('discoverTailnetHosts', () => {

@@ -29,9 +29,16 @@ struct BeginPairURLTests {
                 .absoluteString == "https://h.ts.net/v1/beginpair")
     }
 
-    @Test("returns nil for an unparseable relay URL")
+    @Test("returns nil for an unparseable or hostless relay URL")
     func invalid() {
         #expect(RelayCandidates.beginPairURL(fromRelay: "") == nil)
+        #expect(RelayCandidates.beginPairURL(fromRelay: "wss://") == nil)
+    }
+
+    @Test("rejects non-ws(s) schemes rather than POSTing to an unexpected scheme")
+    func rejectsForeignScheme() {
+        #expect(RelayCandidates.beginPairURL(fromRelay: "https://h.ts.net") == nil)
+        #expect(RelayCandidates.beginPairURL(fromRelay: "http://h.ts.net") == nil)
     }
 }
 

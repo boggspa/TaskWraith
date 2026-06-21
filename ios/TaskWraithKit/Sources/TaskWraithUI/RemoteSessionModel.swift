@@ -592,14 +592,21 @@ public final class RemoteSessionModel: ObservableObject {
         isDiscoveringHosts = true
         discoveryError = nil
         defer { isDiscoveringHosts = false }
+        // The enumeration runs on the CURRENT oracle. If the user switches hosts
+        // during the await, discard the late result so the old oracle's hosts
+        // can't land under the new host (clearCachedProjectionState already reset
+        // the list on the switch).
+        let oracle = selectedHostId
         do {
             // Enumerate + probe the whole tailnet host-side — give it room.
             let ack = try await requestFileAction(
                 BridgeAction.discoverTailnetHosts(), timeoutMs: 20_000)
+            guard selectedHostId == oracle else { return }
             let found = ack.data?.hosts ?? []
             let pairedKeys = Set(pairedHosts.map { $0.macIdentityPubKey })
             discoveredHosts = found.filter { !pairedKeys.contains($0.macIdentityPubKey) }
         } catch {
+            guard selectedHostId == oracle else { return }
             discoveryError =
                 (error as? LocalizedError)?.errorDescription ?? "Couldn't search your tailnet."
             discoveredHosts = []
@@ -612,47 +619,61 @@ public final class RemoteSessionModel: ObservableObject {
     /// 6-digit SAS confirm still happens on the TARGET host, so an
     /// unauthenticated tailnet POST only opens a window the user must approve;
     /// it can't pair on its own.
-    public func pairDiscoveredHost(_ host: DiscoveredHostInfo) {
+    /// Returns true once a pairing connect was kicked off (the SAS flow takes
+    /// over); false if every candidate door failed — in which case the live
+    /// oracle connection is left untouched and the reason surfaces via
+    /// `discoveryError` (shown in the discovery sheet), NOT `phase`.
+    @discardableResult
+    public func pairDiscoveredHost(_ host: DiscoveredHostInfo) async -> Bool {
         let candidates = RelayCandidates.ordered(
             from: host.relayUrls, fallback: host.relayUrls.first ?? "",
             preferRemoteFirst: preferRemoteRelayFirst())
         let label = host.macDisplayName ?? "that host"
-        Task {
-            var lastError = "Couldn't reach \(label) to start pairing."
-            for relay in candidates {
-                // ATS blocks cleartext to non-local hosts (ws→http alike); skip
-                // a LAN-only door when we're off that network, try the next.
-                if let problem = Self.cleartextRelayProblem(relay) {
-                    lastError = problem
-                    continue
-                }
-                guard let url = RelayCandidates.beginPairURL(fromRelay: relay) else { continue }
-                do {
-                    var req = URLRequest(url: url)
-                    req.httpMethod = "POST"
-                    req.timeoutInterval = 10
-                    let (data, response) = try await URLSession.shared.data(for: req)
-                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                        lastError = "\(label) declined to open a pairing window — try again."
-                        continue
-                    }
-                    guard
-                        let bootstrap = try? JSONDecoder().decode(
-                            PairingBootstrapPayload.self, from: data)
-                    else {
-                        lastError = "\(label) returned an unreadable pairing response."
-                        continue
-                    }
-                    connect(bootstrap: bootstrap)
-                    return
-                } catch {
-                    lastError =
-                        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                    continue
-                }
+        var lastError = "Couldn't reach \(label) to start pairing."
+        for relay in candidates {
+            // ATS blocks cleartext to non-local hosts (ws→http alike); skip
+            // a LAN-only door when we're off that network, try the next.
+            if let problem = Self.cleartextRelayProblem(relay) {
+                lastError = problem
+                continue
             }
-            phase = .error(lastError)
+            guard let url = RelayCandidates.beginPairURL(fromRelay: relay) else { continue }
+            do {
+                var req = URLRequest(url: url)
+                req.httpMethod = "POST"
+                // Per-candidate budget: LAN doors fail fast, remote doors get
+                // room — a dead LAN door can't hang the whole flow.
+                req.timeoutInterval = Double(RelayCandidates.dialTimeoutMs(for: relay)) / 1000.0
+                let (data, response) = try await URLSession.shared.data(for: req)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    lastError = "\(label) declined to open a pairing window — try again."
+                    continue
+                }
+                guard
+                    let bootstrap = try? JSONDecoder().decode(
+                        PairingBootstrapPayload.self, from: data)
+                else {
+                    lastError = "\(label) returned an unreadable pairing response."
+                    continue
+                }
+                // Defense in depth: the door we reached must be the host the user
+                // picked. The SAS still gates pairing, but refuse a silently
+                // different identity rather than prompting for an unexpected host.
+                guard bootstrap.macIdentityPubKey == host.macIdentityPubKey else {
+                    lastError = "\(label) returned a different identity than expected."
+                    continue
+                }
+                connect(bootstrap: bootstrap)
+                return true
+            } catch {
+                lastError =
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                continue
+            }
         }
+        // Don't clobber `phase` — the oracle connection is still live.
+        discoveryError = lastError
+        return false
     }
 
     /// iOS text fields apply smart punctuation: touching the paste field
