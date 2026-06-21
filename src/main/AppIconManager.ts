@@ -12,11 +12,14 @@ import iconWwdc26Light from '../../resources/app-icon/icon-wwdc26-light.png?asse
 import iconWwdc26Dark from '../../resources/app-icon/icon-wwdc26-dark.png?asset'
 import iconMonolineLight from '../../resources/app-icon/icon-monoline-light.png?asset'
 import iconMonolineDark from '../../resources/app-icon/icon-monoline-dark.png?asset'
+import iconGlassLight from '../../resources/app-icon/icon-glass-light.png?asset'
+import iconGlassDark from '../../resources/app-icon/icon-glass-dark.png?asset'
 
 const ICON_PATHS: Record<AppIconVariant, { light: string; dark: string }> = {
   regular: { light: iconRegularLight, dark: iconRegularDark },
   wwdc26: { light: iconWwdc26Light, dark: iconWwdc26Dark },
-  monoline: { light: iconMonolineLight, dark: iconMonolineDark }
+  monoline: { light: iconMonolineLight, dark: iconMonolineDark },
+  glass: { light: iconGlassLight, dark: iconGlassDark }
 }
 
 export interface AppIconManagerDeps {

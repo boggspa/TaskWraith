@@ -11,8 +11,8 @@ import {
 } from './iconVariants'
 
 describe('iconVariants', () => {
-  it('exposes the three variants with regular as the default', () => {
-    expect(APP_ICON_VARIANTS.map((v) => v.id)).toEqual(['regular', 'wwdc26', 'monoline'])
+  it('exposes the four variants with regular as the default', () => {
+    expect(APP_ICON_VARIANTS.map((v) => v.id)).toEqual(['regular', 'wwdc26', 'monoline', 'glass'])
     expect(DEFAULT_APP_ICON_VARIANT).toBe('regular')
     expect(APP_ICON_VARIANTS.find((v) => v.id === 'wwdc26')?.limitedTime).toBe(true)
   })
@@ -21,6 +21,7 @@ describe('iconVariants', () => {
     expect(isAppIconVariant('regular')).toBe(true)
     expect(isAppIconVariant('wwdc26')).toBe(true)
     expect(isAppIconVariant('monoline')).toBe(true)
+    expect(isAppIconVariant('glass')).toBe(true)
     expect(isAppIconVariant('nope')).toBe(false)
     expect(isAppIconVariant(undefined)).toBe(false)
     expect(isAppIconVariant(null)).toBe(false)
@@ -36,8 +37,13 @@ describe('iconVariants', () => {
     const after = Date.UTC(2026, 8, 2) // Sep 2 2026
     expect(isWwdc26IconAvailable(before)).toBe(true)
     expect(isWwdc26IconAvailable(after)).toBe(false)
-    expect(availableIconVariants(before).map((v) => v.id)).toEqual(['regular', 'wwdc26', 'monoline'])
-    expect(availableIconVariants(after).map((v) => v.id)).toEqual(['regular', 'monoline'])
+    expect(availableIconVariants(before).map((v) => v.id)).toEqual([
+      'regular',
+      'wwdc26',
+      'monoline',
+      'glass'
+    ])
+    expect(availableIconVariants(after).map((v) => v.id)).toEqual(['regular', 'monoline', 'glass'])
   })
 
   it('keeps the Swift twin cutoff in sync (drift guard)', () => {

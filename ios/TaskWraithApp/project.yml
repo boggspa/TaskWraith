@@ -88,7 +88,7 @@ targets:
         # Default/Dark/Tinted appearances, auto-rendered by iOS). INCLUDE_ALL
         # stops the optimizer stripping alternates (which makes
         # supportsAlternateIcons false). Mirror: src/shared/iconVariants.ts.
-        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-WWDC26 AppIcon-Monoline"
+        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-WWDC26 AppIcon-Monoline AppIcon-Glass"
         ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: "YES"
         TARGETED_DEVICE_FAMILY: "1,2"
       configs:

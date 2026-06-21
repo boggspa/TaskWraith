@@ -18,7 +18,7 @@
  * past the cutoff instead of being yanked out from under the user.
  */
 
-export type AppIconVariant = 'regular' | 'wwdc26' | 'monoline'
+export type AppIconVariant = 'regular' | 'wwdc26' | 'monoline' | 'glass'
 
 export const DEFAULT_APP_ICON_VARIANT: AppIconVariant = 'regular'
 
@@ -38,12 +38,13 @@ export const APP_ICON_VARIANTS: readonly AppIconVariantMeta[] = [
     description: 'Limited-edition metallic glass ghost.',
     limitedTime: true
   },
-  { id: 'monoline', label: 'Monoline', description: 'Minimalist outline ghost.' }
+  { id: 'monoline', label: 'Monoline', description: 'Minimalist outline ghost.' },
+  { id: 'glass', label: 'Glass', description: 'Frosted Liquid Glass ghost.' }
 ]
 
 /** True when `value` is a valid, currently-known variant id. */
 export function isAppIconVariant(value: unknown): value is AppIconVariant {
-  return value === 'regular' || value === 'wwdc26' || value === 'monoline'
+  return value === 'regular' || value === 'wwdc26' || value === 'monoline' || value === 'glass'
 }
 
 // --- WWDC26 limited-time availability gate ------------------------------------

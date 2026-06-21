@@ -53,6 +53,7 @@ import { availableIconVariants, type AppIconVariant } from '../../../shared/icon
 import appIconRegularThumb from '../assets/app-icons/regular.png'
 import appIconWwdc26Thumb from '../assets/app-icons/wwdc26.png'
 import appIconMonolineThumb from '../assets/app-icons/monoline.png'
+import appIconGlassThumb from '../assets/app-icons/glass.png'
 import {
   COMPOSER_FONT_MATCH_TRANSCRIPT,
   COMPOSER_FONT_OPTIONS,
@@ -397,7 +398,8 @@ const ACCENT_OPTIONS: Array<{ value: ThemeAccentStyle; label: string }> = [
 const APP_ICON_THUMBS: Record<AppIconVariant, string> = {
   regular: appIconRegularThumb,
   wwdc26: appIconWwdc26Thumb,
-  monoline: appIconMonolineThumb
+  monoline: appIconMonolineThumb,
+  glass: appIconGlassThumb
 }
 const TOOL_ICON_ACCENT_OPTIONS: Array<{ value: ToolIconAccent; label: string }> = [
   { value: 'system', label: 'Match accent' },
