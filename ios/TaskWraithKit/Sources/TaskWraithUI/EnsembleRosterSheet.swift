@@ -29,6 +29,8 @@ public struct EnsembleRosterSheet: View {
     @State private var pendingOrderIds: [String]? = nil
     /// Consume `model.rosterFocusParticipantId` exactly once (chip-tap deep link).
     @State private var didConsumeFocus = false
+    /// Preset pending a "replace the roster?" confirmation.
+    @State private var presetToApply: RemoteEnsemblePreset? = nil
 
     public init(model: RemoteSessionModel, threadId: String, workspaceId: String) {
         self.model = model
@@ -71,6 +73,7 @@ public struct EnsembleRosterSheet: View {
     public var body: some View {
         NavigationStack {
             List {
+                presetsSection
                 participantsSection
                 addSection
             }
@@ -117,6 +120,22 @@ public struct EnsembleRosterSheet: View {
                 )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+            }
+            .confirmationDialog(
+                "Replace the current roster?",
+                isPresented: Binding(
+                    get: { presetToApply != nil },
+                    set: { if !$0 { presetToApply = nil } }
+                ),
+                presenting: presetToApply
+            ) { preset in
+                Button("Replace with \(preset.name ?? "preset")", role: .destructive) {
+                    applyPreset(preset)
+                    presetToApply = nil
+                }
+                Button("Cancel", role: .cancel) { presetToApply = nil }
+            } message: { preset in
+                Text("This swaps in \(preset.participants?.count ?? 0) participant\((preset.participants?.count ?? 0) == 1 ? "" : "s") from “\(preset.name ?? "preset")”. Your current roster isn’t saved unless you save it as a preset first.")
             }
         }
         .twColorScheme()
@@ -244,6 +263,56 @@ public struct EnsembleRosterSheet: View {
                 brief: "",
                 enabled: true
             ))
+        commit()
+    }
+
+    @ViewBuilder
+    private var presetsSection: some View {
+        Section {
+            if model.ensemblePresets.isEmpty {
+                Text("No saved presets yet. Create one on the Mac (or save this roster, coming soon).")
+                    .font(.footnote)
+                    .foregroundStyle(TWTheme.textMuted)
+            } else {
+                Menu {
+                    ForEach(model.ensemblePresets) { preset in
+                        Button {
+                            presetToApply = preset
+                        } label: {
+                            Text("\(preset.name ?? "Untitled")  ·  \(preset.participants?.count ?? 0)")
+                        }
+                    }
+                } label: {
+                    Label("Load preset", systemImage: "square.and.arrow.down")
+                }
+            }
+        } header: {
+            Text("Presets")
+        }
+    }
+
+    /// Replace the working roster with a preset's participants. Fresh `draft-`
+    /// ids make the Mac materialize brand-new participants (the existing
+    /// roster-update path), so loading a preset == applying it.
+    private func applyPreset(_ preset: RemoteEnsemblePreset) {
+        let entries = (preset.participants ?? [])
+            .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+            .map { participant in
+                RemoteSessionModel.RosterDraftEntry(
+                    id: "draft-\(UUID().uuidString.prefix(8))",
+                    provider: participant.provider,
+                    model: participant.model,
+                    role: participant.role ?? TWTheme.providerLabel(participant.provider),
+                    brief: participant.brief ?? "",
+                    enabled: participant.enabled ?? true,
+                    permissionPresetId: participant.permissionPresetId,
+                    reasoningEffort: participant.reasoningEffort,
+                    fastModeEnabled: participant.fastModeEnabled ?? false,
+                    thinkingEnabled: participant.thinkingEnabled ?? false
+                )
+            }
+        guard !entries.isEmpty else { return }
+        draft = entries
         commit()
     }
 

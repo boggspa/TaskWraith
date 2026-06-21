@@ -144,6 +144,9 @@ public final class RemoteSessionModel: ObservableObject {
     /// "Workflows" section). Read-only on the phone — tapping opens the
     /// workflow's chat. One `workflows` envelope per workflow, like `taskCard`.
     @Published public private(set) var workflows: [RemoteWorkflow] = []
+    /// Saved ensemble roster presets projected from the Mac (iOS Roster page's
+    /// "Load preset"). GLOBAL; one `ensemblePresets` envelope per preset.
+    @Published public private(set) var ensemblePresets: [RemoteEnsemblePreset] = []
     /// Latest thread snapshot per taskId/threadId (drives the detail view).
     @Published public private(set) var threadSnapshots: [String: RemoteThreadSnapshot] = [:]
     /// Run summaries the phone hid when the user sent a follow-up turn. The Mac
@@ -1233,6 +1236,7 @@ public final class RemoteSessionModel: ObservableObject {
         ensembleStates = [:]
         diffSummaries = [:]
         workflows = []
+        ensemblePresets = []
         threadWorkspaceHints = [:]
         demoFileEdits = [:]
         // Expanded transcript row bodies hold verbatim message/tool content —
@@ -2131,6 +2135,14 @@ public final class RemoteSessionModel: ObservableObject {
                     workflows[index] = workflow
                 } else {
                     workflows.append(workflow)
+                }
+            }
+        case "ensemblePresets":
+            if let preset = envelope.decodePayload(RemoteEnsemblePreset.self) {
+                if let index = ensemblePresets.firstIndex(where: { $0.id == preset.id }) {
+                    ensemblePresets[index] = preset
+                } else {
+                    ensemblePresets.append(preset)
                 }
             }
         case "shellAppearance":
@@ -3181,6 +3193,7 @@ public final class RemoteSessionModel: ObservableObject {
         var ensembleSnapshots: [String: RemoteEnsembleState] = [:]
         var diffSnapshots: [String: MobileDiffSummary] = [:]
         var workflowCards: [RemoteWorkflow] = []
+        var presetCards: [RemoteEnsemblePreset] = []
         for envelope in snapshot.projections {
             switch envelope.kind {
             case "taskCard":
@@ -3188,6 +3201,10 @@ public final class RemoteSessionModel: ObservableObject {
             case "workflows":
                 if let workflow = envelope.decodePayload(RemoteWorkflow.self) {
                     workflowCards.append(workflow)
+                }
+            case "ensemblePresets":
+                if let preset = envelope.decodePayload(RemoteEnsemblePreset.self) {
+                    presetCards.append(preset)
                 }
             case "approvalCard":
                 if let card = envelope.decodePayload(MobileApprovalCard.self) {
@@ -3244,6 +3261,14 @@ public final class RemoteSessionModel: ObservableObject {
             // Settling snapshot — keep cached workflows.
         } else {
             workflows = workflowCards
+        }
+        // Roster presets mirror the workflows settling-guard: keep cached presets
+        // only when the WHOLE snapshot is empty (Mac mid-restart); a populated
+        // snapshot with no presets is authoritative (the user deleted them).
+        if presetCards.isEmpty, !ensemblePresets.isEmpty, tasks.isEmpty {
+            // Settling snapshot — keep cached presets.
+        } else {
+            ensemblePresets = presetCards
         }
         // Real content ends the first-connect "Syncing…" state immediately;
         // an empty settling snapshot does NOT (the grace timer or the Mac's

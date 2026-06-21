@@ -340,6 +340,19 @@ public struct WorkspaceSummary: Codable, Sendable, Identifiable, Hashable {
 /// section). Read-only on the phone for now — tapping a row opens the workflow's
 /// chat (`threadId`). Every field except `id` is optional per the additive-decode
 /// convention so older/newer Mac builds still decode.
+/// A saved ensemble roster preset projected from the Mac (iOS Roster page).
+/// GLOBAL (not workspace-bound). Participants reuse the roster-entry shape so
+/// the phone can apply a preset by replaying them through the existing
+/// roster-update action.
+public struct RemoteEnsemblePreset: Codable, Sendable, Identifiable {
+    public let id: String
+    public let name: String?
+    public let orchestrationMode: String?
+    public let maxParticipants: Int?
+    public let updatedAt: Double?
+    public let participants: [RemoteEnsembleState.RosterEntry]?
+}
+
 public struct RemoteWorkflow: Codable, Sendable, Identifiable, Hashable {
     public let id: String
     public let name: String?
