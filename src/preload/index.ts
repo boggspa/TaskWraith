@@ -323,6 +323,35 @@ const api = {
     return () => ipcRenderer.removeListener('agentic-yolo-state', wrapped)
   },
 
+  // TaskWraith Canvas renderer-pane (live-embed). The renderer opens an embedded
+  // web canvas (a WebContentsView floated over its pane), streams the pane rect
+  // via setBounds, and toggles visibility on occlusion. canvas-event is the same
+  // audit-event broadcast the main process emits for every canvas action.
+  canvas: {
+    openEmbedded: (args: {
+      url: string
+      originAllowlist?: string[]
+    }): Promise<{
+      canvasId: string
+      url: string
+      title: string
+      viewport: { width: number; height: number }
+    }> => ipcRenderer.invoke('canvas:open-embedded', args),
+    setBounds: (
+      canvasId: string,
+      rect: { x: number; y: number; width: number; height: number }
+    ): Promise<void> => ipcRenderer.invoke('canvas:set-bounds', canvasId, rect),
+    setVisible: (canvasId: string, visible: boolean): Promise<void> =>
+      ipcRenderer.invoke('canvas:set-visible', canvasId, visible),
+    close: (canvasId: string): Promise<void> => ipcRenderer.invoke('canvas:close', canvasId),
+    list: (): Promise<unknown[]> => ipcRenderer.invoke('canvas:list'),
+    onEvent: (handler: (event: unknown) => void) => {
+      const wrapped = (_event: unknown, payload: unknown) => handler(payload)
+      ipcRenderer.on('canvas-event', wrapped)
+      return () => ipcRenderer.removeListener('canvas-event', wrapped)
+    }
+  },
+
   // QMOD (1.0.3) — `ask_user_question` MCP tool bridge. Main fires
   // `agent-question-requested` when an agent calls the tool; renderer
   // responds via `answer-agent-question` (with the user's pick) or

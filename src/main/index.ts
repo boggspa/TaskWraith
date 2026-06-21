@@ -578,6 +578,9 @@ import { CanvasService } from './canvas/CanvasService'
 import { CanvasStore } from './canvas/CanvasStore'
 import { CanvasWebDriver } from './canvas/CanvasWebDriver'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
+import { CanvasEmbedController } from './canvas/CanvasEmbedController'
+import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
+import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type { CanvasDriverKind, CanvasEventRecord } from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
 import {
@@ -1504,10 +1507,23 @@ const desktopToolExecutors = createDesktopToolExecutors({
 // canvasToolExecutors (see executeGeminiMcpTool). Persistence + audit events live
 // in a self-contained CanvasStore (own atomic JSON) and broadcast to the renderer
 // as 'canvas-event'. The web driver opens one sandboxed BrowserWindow per session.
+// Renderer-pane embed: hosts a canvas as a WebContentsView floated over the pane
+// (lazily reads mainWindow, which is assigned later, so the closure is safe here).
+const canvasEmbedController = new CanvasEmbedController({
+  getParentWindow: () =>
+    mainWindow && !mainWindow.isDestroyed() ? asEmbedParent(mainWindow) : null,
+  createView: createElectronEmbedView
+})
 const canvasService = new CanvasService({
-  createDriver: (kind: CanvasDriverKind, sessionId: string) => {
+  createDriver: (kind: CanvasDriverKind, sessionId: string, opts?: { embedded?: boolean }) => {
     if (kind === 'device') return new CanvasDeviceDriver(sessionId)
-    if (kind === 'web') return new CanvasWebDriver(sessionId)
+    if (kind === 'web') {
+      return opts?.embedded
+        ? new CanvasWebDriver(sessionId, {
+            createSurface: canvasEmbedController.surfaceFor(sessionId)
+          })
+        : new CanvasWebDriver(sessionId)
+    }
     throw new Error(`Canvas driver "${kind}" is not available in this build.`)
   },
   store: new CanvasStore(join(app.getPath('userData'), 'canvas')),
@@ -1519,6 +1535,9 @@ const canvasService = new CanvasService({
   logger: console
 })
 const canvasToolExecutors = createCanvasToolExecutors({ controller: canvasService })
+// Renderer canvas-pane (live-embed) IPC: open-embedded / set-bounds / set-visible
+// / close / list. Human-initiated (un-gated); the driver still enforces SSRF.
+registerCanvasEmbedIpc(ipcMain, { controller: canvasService, embed: canvasEmbedController })
 
 // M11 (1.0.7) — sticky AppWatch: per-chat remembered attachment snapshots,
 // persisted so they survive an app restart. The pure store logic lives in

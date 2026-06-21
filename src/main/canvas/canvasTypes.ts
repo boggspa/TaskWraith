@@ -42,6 +42,12 @@ export interface CanvasOpenInput {
   appPath?: string
   /** Bundle id to launch + screenshot. REQUIRED for the device driver. */
   bundleId?: string
+  /**
+   * Renderer-pane embed (web driver only): host the preview as a WebContentsView
+   * inside the app window instead of a standalone BrowserWindow. Set ONLY by the
+   * renderer's canvas-pane IPC — never by the agent's canvas_open executor.
+   */
+  embed?: boolean
 }
 
 export interface CanvasElementNode {

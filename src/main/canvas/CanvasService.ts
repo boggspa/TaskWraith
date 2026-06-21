@@ -40,7 +40,11 @@ import { isValidBundleId, redactUrlQuery, resolveViewport, validateCanvasUrl } f
 import type { CanvasStore } from './CanvasStore'
 
 export interface CanvasServiceDeps {
-  createDriver: (kind: CanvasDriverKind, sessionId: string) => CanvasDriver
+  createDriver: (
+    kind: CanvasDriverKind,
+    sessionId: string,
+    opts?: { embedded?: boolean }
+  ) => CanvasDriver
   store: CanvasStore
   uuid: () => string
   now: () => string
@@ -178,7 +182,9 @@ export class CanvasService implements CanvasController {
     }
     this.deps.store.upsertSession(baseRecord)
 
-    const driver = this.deps.createDriver(driverKind, canvasId)
+    // Embed is web-only and renderer-initiated; the agent's executor never sets it.
+    const embedded = driverKind === 'web' && input.embed === true
+    const driver = this.deps.createDriver(driverKind, canvasId, { embedded })
     try {
       const handle = await driver.open(input)
       const record: CanvasSessionRecord = {
