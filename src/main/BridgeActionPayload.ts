@@ -441,6 +441,17 @@ export interface BridgeToggleMessagePinAction extends BridgeActionMetadata {
   pinned: boolean
 }
 
+export interface BridgeProposedPlanDecisionAction extends BridgeActionMetadata {
+  kind: 'proposedPlanDecision'
+  workspaceId: string
+  threadId: string
+  /** Id of the assistant message the plan card anchors to (row.id). */
+  messageId: string
+  /** Terminal status to stamp onto metadata.proposedPlan.status. The phone
+   * NEVER sends a body — the Mac re-reads its own canonical plan body. */
+  decision: 'approved' | 'dismissed'
+}
+
 export interface BridgeSetGuestParticipantAction extends BridgeActionMetadata {
   kind: 'setGuestParticipant'
   workspaceId: string
@@ -568,6 +579,7 @@ export type BridgeActionPayload =
   | BridgeSetThreadNotesAction
   | BridgeGoalUpdateAction
   | BridgeToggleMessagePinAction
+  | BridgeProposedPlanDecisionAction
   | BridgeRegisterApnsTokenAction
   | BridgeDiscoverTailnetHostsAction
   | BridgeSetYoloModeAction
@@ -690,6 +702,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'setThreadNotes':
     case 'goalUpdate':
     case 'toggleMessagePin':
+    case 'proposedPlanDecision':
     case 'setYoloMode':
     case 'togglePinChat':
     case 'togglePinWorkspace':
@@ -753,6 +766,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'setThreadNotes':
     case 'goalUpdate':
     case 'toggleMessagePin':
+    case 'proposedPlanDecision':
     case 'setYoloMode':
     case 'togglePinChat':
     case 'togglePinWorkspace':
@@ -816,6 +830,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'setThreadNotes':
     case 'goalUpdate':
     case 'toggleMessagePin':
+    case 'proposedPlanDecision':
     case 'setYoloMode':
     case 'togglePinChat':
     case 'togglePinWorkspace':
@@ -995,6 +1010,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isToggleMessagePin(parsed)
         ? (parsed as unknown as BridgeToggleMessagePinAction)
         : { kind: 'unknown', rawKind: 'toggleMessagePin', raw: parsed }
+    case 'proposedPlanDecision':
+      return isProposedPlanDecision(parsed)
+        ? (parsed as unknown as BridgeProposedPlanDecisionAction)
+        : { kind: 'unknown', rawKind: 'proposedPlanDecision', raw: parsed }
     case 'registerApnsToken':
       return isRegisterApnsToken(parsed)
         ? (parsed as unknown as BridgeRegisterApnsTokenAction)
@@ -1399,6 +1418,15 @@ function isToggleMessagePin(v: Record<string, unknown>): boolean {
     typeof v.messageId === 'string' &&
     v.messageId.trim().length > 0 &&
     typeof v.pinned === 'boolean'
+  )
+}
+
+function isProposedPlanDecision(v: Record<string, unknown>): boolean {
+  return (
+    isWorkspaceThreadAction(v) &&
+    typeof v.messageId === 'string' &&
+    v.messageId.trim().length > 0 &&
+    (v.decision === 'approved' || v.decision === 'dismissed')
   )
 }
 

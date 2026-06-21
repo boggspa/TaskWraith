@@ -32,6 +32,7 @@ import type {
   BridgeSetThreadNotesAction,
   BridgeGoalUpdateAction,
   BridgeToggleMessagePinAction,
+  BridgeProposedPlanDecisionAction,
   BridgeEnsembleWakeNowAction,
   BridgeQuestionRejectAction,
   BridgeQuestionReplyAction,
@@ -154,6 +155,9 @@ export interface BridgeActionExecutor {
   executeGoalUpdate(action: BridgeGoalUpdateAction): Promise<BridgeActionExecutionResult>
   executeToggleMessagePin(
     action: BridgeToggleMessagePinAction
+  ): Promise<BridgeActionExecutionResult>
+  executeProposedPlanDecision(
+    action: BridgeProposedPlanDecisionAction
   ): Promise<BridgeActionExecutionResult>
   executeRegisterApnsToken(
     action: BridgeRegisterApnsTokenAction
@@ -343,6 +347,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeToggleMessagePinAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('toggleMessagePin', action.threadId)
+  }
+  async executeProposedPlanDecision(
+    action: BridgeProposedPlanDecisionAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('proposedPlanDecision', action.threadId)
   }
   async executeRegisterApnsToken(
     action: BridgeRegisterApnsTokenAction
@@ -578,6 +587,7 @@ export interface MainProcessActionExecutorDependencies {
     reason?: string
   }>
   toggleMessagePinFn?: (action: BridgeToggleMessagePinAction) => Promise<unknown>
+  proposedPlanDecisionFn?: (action: BridgeProposedPlanDecisionAction) => Promise<unknown>
   log?: (line: string) => void
 }
 
@@ -1364,6 +1374,17 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       'toggleMessagePin',
       action.threadId,
       this.deps.toggleMessagePinFn,
+      action
+    )
+  }
+
+  async executeProposedPlanDecision(
+    action: BridgeProposedPlanDecisionAction
+  ): Promise<BridgeActionExecutionResult> {
+    return this.executeEnsembleAction(
+      'proposedPlanDecision',
+      action.threadId,
+      this.deps.proposedPlanDecisionFn,
       action
     )
   }

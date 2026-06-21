@@ -157,6 +157,10 @@ function makeStubExecutor(
       executed: true,
       message: 'ensembleSteer done'
     }),
+    executeProposedPlanDecision: make('executeProposedPlanDecision', {
+      executed: true,
+      message: 'proposedPlanDecision done'
+    }),
     executeRegisterApnsToken: make('executeRegisterApnsToken', {
       executed: true,
       message: 'registerApnsToken done'

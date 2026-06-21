@@ -89,6 +89,42 @@ describe('decodeBridgeActionPayload', () => {
       if (payload.kind === 'questionReject') expect(payload.runId).toBe('run-1')
     })
 
+    it('decodes a proposedPlanDecision (mutating, workspace-gated)', () => {
+      const wire = encode({
+        kind: 'proposedPlanDecision',
+        actionId: 'a-plan-1',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        messageId: 'm7',
+        decision: 'approved'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('proposedPlanDecision')
+      if (payload.kind === 'proposedPlanDecision') {
+        expect(payload.messageId).toBe('m7')
+        expect(payload.decision).toBe('approved')
+      }
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('rejects a proposedPlanDecision with a non-terminal decision', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'proposedPlanDecision',
+          actionId: 'a-plan-2',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          messageId: 'm7',
+          // 'pending' is not a terminal decision — the validator rejects it.
+          decision: 'pending'
+        })
+      )
+      expect(payload.kind).toBe('unknown')
+      if (payload.kind === 'unknown') expect(payload.rawKind).toBe('proposedPlanDecision')
+    })
+
     it('rejects oversized questionReply answers', () => {
       const { payload } = decodeBridgeActionPayload(
         encode({

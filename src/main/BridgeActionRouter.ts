@@ -566,6 +566,8 @@ export class BridgeActionRouter {
         return this.executor.executeGoalUpdate(payload)
       case 'toggleMessagePin':
         return this.executor.executeToggleMessagePin(payload)
+      case 'proposedPlanDecision':
+        return this.executor.executeProposedPlanDecision(payload)
       case 'registerApnsToken':
         return this.executor.executeRegisterApnsToken(payload)
       case 'discoverTailnetHosts':
@@ -1009,6 +1011,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'setThreadNotes':
     case 'goalUpdate':
     case 'toggleMessagePin':
+    case 'proposedPlanDecision':
     case 'setGuestParticipant':
     case 'removeGuestParticipant':
     case 'createSideChat':

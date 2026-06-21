@@ -29,6 +29,7 @@ import type {
   BridgeGithubPrReadinessAction,
   BridgeGithubCreatePrAction,
   BridgeGoalUpdateAction,
+  BridgeProposedPlanDecisionAction,
   BridgeTogglePinChatAction,
   BridgeTogglePinWorkspaceAction
 } from './BridgeActionPayload'
@@ -141,6 +142,13 @@ const sample = {
     op: 'set',
     objective: 'Ship the mobile goal control'
   } satisfies BridgeGoalUpdateAction,
+  proposedPlanDecision: {
+    kind: 'proposedPlanDecision',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    messageId: 'm7',
+    decision: 'approved'
+  } satisfies BridgeProposedPlanDecisionAction,
   togglePinChat: {
     kind: 'togglePinChat',
     workspaceId: 'ws-1',
@@ -688,6 +696,23 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     const result = await executor.executeGoalUpdate(sample.goalUpdate)
     expect(result.executed).toBe(false)
     expect(result.message).toBe('thread missing')
+  })
+
+  it('flips a proposed plan status through proposedPlanDecisionFn', async () => {
+    const proposedPlanDecisionFn = vi.fn().mockResolvedValue({ ok: true })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, proposedPlanDecisionFn })
+    const result = await executor.executeProposedPlanDecision(sample.proposedPlanDecision)
+    expect(proposedPlanDecisionFn).toHaveBeenCalledWith(sample.proposedPlanDecision)
+    expect(result.executed).toBe(true)
+  })
+
+  it('surfaces proposedPlanDecisionFn errors', async () => {
+    const proposedPlanDecisionFn = vi.fn().mockResolvedValue({ ok: false, error: 'Thread not found' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, proposedPlanDecisionFn })
+    const result = await executor.executeProposedPlanDecision(sample.proposedPlanDecision)
+    expect(result.executed).toBe(false)
+    // executeEnsembleAction wraps the fn's error string.
+    expect(result.message).toContain('Thread not found')
   })
 
   it('updates a chat pin through togglePinChatFn', async () => {
