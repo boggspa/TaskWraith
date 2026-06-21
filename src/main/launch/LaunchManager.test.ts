@@ -173,6 +173,30 @@ describe('LaunchManager', () => {
     expect(fixture.spawnProcess).not.toHaveBeenCalled()
   })
 
+  it('does not collapse active targets with the same id across workspaces', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-a-'))
+    const otherWorkspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-b-'))
+    const storagePath = await tempFile()
+    const fixture = managerFixture(storagePath, workspacePath)
+
+    const first = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath)
+    })
+    const second = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(otherWorkspacePath)
+    })
+
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    expect(second.attempt?.id).not.toBe(first.attempt?.id)
+    expect(fixture.requestApproval).toHaveBeenCalledTimes(2)
+    expect(fixture.spawnProcess).toHaveBeenCalledTimes(2)
+  })
+
   it('stops only owned active attempts through the injected kill path', async () => {
     const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
     const storagePath = await tempFile()

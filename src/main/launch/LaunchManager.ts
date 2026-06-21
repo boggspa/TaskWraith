@@ -110,7 +110,7 @@ export class LaunchManager {
 
   async startTarget(input: StartLaunchTargetInput): Promise<LaunchStartResult> {
     const { target, provider, sender, chatId, runId } = input
-    const existing = this.activeAttemptForTarget(target.id)
+    const existing = this.activeAttemptForTarget(target.id, target.workspacePath)
     if (existing) return { ok: true, attempt: existing }
     if (target.blockers.length > 0) {
       return { ok: false, error: target.blockers.join(' ') }
@@ -317,11 +317,16 @@ export class LaunchManager {
     this.publishSoon()
   }
 
-  private activeAttemptForTarget(targetId: string): LaunchAttempt | null {
+  private activeAttemptForTarget(targetId: string, workspacePath: string): LaunchAttempt | null {
     return (
       this.store
         .list()
-        .find((attempt) => attempt.targetId === targetId && ACTIVE_STATUSES.has(attempt.status)) ||
+        .find(
+          (attempt) =>
+            attempt.targetId === targetId &&
+            attempt.workspacePath === workspacePath &&
+            ACTIVE_STATUSES.has(attempt.status)
+        ) ||
       null
     )
   }
