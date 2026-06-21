@@ -72,7 +72,11 @@ export function CanvasComposerButton({ onOpenCanvas, disabled }: CanvasComposerB
       ? createPortal(
           <div
             ref={popoverRef}
-            className="canvas-composer-popover"
+            // Reuse the Model/Reasoning/Provider picker's frosted-glass popover
+            // (opaque panel-elevated bg + backdrop blur, light-theme variant
+            // included) so it's readable; override only its row layout — our
+            // content is a vertical form, not the pickers' multi-column grid.
+            className="composer-combined-picker-popover composer-plus-picker-popover canvas-composer-popover"
             role="dialog"
             aria-label="Open a web canvas"
             style={{
@@ -80,13 +84,10 @@ export function CanvasComposerButton({ onOpenCanvas, disabled }: CanvasComposerB
               left: `${position.left}px`,
               top: `${position.top}px`,
               transform: 'translateY(-100%)',
-              zIndex: 60,
-              minWidth: 300,
-              padding: 10,
-              borderRadius: 10,
-              background: 'var(--panel-bg, #1c1c20)',
-              border: '1px solid var(--border, #333)',
-              boxShadow: '0 8px 28px rgba(0,0,0,0.35)'
+              flexDirection: 'column',
+              gap: 8,
+              minWidth: 290,
+              padding: 10
             }}
           >
             <div style={{ font: '11px/1.4 system-ui, sans-serif', opacity: 0.7, marginBottom: 6 }}>
