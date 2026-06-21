@@ -39,7 +39,7 @@ import {
 import { makeBridgeRunEventSink } from '../BridgeRunEventSink'
 import type { RunEventSink } from '../RunEventBus'
 import { E2EE_PROTOCOL, type PairingBootstrapPayload } from '../../shared/e2ee/protocol'
-import { b64, type KeyPair } from '../../shared/e2ee/keys'
+import { b64, exportRawEd25519PublicKey, type KeyPair } from '../../shared/e2ee/keys'
 import { signRegisterRequest, type RegisterRequest } from '../../shared/e2ee/resolve'
 import { RemoteTransportClient, type TransportSocketFactory } from './RemoteTransportClient'
 import type { PersistedRemotePairing } from './RemotePairingStore'
@@ -252,6 +252,30 @@ export class RemoteBridgeRuntime {
     this.teardownEstablished(iphoneIdentityPubKey)
     if (this.established.size === 0 && !this.pending) {
       this.teardownBroadcaster()
+    }
+  }
+
+  /** Read-only self-description for QR-optional discovery (served at GET
+   * /v1/hostinfo). Carries the SAME public identity + relay material a pairing
+   * bootstrap advertises — minus the per-session `sessionId`/`expiresAt` — so
+   * another tailnet peer's "oracle" host can learn this machine runs TaskWraith
+   * and fetch its identity pubkey + phone-reachable relay URLs. Nothing here is
+   * secret (trust is still the 6-digit SAS); deriving the pubkey + relayUrls the
+   * exact same way `beginPairing` does keeps the advertisement from drifting from
+   * the bootstrap. Pure read — never mints a session. */
+  describeHost(): {
+    protocol: string
+    macIdentityPubKey: string
+    macDisplayName: string
+    hostPlatform?: string
+    relayUrls: string[]
+  } {
+    return {
+      protocol: E2EE_PROTOCOL,
+      macIdentityPubKey: b64.encode(exportRawEd25519PublicKey(this.opts.identity.publicKey)),
+      macDisplayName: this.opts.macDisplayName,
+      hostPlatform: this.opts.hostPlatform,
+      relayUrls: this.resolveAdvertiseRelayUrls()
     }
   }
 

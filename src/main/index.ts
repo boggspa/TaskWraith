@@ -18072,6 +18072,29 @@ if (isGeminiMcpBridgeProcess) {
           return relayUrl.replace(/\/$/, '')
         }
       }
+      // QR-optional discovery (multi-host): the embedded relay advertises this
+      // host on the tailnet. `hostInfo` is a read-only self-description an
+      // oracle peer probes (GET /v1/hostinfo) to learn the machine runs
+      // TaskWraith; `beginPair` lets a discovered (never-paired) phone ask THIS
+      // host to open a pairing window on demand (POST /v1/beginpair) — the user
+      // still confirms the 6-digit SAS here, so an unauthenticated tailnet POST
+      // can only open a window, never pair on its own. Both read `iosRemoteRuntime`
+      // at request time (it's assigned later, inside startRuntime), so they return
+      // null until the runtime is up; nothing here exposes a secret.
+      const relayHostInfoProvider = (): Record<string, unknown> | null =>
+        iosRemoteRuntime
+          ? (iosRemoteRuntime.describeHost() as unknown as Record<string, unknown>)
+          : null
+      const relayBeginPairProvider = async (): Promise<Record<string, unknown> | null> => {
+        if (!iosRemoteRuntime) return null
+        // No advertiseRelayUrls override / display name: the discovered phone
+        // already reached this host (it POSTed), so the static candidate set the
+        // bootstrap advertises is live; the phone walks it LAN-first on connect.
+        const result = iosRemoteRuntime.beginPairing()
+        return result.ok && result.bootstrap
+          ? (result.bootstrap.bootstrapPayload as unknown as Record<string, unknown>)
+          : null
+      }
       const startEmbeddedRelay = (advertiseRelayUrl: string | null): void => {
         // No external relay configured → run the relay IN-PROCESS. The relay
         // is a plain Node http+ws server and Electron main is Node, so users
@@ -18079,7 +18102,11 @@ if (isGeminiMcpBridgeProcess) {
         // advertises the Mac's Tailscale IP when present (reachable across
         // networks), else the LAN IP (same-Wi-Fi pairing).
         const port = embeddedPort(advertiseRelayUrl)
-        void createRelayServer({ port })
+        void createRelayServer({
+          port,
+          hostInfo: relayHostInfoProvider,
+          beginPair: relayBeginPairProvider
+        })
           .then((handle) => {
             embeddedRelayHandle = handle
             const advertised = advertiseRelayUrl ? null : pickRelayAdvertiseHost()
@@ -18127,7 +18154,11 @@ if (isGeminiMcpBridgeProcess) {
         cliPath: string | null
       ): void => {
         const port = embeddedPort(null)
-        void createRelayServer({ port })
+        void createRelayServer({
+          port,
+          hostInfo: relayHostInfoProvider,
+          beginPair: relayBeginPairProvider
+        })
           .then(async (handle) => {
             embeddedRelayHandle = handle
             // T70 — the QR advertises BOTH doors: the LAN ws:// URL (fast

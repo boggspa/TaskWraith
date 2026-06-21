@@ -59,6 +59,8 @@ function harness(
   opts: {
     pairingWindowMs?: number
     pairingStore?: RemotePairingPersistence
+    hostPlatform?: string
+    advertiseRelayUrls?: string[]
   } = {}
 ) {
   const macId = generateIdentityKeyPair()
@@ -93,6 +95,8 @@ function harness(
   const runtime = new RemoteBridgeRuntime({
     relayUrl: 'ws://relay.test',
     macDisplayName: 'Test Mac',
+    hostPlatform: opts.hostPlatform,
+    advertiseRelayUrls: opts.advertiseRelayUrls,
     identity: macId,
     socketFactory,
     appStore: emptyAppStore,
@@ -261,6 +265,44 @@ describe('RemoteBridgeRuntime pairing', () => {
     expect(h.runtime.isEstablished).toBe(false)
     // The session is gone — finalizing again misses.
     expect(h.runtime.finalizePairing(bootstrap.pairingSessionID, true).ok).toBe(false)
+  })
+})
+
+describe('RemoteBridgeRuntime.describeHost (QR-optional discovery advertisement)', () => {
+  it('advertises the public self-description without minting a session', () => {
+    const h = harness()
+    const info = h.runtime.describeHost()
+    expect(info.protocol).toBe('taskwraith-e2ee-v1')
+    expect(info.macDisplayName).toBe('Test Mac')
+    expect(b64.decode(info.macIdentityPubKey)).toHaveLength(32)
+    expect(info.relayUrls).toEqual(['ws://relay.test'])
+    // Pure read: no pairing prompt armed, and a later beginPairing still mints
+    // a brand-new pending session (describeHost left none behind).
+    expect(h.prompts).toHaveLength(0)
+    const first = h.runtime.beginPairing()
+    const second = h.runtime.beginPairing('iPad', { force: true })
+    expect(second.bootstrap.pairingSessionID).not.toBe(first.bootstrap.pairingSessionID)
+  })
+
+  it('matches the pairing bootstrap exactly (no drift in pubkey/relay/identity)', () => {
+    const h = harness({
+      hostPlatform: 'windows',
+      advertiseRelayUrls: ['ws://lan:8787', 'wss://x.ts.net']
+    })
+    const info = h.runtime.describeHost()
+    const { bootstrapPayload } = h.runtime.beginPairing('iPad').bootstrap
+    expect(info.macIdentityPubKey).toBe(bootstrapPayload.macIdentityPubKey)
+    expect(info.relayUrls).toEqual(bootstrapPayload.relayUrls)
+    expect(info.protocol).toBe(bootstrapPayload.protocol)
+    expect(info.macDisplayName).toBe(bootstrapPayload.macDisplayName)
+    // hostPlatform rides along for the phone's per-OS glyph.
+    expect(info.hostPlatform).toBe('windows')
+    expect(info.relayUrls).toEqual(['ws://lan:8787', 'wss://x.ts.net'])
+  })
+
+  it('omits hostPlatform when the host did not set one', () => {
+    const h = harness()
+    expect(h.runtime.describeHost().hostPlatform).toBeUndefined()
   })
 })
 
