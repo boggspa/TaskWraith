@@ -2815,13 +2815,14 @@
   justify-content: center;
   width: 30px;
   height: 30px;
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0;
+  flex: 0 0 auto;
+}
+
+.settings-mcp-tool-icon-svg {
+  display: block;
+  width: 18px;
+  height: 18px;
 }
 
 .settings-mcp-tool-detail-grid {

@@ -138,6 +138,17 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('settings-mcp-server-card provider-claude')
   })
 
+  it('renders SVG tool icons in the MCP tool catalog instead of text badges', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
+    )
+
+    expect(html).toContain('settings-mcp-tool-icon-svg')
+    expect(html).not.toContain('>WO</span>')
+    expect(html).not.toContain('>ID</span>')
+    expect(html).toContain('<code>tool:workspace</code>')
+  })
+
   it('does not render the retired deeper Gemini auth/runtime config, but keeps the shared MCP bridge', () => {
     const providersHtml = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 

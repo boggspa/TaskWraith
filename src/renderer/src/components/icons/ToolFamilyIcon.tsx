@@ -1,11 +1,12 @@
 /*
  * ToolFamilyIcon — hand-drawn monoline SVG icon per tool family.
  *
- * Source of truth for the path geometry: `tool-call-icons.catalog.svg`
- * in this same directory. The catalog is the designer-friendly file
- * (all 15 icons on one canvas for cohesion review); this component
+ * Source of truth for the path geometry:
+ * `design-assets/tool-call-icons/tool-call-icons.catalog.svg`. The
+ * catalog is the designer-friendly file (all 16 icons on one canvas
+ * for cohesion review); this component
  * inlines the same path data switched on a `family` prop so the
- * runtime never has to load 15 separate SVG files.
+ * runtime never has to load 16 separate SVG files.
  *
  * Sized to ~13px by default to match the existing `ToolCategoryIcon`
  * footprint in the activity card header. All icons use `currentColor`
@@ -94,14 +95,28 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'attached_window_status':
       return 'window-context'
     case 'create_handoff_card':
+    case 'open_in_ide':
+    case 'open_in_ide_at_position':
+    case 'reveal_in_finder':
+    case 'ide_app_status':
+    case 'ide_app_capabilities':
+    case 'list_running_ides':
       return 'handoff'
     case 'run_task':
     case 'test_result_summary':
+    case 'schedule_wakeup':
+    case 'cancel_wakeup':
+    case 'scout_brief':
+    case 'blackboard_post':
       return 'task'
     case 'workspace_search':
       return 'search'
     case 'workspace_symbols':
       return 'search'
+    case 'web_search':
+      return 'search'
+    case 'web_fetch':
+      return 'browser'
     case 'codex_plan':
     case 'goal_read':
     case 'goal_update':
@@ -135,6 +150,11 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'creative_timeline_validate':
     case 'creative_timeline_ir':
     case 'creative_timeline_diff':
+    case 'creative_timeline_import':
+    case 'creative_applescript_dispatch':
+    case 'creative_blender_python':
+    case 'creative_midi_dispatch':
+    case 'provider_usage_status':
       return 'diagnostic'
     case 'mcp_tool':
     case 'dynamic_tool':
@@ -144,6 +164,10 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   // Pattern buckets — order matters (more-specific patterns first).
   if (normalised.startsWith('git_') || normalised === 'git') return 'git'
   if (normalised.startsWith('browser_')) return 'browser'
+  if (normalised.startsWith('appwatch_')) return 'window-context'
+  if (normalised.startsWith('ensemble_') || normalised === 'list_ensemble_participants') {
+    return 'yield'
+  }
   if (normalised === 'run_shell_command' || normalised === 'shell') return 'shell'
   if (
     // 1.0.4-AA — handle no-separator variants alongside snake_case
@@ -194,8 +218,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
 }
 
 /**
- * The 15 hand-drawn monoline icons. Paths are copy-pasted from
- * `tool-call-icons.catalog.svg` (the designer source of truth).
+ * The 16 hand-drawn monoline icons. Paths are copy-pasted from
+ * `design-assets/tool-call-icons/tool-call-icons.catalog.svg` (the
+ * designer source of truth).
  *
  * Each branch returns a `<g>` of paths — the wrapping `<svg>` lives
  * in the component shell so size/title/aria props apply uniformly.

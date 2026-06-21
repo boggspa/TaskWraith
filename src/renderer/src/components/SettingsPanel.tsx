@@ -100,6 +100,7 @@ import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaul
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
+import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
 import type { ModelUsageAggregate } from '../App'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../../../main/TaskWraithMcpTools'
 
@@ -998,6 +999,39 @@ function getMcpToolMeta(tool: TaskWraithMcpToolName): {
     policyKey: inferMcpPolicyKey(tool),
     description: `${MCP_TOOL_GROUP_LABELS[group]} tool exposed through the TaskWraith MCP bridge.`
   }
+}
+
+const MCP_ICON_REF_FAMILIES: Record<string, ToolFamily> = {
+  'tool:auth': 'diagnostic',
+  'tool:browser': 'browser',
+  'tool:creative': 'diagnostic',
+  'tool:delegate': 'delegate',
+  'tool:diagnostics': 'diagnostic',
+  'tool:ensemble': 'yield',
+  'tool:file-read': 'file',
+  'tool:file-write': 'edit',
+  'tool:files': 'edit',
+  'tool:folder': 'file',
+  'tool:frames': 'window-context',
+  'tool:git': 'git',
+  'tool:ide': 'handoff',
+  'tool:image': 'window-context',
+  'tool:patch': 'edit',
+  'tool:replace': 'edit',
+  'tool:runtime': 'task',
+  'tool:search': 'search',
+  'tool:subthreads': 'subthread',
+  'tool:terminal': 'shell',
+  'tool:web': 'browser',
+  'tool:workspace': 'task',
+  'tool:yield': 'yield'
+}
+
+function resolveMcpToolIconFamily(tool: {
+  name: TaskWraithMcpToolName
+  iconRef: string
+}): ToolFamily {
+  return toolNameToFamily(tool.name) ?? MCP_ICON_REF_FAMILIES[tool.iconRef] ?? 'mcp'
 }
 
 function formatMcpInvocation(provider: ProviderId, tool: TaskWraithMcpToolName): string {
@@ -4996,10 +5030,11 @@ export function SettingsPanel({
                                 title={`Icon ref: ${tool.iconRef}`}
                                 aria-hidden
                               >
-                                {tool.iconRef
-                                  .replace(/^tool:/, '')
-                                  .slice(0, 2)
-                                  .toUpperCase()}
+                                <ToolFamilyIcon
+                                  family={resolveMcpToolIconFamily(tool)}
+                                  size={18}
+                                  className="settings-mcp-tool-icon-svg"
+                                />
                               </span>
                               <div>
                                 <strong>{tool.label}</strong>

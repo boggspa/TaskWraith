@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { TASKWRAITH_MCP_TOOLS } from '../../../../main/TaskWraithMcpTools'
 import { toolNameToFamily } from './ToolFamilyIcon'
 
 /*
@@ -149,6 +150,12 @@ describe('toolNameToFamily', () => {
   it('maps generic MCP/dynamic tool placeholders to the mcp family', () => {
     expect(toolNameToFamily('mcp_tool')).toBe('mcp')
     expect(toolNameToFamily('dynamic_tool')).toBe('mcp')
+  })
+
+  it('maps every TaskWraith MCP tool to a custom SVG family', () => {
+    const unmapped = TASKWRAITH_MCP_TOOLS.filter((tool) => !toolNameToFamily(tool))
+
+    expect(unmapped).toEqual([])
   })
 
   it('strips MCP namespace prefixes before matching', () => {

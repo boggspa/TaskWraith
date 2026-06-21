@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="540" viewBox="0 0 360 216" role="img" aria-labelledby="tool-call-icons-title tool-call-icons-desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="720" viewBox="0 0 360 288" role="img" aria-labelledby="tool-call-icons-title tool-call-icons-desc">
   <title id="tool-call-icons-title">Tool-call icon catalog</title>
-  <desc id="tool-call-icons-desc">Fifteen sketchy monoline SVG icons for TaskWraith tool-call families.</desc>
+  <desc id="tool-call-icons-desc">Sixteen sketchy monoline SVG icons for TaskWraith tool-call families.</desc>
 
   <g fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">
     <g id="tool-icon-file" transform="translate(24 11)">
@@ -182,6 +182,17 @@
         <path d="M20.8 10.8C20.1 11.6 19.6 12 18.9 12.2" />
       </svg>
     </g>
+
+    <g id="tool-icon-yield" transform="translate(24 227)">
+      <svg width="24" height="24" viewBox="0 0 24 24">
+        <path d="M4.1 5.7 12.5 5.4C15.9 5.4 18.8 7.7 19 11.1 19.3 15.1 16.2 18.4 12.2 18.4H7.4" />
+        <path d="M8.4 3.5 4.2 5.8 8.6 8" />
+        <path d="M7.1 18.4 9.6 15.8" />
+        <path d="M7.1 18.4 9.8 20.9" />
+        <path d="M11.3 10.3 15.4 10.2" />
+        <path d="M11.2 13.4 14.2 13.3" />
+      </svg>
+    </g>
   </g>
 
   <g fill="currentColor" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="4.8" text-anchor="middle">
@@ -200,5 +211,6 @@
     <text x="180" y="191">reasoning</text>
     <text x="252" y="191">plan</text>
     <text x="324" y="191">handoff</text>
+    <text x="36" y="263">yield</text>
   </g>
 </svg>
