@@ -2185,6 +2185,11 @@ function App(): React.JSX.Element {
     paneId: string
     chatId: string
   } | null>(null)
+  const [previewLaunchError, setPreviewLaunchError] = useState<{
+    chatId?: string
+    targetLabel: string
+    message: string
+  } | null>(null)
   const [sideChatSeedMessageId, setSideChatSeedMessageId] = useState<string | null>(null)
 
   // Reset inspector when the user navigates to a chat that doesn't own
@@ -3503,29 +3508,67 @@ function App(): React.JSX.Element {
       workspacePath
     )
   }
-  const runPreviewTargetAction = (
+  const reportPreviewLaunchError = (
+    target: LaunchPreviewTarget,
+    chat: ChatRecord | null | undefined,
+    message: string
+  ): void => {
+    const redacted = redactLog(message)
+    setPreviewLaunchError({
+      chatId: chat?.appChatId,
+      targetLabel: target.label,
+      message: redacted
+    })
+    appendThreadRawLog(chat?.appChatId, {
+      type: 'stderr',
+      content: `Launch action failed for ${target.label}: ${redacted}`
+    })
+  }
+  const runPreviewTargetAction = async (
     target: LaunchPreviewTarget,
     chat?: ChatRecord | null
-  ): void => {
+  ): Promise<void> => {
     setPreviewMenuTarget(null)
-    if (target.action === 'open' && target.url) {
-      void window.api.openExternalOrPath(target.url)
-      return
-    }
-    if (target.action === 'start' && target.target) {
-      const workspace = getWorkspaceForChat(chat)
-      const workspacePath = workspace?.path || target.target.workspacePath
-      const provider = chat ? getChatProvider(chat) : currentProvider
-      void startLaunchAttempt({
-        workspacePath,
-        targetId: target.target.id,
-        provider,
-        chatId: chat?.appChatId
-      })
-      return
-    }
-    if (target.action === 'stop' && target.attempt) {
-      void stopLaunchAttempt({ attemptId: target.attempt.id })
+    setPreviewLaunchError(null)
+    try {
+      if (target.action === 'open' && target.url) {
+        const result = await window.api.openExternalOrPath(target.url)
+        if (!result?.ok) {
+          reportPreviewLaunchError(target, chat, result?.error || 'Could not open preview URL.')
+        }
+        return
+      }
+      if (target.action === 'start' && target.target) {
+        const workspace = getWorkspaceForChat(chat)
+        const workspacePath = workspace?.path || target.target.workspacePath
+        const provider = chat ? getChatProvider(chat) : currentProvider
+        const result = await startLaunchAttempt({
+          workspacePath,
+          targetId: target.target.id,
+          provider,
+          chatId: chat?.appChatId
+        })
+        if (!result?.ok) {
+          reportPreviewLaunchError(target, chat, result?.error || 'Launch target did not start.')
+        }
+        return
+      }
+      if (target.action === 'stop' && target.attempt) {
+        const result = await stopLaunchAttempt({ attemptId: target.attempt.id })
+        if (!result?.ok) {
+          reportPreviewLaunchError(target, chat, result?.error || 'Launch target did not stop.')
+        }
+        return
+      }
+      if (target.action === 'disabled') {
+        reportPreviewLaunchError(target, chat, target.reason || 'Launch target is unavailable.')
+      }
+    } catch (error) {
+      reportPreviewLaunchError(
+        target,
+        chat,
+        error instanceof Error ? error.message : String(error)
+      )
     }
   }
   const renderPreviewTargetMenu = (
@@ -3552,7 +3595,7 @@ function App(): React.JSX.Element {
             key={target.id}
             type="button"
             role="menuitem"
-            onClick={() => runPreviewTargetAction(target, chat)}
+            onClick={() => void runPreviewTargetAction(target, chat)}
             disabled={target.action === 'disabled'}
             title={target.reason || target.url || target.subtitle}
           >
@@ -3560,6 +3603,22 @@ function App(): React.JSX.Element {
             <small>{target.reason || target.subtitle || target.url}</small>
           </button>
         ))}
+      </div>
+    )
+  }
+  const renderPreviewLaunchError = (chatId?: string | null): ReactNode => {
+    if (!previewLaunchError || previewLaunchError.chatId !== chatId) return null
+    return (
+      <div className="pane-preview-action-error" role="alert">
+        <strong>{previewLaunchError.targetLabel}</strong>
+        <span>{previewLaunchError.message}</span>
+        <button
+          type="button"
+          onClick={() => setPreviewLaunchError(null)}
+          aria-label="Dismiss launch error"
+        >
+          Dismiss
+        </button>
       </div>
     )
   }
@@ -18122,7 +18181,7 @@ function App(): React.JSX.Element {
           setPopoutMenuOpen(false)
           if (viewerPreviewTargets.length === 1) {
             const target = viewerPreviewTargets[0]
-            if (target) runPreviewTargetAction(target, viewerChat)
+            if (target) void runPreviewTargetAction(target, viewerChat)
             return
           }
           if (viewerPreviewTargets.length > 1) {
@@ -20289,7 +20348,7 @@ function App(): React.JSX.Element {
                   setPopoutMenuOpen(false)
                   if (currentPreviewTargets.length === 1) {
                     const target = currentPreviewTargets[0]
-                    if (target) runPreviewTargetAction(target, currentChat)
+                    if (target) void runPreviewTargetAction(target, currentChat)
                     return
                   }
                   if (currentPreviewTargets.length > 1) {
@@ -20319,6 +20378,7 @@ function App(): React.JSX.Element {
                   currentChat.appChatId,
                   currentChat
                 )}
+              {renderPreviewLaunchError(currentChat?.appChatId)}
             </div>
             <button
               className={`chat-corner-btn ${showCockpit ? 'active' : ''}`}
