@@ -452,6 +452,73 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('agentQuestion', () => {
+    const ask = (overrides = {}) =>
+      msg(1, {
+        id: 'agent-question-q1',
+        role: 'system',
+        content: 'Agent asked you a question:',
+        metadata: {
+          kind: 'agentQuestion',
+          questionId: 'q1',
+          agentQuestion: 'Which database should we use?',
+          agentQuestionOptions: ['Postgres', 'SQLite'],
+          agentQuestionContext: 'For the new analytics service.',
+          ...overrides
+        }
+      })
+
+    it('projects metadata.agentQuestion as an inline structured field (still an attention row)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [ask()])
+      expect(snap.rows[0]).toMatchObject({
+        id: 'agent-question-q1',
+        // Stays an attention row so older clients keep the banner...
+        kind: 'attention',
+        // ...AND carries the inline field for clients that render it in place.
+        agentQuestion: {
+          promptId: 'q1',
+          question: 'Which database should we use?',
+          options: ['Postgres', 'SQLite'],
+          context: 'For the new analytics service.'
+        }
+      })
+    })
+
+    it('omits options/context when absent but still projects the question', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        ask({ agentQuestionOptions: undefined, agentQuestionContext: undefined })
+      ])
+      expect(snap.rows[0].agentQuestion).toMatchObject({ promptId: 'q1' })
+      expect(snap.rows[0].agentQuestion?.options).toBeUndefined()
+      expect(snap.rows[0].agentQuestion?.context).toBeUndefined()
+    })
+
+    it('caps options at 4 (the tool ceiling)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        ask({ agentQuestionOptions: ['a', 'b', 'c', 'd', 'e', 'f'] })
+      ])
+      expect(snap.rows[0].agentQuestion?.options).toEqual(['a', 'b', 'c', 'd'])
+    })
+
+    it('does NOT project agentQuestion on a non-system row, or without the kind', () => {
+      const notSystem = project({ kind: 'latestN', n: 10 }, [
+        msg(1, { id: 'q', role: 'assistant', metadata: { kind: 'agentQuestion', questionId: 'q1', agentQuestion: 'x' } })
+      ])
+      expect(notSystem.rows[0].agentQuestion).toBeUndefined()
+      const noKind = project({ kind: 'latestN', n: 10 }, [
+        msg(1, { id: 'q', role: 'system', metadata: { questionId: 'q1', agentQuestion: 'x' } })
+      ])
+      expect(noKind.rows[0].agentQuestion).toBeUndefined()
+    })
+
+    it('ignores a malformed agent question (no questionId or no text)', () => {
+      const noId = project({ kind: 'latestN', n: 10 }, [ask({ questionId: '   ' })])
+      expect(noId.rows[0].agentQuestion).toBeUndefined()
+      const noText = project({ kind: 'latestN', n: 10 }, [ask({ agentQuestion: '' })])
+      expect(noText.rows[0].agentQuestion).toBeUndefined()
+    })
+  })
+
   describe('aroundRow', () => {
     it('windows plus/minus radius around the target, bounded to 2*radius+1', () => {
       const snap = project({ kind: 'aroundRow', rowId: 'm5', radius: 2 })

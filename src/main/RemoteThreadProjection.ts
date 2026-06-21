@@ -438,6 +438,20 @@ export interface RemoteProposedPlan {
   bodyTruncated?: boolean
 }
 
+/** Structured `ask_user_question` prompt — the desktop AgentQuestionCard's data,
+ * projected so the phone can render the question INLINE in the transcript
+ * (anchored to its asking system message) instead of only in the top attention
+ * banner. `promptId` === the registry questionId, so the inline card resolves the
+ * SAME parked tool the banner does (the answer round-trip is unchanged — this
+ * only moves the render home). The asking row also still carries `attention`
+ * (kind 'agentQuestion') so older clients keep their banner. */
+export interface RemoteAgentQuestion {
+  promptId: string
+  question: string
+  options?: string[]
+  context?: string
+}
+
 export interface RemoteThreadRowMedia {
   id: string
   kind: 'image'
@@ -511,6 +525,10 @@ export interface RemoteThreadRow {
    * drives the inline collapsible plan card + approve/respond/dismiss on remote
    * clients, mirroring the desktop ProposedPlanCard. */
   proposedPlan?: RemoteProposedPlan
+  /** Present on an ask_user_question asking message — drives the inline question
+   * card (the same prompt the top attention banner shows) so remote clients can
+   * answer it in place, matching the desktop AgentQuestionCard. */
+  agentQuestion?: RemoteAgentQuestion
   /** Present for rows that need the user — drives the remote action UI. */
   attention?: {
     kind: RemoteAttentionKind
@@ -986,6 +1004,34 @@ function buildProposedPlan(message: ChatMessage): RemoteProposedPlan | undefined
   return result
 }
 
+/**
+ * Project an ask_user_question prompt from its asking message. The renderer
+ * stamps `metadata.kind === 'agentQuestion'` (+ questionId / agentQuestion /
+ * agentQuestionOptions / agentQuestionContext) ONLY on the asking SYSTEM message
+ * (App.tsx capture), so gate on role==='system' && that kind. promptId is the
+ * registry questionId — the inline card resolves the same parked tool the banner
+ * does. Options are capped at 4 (the tool's ceiling).
+ */
+function buildAgentQuestion(message: ChatMessage): RemoteAgentQuestion | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (message.role !== 'system' || metadata?.kind !== 'agentQuestion') return undefined
+  const promptId = typeof metadata.questionId === 'string' ? metadata.questionId.trim() : ''
+  const question = stringField(metadata.agentQuestion, 600)
+  if (!promptId || !question) return undefined
+  const result: RemoteAgentQuestion = { promptId, question }
+  const rawOptions = metadata.agentQuestionOptions
+  if (Array.isArray(rawOptions)) {
+    const options = rawOptions
+      .map((option) => stringField(option, 200))
+      .filter((option): option is string => Boolean(option))
+      .slice(0, 4)
+    if (options.length) result.options = options
+  }
+  const context = stringField(metadata.agentQuestionContext, 600)
+  if (context) result.context = context
+  return result
+}
+
 const REMOTE_MEDIA_SOURCES = new Set<TranscriptMediaSource>([
   'generated',
   'workspace_path',
@@ -1181,6 +1227,8 @@ function buildRow(
   }
   const proposedPlan = buildProposedPlan(message)
   if (proposedPlan) row.proposedPlan = proposedPlan
+  const agentQuestion = buildAgentQuestion(message)
+  if (agentQuestion) row.agentQuestion = agentQuestion
   if (attentionKind) {
     row.attention = {
       kind: attentionKind,
