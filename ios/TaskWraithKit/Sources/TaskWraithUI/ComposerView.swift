@@ -302,17 +302,27 @@ struct Composer: View {
             // Compact idle bar: only the model pill shows. Approval + guest
             // controls appear once the composer is focused/expanded.
             if isExpanded {
-                composerControlSeparator
-                approvalControl
-                if !canChangeProvider, card.parentChatId == nil, newTaskWorkspaceId == nil {
+                // Fade the approval/guest/separator chips in together as the
+                // composer expands. Opacity-only (inherently Reduce-Motion-safe)
+                // so the always-present model pill never shifts; the Group is
+                // layout-transparent so HStack spacing is unchanged.
+                Group {
                     composerControlSeparator
-                    // Guest participant: + invites, chip shows/changes,
-                    // × removes (desktop guest-picker parity).
-                    GuestParticipantControl(model: model, card: card)
+                    approvalControl
+                    if !canChangeProvider, card.parentChatId == nil, newTaskWorkspaceId == nil {
+                        composerControlSeparator
+                        // Guest participant: + invites, chip shows/changes,
+                        // × removes (desktop guest-picker parity).
+                        GuestParticipantControl(model: model, card: card)
+                    }
                 }
+                .transition(.opacity)
             }
             Spacer(minLength: 0)
         }
+        // Scoped to isExpanded so only the chip fade animates — never the
+        // picker reseed, send/queue, or any other composer state change.
+        .animation(ComposerMotion.inlineFade, value: isExpanded)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(Rectangle().fill(composerControlsRowFill))
