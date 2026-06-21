@@ -4755,7 +4755,6 @@ export function SettingsPanel({
                     <h4 className="sidebar-section-title" style={{ margin: 0 }}>
                       MCP servers and TaskWraith tools
                     </h4>
-                    <span className="settings-readonly-pill">Read-only audit</span>
                   </div>
                   <p className="settings-hint">
                     Audit the tool surface agents can see, the transcript labels users see, and the

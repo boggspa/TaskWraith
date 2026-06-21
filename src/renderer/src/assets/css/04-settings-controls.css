@@ -2546,7 +2546,6 @@
   gap: 8px;
 }
 
-.settings-readonly-pill,
 .settings-editable-pill {
   display: inline-flex;
   align-items: center;
