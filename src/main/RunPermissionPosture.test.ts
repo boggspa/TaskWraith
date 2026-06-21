@@ -23,6 +23,7 @@ function readOnlyPerms(): EffectiveRunPermissions {
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
+      crossThreadRead: 'ask',
       canvasEval: 'ask'
     },
     networkAccess: 'deny',
@@ -42,6 +43,7 @@ function fullAccessPerms(): EffectiveRunPermissions {
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
+      crossThreadRead: 'ask',
       canvasEval: 'ask'
     },
     networkAccess: 'allow',
@@ -61,6 +63,7 @@ function defaultPerms(): EffectiveRunPermissions {
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
+      crossThreadRead: 'ask',
       canvasEval: 'ask'
     },
     networkAccess: 'allow',
@@ -71,9 +74,7 @@ function defaultPerms(): EffectiveRunPermissions {
 }
 
 /** Verifier + read-only re-derivation bound to the test secret. */
-function deps(
-  reDerive: () => EffectiveRunPermissions = readOnlyPerms
-): ClampRunPostureDeps & {
+function deps(reDerive: () => EffectiveRunPermissions = readOnlyPerms): ClampRunPostureDeps & {
   reDeriveReadOnly: ReturnType<typeof vi.fn>
   reDeriveDefault: ReturnType<typeof vi.fn>
 } {
@@ -126,6 +127,7 @@ describe('canonical posture + sign/verify', () => {
       agenticServices: {
         subThreadDelegation: 'allow',
         canvasInteraction: 'ask',
+        crossThreadRead: 'ask',
         canvasEval: 'ask',
         mcpTools: 'allow',
         fileChanges: 'allow',

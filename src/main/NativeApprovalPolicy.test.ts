@@ -32,6 +32,7 @@ const effectivePermissions = (
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'deny',
+    crossThreadRead: 'deny',
     canvasEval: 'deny'
   }
 ): EffectiveRunPermissions => ({
@@ -58,9 +59,7 @@ describe('canonicalTaskWraithToolName', () => {
 
 describe('taskWraithToolServiceIfKnown', () => {
   it('maps native TaskWraith MCP approvals to their real agentic service', () => {
-    expect(taskWraithToolServiceIfKnown('mcp__taskwraith__run_shell_command')).toBe(
-      'shellCommands'
-    )
+    expect(taskWraithToolServiceIfKnown('mcp__taskwraith__run_shell_command')).toBe('shellCommands')
     expect(taskWraithToolServiceIfKnown('mcp__other_server__write_file')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('taskwraith__write_file')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('delegate_to_subthread')).toBe('subThreadDelegation')
@@ -226,6 +225,7 @@ describe('effectiveAgenticSettings', () => {
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
+      crossThreadRead: 'ask',
       canvasEval: 'ask'
     })
     effective.networkAccess = 'allow'

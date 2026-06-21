@@ -24,7 +24,11 @@ import {
   findAppleScriptClass,
   formatAppleScriptClassName
 } from '../CreativeAppleScriptClasses'
-import { BLENDER_CLASSES, findBlenderClass, formatBlenderClassName } from '../CreativeBlenderClasses'
+import {
+  BLENDER_CLASSES,
+  findBlenderClass,
+  formatBlenderClassName
+} from '../CreativeBlenderClasses'
 import type {
   CreativeApprovalDecision,
   CreativeApprovalRequestDetails
@@ -65,13 +69,22 @@ const CREATIVE_RUNNING_PROBE_TTL_MS = 3_000
 const FCPXML_DTD_CACHE_DIR = `${os.tmpdir()}/taskwraith-fcpxml-dtds`
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
-const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PROVIDER_IDS = new Set<ProviderId>([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama'
+])
 const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'shellCommands',
   'fileChanges',
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'crossThreadRead',
   'canvasEval'
 ])
 
@@ -674,16 +687,15 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
   function unsupportedNativeToolResult(tool: DesktopMcpToolName): McpToolExecutionResult | null {
     const capabilities = deps.getNativeCapabilities?.()
     if (!capabilities) return null
-    const feature =
-      tool.startsWith('appwatch_')
-        ? capabilities.appwatch
-        : tool.startsWith('attached_window_')
-          ? capabilities.screenWatch
-          : tool === 'creative_applescript_dispatch'
-            ? capabilities.appleEvents
-            : NATIVE_BRIDGE_TOOL_NAMES.has(tool)
-              ? capabilities.bridge
-              : { available: true }
+    const feature = tool.startsWith('appwatch_')
+      ? capabilities.appwatch
+      : tool.startsWith('attached_window_')
+        ? capabilities.screenWatch
+        : tool === 'creative_applescript_dispatch'
+          ? capabilities.appleEvents
+          : NATIVE_BRIDGE_TOOL_NAMES.has(tool)
+            ? capabilities.bridge
+            : { available: true }
     if (feature.available) return null
     return mcpStructuredJsonResult({
       ok: false,
@@ -816,7 +828,8 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       return mcpStructuredJsonResult({
         ok: false,
         tool: 'attached_window_capture',
-        error: 'TaskWraith bridge daemon is not running. Enable it in Settings -> Bridge Networking.'
+        error:
+          'TaskWraith bridge daemon is not running. Enable it in Settings -> Bridge Networking.'
       })
     }
     const includeOcr = args.include_ocr !== false && args.includeOCR !== false
@@ -891,7 +904,9 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     })
   }
 
-  async function executeAppwatchStart(args: Record<string, unknown>): Promise<McpToolExecutionResult> {
+  async function executeAppwatchStart(
+    args: Record<string, unknown>
+  ): Promise<McpToolExecutionResult> {
     const snapshot = deps.attachedWindow.get()
     if (!snapshot) {
       return mcpStructuredJsonResult({
@@ -906,7 +921,8 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       return mcpStructuredJsonResult({
         ok: false,
         tool: 'appwatch_start',
-        error: 'TaskWraith bridge daemon is not running. Enable it in Settings -> Bridge Networking.'
+        error:
+          'TaskWraith bridge daemon is not running. Enable it in Settings -> Bridge Networking.'
       })
     }
     const fps = Number(args.fps) > 0 ? Math.trunc(Number(args.fps)) : 5
@@ -1136,7 +1152,9 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     )
   }
 
-  async function executeAppwatchFrames(args: Record<string, unknown>): Promise<McpToolExecutionResult> {
+  async function executeAppwatchFrames(
+    args: Record<string, unknown>
+  ): Promise<McpToolExecutionResult> {
     const snapshot = deps.attachedWindow.get()
     if (!snapshot) {
       return mcpStructuredJsonResult({
@@ -1362,9 +1380,10 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
 
     const preflight = await runFcpxmlDtdPreflight({
       filePath,
-      fcpxmlVersion: typeof (irArg as { version?: unknown }).version === 'string'
-        ? ((irArg as { version: string }).version)
-        : '1.13'
+      fcpxmlVersion:
+        typeof (irArg as { version?: unknown }).version === 'string'
+          ? (irArg as { version: string }).version
+          : '1.13'
     })
     if (preflight.status === 'invalid') {
       return {
@@ -1385,7 +1404,11 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       `DTD preflight: ${preflight.status}${preflight.dtdPath ? ` (${preflight.dtdPath.split('/').pop()})` : ''}`
     ]
     if (writer.warnings.length > 0) {
-      summaryLines.push('', 'Writer warnings:', ...writer.warnings.map((warning) => `  - ${warning}`))
+      summaryLines.push(
+        '',
+        'Writer warnings:',
+        ...writer.warnings.map((warning) => `  - ${warning}`)
+      )
     }
     const decision = await gate.requestApproval('fcp.import-fcpxml', {
       title: 'Import draft into Final Cut Pro',
@@ -1425,14 +1448,18 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     }
   }
 
-  async function executeCreativeAppleScriptDispatch(args: Record<string, unknown>): Promise<unknown> {
+  async function executeCreativeAppleScriptDispatch(
+    args: Record<string, unknown>
+  ): Promise<unknown> {
     const gate = deps.getCreativeApprovalGate()
     const daemon = deps.getBridgeDaemon()
     if (!gate) {
       throw new Error('Creative-action approval gate is not yet wired up (main process not ready).')
     }
     if (!daemon) {
-      throw new Error('Bridge daemon is not running; creative_applescript_dispatch cannot dispatch.')
+      throw new Error(
+        'Bridge daemon is not running; creative_applescript_dispatch cannot dispatch.'
+      )
     }
     let source: string
     let className: string
@@ -1556,7 +1583,9 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         title: entry.label,
         description: entry.description,
         targetBundleId: entry.targetBundleId,
-        payloadPreview: inputBlendPath ? `# Blender input: ${inputBlendPath}\n${pythonSource}` : pythonSource
+        payloadPreview: inputBlendPath
+          ? `# Blender input: ${inputBlendPath}\n${pythonSource}`
+          : pythonSource
       }
     } else if (typeof args.pythonSource === 'string' && args.pythonSource.length > 0) {
       pythonSource = args.pythonSource
@@ -1567,7 +1596,9 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         description:
           'TaskWraith will execute the Python source below inside `Blender --background --python` in a sandbox tempdir. Raw scripts are NEVER cached on approval - every invocation prompts.',
         targetBundleId: 'org.blenderfoundation.blender',
-        payloadPreview: inputBlendPath ? `# Blender input: ${inputBlendPath}\n${pythonSource}` : pythonSource
+        payloadPreview: inputBlendPath
+          ? `# Blender input: ${inputBlendPath}\n${pythonSource}`
+          : pythonSource
       }
     } else {
       throw new Error(
@@ -1723,7 +1754,9 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         findEditorById('vscode')
     }
     if (!adapter) {
-      throw new Error('open_in_ide_at_position: no editor could be resolved. Pass `ide` explicitly.')
+      throw new Error(
+        'open_in_ide_at_position: no editor could be resolved. Pass `ide` explicitly.'
+      )
     }
     const positionalArgs = buildEditorPositionalArgs(adapter, filePath, line, column)
     if (positionalArgs && adapter.cliCommand) {
@@ -1872,7 +1905,9 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       ...(optionalString(args.chatId) || (!args.all && context.appChatId)
         ? { chatId: optionalString(args.chatId) || context.appChatId }
         : {}),
-      ...(optionalString(args.workspaceId) ? { workspaceId: optionalString(args.workspaceId) } : {}),
+      ...(optionalString(args.workspaceId)
+        ? { workspaceId: optionalString(args.workspaceId) }
+        : {}),
       ...(statuses.length ? { statuses: statuses as ApprovalLedgerFilter['statuses'] } : {}),
       ...(scopes.length ? { scopes: scopes as ApprovalLedgerFilter['scopes'] } : {}),
       includeExpired: args.includeExpired === true,

@@ -163,14 +163,7 @@ export type ComposerStyle =
 // e.g. Grok using diff-reviewed writes instead of per-tool approval cards, or
 // Cursor's read-only plan seat carrying no MCP tools — are enforced elsewhere
 // via CLI args / approval posture, never by membership in this union.)
-export type ProviderId =
-  | 'gemini'
-  | 'codex'
-  | 'claude'
-  | 'kimi'
-  | 'grok'
-  | 'cursor'
-  | 'ollama'
+export type ProviderId = 'gemini' | 'codex' | 'claude' | 'kimi' | 'grok' | 'cursor' | 'ollama'
 export type ProviderRerouteReason = 'provider-paused' | 'user-failover'
 export interface ProviderRunReroute {
   from: ProviderId
@@ -239,6 +232,12 @@ export type AgenticServiceId =
   // denied outright under read-only, and non-grantable. See PermissionService
   // (non-grantable), EffectiveRunPermissions (read_only deny), and the YOLO guards.
   | 'canvasEval'
+  // Cross-thread retrospection reads (tw_recall_find/read/read_events). A
+  // DEDICATED grant bucket — grantable like canvasInteraction, NOT signed-
+  // elevated like canvasEval — so a generic `mcpTools` grant can't silently
+  // auto-allow reading another thread/workspace's run history, and so the
+  // read_only preset can deny it outright.
+  | 'crossThreadRead'
 export type OllamaToolControlTier =
   | 'read_only'
   | 'approved_edits'
@@ -374,6 +373,9 @@ export interface AgenticServicesSettings {
   subThreadDelegation: AgenticServicePolicy
   canvasInteraction: AgenticServicePolicy
   canvasEval: AgenticServicePolicy
+  // Optional for back-compat with settings persisted before cross-thread recall;
+  // defaults to 'ask' via servicesFromSettings + the sanitizer. Grantable.
+  crossThreadRead?: AgenticServicePolicy
   networkAccess: AgenticNetworkPolicy
 }
 
@@ -1068,7 +1070,10 @@ export type ProviderCapabilityWarningSeverity = 'info' | 'warning' | 'error'
 export type ProviderToolingCapabilityId =
   // canvasInteraction / canvasEval are approval-grant buckets, not provider-
   // capability contract rows — excluded like subThreadDelegation.
-  | Exclude<AgenticServiceId, 'subThreadDelegation' | 'canvasInteraction' | 'canvasEval'>
+  | Exclude<
+      AgenticServiceId,
+      'subThreadDelegation' | 'canvasInteraction' | 'canvasEval' | 'crossThreadRead'
+    >
   | 'creativeApps'
   | 'networkAccess'
   | 'elicit'
@@ -2852,14 +2857,7 @@ export type AuditRunStatus =
   | 'cancelled'
 
 /** Phases in execution order. `gates` and `review` run in parallel. */
-export type AuditPhaseId =
-  | 'recon'
-  | 'plan'
-  | 'gates'
-  | 'review'
-  | 'dedup'
-  | 'verify'
-  | 'synthesis'
+export type AuditPhaseId = 'recon' | 'plan' | 'gates' | 'review' | 'dedup' | 'verify' | 'synthesis'
 
 export type AuditPhaseStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
 
@@ -2965,7 +2963,13 @@ export interface AuditRoster {
 export interface AuditDegradation {
   provider: ProviderId
   /** Eligibility layer that excluded it. */
-  reason: 'unconfigured' | 'unauthenticated' | 'unhealthy' | 'rate_limited' | 'policy_excluded' | 'ollama_disabled'
+  reason:
+    | 'unconfigured'
+    | 'unauthenticated'
+    | 'unhealthy'
+    | 'rate_limited'
+    | 'policy_excluded'
+    | 'ollama_disabled'
   detail?: string
 }
 

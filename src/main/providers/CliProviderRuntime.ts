@@ -108,7 +108,9 @@ export function getCliSearchDirs(binaryPath?: string | null): string[] {
     process.platform === 'win32'
       ? [
           process.env.APPDATA ? join(process.env.APPDATA, 'npm') : '',
-          process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Microsoft', 'WindowsApps') : '',
+          process.env.LOCALAPPDATA
+            ? join(process.env.LOCALAPPDATA, 'Microsoft', 'WindowsApps')
+            : '',
           process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs') : '',
           process.env.USERPROFILE ? join(process.env.USERPROFILE, 'scoop', 'shims') : '',
           process.env.ProgramFiles ? join(process.env.ProgramFiles, 'nodejs') : '',
@@ -209,6 +211,10 @@ export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | nu
       canvasInteraction: stricterServicePolicy(
         base.agenticServices?.canvasInteraction,
         profile.agenticServices.canvasInteraction
+      ),
+      crossThreadRead: stricterServicePolicy(
+        base.agenticServices?.crossThreadRead,
+        profile.agenticServices.crossThreadRead
       ),
       canvasEval: stricterServicePolicy(
         base.agenticServices?.canvasEval,
@@ -422,7 +428,13 @@ export async function readResolvedCliVersion(
   deps?: CliProviderRuntimeDependencies
 ): Promise<string> {
   if (!resolved.binaryPath) return 'missing'
-  const output = await captureProcessOutput(resolved.binaryPath, ['--version'], undefined, 8_000, deps)
+  const output = await captureProcessOutput(
+    resolved.binaryPath,
+    ['--version'],
+    undefined,
+    8_000,
+    deps
+  )
   return (
     (output.stdout || output.stderr || output.error || 'unknown').trim().split('\n')[0] || 'unknown'
   )

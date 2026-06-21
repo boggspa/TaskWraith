@@ -23,13 +23,22 @@ import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProvi
 import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
-const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PROVIDER_IDS = new Set<ProviderId>([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama'
+])
 const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   shellCommands: 'workspace',
   fileChanges: 'ask',
   mcpTools: 'ask',
   subThreadDelegation: 'ask',
   canvasInteraction: 'ask',
+  crossThreadRead: 'ask',
   canvasEval: 'ask',
   networkAccess: 'allow'
 }
@@ -275,9 +284,7 @@ const AUDIT_PROVIDER_IDS = new Set<ProviderId>([
  * Ollama concurrency cap + budgets, and keep only known roles in the
  * per-role preference map. Returns undefined when the input clears to nothing
  * meaningful (so it round-trips as "use defaults"). */
-export function sanitizeAuditOrchestration(
-  value: unknown
-): AuditOrchestrationSettings | undefined {
+export function sanitizeAuditOrchestration(value: unknown): AuditOrchestrationSettings | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const input = value as Record<string, unknown>
   const filterProviders = (raw: unknown): ProviderId[] =>
@@ -541,13 +548,14 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       customModel: optionalString(input.customModel) || '',
       approvalMode: optionalString(input.approvalMode) || 'default',
       sessionTrust: Boolean(input.sessionTrust),
-      imageAttachments: Array.isArray(input.imageAttachments) ? (input.imageAttachments as any) : [],
+      imageAttachments: Array.isArray(input.imageAttachments)
+        ? (input.imageAttachments as any)
+        : [],
       externalPathGrants: normalizeScheduledTaskExternalGrants(input.externalPathGrants),
       geminiWorktree: input.geminiWorktree as any,
       codexReasoningEffort: optionalString(input.codexReasoningEffort),
       codexServiceTier: optionalString(input.codexServiceTier),
-      claudeFastMode:
-        typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,
+      claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,
       kimiThinkingEnabled:
         typeof input.kimiThinkingEnabled === 'boolean' ? input.kimiThinkingEnabled : undefined,
       runtimeProfileId: optionalString(input.runtimeProfileId),
@@ -561,7 +569,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
   function sanitizeWorkflowForSave(
     workflow: unknown
   ): Omit<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'> &
-    Partial<Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>> {
+    Partial<
+      Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>
+    > {
     const input = requireRecord(workflow, 'Workflow')
     const template = sanitizeWorkflowTemplate(input.template)
     const limits = isRecord(input.limits) ? input.limits : {}
@@ -672,6 +682,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
             canvasInteraction: sanitizeAgenticServicePolicy(
               input.agenticServices.canvasInteraction,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.canvasInteraction
+            ),
+            crossThreadRead: sanitizeAgenticServicePolicy(
+              input.agenticServices.crossThreadRead,
+              DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.crossThreadRead ?? 'ask'
             ),
             canvasEval: sanitizeAgenticServicePolicy(
               input.agenticServices.canvasEval,
@@ -868,7 +882,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
         : {}
       sanitized.ollamaProviderParityWorkspaceGrants = Object.fromEntries(
         Object.entries(grants)
-          .map(([workspacePath, grantedAt]) => [workspacePath.trim(), String(grantedAt || '').trim()])
+          .map(([workspacePath, grantedAt]) => [
+            workspacePath.trim(),
+            String(grantedAt || '').trim()
+          ])
           .filter(([workspacePath, grantedAt]) => workspacePath.length > 0 && grantedAt.length > 0)
       )
     }

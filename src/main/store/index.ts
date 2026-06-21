@@ -159,15 +159,7 @@ const AUDIT_RUN_HISTORY_LIMIT = 100
 // runtime profiles too (local + global per provider, see getDefaultRuntimeProfiles)
 // so their global chats have a usable runtime out of the box. Unconditional:
 // unused default profiles for a force-disabled provider are harmless data.
-const providerIds: ProviderId[] = [
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama'
-]
+const providerIds: ProviderId[] = ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']
 const LEGACY_TASKWRAITH_FONT_STACK =
   '"SF Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif'
 const TASKWRAITH_DEFAULT_FONT_STACK =
@@ -195,12 +187,13 @@ function normalizeWorkflowExecutionRecord(
   return {
     id: input.id,
     workflowId,
-    plannedFor:
-      typeof input.plannedFor === 'string' && input.plannedFor ? input.plannedFor : now,
+    plannedFor: typeof input.plannedFor === 'string' && input.plannedFor ? input.plannedFor : now,
     status,
     createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : now,
     updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : now,
-    ...(typeof input.scheduledTaskId === 'string' ? { scheduledTaskId: input.scheduledTaskId } : {}),
+    ...(typeof input.scheduledTaskId === 'string'
+      ? { scheduledTaskId: input.scheduledTaskId }
+      : {}),
     ...(typeof input.runId === 'string' ? { runId: input.runId } : {}),
     ...(typeof input.startedAt === 'string' ? { startedAt: input.startedAt } : {}),
     ...(typeof input.completedAt === 'string' ? { completedAt: input.completedAt } : {}),
@@ -463,6 +456,7 @@ const defaultSettings: AppSettings = {
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
+    crossThreadRead: 'ask',
     canvasEval: 'ask',
     networkAccess: 'allow'
   },
@@ -626,7 +620,9 @@ function writeJson<T>(filePath: string, data: T) {
 }
 
 function previewText(value: unknown, maxLength: number): string {
-  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  const text = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
   if (text.length <= maxLength) return text
   return `${text.slice(0, maxLength - 3)}...`
 }
@@ -944,7 +940,8 @@ export class AppStore {
         ? stored.agenticWorkspaceGrants
         : [],
       nativeSubAgentRequests:
-        stored.nativeSubAgentRequests === 'provider' || stored.nativeSubAgentRequests === 'taskwraith'
+        stored.nativeSubAgentRequests === 'provider' ||
+        stored.nativeSubAgentRequests === 'taskwraith'
           ? stored.nativeSubAgentRequests
           : 'ask',
       lastSeenChangelogVersion:
@@ -1425,7 +1422,9 @@ export class AppStore {
   }
 
   static getPinnedMessages(workspaceId?: string): PinnedMessageGroup[] {
-    const workspacesById = new Map(this.getWorkspaces().map((workspace) => [workspace.id, workspace]))
+    const workspacesById = new Map(
+      this.getWorkspaces().map((workspace) => [workspace.id, workspace])
+    )
     const groups = new Map<string, PinnedMessageGroup>()
 
     for (const chat of this.getChats(workspaceId)) {
@@ -1454,7 +1453,8 @@ export class AppStore {
           ? 'Global chats'
           : workspace?.displayName ||
             (workspacePath ? path.basename(workspacePath) || workspacePath : 'Unknown workspace')
-      const groupKey = chat.scope === 'global' ? 'global' : chat.workspaceId || workspacePath || 'unknown'
+      const groupKey =
+        chat.scope === 'global' ? 'global' : chat.workspaceId || workspacePath || 'unknown'
       const group =
         groups.get(groupKey) ||
         ({
@@ -1933,7 +1933,9 @@ export class AppStore {
 
   static getSideChats(parentChatId: string): ChatRecord[] {
     return this.getChats()
-      .filter((chat) => chat.parentChatId === parentChatId && chat.parentChatRelation === 'sideChat')
+      .filter(
+        (chat) => chat.parentChatId === parentChatId && chat.parentChatRelation === 'sideChat'
+      )
       .sort((a, b) => a.createdAt - b.createdAt)
   }
 
@@ -1959,7 +1961,8 @@ export class AppStore {
 
   static isSubThreadChat(chat: ChatRecord | null | undefined): boolean {
     return Boolean(
-      chat?.parentChatId && (chat.parentChatRelation === undefined || chat.parentChatRelation === 'subThread')
+      chat?.parentChatId &&
+      (chat.parentChatRelation === undefined || chat.parentChatRelation === 'subThread')
     )
   }
 
@@ -2185,8 +2188,13 @@ export class AppStore {
   }
 
   static saveWorkflowDefinition(
-    workflow: Omit<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'> &
-      Partial<Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>>
+    workflow: Omit<
+      WorkflowDefinition,
+      'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'
+    > &
+      Partial<
+        Pick<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'history' | 'failureStreak'>
+      >
   ): WorkflowDefinition {
     const workflows = this.getWorkflowDefinitions()
     const nowMs = Date.now()
@@ -2304,10 +2312,7 @@ export class AppStore {
       | 'gates'
     > &
       Partial<
-        Pick<
-          AuditRunRecord,
-          'id' | 'phases' | 'participants' | 'findings' | 'verdicts' | 'gates'
-        >
+        Pick<AuditRunRecord, 'id' | 'phases' | 'participants' | 'findings' | 'verdicts' | 'gates'>
       >
   ): AuditRunRecord {
     const nowIso = new Date().toISOString()
@@ -2530,7 +2535,8 @@ export class AppStore {
       // string (the prefix used to leak into the chat title everywhere).
       displayPrompt: workflow.template.displayPrompt || workflow.template.prompt,
       runAt: nowIso,
-      timezone: workflow.trigger.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'local',
+      timezone:
+        workflow.trigger.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'local',
       status: 'due',
       workflowId: workflow.id,
       workflowExecutionId: executionId,
@@ -2673,10 +2679,7 @@ export class AppStore {
     const index = tasks.findIndex((task) => task.id === id)
     if (index < 0) return null
     const current = tasks[index]
-    if (
-      partial.status &&
-      isInvalidScheduledTaskStatusTransition(current.status, partial.status)
-    ) {
+    if (partial.status && isInvalidScheduledTaskStatusTransition(current.status, partial.status)) {
       return current
     }
     const updated = { ...current, ...partial, id, updatedAt: new Date().toISOString() }
@@ -2702,9 +2705,7 @@ export class AppStore {
     })
   }
 
-  static recoverInterruptedScheduledTasksAfterStartup(
-    nowMs: number = Date.now()
-  ): ScheduledTask[] {
+  static recoverInterruptedScheduledTasksAfterStartup(nowMs: number = Date.now()): ScheduledTask[] {
     const tasks = this.getScheduledTasks()
     const recoveredAt = new Date(nowMs).toISOString()
     const recovered: ScheduledTask[] = []

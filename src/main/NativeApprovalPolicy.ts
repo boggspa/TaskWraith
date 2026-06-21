@@ -58,6 +58,9 @@ export function effectiveAgenticSettings(
         current.canvasInteraction,
         effective.canvasInteraction
       ),
+      // Cross-thread reads: the read_only preset's crossThreadRead:'deny' must
+      // survive this key-by-key rebuild (same deny-survival as canvasInteraction).
+      crossThreadRead: preserveCurrentDeny(current.crossThreadRead, effective.crossThreadRead),
       // Same as canvasInteraction: the read_only preset's canvasEval:'deny' must
       // survive this key-by-key rebuild, or read-only eval would only prompt.
       canvasEval: preserveCurrentDeny(current.canvasEval, effective.canvasEval),
@@ -100,9 +103,12 @@ export function resolveNativeApprovalPreflightDecision(args: {
   effectivePermissions?: EffectiveRunPermissions
 }): Exclude<NativeApprovalPreflight, { kind: 'none' }> {
   const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = args.resolution
-  if (decision === 'deny') return { kind: 'deny', policy, effectivePermissions: args.effectivePermissions }
-  if (args.neverAutoAllow) return { kind: 'ask', policy, effectivePermissions: args.effectivePermissions }
-  if (args.externalPathDetected) return { kind: 'ask', policy, effectivePermissions: args.effectivePermissions }
+  if (decision === 'deny')
+    return { kind: 'deny', policy, effectivePermissions: args.effectivePermissions }
+  if (args.neverAutoAllow)
+    return { kind: 'ask', policy, effectivePermissions: args.effectivePermissions }
+  if (args.externalPathDetected)
+    return { kind: 'ask', policy, effectivePermissions: args.effectivePermissions }
   if (args.sessionYoloEnabled && !args.readOnly) {
     return {
       kind: 'allow',
@@ -152,6 +158,14 @@ export function taskWraithToolAgenticService(toolName: string): AgenticServiceId
   if (toolName === 'canvas_click' || toolName === 'canvas_fill') return 'canvasInteraction'
   // Arbitrary eval gets its OWN, stricter bucket (non-grantable / never-YOLO).
   if (toolName === 'canvas_eval') return 'canvasEval'
+  // Cross-thread retrospection reads route to crossThreadRead (grantable) so a
+  // generic mcpTools grant can't auto-allow reading another thread/workspace.
+  if (
+    toolName === 'tw_recall_find' ||
+    toolName === 'tw_recall_read' ||
+    toolName === 'tw_recall_read_events'
+  )
+    return 'crossThreadRead'
   return 'mcpTools'
 }
 

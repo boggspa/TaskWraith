@@ -5,6 +5,7 @@ export const AGENTIC_SERVICE_LABELS: Record<AgenticServiceId, string> = {
   mcpTools: 'Tool calls',
   subThreadDelegation: 'Sub-thread delegation',
   canvasInteraction: 'Canvas interaction',
+  crossThreadRead: 'Cross-thread read',
   canvasEval: 'Canvas eval'
 }
 
@@ -16,6 +17,7 @@ export function agenticServiceDisabledMessage(service: AgenticServiceId): string
   if (
     service === 'subThreadDelegation' ||
     service === 'canvasInteraction' ||
+    service === 'crossThreadRead' ||
     service === 'canvasEval'
   ) {
     return `${AGENTIC_SERVICE_LABELS[service]} is disabled in TaskWraith settings.`
@@ -29,6 +31,7 @@ export const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'crossThreadRead',
   'canvasEval'
 ])
 
@@ -39,7 +42,10 @@ export function assertAgenticServiceId(value: unknown): AgenticServiceId {
   throw new Error('Unknown agentic service id.')
 }
 
-export function approvalActionsForPolicy(policy: string, workspacePath?: string): AgentApprovalAction[] {
+export function approvalActionsForPolicy(
+  policy: string,
+  workspacePath?: string
+): AgentApprovalAction[] {
   const actions: AgentApprovalAction[] = ['accept']
   if (policy === 'workspace' && workspacePath) {
     actions.push('acceptForWorkspace')

@@ -67,6 +67,7 @@ function makeEffectivePermissions(
       mcpTools: 'ask',
       subThreadDelegation: 'deny',
       canvasInteraction: 'ask',
+      crossThreadRead: 'ask',
       canvasEval: 'ask'
     },
     networkAccess: 'deny',
@@ -260,9 +261,7 @@ describe('buildSoloScratchpadRecall', () => {
     expect(
       buildSoloScratchpadRecall(
         makeChat({
-          messages: [
-            { id: 'u1', role: 'user', content: 'hi', timestamp: '2026-05-27T09:00:00Z' }
-          ]
+          messages: [{ id: 'u1', role: 'user', content: 'hi', timestamp: '2026-05-27T09:00:00Z' }]
         })
       )
     ).toBe('')

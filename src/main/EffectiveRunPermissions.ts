@@ -19,6 +19,7 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'crossThreadRead',
   'canvasEval'
 ]
 
@@ -36,6 +37,9 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // mcpTools->shellCommands read-only reroute no longer fires for them, so the
       // read-only DENY must come from THIS preset entry.
       canvasInteraction: 'deny',
+      // Cross-thread reads are denied under read-only — no reaching into other
+      // threads'/workspaces' run history from a read-only seat.
+      crossThreadRead: 'deny',
       // Arbitrary canvas_eval is RCE — never available under read-only.
       canvasEval: 'deny'
     },
@@ -64,7 +68,9 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       fileChanges: 'allow',
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
-      canvasInteraction: 'allow'
+      canvasInteraction: 'allow',
+      // Cross-thread reads are grantable; Full access auto-allows them.
+      crossThreadRead: 'allow'
       // DELIBERATELY no canvasEval here: even Full access must NOT auto-allow
       // arbitrary eval (RCE). It stays at the settings default ('ask') so every
       // eval still prompts. Do not add canvasEval: 'allow' — the non-grantable +
@@ -158,6 +164,7 @@ function servicesFromSettings(
     mcpTools: normalizePolicy(settings?.mcpTools, 'ask'),
     subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask'),
     canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask'),
+    crossThreadRead: normalizePolicy(settings?.crossThreadRead, 'ask'),
     // canvasEval (RCE) is non-grantable / never-auto-allowed. Clamp the stored
     // policy so it can only ever be 'ask' or 'deny' — a settings value (or import)
     // of 'allow'/'workspace' must not be able to contradict that guarantee at the
