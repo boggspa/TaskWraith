@@ -16481,7 +16481,12 @@ function App(): React.JSX.Element {
   const showComposerChips =
     showComposerBranchChip ||
     (currentProvider === 'gemini' && persistentSessionNeedsRestart) ||
-    Boolean(currentProviderCapabilityWarning) ||
+    // The Ollama Tier-4 parity warning is now shown by the composer's tier
+    // picker (its ⚠ ineffective state), not as a chip — so it must NOT keep the
+    // chips row alive on its own (else an empty row renders in the generic
+    // shells). Other capability warnings still count.
+    (Boolean(currentProviderCapabilityWarning) &&
+      currentProviderCapabilityWarning?.id !== 'ollama-provider-parity-not-granted') ||
     queuedRunQueueCount > 0
   const permissionRequestTitle =
     permissionRequestKind === 'workspace_trust'

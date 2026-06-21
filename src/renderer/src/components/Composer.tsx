@@ -38,7 +38,6 @@ import { GitCiChip, GitMergeBadge, GitSyncChip, branchTone } from '../components
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
-import { OllamaHealthChip } from '../components/OllamaHealthChip'
 import { OllamaTierPicker } from '../components/OllamaTierPicker'
 import { ollamaProviderParityWorkspaceGranted } from '../../../main/ollama/OllamaToolTiers'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
@@ -393,7 +392,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     addImageAttachments,
     addImageAttachmentsToChat,
     agentModelsByProvider,
-    agentStatusByProvider,
     agenticServices,
     agenticWorkspaceGrants,
     appearance,
@@ -1745,21 +1743,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   {currentProvider === 'gemini' && persistentSessionNeedsRestart && (
                     <span className="composer-chip warning">{sessionRestartReason}</span>
                   )}
-                  {currentProvider === 'ollama' && (
-                    <OllamaHealthChip
-                      status={agentStatusByProvider.ollama}
-                      selectedModelId={selectedModelType}
-                      toolControlTier={chatOllamaTier}
-                    />
-                  )}
-                  {currentProviderCapabilityWarning && (
-                    <span
-                      className="composer-chip warning"
-                      title={currentProviderCapabilityWarning.message}
-                    >
-                      {currentProviderCapabilityWarning.title}
-                    </span>
-                  )}
+                  {/* The Ollama health chip + the Tier-4 parity capability
+                    warning were removed from this row — the footer Ollama tier
+                    picker (and its ⚠ ineffective state) now convey both. Other
+                    providers' capability warnings still surface here. */}
+                  {currentProviderCapabilityWarning &&
+                    currentProviderCapabilityWarning.id !== 'ollama-provider-parity-not-granted' && (
+                      <span
+                        className="composer-chip warning"
+                        title={currentProviderCapabilityWarning.message}
+                      >
+                        {currentProviderCapabilityWarning.title}
+                      </span>
+                    )}
                   {queuedRunQueueCount > 0 && (
                     <span
                       className="composer-chip"
