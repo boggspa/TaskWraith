@@ -9,10 +9,16 @@ import type { LaunchTarget } from '../launchTargets/types'
 import { LaunchAttemptStore } from './LaunchAttemptStore'
 import { LaunchManager } from './LaunchManager'
 
+class FakeReadable extends EventEmitter {
+  setEncoding(): this {
+    return this
+  }
+}
+
 class FakeChild extends EventEmitter {
   pid = 4321
-  stdout = new EventEmitter()
-  stderr = new EventEmitter()
+  stdout = new FakeReadable()
+  stderr = new FakeReadable()
 }
 
 async function tempFile(): Promise<string> {
@@ -424,10 +430,10 @@ describe('LaunchManager', () => {
     ])
   })
 
-  it('can stop a recovered interrupted attempt through its persisted pid', async () => {
-    const storagePath = await tempFile()
-    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
-    const store = new LaunchAttemptStore(storagePath)
+  async function saveRecoveredAttempt(
+    store: LaunchAttemptStore,
+    workspacePath: string
+  ): Promise<void> {
     store.save({
       schemaVersion: 1,
       id: 'attempt-recovered',
@@ -451,6 +457,13 @@ describe('LaunchManager', () => {
       outputTailBytes: 0,
       outputTruncated: false
     })
+  }
+
+  it('stops a recovered attempt whose pid is still live this boot', async () => {
+    const storagePath = await tempFile()
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
+    const store = new LaunchAttemptStore(storagePath)
+    await saveRecoveredAttempt(store, workspacePath)
     const killProcess = vi.fn(async () => ({ ok: true, escalated: false }))
     const untracked: number[] = []
     const manager = new LaunchManager({
@@ -459,7 +472,10 @@ describe('LaunchManager', () => {
       requestApproval: vi.fn(),
       createEnv: (extra) => extra,
       killProcess,
-      untrackSpawn: (pid) => untracked.push(pid)
+      untrackSpawn: (pid) => untracked.push(pid),
+      // Booted before the attempt started, and the pid still exists → ours.
+      bootTime: () => new Date('2026-06-21T10:00:00.000Z'),
+      processExists: () => true
     })
 
     expect(store.get('attempt-recovered')).toMatchObject({ status: 'interrupted', pid: 9876 })
@@ -470,5 +486,118 @@ describe('LaunchManager', () => {
     expect(killProcess).toHaveBeenCalledWith(9876, 9876)
     expect(untracked).toEqual([9876])
     expect(store.get('attempt-recovered')).toMatchObject({ status: 'cancelled' })
+  })
+
+  it('never signals a recovered pid that predates the current boot', async () => {
+    const storagePath = await tempFile()
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
+    const store = new LaunchAttemptStore(storagePath)
+    await saveRecoveredAttempt(store, workspacePath)
+    const killProcess = vi.fn(async () => ({ ok: true, escalated: false }))
+    const untracked: number[] = []
+    const manager = new LaunchManager({
+      store,
+      now: () => new Date('2026-06-21T12:00:00.000Z'),
+      requestApproval: vi.fn(),
+      createEnv: (extra) => extra,
+      killProcess,
+      untrackSpawn: (pid) => untracked.push(pid),
+      // Booted AFTER the attempt started → pid 9876 was recycled by the OS, so
+      // even though some process now holds it, it is NOT ours.
+      bootTime: () => new Date('2026-06-21T11:30:00.000Z'),
+      processExists: () => true
+    })
+
+    const stopped = await manager.stopAttempt('attempt-recovered')
+
+    expect(stopped.ok).toBe(true)
+    expect(killProcess).not.toHaveBeenCalled()
+    expect(untracked).toEqual([9876])
+    expect(store.get('attempt-recovered')).toMatchObject({ status: 'stopped' })
+    expect(store.get('attempt-recovered')?.pid).toBeUndefined()
+  })
+
+  it('never signals a recovered pid that no longer exists', async () => {
+    const storagePath = await tempFile()
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
+    const store = new LaunchAttemptStore(storagePath)
+    await saveRecoveredAttempt(store, workspacePath)
+    const killProcess = vi.fn(async () => ({ ok: true, escalated: false }))
+    const manager = new LaunchManager({
+      store,
+      now: () => new Date('2026-06-21T12:00:00.000Z'),
+      requestApproval: vi.fn(),
+      createEnv: (extra) => extra,
+      killProcess,
+      bootTime: () => new Date('2026-06-21T10:00:00.000Z'),
+      processExists: () => false
+    })
+
+    const stopped = await manager.stopAttempt('attempt-recovered')
+
+    expect(stopped.ok).toBe(true)
+    expect(killProcess).not.toHaveBeenCalled()
+    expect(store.get('attempt-recovered')).toMatchObject({ status: 'stopped' })
+  })
+
+  it('rejects a concurrent second start for the same target while approval is pending', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
+    const storagePath = await tempFile()
+    const fixture = managerFixture(storagePath, workspacePath)
+    let resolveApproval: ((value: boolean) => void) | undefined
+    fixture.requestApproval.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveApproval = resolve
+        })
+    )
+
+    const first = fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath)
+    })
+    const second = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath)
+    })
+
+    expect(second).toMatchObject({ ok: false })
+    expect(second.error).toMatch(/already starting/i)
+
+    resolveApproval?.(true)
+    const firstResult = await first
+
+    expect(firstResult.ok).toBe(true)
+    expect(fixture.spawnProcess).toHaveBeenCalledTimes(1)
+    expect(fixture.requestApproval).toHaveBeenCalledTimes(1)
+  })
+
+  it('strips library-injection env vars from discovered launch targets', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
+    const storagePath = await tempFile()
+    const fixture = managerFixture(storagePath, workspacePath)
+
+    await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        command: {
+          raw: 'npm run dev',
+          argv: ['npm', 'run', 'dev'],
+          cwd: workspacePath,
+          longRunning: true,
+          env: { DYLD_INSERT_LIBRARIES: '/tmp/evil.dylib', VITE_PORT: '5173' }
+        }
+      })
+    })
+
+    const preview = (fixture.approvals[0] as { preview: { envDeltas?: Record<string, string> } })
+      .preview
+    expect(preview.envDeltas).toEqual({ VITE_PORT: '5173' })
+    const spawnedEnv = fixture.spawnProcess.mock.calls[0]?.[2]?.env as Record<string, string>
+    expect(spawnedEnv.DYLD_INSERT_LIBRARIES).toBeUndefined()
+    expect(spawnedEnv.VITE_PORT).toBe('5173')
   })
 })
