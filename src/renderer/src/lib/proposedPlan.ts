@@ -40,10 +40,18 @@ export const derivePlanTitle = (body: string): string => {
  */
 const looksSubstantive = (body: string): boolean => {
   const stripped = body.replace(/```[\s\S]*?```/g, '').trim()
-  if (stripped.length >= 220) return true
+  if (!stripped) return false
+  // Require plan-shaped STRUCTURE, not length alone — length alone over-triggers
+  // on ordinary plan-mode narration ("I explored the code, here's what I
+  // found…"), turning it into a spurious approve card. A markdown heading is a
+  // strong intentional-structure signal; otherwise require ≥2 steps with enough
+  // body that it isn't a one-line quip.
   if (/^#{1,6}\s+/m.test(stripped)) return true
-  const bulletLines = stripped.split('\n').filter((line) => /^\s*(?:[-*+]|\d+[.)])\s+/.test(line))
-  return bulletLines.length >= 2
+  if (stripped.length < 40) return false
+  const stepLines = stripped
+    .split('\n')
+    .filter((line) => /^\s*(?:[-*+]|\d+[.)])\s+/.test(line))
+  return stepLines.length >= 2
 }
 
 /**

@@ -26,6 +26,7 @@ export interface BuildChatViewPropsInput {
   isWelcomeChat: boolean
   isThinking: boolean
   pendingPlanChoice?: TranscriptPanelProps['pendingPlanChoice']
+  pendingProposedPlan?: TranscriptPanelProps['pendingProposedPlan']
   runCompleteNotice: TranscriptPanelProps['runCompleteNotice']
   pendingAgentQuestions: TranscriptPanelProps['pendingAgentQuestions']
   onAgentQuestionSubmit?: TranscriptPanelProps['onAgentQuestionSubmit']
@@ -39,6 +40,9 @@ export interface BuildChatViewPropsInput {
   onOpenSubThreadInSidePanel?: TranscriptPanelProps['onOpenSubThreadInSidePanel']
   onRunFallback?: TranscriptPanelProps['onRunFallback']
   onPlanChoiceSubmit?: TranscriptPanelProps['onPlanChoiceSubmit']
+  onProposedPlanApprove?: TranscriptPanelProps['onProposedPlanApprove']
+  onProposedPlanDismiss?: TranscriptPanelProps['onProposedPlanDismiss']
+  onProposedPlanCustom?: TranscriptPanelProps['onProposedPlanCustom']
   onCopyMessage: TranscriptPanelProps['onCopyMessage']
   onDeleteMessage?: TranscriptPanelProps['onDeleteMessage']
   onTogglePinMessage?: TranscriptPanelProps['onTogglePinMessage']
@@ -79,6 +83,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     // plan cards are writable when the host passes the target-chat handlers.
     showFallbackUX: false,
     pendingPlanChoice: input.pendingPlanChoice ?? null,
+    pendingProposedPlan: input.pendingProposedPlan ?? null,
     pendingAgentQuestions: input.pendingAgentQuestions,
     onAgentQuestionSubmit: input.onAgentQuestionSubmit ?? NOOP_AGENT_QUESTION,
     onAgentQuestionDismiss: input.onAgentQuestionDismiss ?? NOOP,
@@ -108,6 +113,9 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     chats: input.chats,
     runningChatIds: input.runningChatIds,
     onPlanChoiceSubmit: input.onPlanChoiceSubmit ?? NOOP_PLAN_CHOICE,
+    onProposedPlanApprove: input.onProposedPlanApprove ?? (() => {}),
+    onProposedPlanDismiss: input.onProposedPlanDismiss ?? (() => {}),
+    onProposedPlanCustom: input.onProposedPlanCustom ?? (() => {}),
     onRunFallback: input.onRunFallback ?? NOOP_RUN_FALLBACK,
     onOpenSubThread: input.onOpenSubThread,
     onOpenSubThreadInSidePanel: input.onOpenSubThreadInSidePanel,

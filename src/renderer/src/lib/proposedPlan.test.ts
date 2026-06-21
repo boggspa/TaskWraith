@@ -31,6 +31,15 @@ describe('parseProposedPlan', () => {
     expect(parseProposedPlan('Okay, sounds good.', true)).toBeNull()
   })
 
+  it('ignores long plan-mode narration with no heading or steps (no over-trigger)', () => {
+    expect(
+      parseProposedPlan(
+        'I explored the code and read the README plus a couple of the test files to understand the existing conventions before deciding what to change.',
+        true
+      )
+    ).toBeNull()
+  })
+
   it('returns null for an empty block', () => {
     expect(parseProposedPlan('<proposed_plan>\n\n</proposed_plan>', true)).toBeNull()
   })

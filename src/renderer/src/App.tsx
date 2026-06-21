@@ -391,6 +391,7 @@ import {
   type ImageAttachment
 } from './lib/imageAttachments'
 import { parsePlanModeChoice, type PlanChoiceState } from './lib/planModeChoice'
+import { parseProposedPlan, type ProposedPlanState } from './lib/proposedPlan'
 import { messageAnchorsActivePrompt } from './lib/transcriptDeleteGuard'
 import { type AgentQuestionState } from './components/AgentQuestionCard'
 import {
@@ -2077,6 +2078,8 @@ function App(): React.JSX.Element {
   const [isAttachingWindow, setIsAttachingWindow] = useState(false)
   const [pendingPlanChoiceByChatId, setPendingPlanChoiceForChat] =
     usePerChatState<PlanChoiceState | null>(null)
+  const [pendingProposedPlanByChatId, setPendingProposedPlanForChat] =
+    usePerChatState<ProposedPlanState | null>(null)
   const [pendingPlanImportByChatId, setPendingPlanImportForChat] =
     usePerChatState<PlanImportReviewState | null>(null)
   const [planImportGroundingBusyByChatId, setPlanImportGroundingBusyForChat] =
@@ -2591,6 +2594,9 @@ function App(): React.JSX.Element {
   const pendingPlanChoice = currentComposerChatId
     ? pendingPlanChoiceByChatId[currentComposerChatId] || null
     : null
+  const pendingProposedPlan = currentComposerChatId
+    ? pendingProposedPlanByChatId[currentComposerChatId] || null
+    : null
   const pendingPlanImport = currentComposerChatId
     ? pendingPlanImportByChatId[currentComposerChatId] || null
     : null
@@ -2788,6 +2794,15 @@ function App(): React.JSX.Element {
   ) => {
     const chatId = getCurrentComposerStateChatId()
     setPendingPlanChoiceForChat(chatId, value)
+  }
+  const setPendingProposedPlan = (
+    value:
+      | ProposedPlanState
+      | null
+      | ((previous: ProposedPlanState | null) => ProposedPlanState | null)
+  ) => {
+    const chatId = getCurrentComposerStateChatId()
+    setPendingProposedPlanForChat(chatId, value)
   }
   const setPendingPlanImport = (
     value:
@@ -9153,6 +9168,7 @@ function App(): React.JSX.Element {
         setRunCompleteNotice(null)
         setRunDiff(null)
         setPendingPlanChoice(null)
+        setPendingProposedPlan(null)
         setPendingPlanImport(null)
         setIsThinking(true)
       }
@@ -9721,14 +9737,36 @@ function App(): React.JSX.Element {
                 }
               })
             }
-            if (isVisibleRunChat() && isPlanMode && parsedChoice) {
-              setPendingPlanChoice({
-                messageId: assistantMessageId,
-                question: parsedChoice.question,
-                options: parsedChoice.options
-              })
-            } else if (isVisibleRunChat()) {
-              setPendingPlanChoice(null)
+            if (isVisibleRunChat()) {
+              // Plan mode surfaces ONE card per turn: a choice (question +
+              // options) takes precedence; otherwise a proposed plan (an
+              // explicit <proposed_plan> block in any mode, or a substantive
+              // plan-mode turn) gets the approve/implement card.
+              // Ensemble transcripts are authored by the orchestrator (per-
+              // participant), so the anchor/clobber semantics here don't hold —
+              // only surface the plan card for a solo plan-mode run.
+              const parsedPlan =
+                parsedChoice || !isPlanMode || updated.chatKind === 'ensemble'
+                  ? null
+                  : parseProposedPlan(event.content, isPlanMode)
+              setPendingPlanChoice(
+                isPlanMode && parsedChoice
+                  ? {
+                      messageId: assistantMessageId,
+                      question: parsedChoice.question,
+                      options: parsedChoice.options
+                    }
+                  : null
+              )
+              setPendingProposedPlan(
+                parsedPlan
+                  ? {
+                      messageId: assistantMessageId,
+                      title: parsedPlan.title,
+                      body: parsedPlan.body
+                    }
+                  : null
+              )
             }
           } else if (event.type === 'run_started') {
             const sessionId = normalizeGeminiResumeTarget(event.session_id)
@@ -10269,9 +10307,20 @@ function App(): React.JSX.Element {
      * Plumbed onto the request envelope (not chat-level state)
      * because each dispatch is an independent decision.
      */
-    dmTargetParticipantId?: string
+    dmTargetParticipantId?: string,
+    /**
+     * Plan-mode approval elevates the run off read-only: Approve re-dispatches
+     * with `approvalMode: 'default'` so ComposerService re-derives write
+     * permissions (the HMAC posture clamp re-signs). Undefined inherits the
+     * chat's composer selection.
+     */
+    approvalModeOverride?: string
   ) => {
-    const baseRequest = buildRunRequest(overrideModel, existingPrompt)
+    const baseRequest = buildRunRequest(
+      overrideModel,
+      existingPrompt,
+      approvalModeOverride ? { approvalMode: approvalModeOverride } : undefined
+    )
     const request = dmTargetParticipantId ? { ...baseRequest, dmTargetParticipantId } : baseRequest
     if (!request.prompt.trim()) {
       return
@@ -13009,6 +13058,63 @@ function App(): React.JSX.Element {
 
     setPendingPlanChoice((prev) => (prev?.messageId === messageId ? null : prev))
     handleRun(undefined, option)
+  }
+
+  // Plan-mode proposed-plan decisions (the ProposedPlanCard action row).
+  // Approve leaves read-only and implements; Respond/Dismiss stay in plan mode.
+  const handleProposedPlanApprove = (messageId: string, planBody: string) => {
+    if (!currentChat) return
+    const original =
+      pendingProposedPlan?.messageId === messageId ? pendingProposedPlan.body : null
+    setPendingProposedPlan((prev) => (prev?.messageId === messageId ? null : prev))
+    const trimmed = planBody.trim()
+    const isEdited = original != null && trimmed !== original.trim()
+    const prompt = isEdited
+      ? `The plan above is approved with edits — implement this version now:\n\n${trimmed}`
+      : 'The plan above is approved — implement it now.'
+    // Approving LEAVES plan mode. Persist 'default' on the chat FIRST: the
+    // main-side posture cap is downgrade-only, so a sticky 'plan' pill would
+    // otherwise outrank the per-dispatch 'default' override and silently keep
+    // the implement run read-only. This makes the trusted posture 'default'.
+    rememberCurrentChatComposerSelection({ approvalMode: 'default' })
+    setApprovalMode('default')
+    setCurrentChat((prev) => {
+      if (!prev) return prev
+      const nextMessage: ChatMessage = {
+        id: createMessageId(),
+        role: 'user',
+        content: prompt,
+        timestamp: new Date().toISOString()
+      }
+      const updated = { ...prev, messages: [...prev.messages, nextMessage] }
+      window.api.saveChat(updated)
+      return updated
+    })
+    // Elevate off plan/read-only so the implementation run can write files.
+    handleRun(undefined, prompt, undefined, 'default')
+  }
+
+  const handleProposedPlanDismiss = (messageId: string) => {
+    setPendingProposedPlan((prev) => (prev?.messageId === messageId ? null : prev))
+  }
+
+  const handleProposedPlanCustom = (messageId: string, feedback: string) => {
+    if (!currentChat || !feedback.trim()) return
+    setPendingProposedPlan((prev) => (prev?.messageId === messageId ? null : prev))
+    setCurrentChat((prev) => {
+      if (!prev) return prev
+      const nextMessage: ChatMessage = {
+        id: createMessageId(),
+        role: 'user',
+        content: feedback,
+        timestamp: new Date().toISOString()
+      }
+      const updated = { ...prev, messages: [...prev.messages, nextMessage] }
+      window.api.saveChat(updated)
+      return updated
+    })
+    // Respond = revise the plan; STAY in plan mode (no permission elevation).
+    handleRun(undefined, feedback)
   }
 
   // QMOD (1.0.3) — user picked an answer (or typed free-text) for an
@@ -20171,6 +20277,10 @@ function App(): React.JSX.Element {
                 chats={chats}
                 runningChatIds={runningChatIdsArray}
                 onPlanChoiceSubmit={handlePlanChoiceSubmit}
+                pendingProposedPlan={pendingProposedPlan}
+                onProposedPlanApprove={handleProposedPlanApprove}
+                onProposedPlanDismiss={handleProposedPlanDismiss}
+                onProposedPlanCustom={handleProposedPlanCustom}
                 onRunFallback={handleRunFallback}
                 onOpenSubThread={handleOpenCockpitThread}
                 onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
@@ -20518,6 +20628,10 @@ function App(): React.JSX.Element {
               chats={chats}
               runningChatIds={runningChatIdsArray}
               onPlanChoiceSubmit={() => {}}
+              pendingProposedPlan={null}
+              onProposedPlanApprove={() => {}}
+              onProposedPlanDismiss={() => {}}
+              onProposedPlanCustom={() => {}}
               onRunFallback={() => {}}
               onOpenSubThread={handleOpenCockpitThread}
               onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}

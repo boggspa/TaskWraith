@@ -36,6 +36,15 @@ export function ProposedPlanCard({
   const [mode, setMode] = useState<CardMode>('view')
   const [draftBody, setDraftBody] = useState(body)
   const [customText, setCustomText] = useState('')
+  // Latch: a decision dispatches a run (Approve elevates to write), and the card
+  // stays mounted until the parent clears state, so a fast double-click could
+  // dispatch twice. Fire once.
+  const [submitted, setSubmitted] = useState(false)
+  const fire = (action: () => void) => {
+    if (submitted) return
+    setSubmitted(true)
+    action()
+  }
 
   const editRows = useMemo(
     () => Math.min(24, Math.max(6, draftBody.split('\n').length + 1)),
@@ -87,7 +96,7 @@ export function ProposedPlanCard({
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && customText.trim()) {
                 event.preventDefault()
-                onCustom(customText.trim())
+                fire(() => onCustom(customText.trim()))
               }
             }}
           />
@@ -98,8 +107,8 @@ export function ProposedPlanCard({
             <button
               type="button"
               className="proposed-plan-btn proposed-plan-primary"
-              disabled={!customText.trim()}
-              onClick={() => onCustom(customText.trim())}
+              disabled={submitted || !customText.trim()}
+              onClick={() => fire(() => onCustom(customText.trim()))}
             >
               Send response
             </button>
@@ -120,8 +129,8 @@ export function ProposedPlanCard({
           <button
             type="button"
             className="proposed-plan-btn proposed-plan-primary"
-            disabled={!draftBody.trim()}
-            onClick={() => onApprove(draftBody.trim())}
+            disabled={submitted || !draftBody.trim()}
+            onClick={() => fire(() => onApprove(draftBody.trim()))}
             title="Approve the edited plan and implement it"
           >
             Approve edited plan
@@ -132,21 +141,39 @@ export function ProposedPlanCard({
           <button
             type="button"
             className="proposed-plan-btn proposed-plan-dismiss"
-            onClick={onDismiss}
+            disabled={submitted}
+            onClick={() => fire(onDismiss)}
             title="Dismiss without implementing"
           >
             Dismiss
           </button>
-          <button type="button" className="proposed-plan-btn" onClick={() => setMode('custom')}>
+          <button
+            type="button"
+            className="proposed-plan-btn"
+            disabled={submitted}
+            onClick={() => {
+              setExpanded(true)
+              setMode('custom')
+            }}
+          >
             Respond…
           </button>
-          <button type="button" className="proposed-plan-btn" onClick={() => setMode('edit')}>
+          <button
+            type="button"
+            className="proposed-plan-btn"
+            disabled={submitted}
+            onClick={() => {
+              setExpanded(true)
+              setMode('edit')
+            }}
+          >
             Edit
           </button>
           <button
             type="button"
             className="proposed-plan-btn proposed-plan-primary"
-            onClick={() => onApprove(draftBody.trim())}
+            disabled={submitted}
+            onClick={() => fire(() => onApprove(draftBody.trim()))}
             title="Approve this plan and implement it with edit permissions"
           >
             Approve &amp; implement

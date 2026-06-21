@@ -50,6 +50,8 @@ import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturn
 import { ParticipantHealthCard } from './ParticipantHealthCard'
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { MarkdownMessage } from './MarkdownMessage'
+import { ProposedPlanCard } from './ProposedPlanCard'
+import type { ProposedPlanState } from '../lib/proposedPlan'
 import { MessageActionsChip } from './MessageActionsChip'
 import {
   TranscriptMessageContextMenu,
@@ -82,6 +84,7 @@ export type TranscriptPanelProps = {
   isThinking: boolean
   showFallbackUX: boolean
   pendingPlanChoice: PlanChoiceState | null
+  pendingProposedPlan: ProposedPlanState | null
   pendingAgentQuestions: readonly AgentQuestionState[]
   onAgentQuestionSubmit: (questionId: string, answer: string, isCustom: boolean) => void
   onAgentQuestionDismiss: (questionId: string) => void
@@ -150,6 +153,9 @@ export type TranscriptPanelProps = {
    * delegation card and the chat-header ticker can show live state. */
   runningChatIds: string[]
   onPlanChoiceSubmit: (messageId: string, option: string) => void
+  onProposedPlanApprove: (messageId: string, planBody: string) => void
+  onProposedPlanDismiss: (messageId: string) => void
+  onProposedPlanCustom: (messageId: string, feedback: string) => void
   onRunFallback: (model: string) => void
   onOpenSubThread: (chatId: string) => void
   onOpenSubThreadInSidePanel?: (chatId: string, presentation?: 'split' | 'drawer') => void
@@ -677,6 +683,7 @@ export const TranscriptPanel = memo(
     isThinking,
     showFallbackUX,
     pendingPlanChoice,
+    pendingProposedPlan,
     pendingAgentQuestions,
     onAgentQuestionSubmit,
     onAgentQuestionDismiss,
@@ -703,6 +710,9 @@ export const TranscriptPanel = memo(
     chats,
     runningChatIds,
     onPlanChoiceSubmit,
+    onProposedPlanApprove,
+    onProposedPlanDismiss,
+    onProposedPlanCustom,
     onRunFallback,
     onOpenSubThread,
     onOpenSubThreadInSidePanel,
@@ -1467,6 +1477,16 @@ export const TranscriptPanel = memo(
                         </div>
                       </div>
                     )}
+                    {pendingProposedPlan && pendingProposedPlan.messageId === msg.id && (
+                      <ProposedPlanCard
+                        title={pendingProposedPlan.title}
+                        body={pendingProposedPlan.body}
+                        chat={currentChat || undefined}
+                        onApprove={(planBody) => onProposedPlanApprove(msg.id, planBody)}
+                        onDismiss={() => onProposedPlanDismiss(msg.id)}
+                        onCustom={(feedback) => onProposedPlanCustom(msg.id, feedback)}
+                      />
+                    )}
                     {pendingAgentQuestions
                       .filter((question) => question.messageId === msg.id)
                       .map((question) => (
@@ -1772,6 +1792,7 @@ export const TranscriptPanel = memo(
     previous.isThinking === next.isThinking &&
     previous.showFallbackUX === next.showFallbackUX &&
     previous.pendingPlanChoice === next.pendingPlanChoice &&
+    previous.pendingProposedPlan === next.pendingProposedPlan &&
     previous.pendingAgentQuestions === next.pendingAgentQuestions &&
     previous.onAgentQuestionSubmit === next.onAgentQuestionSubmit &&
     previous.onAgentQuestionDismiss === next.onAgentQuestionDismiss &&
