@@ -2154,13 +2154,25 @@ public final class RemoteSessionModel: ObservableObject {
 
     private func mergeThreadSnapshot(_ incoming: RemoteThreadSnapshot, key: String) {
         let filteredIncoming = snapshotFilteringHiddenRunSummaries(incoming, key: key)
+        let incomingRows = filteredIncoming.rows ?? []
+        // Recover a backgrounded-missed completion: if this snapshot shows the
+        // run our live buffer is streaming has ENDED, the live `agent-exit` that
+        // normally clears the buffers never arrived (the WS was suspended while
+        // backgrounded), so clear them here. Otherwise `liveStreamRunId` stays
+        // non-nil → the thread is stuck "running" and the partial live bubble
+        // masks the finalized message. ONLY when this snapshot carries rows, so
+        // the finalized rows replace the bubble in the same pass (no empty
+        // flash); and against the UNFILTERED `incoming` so a user-dismissed run
+        // summary still counts as ended. Mirrors the agent-exit clear path.
+        if !incomingRows.isEmpty {
+            reconcileStreamingState(against: incoming, key: key)
+        }
         guard let current = threadSnapshots[key] else {
             threadSnapshots[key] = filteredIncoming
             return
         }
         let filteredCurrent = snapshotFilteringHiddenRunSummaries(current, key: key)
 
-        let incomingRows = filteredIncoming.rows ?? []
         let currentRows = filteredCurrent.rows ?? []
         if incomingRows.isEmpty {
             return
@@ -2194,6 +2206,41 @@ public final class RemoteSessionModel: ObservableObject {
         threadSnapshots[key] = mergedSnapshot(
             base: filteredIncoming, fallback: filteredCurrent, rows: rows, windowStartIndex: start,
             totalRows: totalRows)
+    }
+
+    /// Clear orphaned live-stream buffers when a freshly-merged snapshot shows
+    /// the run they were streaming has terminated. The reconnect/foreground
+    /// recovery for a run that finished while the app was backgrounded (its live
+    /// `agent-exit` was never delivered, so the buffers were never cleared and
+    /// `liveStreamRunId` is stuck non-nil). Matched by the LIVE run id so a NEW
+    /// run streaming on the same thread is never cleared by an OLD run's
+    /// terminal summary. Clears the same buffer set as the agent-exit path.
+    private func reconcileStreamingState(against snapshot: RemoteThreadSnapshot, key: String) {
+        guard let liveRunId = streamingRunIds[key] else { return }
+        var summaries = snapshot.runSummaries ?? []
+        if let latest = snapshot.runSummary { summaries.append(latest) }
+        guard let match = summaries.first(where: { $0.runId == liveRunId }),
+            match.endedAt != nil || Self.isFinishedRunStatus(match.status)
+        else { return }
+        streamingTexts[key] = nil
+        streamingSegments[key] = nil
+        streamingRunIds[key] = nil
+        streamingProviders[key] = nil
+        streamingItemIds[key] = nil
+    }
+
+    /// Terminal run-status vocabulary the Mac projects (bridge runs flip
+    /// ChatRun.status to success/failed on finalize; the broader set is defensive
+    /// against other providers). `endedAt` is the primary terminal signal; this
+    /// is the fallback when a summary carries a status but no end timestamp.
+    private static func isFinishedRunStatus(_ status: String?) -> Bool {
+        guard let status else { return false }
+        switch status {
+        case "success", "failed", "completed", "complete", "cancelled", "canceled", "error", "done":
+            return true
+        default:
+            return false
+        }
     }
 
     private func currentRunSummaryFingerprints(
