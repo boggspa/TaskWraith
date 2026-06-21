@@ -84,9 +84,23 @@ function requirementSummary(target: LaunchTarget): string {
     : requirement.label
 }
 
+function requirementOptionSummary(target: LaunchTarget): string {
+  const requirement = target.requirements?.find((item) => item.required)
+  const options = requirement?.options || []
+  if (options.length === 0) return ''
+  const labels = options.slice(0, 4).map((option) => {
+    const suffix = option.available === false ? ' unavailable' : ''
+    return `${option.label}${suffix}`
+  })
+  const remaining = options.length - labels.length
+  return remaining > 0 ? `${labels.join(', ')}, +${remaining} more` : labels.join(', ')
+}
+
 function targetDisabledReason(target: LaunchTarget, fallback: string): string {
   const requirement = target.requirements?.find((item) => item.required)
-  return requirement?.reason || fallback
+  const reason = requirement?.reason || fallback
+  const options = requirementOptionSummary(target)
+  return options ? `${reason} Options: ${options}.` : reason
 }
 
 function targetStateFromAttempt(attempt: LaunchAttempt): LaunchPreviewTargetState {

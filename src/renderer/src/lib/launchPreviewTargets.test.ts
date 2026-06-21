@@ -213,7 +213,12 @@ describe('buildLaunchPreviewTargets', () => {
               required: true,
               options: [
                 { id: 'generic-ios-device', label: 'Any iOS Device', platform: 'ios' },
-                { id: 'generic-ios-simulator', label: 'Any iOS Simulator Device', platform: 'ios' }
+                {
+                  id: 'generic-ios-simulator',
+                  label: 'Any iOS Simulator Device',
+                  platform: 'ios',
+                  available: false
+                }
               ]
             }
           ]
@@ -227,7 +232,8 @@ describe('buildLaunchPreviewTargets', () => {
       action: 'disabled',
       state: 'blocked',
       subtitle: expect.stringContaining('Run destination: 2 options'),
-      reason: 'Choose a device, simulator, or Mac destination before launching this Xcode scheme.'
+      reason:
+        'Choose a device, simulator, or Mac destination before launching this Xcode scheme. Options: Any iOS Device, Any iOS Simulator Device unavailable.'
     })
   })
 
