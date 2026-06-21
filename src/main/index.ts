@@ -290,7 +290,14 @@ import {
 import { ChatService } from './services/ChatService'
 import { detectConfiguredProviders } from './ProviderConfiguration'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
-import { applyReroutePlanToPayload, resolveProviderDispatch } from './ProviderRunPause'
+import { applyReroutePlanToPayload, isProviderPaused, resolveProviderDispatch } from './ProviderRunPause'
+import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
+import { isNonEscalatingPreset, reroutePresetId } from './RerouteFailoverPosture'
+import {
+  runProviderAutoFailover,
+  type AutoFailoverNotice,
+  type FailoverRunSnapshot
+} from './services/ProviderAutoFailover'
 import { ComposerService, type ComposerInput } from './services/ComposerService'
 import {
   DiscordContextService,
@@ -1224,6 +1231,145 @@ let approvalService: ApprovalService | null = null
 // the newly-created sub-thread without going through the renderer.
 // Stays null until whenReady; the consumer null-checks.
 let runCoordinatorRef: RunCoordinator | null = null
+// Provider auto-failover (quota-wall kill-switch) — module-scope state.
+// `dispatchRunWithProviderPauseRef` is assigned inside whenReady so the
+// failover orchestrator (module scope) can re-dispatch through the same
+// pause/reroute seam the renderer + bridge use.
+let dispatchRunWithProviderPauseRef:
+  | ((
+      payload: AgentRunPayload,
+      event: { sender: Electron.WebContents }
+    ) => Promise<{ dispatched: boolean; appRunId: string }>)
+  | null = null
+const quotaWallSignalByRun = new Map<string, { provider: ProviderId; resetHintAt?: string }>()
+const failoverSnapshotByRun = new Map<string, FailoverRunSnapshot>()
+
+/**
+ * Re-derive + re-sign a CAPPED, non-escalating permission posture for an
+ * auto-failover reroute TARGET. Runs at the dispatch seam after
+ * applyReroutePlanToPayload cleared the cross-provider posture, before
+ * normalize would downgrade it. Mutates routedPayload in place. Scoped to
+ * failover runs so manual reroutes keep their existing fail-closed behavior.
+ */
+function applyFailoverReroutePosture(
+  routedPayload: AgentRunPayload,
+  originalPayload: AgentRunPayload
+): void {
+  const target = routedPayload.provider
+  // Ollama is forced to plan/read-only by every first-party producer (its tool
+  // tier ladder lives outside the posture object); mirror that for parity.
+  if (target === 'ollama') routedPayload.approvalMode = 'plan'
+  const cappedMode = routedPayload.approvalMode
+  const originalPresetId = originalPayload.effectivePermissions?.presetId
+  const presetId = reroutePresetId(cappedMode, originalPresetId, target)
+  if (!isNonEscalatingPreset(presetId, originalPresetId)) {
+    // Would escalate ⇒ bail; normalize then fails it closed to read-only.
+    return
+  }
+  let effective: EffectiveRunPermissions | undefined
+  if (presetId && !(routedPayload.scope === 'global' && cappedMode !== 'plan')) {
+    effective = resolveEffectiveRunPermissions({
+      provider: target,
+      workspacePath: routedPayload.scope === 'global' ? undefined : routedPayload.workspace,
+      settings: AppStore.getSettings(),
+      presetId
+    })
+  }
+  routedPayload.effectivePermissions = effective
+  routedPayload.effectivePermissionsSignature = signRunPosture(
+    routedPayload.approvalMode,
+    effective,
+    runPostureContextFromPayload(routedPayload)
+  )
+}
+
+/** Snapshot a dispatched request so a future quota wall can re-run it faithfully. */
+function captureFailoverSnapshot(payload: AgentRunPayload): FailoverRunSnapshot {
+  return {
+    provider: payload.provider,
+    scope: payload.scope,
+    workspace: payload.workspace,
+    prompt: payload.prompt,
+    appChatId: payload.appChatId,
+    approvalMode: payload.approvalMode,
+    effectivePermissions: payload.effectivePermissions,
+    model: payload.model,
+    reasoningEffort: payload.reasoningEffort,
+    serviceTier: payload.serviceTier,
+    claudeReasoningEffort: payload.claudeReasoningEffort,
+    claudeFastMode: payload.claudeFastMode,
+    kimiThinking: payload.kimiThinking,
+    runtimeProfileId: payload.runtimeProfileId,
+    geminiAuthProfileId: payload.geminiAuthProfileId,
+    failoverHopCount: payload.failoverHopCount
+  }
+}
+
+/** Gate + fire an auto-failover on a terminal failed exit; prune per-run state. */
+function maybeTriggerProviderAutoFailover(
+  appRunId: string,
+  provider: ProviderId,
+  appChatId: string | undefined,
+  exitCode: number | null
+): void {
+  const failed = (exitCode ?? -1) !== 0
+  const signal = quotaWallSignalByRun.get(appRunId)
+  const snapshot = failoverSnapshotByRun.get(appRunId)
+  quotaWallSignalByRun.delete(appRunId)
+  failoverSnapshotByRun.delete(appRunId)
+  if (!failed) return
+  if (!signal || AppStore.getSettings().autoFailoverEnabled !== true) return
+  // Dedup is via signal consumption above (signal+snapshot are deleted before
+  // we fire), so a second terminal exit for the same run finds no signal and
+  // no-ops — no separate triggered-ids set needed.
+  // Ensemble participant runs share per-round accounting — never fail them over.
+  const chat = appChatId ? AppStore.getChat(appChatId) : undefined
+  if (chat?.chatKind === 'ensemble') return
+  void triggerProviderAutoFailover(appRunId, provider, appChatId, signal.resetHintAt, snapshot)
+}
+
+/** Wire the failover orchestrator to live main-process dependencies. */
+async function triggerProviderAutoFailover(
+  failedRunId: string,
+  failedProvider: ProviderId,
+  appChatId: string | undefined,
+  resetHintAt: string | undefined,
+  snapshot: FailoverRunSnapshot | undefined
+): Promise<void> {
+  const dispatchRef = dispatchRunWithProviderPauseRef
+  if (!dispatchRef) return
+  const sender =
+    mainWindow?.webContents && !mainWindow.webContents.isDestroyed()
+      ? mainWindow.webContents
+      : createHeadlessRunSender()
+  try {
+    await runProviderAutoFailover(
+      {
+        getSettings: () => AppStore.getSettings(),
+        updateSettings: (partial) => AppStore.updateSettings(partial),
+        availableProviders: () => selectableProviderIds(),
+        isPaused: (candidate) => isProviderPaused(AppStore.getSettings(), candidate),
+        signPosture: (mode, eff, ctx) => signRunPosture(mode, eff, ctx),
+        makeRunId: (candidate) => createFallbackRunId(candidate),
+        dispatch: (payload) => dispatchRef(payload, { sender }),
+        notify: (notice) => emitAutoFailoverNotice(notice)
+      },
+      { failedRunId, failedProvider, appChatId, snapshot, resetHintAt }
+    )
+  } catch (error) {
+    console.warn('[auto-failover] orchestration failed', error)
+  }
+}
+
+function emitAutoFailoverNotice(notice: AutoFailoverNotice): void {
+  if (notice.kind === 'rerouted') {
+    console.info(
+      `[auto-failover] ${notice.failedProvider} quota wall → rerouted to ${notice.target} (resets ${notice.until}); new run ${notice.newRunId}`
+    )
+  } else {
+    console.warn(`[auto-failover] ${notice.kind} for ${notice.failedProvider}`)
+  }
+}
 let ensembleOrchestratorRef: EnsembleOrchestrator | null = null
 let wakeupTimerServiceRef: WakeupTimerService | null = null
 let sessionCheckpointStoreRef: SessionCheckpointStore | null = null
@@ -2190,6 +2336,10 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
     runtimeProfileId: optionalString(payload.runtimeProfileId),
     geminiAuthProfileId: optionalStringOrNull(payload.geminiAuthProfileId),
     handoffSourceRunId: optionalString(payload.handoffSourceRunId),
+    failoverHopCount:
+      typeof payload.failoverHopCount === 'number' && Number.isFinite(payload.failoverHopCount)
+        ? payload.failoverHopCount
+        : undefined,
     effectivePermissions: clampedPosture.effectivePermissions,
     effectivePermissionsSignature: clampedPosture.signature,
     ensembleRun: normalizeEnsembleRunIdentity(payload.ensembleRun),
@@ -9193,6 +9343,14 @@ function sendAgentCompatError(
       bridgeState.errorMessage = error
     }
   }
+  // Auto-failover: classify the provider's error channel for a quota wall (429)
+  // and stash the signal keyed by run; the terminal exit decides whether to act.
+  if (routed.appRunId && AppStore.getSettings().autoFailoverEnabled) {
+    const verdict = classifyProviderQuotaWall(provider, error)
+    if (verdict.hit) {
+      quotaWallSignalByRun.set(routed.appRunId, { provider, resetHintAt: verdict.resetHintAt })
+    }
+  }
   publishRunEvent('agent-error', provider, routed, sender)
   if (provider === 'gemini') {
     publishRunEvent('gemini-error', provider, routed, sender)
@@ -9231,6 +9389,9 @@ function sendAgentCompatExit(
       routed.appRunId,
       (code ?? -1) === 0 ? 'success' : 'failed'
     )
+    // Auto-failover: on a terminal FAILED exit with a stashed quota-wall signal,
+    // pause the throttled provider and re-dispatch the request to a healthy one.
+    maybeTriggerProviderAutoFailover(routed.appRunId, provider, routed.appChatId, code)
   }
   publishRunEvent('agent-exit', provider, routed, sender)
   if (provider === 'gemini') {
@@ -22033,6 +22194,14 @@ if (isGeminiMcpBridgeProcess) {
     ): Promise<{ dispatched: boolean; appRunId: string }> => {
       const resolution = resolveProviderDispatch(AppStore.getSettings(), payload.provider)
       const routedPayload = applyReroutePlanToPayload(payload, resolution)
+      // Auto-failover re-dispatch: a provider-change reroute clears
+      // effectivePermissions, which normalize would then downgrade to read-only.
+      // Re-derive + re-sign a CAPPED, non-escalating posture for the target so a
+      // failover PRESERVES (never raises) the user's approved authority. Scoped
+      // to failover runs (failoverHopCount set) so manual reroutes are unchanged.
+      if (resolution.reroute && typeof routedPayload.failoverHopCount === 'number') {
+        applyFailoverReroutePosture(routedPayload, payload)
+      }
       // Self-heal stale persisted MCP configs on EVERY dispatch path, not
       // just renderer capability refreshes — bridge (iOS) dispatches on a
       // Mac whose UI never opens the capabilities panel were running with
@@ -22044,8 +22213,14 @@ if (isGeminiMcpBridgeProcess) {
           ? routedPayload.workspace
           : undefined
       await repairKnownStaleGeminiMcpBridgeConfigs(repairCwd).catch(() => {})
-      return runCoordinator.dispatch(routedPayload, event)
+      const dispatchResult = await runCoordinator.dispatch(routedPayload, event)
+      // Snapshot the dispatched request so a later quota wall can re-run it.
+      if (AppStore.getSettings().autoFailoverEnabled && dispatchResult.appRunId) {
+        failoverSnapshotByRun.set(dispatchResult.appRunId, captureFailoverSnapshot(routedPayload))
+      }
+      return dispatchResult
     }
+    dispatchRunWithProviderPauseRef = dispatchRunWithProviderPause
     if (messageBridgeRuntime) {
       const {
         messageChannelBindingStore,
