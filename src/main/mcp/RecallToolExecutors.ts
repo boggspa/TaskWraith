@@ -21,8 +21,9 @@
  * `not_implemented` here).
  */
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
-import type { ProviderId, RunQueueJob, WorkspaceRecord } from '../store/types'
+import type { ProviderId, RunEventRecord, RunQueueJob, WorkspaceRecord } from '../store/types'
 import { resolveCanonicalWorkspaceId } from '../WorkspaceIdentity'
+import { createRunEventReplay } from '../RunEventStore'
 import {
   RECALL_TOP_K,
   normalizeProviderQuery,
@@ -67,6 +68,18 @@ export interface RecallToolExecutorDeps {
    * provided and it returns false for the target workspace, find refuses —
    * defence for a remote caller (host-issued recall is the v1 path). */
   isWorkspaceVisibleToCaller?: (workspaceId: string, context: RecallToolContext) => boolean
+  /** Read-verb deps (Slice 4). */
+  getRunQueueJob: (runId: string) => RunQueueJob | null
+  getRunEvents: (runId: string) => RunEventRecord[]
+  /** The run's final assistant message text (durable result), or null. */
+  loadFinalAssistantMessage: (input: { runId: string; chatId: string | null }) => string | null
+  /** Best-effort plan/todo progress for the run, or null. */
+  loadPlanProgress?: (input: { runId: string; chatId: string | null }) => {
+    done: number
+    total: number
+  } | null
+  /** Mint an opaque per-serving citation token (Slice 5 makes it verifiable). */
+  mintCitationToken: (input: { runId: string; kind: string }) => string
   now: () => number
   normalizePath?: (value: string) => string
   timeZone?: string
@@ -200,6 +213,135 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
     })
   }
 
+  function workspaceLabelFor(workspaceId: string | null | undefined): string | null {
+    if (!workspaceId) return null
+    const workspaces = deps.getWorkspaces()
+    const canonical = resolveCanonicalWorkspaceId(workspaceId, workspaces, deps.normalizePath)
+    if (!canonical) return null
+    return workspaces.find((w) => w.id === canonical)?.displayName ?? null
+  }
+
+  function truncate(value: string, max: number): string {
+    return value.length > max ? `${value.slice(0, max)}…` : value
+  }
+
+  function executeRead(rawArgs: unknown): McpToolExecutionResult {
+    const tool = 'tw_recall_read'
+    const args = asRecord(rawArgs)
+    const runId = asOptString(args.runId)
+    if (!runId)
+      return fail(tool, '`runId` is required (use a runId from a tw_recall_find candidate).')
+
+    // Fail closed when the run's forensics were deleted — never return an
+    // empty-but-plausible shell (the #1 confabulation trap).
+    if (!deps.isForensicsAvailable(runId)) {
+      return jsonResult({
+        ok: true,
+        tool,
+        runId,
+        available: false,
+        reason: 'forensics_deleted',
+        message: "That run's history was deleted, so I can't see how far it got."
+      })
+    }
+
+    const events = deps.getRunEvents(runId)
+    if (events.length === 0) {
+      return jsonResult({
+        ok: true,
+        tool,
+        runId,
+        available: false,
+        reason: 'no_events',
+        message: 'No durable events were recorded for that run.'
+      })
+    }
+
+    const job = deps.getRunQueueJob(runId)
+    const replay = createRunEventReplay(runId, events)
+    const startedAt = job?.startedAt || replay.startedAt || null
+    const endedAt =
+      job?.endedAt ||
+      job?.completedAt ||
+      job?.failedAt ||
+      job?.cancelledAt ||
+      replay.endedAt ||
+      null
+    const durationMs =
+      startedAt && endedAt ? Math.max(0, Date.parse(endedAt) - Date.parse(startedAt)) : null
+    const finalMessage = deps.loadFinalAssistantMessage({ runId, chatId: job?.chatId ?? null })
+    const planProgress = deps.loadPlanProgress?.({ runId, chatId: job?.chatId ?? null }) ?? null
+    const citationToken = deps.mintCitationToken({ runId, kind: 'read' })
+
+    const result: Record<string, unknown> = {
+      ok: true,
+      tool,
+      runId,
+      available: true,
+      provider: job?.provider ?? null,
+      workspace: workspaceLabelFor(job?.workspaceId),
+      status: job?.status ?? 'unknown',
+      startedAt,
+      endedAt,
+      durationMs,
+      counts: replay.countsByKind,
+      finalMessage: finalMessage ? truncate(finalMessage, 4000) : null,
+      planProgress,
+      citationToken
+    }
+    if (asOptString(args.depth) === 'full') {
+      result.timeline = replay.timeline.slice(-40).map((entry) => ({
+        sequence: entry.sequence,
+        kind: entry.kind,
+        summary: entry.summary,
+        timestamp: entry.timestamp
+      }))
+    }
+    return jsonResult(result)
+  }
+
+  function executeReadEvents(rawArgs: unknown): McpToolExecutionResult {
+    const tool = 'tw_recall_read_events'
+    const args = asRecord(rawArgs)
+    const runId = asOptString(args.runId)
+    if (!runId)
+      return fail(tool, '`runId` is required (use a runId from a tw_recall_find candidate).')
+
+    if (!deps.isForensicsAvailable(runId)) {
+      return jsonResult({ ok: true, tool, runId, available: false, reason: 'forensics_deleted' })
+    }
+
+    const kind = asOptString(args.kind)
+    const all = deps.getRunEvents(runId)
+    const filtered = kind ? all.filter((event) => event.kind === kind) : all
+    const requested = asOptNumber(args.limit)
+    const limit = requested && requested > 0 ? Math.min(100, Math.floor(requested)) : 30
+    const sliced = filtered.slice(-limit)
+    const citationToken = deps.mintCitationToken({ runId, kind: 'read_events' })
+
+    return jsonResult({
+      ok: true,
+      tool,
+      runId,
+      available: true,
+      count: sliced.length,
+      totalAvailable: filtered.length,
+      truncated: filtered.length > sliced.length,
+      disclaimer:
+        'Long runs are compacted on disk; older detail may be summarized rather than verbatim.',
+      citationToken,
+      events: sliced.map((event) => ({
+        sequence: event.sequence,
+        kind: event.kind,
+        phase: event.phase,
+        summary: event.summary,
+        timestamp: event.timestamp,
+        payloadPreview:
+          event.payload != null ? truncate(JSON.stringify(event.payload), 600) : undefined
+      }))
+    })
+  }
+
   async function executeRecallTool(
     toolName: RecallMcpToolName,
     rawArgs: unknown,
@@ -211,11 +353,9 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
         case 'tw_recall_find':
           return executeFind(rawArgs, context)
         case 'tw_recall_read':
+          return executeRead(rawArgs)
         case 'tw_recall_read_events':
-          return fail(
-            toolName,
-            `${toolName} is not implemented yet — the recall read verbs land in the next slice.`
-          )
+          return executeReadEvents(rawArgs)
         default:
           return fail(toolName, `Unknown recall tool "${toolName}".`)
       }

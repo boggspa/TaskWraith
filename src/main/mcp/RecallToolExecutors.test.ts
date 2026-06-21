@@ -5,7 +5,7 @@ import {
   isRecallMcpToolName,
   type RecallToolExecutorDeps
 } from './RecallToolExecutors'
-import type { RunQueueJob, WorkspaceRecord } from '../store/types'
+import type { RunEventRecord, RunQueueJob, WorkspaceRecord } from '../store/types'
 
 const NOW = new Date(2026, 5, 15, 12, 0, 0).getTime()
 
@@ -44,6 +44,20 @@ function job(over: Partial<RunQueueJob>): RunQueueJob {
   } as RunQueueJob
 }
 
+function ev(over: Partial<RunEventRecord>): RunEventRecord {
+  return {
+    schemaVersion: 1,
+    id: over.id ?? 's',
+    sequence: over.sequence ?? 1,
+    runId: over.runId ?? 'run',
+    kind: over.kind ?? 'tool',
+    phase: over.phase ?? 'normalized',
+    source: over.source ?? 'main',
+    timestamp: over.timestamp ?? new Date(2026, 5, 14, 18, 2).toISOString(),
+    ...over
+  } as RunEventRecord
+}
+
 function deps(over: Partial<RecallToolExecutorDeps> = {}): RecallToolExecutorDeps {
   return {
     listRunQueueJobs: () => [],
@@ -51,6 +65,10 @@ function deps(over: Partial<RecallToolExecutorDeps> = {}): RecallToolExecutorDep
     resolveCallerWorkspaceId: () => 'ws-home',
     loadChatText: () => null,
     isForensicsAvailable: () => true,
+    getRunQueueJob: () => null,
+    getRunEvents: () => [],
+    loadFinalAssistantMessage: () => null,
+    mintCitationToken: ({ kind }) => `tok-${kind}`,
     now: () => NOW,
     ...over
   }
@@ -147,13 +165,107 @@ describe('tw_recall_find executor', () => {
   })
 })
 
-describe('recall read verbs (slice 2 — still inert)', () => {
-  it('returns not-implemented for read + read_events', async () => {
-    const { executeRecallTool } = createRecallToolExecutors(deps())
-    for (const name of ['tw_recall_read', 'tw_recall_read_events'] as const) {
-      const res = await executeRecallTool(name, { runId: 'r1' }, {}, 'claude')
-      expect(res.isError).toBe(true)
-      expect(res.text).toContain('not implemented')
-    }
+function readDeps(): RecallToolExecutorDeps {
+  return deps({
+    getRunQueueJob: () =>
+      job({
+        runId: 'r1',
+        workspaceId: 'ws-home',
+        status: 'failed',
+        startedAt: new Date(2026, 5, 14, 18, 0).toISOString(),
+        failedAt: new Date(2026, 5, 14, 18, 10).toISOString(),
+        chatId: 'c1'
+      }),
+    getRunEvents: () => [
+      ev({ runId: 'r1', kind: 'lifecycle', sequence: 1, payload: { status: 'started' } }),
+      ev({ runId: 'r1', kind: 'tool', sequence: 2 }),
+      ev({ runId: 'r1', kind: 'diff', sequence: 3 }),
+      ev({ runId: 'r1', kind: 'lifecycle', sequence: 4, payload: { status: 'failed' } })
+    ],
+    loadFinalAssistantMessage: () => 'Wired the endpoint but the new tests are red.',
+    loadPlanProgress: () => ({ done: 4, total: 7 }),
+    mintCitationToken: ({ runId, kind }) => `recall:${runId}:${kind}`
+  })
+}
+
+async function callTool(
+  name: 'tw_recall_read' | 'tw_recall_read_events',
+  args: Record<string, unknown>,
+  d: RecallToolExecutorDeps
+): Promise<{ structuredContent: Record<string, unknown>; isError?: boolean }> {
+  const { executeRecallTool } = createRecallToolExecutors(d)
+  const res = await executeRecallTool(name, args, {}, 'claude')
+  return {
+    structuredContent: res.structuredContent as Record<string, unknown>,
+    isError: res.isError
+  }
+}
+
+describe('tw_recall_read', () => {
+  it('returns a rollup + final message + plan progress + citation token', async () => {
+    const { structuredContent: out } = await callTool('tw_recall_read', { runId: 'r1' }, readDeps())
+    expect(out.available).toBe(true)
+    expect(out.status).toBe('failed')
+    expect(String(out.finalMessage)).toContain('tests are red')
+    expect(out.planProgress).toEqual({ done: 4, total: 7 })
+    expect((out.counts as Record<string, number>).tool).toBe(1)
+    expect(out.durationMs).toBe(10 * 60 * 1000)
+    expect(out.citationToken).toBe('recall:r1:read')
+    expect(out.timeline).toBeUndefined()
+  })
+
+  it('includes a bounded timeline at depth=full', async () => {
+    const { structuredContent: out } = await callTool(
+      'tw_recall_read',
+      { runId: 'r1', depth: 'full' },
+      readDeps()
+    )
+    expect((out.timeline as unknown[]).length).toBe(4)
+  })
+
+  it('fails closed when the run forensics are gone', async () => {
+    const { structuredContent: out } = await callTool(
+      'tw_recall_read',
+      { runId: 'r1' },
+      deps({ isForensicsAvailable: () => false })
+    )
+    expect(out.available).toBe(false)
+    expect(out.reason).toBe('forensics_deleted')
+  })
+
+  it('errors when runId is missing', async () => {
+    const { isError } = await callTool('tw_recall_read', {}, readDeps())
+    expect(isError).toBe(true)
+  })
+})
+
+describe('tw_recall_read_events', () => {
+  it('returns bounded raw events + a compaction disclaimer', async () => {
+    const events = Array.from({ length: 50 }, (_, i) =>
+      ev({ sequence: i + 1, kind: i % 2 ? 'tool' : 'diff', summary: `e${i}` })
+    )
+    const { structuredContent: out } = await callTool(
+      'tw_recall_read_events',
+      { runId: 'r1', limit: 10 },
+      deps({ getRunEvents: () => events, mintCitationToken: () => 'tok' })
+    )
+    expect(out.count).toBe(10)
+    expect(out.truncated).toBe(true)
+    expect(String(out.disclaimer)).toMatch(/compacted/i)
+    expect(out.citationToken).toBe('tok')
+  })
+
+  it('filters events by kind', async () => {
+    const events = [
+      ev({ sequence: 1, kind: 'tool' }),
+      ev({ sequence: 2, kind: 'diff' }),
+      ev({ sequence: 3, kind: 'tool' })
+    ]
+    const { structuredContent: out } = await callTool(
+      'tw_recall_read_events',
+      { runId: 'r1', kind: 'tool' },
+      deps({ getRunEvents: () => events })
+    )
+    expect(out.count).toBe(2)
   })
 })
