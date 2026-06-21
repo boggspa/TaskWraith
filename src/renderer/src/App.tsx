@@ -9761,9 +9761,16 @@ function App(): React.JSX.Element {
               if (parsedPlan) {
                 // Persist the plan on its message so the card survives reload +
                 // the decision, and strip the raw <proposed_plan> block so it
-                // doesn't double-render as prose beside the card.
+                // doesn't double-render as prose beside the card. Anchor to the
+                // message that actually holds the plan: the resolved id when it
+                // exists, else the last assistant bubble — `assistantMessageId`
+                // can be a phantom id on the skip branch when the turn ends on a
+                // tool burst (the plan streamed into the pre-burst bubble).
+                const planTargetId = updated.messages.some((m) => m.id === assistantMessageId)
+                  ? assistantMessageId
+                  : [...updated.messages].reverse().find((m) => m.role === 'assistant')?.id
                 updated.messages = updated.messages.map((m) =>
-                  m.id === assistantMessageId
+                  m.id === planTargetId
                     ? {
                         ...m,
                         content: stripProposedPlanBlock(m.content),

@@ -80,7 +80,11 @@ export const parseProposedPlan = (
 /** Strip a <proposed_plan> block out of a message's display text (the card
  *  renders the plan, so the raw block shouldn't also show as prose). Leaves
  *  non-block messages untouched. */
+// Separate /g regex for the strip — the shared PROPOSED_PLAN_BLOCK is reused by
+// stateless .test()/.match() and must NOT carry the global flag's lastIndex.
+const PROPOSED_PLAN_BLOCK_GLOBAL = /<proposed_plan>[\s\S]*?<\/proposed_plan>/gi
+
 export const stripProposedPlanBlock = (text: string): string => {
   if (!PROPOSED_PLAN_BLOCK.test(text)) return text
-  return text.replace(PROPOSED_PLAN_BLOCK, '').trim()
+  return text.replace(PROPOSED_PLAN_BLOCK_GLOBAL, '').trim()
 }

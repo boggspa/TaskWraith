@@ -79,4 +79,10 @@ describe('stripProposedPlanBlock', () => {
   it('leaves a block-free message untouched', () => {
     expect(stripProposedPlanBlock('just a normal message')).toBe('just a normal message')
   })
+
+  it('strips EVERY block, not just the first', () => {
+    expect(
+      stripProposedPlanBlock('a<proposed_plan>X</proposed_plan>b<proposed_plan>Y</proposed_plan>c')
+    ).toBe('abc')
+  })
 })

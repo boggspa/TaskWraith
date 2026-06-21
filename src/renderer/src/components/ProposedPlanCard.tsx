@@ -81,7 +81,7 @@ export function ProposedPlanCard({
 
       {expanded && (
         <div className="proposed-plan-body">
-          {mode === 'edit' ? (
+          {mode === 'edit' && isPending ? (
             <textarea
               className="proposed-plan-edit"
               value={draftBody}
