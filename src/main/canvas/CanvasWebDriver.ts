@@ -43,6 +43,13 @@ import {
 
 const NETWORK_BUFFER = 200
 const CONSOLE_BUFFER = 200
+// How long the egress-cut is held AFTER an eval's synchronous frame resolves, so
+// requests the script merely SCHEDULED (setTimeout(0) / microtask / a short async
+// chain) are still cancelled before egress is restored. A long-delay timer that
+// fires after this window is a documented residual — see evaluate().
+const EVAL_EGRESS_HOLD_MS = 300
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 const LOAD_TIMEOUT_MS = 20000
 
 const DEFAULT_INSPECT_STYLES = [
@@ -330,6 +337,7 @@ export class CanvasWebDriver implements CanvasDriver {
 
     // Block popups / window.open — no new windows escape the canvas.
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    this.hardenSession(win)
     // The origin allowlist is enforced per-request in attachNetwork via
     // webRequest.onBeforeRequest (covers the main frame, subframes, subresources
     // and websockets — the navigation events only see the main frame).
@@ -387,6 +395,34 @@ export class CanvasWebDriver implements CanvasDriver {
       win.webContents.on('did-fail-load', onFail)
       win.loadURL(url).catch((err) => finish(err instanceof Error ? err : new Error(String(err))))
     })
+  }
+
+  /**
+   * Close the egress channels that webRequest.onBeforeRequest (and thus the eval
+   * egress-cut) cannot see, on this canvas's isolated partition session:
+   *  - WebRTC ICE/STUN/TURN/data-channel is UDP and bypasses webRequest entirely,
+   *    so a script could open an RTCPeerConnection to exfiltrate. Force non-proxied
+   *    UDP off and deny the media permission. (TURN-over-TCP remains a documented
+   *    residual — see the canvas_eval security notes.)
+   *  - A preview never needs device/geo/notification/clipboard permissions; deny
+   *    them all so neither the page nor an eval'd script can open those sinks.
+   *  - Downloads flow outside webRequest once the download manager takes over;
+   *    refuse them so eval can't stage a remote <a download> egress/side effect.
+   */
+  private hardenSession(win: BrowserWindow): void {
+    try {
+      win.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+    } catch {
+      // Older Electron / unavailable — best effort.
+    }
+    const ses = win.webContents.session
+    ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+    try {
+      ses.setPermissionCheckHandler(() => false)
+    } catch {
+      // Best effort — older Electron.
+    }
+    ses.on('will-download', (event) => event.preventDefault())
   }
 
   private attachNetwork(win: BrowserWindow): void {
@@ -549,8 +585,19 @@ export class CanvasWebDriver implements CanvasDriver {
       '), truncated: s.length > ' +
       cap +
       ' }; } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } })()'
-    // Cut ALL page egress for the duration of the script, then restore the per-host
-    // SSRF policy in finally — even if the script throws.
+    // Cut ALL page egress for the script, then restore the per-host SSRF policy in
+    // finally — even if the script throws.
+    //
+    // SCOPE / RESIDUALS (the egress-cut is best-effort defence-in-depth, NOT a hard
+    // boundary — the primary control is that a human approved this exact script,
+    // which they saw in full):
+    //  - executeJavaScript resolves after the script's SYNCHRONOUS frame; a script
+    //    can SCHEDULE a deferred request. We hold the cut for EVAL_EGRESS_HOLD_MS
+    //    after it resolves to catch setTimeout(0)/microtask/short-async exfil. A
+    //    LONG-delay timer (which the approver saw in the script) still escapes.
+    //  - The eval RETURN VALUE is itself a read channel (the agent can `return
+    //    document.cookie`); the cut does not — and is not meant to — stop that.
+    //  - WebRTC/downloads are closed in hardenSession(); TURN-over-TCP is residual.
     this.evalEgressCut = true
     let result: Omit<CanvasEvalResult, 'url' | 'title'>
     try {
@@ -559,6 +606,7 @@ export class CanvasWebDriver implements CanvasDriver {
         'url' | 'title'
       >
     } finally {
+      await delay(EVAL_EGRESS_HOLD_MS)
       this.evalEgressCut = false
     }
     return { ...result, url: win.webContents.getURL(), title: win.getTitle() }

@@ -210,6 +210,46 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.canvasEval).toBe('ask')
   })
 
+  it('clamps a stored canvasEval allow/workspace policy down to ask, but honors deny', () => {
+    const withAllow = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings({
+        agenticServices: {
+          shellCommands: 'ask',
+          fileChanges: 'ask',
+          mcpTools: 'ask',
+          subThreadDelegation: 'ask',
+          canvasInteraction: 'ask',
+          canvasEval: 'allow',
+          networkAccess: 'allow'
+        }
+      }),
+      presetId: 'default'
+    })
+    // A settings/import value of 'allow' must not produce an auto-allow policy.
+    expect(withAllow.agenticServices.canvasEval).toBe('ask')
+
+    const withDeny = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings({
+        agenticServices: {
+          shellCommands: 'ask',
+          fileChanges: 'ask',
+          mcpTools: 'ask',
+          subThreadDelegation: 'ask',
+          canvasInteraction: 'ask',
+          canvasEval: 'deny',
+          networkAccess: 'allow'
+        }
+      }),
+      presetId: 'default'
+    })
+    // An explicit deny is still honored.
+    expect(withDeny.agenticServices.canvasEval).toBe('deny')
+  })
+
   it('merges workspace grants and provider-scoped external path grants', () => {
     const grant: ExternalPathGrant = {
       id: 'grant-1',

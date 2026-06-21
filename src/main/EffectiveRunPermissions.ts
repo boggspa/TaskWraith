@@ -158,8 +158,16 @@ function servicesFromSettings(
     mcpTools: normalizePolicy(settings?.mcpTools, 'ask'),
     subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask'),
     canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask'),
-    canvasEval: normalizePolicy(settings?.canvasEval, 'ask')
+    // canvasEval (RCE) is non-grantable / never-auto-allowed. Clamp the stored
+    // policy so it can only ever be 'ask' or 'deny' — a settings value (or import)
+    // of 'allow'/'workspace' must not be able to contradict that guarantee at the
+    // policy layer, even though both approval gates would also override it.
+    canvasEval: clampNonGrantablePolicy(normalizePolicy(settings?.canvasEval, 'ask'))
   }
+}
+
+function clampNonGrantablePolicy(policy: AgenticServicePolicy): AgenticServicePolicy {
+  return policy === 'allow' || policy === 'workspace' ? 'ask' : policy
 }
 
 function normalizePolicy(value: unknown, fallback: AgenticServicePolicy): AgenticServicePolicy {
