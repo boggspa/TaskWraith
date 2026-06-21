@@ -1049,6 +1049,17 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             public let bodyTruncated: Bool?
         }
         public let proposedPlan: ProposedPlan?
+        /// ask_user_question prompt anchored to this (asking) row — drives the
+        /// inline question card. `promptId` === the registry questionId, so the
+        /// inline card resolves the same parked tool the top banner does.
+        /// Additive optional + synthesized Codable ⇒ forward/back-compatible.
+        public struct AgentQuestion: Codable, Sendable {
+            public let promptId: String?
+            public let question: String?
+            public let options: [String]?
+            public let context: String?
+        }
+        public let agentQuestion: AgentQuestion?
     }
     public struct RunSummary: Codable, Sendable {
         public let runId: String?

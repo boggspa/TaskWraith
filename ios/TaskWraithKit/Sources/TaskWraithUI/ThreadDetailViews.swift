@@ -520,7 +520,16 @@ struct ThreadDetailView: View {
         model.approvals.filter { $0.threadId == taskId }
     }
     private var threadQuestions: [MobileQuestionCard] {
-        model.questions.filter { $0.threadId == taskId }
+        // Suppress a question from the TOP banner when its asking row is loaded
+        // inline in the transcript (the inline card is now its home). Keep the
+        // banner as a fallback for scrolled-off history or older-Mac rows that
+        // don't carry the inline field.
+        let inlinePromptIds = Set(
+            (model.threadSnapshots[taskId]?.rows ?? [])
+                .compactMap { $0.agentQuestion?.promptId })
+        return model.questions.filter {
+            $0.threadId == taskId && !($0.resolvedId.map(inlinePromptIds.contains) ?? false)
+        }
     }
 
     /// Pending approvals/questions pinned to the TOP OF THE SCREEN (safe-area
@@ -1826,6 +1835,7 @@ struct ThreadRowView: View {
     private var isTool: Bool { row.role == "tool" || row.kind == "tool" }
     private var showExpand: Bool {
         row.truncated == true && !hasParticipantHealthCard && !hasProposedPlanCard
+            && !hasAgentQuestionCard
     }
     private var isExpanding: Bool { model.expandingRows.contains(row.id) }
     private var hasParticipantHealthCard: Bool {
@@ -1833,6 +1843,7 @@ struct ThreadRowView: View {
     }
     private var hasSubThreadReturnCard: Bool { row.subThreadReturn != nil }
     private var hasProposedPlanCard: Bool { row.proposedPlan != nil }
+    private var hasAgentQuestionCard: Bool { row.agentQuestion?.promptId != nil }
     private var ensembleParticipants: [RemoteEnsembleState.Participant] {
         model.ensembleStates[threadId]?.participants ?? []
     }
@@ -1844,12 +1855,16 @@ struct ThreadRowView: View {
                 fallbackAccent: accentColor,
                 hidden: isUser || hasParticipantHealthCard)
             VStack(alignment: .leading, spacing: 4) {
-                if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard {
+                if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
+                    && !hasAgentQuestionCard
+                {
                     Text(label)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(labelColor)
                 }
-                if let plan = row.proposedPlan {
+                if let agentQuestion = row.agentQuestion, agentQuestion.promptId != nil {
+                    AgentQuestionRow(model: model, question: agentQuestion)
+                } else if let plan = row.proposedPlan {
                     ProposedPlanRow(
                         model: model, threadId: threadId, rowId: row.id, plan: plan)
                 } else if let health = row.participantHealth,
@@ -1902,23 +1917,29 @@ struct ThreadRowView: View {
                 // so an image attached to the plan turn can't render orphaned
                 // beneath the card. Guard every branch — gating only the first
                 // would fall through to the else-ifs.
-                if !hasProposedPlanCard, let media = row.media, !media.isEmpty {
+                if !hasProposedPlanCard, !hasAgentQuestionCard, let media = row.media, !media.isEmpty
+                {
                     #if canImport(UIKit)
                         TranscriptMediaStrip(
                             model: model, threadId: threadId, rowId: row.id, media: media)
                     #else
                         imageAttachmentChip(media.count)
                     #endif
-                } else if !hasProposedPlanCard, let thumbs = row.imageThumbnails, !thumbs.isEmpty {
+                } else if !hasProposedPlanCard, !hasAgentQuestionCard,
+                    let thumbs = row.imageThumbnails, !thumbs.isEmpty
+                {
                     #if canImport(UIKit)
                         TranscriptImageThumbnails(thumbnails: thumbs)
                     #else
                         imageAttachmentChip(thumbs.count)
                     #endif
-                } else if !hasProposedPlanCard, let count = row.imageAttachmentCount, count > 0 {
+                } else if !hasProposedPlanCard, !hasAgentQuestionCard,
+                    let count = row.imageAttachmentCount, count > 0
+                {
                     imageAttachmentChip(count)
                 }
-                if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard,
+                if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
+                    && !hasAgentQuestionCard,
                     let preview = row.preview, !preview.isEmpty
                 {
                     MarkdownLite(
