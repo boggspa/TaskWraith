@@ -46,6 +46,17 @@ export interface RelayOptions {
    * secret.
    */
   hostInfo?: () => Record<string, unknown> | null
+  /**
+   * On-demand pairing trigger for QR-optional discovery (POST /v1/beginpair).
+   * A discovered (never-paired) phone has no live session to dial, so it asks
+   * the target host to OPEN one: this callback mints a fresh pairing session via
+   * the bridge and returns its PUBLIC bootstrap ({sessionId, …}). The user still
+   * confirms the 6-digit SAS on THIS host, so an unauthenticated tailnet POST
+   * only opens a window the user must approve — it cannot pair on its own.
+   * Returns null when pairing can't be opened (→503). Absent on a shared relay
+   * (→404).
+   */
+  beginPair?: () => Promise<Record<string, unknown> | null>
 }
 
 export interface RelayServerHandle {
@@ -97,6 +108,40 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
       res.setHeader('content-type', 'application/json')
       res.setHeader('cache-control', 'no-store')
       res.end(req.method === 'HEAD' ? undefined : JSON.stringify(info))
+      return
+    }
+    if ((req.url || '').split('?')[0] === '/v1/beginpair') {
+      // On-demand pairing trigger (see RelayOptions.beginPair). POST only; 404
+      // when unsupported, 503 when a window couldn't be opened. No request body
+      // is needed — the SAS confirm on the target host is the real gate.
+      if (req.method !== 'POST') {
+        res.statusCode = 405
+        res.end('method not allowed')
+        return
+      }
+      const beginPair = options.beginPair
+      if (!beginPair) {
+        res.statusCode = 404
+        res.end('not found')
+        return
+      }
+      req.resume() // drain+discard any body so the socket frees
+      beginPair()
+        .then((info) => {
+          if (!info) {
+            res.statusCode = 503
+            res.end('pairing unavailable')
+            return
+          }
+          res.statusCode = 200
+          res.setHeader('content-type', 'application/json')
+          res.setHeader('cache-control', 'no-store')
+          res.end(JSON.stringify(info))
+        })
+        .catch(() => {
+          res.statusCode = 503
+          res.end('pairing failed')
+        })
       return
     }
     res.statusCode = 404
