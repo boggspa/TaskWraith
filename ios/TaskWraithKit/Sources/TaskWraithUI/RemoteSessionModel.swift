@@ -780,6 +780,12 @@ public final class RemoteSessionModel: ObservableObject {
                         macIdentityPubKey: record.macIdentityPubKey,
                         timeoutMs: budgetMs)
                     try await client.connectAndWaitEstablished(timeoutMs: budgetMs)
+                    // A newer attempt (e.g. switchHost(to: another host) or a
+                    // fresh pairing) superseded us while we awaited establish —
+                    // do NOT persist this host's door / clear the self-heal
+                    // stamp under the new host's identity. Matches the guard the
+                    // rest of the walk already enforces per candidate.
+                    guard self.connectAttempt == attempt else { return }
                     self.relayUrl = candidate
                     self.trustedReconnectAttempt = nil
                     // Refresh the record so the v1 field tracks the
@@ -1081,6 +1087,11 @@ public final class RemoteSessionModel: ObservableObject {
     /// Clears cached projection/render state (snapshots, streaming buffers, usage
     /// panels, git/diff caches) so real and demo data never bleed together.
     /// Mirrors forgetPairing's cache wipe; used by demo enter/exit.
+    // CANONICAL per-host projection reset. This + wipeProjectionCaches() are
+    // the ONLY places host-specific render state is cleared on a host switch /
+    // forget / demo toggle. When a future slice adds a per-host @Published
+    // (transcripts, streaming, usage, nav targets, suppression sets), reset it
+    // HERE or it will silently bleed across hosts.
     private func clearCachedProjectionState() {
         threadSnapshots = [:]
         streamingTexts = [:]
@@ -1101,8 +1112,20 @@ public final class RemoteSessionModel: ObservableObject {
         workflows = []
         threadWorkspaceHints = [:]
         demoFileEdits = [:]
+        // Expanded transcript row bodies hold verbatim message/tool content —
+        // wiping snapshots without these would leave a host's transcript text
+        // readable after switch/forget ("leave NOTHING readable").
+        rowExpansions = [:]
+        expandingRows = []
+        // Per-thread run-summary suppression state is part of the snapshot cache
+        // it sits beside — keeping it would let one host's hidden summaries
+        // filter another's.
+        hiddenRunSummaryFingerprintsByThread = [:]
         navigationTarget = nil
         visibleThreadId = nil
+        // Side-chat inspector target is a host-scoped navigation pointer, same
+        // as navigationTarget/visibleThreadId above.
+        inspectorSideChatTarget = nil
         lastActionMessage = nil
     }
 
@@ -1565,6 +1588,14 @@ public final class RemoteSessionModel: ObservableObject {
         // reset (clearCachedProjectionState), but it IS per-host material — a
         // forgotten/outgoing host's workspaces must not linger under the next.
         workspaces = []
+        // In-flight per-thread snapshot debounce timers belong to the outgoing
+        // host's thread ids — cancel them so none fires requestThreadSnapshot()
+        // against the next host (same hygiene as apnsTokenRetryTask below).
+        pendingThreadRefresh.values.forEach { $0.cancel() }
+        pendingThreadRefresh = [:]
+        // A queued notification deep-link is a host-specific navigation target;
+        // don't let a stale one fire against a different host on establish.
+        pendingDeepLinkThreadId = nil
         pendingApnsToken = nil
         apnsTokenRegistrationInFlight = false
         apnsTokenRetryTask?.cancel()
@@ -1604,10 +1635,15 @@ public final class RemoteSessionModel: ObservableObject {
         // UPSERT (not overwrite): pairing/reconnecting one host must never drop
         // the others. Preserve the original pairedAt across reconnects so the
         // host list ordering doesn't churn; stamp it on first pairing only.
-        let pairedAt = pairingStore.find(macIdentityPubKey: macId)?.pairedAt ?? Self.iso8601Now()
+        let existing = pairingStore.find(macIdentityPubKey: macId)
+        let pairedAt = existing?.pairedAt ?? Self.iso8601Now()
+        // sanitizedMacName() maps a host literally named "Demo Mac" to "" on
+        // every reconnect read; never let that (or any transient empty) clobber
+        // a good persisted name — fall back to what we already stored.
+        let name = macDisplayName.isEmpty ? (existing?.macDisplayName ?? "") : macDisplayName
         pairingStore.upsert(
             PairedHostRecord(
-                relayUrl: relayUrl, macIdentityPubKey: macId, macDisplayName: macDisplayName,
+                relayUrl: relayUrl, macIdentityPubKey: macId, macDisplayName: name,
                 // The full candidate set from the bootstrap (LAN + wss) —
                 // ONE pairing then reconnects from home Wi-Fi or cellular
                 // alike; `relayUrl` holds the door that last worked.
@@ -1634,11 +1670,21 @@ public final class RemoteSessionModel: ObservableObject {
         eventTask = Task { [weak self] in
             for await event in client.events {
                 guard let self else { return }
+                // Each handler re-checks that THIS client is still the live one:
+                // teardown() (switch/forget/disconnect/next candidate) nils or
+                // replaces self.client, so a late event from a superseded client
+                // can't resurrect .connected or re-persist the outgoing host.
+                // The check sits INSIDE each MainActor.run so it is atomic with
+                // the mutations (no await gap a teardown could slip through).
                 switch event {
                 case .confirmCode(let code):
-                    await MainActor.run { self.phase = .awaitingMacConfirm(code: code) }
+                    await MainActor.run {
+                        guard self.client === client else { return }
+                        self.phase = .awaitingMacConfirm(code: code)
+                    }
                 case .established:
                     await MainActor.run {
+                        guard self.client === client else { return }
                         self.cancelAutoReconnect(resetAttempts: true)
                         self.phase = .connected
                         self.wasEverConnected = true
@@ -1678,11 +1724,15 @@ public final class RemoteSessionModel: ObservableObject {
                     await self.handle(method: method, params: params)
                 case .error(let message):
                     await MainActor.run {
+                        guard self.client === client else { return }
                         if case .connected = self.phase { self.lastActionMessage = message }
                         else { self.phase = .error(message) }
                     }
                 case .closed:
-                    await MainActor.run { self.handleSocketClosed() }
+                    await MainActor.run {
+                        guard self.client === client else { return }
+                        self.handleSocketClosed()
+                    }
                 }
             }
         }
