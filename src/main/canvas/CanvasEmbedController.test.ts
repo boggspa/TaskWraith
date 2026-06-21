@@ -28,6 +28,7 @@ class FakeView implements EmbeddedViewHandle {
 class FakeParent implements EmbedParentWindow {
   children: EmbeddedViewHandle[] = []
   destroyed = false
+  zoom = 1
   isDestroyed(): boolean {
     return this.destroyed
   }
@@ -36,6 +37,9 @@ class FakeParent implements EmbedParentWindow {
   }
   removeChildView(view: EmbeddedViewHandle): void {
     this.children = this.children.filter((v) => v !== view)
+  }
+  getZoomFactor(): number {
+    return this.zoom
   }
 }
 
@@ -69,6 +73,19 @@ describe('CanvasEmbedController', () => {
     controller.surfaceFor('c1')({ partition: 'p', width: 800, height: 600 })
     controller.setBounds('c1', { x: 10.6, y: 20.4, width: 300.9, height: -5 })
     expect(created[0].bounds).toEqual({ x: 11, y: 20, width: 301, height: 0 })
+  })
+
+  it('scales the reported rect by the window zoom factor (CSS-px -> DIP)', () => {
+    const { parent, created, controller } = make()
+    parent.zoom = 2
+    controller.surfaceFor('c1')({ partition: 'p', width: 800, height: 600 })
+    controller.setBounds('c1', { x: 10, y: 20, width: 100, height: 50 })
+    // The view is positioned in DIP = CSS-px * zoom.
+    expect(created[0].bounds).toEqual({ x: 20, y: 40, width: 200, height: 100 })
+    // At zoom 1 the rect passes through unchanged.
+    parent.zoom = 1
+    controller.setBounds('c1', { x: 5, y: 6, width: 7, height: 8 })
+    expect(created[0].bounds).toEqual({ x: 5, y: 6, width: 7, height: 8 })
   })
 
   it('setVisible(false) hides + parks off-screen and ignores live setBounds repaint', () => {

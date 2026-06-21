@@ -38,6 +38,9 @@ export interface EmbedParentWindow {
   isDestroyed(): boolean
   addChildView(view: EmbeddedViewHandle): void
   removeChildView(view: EmbeddedViewHandle): void
+  /** The window webContents' zoom factor — the renderer reports CSS-px rects, but
+   * setBounds wants DIP, so a zoomed window needs the rect scaled. Defaults to 1. */
+  getZoomFactor?(): number
 }
 
 export interface CanvasEmbedControllerDeps {
@@ -102,13 +105,13 @@ export class CanvasEmbedController {
     }
     this.entries.set(canvasId, entry)
     parent.addChildView(view)
-    view.setBounds(entry.bounds)
+    view.setBounds(this.scaled(entry.bounds))
     return {
       webContents: view.webContents as unknown as CanvasHostSurface['webContents'],
       getTitle: () => view.webContents.getTitle(),
       setContentSize: (width, height) => {
         entry.bounds = { ...entry.bounds, width: Math.max(0, width), height: Math.max(0, height) }
-        if (!entry.destroyed && entry.visible) view.setBounds(entry.bounds)
+        if (!entry.destroyed && entry.visible) view.setBounds(this.scaled(entry.bounds))
       },
       isDestroyed: () => entry.destroyed || view.webContents.isDestroyed(),
       destroy: () => this.detach(canvasId),
@@ -117,12 +120,30 @@ export class CanvasEmbedController {
     }
   }
 
+  /**
+   * Map a renderer-reported (CSS-px) rect into the window's DIP space the
+   * WebContentsView is positioned in. They are 1:1 at zoom 1; a zoomed main window
+   * lays the DOM out in CSS px but paints it scaled, so the view rect must scale by
+   * the same factor to sit over the pane. (Stored bounds stay raw; we scale only at
+   * the setBounds call, so a later zoom change is picked up on the next report.)
+   */
+  private scaled(rect: CanvasEmbedRect): CanvasEmbedRect {
+    const zoom = this.deps.getParentWindow()?.getZoomFactor?.() ?? 1
+    if (!Number.isFinite(zoom) || zoom <= 0 || zoom === 1) return rect
+    return {
+      x: Math.round(rect.x * zoom),
+      y: Math.round(rect.y * zoom),
+      width: Math.round(rect.width * zoom),
+      height: Math.round(rect.height * zoom)
+    }
+  }
+
   /** Position the floating view over the renderer pane's reported rect. */
   setBounds(canvasId: string, rect: Partial<CanvasEmbedRect>): void {
     const entry = this.entries.get(canvasId)
     if (!entry || entry.destroyed) return
     entry.bounds = clampRect(rect)
-    if (entry.visible) entry.view.setBounds(entry.bounds)
+    if (entry.visible) entry.view.setBounds(this.scaled(entry.bounds))
   }
 
   /** Show/hide the view (e.g. hide while an app modal occludes the pane). */
@@ -133,7 +154,7 @@ export class CanvasEmbedController {
     entry.view.setVisible(visible)
     // Belt-and-suspenders: park it off-screen when hidden so it can't paint over
     // the DOM even if a platform ignores setVisible.
-    entry.view.setBounds(visible ? entry.bounds : OFFSCREEN)
+    entry.view.setBounds(visible ? this.scaled(entry.bounds) : OFFSCREEN)
   }
 
   /** Detach + destroy the embedded view for a canvas (idempotent). */

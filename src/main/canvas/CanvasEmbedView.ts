@@ -27,6 +27,13 @@ export function asEmbedParent(win: BrowserWindow): EmbedParentWindow {
   return {
     isDestroyed: () => win.isDestroyed(),
     addChildView: (view) => win.contentView.addChildView(view as unknown as WebContentsView),
-    removeChildView: (view) => win.contentView.removeChildView(view as unknown as WebContentsView)
+    removeChildView: (view) => win.contentView.removeChildView(view as unknown as WebContentsView),
+    getZoomFactor: () => {
+      try {
+        return win.isDestroyed() ? 1 : win.webContents.getZoomFactor()
+      } catch {
+        return 1
+      }
+    }
   }
 }
