@@ -102,6 +102,45 @@ describe('executeCanvasTool', () => {
     expect(result.isError).toBe(true)
   })
 
+  it('canvas_open device driver requires a bundleId and routes device inputs', async () => {
+    let seen: unknown = null
+    const controller = fakeController({
+      open: async (input) => {
+        seen = input
+        return {
+          canvasId: 'cd',
+          url: `device://booted/${input.bundleId}`,
+          title: input.bundleId || '',
+          viewport: { width: 0, height: 0 }
+        }
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    // No bundleId → error, no url required for device.
+    expect((await executeCanvasTool('canvas_open', { driver: 'device' }, ctx, 'claude')).isError).toBe(
+      true
+    )
+    const r = await executeCanvasTool(
+      'canvas_open',
+      {
+        driver: 'device',
+        bundleId: 'com.example.App',
+        appPath: '/Users/me/Build/Example.app',
+        udid: 'AAAAAAAA-1111-2222-3333-444444444444'
+      },
+      ctx,
+      'claude'
+    )
+    expect(r.isError).toBeFalsy()
+    expect(seen).toEqual({
+      driver: 'device',
+      bundleId: 'com.example.App',
+      appPath: '/Users/me/Build/Example.app',
+      device: { udid: 'AAAAAAAA-1111-2222-3333-444444444444' },
+      viewport: { width: 1280, height: 800 }
+    })
+  })
+
   it('canvas_screenshot returns an image block and keeps base64 out of structuredContent', async () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
     const result = await executeCanvasTool('canvas_screenshot', { canvasId: 'c1' }, ctx, 'claude')

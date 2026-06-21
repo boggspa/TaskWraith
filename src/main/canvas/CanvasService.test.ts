@@ -128,7 +128,7 @@ describe('CanvasService', () => {
   })
 
   it('rejects an unsupported driver', async () => {
-    await expect(service.open({ driver: 'device', url: 'http://localhost:3000' }, {})).rejects.toThrow(
+    await expect(service.open({ driver: 'window', url: 'http://localhost:3000' }, {})).rejects.toThrow(
       /not available/
     )
   })
@@ -136,6 +136,21 @@ describe('CanvasService', () => {
   it('rejects a bad url before spawning a window', async () => {
     await expect(service.open({ url: 'file:///etc/passwd' }, {})).rejects.toThrow()
     expect(fake.opened).toBe(false)
+  })
+
+  it('device open requires a valid bundleId, rejected before the driver runs', async () => {
+    await expect(service.open({ driver: 'device' }, {})).rejects.toThrow(/bundleId/)
+    await expect(service.open({ driver: 'device', bundleId: 'com.x; rm -rf /' }, {})).rejects.toThrow(
+      /bundleId/
+    )
+    expect(fake.opened).toBe(false)
+  })
+
+  it('device open routes to the device driver and records the device kind', async () => {
+    const opened = await service.open({ driver: 'device', bundleId: 'com.example.App' }, {})
+    expect(opened.canvasId).toBeTruthy()
+    expect(fake.opened).toBe(true)
+    expect(service.status(opened.canvasId, {})?.driver).toBe('device')
   })
 
   it('snapshot/screenshot emit redacted events — base64 never enters the audit', async () => {

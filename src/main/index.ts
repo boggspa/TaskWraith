@@ -577,6 +577,7 @@ import {
 import { CanvasService } from './canvas/CanvasService'
 import { CanvasStore } from './canvas/CanvasStore'
 import { CanvasWebDriver } from './canvas/CanvasWebDriver'
+import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import type { CanvasDriverKind, CanvasEventRecord } from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
 import {
@@ -1503,10 +1504,9 @@ const desktopToolExecutors = createDesktopToolExecutors({
 // as 'canvas-event'. The web driver opens one sandboxed BrowserWindow per session.
 const canvasService = new CanvasService({
   createDriver: (kind: CanvasDriverKind, sessionId: string) => {
-    if (kind !== 'web') {
-      throw new Error(`Canvas driver "${kind}" is not available in this build (web only).`)
-    }
-    return new CanvasWebDriver(sessionId)
+    if (kind === 'device') return new CanvasDeviceDriver(sessionId)
+    if (kind === 'web') return new CanvasWebDriver(sessionId)
+    throw new Error(`Canvas driver "${kind}" is not available in this build.`)
   },
   store: new CanvasStore(join(app.getPath('userData'), 'canvas')),
   uuid: () => randomUUID(),

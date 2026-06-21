@@ -146,13 +146,39 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
     try {
       switch (toolName) {
         case 'canvas_open': {
+          const driver = asOptString(args.driver) === 'device' ? 'device' : 'web'
+          const viewport = resolveViewport({ width: args.width, height: args.height })
+          if (driver === 'device') {
+            // iOS simulator: launch + screenshot an app by bundle id (no url).
+            const bundleId = asOptString(args.bundleId)
+            if (!bundleId) {
+              return fail(toolName, '`bundleId` is required for the device driver.')
+            }
+            const udid = asOptString(args.udid)
+            const opened = await controller.open(
+              {
+                driver: 'device',
+                bundleId,
+                appPath: asOptString(args.appPath),
+                device: udid ? { udid } : undefined,
+                viewport
+              },
+              ctx
+            )
+            return jsonResult({
+              ok: true,
+              tool: toolName,
+              canvasId: opened.canvasId,
+              url: opened.url,
+              title: opened.title,
+              viewport: opened.viewport
+            })
+          }
           const url = asOptString(args.url)
           if (!url) return fail(toolName, '`url` is required.')
-          const driver = asOptString(args.driver)
-          const viewport = resolveViewport({ width: args.width, height: args.height })
           const opened = await controller.open(
             {
-              driver: driver === 'window' || driver === 'device' ? driver : 'web',
+              driver: 'web',
               url,
               viewport,
               originAllowlist: asStringArray(args.originAllowlist)

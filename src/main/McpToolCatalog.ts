@@ -1691,7 +1691,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_open',
       description:
-        'Open a TaskWraith Canvas: a sandboxed preview of a running app the agent can inspect. Driver "web" loads an http(s) URL (typically a local dev server, e.g. http://localhost:3000). Returns a canvasId used by every other canvas_* tool. Gated (asks once per session); blocks file://, link-local and cloud-metadata addresses.',
+        'Open a TaskWraith Canvas: a sandboxed preview of a running app the agent can inspect. Driver "web" (default) loads an http(s) `url` (typically a local dev server, e.g. http://localhost:3000) and supports the full structured surface (snapshot/inspect/click/fill/eval). Driver "device" launches an app by `bundleId` in a booted iOS Simulator (optionally installing a built `appPath` first; optional `udid`, default the booted sim) and is SCREENSHOT-ONLY — only canvas_screenshot/canvas_close apply; the DOM verbs return an error. Returns a canvasId used by every other canvas_* tool. Gated; the web driver blocks file://, link-local and cloud-metadata addresses.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -1701,13 +1701,24 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       inputSchema: {
         type: 'object',
         properties: {
-          driver: { type: 'string', enum: ['web'] },
-          url: { type: 'string' },
+          driver: { type: 'string', enum: ['web', 'device'] },
+          url: { type: 'string', description: 'web driver: the http(s) URL to preview.' },
+          bundleId: {
+            type: 'string',
+            description: 'device driver: the app bundle id to launch, e.g. "com.example.App".'
+          },
+          appPath: {
+            type: 'string',
+            description: 'device driver: absolute path to a built .app to install before launch.'
+          },
+          udid: {
+            type: 'string',
+            description: 'device driver: target simulator UDID (default: the booted simulator).'
+          },
           width: { type: 'number' },
           height: { type: 'number' },
           originAllowlist: { type: 'array', items: { type: 'string' } }
-        },
-        required: ['url']
+        }
       }
     },
     {

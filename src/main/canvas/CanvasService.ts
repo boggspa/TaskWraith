@@ -36,7 +36,7 @@ import type {
   CanvasSessionSummary,
   CanvasViewport
 } from './canvasTypes'
-import { redactUrlQuery, resolveViewport, validateCanvasUrl } from './canvasTypes'
+import { isValidBundleId, redactUrlQuery, resolveViewport, validateCanvasUrl } from './canvasTypes'
 import type { CanvasStore } from './CanvasStore'
 
 export interface CanvasServiceDeps {
@@ -56,7 +56,7 @@ interface LiveSession {
   evals: number
 }
 
-const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set(['web'])
+const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set(['web', 'device'])
 // Defence-in-depth cap so a hijacked agent (or a session-granted approval)
 // cannot machine-gun clicks/fills against a live app. Per live session.
 const MAX_INTERACTIONS_PER_SESSION = 200
@@ -136,13 +136,24 @@ export class CanvasService implements CanvasController {
   ): Promise<{ canvasId: string } & CanvasSessionHandle> {
     const driverKind = input.driver ?? 'web'
     if (!SUPPORTED_DRIVERS.has(driverKind)) {
-      throw new Error(
-        `Canvas driver "${driverKind}" is not available in this build (P0 supports "web" only).`
-      )
+      throw new Error(`Canvas driver "${driverKind}" is not available in this build.`)
     }
-    // Validate up front so a bad URL never even spawns a window.
-    const verdict = validateCanvasUrl((input.url || '').trim(), input.originAllowlist ?? [])
-    if (!verdict.ok) throw new Error(verdict.reason || 'Canvas URL was rejected.')
+    // Validate up front so a bad input never even spawns a window / boots a sim.
+    let recordUrl: string
+    let eventHost: string | undefined
+    if (driverKind === 'device') {
+      const bundleId = (input.bundleId || '').trim()
+      if (!bundleId || !isValidBundleId(bundleId)) {
+        throw new Error('The device driver requires a valid `bundleId` (e.g. "com.example.App").')
+      }
+      eventHost = (input.device?.udid || 'booted').trim()
+      recordUrl = `device://${eventHost}/${bundleId}`
+    } else {
+      const verdict = validateCanvasUrl((input.url || '').trim(), input.originAllowlist ?? [])
+      if (!verdict.ok) throw new Error(verdict.reason || 'Canvas URL was rejected.')
+      recordUrl = redactUrlQuery(verdict.normalizedUrl ?? (input.url || ''))
+      eventHost = verdict.host
+    }
 
     const canvasId = this.deps.uuid()
     const nowIso = this.deps.now()
@@ -154,7 +165,7 @@ export class CanvasService implements CanvasController {
       schemaVersion: 1,
       id: canvasId,
       driver: driverKind,
-      url: redactUrlQuery(verdict.normalizedUrl ?? (input.url || '')),
+      url: recordUrl,
       title: '',
       viewport,
       originAllowlist: input.originAllowlist ?? [],
@@ -182,7 +193,7 @@ export class CanvasService implements CanvasController {
       this.deps.store.upsertSession(record)
       this.emit(canvasId, 'session.opened', ctx, {
         driver: driverKind,
-        host: verdict.host,
+        host: eventHost,
         url: redactUrlQuery(handle.url)
       })
       return { canvasId, ...handle }
