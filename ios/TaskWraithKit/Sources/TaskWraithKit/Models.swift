@@ -534,6 +534,8 @@ public struct RemoteTaskCard: Codable, Sendable {
     /// the Mac from the activity stream, so it covers every provider whose plan
     /// flows as a tool activity (todo_write / Claude TodoWrite / Codex plan).
     public let todoLanes: [RemoteTodoLane]?
+    /// Open Canvas previews in this chat (read-only; P3). Omitted when none open.
+    public let canvasPreviews: [RemoteCanvasPreview]?
     public let capabilities: RemoteTaskCapabilities?
     public let additionalWorkspaces: [AdditionalWorkspace]?
     public let queuedComposerPrompts: [QueuedComposerPrompt]?
@@ -623,6 +625,32 @@ public struct RemoteTodoItem: Codable, Sendable, Identifiable, Hashable {
 
 /// One author's plan within a chat (PlanRail lane). `lane` is the ensemble
 /// participant/provider id, or `__solo__` for solo/guest chats.
+/// A read-only projection of an open TaskWraith Canvas preview (P3). All-optional
+/// (forward/back-compat) and never an enum for `status`/`driver` — unknown values
+/// degrade gracefully on a read-only seat. Mirrors RemoteCanvasPreview in
+/// src/main/RemoteTaskProjection.ts (kept in sync by CanvasPreviewDecodeTests).
+public struct RemoteCanvasPreview: Codable, Sendable, Identifiable, Hashable {
+    public struct Viewport: Codable, Sendable, Hashable {
+        public let width: Double?
+        public let height: Double?
+    }
+    public let canvasId: String?
+    public let driver: String?
+    public let url: String?
+    public let title: String?
+    public let status: String?
+    public let viewport: Viewport?
+    public var id: String { canvasId ?? UUID().uuidString }
+
+    /// A concise label: the page title, else its host, else the driver.
+    public var displayLabel: String {
+        if let title, !title.isEmpty { return title }
+        if let url, let host = URL(string: url)?.host, !host.isEmpty { return host }
+        return driver ?? "Canvas"
+    }
+    public var isActive: Bool { status == "active" }
+}
+
 public struct RemoteTodoLane: Codable, Sendable, Identifiable, Hashable {
     public static let soloLane = "__solo__"
     public let lane: String
