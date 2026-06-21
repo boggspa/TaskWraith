@@ -11,6 +11,7 @@ import type {
   UserBubbleColor,
   VisualEffectStyle
 } from '../../../main/store/types'
+import type { AppIconVariant } from '../../../shared/iconVariants'
 import {
   COMPOSER_FONT_MATCH_TRANSCRIPT,
   FONT_STACKS,
@@ -35,6 +36,7 @@ export interface AppearanceState {
   themeAccentStyle: ThemeAccentStyle
   toolIconAccent: ToolIconAccent
   userBubbleColor: UserBubbleColor
+  appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
   composerStyle: ComposerStyle
   transcriptFontFamily: string
@@ -121,6 +123,7 @@ function getInitialState(): AppearanceState {
     themeAccentStyle: 'system',
     toolIconAccent: 'system',
     userBubbleColor: 'system',
+    appIconVariant: 'regular',
     promptSurfaceStyle: 'liquid_glass',
     composerStyle: 'default',
     transcriptFontFamily: FONT_STACKS.taskwraith,
@@ -182,6 +185,7 @@ export function useAppearance() {
           themeCornerStyle: settings.themeCornerStyle || 'rounded',
           themeAccentStyle: settings.themeAccentStyle || 'system',
           toolIconAccent: settings.toolIconAccent || 'system',
+          appIconVariant: settings.appIconVariant || 'regular',
           userBubbleColor: settings.userBubbleColor || 'system',
           promptSurfaceStyle: settings.promptSurfaceStyle || 'liquid_glass',
           composerStyle: settings.composerStyle || 'default',
@@ -366,6 +370,7 @@ export function useAppearance() {
             themeAccentStyle: next.themeAccentStyle,
             toolIconAccent: next.toolIconAccent,
             userBubbleColor: next.userBubbleColor,
+            appIconVariant: next.appIconVariant,
             promptSurfaceStyle: next.promptSurfaceStyle,
             composerStyle: next.composerStyle,
             transcriptFontFamily: next.transcriptFontFamily,

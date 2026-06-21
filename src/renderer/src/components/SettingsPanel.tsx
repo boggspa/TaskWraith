@@ -49,6 +49,10 @@ import {
   type ProviderAuthSummary
 } from '../lib/providerAuthSummary'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
+import { availableIconVariants, type AppIconVariant } from '../../../shared/iconVariants'
+import appIconRegularThumb from '../assets/app-icons/regular.png'
+import appIconWwdc26Thumb from '../assets/app-icons/wwdc26.png'
+import appIconMonolineThumb from '../assets/app-icons/monoline.png'
 import {
   COMPOSER_FONT_MATCH_TRANSCRIPT,
   COMPOSER_FONT_OPTIONS,
@@ -114,6 +118,7 @@ interface SettingsPanelProps {
   themeAccentStyle: ThemeAccentStyle
   toolIconAccent: ToolIconAccent
   userBubbleColor: UserBubbleColor
+  appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
   composerStyle: ComposerStyle
   transcriptFontFamily: string
@@ -225,6 +230,7 @@ interface SettingsPanelProps {
     themeAccentStyle?: ThemeAccentStyle
     toolIconAccent?: ToolIconAccent
     userBubbleColor?: UserBubbleColor
+    appIconVariant?: AppIconVariant
     promptSurfaceStyle?: PromptSurfaceStyle
     composerStyle?: ComposerStyle
     transcriptFontFamily?: string
@@ -387,6 +393,11 @@ const ACCENT_OPTIONS: Array<{ value: ThemeAccentStyle; label: string }> = [
  * choice — useful for tester debug or for users who want the
  * tool-call ledger to read as a distinct surface.
  */
+const APP_ICON_THUMBS: Record<AppIconVariant, string> = {
+  regular: appIconRegularThumb,
+  wwdc26: appIconWwdc26Thumb,
+  monoline: appIconMonolineThumb
+}
 const TOOL_ICON_ACCENT_OPTIONS: Array<{ value: ToolIconAccent; label: string }> = [
   { value: 'system', label: 'Match accent' },
   { value: 'blue', label: 'Blue' },
@@ -1506,6 +1517,7 @@ export function SettingsPanel({
   themeCornerStyle,
   themeAccentStyle,
   toolIconAccent,
+  appIconVariant,
   userBubbleColor,
   promptSurfaceStyle,
   composerStyle,
@@ -2323,6 +2335,33 @@ export function SettingsPanel({
         {
           activeTab === 'appearance' && (
             <>
+              <div className="settings-group">
+                <label className="settings-label">App icon</label>
+                <div className="settings-option-grid settings-app-icon-grid">
+                  {availableIconVariants(Date.now()).map((variant) => (
+                    <button
+                      key={variant.id}
+                      type="button"
+                      className={`settings-radio-option settings-app-icon-option ${appIconVariant === variant.id ? 'active' : ''}`}
+                      onClick={() => onChange({ appIconVariant: variant.id })}
+                      title={variant.description}
+                    >
+                      <img
+                        className="settings-app-icon-swatch"
+                        src={APP_ICON_THUMBS[variant.id]}
+                        alt=""
+                        draggable={false}
+                      />
+                      <span>{variant.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="settings-hint">
+                  Swaps the icon in your Dock/taskbar while TaskWraith is running. The installed app
+                  icon (Finder/Launchpad) is set when the app is built.
+                </p>
+              </div>
+
               <div className="settings-group">
                 <label className="settings-label">System theme</label>
                 <div className="settings-option-grid">

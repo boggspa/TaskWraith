@@ -35,6 +35,7 @@ import * as pty from 'node-pty'
 import os from 'os'
 import { fileURLToPath, pathToFileURL } from 'url'
 import icon from '../../resources/icon.png?asset'
+import { startAppIconManager, applyAppIcon } from './AppIconManager'
 import trayGhostMonoline from '../../resources/tray-ghost-monoline.png?asset'
 import {
   contentPartsToText,
@@ -19479,8 +19480,21 @@ if (isGeminiMcpBridgeProcess) {
           ) {
             reconcileMessageChannelPollingFromSettings()
           }
+          if (
+            sanitizedPatch.appIconVariant !== undefined ||
+            sanitizedPatch.themeAppearance !== undefined
+          ) {
+            // Re-apply the live Dock/taskbar icon when the variant OR the theme
+            // (light/dark) changes. Apply path is ungated — grandfathers WWDC26.
+            applyAppIcon(true)
+          }
         }
       ]
+    })
+    startAppIconManager({
+      getVariant: () => AppStore.getSettings().appIconVariant,
+      getThemeAppearance: () => AppStore.getSettings().themeAppearance,
+      getWindows: () => BrowserWindow.getAllWindows()
     })
     const composerService = new ComposerService({
       appStore: AppStore,

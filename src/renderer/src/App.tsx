@@ -19752,6 +19752,7 @@ function App(): React.JSX.Element {
               themeCornerStyle={appearance.themeCornerStyle}
               themeAccentStyle={appearance.themeAccentStyle}
               toolIconAccent={appearance.toolIconAccent}
+              appIconVariant={appearance.appIconVariant}
               userBubbleColor={appearance.userBubbleColor}
               promptSurfaceStyle={appearance.promptSurfaceStyle}
               composerStyle={appearance.composerStyle}
