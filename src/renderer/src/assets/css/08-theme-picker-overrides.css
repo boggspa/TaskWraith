@@ -8144,8 +8144,19 @@
   color: var(--color-warning, #d29922);
   flex-shrink: 0;
 }
-.composer-combined-picker-trigger[data-ollama-tier-ineffective="true"] {
-  border-color: color-mix(in srgb, var(--color-warning, #d29922) 45%, var(--panel-border));
+/* Satellite treatment: the Ollama tier picker reads as a BARE text control — no
+ * pill container — sitting flush with the composer's other satellite controls in
+ * every shell (the per-shell pill / border / tint treatments are overridden here
+ * uniformly; per-shell TEXT colours still flow from the trigger's
+ * `composer-combined-picker-trigger` class). The Tier-4 "ineffective" state is
+ * signalled by the ⚠ glyph above, not a border. */
+.composer-ollama-tier-trigger {
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 6px !important;
+}
+.composer-ollama-tier-trigger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent) !important;
 }
 
 /* Popover ------------------------------------------------------ */

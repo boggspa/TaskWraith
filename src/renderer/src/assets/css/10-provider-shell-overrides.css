@@ -1612,14 +1612,11 @@
 [data-composer-style="grok"] [data-composer-control="ollama-tier"] .composer-combined-picker-trigger-suffix {
   color: var(--grok-muted) !important;
 }
-/* Strict monochrome: neutralize the amber Tier-4-ineffective signal to a heavier
- * border + muted glyph. The base rule above sets border:0, so RESTORE a 1px
- * border here, else the warning state would be invisible. */
+/* Strict monochrome: the Tier-4-ineffective ⚠ glyph is muted to grey. The picker
+ * trigger is bare across all shells (glyph-only warning — no amber, no border),
+ * which honours grok's monochrome design. */
 [data-composer-style="grok"] .composer-ollama-tier-warning {
   color: var(--grok-muted) !important;
-}
-[data-composer-style="grok"] .composer-combined-picker-trigger[data-ollama-tier-ineffective="true"] {
-  border: 1px solid var(--grok-border-strong) !important;
 }
 
 /* Workspace — no container pill; bare label + icon. (Hover gives a
@@ -2420,14 +2417,11 @@
 [data-composer-style="cursor"] [data-composer-control="ollama-tier"] .composer-combined-picker-trigger-suffix {
   color: var(--cursor-shell-muted);
 }
-/* Flat-gray shell: neutralize the amber Tier-4-ineffective signal to a heavier
- * gray border + muted glyph (cursor's own border above would otherwise mask
- * the global amber rule anyway). */
+/* Flat-gray shell: the Tier-4-ineffective ⚠ glyph is muted to grey. The picker
+ * trigger is bare across all shells (glyph-only warning), honouring cursor's
+ * flat-gray, chroma-free design. */
 [data-composer-style="cursor"] .composer-ollama-tier-warning {
   color: var(--cursor-shell-muted) !important;
-}
-[data-composer-style="cursor"] [data-composer-control="ollama-tier"][data-ollama-tier-ineffective="true"] {
-  border-color: var(--cursor-shell-border-strong) !important;
 }
 
 /* ---- LIFT: +/model/send onto the capsule's row ----
