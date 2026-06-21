@@ -4262,171 +4262,1385 @@ public struct MastheadLogoView: View {
     }
 }
 
-/// App settings — theme controls land here next pass (mirroring the
-/// desktop's theme system where sensible; composer theming deferred).
+private enum MobileSettingsGroup: String, CaseIterable, Identifiable {
+    case app
+    case aiProviders
+    case automation
+    case workspaces
+    case integrations
+    case data
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .app: return "App"
+        case .aiProviders: return "AI & Providers"
+        case .automation: return "Automation"
+        case .workspaces: return "Workspaces"
+        case .integrations: return "Integrations"
+        case .data: return "Data"
+        }
+    }
+}
+
+private enum MobileSettingsSection: String, CaseIterable, Identifiable, Hashable {
+    case general
+    case appearance
+    case composer
+    case providers
+    case ensembleRoster
+    case approvals
+    case workspaces
+    case remote
+    case toolsMcp
+    case localServers
+    case modelUsage
+    case privacy
+    case guide
+    case about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .appearance: return "Appearance"
+        case .composer: return "Composer & Transcript"
+        case .providers: return "Providers"
+        case .ensembleRoster: return "Ensemble Roster"
+        case .approvals: return "Approvals"
+        case .workspaces: return "Workspaces"
+        case .remote: return "Devices & Hosts"
+        case .toolsMcp: return "Tools & MCPs"
+        case .localServers: return "Local Servers"
+        case .modelUsage: return "Model Usage"
+        case .privacy: return "Safety & Privacy"
+        case .guide: return "First-launch guide"
+        case .about: return "About"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .general: return "Device role, defaults, and orientation."
+        case .appearance: return "Theme, accent, and app icon."
+        case .composer: return "Composer shell, tools, and transcript type."
+        case .providers: return "Readiness, availability, and Mac-owned setup."
+        case .ensembleRoster: return "Multi-provider roles and preset orientation."
+        case .approvals: return "Live requests, questions, and approval boundaries."
+        case .workspaces: return "Visible workspaces and remote access scope."
+        case .remote: return "Pairing, host reachability, and device identity."
+        case .toolsMcp: return "Remote view of desktop tool configuration."
+        case .localServers: return "Mac-hosted runtimes and dev servers."
+        case .modelUsage: return "Quota windows, usage snapshots, and coverage."
+        case .privacy: return "Approvals, local data, and visibility boundaries."
+        case .guide: return "Provider, usage, approvals, and Ensemble orientation."
+        case .about: return "Version and transport details."
+        }
+    }
+
+    var group: MobileSettingsGroup {
+        switch self {
+        case .general, .appearance, .composer: return .app
+        case .providers, .ensembleRoster: return .aiProviders
+        case .approvals: return .automation
+        case .workspaces: return .workspaces
+        case .remote, .toolsMcp, .localServers: return .integrations
+        case .modelUsage, .privacy, .guide, .about: return .data
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general: return "gearshape"
+        case .appearance: return "paintpalette"
+        case .composer: return "text.bubble"
+        case .providers: return "switch.2"
+        case .ensembleRoster: return "person.3.sequence"
+        case .approvals: return "checkmark.shield"
+        case .workspaces: return "folder"
+        case .remote: return "macbook.and.iphone"
+        case .toolsMcp: return "wrench.and.screwdriver"
+        case .localServers: return "server.rack"
+        case .modelUsage: return "chart.bar.xaxis"
+        case .privacy: return "checkmark.shield"
+        case .guide: return "questionmark.circle"
+        case .about: return "info.circle"
+        }
+    }
+
+    var searchText: String {
+        [
+            title, subtitle, group.label, rawValue,
+            "settings", "preferences",
+            self == .providers ? "codex claude kimi cursor grok ollama models readiness sign in login api keys cli" : "",
+            self == .ensembleRoster ? "ensemble participants roster roles turn continuous presets multi provider" : "",
+            self == .approvals ? "permissions approve decline questions grants timeouts" : "",
+            self == .workspaces ? "workspace allowlist folder project file write read" : "",
+            self == .modelUsage ? "usage quota tokens cost windows dashboard snapshots" : "",
+            self == .privacy ? "approvals grants safety data local history visibility" : "",
+            self == .remote ? "pairing workspace mac devices hosts reconnect switch forget" : "",
+            self == .toolsMcp ? "mcp tools browser automation integrations setup" : "",
+            self == .localServers ? "ollama local runtime dev servers localhost" : "",
+            self == .composer ? "shell transcript font tool call style" : "",
+            self == .appearance ? "theme accent color icon glass" : ""
+        ].joined(separator: " ").lowercased()
+    }
+}
+
+/// App settings - full-screen mobile surface mirroring the desktop settings
+/// IA while keeping iPhone navigation native. iPad gets a persistent settings
+/// sidebar; iPhone gets a searchable category list that pushes detail pages.
 public struct AppSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @ObservedObject private var model: RemoteSessionModel
     @ObservedObject private var themes = TWThemeStore.shared
     @State private var appIcon: TWAppIconVariant = TWAppIconController.selected
+    @State private var selectedSection: MobileSettingsSection = .general
+    @State private var compactPath: [MobileSettingsSection] = []
+    @State private var searchText = ""
+    private let onOpenFirstLaunchGuide: (() -> Void)?
 
-    public init() {}
+    public init(model: RemoteSessionModel, onOpenFirstLaunchGuide: (() -> Void)? = nil) {
+        self.model = model
+        self.onOpenFirstLaunchGuide = onOpenFirstLaunchGuide
+    }
+
+    private var sections: [MobileSettingsSection] {
+        MobileSettingsSection.allCases.filter { section in
+            if section == .guide, onOpenFirstLaunchGuide == nil { return false }
+            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return query.isEmpty || section.searchText.contains(query)
+        }
+    }
 
     public var body: some View {
-        NavigationStack {
-            Form {
-                Section("Themes") {
-                    Picker(
-                        selection: Binding(
-                            get: { themes.systemTheme },
-                            set: { themes.systemTheme = $0 }
-                        )
-                    ) {
-                        ForEach(TWSystemTheme.allCases) { theme in
-                            HStack {
-                                Circle().fill(theme.surface3).frame(width: 12, height: 12)
-                                Text(theme.label)
-                            }
-                            .tag(theme)
-                        }
-                    } label: {
-                        Label("System Theme", systemImage: "circle.lefthalf.filled")
-                    }
-                    Picker(
-                        selection: Binding(
-                            get: { themes.accentTheme },
-                            set: { themes.accentTheme = $0 }
-                        )
-                    ) {
-                        ForEach(TWAccentTheme.allCases) { accent in
-                            HStack {
-                                Circle().fill(accent.color).frame(width: 12, height: 12)
-                                Text(accent.label)
-                            }
-                            .tag(accent)
-                        }
-                    } label: {
-                        Label("Accent Theme", systemImage: "paintpalette")
-                    }
-                    Picker(
-                        selection: Binding(
-                            get: { themes.toolTheme },
-                            set: { themes.toolTheme = $0 }
-                        )
-                    ) {
-                        ForEach(TWToolTheme.allCases) { tool in
-                            Text(tool.label).tag(tool)
-                        }
-                    } label: {
-                        Label("Tool Call Theme", systemImage: "wrench.and.screwdriver")
-                    }
-                    Text("Mirrors your computer's Appearance settings where sensible.")
-                        .font(.caption)
-                        .foregroundStyle(TWTheme.textMuted)
-                }
-                Section("Composer Shell") {
-                    Picker(
-                        selection: Binding<String>(
-                            get: {
-                                switch themes.composerShellPreference {
-                                case .followMac: return "followMac"
-                                case .override(let style): return style.raw
-                                }
-                            },
-                            set: { raw in
-                                themes.composerShellPreference =
-                                    raw == "followMac"
-                                    ? .followMac : .override(TWComposerStyle(raw: raw))
-                            }
-                        )
-                    ) {
-                        Text("Follow Mac").tag("followMac")
-                        ForEach(TWComposerStyle.known, id: \.raw) { style in
-                            Text(style.label).tag(style.raw)
-                        }
-                    } label: {
-                        Label("Style", systemImage: "rectangle.and.pencil.and.ellipsis")
-                    }
-                    Text(
-                        "Follow Mac mirrors your desktop composer style. Override to pin a style on this device."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textMuted)
-                }
-                Section("Transcript") {
-                    Picker(
-                        selection: Binding(
-                            get: { themes.transcriptFontPreference },
-                            set: { themes.transcriptFontPreference = $0 }
-                        )
-                    ) {
-                        ForEach(TWTranscriptFont.allCases, id: \.self) { font in
-                            Text(font.label)
-                                .font(TWFont.font(for: font, size: 16, relativeTo: .body))
-                                .tag(font)
-                        }
-                    } label: {
-                        Label("Response Font", systemImage: "textformat")
-                    }
-                    Text("Typeface for assistant response text in the transcript.")
-                        .font(.caption)
-                        .foregroundStyle(TWTheme.textMuted)
-                }
-                #if os(iOS)
-                    Section("App Icon") {
-                        HStack(spacing: 14) {
-                            ForEach(TWAppIconVariant.available()) { variant in
-                                Button {
-                                    appIcon = variant
-                                    TWAppIconController.select(variant)
-                                } label: {
-                                    VStack(spacing: 6) {
-                                        Image(variant.thumbnailAssetName)
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 56, height: 56)
-                                            .clipShape(
-                                                RoundedRectangle(cornerRadius: 13, style: .continuous))
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                                    .strokeBorder(
-                                                        appIcon == variant
-                                                            ? themes.accentTheme.color : Color.clear,
-                                                        lineWidth: 2)
-                                            )
-                                        Text(variant.label)
-                                            .font(.caption)
-                                            .foregroundStyle(
-                                                appIcon == variant ? Color.primary : Color.secondary)
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 4)
-                        Text(
-                            "Changes your home-screen icon. Light, dark, and tinted versions follow iOS automatically."
-                        )
-                        .font(.caption)
-                        .foregroundStyle(TWTheme.textMuted)
-                    }
-                #endif
-                Section("About") {
-                    LabeledContent("App", value: "TaskWraith Remote")
-                    LabeledContent("Transport", value: "taskwraith-e2ee-v1")
-                }
+        Group {
+            if horizontalSizeClass == .regular {
+                regularBody
+            } else {
+                compactBody
             }
+        }
+        .background(TWTheme.appBg.ignoresSafeArea())
+        .twColorScheme()
+    }
+
+    private var compactBody: some View {
+        NavigationStack(path: $compactPath) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    compactHeader
+                    searchField
+                    sectionList
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 18)
+            }
+            .background(TWTheme.appBg.ignoresSafeArea())
             .navigationTitle("Settings")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+            .toolbar { closeToolbarItem }
+            .navigationDestination(for: MobileSettingsSection.self) { section in
+                detailScroll(section)
+                    .navigationTitle(section.title)
+                    #if os(iOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                    #endif
+            }
+        }
+    }
+
+    private var regularBody: some View {
+        NavigationStack {
+            HStack(spacing: 0) {
+                settingsSidebar
+                    .frame(width: 300)
+                    .background(TWTheme.sidebarBg)
+                    .iPadSidebarInnerRim(edge: .trailing)
+                detailScroll(selectedSection)
+            }
+            .background(TWTheme.appBg.ignoresSafeArea())
+            .toolbar { closeToolbarItem }
+        }
+    }
+
+    private var closeToolbarItem: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button {
+                dismiss()
+            } label: {
+                Label("Back to app", systemImage: "chevron.left")
+            }
+        }
+    }
+
+    private var compactHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                GhostMonolineMarkView(size: 38, glow: true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("TaskWraith Settings")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(TWTheme.textPrimary)
+                    Text("Remote companion preferences for this iPhone or iPad.")
+                        .font(.footnote)
+                        .foregroundStyle(TWTheme.textSecondary)
+                }
+                Spacer(minLength: 0)
+            }
+            settingsOverviewStrip
+        }
+    }
+
+    private var settingsSidebar: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Button {
+                dismiss()
+            } label: {
+                Label("Back to app", systemImage: "chevron.left")
+                    .font(.headline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(TWTheme.surface1.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(TWTheme.textPrimary)
+
+            searchField
+            settingsOverviewStrip
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    groupedSectionButtons
+                }
+                .padding(.bottom, 20)
+            }
+            Spacer(minLength: 0)
+            Text("TaskWraith Remote")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(TWTheme.textMuted)
+        }
+        .padding(16)
+    }
+
+    private var sectionList: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            groupedSectionButtons
+        }
+    }
+
+    private var groupedSectionButtons: some View {
+        ForEach(MobileSettingsGroup.allCases) { group in
+            let rows = sections.filter { $0.group == group }
+            if !rows.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(group.label)
+                        .font(.caption2.weight(.bold))
+                        .textCase(.uppercase)
+                        .foregroundStyle(TWTheme.textTertiary)
+                        .padding(.horizontal, 4)
+                    VStack(spacing: 8) {
+                        ForEach(rows) { section in
+                            sectionButton(section)
+                        }
+                    }
                 }
             }
         }
-        .twColorScheme()
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(TWTheme.textTertiary)
+            TextField("Search settings...", text: $searchText)
+                .foregroundStyle(TWTheme.textPrimary)
+        }
+        .font(.body)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(TWTheme.surface1.opacity(0.86), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(TWTheme.border, lineWidth: 1)
+        )
+    }
+
+    private var settingsOverviewStrip: some View {
+        HStack(spacing: 8) {
+            SettingsMetricPill(title: "Theme", value: themes.systemTheme.label, systemImage: "circle.lefthalf.filled")
+            SettingsMetricPill(title: "Composer", value: composerShellLabel, systemImage: "text.bubble")
+        }
+    }
+
+    private func sectionButton(_ section: MobileSettingsSection) -> some View {
+        Button {
+            if horizontalSizeClass == .regular {
+                selectedSection = section
+            } else {
+                compactPath.append(section)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                SettingsIconPlate(systemImage: section.systemImage, selected: selectedSection == section)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(section.title)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(TWTheme.textPrimary)
+                    Text(section.subtitle)
+                        .font(.footnote)
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: horizontalSizeClass == .regular ? "chevron.right" : "chevron.forward")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(TWTheme.textTertiary)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(section == selectedSection ? TWTheme.chroma1.opacity(0.16) : TWTheme.surface1, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(section == selectedSection ? TWTheme.chroma1.opacity(0.38) : TWTheme.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(section.title)
+        .accessibilityValue(section.subtitle)
+    }
+
+    private func detailScroll(_ section: MobileSettingsSection) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                detailHeader(section)
+                switch section {
+                case .general: generalSection
+                case .appearance: appearanceSection
+                case .composer: composerSection
+                case .providers: providersSection
+                case .ensembleRoster: ensembleRosterSection
+                case .approvals: approvalsSection
+                case .workspaces: workspacesSection
+                case .remote: remoteSection
+                case .toolsMcp: toolsMcpSection
+                case .localServers: localServersSection
+                case .modelUsage: modelUsageSection
+                case .privacy: privacySection
+                case .guide: guideSection
+                case .about: aboutSection
+                }
+            }
+            .padding(.horizontal, horizontalSizeClass == .regular ? 28 : 16)
+            .padding(.vertical, 20)
+            .frame(maxWidth: horizontalSizeClass == .regular ? 840 : .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(TWTheme.appBg.ignoresSafeArea())
+    }
+
+    private func detailHeader(_ section: MobileSettingsSection) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                SettingsIconPlate(systemImage: section.systemImage, selected: true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(section.title)
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(TWTheme.textPrimary)
+                    Text(section.subtitle)
+                        .font(.footnote)
+                        .foregroundStyle(TWTheme.textSecondary)
+                }
+            }
+        }
+        .padding(.top, horizontalSizeClass == .regular ? 18 : 0)
+    }
+
+    private var generalSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Desktop parity", systemImage: "rectangle.3.group") {
+                SettingsInfoRow(
+                    icon: "sidebar.left",
+                    title: "Settings are full-screen on iOS",
+                    detail: "This surface mirrors the Mac's grouped settings IA while keeping iPhone navigation native."
+                )
+                SettingsInfoRow(
+                    icon: "macbook.and.iphone",
+                    title: "Mac owns provider setup",
+                    detail: "Provider logins, API keys, MCP servers, and local runtimes still live on the desktop."
+                )
+                SettingsInfoRow(
+                    icon: "checkmark.shield",
+                    title: "iPhone can respond",
+                    detail: "Approvals, questions, monitoring, and allowed remote turns stay visible here."
+                )
+            }
+            SettingsCard(title: "Current defaults", systemImage: "slider.horizontal.3") {
+                SettingsValueRow(title: "Theme", value: themes.systemTheme.label)
+                SettingsValueRow(title: "Accent", value: themes.accentTheme.label)
+                SettingsValueRow(title: "Composer shell", value: composerShellLabel)
+                SettingsValueRow(title: "Transcript font", value: themes.transcriptFontPreference.label)
+            }
+        }
+    }
+
+    private var appearanceSection: some View {
+        VStack(spacing: 12) {
+            #if os(iOS)
+                SettingsCard(title: "App icon", systemImage: "app.dashed") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 10)], spacing: 10) {
+                        ForEach(TWAppIconVariant.available()) { variant in
+                            appIconButton(variant)
+                        }
+                    }
+                    Text("Changes the home-screen icon. Light, dark, and tinted variants follow iOS automatically.")
+                        .font(.footnote)
+                        .foregroundStyle(TWTheme.textSecondary)
+                }
+            #endif
+            SettingsCard(title: "System theme", systemImage: "circle.lefthalf.filled") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
+                    ForEach(TWSystemTheme.allCases) { theme in
+                        themeButton(theme)
+                    }
+                }
+            }
+            SettingsCard(title: "Accent color", systemImage: "paintpalette") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 8)], spacing: 8) {
+                    ForEach(TWAccentTheme.allCases) { accent in
+                        accentButton(accent)
+                    }
+                }
+            }
+        }
+    }
+
+    private var composerSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Composer shell", systemImage: "rectangle.and.pencil.and.ellipsis") {
+                Picker(
+                    "Style",
+                    selection: Binding<String>(
+                        get: {
+                            switch themes.composerShellPreference {
+                            case .followMac: return "followMac"
+                            case .override(let style): return style.raw
+                            }
+                        },
+                        set: { raw in
+                            themes.composerShellPreference =
+                                raw == "followMac"
+                                ? .followMac : .override(TWComposerStyle(raw: raw))
+                        }
+                    )
+                ) {
+                    Text("Follow Mac").tag("followMac")
+                    ForEach(TWComposerStyle.known, id: \.raw) { style in
+                        Text(style.label).tag(style.raw)
+                    }
+                }
+                .pickerStyle(.menu)
+                Text("Follow Mac mirrors your desktop composer style. Override to pin a style on this device.")
+                    .font(.footnote)
+                    .foregroundStyle(TWTheme.textSecondary)
+                composerPreviewCard
+            }
+            SettingsCard(title: "Transcript", systemImage: "textformat") {
+                Picker(
+                    "Response font",
+                    selection: Binding(
+                        get: { themes.transcriptFontPreference },
+                        set: { themes.transcriptFontPreference = $0 }
+                    )
+                ) {
+                    ForEach(TWTranscriptFont.allCases, id: \.self) { font in
+                        Text(font.label)
+                            .font(TWFont.font(for: font, size: 16, relativeTo: .body))
+                            .tag(font)
+                    }
+                }
+                .pickerStyle(.menu)
+                Text("Typeface for assistant response text in the transcript.")
+                    .font(.footnote)
+                    .foregroundStyle(TWTheme.textSecondary)
+            }
+            SettingsCard(title: "Tool-call color", systemImage: "wrench.and.screwdriver") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 8)], spacing: 8) {
+                    ForEach(TWToolTheme.allCases) { tool in
+                        toolButton(tool)
+                    }
+                }
+            }
+        }
+    }
+
+    private var providersSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Readiness snapshot", systemImage: "switch.2") {
+                SettingsValueRow(title: "Providers", value: "\(providerSnapshots.count) visible")
+                if let asOf = snapshotTimeText(model.modelUsage?.generatedAt) {
+                    SettingsValueRow(title: "Snapshot", value: asOf)
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 10)], spacing: 10) {
+                    ForEach(providerSnapshots) { card in
+                        providerReadinessRow(card)
+                    }
+                }
+                Text("This is a read-only remote projection. Sign in, install CLIs, manage API keys, and configure local runtimes on the Mac.")
+                    .font(.footnote)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var ensembleRosterSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Ensemble UX", systemImage: "person.3.sequence") {
+                SettingsValueRow(title: "Preset rosters", value: "\(model.ensemblePresets.count)")
+                SettingsInfoRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    title: "Turn-bound and continuous rounds",
+                    detail: "iOS follows the active chat's orchestration mode so you can monitor and steer multi-provider rounds from the transcript."
+                )
+                SettingsInfoRow(
+                    icon: "person.crop.circle.badge.plus",
+                    title: "Roles stay visible",
+                    detail: "Participant chips expose provider, model, role, and current-turn state in Ensemble chats."
+                )
+                SettingsInfoRow(
+                    icon: "macwindow",
+                    title: "Roster editing stays desktop-first",
+                    detail: "The Mac remains the richer surface for preset curation, provider setup, and deep participant configuration."
+                )
+            }
+        }
+    }
+
+    private var approvalsSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Live requests", systemImage: "hand.raised") {
+                SettingsValueRow(title: "Approvals waiting", value: "\(model.approvals.count)")
+                SettingsValueRow(title: "Questions waiting", value: "\(model.questions.count)")
+                if model.approvals.isEmpty && model.questions.isEmpty {
+                    SettingsInfoRow(
+                        icon: "checkmark.circle",
+                        title: "Nothing needs attention",
+                        detail: "Approval and question cards will appear in the active chat when a provider pauses for user input."
+                    )
+                } else {
+                    ForEach(Array(model.approvals.prefix(3).enumerated()), id: \.offset) { _, card in
+                        attentionSummaryRow(
+                            icon: "checkmark.shield",
+                            title: card.title ?? TWTheme.providerLabel(card.provider ?? "approval"),
+                            detail: card.body ?? "Approval requested by \(TWTheme.providerLabel(card.provider ?? "provider"))."
+                        )
+                    }
+                    ForEach(Array(model.questions.prefix(3).enumerated()), id: \.offset) { _, card in
+                        attentionSummaryRow(
+                            icon: "questionmark.bubble",
+                            title: card.resolvedQuestion ?? "Question from \(TWTheme.providerLabel(card.provider ?? "provider"))",
+                            detail: card.context ?? "Answer from the active thread."
+                        )
+                    }
+                }
+            }
+            SettingsCard(title: "Boundary", systemImage: "lock.badge.clock") {
+                SettingsInfoRow(
+                    icon: "iphone",
+                    title: "Phone can answer live prompts",
+                    detail: "Accept, decline, session/workspace grants, and ask-user questions are actionable when projected to iOS."
+                )
+                SettingsInfoRow(
+                    icon: "desktopcomputer",
+                    title: "Ledger and policy live on Mac",
+                    detail: "Approval history, grant revocation, provider policies, and timeout tuning remain desktop settings."
+                )
+            }
+        }
+    }
+
+    private var workspacesSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Workspace access", systemImage: "folder") {
+                SettingsValueRow(title: "Visible", value: "\(model.workspaces.count)")
+                SettingsValueRow(
+                    title: "Running",
+                    value: "\(model.workspaces.reduce(0) { $0 + ($1.runningChatCount ?? 0) })"
+                )
+                SettingsInfoRow(
+                    icon: "lock.open",
+                    title: "Allowlist is Mac-owned",
+                    detail: "A phone can start work only inside workspaces exposed from TaskWraith on the paired desktop."
+                )
+                if model.workspaces.isEmpty {
+                    SettingsInfoRow(
+                        icon: "folder.badge.questionmark",
+                        title: "No shared workspaces yet",
+                        detail: "Open TaskWraith on the Mac and grant this device workspace access in Settings -> Devices."
+                    )
+                } else {
+                    ForEach(Array(model.workspaces.prefix(4))) { workspace in
+                        workspaceSummaryRow(workspace)
+                    }
+                }
+            }
+        }
+    }
+
+    private var remoteSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Connected host", systemImage: "macbook.and.iphone") {
+                SettingsValueRow(title: "Mac", value: model.macDisplayName.isEmpty ? "TaskWraith Mac" : model.macDisplayName)
+                SettingsValueRow(title: "Connection", value: connectionStatusLabel)
+                SettingsValueRow(title: "Paired hosts", value: "\(model.pairedHosts.count)")
+                SettingsInfoRow(
+                    icon: "key.horizontal",
+                    title: "Identity is pinned",
+                    detail: "The Mac trusts this device by public identity. Resetting or revoking trust is intentionally Mac-managed."
+                )
+                SettingsInfoRow(
+                    icon: "wifi",
+                    title: "Reachability follows the relay",
+                    detail: "Reconnect and wake flows reuse the active host stored on this device."
+                )
+            }
+            SettingsCard(title: "Paired devices", systemImage: "iphone.and.arrow.forward") {
+                if model.pairedHosts.isEmpty {
+                    SettingsInfoRow(
+                        icon: "plus.circle",
+                        title: "No trusted host on this device",
+                        detail: "Pair from the opening screen to connect this iPhone or iPad to TaskWraith on a Mac."
+                    )
+                } else {
+                    ForEach(Array(model.pairedHosts.prefix(4))) { host in
+                        pairedHostRow(host)
+                    }
+                }
+                SettingsInfoRow(
+                    icon: "slider.horizontal.3",
+                    title: "Switching and revocation stay deliberate",
+                    detail: "Use the pairing flow for host switching. Revoke device access from the Mac when removing trust."
+                )
+            }
+        }
+    }
+
+    private var toolsMcpSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Tool surface", systemImage: "wrench.and.screwdriver") {
+                SettingsValueRow(title: "Projected providers", value: "\(providerSnapshots.count)")
+                SettingsInfoRow(
+                    icon: "server.rack",
+                    title: "MCP servers run on the desktop",
+                    detail: "Tool servers, authentication prompts, browser automation, editor hooks, and creative app bridges stay attached to the Mac runtime."
+                )
+                SettingsInfoRow(
+                    icon: "checkmark.shield",
+                    title: "Approvals still project to iOS",
+                    detail: "When a tool call needs permission, the phone can answer the live request if the Mac projects it."
+                )
+                SettingsInfoRow(
+                    icon: "eye",
+                    title: "Remote view, not remote configuration",
+                    detail: "iOS can orient the user and monitor availability; it does not install servers or mutate desktop MCP profiles."
+                )
+            }
+        }
+    }
+
+    private var localServersSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Local runtimes", systemImage: "server.rack") {
+                if let ollama = providerSnapshots.first(where: { $0.id == "ollama" }) {
+                    providerReadinessRow(ollama)
+                } else {
+                    SettingsInfoRow(
+                        icon: "circle.dashed",
+                        title: "Ollama status not loaded",
+                        detail: "The Mac has not projected local runtime readiness yet."
+                    )
+                }
+                SettingsInfoRow(
+                    icon: "terminal",
+                    title: "Server lifecycle is Mac-side",
+                    detail: "Local servers, Ollama pulls, dev-server previews, and localhost routing are started and stopped on the desktop."
+                )
+                SettingsInfoRow(
+                    icon: "iphone",
+                    title: "Phone receives projected state",
+                    detail: "When a local runtime or server is relevant to a run, iOS shows the remote transcript, prompts, and usage context."
+                )
+            }
+        }
+    }
+
+    private var modelUsageSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SettingsCard(title: "Coverage", systemImage: "chart.bar.xaxis") {
+                SettingsValueRow(title: "Quota providers", value: "\(model.modelUsage?.providers.count ?? 0)")
+                if let asOf = snapshotTimeText(model.modelUsage?.generatedAt) {
+                    SettingsValueRow(title: "Usage snapshot", value: asOf)
+                }
+                SettingsInfoRow(
+                    icon: "info.circle",
+                    title: "Mac-formatted usage remains authoritative",
+                    detail: "Quota windows and dashboard stats are projected from the desktop. Provider coverage follows whatever the Mac can currently observe."
+                )
+            }
+            if let dashboard = model.welcomeDashboard {
+                WelcomeUsageDashboardCard(dashboard: dashboard, accent: TWTheme.chroma1)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Quota windows", systemImage: "gauge.with.dots.needle.50percent")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                UsagePanel(model: model, threadId: nil)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var privacySection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "Safety posture", systemImage: "checkmark.shield") {
+                SettingsInfoRow(
+                    icon: "hand.raised",
+                    title: "Approvals pause on the Mac",
+                    detail: "When a provider asks for permission, the desktop owns the durable ledger; iPhone can answer the live prompt."
+                )
+                SettingsInfoRow(
+                    icon: "iphone.slash",
+                    title: "App switcher shield",
+                    detail: "When iOS snapshots TaskWraith in the background, transcripts are covered by the privacy shield."
+                )
+                SettingsInfoRow(
+                    icon: "externaldrive",
+                    title: "Preferences stay local",
+                    detail: "Theme, composer shell, transcript font, and app icon choices are stored on this device."
+                )
+            }
+            SettingsCard(title: "Data boundaries", systemImage: "lock.doc") {
+                SettingsInfoRow(
+                    icon: "network",
+                    title: "E2EE remote transport",
+                    detail: "The companion uses the TaskWraith relay protocol to receive projections and send approved actions."
+                )
+                SettingsInfoRow(
+                    icon: "person.crop.circle.badge.questionmark",
+                    title: "Provider data flow is run-specific",
+                    detail: "Transcript content goes to the provider runtime chosen for that run; the phone only mirrors the Mac state."
+                )
+            }
+        }
+    }
+
+    private var guideSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "First-launch orientation", systemImage: "questionmark.circle") {
+                SettingsInfoRow(
+                    icon: "switch.2",
+                    title: "Provider readiness",
+                    detail: "Review which providers are available, signed in, optional, or waiting for Mac setup."
+                )
+                SettingsInfoRow(
+                    icon: "chart.bar.xaxis",
+                    title: "Usage snapshots",
+                    detail: "See quota and activity snapshots broadcast by the desktop."
+                )
+                SettingsInfoRow(
+                    icon: "person.3.sequence",
+                    title: "Ensemble basics",
+                    detail: "Learn turn-bound and continuous multi-provider workflows from the remote view."
+                )
+                if let onOpenFirstLaunchGuide {
+                    Button {
+                        onOpenFirstLaunchGuide()
+                    } label: {
+                        Label("Open first-launch guide", systemImage: "arrow.up.right.circle")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                            .background(TWTheme.chroma1, in: Capsule())
+                            .foregroundStyle(Color.black.opacity(0.86))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                }
+            }
+        }
+    }
+
+    private var aboutSection: some View {
+        VStack(spacing: 12) {
+            SettingsCard(title: "About", systemImage: "info.circle") {
+                SettingsValueRow(title: "App", value: "TaskWraith Remote")
+                SettingsValueRow(title: "Transport", value: "taskwraith-e2ee-v1")
+                SettingsValueRow(title: "Settings style", value: "Full-screen")
+            }
+        }
+    }
+
+    private static let providerOrder = ["codex", "claude", "kimi", "cursor", "grok", "ollama"]
+
+    private var providerSnapshots: [SettingsProviderSnapshot] {
+        let usageByProvider = Dictionary(
+            uniqueKeysWithValues: (model.modelUsage?.providers ?? []).map { ($0.provider, $0) }
+        )
+        return Self.providerOrder.map { provider in
+            let modelCount = model.providerModels[provider]?.count ?? 0
+            return SettingsProviderSnapshot(
+                id: provider,
+                label: TWTheme.providerLabel(provider),
+                optional: ["kimi", "cursor", "grok", "ollama"].contains(provider),
+                statusKind: modelCount > 0 ? "notObservable" : "notLoaded",
+                statusText: modelCount > 0 ? "\(modelCount) model\(modelCount == 1 ? "" : "s") available" : "Not loaded yet",
+                detail: "Waiting for the paired Mac to report provider readiness.",
+                setupHint: "Provider setup and sign-in happen on the Mac.",
+                usageWindows: usageByProvider[provider]?.windows.map(SettingsUsageWindow.init(window:)) ?? []
+            )
+        }
+        .filter { !TWTheme.isRetiredProvider($0.id) }
+    }
+
+    private var connectionStatusLabel: String {
+        switch model.phase {
+        case .idle: return "Idle"
+        case .connecting: return "Connecting"
+        case .awaitingMacConfirm: return "Confirm on Mac"
+        case .connected: return "Connected"
+        case .error: return "Offline"
+        }
+    }
+
+    private func providerSortIndex(_ provider: String) -> Int {
+        Self.providerOrder.firstIndex(of: provider) ?? 99
+    }
+
+    private func snapshotTimeText(_ value: String?) -> String? {
+        guard let date = twParseISODate(value) else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private func readinessColor(_ statusKind: String) -> Color {
+        switch statusKind {
+        case "ready", "localReady": return TWTheme.statusSuccess
+        case "needsSignIn", "cliMissing", "stale": return TWTheme.statusAttention
+        case "outOfUsage": return TWTheme.statusFailed
+        default: return TWTheme.textSecondary
+        }
+    }
+
+    private func providerReadinessRow(_ card: SettingsProviderSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                ProviderGlyphIcon(provider: card.id, size: 18)
+                Text(card.label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                Spacer(minLength: 0)
+                if card.optional {
+                    Text("Optional")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(TWTheme.textTertiary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(TWTheme.surface3, in: Capsule())
+                }
+            }
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(readinessColor(card.statusKind))
+                    .frame(width: 8, height: 8)
+                Text(card.statusText)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(readinessColor(card.statusKind))
+            }
+            Text(card.detail)
+                .font(.caption)
+                .foregroundStyle(TWTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !card.setupHint.isEmpty {
+                Text(card.setupHint)
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !card.usageWindows.isEmpty {
+                SettingsProviderUsageMiniRow(provider: card.label, providerId: card.id, windows: card.usageWindows)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(TWTheme.providerAccent(card.id).opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    private func attentionSummaryRow(icon: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(TWTheme.statusAttention)
+                .frame(width: 22)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .lineLimit(2)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .lineLimit(3)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(TWTheme.border, lineWidth: 1)
+        )
+    }
+
+    private func workspaceSummaryRow(_ workspace: WorkspaceSummary) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "folder")
+                .foregroundStyle(TWTheme.chroma1)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(workspace.displayName)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                Text(workspace.path)
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            if let running = workspace.runningChatCount, running > 0 {
+                Text("\(running) running")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.statusSuccess)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(TWTheme.statusSuccess.opacity(0.12), in: Capsule())
+            }
+        }
+        .padding(10)
+        .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(TWTheme.border, lineWidth: 1)
+        )
+    }
+
+    private func pairedHostRow(_ host: PairedHostRecord) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: host.hostPlatform == "mac" ? "macbook" : "desktopcomputer")
+                .foregroundStyle(TWTheme.chroma1)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(host.macDisplayName)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                Text(host.relayUrls?.first ?? host.relayUrl)
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
+            if host.id == model.selectedHostId {
+                Text("Active")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.statusSuccess)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(TWTheme.statusSuccess.opacity(0.12), in: Capsule())
+            }
+        }
+        .padding(10)
+        .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(TWTheme.border, lineWidth: 1)
+        )
+    }
+
+    private var composerShellLabel: String {
+        switch themes.composerShellPreference {
+        case .followMac: return "Follow Mac"
+        case .override(let style): return style.label
+        }
+    }
+
+    private var composerPreviewCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Assistant transcript text uses \(themes.transcriptFontPreference.label).")
+                .font(TWFont.font(for: themes.transcriptFontPreference, size: 15, relativeTo: .body))
+                .foregroundStyle(TWTheme.textPrimary)
+            HStack(spacing: 8) {
+                Text(composerShellLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.chroma1)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(TWTheme.chroma1.opacity(0.14), in: Capsule())
+                Text("Tools")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(themes.toolTheme.color)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(themes.toolTheme.color.opacity(0.14), in: Capsule())
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(TWTheme.chroma1)
+            }
+        }
+        .padding(12)
+        .background(TWTheme.composerBg, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(TWTheme.chroma1.opacity(0.28), lineWidth: 1)
+        )
+    }
+
+    #if os(iOS)
+        private func appIconButton(_ variant: TWAppIconVariant) -> some View {
+            let selected = appIcon == variant
+            return Button {
+                appIcon = variant
+                TWAppIconController.select(variant)
+            } label: {
+                VStack(spacing: 7) {
+                    Image(variant.thumbnailAssetName)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 58, height: 58)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(alignment: .topTrailing) {
+                            if selected {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(TWTheme.chroma1)
+                                    .background(Circle().fill(TWTheme.appBg))
+                                    .offset(x: 5, y: -5)
+                            }
+                        }
+                    Text(variant.label)
+                        .font(.footnote.weight(selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? TWTheme.textPrimary : TWTheme.textSecondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(selected ? TWTheme.chroma1.opacity(0.13) : TWTheme.surface2, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .strokeBorder(selected ? TWTheme.chroma1.opacity(0.45) : TWTheme.border, lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(variant.label) app icon")
+            .accessibilityValue(selected ? "Selected" : "Not selected")
+        }
+    #endif
+
+    private func themeButton(_ theme: TWSystemTheme) -> some View {
+        let selected = themes.systemTheme == theme
+        return SettingsSelectionButton(
+            title: theme.label,
+            selected: selected,
+            swatch: theme.surface3
+        ) {
+            themes.systemTheme = theme
+        }
+    }
+
+    private func accentButton(_ accent: TWAccentTheme) -> some View {
+        SettingsSelectionButton(
+            title: accent.label,
+            selected: themes.accentTheme == accent,
+            swatch: accent.color
+        ) {
+            themes.accentTheme = accent
+        }
+    }
+
+    private func toolButton(_ tool: TWToolTheme) -> some View {
+        SettingsSelectionButton(
+            title: tool.label,
+            selected: themes.toolTheme == tool,
+            swatch: tool.color
+        ) {
+            themes.toolTheme = tool
+        }
+    }
+}
+
+private struct SettingsIconPlate: View {
+    let systemImage: String
+    let selected: Bool
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(selected ? TWTheme.chroma1 : TWTheme.textSecondary)
+            .frame(width: 34, height: 34)
+            .background(
+                selected ? TWTheme.chroma1.opacity(0.15) : TWTheme.surface2,
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+    }
+}
+
+private struct SettingsMetricPill: View {
+    let title: String
+    let value: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(.caption2.weight(.bold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(TWTheme.textTertiary)
+                Text(value)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(TWTheme.surface1.opacity(0.86), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+private struct SettingsCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    private let content: Content
+
+    init(title: String, systemImage: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.systemImage = systemImage
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: systemImage)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(TWTheme.textPrimary)
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(TWTheme.border, lineWidth: 1)
+        )
+    }
+}
+
+private struct SettingsInfoRow: View {
+    let icon: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(TWTheme.chroma1)
+                .frame(width: 22)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct SettingsValueRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.body)
+                .foregroundStyle(TWTheme.textSecondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(TWTheme.textPrimary)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct SettingsSelectionButton: View {
+    let title: String
+    let selected: Bool
+    let swatch: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(swatch)
+                    .frame(width: 13, height: 13)
+                    .overlay(Circle().strokeBorder(TWTheme.border, lineWidth: 1))
+                Text(title)
+                    .font(.footnote.weight(selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? TWTheme.textPrimary : TWTheme.textSecondary)
+                Spacer(minLength: 4)
+                if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(TWTheme.chroma1)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(selected ? TWTheme.chroma1.opacity(0.13) : TWTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(selected ? TWTheme.chroma1.opacity(0.42) : TWTheme.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+    }
+}
+
+private struct SettingsProviderSnapshot: Identifiable {
+    let id: String
+    let label: String
+    let optional: Bool
+    let statusKind: String
+    let statusText: String
+    let detail: String
+    let setupHint: String
+    let usageWindows: [SettingsUsageWindow]
+
+    init(
+        id: String,
+        label: String,
+        optional: Bool,
+        statusKind: String,
+        statusText: String,
+        detail: String,
+        setupHint: String,
+        usageWindows: [SettingsUsageWindow]
+    ) {
+        self.id = id
+        self.label = label
+        self.optional = optional
+        self.statusKind = statusKind
+        self.statusText = statusText
+        self.detail = detail
+        self.setupHint = setupHint
+        self.usageWindows = usageWindows
+    }
+
+}
+
+private struct SettingsUsageWindow: Identifiable {
+    let id: String
+    let label: String
+    let usedPercent: Int?
+    let resetAt: String?
+
+    init(window: ModelUsageMessage.Window) {
+        id = window.id
+        label = window.label
+        usedPercent = window.usedPercent
+        resetAt = window.resetAt
+    }
+}
+
+private struct SettingsProviderUsageMiniRow: View {
+    let provider: String
+    let providerId: String
+    let windows: [SettingsUsageWindow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(provider)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                Spacer(minLength: 0)
+                Text("\(windows.count) window\(windows.count == 1 ? "" : "s")")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textTertiary)
+            }
+            ForEach(windows.prefix(2)) { window in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(window.label)
+                            .font(.caption2)
+                            .foregroundStyle(TWTheme.textSecondary)
+                        Spacer(minLength: 0)
+                        if let percent = window.usedPercent {
+                            Text("\(percent)%")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(TWTheme.textSecondary)
+                        }
+                    }
+                    if let reset = resetText(window.resetAt) {
+                        Text(reset)
+                            .font(.caption2)
+                            .foregroundStyle(TWTheme.textTertiary)
+                    }
+                    GeometryReader { proxy in
+                        let percent = CGFloat(window.usedPercent ?? 0) / 100
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(TWTheme.surface3)
+                            Capsule()
+                                .fill(TWTheme.providerAccent(providerId))
+                                .frame(width: max(4, proxy.size.width * percent))
+                        }
+                    }
+                    .frame(height: 5)
+                }
+            }
+        }
+        .padding(9)
+        .background(TWTheme.appBg.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func resetText(_ resetAt: String?) -> String? {
+        guard let resetAt, let date = twParseISODate(resetAt) else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return "resets \(formatter.string(from: date))"
     }
 }
 

@@ -110,10 +110,8 @@ public struct RootView: View {
         // open — AppSettingsSheet re-themes live via its own @ObservedObject
         // themes. Presented here, not from HomeView, which is inside the
         // `.id(revision)` subtree that rebuilds on every settings change.
-        .sheet(isPresented: $model.settingsPresented) {
-            AppSettingsSheet()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+        .settingsSurfaceCover(isPresented: $model.settingsPresented) {
+            AppSettingsSheet(model: model)
         }
         .animation(.easeInOut(duration: 0.25), value: showShellDuringDrop)
         // Privacy shield: iOS snapshots the UI for the app switcher —
@@ -359,6 +357,17 @@ struct ConnectedShell: View {
 }
 
 private extension View {
+    @ViewBuilder
+    func settingsSurfaceCover<Content: View>(
+        isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        #if os(iOS)
+            self.fullScreenCover(isPresented: isPresented, content: content)
+        #else
+            self.sheet(isPresented: isPresented, content: content)
+        #endif
+    }
+
     @ViewBuilder
     func fileModeCover<Content: View>(
         isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content
