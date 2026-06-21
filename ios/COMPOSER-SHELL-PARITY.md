@@ -298,7 +298,10 @@ ONLY **obsidian** + **alabaster** restructure rows: `.composer-surface` → tran
 
 ---
 
-## Part E — iOS architecture & implementation plan
+## Part E — iOS architecture & implementation status
+
+Status: implemented. This section is kept as the implementation record for the
+iOS composer-shell parity pass.
 
 ### E.1 — Zero desktop changes required
 The Mac **already broadcasts** `composerStyle` to iOS:
@@ -309,9 +312,9 @@ The Mac **already broadcasts** `composerStyle` to iOS:
 - Bundled into `RemoteProjectionSnapshot{projections:[]}` by `broadcastRemoteProjectionSnapshot()`
   (`BridgeBroadcaster.ts:444-450`), re-broadcast on every settings change (`index.ts:946-947`) + ~30
   other state transitions. So a Mac `composerStyle` change reaches the phone in the next snapshot.
-- iOS **drops it today**: both `applySnapshot` (`RemoteSessionModel.swift:1872-1954`) and
-  `merge(envelope:)` (`:1171-1206`) `switch` on `envelope.kind` and hit `default: break`.
-  **Adding one `case "shellAppearance"` to each is the entire decode.**
+- iOS now decodes `shellAppearance`, applies the Mac-projected composer style
+  when the local preference is "Follow Mac", and lets the user override the
+  composer shell locally from Settings and the first-launch composer preview.
 - The iOS `RemoteProjectionEnvelope` (`Models.swift:143-156`) omits the top-level `generatedAt`,
   so **stale-gating keys off the PAYLOAD's `generatedAt`** (`RemoteShellAppearance.generatedAt`).
 
@@ -320,7 +323,7 @@ The Mac **already broadcasts** `composerStyle` to iOS:
 - **`TaskWraithUI`** — SwiftUI, depends on Kit; compile-checked by `swift build` (no unit tests) → views/recipes/wiring.
 - Tests = **Swift Testing** (`import Testing`, `@Suite`/`@Test`) in `ios/TaskWraithKit/Tests/TaskWraithKitTests/`. There is **no** SwiftUI preview/snapshot harness today — the fixture gallery (CS3) is the visual-QA surface.
 
-**File plan:**
+**Implemented file split:**
 - **Kit:** `ComposerShellStyle.swift` (`TWComposerStyle`), `RemoteShellAppearance.swift`
   (`TWRemoteShellAppearance` Codable + staleness helper), `ComposerShellPreference.swift`
   (`TWComposerShellPreference` + precedence resolver). Tests: `ComposerShellResolverTests.swift`.

@@ -24,11 +24,12 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
 
 ## Scope rules
 
-- **iPhone**: solid workspace + (future) global thread capabilities — list,
-  read, reply, start, stop, approve/answer. Nothing exotic.
-- **iPad**: the shell for advanced affordances (NavigationSplitView sidebar is
-  already in). Sub-thread management, multi-pane, diff review live HERE when
-  they come — don't cram them into the phone.
+- **iPhone**: workspace and allowed global-thread management — list, read,
+  reply, start, stop, approve/answer, inspect usage/readiness, and respond to
+  questions without becoming the desktop configuration surface.
+- **iPad**: the shell for advanced affordances. NavigationSplitView, richer
+  inspector tabs, file/diff review, and larger settings surfaces should breathe
+  here before being compressed onto phone.
 - **Ensemble + guest parity matters**: panel messages carry the SAME
   participant identity as the desktop transcript tag (`Provider / Role
   (Model)`) via the `speaker` field on thread rows (Mac commit e44f56cd).
@@ -36,7 +37,28 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   allowlist add-form preselects every provider + both approval modes (one-tap
   grant). The gate still exists for users who want it.
 
-## Current state (v0.3)
+## Current state (1.6.0)
+
+- App icon: current variants are regular, WWDC26, monoline, and glass, backed by
+  the checked-in `AppIcon-*` asset sets.
+- Pairing: QR/paste pairing, confirm-code verification, persisted paired Mac,
+  trusted reconnect, local-network preflight, and Tailscale-oriented off-LAN
+  setup. Demo Mode works without a paired Mac and uses local canned data.
+- Home: Mac/device header, Workflows section, global/side/guest chat visibility,
+  collapsed iPad sidebar headers, usage/readiness surfaces, and a rebuilt
+  Pair-with-Mac screen in TaskWraith chrome.
+- Thread: speaker-labelled rows, token streaming, inline image attachments,
+  "still working" anchor during tool calls, proposal/question/approval cards,
+  file editor, Diff Studio, usage tab, notes, side chats, and provider-skinned
+  composer shells.
+- Settings: full-screen settings for General, Appearance, Approvals, Providers,
+  Roster, MCP, Workspaces, pinned messages, Model usage, Local servers, and
+  Devices. Provider setup and deep MCP configuration remain Mac-owned.
+- First launch: the iOS first-launch sheet orients users around Mac-owned setup,
+  provider readiness, workspace capability flags, usage snapshots, composer/theme
+  variations, approvals, Ensemble basics, and Mac-only power tools.
+
+## Historical state (v0.3)
 
 - App icon: full appearance set from `design-assets/TaskWraith App Icon/`
   (Default / Dark / TintedLight in `TaskWraithApp/Assets.xcassets`).
@@ -89,7 +111,7 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   per-thread roster chips above the composer — provider-tinted, active
   participant highlighted, per-participant status dots.
 - **Provider-tinted transcript names**: speaker labels parse their
-  provider ("Codex · gpt-5.4", "Gemini / Researcher") and tint with the
+  provider ("Codex · gpt-5.4", "Kimi / Researcher") and tint with the
   provider accent; solo assistant rows tint via the thread's provider.
 - **Welcome starters**: empty threads show the desktop's three starter
   cards (Map project / Plan a change / Make improvement) that prefill
@@ -598,8 +620,9 @@ lifecycle modifiers landed.)
   limitLabel caption ('N% remaining', Kimi 'n / m remaining', Cursor
   'This cycle'). Activity heatmap + rollup chips at the bottom; "as of
   HH:mm" staleness caption.
-- **Feed**: bridge.broadcastModelUsage — gemini/codex/claude/kimi/
-  cursor quota windows via the SAME TTL-cached snapshot fetchers the
+- **Feed**: bridge.broadcastModelUsage — codex/claude/kimi/cursor quota
+  windows, with historical Gemini data preserved where present, via the SAME
+  TTL-cached snapshot fetchers the
   desktop IPC uses (90s–2m fresh), shipped on establish + ~6s after
   launch + every 7.5 minutes. A few KB bounded at source (8 windows/
   provider) — no transport chunking needed against the relay's 1MB cap.
@@ -925,18 +948,18 @@ until the classification is confirmed):
 Verified: 25 Mac remote-store tests (3 new refusal regressions), Swift
 suite, full xcodebuild of the app target, typecheck.
 
-## Next slices (in rough order)
+## Current follow-ups
 
-1. **Global chats** — needs a Mac-side policy decision: a settings toggle
-   ("allow global chats on paired devices") because the current security
-   model is strictly workspace-scoped. View first, then turn-taking.
-4. **Diff cards** in the thread view (the `diffSummary` projection already
-   flows; render Codex-app-style "+N −M" file rows).
-5. **APNs**: registerApnsToken from the phone + silent-push → resolve →
-   reconnect wake path (Mac side is done).
-6. iPad-exclusive: sub-thread tree, side-by-side thread + diff.
+1. Keep the first-launch, settings, usage, and provider-readiness surfaces in
+   sync with the Mac projection schema as 1.6.0 hardens.
+2. Tighten iPad-exclusive density: sub-thread tree, side-by-side transcript +
+   diff review, and larger workflow/ensemble controls.
+3. Continue device QA across offline Demo Mode, paired LAN, paired Tailscale,
+   foreground reconnect, APNs wake, image attachments, and settings persistence.
 
 ## Non-goals
 
-- Desktop settings surface, model usage meters, FX/sky chrome, ensemble
-  roster editing — the Mac owns configuration; the phone manages threads.
+- Provider login flows, API-key entry, CLI installation, deep MCP server
+  authoring, and provider account upgrades remain Mac-owned. The phone may show
+  readiness, usage, and setup references, but it should not become a replacement
+  for desktop provider configuration.

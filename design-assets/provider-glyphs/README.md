@@ -3,6 +3,8 @@
 Original monoline mnemonic glyphs for representing providers without bundling official logo PNGs.
 
 These are deliberately simplified and slightly "wrong" visual hints. The provider label remains the actual product identifier; the glyph is only supporting iconography.
+Gemini glyphs remain in the set for historical chats and usage history even
+though Gemini is retired for new runs.
 
 Design constraints:
 
@@ -35,3 +37,5 @@ lean on `<style>` + `var(--provider-accent)`, which qlmanage/NSImage
 flatten onto a white card). Writes masters to `png/` and copies into the
 iOS package resources, where `ProviderGlyphIcon` tints them with the
 provider accent at runtime (`renderingMode(.template)`).
+After changing glyph geometry, also sync any inline desktop copy in
+`src/renderer/src/components/icons/ProviderGlyph.tsx`.
