@@ -129,6 +129,14 @@ public final class RemoteSessionModel: ObservableObject {
     /// taps would otherwise flash the resolved card straight back.
     private var repliedApprovalToolCallIds: Set<String> = []
     private var repliedQuestionIds: Set<String> = []
+    /// Plan messageIds the user just acted on (approve/respond/dismiss), keyed on
+    /// the transcript row id (a proposed plan parks NO tool-call, so this can't
+    /// reuse repliedApprovalToolCallIds). Unlike approvals/questions — which
+    /// re-render by removal from the @Published `approvals`/`questions` arrays —
+    /// a plan card stays in the transcript, so this set must be @Published to
+    /// drive the action row's disabled state until the Mac's status re-projection
+    /// lands. Restored in onAck on `!accepted` so a denied decision re-enables it.
+    @Published private var repliedProposedPlanIds: Set<String> = []
     /// Allowlist-visible workspaces (the compose surface). Empty until the Mac
     /// has at least one entry in Settings → Devices → workspace access.
     @Published public private(set) var workspaces: [WorkspaceSummary] = []
@@ -3377,6 +3385,100 @@ public final class RemoteSessionModel: ObservableObject {
                 }
             })
         scheduleThreadRefresh(thread)
+    }
+
+    /// Provider that owns a thread (for a composerPrompt continuation): the task
+    /// card is authoritative; fall back to the loaded snapshot, then to claude so
+    /// a Codex/Cursor plan re-dispatches on its OWN provider, never silently dead.
+    private func providerForThread(_ threadId: String) -> String {
+        if let p = taskCards.first(where: { $0.id == threadId })?.provider, !p.isEmpty {
+            return p
+        }
+        if let p = threadSnapshots[threadId]?.provider, !p.isEmpty { return p }
+        return "claude"
+    }
+
+    /// True once the user has acted on this plan locally (optimistic) — drives the
+    /// action row's disabled state until the Mac's status re-projection confirms.
+    public func proposedPlanIsReplied(_ messageId: String) -> Bool {
+        repliedProposedPlanIds.contains(messageId)
+    }
+
+    /// Approve a proposed plan: dispatch the implement run in DEFAULT (file-write)
+    /// mode, and mark the plan `approved` ONLY once that run is accepted. Gating
+    /// the status flip on the run's ack means a plan-only / global workspace that
+    /// DENIES the elevated 'default' run restores the card instead of lying that
+    /// it was approved when nothing ran. The Mac re-signs the elevated posture
+    /// trust-side (composerPromptFn → signRunPosture); the phone sends no HMAC.
+    /// The prompt references "the plan above", so the agent reads the canonical
+    /// plan from its own transcript — the phone never round-trips the (possibly
+    /// truncated) preview body.
+    public func proposedPlanApprove(threadId: String, messageId: String) {
+        guard let ws = remoteScopeForThread(threadId) else { return }
+        let provider = providerForThread(threadId)
+        repliedProposedPlanIds.insert(messageId)
+        send(
+            BridgeAction.composerPrompt(
+                workspaceId: ws, threadId: threadId, provider: provider,
+                text: "The plan above is approved — go ahead and implement it now.",
+                approvalMode: "default"),
+            successLabel: "Plan approved — implementing.",
+            onAck: { [weak self] accepted in
+                guard let self else { return }
+                if accepted {
+                    // The implement run started — NOW persist the approved status.
+                    self.send(
+                        BridgeAction.proposedPlanDecision(
+                            workspaceId: ws, threadId: threadId, messageId: messageId,
+                            decision: "approved"))
+                } else {
+                    // Run denied (e.g. read-only workspace) — re-enable the card.
+                    self.repliedProposedPlanIds.remove(messageId)
+                }
+            })
+        scheduleThreadRefresh(threadId)
+    }
+
+    /// Respond to a proposed plan with feedback: send it as a normal turn WITHOUT
+    /// approvalMode (stays in plan mode so the agent re-plans) and dismiss the
+    /// current plan card once the turn is accepted. Mirrors the desktop
+    /// handleProposedPlanCustom (revise, no permission elevation).
+    public func proposedPlanRespond(threadId: String, messageId: String, feedback: String) {
+        let trimmed = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let ws = remoteScopeForThread(threadId) else { return }
+        let provider = providerForThread(threadId)
+        repliedProposedPlanIds.insert(messageId)
+        send(
+            BridgeAction.composerPrompt(
+                workspaceId: ws, threadId: threadId, provider: provider, text: trimmed),
+            successLabel: "Feedback sent.",
+            onAck: { [weak self] accepted in
+                guard let self else { return }
+                if accepted {
+                    self.send(
+                        BridgeAction.proposedPlanDecision(
+                            workspaceId: ws, threadId: threadId, messageId: messageId,
+                            decision: "dismissed"))
+                } else {
+                    self.repliedProposedPlanIds.remove(messageId)
+                }
+            })
+        scheduleThreadRefresh(threadId)
+    }
+
+    /// Dismiss a proposed plan with no run — the executor only flips status.
+    public func proposedPlanDismiss(threadId: String, messageId: String) {
+        guard let ws = remoteScopeForThread(threadId) else { return }
+        repliedProposedPlanIds.insert(messageId)
+        send(
+            BridgeAction.proposedPlanDecision(
+                workspaceId: ws, threadId: threadId, messageId: messageId, decision: "dismissed"),
+            successLabel: "Plan dismissed.",
+            onAck: { [weak self] accepted in
+                guard let self, !accepted else { return }
+                self.repliedProposedPlanIds.remove(messageId)
+            })
+        scheduleThreadRefresh(threadId)
     }
 
     public func cancelRun(_ card: RemoteTaskCard) {

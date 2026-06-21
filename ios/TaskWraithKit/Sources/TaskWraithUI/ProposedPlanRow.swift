@@ -20,6 +20,7 @@ struct ProposedPlanRow: View {
     let plan: RemoteThreadSnapshot.Row.ProposedPlan
 
     @State private var expanded: Bool
+    @State private var feedback: String = ""
 
     init(
         model: RemoteSessionModel,
@@ -67,6 +68,11 @@ struct ProposedPlanRow: View {
                     Text("Plan truncated — open on desktop to read it in full.")
                         .font(.caption2)
                         .foregroundStyle(TWTheme.textTertiary)
+                }
+                // Actions only while the plan is awaiting a decision; a decided
+                // plan (re-projected approved/dismissed) shows just its pill.
+                if status == "pending" {
+                    actionRow
                 }
             }
         }
@@ -141,5 +147,52 @@ struct ProposedPlanRow: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(color.opacity(0.14), in: Capsule())
+    }
+
+    /// True once the user has tapped Approve/Respond/Dismiss locally — the
+    /// optimistic suppression keyed on the plan's messageId (rowId). Disables the
+    /// row so it can't double-fire before the Mac's status re-projection lands.
+    private var decided: Bool { model.proposedPlanIsReplied(rowId) }
+
+    private var actionRow: some View {
+        VStack(spacing: 7) {
+            HStack(spacing: 7) {
+                Button("Approve") {
+                    model.proposedPlanApprove(threadId: threadId, messageId: rowId)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(accent)
+                .disabled(decided)
+                Spacer(minLength: 0)
+                Button("Dismiss", role: .destructive) {
+                    model.proposedPlanDismiss(threadId: threadId, messageId: rowId)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(decided)
+            }
+            HStack(spacing: 7) {
+                TextField("Respond with feedback…", text: $feedback)
+                    .font(.footnote)
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(TWTheme.surface2, in: Capsule())
+                    .disabled(decided)
+                Button {
+                    model.proposedPlanRespond(threadId: threadId, messageId: rowId, feedback: feedback)
+                    feedback = ""
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(
+                            feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? TWTheme.textMuted : TWTheme.chroma1)
+                }
+                .buttonStyle(.plain)
+                .disabled(decided || feedback.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
     }
 }
