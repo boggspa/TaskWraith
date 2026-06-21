@@ -1035,6 +1035,20 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             public let title: String?
         }
         public let subThreadReturn: SubThreadReturn?
+        /// Structured Codex-style proposed-plan card — the desktop
+        /// ProposedPlanCard's persisted state, projected so the phone renders
+        /// the same inline collapsible plan card and can round-trip the
+        /// decision. Field names match the Mac projection 1:1 (title /
+        /// bodyPreview / status / bodyTruncated); `status` is an optional
+        /// String (never a non-optional enum) so an unexpected value from a
+        /// newer Mac degrades to read-only rather than failing decode.
+        public struct ProposedPlan: Codable, Sendable {
+            public let title: String?
+            public let bodyPreview: String?
+            public let status: String?
+            public let bodyTruncated: Bool?
+        }
+        public let proposedPlan: ProposedPlan?
     }
     public struct RunSummary: Codable, Sendable {
         public let runId: String?

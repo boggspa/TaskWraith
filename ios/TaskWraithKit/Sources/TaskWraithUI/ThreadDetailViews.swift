@@ -1791,12 +1791,15 @@ struct ThreadRowView: View {
 
     private var isUser: Bool { row.role == "user" }
     private var isTool: Bool { row.role == "tool" || row.kind == "tool" }
-    private var showExpand: Bool { row.truncated == true && !hasParticipantHealthCard }
+    private var showExpand: Bool {
+        row.truncated == true && !hasParticipantHealthCard && !hasProposedPlanCard
+    }
     private var isExpanding: Bool { model.expandingRows.contains(row.id) }
     private var hasParticipantHealthCard: Bool {
         !(row.participantHealth?.entries?.isEmpty ?? true)
     }
     private var hasSubThreadReturnCard: Bool { row.subThreadReturn != nil }
+    private var hasProposedPlanCard: Bool { row.proposedPlan != nil }
     private var ensembleParticipants: [RemoteEnsembleState.Participant] {
         model.ensembleStates[threadId]?.participants ?? []
     }
@@ -1808,12 +1811,15 @@ struct ThreadRowView: View {
                 fallbackAccent: accentColor,
                 hidden: isUser || hasParticipantHealthCard)
             VStack(alignment: .leading, spacing: 4) {
-                if !hasParticipantHealthCard && !hasSubThreadReturnCard {
+                if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard {
                     Text(label)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(labelColor)
                 }
-                if let health = row.participantHealth,
+                if let plan = row.proposedPlan {
+                    ProposedPlanRow(
+                        model: model, threadId: threadId, rowId: row.id, plan: plan)
+                } else if let health = row.participantHealth,
                     let entries = health.entries, !entries.isEmpty
                 {
                     ParticipantHealthSummaryCard(summary: health)
@@ -1874,7 +1880,7 @@ struct ThreadRowView: View {
                 } else if let count = row.imageAttachmentCount, count > 0 {
                     imageAttachmentChip(count)
                 }
-                if !hasParticipantHealthCard && !hasSubThreadReturnCard,
+                if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard,
                     let preview = row.preview, !preview.isEmpty
                 {
                     MarkdownLite(
