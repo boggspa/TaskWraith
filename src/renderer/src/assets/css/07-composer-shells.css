@@ -13,8 +13,8 @@
  * Anything else TaskWraith-specific in the left bar (model-aware reasoning
  * pills, extra workspace chips, etc.) still gets hidden by these :not()
  * allowlists. */
-[data-composer-style="codex"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]),
-[data-composer-style="claude"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]) {
+[data-composer-style="codex"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]),
+[data-composer-style="claude"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
@@ -116,6 +116,10 @@
  * chrome surface. */
 [data-composer-style="codex"] [data-composer-control="workspace"] { order: 4; }
 [data-composer-style="codex"] [data-composer-control="model"] { order: 5; margin-left: auto; }
+/* Ollama tier picker sits beside the permission picker (it IS the Ollama
+ * permission control). order:1 ties permission; DOM source-order (rendered
+ * right after the permission picker) resolves the tie deterministically. */
+[data-composer-style="codex"] [data-composer-control="ollama-tier"] { order: 1; }
 
 [data-composer-style="codex"] [data-composer-control="workspace"] {
   min-height: 24px;
@@ -454,7 +458,7 @@
   flex: 1;
 }
 [data-composer-style="claude"] [data-composer-control="permission"] { order: 0; }
-[data-composer-style="claude"] [data-composer-control="attach"]    { order: 1; }
+[data-composer-style="claude"] [data-composer-control="attach"]    { order: -1; }
 /* Provider sits in the gap between `+` (attach) and the right-aligned model
  * picker — replaces the previous satellite footer chip. */
 [data-composer-style="claude"] [data-composer-control="ensemble-mode"] { order: 2; }
@@ -464,6 +468,7 @@
  * so the controls cluster reads as a coherent peer-group. */
 [data-composer-style="claude"] [data-composer-control="workspace"] { order: 4; }
 [data-composer-style="claude"] [data-composer-control="model"]    { order: 5; margin-left: auto; }
+[data-composer-style="claude"] [data-composer-control="ollama-tier"] { order: 0; }
 
 [data-composer-style="claude"] [data-composer-control="workspace"] {
   min-height: 24px;
@@ -2076,7 +2081,7 @@
  * ============================================================ */
 [data-composer-style="gemini"] .composer-top-toggles,
 [data-composer-style="gemini"] .composer-chips,
-[data-composer-style="gemini"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]) {
+[data-composer-style="gemini"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 /* Gemini shell — historically hid `.composer-above-bar` entirely
@@ -2253,6 +2258,7 @@
 /* 1.0.5-AR12 — Workspace pill matches Gemini's softened outline-chip
  * family (provider chip pattern at line 19060). */
 [data-composer-style="gemini"] [data-composer-control="workspace"] { order: 4; }
+[data-composer-style="gemini"] [data-composer-control="ollama-tier"] { order: 1; }
 
 /* ---- LIFT: +/model/send onto the capsule's row ----
  * Anchored to `.composer-surface` (position:relative) as the containing
@@ -2552,7 +2558,7 @@
  * ============================================================ */
 [data-composer-style="kimi"] .composer-top-toggles,
 [data-composer-style="kimi"] .composer-chips,
-[data-composer-style="kimi"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]) {
+[data-composer-style="kimi"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 /* Kimi shell — same parity move as Gemini above. Was hidden
@@ -2620,6 +2626,7 @@
  * terminal aesthetic. */
 [data-composer-style="kimi"] [data-composer-control="workspace"] { order: 4; }
 [data-composer-style="kimi"] [data-composer-control="model"] { order: 5; margin-left: auto; }
+[data-composer-style="kimi"] [data-composer-control="ollama-tier"] { order: 1; }
 
 [data-composer-style="kimi"] [data-composer-control="workspace"] {
   min-height: 28px;

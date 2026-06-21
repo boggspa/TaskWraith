@@ -1417,7 +1417,7 @@
 /* Hide the same extra controls Gemini hides. */
 [data-composer-style="grok"] .composer-top-toggles,
 [data-composer-style="grok"] .composer-chips,
-[data-composer-style="grok"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]) {
+[data-composer-style="grok"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
@@ -1587,6 +1587,40 @@
 [data-composer-style="grok"] [data-composer-control="provider"] { order: 3; }
 [data-composer-style="grok"] [data-composer-control="workspace"] { order: 4; }
 [data-composer-style="grok"] [data-composer-control="model"] { order: 5; margin-left: auto; }
+/* Ollama tier picker — Grok has no base `.composer-combined-picker-trigger`
+ * rule to inherit, so style it explicitly as a bare-text monochrome control
+ * (matching grok's permission/model chips) sitting beside the permission
+ * picker. order:1 ties permission; DOM source-order resolves it after. */
+[data-composer-style="grok"] [data-composer-control="ollama-tier"] {
+  order: 1;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: transparent !important;
+  color: var(--grok-muted) !important;
+  border: 0 !important;
+  font-size: calc(var(--font-size-xs) + 1px);
+  font-weight: 500;
+}
+[data-composer-style="grok"] [data-composer-control="ollama-tier"]:hover:not(:disabled) {
+  background: var(--grok-hover) !important;
+  color: var(--grok-fg) !important;
+}
+[data-composer-style="grok"] [data-composer-control="ollama-tier"] .composer-combined-picker-trigger-primary {
+  color: var(--grok-fg) !important;
+}
+[data-composer-style="grok"] [data-composer-control="ollama-tier"] .composer-combined-picker-trigger-suffix {
+  color: var(--grok-muted) !important;
+}
+/* Strict monochrome: neutralize the amber Tier-4-ineffective signal to a heavier
+ * border + muted glyph. The base rule above sets border:0, so RESTORE a 1px
+ * border here, else the warning state would be invisible. */
+[data-composer-style="grok"] .composer-ollama-tier-warning {
+  color: var(--grok-muted) !important;
+}
+[data-composer-style="grok"] .composer-combined-picker-trigger[data-ollama-tier-ineffective="true"] {
+  border: 1px solid var(--grok-border-strong) !important;
+}
 
 /* Workspace — no container pill; bare label + icon. (Hover gives a
  * transient highlight, not a persistent outline.) */
@@ -2135,7 +2169,7 @@
 /* Hide the same extra controls Gemini hides. */
 [data-composer-style="cursor"] .composer-top-toggles,
 [data-composer-style="cursor"] .composer-chips,
-[data-composer-style="cursor"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]) {
+[data-composer-style="cursor"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
@@ -2362,6 +2396,39 @@
 [data-composer-style="cursor"] [data-composer-control="ensemble-mode"] { order: 2; }
 [data-composer-style="cursor"] [data-composer-control="provider"] { order: 3; }
 [data-composer-style="cursor"] [data-composer-control="workspace"] { order: 4; }
+/* Ollama tier picker — Cursor styles triggers per-control-key (never the generic
+ * `.composer-combined-picker-trigger` class), so style it explicitly with the
+ * flat-gray `--cursor-shell-*` tokens (auto light/dark via the token flip).
+ * order:1 ties permission; DOM source-order resolves it after. */
+[data-composer-style="cursor"] [data-composer-control="ollama-tier"] {
+  order: 1;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--cursor-shell-muted);
+  border: 1px solid var(--cursor-shell-border);
+  font-size: var(--font-size-xs);
+}
+[data-composer-style="cursor"] [data-composer-control="ollama-tier"]:hover:not(:disabled) {
+  background: var(--cursor-shell-hover);
+  border-color: var(--cursor-shell-border-strong);
+}
+[data-composer-style="cursor"] [data-composer-control="ollama-tier"] .composer-combined-picker-trigger-primary {
+  color: var(--cursor-shell-fg);
+}
+[data-composer-style="cursor"] [data-composer-control="ollama-tier"] .composer-combined-picker-trigger-suffix {
+  color: var(--cursor-shell-muted);
+}
+/* Flat-gray shell: neutralize the amber Tier-4-ineffective signal to a heavier
+ * gray border + muted glyph (cursor's own border above would otherwise mask
+ * the global amber rule anyway). */
+[data-composer-style="cursor"] .composer-ollama-tier-warning {
+  color: var(--cursor-shell-muted) !important;
+}
+[data-composer-style="cursor"] [data-composer-control="ollama-tier"][data-ollama-tier-ineffective="true"] {
+  border-color: var(--cursor-shell-border-strong) !important;
+}
 
 /* ---- LIFT: +/model/send onto the capsule's row ----
  * Containing block is `.composer-surface` (position:relative); the
