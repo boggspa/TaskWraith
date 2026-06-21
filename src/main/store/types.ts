@@ -1991,6 +1991,14 @@ export interface ChatMessage {
     parentChatId?: string
     /** User pin timestamp (ms since epoch). Missing means not pinned. */
     pinnedAt?: number
+    /** Plan-mode proposed plan presented for approval (the ProposedPlanCard).
+     *  Persisted on the message so the card survives reload + the decision,
+     *  and the raw <proposed_plan> block is stripped from `content`. */
+    proposedPlan?: {
+      title: string
+      body: string
+      status: 'pending' | 'approved' | 'dismissed'
+    }
     /** Presentation-only link preview targets extracted from user-visible prompt text. */
     linkPreviews?: Array<{ url: string; origin: string; host: string }>
     /** Local filesystem paths of images attached to this message (desktop

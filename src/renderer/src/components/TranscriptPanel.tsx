@@ -683,7 +683,6 @@ export const TranscriptPanel = memo(
     isThinking,
     showFallbackUX,
     pendingPlanChoice,
-    pendingProposedPlan,
     pendingAgentQuestions,
     onAgentQuestionSubmit,
     onAgentQuestionDismiss,
@@ -1489,10 +1488,11 @@ export const TranscriptPanel = memo(
                         </div>
                       </div>
                     )}
-                    {pendingProposedPlan && pendingProposedPlan.messageId === msg.id && (
+                    {msg.metadata?.proposedPlan && (
                       <ProposedPlanCard
-                        title={pendingProposedPlan.title}
-                        body={pendingProposedPlan.body}
+                        title={msg.metadata.proposedPlan.title}
+                        body={msg.metadata.proposedPlan.body}
+                        status={msg.metadata.proposedPlan.status}
                         chat={currentChat || undefined}
                         onApprove={(planBody) => onProposedPlanApprove(msg.id, planBody)}
                         onDismiss={() => onProposedPlanDismiss(msg.id)}

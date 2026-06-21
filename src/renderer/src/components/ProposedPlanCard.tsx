@@ -5,6 +5,9 @@ import { MarkdownMessage } from './MarkdownMessage'
 export type ProposedPlanCardProps = {
   title: string
   body: string
+  /** Decision state — `pending` shows the action row; once decided the card
+   *  collapses to a read-only outcome. */
+  status: 'pending' | 'approved' | 'dismissed'
   chat?: ChatRecord
   /** Approve → re-dispatch the thread (write-capable) to implement `planBody`
    *  (the possibly-edited plan). */
@@ -27,12 +30,15 @@ type CardMode = 'view' | 'edit' | 'custom'
 export function ProposedPlanCard({
   title,
   body,
+  status,
   chat,
   onApprove,
   onDismiss,
   onCustom
 }: ProposedPlanCardProps) {
-  const [expanded, setExpanded] = useState(true)
+  const isPending = status === 'pending'
+  // Pending plans open for review; a decided plan collapses to its outcome.
+  const [expanded, setExpanded] = useState(isPending)
   const [mode, setMode] = useState<CardMode>('view')
   const [draftBody, setDraftBody] = useState(body)
   const [customText, setCustomText] = useState('')
@@ -65,6 +71,12 @@ export function ProposedPlanCard({
         </span>
         <span className="proposed-plan-eyebrow">Plan</span>
         <span className="proposed-plan-title">{title}</span>
+        {status === 'approved' && (
+          <span className="proposed-plan-badge proposed-plan-badge-approved">Approved</span>
+        )}
+        {status === 'dismissed' && (
+          <span className="proposed-plan-badge proposed-plan-badge-dismissed">Dismissed</span>
+        )}
       </button>
 
       {expanded && (
@@ -84,7 +96,7 @@ export function ProposedPlanCard({
         </div>
       )}
 
-      {mode === 'custom' ? (
+      {isPending && (mode === 'custom' ? (
         <div className="proposed-plan-custom">
           <textarea
             className="proposed-plan-custom-input"
@@ -179,7 +191,7 @@ export function ProposedPlanCard({
             Approve &amp; implement
           </button>
         </div>
-      )}
+      ))}
     </div>
   )
 }

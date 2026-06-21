@@ -391,7 +391,7 @@ import {
   type ImageAttachment
 } from './lib/imageAttachments'
 import { parsePlanModeChoice, type PlanChoiceState } from './lib/planModeChoice'
-import { parseProposedPlan, type ProposedPlanState } from './lib/proposedPlan'
+import { parseProposedPlan, stripProposedPlanBlock, type ProposedPlanState } from './lib/proposedPlan'
 import { messageAnchorsActivePrompt } from './lib/transcriptDeleteGuard'
 import { type AgentQuestionState } from './components/AgentQuestionCard'
 import {
@@ -9758,15 +9758,27 @@ function App(): React.JSX.Element {
                     }
                   : null
               )
-              setPendingProposedPlan(
-                parsedPlan
-                  ? {
-                      messageId: assistantMessageId,
-                      title: parsedPlan.title,
-                      body: parsedPlan.body
-                    }
-                  : null
-              )
+              if (parsedPlan) {
+                // Persist the plan on its message so the card survives reload +
+                // the decision, and strip the raw <proposed_plan> block so it
+                // doesn't double-render as prose beside the card.
+                updated.messages = updated.messages.map((m) =>
+                  m.id === assistantMessageId
+                    ? {
+                        ...m,
+                        content: stripProposedPlanBlock(m.content),
+                        metadata: {
+                          ...(m.metadata || {}),
+                          proposedPlan: {
+                            title: parsedPlan.title,
+                            body: parsedPlan.body,
+                            status: 'pending' as const
+                          }
+                        }
+                      }
+                    : m
+                )
+              }
             }
           } else if (event.type === 'run_started') {
             const sessionId = normalizeGeminiResumeTarget(event.session_id)
@@ -13062,11 +13074,26 @@ function App(): React.JSX.Element {
 
   // Plan-mode proposed-plan decisions (the ProposedPlanCard action row).
   // Approve leaves read-only and implements; Respond/Dismiss stay in plan mode.
+  // The decision is persisted on the plan's message so the card shows the
+  // outcome (collapsed) and survives reload.
+  const markProposedPlan = (
+    messages: ChatMessage[],
+    messageId: string,
+    status: 'approved' | 'dismissed'
+  ): ChatMessage[] =>
+    messages.map((m) =>
+      m.id === messageId && m.metadata?.proposedPlan
+        ? {
+            ...m,
+            metadata: { ...m.metadata, proposedPlan: { ...m.metadata.proposedPlan, status } }
+          }
+        : m
+    )
+
   const handleProposedPlanApprove = (messageId: string, planBody: string) => {
     if (!currentChat) return
     const original =
-      pendingProposedPlan?.messageId === messageId ? pendingProposedPlan.body : null
-    setPendingProposedPlan((prev) => (prev?.messageId === messageId ? null : prev))
+      currentChat.messages.find((m) => m.id === messageId)?.metadata?.proposedPlan?.body ?? null
     const trimmed = planBody.trim()
     const isEdited = original != null && trimmed !== original.trim()
     const prompt = isEdited
@@ -13086,7 +13113,10 @@ function App(): React.JSX.Element {
         content: prompt,
         timestamp: new Date().toISOString()
       }
-      const updated = { ...prev, messages: [...prev.messages, nextMessage] }
+      const updated = {
+        ...prev,
+        messages: [...markProposedPlan(prev.messages, messageId, 'approved'), nextMessage]
+      }
       window.api.saveChat(updated)
       return updated
     })
@@ -13095,12 +13125,17 @@ function App(): React.JSX.Element {
   }
 
   const handleProposedPlanDismiss = (messageId: string) => {
-    setPendingProposedPlan((prev) => (prev?.messageId === messageId ? null : prev))
+    if (!currentChat) return
+    setCurrentChat((prev) => {
+      if (!prev) return prev
+      const updated = { ...prev, messages: markProposedPlan(prev.messages, messageId, 'dismissed') }
+      window.api.saveChat(updated)
+      return updated
+    })
   }
 
   const handleProposedPlanCustom = (messageId: string, feedback: string) => {
     if (!currentChat || !feedback.trim()) return
-    setPendingProposedPlan((prev) => (prev?.messageId === messageId ? null : prev))
     setCurrentChat((prev) => {
       if (!prev) return prev
       const nextMessage: ChatMessage = {
@@ -13109,7 +13144,10 @@ function App(): React.JSX.Element {
         content: feedback,
         timestamp: new Date().toISOString()
       }
-      const updated = { ...prev, messages: [...prev.messages, nextMessage] }
+      const updated = {
+        ...prev,
+        messages: [...markProposedPlan(prev.messages, messageId, 'dismissed'), nextMessage]
+      }
       window.api.saveChat(updated)
       return updated
     })

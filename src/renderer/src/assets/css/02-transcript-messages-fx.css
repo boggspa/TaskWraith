@@ -4840,6 +4840,27 @@
   color: var(--text-secondary);
 }
 
+.proposed-plan-badge {
+  margin-left: auto;
+  align-self: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.proposed-plan-badge-approved {
+  color: var(--status-success, #46a758);
+  background: color-mix(in srgb, var(--status-success, #46a758) 16%, transparent);
+}
+
+.proposed-plan-badge-dismissed {
+  color: var(--text-tertiary, var(--text-secondary));
+  background: rgba(255, 255, 255, 0.08);
+}
+
 /* 1.4.2 — goal-step / todo checklist cards (todo_write + provider-native aliases). */
 .todo-checklist-card {
   list-style: none;
