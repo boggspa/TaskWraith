@@ -1903,6 +1903,45 @@ export interface WorkspaceRecord {
   notes?: string
 }
 
+export type TranscriptMediaSource = 'generated' | 'workspace_path' | 'upload' | 'tool_result'
+export type TranscriptMediaKind = 'image'
+export type TranscriptMediaFormat = 'raster' | 'svg'
+export type TranscriptMediaStatus =
+  | 'available'
+  | 'missing'
+  | 'denied'
+  | 'unsafe_svg'
+  | 'too_large'
+  | 'unsupported'
+
+export interface TranscriptMediaThumbnail {
+  dataBase64: string
+  mimeType: string
+  width?: number
+  height?: number
+}
+
+export interface TranscriptMediaRef {
+  id: string
+  kind: TranscriptMediaKind
+  format: TranscriptMediaFormat
+  source: TranscriptMediaSource
+  name: string
+  alt?: string
+  caption?: string
+  mimeType: string
+  width?: number
+  height?: number
+  byteLength?: number
+  sha256?: string
+  assetId?: string
+  path?: string
+  workspaceId?: string
+  workspaceRelativePath?: string
+  thumbnail?: TranscriptMediaThumbnail
+  status?: TranscriptMediaStatus
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool' | 'error'
@@ -1966,6 +2005,10 @@ export interface ChatMessage {
       width?: number
       height?: number
     }>
+    /** Canonical transcript media artifacts. Unlike legacy image paths, these
+     * can represent assistant/tool-generated media and must be produced by the
+     * main-process media service after provenance and path validation. */
+    mediaRefs?: TranscriptMediaRef[]
     [key: string]: unknown
   }
 }
