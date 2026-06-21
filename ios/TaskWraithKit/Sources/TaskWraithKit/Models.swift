@@ -1496,6 +1496,27 @@ public enum BridgeAction {
         ])
     }
 
+    /// Save the current roster as a named preset (GLOBAL; the host forwards it
+    /// to the renderer's localStorage store, which re-syncs to all devices).
+    public static func ensemblePresetSave(
+        name: String, participants: [[String: Any]], actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "ensemblePresetMutate", "actionId": actionId,
+            "op": "save", "name": name, "participants": participants,
+        ])
+    }
+
+    /// Delete a roster preset by id (GLOBAL).
+    public static func ensemblePresetDelete(
+        presetId: String, actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "ensemblePresetMutate", "actionId": actionId,
+            "op": "delete", "presetId": presetId,
+        ])
+    }
+
     public static func ensembleSteer(
         workspaceId: String, threadId: String, text: String,
         imageAttachments: [[String: Any]]? = nil,

@@ -273,8 +273,10 @@ import { extractHttpUrls } from './lib/urlPresentation'
 import { useCopyFeedback } from './lib/useCopyFeedback'
 import { reasoningDisplayLabel, shortModelName } from './lib/composerChipFormat'
 import {
+  deleteEnsembleRosterPreset,
   listEnsembleRosterPresets,
   materializeParticipantsFromPreset,
+  saveEnsembleRosterPresetFromParticipants,
   subscribeEnsembleRosterPresets,
   type EnsembleRosterPreset
 } from './lib/ensembleRosterPresets'
@@ -1386,7 +1388,33 @@ function App(): React.JSX.Element {
       }
     }
     push()
-    return subscribeEnsembleRosterPresets(push)
+    const unsubscribe = subscribeEnsembleRosterPresets(push)
+    // iOS-triggered preset writes round-trip here (the renderer owns the store).
+    // Persisting fires the subscription above, which re-syncs the list to main.
+    const offSave = window.api.onEnsembleRosterPresetSaveRequested?.((payload) => {
+      try {
+        saveEnsembleRosterPresetFromParticipants(
+          payload.name,
+          (payload.participants ?? []) as Parameters<
+            typeof saveEnsembleRosterPresetFromParticipants
+          >[1]
+        )
+      } catch {
+        // ignore malformed payloads
+      }
+    })
+    const offDelete = window.api.onEnsembleRosterPresetDeleteRequested?.((presetId) => {
+      try {
+        deleteEnsembleRosterPreset(presetId)
+      } catch {
+        // ignore
+      }
+    })
+    return () => {
+      unsubscribe()
+      offSave?.()
+      offDelete?.()
+    }
   }, [])
 
   const [composerDraftsByChatId, setComposerDraftForChat] = usePerChatState('')

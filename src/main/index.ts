@@ -16670,6 +16670,29 @@ if (isGeminiMcpBridgeProcess) {
             }
           }
         },
+        // Roster preset save/delete from a paired device. Presets are
+        // renderer-local (localStorage), so forward the mutation to the
+        // renderer (the source of truth); its existing subscribe re-syncs the
+        // projected list back up (B1) and re-broadcasts to iOS.
+        ensemblePresetMutateFn: async (action) => {
+          if (!mainWindow) return { ok: false, reason: 'no-window' }
+          if (action.op === 'save') {
+            if (!action.name?.trim() || !action.participants?.length) {
+              return { ok: false, reason: 'save needs a name + participants' }
+            }
+            mainWindow.webContents.send('ensemble-roster-presets:save-requested', {
+              name: action.name,
+              participants: action.participants
+            })
+            return { ok: true }
+          }
+          if (action.op === 'delete') {
+            if (!action.presetId) return { ok: false, reason: 'delete needs a presetId' }
+            mainWindow.webContents.send('ensemble-roster-presets:delete-requested', action.presetId)
+            return { ok: true }
+          }
+          return { ok: false, reason: 'unknown op' }
+        },
         // QR-optional discovery (Slice 5e): enumerate the tailnet with the
         // host-side OAuth credential and probe each device's /v1/hostinfo. The
         // credential never leaves this Mac. Self is dropped here (its own

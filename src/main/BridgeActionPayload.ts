@@ -322,6 +322,21 @@ export interface BridgeRegisterApnsTokenAction extends BridgeActionMetadata {
   env: 'production' | 'sandbox'
 }
 
+/** Save or delete an ensemble roster preset from a paired device (iOS Roster
+ * page). GLOBAL — the preset store is renderer-local (localStorage), not
+ * workspace-bound. The host forwards the mutation to the renderer (the source
+ * of truth), which persists it and re-syncs the projected list. */
+export interface BridgeEnsemblePresetMutateAction extends BridgeActionMetadata {
+  kind: 'ensemblePresetMutate'
+  op: 'save' | 'delete'
+  /** save: the preset name. */
+  name?: string
+  /** save: participants in speaking order (reuses the roster-update shape). */
+  participants?: BridgeRosterParticipant[]
+  /** delete: the preset id to remove. */
+  presetId?: string
+}
+
 /** QR-optional multi-host discovery (Slice 5e). An already-paired phone asks
  * THIS host (the "oracle") to enumerate the tailnet with its stored OAuth
  * credential and report which machines run TaskWraith. No parameters: the host
@@ -590,6 +605,7 @@ export type BridgeActionPayload =
   | BridgeToggleMessagePinAction
   | BridgeProposedPlanDecisionAction
   | BridgeRegisterApnsTokenAction
+  | BridgeEnsemblePresetMutateAction
   | BridgeDiscoverTailnetHostsAction
   | BridgeSetYoloModeAction
   | BridgeTogglePinChatAction
@@ -717,6 +733,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'togglePinWorkspace':
       return payload.workspaceId
     case 'registerApnsToken':
+    case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
     case 'unknown':
       return null
@@ -781,6 +798,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'togglePinWorkspace':
       return true
     case 'registerApnsToken':
+    case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
       return false
     case 'unknown':
@@ -849,6 +867,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'gitPush':
     case 'githubCreatePr':
     case 'registerApnsToken':
+    case 'ensemblePresetMutate':
       return true
     case 'approvalReply':
     case 'questionReject':
@@ -1027,6 +1046,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isRegisterApnsToken(parsed)
         ? (parsed as unknown as BridgeRegisterApnsTokenAction)
         : { kind: 'unknown', rawKind: 'registerApnsToken', raw: parsed }
+    case 'ensemblePresetMutate':
+      return isEnsemblePresetMutate(parsed)
+        ? (parsed as unknown as BridgeEnsemblePresetMutateAction)
+        : { kind: 'unknown', rawKind: 'ensemblePresetMutate', raw: parsed }
     case 'discoverTailnetHosts':
       return isDiscoverTailnetHosts(parsed)
         ? (parsed as unknown as BridgeDiscoverTailnetHostsAction)
@@ -1541,6 +1564,27 @@ function isTogglePinWorkspace(v: Record<string, unknown>): boolean {
   return (
     hasValidActionMetadata(v) && typeof v.workspaceId === 'string' && typeof v.pinned === 'boolean'
   )
+}
+
+function isEnsemblePresetMutate(v: Record<string, unknown>): boolean {
+  if (!hasValidActionMetadata(v)) return false
+  if (v.op === 'save') {
+    return (
+      typeof v.name === 'string' &&
+      v.name.trim().length > 0 &&
+      Array.isArray(v.participants) &&
+      v.participants.every(
+        (p) =>
+          !!p &&
+          typeof p === 'object' &&
+          typeof (p as Record<string, unknown>).provider === 'string'
+      )
+    )
+  }
+  if (v.op === 'delete') {
+    return typeof v.presetId === 'string' && v.presetId.length > 0
+  }
+  return false
 }
 
 function isRegisterApnsToken(v: Record<string, unknown>): boolean {

@@ -165,6 +165,10 @@ function makeStubExecutor(
       executed: true,
       message: 'registerApnsToken done'
     }),
+    executeEnsemblePresetMutate: make('executeEnsemblePresetMutate', {
+      executed: true,
+      message: 'ensemblePresetMutate done'
+    }),
     executeDiscoverTailnetHosts: make('executeDiscoverTailnetHosts', {
       executed: true,
       message: 'discoverTailnetHosts done',

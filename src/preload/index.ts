@@ -1024,6 +1024,22 @@ const api = {
   onWorkflowDefinitionsChanged: (callback: (payload: any) => void) => {
     ipcRenderer.on('workflow-definitions-changed', (_event, payload) => callback(payload))
   },
+  // iOS-triggered roster-preset writes round-tripped back to the renderer (the
+  // localStorage source of truth). The renderer persists, which re-syncs the
+  // projected list back to the bridge.
+  onEnsembleRosterPresetSaveRequested: (
+    callback: (payload: { name: string; participants: unknown[] }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: { name: string; participants: unknown[] }): void =>
+      callback(payload)
+    ipcRenderer.on('ensemble-roster-presets:save-requested', wrapped)
+    return () => ipcRenderer.removeListener('ensemble-roster-presets:save-requested', wrapped)
+  },
+  onEnsembleRosterPresetDeleteRequested: (callback: (presetId: string) => void) => {
+    const wrapped = (_event: unknown, presetId: string): void => callback(presetId)
+    ipcRenderer.on('ensemble-roster-presets:delete-requested', wrapped)
+    return () => ipcRenderer.removeListener('ensemble-roster-presets:delete-requested', wrapped)
+  },
   onAuditRunChanged: (callback: (run: any) => void) => {
     const wrapped = (_event: unknown, run: unknown): void => callback(run)
     ipcRenderer.on('audit-run-changed', wrapped)

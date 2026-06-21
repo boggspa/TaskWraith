@@ -2929,6 +2929,37 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefresh(threadId)
     }
 
+    /// Save a roster (draft entries) as a named preset. GLOBAL — the host
+    /// forwards it to the renderer's preset store, which re-syncs to all
+    /// devices (the new preset shows up in `ensemblePresets`).
+    public func saveEnsembleRosterPreset(name: String, entries: [RosterDraftEntry]) {
+        let participants: [[String: Any]] = entries.map { entry in
+            var dict: [String: Any] = ["provider": entry.provider, "enabled": entry.enabled]
+            if let model = entry.model, !model.isEmpty { dict["model"] = model }
+            if !entry.role.isEmpty { dict["role"] = entry.role }
+            dict["brief"] = entry.brief
+            if let preset = entry.permissionPresetId, !preset.isEmpty {
+                dict["permissionPresetId"] = preset
+            }
+            if let reasoning = entry.reasoningEffort, !reasoning.isEmpty {
+                dict["reasoningEffort"] = reasoning
+            }
+            dict["fastModeEnabled"] = entry.fastModeEnabled
+            dict["thinkingEnabled"] = entry.thinkingEnabled
+            return dict
+        }
+        send(
+            BridgeAction.ensemblePresetSave(name: name, participants: participants),
+            successLabel: "Preset saved.")
+    }
+
+    /// Delete a roster preset by id. GLOBAL — re-syncs to all devices.
+    public func deleteEnsembleRosterPreset(presetId: String) {
+        send(
+            BridgeAction.ensemblePresetDelete(presetId: presetId),
+            successLabel: "Preset deleted.")
+    }
+
     /// The current guest participant child of a thread, if any.
     /// Filters on `sideChatIsActive` so a removed guest (whose child the Mac
     /// marks `closed` rather than deleting) drops out — otherwise the composer

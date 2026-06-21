@@ -379,6 +379,62 @@ export function getEnsembleRosterPreset(id: string): EnsembleRosterPreset | null
 }
 
 /**
+ * Save a roster preset from a paired device's participant list (iOS Roster
+ * page → bridge → main → here). The participants arrive in the roster-update
+ * wire shape (provider / role / brief / model / permission / reasoning / …);
+ * we map them to snapshots and persist via the clobber-safe upsert, whose
+ * notify re-syncs the projected list back to iOS.
+ */
+export function saveEnsembleRosterPresetFromParticipants(
+  name: string,
+  participants: Array<{
+    provider: string
+    role?: string
+    brief?: string
+    model?: string
+    enabled?: boolean
+    permissionPresetId?: string
+    reasoningEffort?: string
+    fastModeEnabled?: boolean
+    thinkingEnabled?: boolean
+  }>
+): EnsembleRosterPreset {
+  const trimmed = name.trim()
+  if (!trimmed) {
+    throw new Error('Preset name is required.')
+  }
+  const snapshots: EnsembleRosterParticipantSnapshot[] = participants.map((participant, index) => ({
+    provider: participant.provider as ProviderId,
+    enabled: participant.enabled ?? true,
+    role: participant.role || '',
+    instructions: participant.brief || '',
+    order: index + 1,
+    ...(participant.model ? { model: participant.model } : {}),
+    ...(participant.permissionPresetId
+      ? { permissionPresetId: participant.permissionPresetId as PermissionPresetId }
+      : {}),
+    ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
+    ...(typeof participant.fastModeEnabled === 'boolean'
+      ? { fastModeEnabled: participant.fastModeEnabled }
+      : {}),
+    ...(typeof participant.thinkingEnabled === 'boolean'
+      ? { thinkingEnabled: participant.thinkingEnabled }
+      : {})
+  }))
+  const now = Date.now()
+  const preset: EnsembleRosterPreset = {
+    id: newPresetId(now),
+    name: trimmed,
+    createdAt: now,
+    updatedAt: now,
+    orchestrationMode: 'turn_bound',
+    maxParticipants: Math.max(MIN_ROSTER_PRESET_PARTICIPANTS, snapshots.length),
+    participants: snapshots
+  }
+  return upsertEnsembleRosterPreset(preset)
+}
+
+/**
  * Create + persist a new roster preset seeded with the minimum two
  * participants (the live ensemble floor). The returned preset already passes
  * `isEnsembleRosterPreset`, so it survives the next `readRawPresets`.

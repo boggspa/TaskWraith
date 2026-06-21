@@ -1290,6 +1290,12 @@ declare global {
       ) => void
       onScheduledTaskDue: (callback: (payload: ScheduledTask) => void) => void
       onScheduledTasksChanged: (callback: (payload: ScheduledTask[]) => void) => void
+      onEnsembleRosterPresetSaveRequested: (
+        callback: (payload: { name: string; participants: unknown[] }) => void
+      ) => () => void
+      onEnsembleRosterPresetDeleteRequested: (
+        callback: (presetId: string) => void
+      ) => () => void
       onWorkflowDefinitionsChanged: (callback: (payload: WorkflowDefinition[]) => void) => void
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
       onUsageChanged: (callback: () => void) => void

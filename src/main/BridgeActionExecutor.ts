@@ -37,6 +37,7 @@ import type {
   BridgeQuestionRejectAction,
   BridgeQuestionReplyAction,
   BridgeRegisterApnsTokenAction,
+  BridgeEnsemblePresetMutateAction,
   BridgeDiscoverTailnetHostsAction,
   BridgeSetYoloModeAction,
   BridgeTogglePinChatAction,
@@ -161,6 +162,9 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeRegisterApnsToken(
     action: BridgeRegisterApnsTokenAction
+  ): Promise<BridgeActionExecutionResult>
+  executeEnsemblePresetMutate(
+    action: BridgeEnsemblePresetMutateAction
   ): Promise<BridgeActionExecutionResult>
   executeDiscoverTailnetHosts(
     action: BridgeDiscoverTailnetHostsAction
@@ -358,6 +362,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult> {
     return notWired('registerApnsToken', action.pairID)
   }
+  async executeEnsemblePresetMutate(
+    action: BridgeEnsemblePresetMutateAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('ensemblePresetMutate', action.op)
+  }
   async executeDiscoverTailnetHosts(
     _action: BridgeDiscoverTailnetHostsAction
   ): Promise<BridgeActionExecutionResult> {
@@ -545,6 +554,10 @@ export interface MainProcessActionExecutorDependencies {
   }>
   registerApnsTokenFn?: (action: BridgeRegisterApnsTokenAction) => Promise<{
     registered: boolean
+    reason?: string
+  }>
+  ensemblePresetMutateFn?: (action: BridgeEnsemblePresetMutateAction) => Promise<{
+    ok: boolean
     reason?: string
   }>
   /** QR-optional discovery (Slice 5e): enumerate the tailnet with the host's
@@ -1419,6 +1432,26 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
         executed: false,
         message: `APNs token registration failed: ${errMessage}`
       }
+    }
+  }
+
+  async executeEnsemblePresetMutate(
+    action: BridgeEnsemblePresetMutateAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.ensemblePresetMutateFn) {
+      return notWired('ensemblePresetMutate', action.op)
+    }
+    try {
+      const result = await this.deps.ensemblePresetMutateFn(action)
+      return result.ok
+        ? { executed: true, message: `Roster preset ${action.op} applied.` }
+        : {
+            executed: false,
+            message: `Roster preset ${action.op} declined${result.reason ? `: ${result.reason}` : ''}`
+          }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      return { executed: false, message: `Roster preset ${action.op} failed: ${errMessage}` }
     }
   }
 

@@ -31,6 +31,9 @@ public struct EnsembleRosterSheet: View {
     @State private var didConsumeFocus = false
     /// Preset pending a "replace the roster?" confirmation.
     @State private var presetToApply: RemoteEnsemblePreset? = nil
+    /// "Save current roster as preset" name prompt.
+    @State private var showSavePrompt = false
+    @State private var presetNameDraft = ""
 
     public init(model: RemoteSessionModel, threadId: String, workspaceId: String) {
         self.model = model
@@ -136,6 +139,18 @@ public struct EnsembleRosterSheet: View {
                 Button("Cancel", role: .cancel) { presetToApply = nil }
             } message: { preset in
                 Text("This swaps in \(preset.participants?.count ?? 0) participant\((preset.participants?.count ?? 0) == 1 ? "" : "s") from “\(preset.name ?? "preset")”. Your current roster isn’t saved unless you save it as a preset first.")
+            }
+            .alert("Save roster as preset", isPresented: $showSavePrompt) {
+                TextField("Preset name", text: $presetNameDraft)
+                Button("Save") {
+                    let name = presetNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !name.isEmpty {
+                        model.saveEnsembleRosterPreset(name: name, entries: draft)
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Saves the current \(draft.count) participant\(draft.count == 1 ? "" : "s") as a reusable preset, shared with your Mac.")
             }
         }
         .twColorScheme()
@@ -269,25 +284,55 @@ public struct EnsembleRosterSheet: View {
     @ViewBuilder
     private var presetsSection: some View {
         Section {
+            Button {
+                presetNameDraft = ""
+                showSavePrompt = true
+            } label: {
+                Label("Save current as preset…", systemImage: "square.and.arrow.down")
+            }
+            .disabled(draft.isEmpty)
+
             if model.ensemblePresets.isEmpty {
-                Text("No saved presets yet. Create one on the Mac (or save this roster, coming soon).")
+                Text("No saved presets yet. Save the current roster, or create one on the Mac.")
                     .font(.footnote)
                     .foregroundStyle(TWTheme.textMuted)
             } else {
-                Menu {
-                    ForEach(model.ensemblePresets) { preset in
-                        Button {
-                            presetToApply = preset
-                        } label: {
-                            Text("\(preset.name ?? "Untitled")  ·  \(preset.participants?.count ?? 0)")
+                ForEach(model.ensemblePresets) { preset in
+                    Button {
+                        presetToApply = preset
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "rectangle.stack")
+                                .foregroundStyle(TWTheme.textSecondary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(preset.name ?? "Untitled")
+                                    .font(.subheadline)
+                                    .foregroundStyle(TWTheme.textPrimary)
+                                Text(
+                                    "\(preset.participants?.count ?? 0) participant\((preset.participants?.count ?? 0) == 1 ? "" : "s")"
+                                )
+                                .font(.caption2)
+                                .foregroundStyle(TWTheme.textMuted)
+                            }
+                            Spacer()
+                            Image(systemName: "square.and.arrow.down.on.square")
+                                .font(.caption)
+                                .foregroundStyle(TWTheme.textMuted)
                         }
+                        .contentShape(Rectangle())
                     }
-                } label: {
-                    Label("Load preset", systemImage: "square.and.arrow.down")
+                    .buttonStyle(.plain)
+                }
+                .onDelete { indexSet in
+                    for index in indexSet {
+                        model.deleteEnsembleRosterPreset(presetId: model.ensemblePresets[index].id)
+                    }
                 }
             }
         } header: {
             Text("Presets")
+        } footer: {
+            Text("Presets are shared with your Mac. Tap to load (replaces the roster); swipe to delete.")
         }
     }
 
