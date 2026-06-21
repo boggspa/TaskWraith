@@ -225,4 +225,27 @@ public enum RelayCandidates {
         guard let host = URL(string: url)?.host else { return false }
         return isLocalNetworkHost(host)
     }
+
+    /// Derive a host's `/v1/beginpair` HTTP(S) endpoint from one of its relay
+    /// URLs (QR-optional discovery): wss→https, ws→http — the SAME origin
+    /// `tailscale serve` fronts the relay's ws + http on. Returns nil for an
+    /// unparseable URL. Query/fragment are dropped.
+    public static func beginPairURL(fromRelay relayUrl: String) -> URL? {
+        guard
+            var comps = URLComponents(
+                string: relayUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
+            // A scheme-less / hostless string (e.g. "") yields a useless relative
+            // URL — reject it so a malformed relay can't produce a bogus POST.
+            let host = comps.host, !host.isEmpty
+        else { return nil }
+        switch comps.scheme?.lowercased() {
+        case "wss": comps.scheme = "https"
+        case "ws": comps.scheme = "http"
+        default: break
+        }
+        comps.path = "/v1/beginpair"
+        comps.query = nil
+        comps.fragment = nil
+        return comps.url
+    }
 }

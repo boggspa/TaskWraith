@@ -30,6 +30,9 @@ struct HomeView: View {
     /// launch (then the user's own choices stick — persisted on the model).
     @AppStorage("tw.sidebar.ipadCollapseSeeded") private var ipadCollapseSeeded = false
     @State private var showDemoConfirm = false
+    /// QR-optional discovery sheet (find other TaskWraith hosts on the tailnet
+    /// via the connected host as the "oracle").
+    @State private var showDiscoverySheet = false
 
     private func openCanvas(_ mode: ComposeMode) {
         if explicitSelection {
@@ -156,6 +159,13 @@ struct HomeView: View {
                                 model.exitDemoMode()
                             }
                         } else {
+                            Button(
+                                "Find hosts on your tailnet",
+                                systemImage: "antenna.radiowaves.left.and.right"
+                            ) {
+                                showDiscoverySheet = true
+                            }
+                            Divider()
                             Button("Disconnect", role: .destructive) { model.disconnect() }
                             Button("Forget this host", role: .destructive) { model.forgetPairing() }
                             Divider()
@@ -181,6 +191,11 @@ struct HomeView: View {
             Text(
                 "This disconnects \(model.macDisplayName.isEmpty ? "your computer" : model.macDisplayName) and shows sample data only. Your chats stay private and won't appear in the demo."
             )
+        }
+        .sheet(isPresented: $showDiscoverySheet) {
+            TailnetDiscoverySheet(model: model)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -816,6 +831,145 @@ struct TaskRow: View {
         }
         .padding(.vertical, 2)
         .padding(.leading, nested ? 8 : 0)
+    }
+}
+
+// ── QR-optional discovery: find other TaskWraith hosts on the tailnet ──────────
+/// Presented from the connected shell's overflow menu. Asks the connected host
+/// (the "oracle") to enumerate the tailnet, lists the OTHER TaskWraith machines
+/// it finds, and pairs with one on tap — POST /v1/beginpair on the target mints
+/// a fresh session and the 6-digit SAS confirm still happens on that host.
+struct TailnetDiscoverySheet: View {
+    @ObservedObject var model: RemoteSessionModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(
+                        "TaskWraith asks \(model.macDisplayName.isEmpty ? "this host" : model.macDisplayName) to look for your other computers on the same Tailscale network. You still confirm a 6-digit code on each new host."
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                    if model.isDiscoveringHosts {
+                        HStack(spacing: 10) {
+                            ProgressView().controlSize(.small).tint(TWTheme.chroma1)
+                            Text("Searching your tailnet…")
+                                .font(.subheadline).foregroundStyle(TWTheme.textPrimary)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(14)
+                        .background(
+                            TWTheme.surface1, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    } else if let error = model.discoveryError {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .top, spacing: 9) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(TWTheme.statusFailed)
+                                Text(error)
+                                    .font(.footnote).foregroundStyle(TWTheme.textPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            searchButton(title: "Try again")
+                        }
+                        .padding(14)
+                        .background(
+                            TWTheme.surface1, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    } else if model.discoveredHosts.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("No other TaskWraith hosts found on your tailnet.")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(TWTheme.textPrimary)
+                            Text(
+                                "Make sure TaskWraith is running on the other computer with remote access enabled, then search again."
+                            )
+                            .font(.footnote).foregroundStyle(TWTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            searchButton(title: "Search again")
+                        }
+                        .padding(14)
+                        .background(
+                            TWTheme.surface1, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(Array(model.discoveredHosts.enumerated()), id: \.element.id) {
+                                index, host in
+                                if index > 0 {
+                                    Rectangle().fill(TWTheme.border).frame(height: 1)
+                                }
+                                discoveredRow(host)
+                            }
+                        }
+                        .background(
+                            TWTheme.surface1, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        searchButton(title: "Search again")
+                    }
+                }
+                .frame(maxWidth: 520)
+                .frame(maxWidth: .infinity)
+                .padding(18)
+            }
+            .background(TWTheme.appBg)
+            .navigationTitle("Find hosts")
+            #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        // Kick off discovery as soon as the sheet appears.
+        .task { await model.discoverHosts() }
+    }
+
+    private func discoveredRow(_ host: DiscoveredHostInfo) -> some View {
+        Button {
+            // Begin on-demand pairing on the target, then leave the sheet — the
+            // SAS confirm surfaces in the main pairing flow.
+            model.pairDiscoveredHost(host)
+            dismiss()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: twHostGlyph(host.hostPlatform))
+                    .font(.title3)
+                    .foregroundStyle(TWTheme.chroma1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(host.macDisplayName ?? "TaskWraith host")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(TWTheme.textPrimary)
+                        .lineLimit(1)
+                    Text("Tap to pair")
+                        .font(.caption).foregroundStyle(TWTheme.textSecondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textMuted)
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 11)
+            .padding(.horizontal, 14)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func searchButton(title: String) -> some View {
+        Button {
+            Task { await model.discoverHosts() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.clockwise").font(.subheadline.weight(.semibold))
+                Text(title).font(.subheadline.weight(.semibold))
+            }
+            .foregroundStyle(TWTheme.chroma1)
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isDiscoveringHosts)
     }
 }
 

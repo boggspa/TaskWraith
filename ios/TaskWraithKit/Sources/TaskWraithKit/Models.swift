@@ -590,6 +590,38 @@ public struct BridgeActionAckData: Codable, Sendable {
     public let pr: GitPullRequestSummary?
     /// PR readiness probe (`githubPrReadiness` ack).
     public let readiness: GitPrReadinessResult?
+    /// QR-optional discovery (`discoverTailnetHosts` ack) — the OTHER TaskWraith
+    /// hosts on the tailnet, with this host (self) already dropped Mac-side. The
+    /// phone still dedupes its already-paired hosts on its side. Wire key `hosts`.
+    public let hosts: [DiscoveredHostInfo]?
+}
+
+/// A discoverable TaskWraith host the phone can offer to pair with — the PUBLIC
+/// subset of a pairing bootstrap. The per-session `sessionId` is NOT here: it's
+/// minted on demand via the host's POST /v1/beginpair when the user taps to
+/// pair (so a discovered host is never "always listening"). Trust is unchanged —
+/// the 6-digit transcript SAS still gates the pairing on the target host.
+public struct DiscoveredHostInfo: Codable, Sendable, Identifiable, Hashable {
+    /// Raw-32B Ed25519 identity pubkey (base64) — the trust anchor the phone
+    /// pins; also the stable id + dedupe key against already-paired hosts.
+    public let macIdentityPubKey: String
+    /// Friendly host label for the picker, when the host advertised one.
+    public let macDisplayName: String?
+    /// Phone-reachable relay URLs (LAN ws:// first, wss front door second).
+    public let relayUrls: [String]
+    /// Host OS for the per-OS glyph ("mac" | "windows" | "linux"), best-effort.
+    public let hostPlatform: String?
+    public var id: String { macIdentityPubKey }
+
+    public init(
+        macIdentityPubKey: String, macDisplayName: String?, relayUrls: [String],
+        hostPlatform: String?
+    ) {
+        self.macIdentityPubKey = macIdentityPubKey
+        self.macDisplayName = macDisplayName
+        self.relayUrls = relayUrls
+        self.hostPlatform = hostPlatform
+    }
 }
 
 public struct WorkspaceFileEntry: Codable, Sendable, Identifiable, Hashable {
@@ -1116,6 +1148,18 @@ public enum BridgeAction {
         encode([
             "kind": "registerApnsToken", "actionId": actionId,
             "pairID": "transport", "deviceToken": deviceToken, "env": env,
+        ])
+    }
+
+    /// Ask the connected host (the "oracle") to enumerate the tailnet and report
+    /// its OTHER TaskWraith machines. Read-only and param-less — the host derives
+    /// everything (own identity, paired devices, stored OAuth credential). The
+    /// discovered hosts come back in the action ack's `hosts` field.
+    public static func discoverTailnetHosts(
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "discoverTailnetHosts", "actionId": actionId,
         ])
     }
 

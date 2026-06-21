@@ -241,6 +241,14 @@ public final class RemoteSessionModel: ObservableObject {
     /// macIdentityPubKey of the host this model is connected to / showing, or
     /// nil when none is paired. Reconnect / resume always target this host.
     @Published public private(set) var selectedHostId: String?
+    /// QR-optional discovery (multi-host): OTHER TaskWraith hosts the connected
+    /// host ("oracle") found on the tailnet, already deduped against
+    /// `pairedHosts`. Populated by `discoverHosts()`; reset on host change.
+    @Published public private(set) var discoveredHosts: [DiscoveredHostInfo] = []
+    /// True while a `discoverHosts()` enumeration is in flight (drives a spinner).
+    @Published public private(set) var isDiscoveringHosts = false
+    /// Last discovery failure, surfaced under the search button; nil on success.
+    @Published public private(set) var discoveryError: String?
     /// True once a session has established this app launch — drives the
     /// keep-the-shell-during-reconnect behavior (transient drops must NOT
     /// eject the user to the pairing screen).
@@ -570,6 +578,81 @@ public final class RemoteSessionModel: ObservableObject {
             return
         }
         connect(bootstrap: bootstrap)
+    }
+
+    // ── QR-optional discovery (multi-host) ───────────────────────────────────
+
+    /// Ask the connected host (the "oracle") to enumerate the tailnet and
+    /// surface its OTHER TaskWraith machines. The host alone holds the Tailscale
+    /// OAuth credential — it never reaches this phone. Results are deduped
+    /// against the hosts we've already paired with (the oracle can't see those
+    /// pairings) and published to `discoveredHosts`. Read-only and idempotent.
+    public func discoverHosts() async {
+        guard !isDiscoveringHosts else { return }
+        isDiscoveringHosts = true
+        discoveryError = nil
+        defer { isDiscoveringHosts = false }
+        do {
+            // Enumerate + probe the whole tailnet host-side — give it room.
+            let ack = try await requestFileAction(
+                BridgeAction.discoverTailnetHosts(), timeoutMs: 20_000)
+            let found = ack.data?.hosts ?? []
+            let pairedKeys = Set(pairedHosts.map { $0.macIdentityPubKey })
+            discoveredHosts = found.filter { !pairedKeys.contains($0.macIdentityPubKey) }
+        } catch {
+            discoveryError =
+                (error as? LocalizedError)?.errorDescription ?? "Couldn't search your tailnet."
+            discoveredHosts = []
+        }
+    }
+
+    /// Pair with a discovered host WITHOUT scanning a QR: POST /v1/beginpair to
+    /// its front door, which mints a fresh pairing session and returns the full
+    /// bootstrap — then connect with it exactly as if we'd scanned its QR. The
+    /// 6-digit SAS confirm still happens on the TARGET host, so an
+    /// unauthenticated tailnet POST only opens a window the user must approve;
+    /// it can't pair on its own.
+    public func pairDiscoveredHost(_ host: DiscoveredHostInfo) {
+        let candidates = RelayCandidates.ordered(
+            from: host.relayUrls, fallback: host.relayUrls.first ?? "",
+            preferRemoteFirst: preferRemoteRelayFirst())
+        let label = host.macDisplayName ?? "that host"
+        Task {
+            var lastError = "Couldn't reach \(label) to start pairing."
+            for relay in candidates {
+                // ATS blocks cleartext to non-local hosts (ws→http alike); skip
+                // a LAN-only door when we're off that network, try the next.
+                if let problem = Self.cleartextRelayProblem(relay) {
+                    lastError = problem
+                    continue
+                }
+                guard let url = RelayCandidates.beginPairURL(fromRelay: relay) else { continue }
+                do {
+                    var req = URLRequest(url: url)
+                    req.httpMethod = "POST"
+                    req.timeoutInterval = 10
+                    let (data, response) = try await URLSession.shared.data(for: req)
+                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                        lastError = "\(label) declined to open a pairing window — try again."
+                        continue
+                    }
+                    guard
+                        let bootstrap = try? JSONDecoder().decode(
+                            PairingBootstrapPayload.self, from: data)
+                    else {
+                        lastError = "\(label) returned an unreadable pairing response."
+                        continue
+                    }
+                    connect(bootstrap: bootstrap)
+                    return
+                } catch {
+                    lastError =
+                        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    continue
+                }
+            }
+            phase = .error(lastError)
+        }
     }
 
     /// iOS text fields apply smart punctuation: touching the paste field
@@ -1127,6 +1210,11 @@ public final class RemoteSessionModel: ObservableObject {
         // filter another's.
         hiddenRunSummaryFingerprintsByThread = [:]
         navigationTarget = nil
+        // QR-optional discovery results belong to the (outgoing) oracle host — a
+        // stale list must not linger under the next host (and could offer to
+        // re-pair a host the new context already knows).
+        discoveredHosts = []
+        discoveryError = nil
         visibleThreadId = nil
         // Side-chat inspector target is a host-scoped navigation pointer, same
         // as navigationTarget/visibleThreadId above.
