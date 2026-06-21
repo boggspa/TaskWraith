@@ -456,7 +456,11 @@
 
 /* Composer layout-picker trigger — container-less to match the Goal /
    Screen Watch / Copy buttons in the telemetry row (no "+" bubble). */
-.composer-multiview-trigger {
+/* The canvas-opener trigger shares the multiview trigger's bare footer-icon style
+   (no container, dimmed icon, accent-tint on hover/open) so the telemetry row stays
+   visually uniform — see CanvasComposerButton. */
+.composer-multiview-trigger,
+.composer-canvas-trigger {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -474,17 +478,21 @@
 }
 
 .composer-multiview-trigger:hover:not(:disabled),
-.composer-multiview-trigger[aria-expanded='true'] {
+.composer-multiview-trigger[aria-expanded='true'],
+.composer-canvas-trigger:hover:not(:disabled),
+.composer-canvas-trigger[aria-expanded='true'] {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-.composer-multiview-trigger:disabled {
+.composer-multiview-trigger:disabled,
+.composer-canvas-trigger:disabled {
   cursor: default;
   opacity: 0.45;
 }
 
-.composer-multiview-trigger .composer-control-icon {
+.composer-multiview-trigger .composer-control-icon,
+.composer-canvas-trigger .composer-control-icon {
   width: 14px;
   height: 14px;
 }

@@ -1,9 +1,13 @@
-// Composer toolbar button that opens a live-embedded web Canvas in a multiview
-// pane (the one-click entry point — vs. splitting the view + the empty-pane
-// launcher, or asking an agent to canvas_open). Clicking the icon opens a small
-// URL popover (the shared CanvasPaneLauncher); on submit the host opens the canvas
-// and places it in a new pane (App.tsx -> openEmbedded + openCanvasInNewPane).
+// Composer telemetry-row button that opens a live-embedded web Canvas in a
+// multiview pane (the one-click entry point — vs. splitting the view + the
+// empty-pane launcher, or asking an agent to canvas_open). It mirrors the other
+// footer icons (Multiview / Screen Watch / Goal): a bare icon-only trigger
+// (composer-canvas-trigger) with a hover/focus hint pill (composer-hint-pill +
+// data-hint-label), and a portaled URL popover (so the composer-surface's
+// overflow:hidden can't clip it). On submit the host opens the canvas + places it
+// in a new pane (window.api.canvas.openEmbedded -> multiview.openCanvasInNewPane).
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 
 export interface CanvasComposerButtonProps {
@@ -13,7 +17,7 @@ export interface CanvasComposerButtonProps {
 
 function CanvasGlyph() {
   return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
       <path d="M1.5 5.5h13" stroke="currentColor" strokeWidth="1.3" />
     </svg>
@@ -21,74 +25,103 @@ function CanvasGlyph() {
 }
 
 export function CanvasComposerButton({ onOpenCanvas, disabled }: CanvasComposerButtonProps) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+
+  // Anchor the popover above the trigger (mirrors ComposerPlusPicker), clamped
+  // into the viewport so it never overflows at narrow widths / in split panes.
+  useEffect(() => {
+    if (!open) {
+      setPosition(null)
+      return
+    }
+    const trigger = triggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    setPosition({
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - 332)),
+      top: rect.top - 8
+    })
+  }, [open])
 
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent): void => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (popoverRef.current?.contains(t) || triggerRef.current?.contains(t)) return
+      setOpen(false)
     }
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
     }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown, true)
+    document.addEventListener('keydown', onKey, true)
     return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown, true)
+      document.removeEventListener('keydown', onKey, true)
     }
   }, [open])
 
-  return (
-    <div ref={rootRef} className="canvas-composer-button" style={{ position: 'relative' }}>
-      <button
-        type="button"
-        className="composer-hint-pill--left composer-canvas-trigger"
-        onClick={() => setOpen((v) => !v)}
-        disabled={disabled}
-        title="Open a web canvas"
-        aria-label="Open a web canvas"
-        aria-expanded={open}
-      >
-        <CanvasGlyph />
-      </button>
-      {open ? (
-        <div
-          className="canvas-composer-popover"
-          role="dialog"
-          aria-label="Open a web canvas"
-          style={{
-            position: 'absolute',
-            bottom: '100%',
-            left: 0,
-            marginBottom: 6,
-            zIndex: 60,
-            minWidth: 300,
-            padding: 10,
-            borderRadius: 10,
-            background: 'var(--surface-1, #1c1c20)',
-            border: '1px solid var(--border, #333)',
-            boxShadow: '0 8px 28px rgba(0,0,0,0.35)'
-          }}
-        >
+  const popover =
+    open && position
+      ? createPortal(
           <div
+            ref={popoverRef}
+            className="canvas-composer-popover"
+            role="dialog"
+            aria-label="Open a web canvas"
             style={{
-              font: '11px/1.4 system-ui, sans-serif',
-              opacity: 0.7,
-              marginBottom: 6
+              position: 'fixed',
+              left: `${position.left}px`,
+              top: `${position.top}px`,
+              transform: 'translateY(-100%)',
+              zIndex: 60,
+              minWidth: 300,
+              padding: 10,
+              borderRadius: 10,
+              background: 'var(--panel-bg, #1c1c20)',
+              border: '1px solid var(--border, #333)',
+              boxShadow: '0 8px 28px rgba(0,0,0,0.35)'
             }}
           >
-            Open a running app (e.g. a dev server) in a Canvas pane
-          </div>
-          <CanvasPaneLauncher
-            onOpen={(url) => {
-              onOpenCanvas(url)
-              setOpen(false)
-            }}
-          />
-        </div>
-      ) : null}
-    </div>
+            <div style={{ font: '11px/1.4 system-ui, sans-serif', opacity: 0.7, marginBottom: 6 }}>
+              Open a running app (e.g. a dev server) in a Canvas pane
+            </div>
+            <CanvasPaneLauncher
+              onOpen={(url) => {
+                onOpenCanvas(url)
+                setOpen(false)
+              }}
+            />
+          </div>,
+          document.body
+        )
+      : null
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="composer-canvas-trigger composer-hint-pill composer-hint-pill--left"
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
+        aria-label="Open a web canvas"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        data-hint-label="Web canvas"
+        data-composer-control="canvas"
+      >
+        <span className="composer-control-icon" aria-hidden="true">
+          <CanvasGlyph />
+        </span>
+      </button>
+      {popover}
+    </>
   )
 }
