@@ -34,8 +34,17 @@ export function normalizeGrokEffortFlag(value: string | null | undefined): strin
 /**
  * The deny rules that keep a Grok run read-only. Grok mirrors Claude Code's
  * tool-name grammar, so these map to `--disallowedTools` semantics.
+ *
+ * Deny BOTH shell tool names: the classic Grok CLI names its shell tool `Bash`,
+ * but the Grok Composer model (Composer 2.5 Fast) names it `Shell`. These deny
+ * rules are the PREVENTION backstop behind the read-only prompt steer, and a
+ * gap here is fatal: if Composer reaches for an un-denied `Shell` (e.g. a
+ * `git status` during a read-only review), the host gate refuses it and Grok
+ * treats the bare reject as a turn-ending CANCEL (stopReason: cancelled, no
+ * answer) instead of answering from the reads it already did. See the read-only
+ * seat wiring in index.ts.
  */
-export const GROK_READ_ONLY_DENY_RULES = ['Bash(*)', 'Edit(*)', 'Write(*)'] as const
+export const GROK_READ_ONLY_DENY_RULES = ['Bash(*)', 'Shell(*)', 'Edit(*)', 'Write(*)'] as const
 
 /**
  * Deny rules for FILE-WRITE mode: Edit/Write are allowed (diff-reviewed via

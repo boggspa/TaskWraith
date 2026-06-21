@@ -64,6 +64,8 @@ describe('buildGrokCliArgs', () => {
       '--deny',
       'Bash(*)',
       '--deny',
+      'Shell(*)',
+      '--deny',
       'Edit(*)',
       '--deny',
       'Write(*)'
@@ -93,6 +95,17 @@ describe('buildGrokCliArgs', () => {
       .map((value, index) => (value === '--deny' ? args[index + 1] : null))
       .filter((value): value is string => value !== null)
     expect(denied).toEqual([...GROK_READ_ONLY_DENY_RULES])
+  })
+
+  it('denies BOTH Bash and Shell so the Composer shell tool cannot hard-cancel a read-only turn', () => {
+    // Regression: Grok Composer 2.5 names its shell tool `Shell`, not `Bash`.
+    // With only `Bash(*)` denied, a read-only Composer turn that reached for
+    // `Shell` (e.g. `git status`) was refused by the host gate and HARD-CANCELLED
+    // (stopReason: cancelled, no answer) instead of answering from its reads.
+    // Both shell-tool names must be in the read-only deny set.
+    const args = buildGrokCliArgs(base)
+    expect(args).toContain('Bash(*)')
+    expect(args).toContain('Shell(*)')
   })
 
   it('disables web search for hermeticity', () => {
@@ -193,10 +206,11 @@ describe('buildGrokCliArgs', () => {
     for (const approvalMode of [undefined, null, '', '   ', 'plan']) {
       const args = buildGrokCliArgs({ ...base, approvalMode })
       expect(args[args.indexOf('--permission-mode') + 1]).toBe('plan')
-      // All three write/shell tools denied.
+      // All write/shell tools denied — incl. Composer's `Shell` shell-tool name.
       expect(args).toContain('Edit(*)')
       expect(args).toContain('Write(*)')
       expect(args).toContain('Bash(*)')
+      expect(args).toContain('Shell(*)')
     }
   })
 
@@ -209,6 +223,7 @@ describe('buildGrokCliArgs', () => {
     expect(args).not.toContain('Edit(*)')
     expect(args).not.toContain('Write(*)')
     expect(args).not.toContain('Bash(*)')
+    expect(args).not.toContain('Shell(*)')
     const denied = args
       .map((value, index) => (value === '--deny' ? args[index + 1] : null))
       .filter((value): value is string => value !== null)
