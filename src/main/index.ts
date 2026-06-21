@@ -489,6 +489,7 @@ import {
   buildBridgeApnsPusherFromSettings,
   cancelGeminiOAuthLogin,
   clearCodexUsageCredential,
+  clearTailscaleOAuthCredentials,
   DEFAULT_APNS_BUNDLE_ID,
   decryptApiKey,
   deleteGeminiAuthProfile,
@@ -509,8 +510,10 @@ import {
   resolveGeminiAuthProfileEnv,
   saveGeminiAuthProfile,
   setDefaultGeminiAuthProfile,
+  setTailscaleOAuthCredentials,
   startGeminiOAuthLogin as startGeminiOAuthLoginViaProviderAuth,
   summarizeGeminiAuthProfile,
+  tailscaleOAuthStatus,
   type GeminiAuthUsageDeps
 } from './providers/ProviderAuthUsage'
 import {
@@ -18834,6 +18837,24 @@ if (isGeminiMcpBridgeProcess) {
         status: await iosRemoteTailscaleStatus()
       }
     })
+    // QR-optional discovery (Slice 5d) — host-side Tailscale OAuth custody. The
+    // client secret is encrypted at rest and NEVER returned to the renderer;
+    // status reports only whether it's configured. An already-paired phone's
+    // discovery request makes the host USE it (the oracle enumerates the
+    // tailnet); the credential itself stays on this Mac.
+    ipcMain.handle(
+      'ios-remote-tailscale-oauth-set',
+      async (_event, input: { clientId?: string; clientSecret?: string }) =>
+        setTailscaleOAuthCredentials({
+          clientId: input?.clientId ?? '',
+          clientSecret: input?.clientSecret ?? ''
+        })
+    )
+    ipcMain.handle('ios-remote-tailscale-oauth-clear', async () => {
+      clearTailscaleOAuthCredentials()
+      return { ok: true }
+    })
+    ipcMain.handle('ios-remote-tailscale-oauth-status', () => tailscaleOAuthStatus())
     ipcMain.handle(
       'set-ios-remote-config',
       (_, config: { enabled?: boolean; relayUrl?: string; openAtLogin?: boolean }) => {

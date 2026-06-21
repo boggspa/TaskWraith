@@ -196,6 +196,11 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'ios-remote-tailscale-enable': [],
   'ios-remote-tailscale-disable': [],
   'ios-remote-tailscale-link': ['nonEmptyString'],
+  // QR-optional discovery (Slice 5d): set takes {clientId, clientSecret}; the
+  // handler validates+encrypts. clear/status are zero-arg.
+  'ios-remote-tailscale-oauth-set': ['object'],
+  'ios-remote-tailscale-oauth-clear': [],
+  'ios-remote-tailscale-oauth-status': [],
   'run-approved-host-command': ['nonEmptyString'],
   'list-gemini-sessions': [],
   'select-workspace': [],

@@ -28,6 +28,7 @@ import {
   type CursorUsageSnapshot
 } from '../cursor/CursorUsage'
 import { AppStore } from '../store'
+import { looksLikeTailscaleOAuthClientSecret } from '../../shared/tailscaleAuthKey'
 import type {
   GeminiAuthProfile,
   GeminiAuthProfileKind,
@@ -805,6 +806,84 @@ export function decryptApnsAuthKey(): string | null {
   try {
     const pem = safeStorage.decryptString(Buffer.from(config.encryptedAuthKey, 'base64'))
     return pem && pem.includes('BEGIN PRIVATE KEY') ? pem : null
+  } catch {
+    return null
+  }
+}
+
+/** QR-optional discovery (Slice 5d) — store the host-side Tailscale OAuth
+ * client credentials. The secret is encrypted via `safeStorage` and NEVER
+ * leaves this Mac; only an already-paired phone's discovery request makes the
+ * host USE it (host = oracle). Mirrors the APNs custody stance: refuse to store
+ * a non-OAuth value down the wrong path, refuse when encryption is unavailable
+ * (don't persist a plaintext secret). */
+export function setTailscaleOAuthCredentials(input: {
+  clientId: string
+  clientSecret: string
+}): { ok: true } | { ok: false; error: string } {
+  const clientId = (input?.clientId || '').trim()
+  const clientSecret = (input?.clientSecret || '').trim()
+  if (!clientId) return { ok: false, error: 'Tailscale OAuth client ID is required.' }
+  if (!looksLikeTailscaleOAuthClientSecret(clientSecret)) {
+    return {
+      ok: false,
+      error:
+        'That does not look like a Tailscale OAuth client secret (expected a tskey-client-… value).'
+    }
+  }
+  if (!safeStorage.isEncryptionAvailable()) {
+    return {
+      ok: false,
+      error:
+        'macOS Keychain encryption is unavailable; cannot safely store the Tailscale OAuth secret.'
+    }
+  }
+  AppStore.updateSettings({
+    tailscaleOAuth: {
+      clientId,
+      encryptedClientSecret: safeStorage.encryptString(clientSecret).toString('base64'),
+      configuredAt: new Date().toISOString(),
+      encryptionAvailable: true
+    }
+  })
+  return { ok: true }
+}
+
+export function clearTailscaleOAuthCredentials(): void {
+  AppStore.updateSettings({ tailscaleOAuth: undefined as any })
+}
+
+/** Status for the Settings UI — never returns the secret. */
+export function tailscaleOAuthStatus(): {
+  configured: boolean
+  clientId: string | null
+  encryptionAvailable: boolean
+} {
+  const cfg = AppStore.getSettings().tailscaleOAuth
+  return {
+    configured: Boolean(cfg?.clientId && cfg?.encryptedClientSecret),
+    clientId: cfg?.clientId ?? null,
+    encryptionAvailable: safeStorage.isEncryptionAvailable()
+  }
+}
+
+/** Decrypt-for-use accessor (the discovery oracle calls this). Degrades to null
+ * — "not configured" — when nothing is stored, encryption is unavailable, or
+ * the ciphertext won't decrypt to a plausible OAuth secret. Deliberately does
+ * NOT fail loud (unlike RemoteIdentityStore): a missing/broken discovery
+ * credential should disable discovery, not hold the whole bridge down. */
+export function loadTailscaleOAuthCredentials(): {
+  clientId: string
+  clientSecret: string
+} | null {
+  const cfg = AppStore.getSettings().tailscaleOAuth
+  if (!cfg?.clientId || !cfg?.encryptedClientSecret) return null
+  if (!safeStorage.isEncryptionAvailable()) return null
+  try {
+    const clientSecret = safeStorage.decryptString(Buffer.from(cfg.encryptedClientSecret, 'base64'))
+    return clientSecret && looksLikeTailscaleOAuthClientSecret(clientSecret)
+      ? { clientId: cfg.clientId, clientSecret }
+      : null
   } catch {
     return null
   }

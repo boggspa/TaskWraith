@@ -734,6 +734,16 @@ declare global {
         message?: string | null
         status?: Record<string, unknown>
       }>
+      iosRemoteTailscaleOAuthSet: (input: {
+        clientId: string
+        clientSecret: string
+      }) => Promise<{ ok: boolean; error?: string }>
+      iosRemoteTailscaleOAuthClear: () => Promise<{ ok: boolean }>
+      iosRemoteTailscaleOAuthStatus: () => Promise<{
+        configured: boolean
+        clientId: string | null
+        encryptionAvailable: boolean
+      }>
       setBridgeDaemonEnabled: (enabled: boolean) => Promise<{
         lan: {
           enabled: boolean

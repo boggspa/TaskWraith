@@ -1651,6 +1651,27 @@ export interface AppSettings {
    * eligibility within this envelope and the agent assigns roles within the
    * resolved set. See src/main/audit/ProviderCapabilityResolver.ts. */
   auditOrchestration?: AuditOrchestrationSettings
+  /** QR-optional multi-host discovery (Slice 5d) — Tailscale OAuth client
+   * credentials so an ALREADY-PAIRED host can enumerate the tailnet on a
+   * phone's behalf ("connected host is the oracle"). The secret NEVER reaches
+   * the phone: it lives here, host-side only, encrypted via `safeStorage`. Read
+   * back for use via `loadTailscaleOAuthCredentials`; written only by the
+   * dedicated `ios-remote-tailscale-oauth-set` IPC (kept OUT of
+   * SETTINGS_PATCH_KEYS so the renderer can't overwrite it through the generic
+   * patch path). devices:core:read is the only scope it needs. */
+  tailscaleOAuth?: {
+    /** Tailscale OAuth client id (not secret; shown back in Settings). */
+    clientId?: string
+    /** base64 ciphertext of the tskey-client-… secret, encrypted via
+     * `safeStorage.encryptString`. Undefined when cleared. */
+    encryptedClientSecret?: string
+    /** ISO timestamp of the most recent successful save. */
+    configuredAt?: string
+    /** Caches `safeStorage.isEncryptionAvailable()` at save-time so the UI can
+     * warn if the secret was saved on a Mac with encryption but is now being
+     * read on one without it. */
+    encryptionAvailable?: boolean
+  }
 }
 
 export type ProductCrashSource =

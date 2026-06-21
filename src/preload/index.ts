@@ -503,6 +503,10 @@ const api = {
   iosRemoteTailscaleDisable: () => ipcRenderer.invoke('ios-remote-tailscale-disable'),
   iosRemoteTailscaleLink: (authKey: string) =>
     ipcRenderer.invoke('ios-remote-tailscale-link', authKey),
+  iosRemoteTailscaleOAuthSet: (input: { clientId: string; clientSecret: string }) =>
+    ipcRenderer.invoke('ios-remote-tailscale-oauth-set', input),
+  iosRemoteTailscaleOAuthClear: () => ipcRenderer.invoke('ios-remote-tailscale-oauth-clear'),
+  iosRemoteTailscaleOAuthStatus: () => ipcRenderer.invoke('ios-remote-tailscale-oauth-status'),
 
   // Phase G2: auto-update controls.
   updateSnapshot: () => ipcRenderer.invoke('update-snapshot'),
