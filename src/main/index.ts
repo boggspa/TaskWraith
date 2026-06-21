@@ -16755,6 +16755,73 @@ if (isGeminiMcpBridgeProcess) {
           }
           return { ok: true, row: row as unknown as Record<string, unknown> }
         },
+        threadMediaFetchFn: async (action) => {
+          const chat = AppStore.getChat(action.threadId)
+          if (!chat) {
+            return { ok: false, reason: `Thread "${action.threadId}" not found` }
+          }
+          if (!chatMatchesRemoteScope(chat, action.workspaceId)) {
+            return { ok: false, reason: 'Thread does not belong to the requested workspace' }
+          }
+          const maxBytes = Math.max(
+            1,
+            Math.min(1_000_000, Math.floor(action.maxBytes ?? 512_000))
+          )
+          const generatedAt = new Date().toISOString()
+          const snapshot = projectRemoteThread(chat.messages ?? [], chat.runs ?? [], {
+            notes: chat.pinnedNotes,
+            blackboardEntries: chat.ensemble?.blackboard,
+            threadId: chat.appChatId,
+            mode: { kind: 'aroundRow', rowId: action.rowId, radius: 0 },
+            previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
+            generatedAt,
+            costDisplay: remoteCostDisplayOptions(),
+            speakerForMessage: remoteSpeakerForMessage(
+              chat,
+              chat.ensemble?.enabled
+                ? ensembleSpeakerForMessage(chat.ensemble.participants)
+                : undefined
+            )
+          })
+          const row = snapshot.rows.find((entry) => entry.id === action.rowId)
+          const media = row?.media?.find((entry) => entry.id === action.mediaId)
+          if (!row || !media) {
+            return { ok: false, reason: 'Transcript media item not found' }
+          }
+          if (media.source === 'workspace_path') {
+            const decision = bridgeAllowlist.evaluate({
+              workspaceId: action.workspaceId,
+              capability: 'fileRead'
+            })
+            if (!decision.allowed) {
+              return { ok: false, reason: 'File read capability required for workspace media' }
+            }
+          }
+          const thumbnail = media.thumbnail
+          if (!thumbnail?.dataBase64) {
+            return { ok: false, reason: 'No bounded preview bytes are available for this media item' }
+          }
+          const byteLength = Buffer.byteLength(thumbnail.dataBase64, 'base64')
+          if (byteLength > maxBytes) {
+            return { ok: false, reason: 'Transcript media item exceeds requested byte limit' }
+          }
+          return {
+            ok: true,
+            media: {
+              id: media.id,
+              rowId: row.id,
+              threadId: chat.appChatId,
+              name: media.name,
+              source: media.source,
+              mimeType: thumbnail.mimeType,
+              dataBase64: thumbnail.dataBase64,
+              ...(thumbnail.width ? { width: thumbnail.width } : {}),
+              ...(thumbnail.height ? { height: thumbnail.height } : {}),
+              byteLength,
+              variant: 'thumbnail'
+            }
+          }
+        },
         threadSnapshotRequestFn: async (action) => {
           // On-demand bounded transcript window — the periodic snapshot only
           // ships threadSnapshots for the most-recent few chats (relay frame

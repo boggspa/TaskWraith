@@ -510,6 +510,8 @@ export class BridgeActionRouter {
         return this.executor.executeCreateThread(payload)
       case 'threadRowExpand':
         return this.executor.executeThreadRowExpand(payload)
+      case 'threadMediaFetch':
+        return this.executor.executeThreadMediaFetch(payload)
       case 'threadSnapshotRequest':
         return this.executor.executeThreadSnapshotRequest(payload)
       case 'workspaceFileList':
@@ -965,6 +967,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
       return 'startTurn'
     case 'threadSnapshotRequest':
     case 'threadRowExpand':
+    case 'threadMediaFetch':
       return 'monitor'
     case 'workspaceFileList':
       return 'fileBrowse'

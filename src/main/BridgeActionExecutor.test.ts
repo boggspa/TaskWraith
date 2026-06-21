@@ -15,6 +15,7 @@ import type {
   BridgeRegisterApnsTokenAction,
   BridgeDiscoverTailnetHostsAction,
   BridgeSetYoloModeAction,
+  BridgeThreadMediaFetchAction,
   BridgeThreadSnapshotRequestAction,
   BridgeWorkspaceFileListAction,
   BridgeWorkspaceFileReadAction,
@@ -124,6 +125,15 @@ const sample = {
     limit: 40,
     beforeRowId: 'm7'
   } satisfies BridgeThreadSnapshotRequestAction,
+  threadMediaFetch: {
+    kind: 'threadMediaFetch',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    rowId: 'm7',
+    mediaId: 'media-1',
+    variant: 'thumbnail',
+    maxBytes: 512000
+  } satisfies BridgeThreadMediaFetchAction,
   goalUpdate: {
     kind: 'goalUpdate',
     workspaceId: 'ws-1',
@@ -223,6 +233,7 @@ describe('NoopActionExecutor', () => {
       executor.executeWorkspaceFileRead(sample.workspaceFileRead),
       executor.executeWorkspaceFileWrite(sample.workspaceFileWrite),
       executor.executeWorkspaceDiff(sample.workspaceDiff),
+      executor.executeThreadMediaFetch(sample.threadMediaFetch),
       executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts)
     ])
     for (const r of results) {
@@ -250,11 +261,56 @@ describe('NoopActionExecutor', () => {
     expect(results[17].message).toContain('README.md')
     expect(results[18].message).toContain('README.md')
     expect(results[19].message).toContain('ws-1')
-    expect(results[20].message).toContain('oracle')
+    expect(results[20].message).toContain('media-1')
+    expect(results[21].message).toContain('oracle')
   })
 })
 
 describe('MainProcessActionExecutor workspace file actions', () => {
+  it('returns transcript media from a wired media fetch callback', async () => {
+    const threadMediaFetchFn = vi.fn().mockResolvedValue({
+      ok: true,
+      media: {
+        id: 'media-1',
+        rowId: 'm7',
+        threadId: 't-1',
+        mimeType: 'image/png',
+        dataBase64: 'iVBORw0KGgo=',
+        variant: 'thumbnail'
+      }
+    })
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      threadMediaFetchFn
+    })
+
+    await expect(executor.executeThreadMediaFetch(sample.threadMediaFetch)).resolves.toMatchObject({
+      executed: true,
+      data: {
+        mediaId: 'media-1',
+        rowId: 'm7',
+        threadId: 't-1',
+        media: { id: 'media-1', mimeType: 'image/png' }
+      }
+    })
+    expect(threadMediaFetchFn).toHaveBeenCalledWith(sample.threadMediaFetch)
+  })
+
+  it('surfaces media fetch callback failures as executed=false', async () => {
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      threadMediaFetchFn: vi.fn().mockResolvedValue({
+        ok: false,
+        reason: 'File read capability required for workspace media'
+      })
+    })
+
+    await expect(executor.executeThreadMediaFetch(sample.threadMediaFetch)).resolves.toMatchObject({
+      executed: false,
+      message: 'File read capability required for workspace media'
+    })
+  })
+
   it('returns thread snapshots in the ack payload', async () => {
     const threadSnapshotRequestFn = vi.fn().mockResolvedValue({
       ok: true,

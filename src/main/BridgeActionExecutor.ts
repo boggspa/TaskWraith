@@ -6,6 +6,7 @@ import type {
   BridgeComposerQueueItemAction,
   BridgeCreateThreadAction,
   BridgeThreadRowExpandAction,
+  BridgeThreadMediaFetchAction,
   BridgeThreadSnapshotRequestAction,
   BridgeWorkspaceFileListAction,
   BridgeWorkspaceFileReadAction,
@@ -93,6 +94,9 @@ export interface BridgeActionExecutor {
   executeCreateThread(action: BridgeCreateThreadAction): Promise<BridgeActionExecutionResult>
   executeThreadRowExpand(
     action: BridgeThreadRowExpandAction
+  ): Promise<BridgeActionExecutionResult>
+  executeThreadMediaFetch(
+    action: BridgeThreadMediaFetchAction
   ): Promise<BridgeActionExecutionResult>
   executeThreadSnapshotRequest(
     action: BridgeThreadSnapshotRequestAction
@@ -211,6 +215,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeThreadRowExpandAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('threadRowExpand', action.rowId)
+  }
+  async executeThreadMediaFetch(
+    action: BridgeThreadMediaFetchAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('threadMediaFetch', action.mediaId)
   }
   async executeThreadSnapshotRequest(
     action: BridgeThreadSnapshotRequestAction
@@ -439,6 +448,11 @@ export interface MainProcessActionExecutorDependencies {
   threadRowExpandFn?: (action: BridgeThreadRowExpandAction) => Promise<{
     ok: boolean
     row?: Record<string, unknown>
+    reason?: string
+  }>
+  threadMediaFetchFn?: (action: BridgeThreadMediaFetchAction) => Promise<{
+    ok: boolean
+    media?: Record<string, unknown>
     reason?: string
   }>
   /** Callback the executor uses to register an iOS device's APNs token.
@@ -735,6 +749,31 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       return { executed: false, message: `Row expand failed: ${message}` }
+    }
+  }
+
+  async executeThreadMediaFetch(
+    action: BridgeThreadMediaFetchAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.threadMediaFetchFn) {
+      return notWired('threadMediaFetch', action.mediaId)
+    }
+    try {
+      const result = await this.deps.threadMediaFetchFn(action)
+      if (result.ok && result.media) {
+        return {
+          executed: true,
+          message: 'Fetched transcript media.',
+          data: { media: result.media, mediaId: action.mediaId, rowId: action.rowId, threadId: action.threadId }
+        }
+      }
+      return {
+        executed: false,
+        message: result.reason ?? 'Could not fetch transcript media.'
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return { executed: false, message: `Media fetch failed: ${message}` }
     }
   }
 

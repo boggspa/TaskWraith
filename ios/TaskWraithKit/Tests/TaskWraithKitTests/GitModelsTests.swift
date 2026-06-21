@@ -114,6 +114,43 @@ struct GitModelsTests {
         #expect(emptyAck.data?.readiness == nil)
     }
 
+    @Test("threadMediaFetch ack data decodes bounded transcript media")
+    func decodeThreadMediaFetchAck() throws {
+        let json = """
+            {
+              "accepted": true, "executed": true, "message": "Fetched transcript media.",
+              "data": {
+                "mediaId": "media-1",
+                "rowId": "m7",
+                "threadId": "t-1",
+                "media": {
+                  "id": "media-1",
+                  "rowId": "m7",
+                  "threadId": "t-1",
+                  "name": "preview.png",
+                  "source": "tool_result",
+                  "mimeType": "image/png",
+                  "dataBase64": "iVBORw0KGgo=",
+                  "width": 64,
+                  "height": 32,
+                  "byteLength": 8,
+                  "variant": "thumbnail"
+                }
+              }
+            }
+            """
+        let ack = try JSONDecoder().decode(BridgeActionAck.self, from: Data(json.utf8))
+        let data = try #require(ack.data)
+        let media = try #require(data.media)
+        #expect(data.mediaId == "media-1")
+        #expect(media.id == "media-1")
+        #expect(media.rowId == "m7")
+        #expect(media.mimeType == "image/png")
+        #expect(media.dataBase64 == "iVBORw0KGgo=")
+        #expect(media.width == 64)
+        #expect(media.variant == "thumbnail")
+    }
+
     @Test("BridgeAction git helpers stamp typed payloads with replay metadata")
     func gitActionHelpersEncode() throws {
         let params = BridgeAction.gitCommit(
@@ -173,5 +210,25 @@ struct GitModelsTests {
             #expect(payload["kind"] as? String == expectedKind)
             #expect(payload["workspaceId"] as? String == "ws-1")
         }
+    }
+
+    @Test("threadMediaFetch helper encodes bounded media request")
+    func threadMediaFetchHelperEncodes() throws {
+        let params = BridgeAction.threadMediaFetch(
+            workspaceId: "ws-1", threadId: "t-1", rowId: "m7", mediaId: "media-1",
+            variant: "thumbnail", maxBytes: 128_000)
+        let payloadBase64 = try #require(params["payloadBase64"] as? String)
+        let payloadData = try #require(Data(base64Encoded: payloadBase64))
+        let payload = try #require(
+            try JSONSerialization.jsonObject(with: payloadData) as? [String: Any])
+
+        #expect(payload["kind"] as? String == "threadMediaFetch")
+        #expect(payload["workspaceId"] as? String == "ws-1")
+        #expect(payload["threadId"] as? String == "t-1")
+        #expect(payload["rowId"] as? String == "m7")
+        #expect(payload["mediaId"] as? String == "media-1")
+        #expect(payload["variant"] as? String == "thumbnail")
+        #expect(payload["maxBytes"] as? Int == 128_000)
+        #expect(payload["actionId"] as? String != nil)
     }
 }

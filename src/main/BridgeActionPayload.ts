@@ -171,6 +171,19 @@ export interface BridgeThreadRowExpandAction extends BridgeActionMetadata {
   maxChars?: number
 }
 
+/** Fetch bounded bytes for one transcript media item. The router gates this
+ * like other transcript reads; the executor callback must still validate the
+ * media id against the requested thread + row before returning bytes. */
+export interface BridgeThreadMediaFetchAction extends BridgeActionMetadata {
+  kind: 'threadMediaFetch'
+  workspaceId: string
+  threadId: string
+  rowId: string
+  mediaId: string
+  variant?: 'thumbnail' | 'full'
+  maxBytes?: number
+}
+
 export interface BridgeWorkspaceFileListAction extends BridgeActionMetadata {
   kind: 'workspaceFileList'
   workspaceId: string
@@ -527,6 +540,7 @@ export type BridgeActionPayload =
   | BridgeComposerQueueItemAction
   | BridgeCreateThreadAction
   | BridgeThreadRowExpandAction
+  | BridgeThreadMediaFetchAction
   | BridgeThreadSnapshotRequestAction
   | BridgeWorkspaceFileListAction
   | BridgeWorkspaceFileReadAction
@@ -648,6 +662,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
+    case 'threadMediaFetch':
     case 'threadSnapshotRequest':
     case 'workspaceFileList':
     case 'workspaceFileRead':
@@ -710,6 +725,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'composerQueueItem':
     case 'createThread':
     case 'threadRowExpand':
+    case 'threadMediaFetch':
     case 'threadSnapshotRequest':
     case 'workspaceFileList':
     case 'workspaceFileRead':
@@ -814,6 +830,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'questionReject':
     case 'threadSnapshotRequest':
     case 'threadRowExpand':
+    case 'threadMediaFetch':
     case 'workspaceFileList':
     case 'workspaceFileRead':
     case 'workspaceDiff':
@@ -866,6 +883,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isThreadRowExpand(parsed)
         ? (parsed as unknown as BridgeThreadRowExpandAction)
         : { kind: 'unknown', rawKind: 'threadRowExpand', raw: parsed }
+    case 'threadMediaFetch':
+      return isThreadMediaFetch(parsed)
+        ? (parsed as unknown as BridgeThreadMediaFetchAction)
+        : { kind: 'unknown', rawKind: 'threadMediaFetch', raw: parsed }
     case 'threadSnapshotRequest':
       return isThreadSnapshotRequest(parsed)
         ? (parsed as unknown as BridgeThreadSnapshotRequestAction)
@@ -1151,6 +1172,21 @@ function isThreadRowExpand(v: Record<string, unknown>): boolean {
     typeof v.rowId === 'string' &&
     (v.maxChars === undefined ||
       (typeof v.maxChars === 'number' && Number.isInteger(v.maxChars) && v.maxChars > 0))
+  )
+}
+
+function isThreadMediaFetch(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    typeof v.threadId === 'string' &&
+    typeof v.rowId === 'string' &&
+    typeof v.mediaId === 'string' &&
+    v.mediaId.length > 0 &&
+    v.mediaId.length <= BRIDGE_THREAD_ROW_ID_MAX_CHARS * 2 &&
+    (v.variant === undefined || v.variant === 'thumbnail' || v.variant === 'full') &&
+    (v.maxBytes === undefined ||
+      (typeof v.maxBytes === 'number' && Number.isInteger(v.maxBytes) && v.maxBytes > 0))
   )
 }
 

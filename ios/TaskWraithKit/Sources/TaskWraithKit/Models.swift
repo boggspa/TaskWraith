@@ -576,6 +576,8 @@ public struct BridgeActionAckData: Codable, Sendable {
     public let chatKind: String?
     public let rowId: String?
     public let row: RemoteThreadSnapshot.Row?
+    public let mediaId: String?
+    public let media: TranscriptMediaFetchResult?
     public let thread: RemoteThreadSnapshot?
     public let entries: [WorkspaceFileEntry]?
     public let truncated: Bool?
@@ -594,6 +596,20 @@ public struct BridgeActionAckData: Codable, Sendable {
     /// hosts on the tailnet, with this host (self) already dropped Mac-side. The
     /// phone still dedupes its already-paired hosts on its side. Wire key `hosts`.
     public let hosts: [DiscoveredHostInfo]?
+}
+
+public struct TranscriptMediaFetchResult: Codable, Sendable, Hashable {
+    public let id: String
+    public let rowId: String?
+    public let threadId: String?
+    public let name: String?
+    public let source: String?
+    public let mimeType: String
+    public let dataBase64: String
+    public let width: Int?
+    public let height: Int?
+    public let byteLength: Int?
+    public let variant: String?
 }
 
 /// A discoverable TaskWraith host the phone can offer to pair with — the PUBLIC
@@ -1476,6 +1492,20 @@ public enum BridgeAction {
             "kind": "threadRowExpand", "actionId": actionId,
             "workspaceId": workspaceId, "threadId": threadId, "rowId": rowId,
             "maxChars": maxChars,
+        ])
+    }
+
+    /// Fetch bounded bytes for one transcript media item. The Mac validates the
+    /// media id against the requested thread + row before returning bytes.
+    public static func threadMediaFetch(
+        workspaceId: String, threadId: String, rowId: String, mediaId: String,
+        variant: String = "thumbnail", maxBytes: Int = 512000,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "threadMediaFetch", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId, "rowId": rowId,
+            "mediaId": mediaId, "variant": variant, "maxBytes": maxBytes,
         ])
     }
 

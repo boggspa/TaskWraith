@@ -134,7 +134,7 @@ describe('decodeBridgeActionPayload', () => {
       }
     })
 
-	  it('decodes createThread (mutating) and threadRowExpand (read-only)', () => {
+	  it('decodes createThread (mutating) and transcript row/media reads', () => {
       const create = decodeBridgeActionPayload(
         encode({
           kind: 'createThread',
@@ -177,6 +177,42 @@ describe('decodeBridgeActionPayload', () => {
       expect(expand.kind).toBe('threadRowExpand')
       if (expand.kind === 'threadRowExpand') expect(expand.rowId).toBe('m7')
       expect(payloadIsMutating(expand)).toBe(false)
+
+      const media = decodeBridgeActionPayload(
+        encode({
+          kind: 'threadMediaFetch',
+          actionId: 'a-media-1',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          rowId: 'm7',
+          mediaId: 'media-1',
+          variant: 'thumbnail',
+          maxBytes: 128000
+        })
+      ).payload
+      expect(media.kind).toBe('threadMediaFetch')
+      if (media.kind === 'threadMediaFetch') {
+        expect(media.mediaId).toBe('media-1')
+        expect(media.variant).toBe('thumbnail')
+        expect(media.maxBytes).toBe(128000)
+      }
+      expect(workspaceIdFromPayload(media)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(media)).toBe(true)
+      expect(payloadIsMutating(media)).toBe(false)
+
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'threadMediaFetch',
+            actionId: 'bad-media-1',
+            workspaceId: 'ws-1',
+            threadId: 't-1',
+            rowId: 'm7',
+            mediaId: 'media-1',
+            variant: 'raw'
+          })
+        ).payload.kind
+      ).toBe('unknown')
       // Bad variant → unknown (defensive decode).
       expect(
         decodeBridgeActionPayload(
@@ -1232,6 +1268,7 @@ describe('payloadRequiresWorkspaceGating', () => {
       { kind: 'questionReply', workspaceId: 'w', threadId: 't', promptId: 'p', answer: 'a' },
       { kind: 'questionReject', workspaceId: 'w', threadId: 't', promptId: 'p' },
       { kind: 'composerPrompt', workspaceId: 'w', threadId: 't', provider: 'gemini', text: 'x' },
+      { kind: 'threadMediaFetch', workspaceId: 'w', threadId: 't', rowId: 'm', mediaId: 'img' },
       { kind: 'cancelRun', workspaceId: 'w', threadId: 't', provider: 'gemini', runId: 'r' },
       { kind: 'setYoloMode', workspaceId: 'w', enabled: false },
       { kind: 'goalUpdate', workspaceId: 'w', threadId: 't', op: 'pause' },
@@ -1373,6 +1410,18 @@ describe('payloadIsMutating', () => {
         workspaceId: 'w',
         threadId: 't',
         promptId: 'p'
+      })
+    ).toBe(false)
+  })
+
+  it('classifies transcript media fetch as non-mutating', () => {
+    expect(
+      payloadIsMutating({
+        kind: 'threadMediaFetch',
+        workspaceId: 'w',
+        threadId: 't',
+        rowId: 'm',
+        mediaId: 'img'
       })
     ).toBe(false)
   })

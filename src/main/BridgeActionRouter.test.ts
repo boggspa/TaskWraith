@@ -54,6 +54,10 @@ function makeStubExecutor(
       executed: true,
       message: 'threadRowExpand done'
     }),
+    executeThreadMediaFetch: make('executeThreadMediaFetch', {
+      executed: true,
+      message: 'threadMediaFetch done'
+    }),
     executeThreadSnapshotRequest: make('executeThreadSnapshotRequest', {
       executed: true,
       message: 'threadSnapshotRequest done'
@@ -880,6 +884,43 @@ describe('BridgeActionRouter', () => {
       })
     })
 
+    it('dispatches threadMediaFetch through monitor-gated transcript reads', async () => {
+      const { executor, calls } = makeStubExecutor({
+        executeThreadMediaFetch: async () => ({
+          executed: true,
+          message: 'Fetched transcript media.',
+          data: {
+            mediaId: 'media-1',
+            rowId: 'm7',
+            threadId: 't-1',
+            media: { id: 'media-1', mimeType: 'image/png', dataBase64: 'iVBORw0KGgo=' }
+          }
+        })
+      })
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
+      const wire = Buffer.from(
+        JSON.stringify(withReplayMeta({
+          kind: 'threadMediaFetch',
+          workspaceId: 'ws-allowed',
+          threadId: 't-1',
+          rowId: 'm7',
+          mediaId: 'media-1',
+          variant: 'thumbnail',
+          maxBytes: 512000
+        })),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean; data?: { mediaId?: string; media?: { id?: string } } }
+
+      expect(result.accepted).toBe(true)
+      expect(result.data?.mediaId).toBe('media-1')
+      expect(result.data?.media?.id).toBe('media-1')
+      expect(calls).toHaveLength(1)
+      expect(calls[0].method).toBe('executeThreadMediaFetch')
+    })
+
     it('dispatches cancelRun to executor.executeCancelRun', async () => {
       const { executor, calls } = makeStubExecutor()
       const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
@@ -1474,6 +1515,25 @@ describe('BridgeActionRouter', () => {
         payloadBase64: wire
       })) as { accepted: boolean }
       expect(result.accepted).toBe(true)
+    })
+
+    it('accepts threadMediaFetch against read-only workspace via monitor capability', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: seedReadOnly(), executor })
+      const wire = encodeAction({
+        kind: 'threadMediaFetch',
+        workspaceId: 'ws-readonly',
+        threadId: 't-1',
+        rowId: 'm7',
+        mediaId: 'media-1'
+      })
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean; message?: string }
+      expect(result.accepted).toBe(true)
+      expect(result.message).toBe('threadMediaFetch done')
+      expect(calls).toHaveLength(1)
+      expect(calls[0].method).toBe('executeThreadMediaFetch')
     })
 
     it('still accepts composerPrompt against read-write workspace (regression guard)', async () => {
