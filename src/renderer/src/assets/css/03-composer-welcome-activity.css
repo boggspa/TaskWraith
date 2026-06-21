@@ -8877,12 +8877,14 @@ button.diff-file-row {
   font-weight: 600;
 }
 
+/* Theme-aware diff hues (NOT the fixed --success/--danger, which wash out on
+ * light themes) so the inline +N / -M counter stays legible everywhere. */
 .activity-line-stat-add {
-  color: var(--success);
+  color: var(--diff-add-text);
 }
 
 .activity-line-stat-delete {
-  color: var(--danger);
+  color: var(--diff-del-text);
 }
 
 .activity-line-stat-divider {
@@ -9060,21 +9062,24 @@ button.diff-file-row {
 }
 
 /* Add/delete lines carry the classic diff signal three ways so the red/green
- * reads clearly and survives any parent cascade muting the inherited text
- * colour: the theme add/delete hue on the TEXT, a visible tint on the
- * BACKGROUND (theme-derived via color-mix so it tracks the active theme rather
- * than a hardcoded rgba), and a left ACCENT BAR (inset shadow) that marks the
- * line as added/removed even when the text itself isn't tinted. */
+ * reads clearly: the diff add/delete hue on the TEXT, a visible tint on the
+ * BACKGROUND, and a left ACCENT BAR (inset shadow) that marks the line as
+ * added/removed even if a parent cascade mutes the text.
+ * Use the purpose-built `--diff-*` tokens (the same ones the main diff viewer
+ * `.diff-line.add` uses), NOT `--success`/`--danger`: those are a single fixed
+ * green/red that washes out to near-white on light themes, whereas `--diff-*`
+ * has proper per-theme light/dark variants (e.g. #055c38 on light vs #7df0b7 on
+ * dark) so the diff stays legible on every theme + provider shell. */
 .activity-diff-line-add {
-  color: var(--success);
-  background: color-mix(in srgb, var(--success) 16%, transparent);
-  box-shadow: inset 2px 0 0 var(--success);
+  color: var(--diff-add-text);
+  background: var(--diff-add-bg);
+  box-shadow: inset 2px 0 0 var(--diff-add-text);
 }
 
 .activity-diff-line-delete {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
-  box-shadow: inset 2px 0 0 var(--danger);
+  color: var(--diff-del-text);
+  background: var(--diff-del-bg);
+  box-shadow: inset 2px 0 0 var(--diff-del-text);
 }
 
 .activity-output-terminal {
