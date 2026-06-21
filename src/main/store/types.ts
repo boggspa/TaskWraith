@@ -1337,6 +1337,9 @@ export interface GeminiAuthStatus extends ProviderApiKeyStatus {
 export interface AppSettings {
   activeProvider?: ProviderId
   providerRunPauses?: Partial<Record<ProviderId, ProviderRunPauseState>>
+  /** When true, a run that dies on a provider quota wall (429) is auto-paused
+   * and re-dispatched to a healthy provider. Default off. */
+  autoFailoverEnabled?: boolean
   windowBounds?: {
     x?: number
     y?: number

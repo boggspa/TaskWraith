@@ -381,6 +381,7 @@ function normalizeAuditRunRecord(value: unknown): AuditRunRecord | null {
 const defaultSettings: AppSettings = {
   activeProvider: DEFAULT_PROVIDER,
   providerRunPauses: {},
+  autoFailoverEnabled: false,
   claudeBinaryPath: '',
   kimiBinaryPath: '',
   ollamaBaseUrl: 'http://127.0.0.1:11434',
@@ -969,6 +970,10 @@ export class AppStore {
         typeof stored.autoUpdateEnabled === 'boolean'
           ? stored.autoUpdateEnabled
           : defaultSettings.autoUpdateEnabled,
+      autoFailoverEnabled:
+        typeof stored.autoFailoverEnabled === 'boolean'
+          ? stored.autoFailoverEnabled
+          : defaultSettings.autoFailoverEnabled,
       approvalTimeouts: {
         ...defaultSettings.approvalTimeouts,
         ...(storedApprovalTimeouts || {}),

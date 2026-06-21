@@ -40,6 +40,12 @@ export interface AgentRunPayload {
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
   handoffSourceRunId?: string
+  /**
+   * Auto-failover hops this run has been through (0 = the original
+   * user-initiated run). Carried so the dispatch seam can re-sign a rerouted
+   * posture and the failover orchestrator can cap ping-pong. Transport-only.
+   */
+  failoverHopCount?: number
   runtimeProfile?: RuntimeProfile
   effectivePermissions?: EffectiveRunPermissions
   /**
