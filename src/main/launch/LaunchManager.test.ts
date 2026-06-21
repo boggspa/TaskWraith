@@ -121,6 +121,9 @@ describe('LaunchManager', () => {
         method: 'launch/start',
         forcePrompt: true,
         preview: expect.objectContaining({
+          platform: 'web',
+          execution: 'long-running',
+          shell: false,
           envDeltas: {
             NODE_ENV: 'development',
             VITE_PORT: '5173'

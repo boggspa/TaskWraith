@@ -171,6 +171,8 @@ export class LaunchManager {
         label: target.label,
         source: target.source,
         kindLabel: target.kind,
+        platform: target.platform,
+        execution: command.longRunning ? 'long-running' : 'finite',
         command: commandText,
         shell: Boolean(command.shell),
         cwd: command.cwd,

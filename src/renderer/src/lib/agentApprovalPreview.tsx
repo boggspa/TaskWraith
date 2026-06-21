@@ -15,6 +15,31 @@ const formatApprovalChangePreview = (changes: any): string => {
     .join('\\n')
 }
 
+const formatLaunchContextPreview = (preview: any): string => {
+  if (preview?.kind !== 'launch-target') return ''
+  const lines: string[] = []
+  const add = (label: string, value: unknown) => {
+    const text = typeof value === 'string' ? value.trim() : ''
+    if (text) lines.push(`${label}: ${text}`)
+  }
+  add('Target', preview.label)
+  add('Source', preview.source)
+  add('Kind', preview.kindLabel)
+  add('Platform', preview.platform)
+  add('Execution', preview.execution)
+  if (preview.shell === true) lines.push('Shell: yes')
+  else if (preview.shell === false) lines.push('Shell: no')
+  const git = preview.git && typeof preview.git === 'object' ? preview.git : null
+  if (git) {
+    const branch = typeof git.branch === 'string' ? git.branch.trim() : ''
+    const head = typeof git.head === 'string' ? git.head.trim() : ''
+    if (branch) lines.push(`Branch: ${branch}`)
+    else if (git.detached && head) lines.push(`Branch: detached ${head.slice(0, 7)}`)
+    else if (git.detached) lines.push('Branch: detached HEAD')
+  }
+  return lines.join('\n')
+}
+
 const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
   if (!preview || typeof preview !== 'object') return null
   const command = typeof preview.command === 'string' ? preview.command : ''
@@ -40,8 +65,17 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
           .join('\n')
       : ''
   const kind = typeof preview.kind === 'string' ? preview.kind : 'approval'
+  const launchContextPreview = formatLaunchContextPreview(preview)
   const hasDetails =
-    command || cwd || toolName || taskPreview || patchPreview || changesPreview || riskLabels.length || envDeltas
+    command ||
+    cwd ||
+    toolName ||
+    launchContextPreview ||
+    taskPreview ||
+    patchPreview ||
+    changesPreview ||
+    riskLabels.length ||
+    envDeltas
   if (!hasDetails) return null
 
   return (
@@ -63,6 +97,12 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
         <div className="agent-approval-preview-block">
           <span>Command</span>
           <pre>{command}</pre>
+        </div>
+      )}
+      {launchContextPreview && (
+        <div className="agent-approval-preview-block">
+          <span>Launch context</span>
+          <pre>{launchContextPreview}</pre>
         </div>
       )}
       {riskLabels.length > 0 && (

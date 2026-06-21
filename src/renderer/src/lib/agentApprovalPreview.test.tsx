@@ -20,4 +20,33 @@ describe('agent approval preview', () => {
     expect(markup).toContain('FORCE_COLOR=0')
     expect(markup).toContain('NO_COLOR=1')
   })
+
+  it('renders launch target context for approval review', () => {
+    const markup = renderToStaticMarkup(
+      renderAgentApprovalPreview({
+        kind: 'launch-target',
+        label: 'npm run dev',
+        source: 'package-script',
+        kindLabel: 'dev-server',
+        platform: 'web',
+        execution: 'long-running',
+        command: 'npm run dev',
+        cwd: '/workspace',
+        shell: false,
+        git: {
+          isRepo: true,
+          branch: 'feature/run-button'
+        }
+      })!
+    )
+
+    expect(markup).toContain('Launch context')
+    expect(markup).toContain('Target: npm run dev')
+    expect(markup).toContain('Source: package-script')
+    expect(markup).toContain('Kind: dev-server')
+    expect(markup).toContain('Platform: web')
+    expect(markup).toContain('Execution: long-running')
+    expect(markup).toContain('Shell: no')
+    expect(markup).toContain('Branch: feature/run-button')
+  })
 })
