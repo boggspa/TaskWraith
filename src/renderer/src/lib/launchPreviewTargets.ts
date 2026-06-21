@@ -68,6 +68,7 @@ function latestAttemptForTarget(
 function targetSubtitle(target: LaunchTarget): string {
   const parts = [
     target.subtitle,
+    target.git?.branch || (target.git?.detached ? 'detached HEAD' : undefined),
     target.platform !== 'unknown' ? target.platform : undefined,
     target.source
   ].filter(Boolean)
@@ -132,10 +133,11 @@ function buildTargetRow(target: LaunchTarget, attempt?: LaunchAttempt): LaunchPr
   }
 
   if (target.command?.argv?.length && !target.command.shell) {
+    const details = targetSubtitle(target)
     return {
       id: `start:${target.id}`,
       label: target.label,
-      subtitle: target.command.raw || targetSubtitle(target),
+      subtitle: [target.command.raw, details].filter(Boolean).join(' · '),
       workspacePath: target.workspacePath,
       action: 'start',
       state: 'startable',

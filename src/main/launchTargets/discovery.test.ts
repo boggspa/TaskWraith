@@ -31,6 +31,7 @@ function localServer(workspacePath: string): LocalServerEntry {
 describe('discoverLaunchTargets', () => {
   it('surfaces running local servers and package scripts for a workspace', async () => {
     const workspace = await tempWorkspace()
+    await write(path.join(workspace, '.git', 'HEAD'), 'ref: refs/heads/feature/run-button\n')
     await write(
       path.join(workspace, 'package.json'),
       JSON.stringify(
@@ -63,11 +64,20 @@ describe('discoverLaunchTargets', () => {
       workspaceId: 'ws-1',
       detectionAvailable: true
     })
+    expect(snapshot.git).toMatchObject({
+      isRepo: true,
+      repoRoot: workspace,
+      branch: 'feature/run-button'
+    })
     expect(snapshot.targets[0]).toMatchObject({
       source: 'local-server',
       kind: 'preview',
       url: 'http://localhost:5173',
-      primaryPort: 5173
+      primaryPort: 5173,
+      git: {
+        isRepo: true,
+        branch: 'feature/run-button'
+      }
     })
     expect(snapshot.targets.find((target) => target.label === 'pnpm dev')).toMatchObject({
       source: 'package-script',

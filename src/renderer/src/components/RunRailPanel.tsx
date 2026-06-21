@@ -332,6 +332,9 @@ export function RunRailPanel({
                 </div>
                 <div className="run-rail-lane-meta">
                   <span title={row.workspacePath}>{row.workspaceName}</span>
+                  {row.branchLabel && (
+                    <span title={`Git branch: ${row.branchLabel}`}>{row.branchLabel}</span>
+                  )}
                   <span title={row.cwd}>{row.cwd.split(/[\\/]/).pop() || row.cwd}</span>
                   {row.pid && <span>pid {row.pid}</span>}
                   {row.duration && <span>{row.duration}</span>}

@@ -46,6 +46,14 @@ export interface LaunchTargetEvidence {
   reason?: string
 }
 
+export interface LaunchGitContext {
+  isRepo: boolean
+  repoRoot?: string
+  branch?: string
+  detached?: boolean
+  head?: string
+}
+
 export interface LaunchTarget {
   id: string
   label: string
@@ -62,6 +70,7 @@ export interface LaunchTarget {
   primaryPort?: number
   localServerPid?: number
   localServer?: LocalServerEntry
+  git?: LaunchGitContext
   evidence: LaunchTargetEvidence[]
   /**
    * Read-only discovery can surface targets that still need a future picker
@@ -74,6 +83,7 @@ export interface LaunchTargetsSnapshot {
   sampledAt: string
   workspacePath: string
   workspaceId?: string
+  git?: LaunchGitContext
   targets: LaunchTarget[]
   platform: NodeJS.Platform
   detectionAvailable: boolean

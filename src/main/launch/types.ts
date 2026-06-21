@@ -22,6 +22,7 @@ export interface LaunchAttempt {
   provider: ProviderId
   workspaceId?: string
   workspacePath: string
+  git?: LaunchTarget['git']
   cwd: string
   commandRaw: string
   argv: string[]

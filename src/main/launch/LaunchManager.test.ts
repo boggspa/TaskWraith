@@ -76,7 +76,13 @@ describe('LaunchManager', () => {
     const result = await fixture.manager.startTarget({
       sender: null,
       provider: 'codex',
-      target: target(workspacePath),
+      target: target(workspacePath, {
+        git: {
+          isRepo: true,
+          repoRoot: workspacePath,
+          branch: 'feature/run-button'
+        }
+      }),
       chatId: 'chat-1'
     })
 
@@ -114,7 +120,10 @@ describe('LaunchManager', () => {
       pid: 4321,
       targetSnapshotHash: expect.any(String),
       commandRaw: 'npm run dev',
-      argv: ['npm', 'run', 'dev']
+      argv: ['npm', 'run', 'dev'],
+      git: {
+        branch: 'feature/run-button'
+      }
     })
   })
 

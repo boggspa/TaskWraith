@@ -5,6 +5,7 @@ import type { LocalServerEntry } from '../localServers/types'
 import type {
   LaunchTarget,
   LaunchTargetCommand,
+  LaunchGitContext,
   LaunchTargetKind,
   LaunchTargetPlatform,
   LaunchTargetsSnapshot
@@ -86,12 +87,14 @@ export async function discoverLaunchTargets(
         sampledAt: now().toISOString(),
         workspacePath,
         workspaceId: options.workspaceId,
+        git: { isRepo: false },
         targets: [],
         platform,
         detectionAvailable: false
       }
     }
 
+    const git = await discoverGitContext(workspacePath)
     targets.push(...buildLocalServerTargets(workspacePath, options))
     targets.push(...(await discoverPackageScripts(workspacePath, options.workspaceId)))
     targets.push(...(await discoverVsCodeTargets(workspacePath, options.workspaceId)))
@@ -102,7 +105,8 @@ export async function discoverLaunchTargets(
       sampledAt: now().toISOString(),
       workspacePath,
       workspaceId: options.workspaceId,
-      targets: targets.sort(compareTargets),
+      git,
+      targets: stampTargetsWithGit(targets.sort(compareTargets), git),
       platform,
       detectionAvailable: true
     }
@@ -111,11 +115,17 @@ export async function discoverLaunchTargets(
       sampledAt: now().toISOString(),
       workspacePath,
       workspaceId: options.workspaceId,
+      git: { isRepo: false },
       targets: [],
       platform,
       detectionAvailable: false
     }
   }
+}
+
+function stampTargetsWithGit(targets: LaunchTarget[], git: LaunchGitContext): LaunchTarget[] {
+  if (!git.isRepo) return targets
+  return targets.map((target) => ({ ...target, git }))
 }
 
 function buildLocalServerTargets(
@@ -484,6 +494,50 @@ async function findNamedEntries(
 
   await walk(root, maxDepth)
   return found
+}
+
+async function discoverGitContext(workspacePath: string): Promise<LaunchGitContext> {
+  let current = path.resolve(workspacePath)
+  while (true) {
+    const dotGitPath = path.join(current, '.git')
+    try {
+      const stat = await fs.stat(dotGitPath)
+      if (stat.isDirectory()) return readGitHead(current, dotGitPath)
+      if (stat.isFile()) {
+        const gitFile = await readText(dotGitPath)
+        const match = gitFile?.match(/^gitdir:\s*(.+)$/m)
+        if (match?.[1]) {
+          const gitDir = path.resolve(current, match[1].trim())
+          return readGitHead(current, gitDir)
+        }
+      }
+    } catch {
+      // Keep walking up to support workspaces nested inside a repo.
+    }
+    const parent = path.dirname(current)
+    if (parent === current) return { isRepo: false }
+    current = parent
+  }
+}
+
+async function readGitHead(repoRoot: string, gitDir: string): Promise<LaunchGitContext> {
+  const headText = await readText(path.join(gitDir, 'HEAD'))
+  const head = headText?.trim()
+  if (!head) return { isRepo: true, repoRoot }
+  const branchRefPrefix = 'ref: refs/heads/'
+  if (head.startsWith(branchRefPrefix)) {
+    return {
+      isRepo: true,
+      repoRoot,
+      branch: head.slice(branchRefPrefix.length)
+    }
+  }
+  return {
+    isRepo: true,
+    repoRoot,
+    detached: true,
+    head
+  }
 }
 
 function localServerBelongsToWorkspace(server: LocalServerEntry, workspacePath: string): boolean {

@@ -55,7 +55,12 @@ describe('buildLaunchPreviewTargets', () => {
       [
         target({
           id: 'dev',
-          label: 'npm run dev'
+          label: 'npm run dev',
+          git: {
+            isRepo: true,
+            repoRoot: '/repo/app',
+            branch: 'feature/run-button'
+          }
         }),
         target({
           id: 'server',
@@ -75,6 +80,9 @@ describe('buildLaunchPreviewTargets', () => {
       ['open', 'open', 'vite :5173'],
       ['start', 'startable', 'npm run dev']
     ])
+    expect(rows.find((row) => row.label === 'npm run dev')?.subtitle).toContain(
+      'feature/run-button'
+    )
   })
 
   it('turns active attempts into stop rows', () => {

@@ -96,6 +96,11 @@ describe('buildLaunchAttemptRows', () => {
           status: 'running',
           pid: 12345,
           workspacePath: '/repo/app',
+          git: {
+            isRepo: true,
+            repoRoot: '/repo/app',
+            branch: 'feature/run-button'
+          },
           cwd: '/repo/app/packages/web',
           outputTail: Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join('\n'),
           outputTruncated: true
@@ -109,6 +114,7 @@ describe('buildLaunchAttemptRows', () => {
       command: 'npm run dev',
       cwd: '/repo/app/packages/web',
       pid: 12345,
+      branchLabel: 'feature/run-button',
       duration: '1m 5s',
       canStop: true,
       outputTruncated: true
@@ -116,5 +122,22 @@ describe('buildLaunchAttemptRows', () => {
     expect(rows[0].outputPreview).toBe(
       ['line 3', 'line 4', 'line 5', 'line 6', 'line 7', 'line 8', 'line 9', 'line 10'].join('\n')
     )
+  })
+
+  it('falls back to target snapshot git context for older attempts', () => {
+    const rows = buildLaunchAttemptRows([
+      attempt({
+        targetSnapshot: target({
+          git: {
+            isRepo: true,
+            repoRoot: '/repo/app',
+            detached: true,
+            head: '1234567890abcdef'
+          }
+        })
+      })
+    ])
+
+    expect(rows[0].branchLabel).toBe('detached 1234567')
   })
 })

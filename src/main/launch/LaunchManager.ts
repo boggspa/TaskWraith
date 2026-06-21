@@ -141,7 +141,8 @@ export class LaunchManager {
         kindLabel: target.kind,
         command: commandText,
         cwd: command.cwd,
-        workspacePath: target.workspacePath
+        workspacePath: target.workspacePath,
+        git: target.git
       }
     })
     if (!allowed) return { ok: false, error: 'Launch denied by TaskWraith approval policy.' }
@@ -159,6 +160,7 @@ export class LaunchManager {
       provider,
       workspaceId: target.workspaceId,
       workspacePath: target.workspacePath,
+      git: target.git,
       cwd: command.cwd,
       commandRaw: commandText,
       argv: command.argv,

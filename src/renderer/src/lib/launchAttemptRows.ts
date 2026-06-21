@@ -11,6 +11,7 @@ export interface LaunchAttemptRow {
   provider: LaunchAttempt['provider']
   workspacePath: string
   workspaceName: string
+  branchLabel?: string
   command: string
   cwd: string
   pid?: number
@@ -72,6 +73,13 @@ function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() || path
 }
 
+function branchLabel(attempt: LaunchAttempt): string | undefined {
+  const git = attempt.git || attempt.targetSnapshot.git
+  if (!git?.isRepo) return undefined
+  if (git.detached) return git.head ? `detached ${git.head.slice(0, 7)}` : 'detached HEAD'
+  return git.branch
+}
+
 function activeRank(status: LaunchAttempt['status']): number {
   if (status === 'running') return 0
   if (status === 'starting') return 1
@@ -115,6 +123,7 @@ export function buildLaunchAttemptRows(
         provider: attempt.provider,
         workspacePath: attempt.workspacePath,
         workspaceName: basename(attempt.workspacePath),
+        branchLabel: branchLabel(attempt),
         command: attempt.commandRaw || attempt.argv.join(' '),
         cwd: attempt.cwd,
         pid: attempt.pid,
