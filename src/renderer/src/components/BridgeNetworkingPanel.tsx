@@ -278,6 +278,12 @@ interface IosRemoteTailscaleStatus {
   runtimeActive: boolean
 }
 
+interface TailscaleOAuthStatus {
+  configured: boolean
+  clientId: string | null
+  encryptionAvailable: boolean
+}
+
 /** iOS remote bridge (relay + E2EE) — settings-first gating so login-item
  * launches keep the bridge alive without shell env. Runtime constructs at
  * startup, so changes prompt a restart. */
@@ -289,6 +295,14 @@ function IosRemoteBridgeSection(): React.JSX.Element {
   const [tailscale, setTailscale] = useState<IosRemoteTailscaleStatus | null>(null)
   const [tailscaleBusy, setTailscaleBusy] = useState(false)
   const [tailscaleMessage, setTailscaleMessage] = useState<string | null>(null)
+  // QR-optional discovery: host-side Tailscale OAuth credential so a paired
+  // phone can ask this host to enumerate the tailnet. The secret is write-only
+  // (encrypted at rest, never read back) — status reports only whether it's set.
+  const [oauthStatus, setOauthStatus] = useState<TailscaleOAuthStatus | null>(null)
+  const [oauthClientId, setOauthClientId] = useState('')
+  const [oauthClientSecret, setOauthClientSecret] = useState('')
+  const [oauthBusy, setOauthBusy] = useState(false)
+  const [oauthMessage, setOauthMessage] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -306,6 +320,17 @@ function IosRemoteBridgeSection(): React.JSX.Element {
         if (!cancelled && ts) setTailscale(ts)
       } catch {
         // Detection is best-effort; the row degrades to "unavailable".
+      }
+      try {
+        const oauth = (await window.api.iosRemoteTailscaleOAuthStatus?.()) as
+          | TailscaleOAuthStatus
+          | undefined
+        if (!cancelled && oauth) {
+          setOauthStatus(oauth)
+          setOauthClientId(oauth.clientId ?? '')
+        }
+      } catch {
+        // Best-effort; the discovery card degrades to "not configured".
       }
     })()
     return () => {
@@ -336,6 +361,49 @@ function IosRemoteBridgeSection(): React.JSX.Element {
       setTailscaleMessage(err instanceof Error ? err.message : String(err))
     } finally {
       setTailscaleBusy(false)
+    }
+  }
+
+  const saveOauth = async (): Promise<void> => {
+    try {
+      setOauthBusy(true)
+      setOauthMessage(null)
+      const result = await window.api.iosRemoteTailscaleOAuthSet?.({
+        clientId: oauthClientId.trim(),
+        clientSecret: oauthClientSecret.trim()
+      })
+      if (!result?.ok) {
+        setOauthMessage(result?.error || 'Could not save the OAuth client.')
+        return
+      }
+      // The secret is never read back; clear the input so it isn't left on screen.
+      setOauthClientSecret('')
+      const refreshed = (await window.api.iosRemoteTailscaleOAuthStatus?.()) as
+        | TailscaleOAuthStatus
+        | undefined
+      if (refreshed) setOauthStatus(refreshed)
+    } catch (err) {
+      setOauthMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setOauthBusy(false)
+    }
+  }
+
+  const clearOauth = async (): Promise<void> => {
+    try {
+      setOauthBusy(true)
+      setOauthMessage(null)
+      await window.api.iosRemoteTailscaleOAuthClear?.()
+      setOauthClientId('')
+      setOauthClientSecret('')
+      const refreshed = (await window.api.iosRemoteTailscaleOAuthStatus?.()) as
+        | TailscaleOAuthStatus
+        | undefined
+      if (refreshed) setOauthStatus(refreshed)
+    } catch (err) {
+      setOauthMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setOauthBusy(false)
     }
   }
 
@@ -454,6 +522,84 @@ function IosRemoteBridgeSection(): React.JSX.Element {
         </span>
       </div>
       {tailscaleMessage && <div className="settings-error">{tailscaleMessage}</div>}
+      <div className="settings-service-row">
+        <span>
+          Let phones find this host on your tailnet
+          <small>
+            Optional. Add a Tailscale OAuth client (scope <code>devices:core:read</code>) and an
+            already-paired phone can discover your other TaskWraith computers and pair with them
+            without scanning each QR. The secret is stored encrypted on this Mac and never sent to
+            the phone — the host enumerates the tailnet on its behalf.
+            {oauthStatus && !oauthStatus.encryptionAvailable
+              ? ' ⚠︎ Keychain encryption is unavailable on this Mac, so the secret can’t be stored safely — discovery is disabled until that’s resolved.'
+              : ''}
+          </small>
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          {oauthStatus?.configured ? (
+            <StatusPill kind="ok" label="Configured" />
+          ) : (
+            <StatusPill kind="idle" label="Not set up" />
+          )}
+        </span>
+      </div>
+      <label className="settings-service-row">
+        <span>Tailscale OAuth client ID</span>
+        <input
+          type="text"
+          className="settings-text-input"
+          placeholder="k123abc…"
+          autoComplete="off"
+          value={oauthClientId}
+          disabled={oauthBusy}
+          onChange={(event) => setOauthClientId(event.target.value)}
+        />
+      </label>
+      <label className="settings-service-row">
+        <span>
+          OAuth client secret
+          <small>
+            {oauthStatus?.configured
+              ? 'A secret is stored. Paste a new one to replace it, or Clear to remove discovery.'
+              : 'tskey-client-… — generated in the Tailscale admin console (Settings → OAuth clients).'}
+          </small>
+        </span>
+        <input
+          type="password"
+          className="settings-text-input"
+          placeholder={oauthStatus?.configured ? '•••••••• (unchanged)' : 'tskey-client-…'}
+          autoComplete="off"
+          value={oauthClientSecret}
+          disabled={oauthBusy}
+          onChange={(event) => setOauthClientSecret(event.target.value)}
+        />
+      </label>
+      <div className="settings-service-row" style={{ justifyContent: 'flex-end', gap: 8 }}>
+        {oauthStatus?.configured && (
+          <button
+            className="btn btn-sm"
+            type="button"
+            disabled={oauthBusy}
+            onClick={() => void clearOauth()}
+          >
+            Clear
+          </button>
+        )}
+        <button
+          className="btn btn-sm btn-primary"
+          type="button"
+          disabled={
+            oauthBusy ||
+            !oauthClientId.trim() ||
+            !oauthClientSecret.trim() ||
+            oauthStatus?.encryptionAvailable === false
+          }
+          onClick={() => void saveOauth()}
+        >
+          {oauthBusy ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {oauthMessage && <div className="settings-error">{oauthMessage}</div>}
       <label className="settings-service-row settings-fx-toggle">
         <span>
           Start TaskWraith at login
