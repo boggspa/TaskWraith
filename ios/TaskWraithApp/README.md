@@ -108,9 +108,10 @@ Release/TestFlight builds request notification permission **after a successful
 pairing**, and register the APNs token to the user's paired Mac. The app works
 fine if the user denies (open to reconnect/refresh).
 
-Delivery requires the **Mac** to have APNs credentials configured. Use the
-desktop Devices/APNs settings surface when available, or set these in the Mac's
-environment before `npm run dev` / the packaged app launch:
+Delivery requires the **Mac** to have APNs credentials configured. The committed
+default is environment-backed; if a build enables the desktop Devices/APNs
+settings surface, use that instead. Otherwise set these in the Mac's environment
+before `npm run dev` / the packaged app launch:
 
 ```sh
 TASKWRAITH_APNS_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8

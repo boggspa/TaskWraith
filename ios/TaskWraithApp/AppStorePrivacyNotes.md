@@ -35,13 +35,15 @@ travels over the paired encrypted bridge to the user's own Mac and is stored
 there as a routing identifier.
 
 **Push delivery depends on APNs credentials for the companion bundle.** The
-current default is user/Mac-owned configuration, either from the desktop settings
-surface or environment (`TASKWRAITH_APNS_KEY_PATH`, `TASKWRAITH_APNS_KEY_ID`,
-`TASKWRAITH_APNS_TEAM_ID`, `TASKWRAITH_APNS_BUNDLE_ID`). Without those, the Mac
-uses a no-op pusher: pairing and manual reconnect work, but **no notifications
-are delivered**. If a project-operated APNs gateway is enabled for a
-distribution, App Store answers and privacy copy must disclose APNs device
-tokens and routing triggers handled by that gateway.
+current committed default is user/Mac-owned environment configuration
+(`TASKWRAITH_APNS_KEY_PATH`, `TASKWRAITH_APNS_KEY_ID`,
+`TASKWRAITH_APNS_TEAM_ID`, `TASKWRAITH_APNS_BUNDLE_ID`). Desktop APNs credential
+UI may be enabled in local/test builds, but should be treated as build-gated
+unless the shipping app exposes it. Without credentials, the Mac uses a no-op
+pusher: pairing and manual reconnect work, but **no notifications are
+delivered**. If a project-operated APNs gateway is enabled for a distribution,
+App Store answers and privacy copy must disclose APNs device tokens and routing
+triggers handled by that gateway.
 
 APNs payloads carry routing metadata only (pair identifier, coarse reason,
 thread/run identifiers, timestamps) — never prompts, commands, diffs, file

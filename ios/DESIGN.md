@@ -727,9 +727,10 @@ both usable simultaneously.
 
 ## v0.36 — APNs end-to-end (BD2)
 
-The Mac was ~95% built (HTTP/2 .p8 pusher, token store, Devices-tab
-config panel, idle-gated + 30s-coalesced attention fanout already
-firing on approvals/questions). This slice closed the loop:
+The Mac was ~95% built (HTTP/2 .p8 pusher, token store, build-gated
+Devices-tab config panel for local/test builds, idle-gated + 30s-coalesced
+attention fanout already firing on approvals/questions). This slice closed the
+loop:
 
 - **Mac**: DEFAULT_APNS_BUNDLE_ID fixed to com.taskwraith.companion
   (was com.example.* — APNs rejects mismatched topics); reason union
