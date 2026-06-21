@@ -17775,18 +17775,6 @@ if (isGeminiMcpBridgeProcess) {
                 reason: 'Global chats are read-only from the phone'
               }
             }
-            // The atomic dedup relies on the flip being DURABLE — a 2nd device
-            // re-reads status='approved' from the store. With local chat history
-            // OFF, AppStore.saveChat no-ops, so the flip never persists and the
-            // duplicate-run race reopens. Refuse the elevated implement run here
-            // (the plan-card feature already assumes metadata persistence).
-            if (!AppStore.getSettings().storeLocalChatHistory) {
-              return {
-                dispatched: false,
-                appRunId: null,
-                reason: 'Approving a plan from the phone needs local chat history enabled'
-              }
-            }
             const planChat = AppStore.getChat(action.threadId)
             const planIdx =
               planChat?.messages.findIndex((m) => m.id === action.proposedPlanImplementOf) ?? -1
