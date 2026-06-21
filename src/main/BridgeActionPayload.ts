@@ -122,6 +122,12 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
    * secondary-workspace picker). The executor validates each against the
    * allowlist and resolves them to AgentRunPayload.externalPathGrants. */
   extraWorkspaceIds?: string[]
+  /** Set ONLY by the iOS proposed-plan Approve flow — the id of the plan
+   * message this run implements. The executor flips that plan's status to
+   * 'approved' and dispatches ATOMICALLY, and refuses if the plan is no longer
+   * pending, so a second device tapping Approve in the projection-latency
+   * window cannot fire a duplicate write-capable implement run. */
+  proposedPlanImplementOf?: string
 }
 
 export interface BridgeComposerQueuePromptAction
@@ -1139,7 +1145,10 @@ function isComposerPrompt(v: Record<string, unknown>): boolean {
         v.extraWorkspaceIds.length <= 2 &&
         v.extraWorkspaceIds.every(
           (id) => typeof id === 'string' && id.trim().length > 0
-        )))
+        ))) &&
+    (v.proposedPlanImplementOf === undefined ||
+      (typeof v.proposedPlanImplementOf === 'string' &&
+        v.proposedPlanImplementOf.trim().length > 0))
   )
 }
 

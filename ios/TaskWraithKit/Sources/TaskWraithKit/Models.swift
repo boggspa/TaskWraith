@@ -1286,6 +1286,7 @@ public enum BridgeAction {
         workspaceId: String, threadId: String, provider: String, text: String,
         approvalMode: String? = nil, model: String? = nil, extraWorkspaceIds: [String]? = nil,
         reasoningEffort: String? = nil, imageAttachments: [[String: Any]]? = nil,
+        proposedPlanImplementOf: String? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -1306,6 +1307,9 @@ public enum BridgeAction {
         }
         if let imageAttachments, !imageAttachments.isEmpty {
             payload["imageAttachments"] = imageAttachments
+        }
+        if let proposedPlanImplementOf {
+            payload["proposedPlanImplementOf"] = proposedPlanImplementOf
         }
         return encode(payload)
     }

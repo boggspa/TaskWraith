@@ -554,6 +554,37 @@ describe('decodeBridgeActionPayload', () => {
       }
     })
 
+    it('decodes a composerPrompt carrying proposedPlanImplementOf (plan implement run)', () => {
+      const wire = encode({
+        kind: 'composerPrompt',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        text: 'implement the plan',
+        provider: 'claude',
+        approvalMode: 'default',
+        proposedPlanImplementOf: 'm7'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('composerPrompt')
+      if (payload.kind === 'composerPrompt') {
+        expect(payload.proposedPlanImplementOf).toBe('m7')
+      }
+    })
+
+    it('rejects a composerPrompt with an empty proposedPlanImplementOf', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'composerPrompt',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          text: 'x',
+          provider: 'claude',
+          proposedPlanImplementOf: '   '
+        })
+      )
+      expect(payload.kind).toBe('unknown')
+    })
+
     it('decodes a composerPrompt with only required fields', () => {
       const wire = encode({
         kind: 'composerPrompt',

@@ -3413,6 +3413,15 @@ public final class RemoteSessionModel: ObservableObject {
     /// The prompt references "the plan above", so the agent reads the canonical
     /// plan from its own transcript — the phone never round-trips the (possibly
     /// truncated) preview body.
+    /// Approve a proposed plan: dispatch the write-capable implement run, naming
+    /// the plan it implements (`proposedPlanImplementOf`). A SINGLE leg — the Mac
+    /// flips the plan status to 'approved' ATOMICALLY with the dispatch and
+    /// rejects the run if the plan is no longer pending. So a second device
+    /// tapping Approve in the projection-latency window can't fire a duplicate
+    /// write-capable run, and a lost ack can't strand the card 'pending' (the
+    /// flip and the run are one Mac op, re-projected back). A read-only /
+    /// plan-only / global workspace denies the elevated run upstream
+    /// (accepted == false), so we re-enable the card rather than lie it ran.
     public func proposedPlanApprove(threadId: String, messageId: String) {
         guard let ws = remoteScopeForThread(threadId) else { return }
         // Self-defending against a double-fire even though `.disabled(decided)`
@@ -3425,20 +3434,14 @@ public final class RemoteSessionModel: ObservableObject {
             BridgeAction.composerPrompt(
                 workspaceId: ws, threadId: threadId, provider: provider,
                 text: "The plan above is approved — go ahead and implement it now.",
-                approvalMode: "default"),
+                approvalMode: "default", proposedPlanImplementOf: messageId),
             successLabel: "Plan approved — implementing.",
             onAck: { [weak self] accepted in
-                guard let self else { return }
-                if accepted {
-                    // The implement run started — NOW persist the approved status.
-                    self.send(
-                        BridgeAction.proposedPlanDecision(
-                            workspaceId: ws, threadId: threadId, messageId: messageId,
-                            decision: "approved"))
-                } else {
-                    // Run denied (e.g. read-only workspace) — re-enable the card.
-                    self.repliedProposedPlanIds.remove(messageId)
-                }
+                guard let self, !accepted else { return }
+                // Denied (read-only workspace) or rejected (already decided on
+                // another device) — re-enable; the Mac's status re-projection
+                // collapses the card if it was in fact decided elsewhere.
+                self.repliedProposedPlanIds.remove(messageId)
             })
         scheduleThreadRefresh(threadId)
     }
