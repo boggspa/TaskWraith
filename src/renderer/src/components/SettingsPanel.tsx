@@ -1065,6 +1065,10 @@ function countMcpStatusTools(status: any): number {
   return 0
 }
 
+function countMcpStatusServers(status: any): number {
+  return Array.isArray(status?.data) ? status.data.length : 0
+}
+
 const MCP_TOOL_CATALOG = TASKWRAITH_MCP_TOOLS.map((name) => ({
   name,
   ...getMcpToolMeta(name)
@@ -1887,11 +1891,35 @@ export function SettingsPanel({
       : Boolean(mcp?.installed ?? available)
     const state = mcp?.state ?? provisionalFallback?.state ?? (available ? 'available' : 'gated')
     const rawToolCount = countMcpStatusTools(status)
+    const rawServerCount = countMcpStatusServers(status)
+    const taskwraithBridgeToolCount =
+      provider === 'codex' && enabled ? TASKWRAITH_MCP_TOOLS.length : 0
     const toolCount = Math.max(
-      rawToolCount,
-      Array.isArray(mcp?.tools) ? mcp.tools.length : 0,
+      taskwraithBridgeToolCount,
+      provider === 'codex' ? 0 : rawToolCount,
+      Array.isArray(mcp?.tools) && provider !== 'codex' ? mcp.tools.length : 0,
       provisionalFallback?.toolCount ?? 0
     )
+    const source =
+      provider === 'codex' && enabled
+        ? 'bridge'
+        : mcp?.source ||
+          provisionalFallback?.source ||
+          (provider === 'codex' ? 'provider' : 'taskwraith')
+    const codexInventoryNote =
+      provider === 'codex' && rawToolCount > toolCount
+        ? ` Codex app-server also reports ${rawServerCount} MCP server${rawServerCount === 1 ? '' : 's'} with ${pluralizeCount(rawToolCount, 'total tool')}.`
+        : ''
+    const messageBase =
+      provider === 'codex' && enabled
+        ? 'TaskWraith registers the MCP bridge for Codex runs.'
+        : mcp?.message ||
+          provisionalFallback?.message ||
+          status?.message ||
+          status?.error ||
+          (available
+            ? 'MCP surface is available for this provider.'
+            : 'MCP status is not available yet.')
     return {
       provider,
       label: SETTINGS_PROVIDER_LABELS[provider],
@@ -1900,23 +1928,13 @@ export function SettingsPanel({
       installed,
       providerManaged,
       state,
-      source:
-        mcp?.source ||
-        provisionalFallback?.source ||
-        (provider === 'codex' ? 'provider' : 'taskwraith'),
+      source,
       serverName:
         mcp?.serverName ||
         provisionalFallback?.serverName ||
         (available ? 'TaskWraith' : 'not connected'),
       toolCount,
-      message:
-        mcp?.message ||
-        provisionalFallback?.message ||
-        status?.message ||
-        status?.error ||
-        (available
-          ? 'MCP surface is available for this provider.'
-          : 'MCP status is not available yet.')
+      message: messageBase + codexInventoryNote
     }
   })
   const connectedMcpProviderCount = providerMcpSummaries.filter(

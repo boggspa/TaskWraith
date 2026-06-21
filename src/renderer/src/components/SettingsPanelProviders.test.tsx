@@ -3,6 +3,7 @@ import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
 import { SettingsPanel } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
+import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
 
 type SettingsPanelProps = ComponentProps<typeof SettingsPanel>
 
@@ -147,6 +148,50 @@ describe('SettingsPanel provider cards', () => {
     expect(html).not.toContain('>WO</span>')
     expect(html).not.toContain('>ID</span>')
     expect(html).toContain('<code>tool:workspace</code>')
+  })
+
+  it('shows Codex TaskWraith bridge tools separately from app-server MCP inventory', () => {
+    const codexTools = Object.fromEntries(
+      Array.from({ length: 215 }, (_, index) => [`codex_tool_${index}`, {}])
+    )
+    const serverTools = (start: number, end?: number) =>
+      Object.fromEntries(Object.entries(codexTools).slice(start, end))
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp',
+          providerCapabilitiesByProvider: {
+            codex: {
+              mcp: {
+                state: 'available',
+                source: 'provider',
+                available: true,
+                enabled: true,
+                installed: true,
+                serverName: 'TaskWraith',
+                tools: Object.keys(codexTools),
+                message: '5 Codex MCP servers reported by app-server.'
+              }
+            } as any
+          },
+          mcpStatusByProvider: {
+            codex: {
+              available: true,
+              data: [
+                { name: 'server-1', tools: serverTools(0, 43) },
+                { name: 'server-2', tools: serverTools(43, 86) },
+                { name: 'server-3', tools: serverTools(86, 129) },
+                { name: 'server-4', tools: serverTools(129, 172) },
+                { name: 'server-5', tools: serverTools(172) }
+              ]
+            }
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain(`<span>bridge</span><span>${TASKWRAITH_MCP_TOOLS.length} tools</span>`)
+    expect(html).toContain('Codex app-server also reports 5 MCP servers with 215 total tools.')
   })
 
   it('does not render the retired deeper Gemini auth/runtime config, but keeps the shared MCP bridge', () => {
