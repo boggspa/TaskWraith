@@ -1,10 +1,12 @@
 /**
- * IPC for the renderer canvas pane (live-embed). Kept out of the index.ts god-
- * module: the handler bodies live here and index.ts just calls
- * registerCanvasEmbedIpc once. The renderer opens an EMBEDDED web canvas (a
- * WebContentsView floated over its pane), then streams the pane's rect via
- * set-bounds and toggles set-visible on occlusion. These are HUMAN actions (the
- * user's own preview) — un-gated, but the driver still enforces the SSRF policy.
+ * IPC for the renderer-opened canvas (HUMAN actions — the user's own preview,
+ * un-gated, but the driver still enforces the SSRF policy). Two open modes:
+ *  - `canvas:open-window` → a standalone floating BrowserWindow (the default, and
+ *    what the composer toolbar button uses — movable/closable, no DOM-overlay
+ *    positioning to get wrong).
+ *  - `canvas:open-embedded` → a WebContentsView floated over a multiview pane (the
+ *    empty-pane launcher), positioned via set-bounds / set-visible.
+ * Kept out of the index.ts god-module: index.ts just calls registerCanvasEmbedIpc.
  */
 import type { IpcMain } from 'electron'
 import type { CanvasController } from './canvasTypes'
@@ -15,38 +17,44 @@ export interface CanvasEmbedIpcDeps {
   embed: CanvasEmbedController
 }
 
+type OpenArgs = { url?: string; originAllowlist?: string[] } | undefined
+
 export function registerCanvasEmbedIpc(ipcMain: IpcMain, deps: CanvasEmbedIpcDeps): void {
-  ipcMain.handle(
-    'canvas:open-embedded',
-    async (_e, args: { url?: string; originAllowlist?: string[] } | undefined) => {
-      // A bad/unreachable url (e.g. no dev server) is a normal outcome, NOT an
-      // exception — return it as a result so ipcMain doesn't log an unhandled
-      // handler rejection and the renderer can surface it. CanvasService already
-      // tears the half-opened view down on a failed navigation.
-      try {
-        const opened = await deps.controller.open(
-          {
-            driver: 'web',
-            url: args?.url,
-            originAllowlist: Array.isArray(args?.originAllowlist)
-              ? args.originAllowlist
-              : undefined,
-            embed: true
-          },
-          {}
-        )
-        return {
-          ok: true as const,
-          canvasId: opened.canvasId,
-          url: opened.url,
-          title: opened.title,
-          viewport: opened.viewport
-        }
-      } catch (err) {
-        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+  // A bad/unreachable url (e.g. no dev server) is a normal outcome, NOT an
+  // exception — return it as a result so ipcMain doesn't log an unhandled handler
+  // rejection and the renderer can surface it. CanvasService tears the half-opened
+  // window/view down on a failed navigation.
+  const openCanvas = async (
+    args: OpenArgs,
+    embed: boolean
+  ): Promise<
+    | { ok: true; canvasId: string; url: string; title: string; viewport: { width: number; height: number } }
+    | { ok: false; error: string }
+  > => {
+    try {
+      const opened = await deps.controller.open(
+        {
+          driver: 'web',
+          url: args?.url,
+          originAllowlist: Array.isArray(args?.originAllowlist) ? args.originAllowlist : undefined,
+          embed
+        },
+        {}
+      )
+      return {
+        ok: true,
+        canvasId: opened.canvasId,
+        url: opened.url,
+        title: opened.title,
+        viewport: opened.viewport
       }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
-  )
+  }
+
+  ipcMain.handle('canvas:open-window', (_e, args: OpenArgs) => openCanvas(args, false))
+  ipcMain.handle('canvas:open-embedded', (_e, args: OpenArgs) => openCanvas(args, true))
 
   ipcMain.handle('canvas:set-bounds', (_e, canvasId: unknown, rect: unknown) => {
     if (typeof canvasId === 'string') {

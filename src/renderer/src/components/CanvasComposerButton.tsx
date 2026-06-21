@@ -11,9 +11,6 @@ import { createPortal } from 'react-dom'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 
 export interface CanvasComposerButtonProps {
-  /** Called with the new canvasId once the embed has loaded; the host places it
-   *  in a pane (multiview.openCanvasInNewPane). */
-  onCanvasOpened: (canvasId: string) => void
   disabled?: boolean
 }
 
@@ -35,7 +32,7 @@ function CanvasGlyph() {
   )
 }
 
-export function CanvasComposerButton({ onCanvasOpened, disabled }: CanvasComposerButtonProps) {
+export function CanvasComposerButton({ disabled }: CanvasComposerButtonProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
@@ -52,9 +49,10 @@ export function CanvasComposerButton({ onCanvasOpened, disabled }: CanvasCompose
     setError(null)
     setBusy(true)
     try {
-      const result = await window.api.canvas?.openEmbedded({ url })
+      // A standalone floating window (movable / closable) — not embedded over a
+      // pane, so there's no DOM-overlay positioning to get wrong.
+      const result = await window.api.canvas?.openWindow({ url })
       if (result?.ok) {
-        onCanvasOpened(result.canvasId)
         setOpen(false)
       } else {
         setError(friendlyCanvasError(result?.error))

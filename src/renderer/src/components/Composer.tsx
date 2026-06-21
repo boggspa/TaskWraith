@@ -694,11 +694,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     settings || {},
     currentWorkspacePath
   )
-  // Default run profile for a tier (the picker keeps tier↔profile coupled 1:1).
-  const defaultOllamaRunProfileForTier = (
-    tier: (typeof OLLAMA_TOOL_CONTROL_TIERS)[number]['value']
-  ): (typeof OLLAMA_RUN_PROFILE_OPTIONS)[number]['value'] =>
-    OLLAMA_RUN_PROFILE_OPTIONS.find((profile) => profile.tier === tier)?.value || 'local_scout'
 
   // ---------------------------------------------------------------------------
   // Composer-local editor state (Slices B + C of the multiview composer-parity
@@ -3963,10 +3958,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             composerStyle={appearance.composerStyle}
                             selectedTier={chatOllamaTier}
                             onSelectTier={(tier) =>
-                              rememberCurrentChatComposerSelection({
-                                ollamaToolControlTier: tier,
-                                ollamaRunProfile: defaultOllamaRunProfileForTier(tier)
-                              })
+                              rememberCurrentChatComposerSelection({ ollamaToolControlTier: tier })
                             }
                             selectedRunProfile={chatOllamaRunProfile}
                             onSelectRunProfile={(profile) =>
@@ -4459,14 +4451,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  provider={currentProvider}
 	                  composerStyle={appearance.composerStyle}
 	                />
-	                <CanvasComposerButton
-	                  onCanvasOpened={(canvasId) => {
-	                    // The button does the SSRF-guarded openEmbedded + shows any
-	                    // load error inline; here we just place the opened canvas in
-	                    // a new multiview pane.
-	                    void multiview.openCanvasInNewPane(canvasId)
-	                  }}
-	                />
+	                {/* Opens a standalone floating Canvas window (self-contained;
+	                    SSRF-guarded openWindow + inline error in the button). */}
+	                <CanvasComposerButton />
 	                {/* 1.0.5-AR12c — Workspace switcher in its new home.
                      Sits between the timecodes / Screen Watch cluster
                      on the left and the token tally on the right. The

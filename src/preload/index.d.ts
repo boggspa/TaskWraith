@@ -567,6 +567,19 @@ declare global {
         handler: (state: { enabled: boolean; enabledAt: string | null }) => void
       ) => () => void
       canvas: {
+        openWindow: (args: {
+          url: string
+          originAllowlist?: string[]
+        }) => Promise<
+          | {
+              ok: true
+              canvasId: string
+              url: string
+              title: string
+              viewport: { width: number; height: number }
+            }
+          | { ok: false; error: string }
+        >
         openEmbedded: (args: {
           url: string
           originAllowlist?: string[]

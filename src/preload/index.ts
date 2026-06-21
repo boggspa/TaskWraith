@@ -328,6 +328,19 @@ const api = {
   // via setBounds, and toggles visibility on occlusion. canvas-event is the same
   // audit-event broadcast the main process emits for every canvas action.
   canvas: {
+    openWindow: (args: {
+      url: string
+      originAllowlist?: string[]
+    }): Promise<
+      | {
+          ok: true
+          canvasId: string
+          url: string
+          title: string
+          viewport: { width: number; height: number }
+        }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('canvas:open-window', args),
     openEmbedded: (args: {
       url: string
       originAllowlist?: string[]

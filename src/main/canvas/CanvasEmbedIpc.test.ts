@@ -38,12 +38,29 @@ function fakeDeps() {
 }
 
 describe('registerCanvasEmbedIpc', () => {
-  it('registers the five canvas channels', () => {
+  it('registers the canvas channels', () => {
     const ipc = fakeIpc()
     registerCanvasEmbedIpc(ipc.ipcMain, fakeDeps())
-    for (const ch of ['canvas:open-embedded', 'canvas:set-bounds', 'canvas:set-visible', 'canvas:close', 'canvas:list']) {
+    for (const ch of [
+      'canvas:open-window',
+      'canvas:open-embedded',
+      'canvas:set-bounds',
+      'canvas:set-visible',
+      'canvas:close',
+      'canvas:list'
+    ]) {
       expect(ipc.has(ch)).toBe(true)
     }
+  })
+
+  it('open-window opens a standalone (embed:false) canvas and returns the handle', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    const result = await ipc.invoke('canvas:open-window', { url: 'http://localhost:5173' })
+    expect(result).toMatchObject({ ok: true, canvasId: 'c1' })
+    const openCall = deps.calls.find((c) => c[0] === 'open')!
+    expect(openCall[1][0]).toMatchObject({ driver: 'web', embed: false, url: 'http://localhost:5173' })
   })
 
   it('open-embedded forces driver:web + embed:true and returns the handle', async () => {
