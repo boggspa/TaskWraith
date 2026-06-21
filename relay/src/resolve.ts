@@ -46,6 +46,15 @@ export interface ResolveDirectoryOptions {
   maxTtlMs?: number
   now?: () => number
   log?: (line: string) => void
+  /**
+   * Optional shared state (the per-Mac peer registry + single-use nonce set).
+   * When omitted, the directory creates + owns its own. The Tier-2 relay gateway
+   * passes the SAME state so its push-trigger handler can reuse the
+   * witnessed-pair registry + the shared anti-replay nonce set
+   * (docs/ios-push-gateway-design.md §5.3 / §8.4). Lifting these out of the
+   * closure is the point of this seam.
+   */
+  state?: ResolveDirectoryState
 }
 
 export interface ResolveDirectory {
@@ -53,6 +62,59 @@ export interface ResolveDirectory {
   resolveJson: (body: unknown) => { status: number; body: unknown }
   registrationCount: () => number
   close: () => void
+}
+
+/**
+ * The mutable state behind a resolve directory: the per-Mac peer registry and
+ * the single-use nonce set, plus the sweep that expires both. Lifted out of
+ * `createResolveDirectory`'s closure so the Tier-2 push-trigger handler can
+ * share the SAME witnessed-pair registry + nonce set (it must verify "this Mac
+ * may speak for this peer" and reject replayed triggers). Create one and pass
+ * it to BOTH `createResolveDirectory` (via options.state) and the gateway.
+ */
+export interface ResolveDirectoryState {
+  /** macIdentityPubKey → { peers: peerPubKey → registration }. */
+  readonly registrations: Map<string, MacRegistration>
+  /** nonce → expiry (ms). Single-use within the freshness window. */
+  readonly seenNonces: Map<string, number>
+  /** Expire stale nonces + peer registrations. Called on a timer + lazily. */
+  sweep: (nowMs: number) => void
+  /** Stop the internal sweep timer. Idempotent. */
+  close: () => void
+}
+
+export interface CreateResolveDirectoryStateOptions {
+  /** Sweep cadence basis; matches the directory's freshness window. Default 2 min. */
+  freshnessMs?: number
+  now?: () => number
+}
+
+export function createResolveDirectoryState(
+  options: CreateResolveDirectoryStateOptions = {}
+): ResolveDirectoryState {
+  const freshnessMs = options.freshnessMs ?? 2 * 60 * 1000
+  const now = options.now ?? Date.now
+  const registrations = new Map<string, MacRegistration>()
+  const seenNonces = new Map<string, number>()
+  const sweep = (nowMs: number): void => {
+    for (const [nonce, expiry] of seenNonces) {
+      if (expiry <= nowMs) seenNonces.delete(nonce)
+    }
+    for (const [key, registration] of registrations) {
+      for (const [peerKey, peerRegistration] of registration.peers) {
+        if (peerRegistration.expiresAt <= nowMs) registration.peers.delete(peerKey)
+      }
+      if (registration.peers.size === 0) registrations.delete(key)
+    }
+  }
+  const sweeper = setInterval(() => sweep(now()), Math.max(5_000, Math.floor(freshnessMs / 2)))
+  sweeper.unref?.()
+  return {
+    registrations,
+    seenNonces,
+    sweep,
+    close: () => clearInterval(sweeper)
+  }
 }
 
 const MAX_BODY_BYTES = 16 * 1024
@@ -93,24 +155,13 @@ export function createResolveDirectory(options: ResolveDirectoryOptions = {}): R
   const now = options.now ?? Date.now
   const log = options.log ?? (() => {})
 
-  const registrations = new Map<string, MacRegistration>()
-  /** nonce → expiry. Swept lazily + on an interval. */
-  const seenNonces = new Map<string, number>()
-
-  const sweep = (): void => {
-    const t = now()
-    for (const [nonce, expiry] of seenNonces) {
-      if (expiry <= t) seenNonces.delete(nonce)
-    }
-    for (const [key, registration] of registrations) {
-      for (const [peerKey, peerRegistration] of registration.peers) {
-        if (peerRegistration.expiresAt <= t) registration.peers.delete(peerKey)
-      }
-      if (registration.peers.size === 0) registrations.delete(key)
-    }
-  }
-  const sweeper = setInterval(sweep, Math.max(5_000, Math.floor(freshnessMs / 2)))
-  sweeper.unref?.()
+  // State (registrations + nonce set + sweep timer) is lifted into a shareable
+  // unit. When a caller passes its own (the Tier-2 gateway sharing the registry
+  // + nonce set) we use it and DON'T own it; otherwise we create + own one.
+  const ownsState = !options.state
+  const state = options.state ?? createResolveDirectoryState({ freshnessMs, now })
+  const registrations = state.registrations
+  const seenNonces = state.seenNonces
 
   const handleRegister = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     let body: unknown
@@ -214,9 +265,11 @@ export function createResolveDirectory(options: ResolveDirectoryOptions = {}): R
     },
     resolveJson,
     registrationCount: () => {
-      sweep()
+      state.sweep(now())
       return registrations.size
     },
-    close: () => clearInterval(sweeper)
+    close: () => {
+      if (ownsState) state.close()
+    }
   }
 }
