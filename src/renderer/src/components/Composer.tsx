@@ -3,6 +3,7 @@ import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
 import { AgenticWorkspaceGrant, EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
+import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
 import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, ContextWheel, ExclamationShieldIcon, FileMenuSelectionIcon, GoalSymbolIcon, LinkCircleSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, QueueSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
@@ -1384,7 +1385,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           <path d="M4 5.1v5.8M5.6 7c2 0 4.8 0 4.8-1.5" />
                         </svg>
                         <span>
-                          {currentWorkspace.displayName}
+                          {resolveWorkspaceDisplayName({
+                            displayName: currentWorkspace.displayName,
+                            path: currentWorkspace.path,
+                            repoRoot: primaryGitSnapshot?.repoRoot,
+                            remoteUrl: primaryGitSnapshot?.remoteUrl
+                          })}
                           {' · '}
                           <em
                             className={`composer-above-bar-secondary-branch git-tone-${branchTone(
