@@ -8,6 +8,7 @@ export interface LaunchAttemptRow {
   status: LaunchAttempt['status']
   statusLabel: string
   tone: LaunchAttemptRowTone
+  executionLabel: string
   provider: LaunchAttempt['provider']
   workspacePath: string
   workspaceName: string
@@ -80,6 +81,19 @@ function branchLabel(attempt: LaunchAttempt): string | undefined {
   return git.branch
 }
 
+function isLongRunningAttempt(attempt: LaunchAttempt): boolean {
+  return attempt.targetSnapshot.command?.longRunning !== false
+}
+
+function statusLabel(attempt: LaunchAttempt): string {
+  if (attempt.status === 'stopped' && !isLongRunningAttempt(attempt)) return 'Succeeded'
+  return STATUS_LABELS[attempt.status]
+}
+
+function executionLabel(attempt: LaunchAttempt): string {
+  return isLongRunningAttempt(attempt) ? 'long-running' : 'finite'
+}
+
 function activeRank(status: LaunchAttempt['status']): number {
   if (status === 'running') return 0
   if (status === 'starting') return 1
@@ -118,8 +132,9 @@ export function buildLaunchAttemptRows(
         id: attempt.id,
         label: attempt.targetLabel || attempt.commandRaw || attempt.targetId,
         status: attempt.status,
-        statusLabel: STATUS_LABELS[attempt.status],
+        statusLabel: statusLabel(attempt),
         tone: STATUS_TONES[attempt.status],
+        executionLabel: executionLabel(attempt),
         provider: attempt.provider,
         workspacePath: attempt.workspacePath,
         workspaceName: basename(attempt.workspacePath),

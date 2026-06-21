@@ -335,6 +335,7 @@ export function RunRailPanel({
                   {row.branchLabel && (
                     <span title={`Git branch: ${row.branchLabel}`}>{row.branchLabel}</span>
                   )}
+                  <span>{row.executionLabel}</span>
                   <span title={row.cwd}>{row.cwd.split(/[\\/]/).pop() || row.cwd}</span>
                   {row.pid && <span>pid {row.pid}</span>}
                   {row.duration && <span>{row.duration}</span>}

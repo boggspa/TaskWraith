@@ -115,6 +115,7 @@ describe('buildLaunchAttemptRows', () => {
       cwd: '/repo/app/packages/web',
       pid: 12345,
       branchLabel: 'feature/run-button',
+      executionLabel: 'long-running',
       duration: '1m 5s',
       canStop: true,
       outputTruncated: true
@@ -139,5 +140,38 @@ describe('buildLaunchAttemptRows', () => {
     ])
 
     expect(rows[0].branchLabel).toBe('detached 1234567')
+  })
+
+  it('labels completed finite commands as succeeded', () => {
+    const rows = buildLaunchAttemptRows(
+      [
+        attempt({
+          status: 'stopped',
+          targetLabel: 'npm run build',
+          commandRaw: 'npm run build',
+          targetSnapshot: target({
+            label: 'npm run build',
+            kind: 'build',
+            command: {
+              raw: 'npm run build',
+              argv: ['npm', 'run', 'build'],
+              cwd: '/repo/app',
+              longRunning: false
+            }
+          }),
+          startedAt: '2026-06-21T12:00:00.000Z',
+          endedAt: '2026-06-21T12:00:17.000Z',
+          updatedAt: '2026-06-21T12:00:17.000Z'
+        })
+      ],
+      new Date('2026-06-21T12:02:00.000Z')
+    )
+
+    expect(rows[0]).toMatchObject({
+      status: 'stopped',
+      statusLabel: 'Succeeded',
+      executionLabel: 'finite',
+      duration: '17s'
+    })
   })
 })
