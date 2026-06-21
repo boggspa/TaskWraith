@@ -583,6 +583,7 @@ import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type { CanvasDriverKind, CanvasEventRecord } from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
+import { createRecallToolExecutors, isRecallMcpToolName } from './mcp/RecallToolExecutors'
 import {
   brokerRequest as mcpBridgeBrokerRequest,
   createMcpBridgeRuntime,
@@ -713,9 +714,12 @@ import {
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import {
   applyLaneTodoWrite,
+  isTodoToolName,
+  parseTodoItemsFromActivity,
   parseTodoItemsFromUnknown,
   TODO_SOLO_LANE,
-  validateTodoWriteArgs
+  validateTodoWriteArgs,
+  type TodoItem
 } from './TodoList'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
 import {
@@ -1538,6 +1542,75 @@ const canvasToolExecutors = createCanvasToolExecutors({ controller: canvasServic
 // Renderer canvas-pane (live-embed) IPC: open-embedded / set-bounds / set-visible
 // / close / list. Human-initiated (un-gated); the driver still enforces SSRF.
 registerCanvasEmbedIpc(ipcMain, { controller: canvasService, embed: canvasEmbedController })
+// Cross-thread retrospection (recall). Slice 1 wires it inert; Slice 2 passes
+// the resolver deps (run-queue / chat-list / workspaces / run-events).
+const recallToolExecutors = createRecallToolExecutors({
+  listRunQueueJobs: (filter) => AppStore.getRunQueueJobs(filter),
+  getWorkspaces: () => AppStore.getWorkspaces(),
+  resolveCallerWorkspaceId: (context) => {
+    const workspaces = AppStore.getWorkspaces()
+    const chat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+    const fromChat = chat?.workspaceId
+      ? resolveCanonicalWorkspaceId(chat.workspaceId, workspaces, canonicalPath)
+      : null
+    if (fromChat) return fromChat
+    return context.workspacePath
+      ? resolveCanonicalWorkspaceId(context.workspacePath, workspaces, canonicalPath)
+      : null
+  },
+  loadChatText: (chatId) => {
+    const chat = AppStore.getChat(chatId)
+    if (!chat) return null
+    const parts: string[] = [chat.title || '']
+    for (const message of chat.messages || []) {
+      if (message.role === 'user' || message.role === 'assistant') {
+        parts.push(message.content || '')
+      }
+    }
+    return parts.join('\n').slice(0, 20000)
+  },
+  isForensicsAvailable: (runId) => AppStore.hasRunForensics(runId),
+  getRunQueueJob: (runId) => AppStore.getRunQueueJob(runId),
+  getRunEvents: (runId) => AppStore.getRunEvents({ runId }),
+  loadFinalAssistantMessage: ({ runId, chatId }) => {
+    if (!chatId) return null
+    const chat = AppStore.getChat(chatId)
+    if (!chat) return null
+    const message = [...(chat.messages || [])]
+      .reverse()
+      .find((m) => m.role === 'assistant' && m.runId === runId)
+    return message?.content?.trim() || null
+  },
+  loadPlanProgress: ({ runId, chatId }) => {
+    if (!chatId) return null
+    try {
+      const chat = AppStore.getChat(chatId)
+      if (!chat) return null
+      // Latest todo/plan activity wins — the run's most recent checklist state.
+      let items: TodoItem[] = []
+      for (const message of chat.messages || []) {
+        if (message.runId !== runId) continue
+        for (const activity of message.toolActivities || []) {
+          if (!isTodoToolName(activity.toolName)) continue
+          const parsed = parseTodoItemsFromActivity({
+            toolName: activity.toolName,
+            parameters: activity.parameters,
+            resultSummary: activity.resultSummary,
+            outputPreview: activity.outputPreview
+          })
+          if (parsed.length) items = parsed
+        }
+      }
+      if (!items.length) return null
+      return { done: items.filter((item) => item.status === 'completed').length, total: items.length }
+    } catch {
+      return null
+    }
+  },
+  mintCitationToken: ({ runId, kind }) => `recall:${kind}:${runId}`,
+  now: () => Date.now(),
+  normalizePath: canonicalPath
+})
 
 // M11 (1.0.7) — sticky AppWatch: per-chat remembered attachment snapshots,
 // persisted so they survive an app restart. The pure store logic lives in
@@ -5657,6 +5730,27 @@ function previewForGeminiMcpTool(
     }
   }
 
+  // Cross-thread reads (tw_recall_find/read/read_events) read another
+  // thread/provider/workspace's run history — route them to the dedicated
+  // `crossThreadRead` grant service (grantable; denied under read-only) so a
+  // prior `mcpTools` grant can't silently auto-allow cross-thread reads.
+  if (
+    toolName === 'tw_recall_find' ||
+    toolName === 'tw_recall_read' ||
+    toolName === 'tw_recall_read_events'
+  ) {
+    return {
+      title: `Approve ${providerName} cross-thread read`,
+      body: toolName,
+      service: 'crossThreadRead' as AgenticServiceId,
+      preview: {
+        kind: 'tool',
+        toolName,
+        params: args
+      }
+    }
+  }
+
   // Arbitrary canvas_eval runs agent-supplied JavaScript in the previewed app
   // (RCE). Route it to the signed-elevated `canvasEval` service so it can NEVER
   // be auto-allowed by a grant, preset, or session-YOLO — it prompts every time.
@@ -7122,6 +7216,14 @@ function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null 
   // too — never auto-allowed by a grant/preset/YOLO.
   if (normalized.includes('canvas_eval')) {
     return 'canvasEval'
+  }
+  // Cross-thread reads route to crossThreadRead (grantable) on the Claude gate too.
+  if (
+    normalized.includes('tw_recall_find') ||
+    normalized.includes('tw_recall_read') ||
+    normalized.includes('tw_recall_read_events')
+  ) {
+    return 'crossThreadRead'
   }
   if (normalized.startsWith('mcp__') || normalized.includes('__')) {
     return 'mcpTools'
@@ -13795,6 +13897,10 @@ async function executeGeminiMcpTool(
     } else if (isCanvasMcpToolName(toolName)) {
       applyRichResult(
         await canvasToolExecutors.executeCanvasTool(toolName, args, context, parentProvider)
+      )
+    } else if (isRecallMcpToolName(toolName)) {
+      applyRichResult(
+        await recallToolExecutors.executeRecallTool(toolName, args, context, parentProvider)
       )
     } else if (isDesktopMcpToolName(toolName)) {
       applyRichResult(
