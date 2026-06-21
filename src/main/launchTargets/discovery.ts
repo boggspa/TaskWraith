@@ -6,6 +6,7 @@ import type {
   LaunchTarget,
   LaunchTargetCommand,
   LaunchGitContext,
+  LaunchTargetRequirement,
   LaunchTargetKind,
   LaunchTargetPlatform,
   LaunchTargetsSnapshot
@@ -449,12 +450,52 @@ async function discoverXcodeTargets(
         platform,
         confidence: 0.72,
         evidence: [schemeEvidence],
+        requirements: [xcodeDestinationRequirement(platform)],
         blockers: ['Run destination selection is required before launching an Xcode scheme.']
       })
     }
   }
 
   return targets
+}
+
+function xcodeDestinationRequirement(platform: LaunchTargetPlatform): LaunchTargetRequirement {
+  const options =
+    platform === 'ios'
+      ? [
+          {
+            id: 'generic-ios-device',
+            label: 'Any iOS Device',
+            subtitle: 'Generic xcodebuild destination',
+            platform: 'ios' as const,
+            available: true
+          },
+          {
+            id: 'generic-ios-simulator',
+            label: 'Any iOS Simulator Device',
+            subtitle: 'Requires a concrete simulator before run',
+            platform: 'ios' as const,
+            available: false
+          }
+        ]
+      : platform === 'macos'
+        ? [
+            {
+              id: 'generic-macos',
+              label: 'My Mac',
+              subtitle: 'Generic macOS destination',
+              platform: 'macos' as const,
+              available: true
+            }
+          ]
+        : []
+  return {
+    kind: 'destination',
+    label: 'Run destination',
+    reason: 'Choose a device, simulator, or Mac destination before launching this Xcode scheme.',
+    required: true,
+    options
+  }
 }
 
 async function findNamedEntries(

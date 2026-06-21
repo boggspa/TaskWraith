@@ -75,6 +75,20 @@ function targetSubtitle(target: LaunchTarget): string {
   return parts.join(' · ')
 }
 
+function requirementSummary(target: LaunchTarget): string {
+  const requirement = target.requirements?.find((item) => item.required)
+  if (!requirement) return ''
+  const optionCount = requirement.options?.length || 0
+  return optionCount > 0
+    ? `${requirement.label}: ${optionCount} option${optionCount === 1 ? '' : 's'}`
+    : requirement.label
+}
+
+function targetDisabledReason(target: LaunchTarget, fallback: string): string {
+  const requirement = target.requirements?.find((item) => item.required)
+  return requirement?.reason || fallback
+}
+
 function targetStateFromAttempt(attempt: LaunchAttempt): LaunchPreviewTargetState {
   if (attempt.status === 'starting') return 'starting'
   if (attempt.status === 'stopping') return 'stopping'
@@ -120,15 +134,16 @@ function buildTargetRow(target: LaunchTarget, attempt?: LaunchAttempt): LaunchPr
   }
 
   if (target.blockers.length > 0) {
+    const requirement = requirementSummary(target)
     return {
       id: `blocked:${target.id}`,
       label: target.label,
-      subtitle: targetSubtitle(target),
+      subtitle: [targetSubtitle(target), requirement].filter(Boolean).join(' · '),
       workspacePath: target.workspacePath,
       action: 'disabled',
       state: 'blocked',
       target,
-      reason: target.blockers.join(' ')
+      reason: targetDisabledReason(target, target.blockers.join(' '))
     }
   }
 

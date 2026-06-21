@@ -54,6 +54,24 @@ export interface LaunchGitContext {
   head?: string
 }
 
+export type LaunchTargetRequirementKind = 'destination' | 'scheme' | 'process' | 'compound'
+
+export interface LaunchTargetRequirementOption {
+  id: string
+  label: string
+  subtitle?: string
+  platform?: LaunchTargetPlatform
+  available?: boolean
+}
+
+export interface LaunchTargetRequirement {
+  kind: LaunchTargetRequirementKind
+  label: string
+  reason: string
+  required: boolean
+  options?: LaunchTargetRequirementOption[]
+}
+
 export interface LaunchTarget {
   id: string
   label: string
@@ -71,6 +89,7 @@ export interface LaunchTarget {
   localServerPid?: number
   localServer?: LocalServerEntry
   git?: LaunchGitContext
+  requirements?: LaunchTargetRequirement[]
   evidence: LaunchTargetEvidence[]
   /**
    * Read-only discovery can surface targets that still need a future picker

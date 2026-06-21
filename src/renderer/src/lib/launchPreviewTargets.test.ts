@@ -145,6 +145,43 @@ describe('buildLaunchPreviewTargets', () => {
     })
   })
 
+  it('surfaces structured required inputs on disabled targets', () => {
+    const rows = buildLaunchPreviewTargets(
+      [
+        target({
+          id: 'xcode-run',
+          label: 'TaskWraith (Xcode run)',
+          source: 'xcode',
+          kind: 'run',
+          platform: 'ios',
+          command: undefined,
+          blockers: ['Run destination selection is required before launching an Xcode scheme.'],
+          requirements: [
+            {
+              kind: 'destination',
+              label: 'Run destination',
+              reason: 'Choose a device, simulator, or Mac destination before launching this Xcode scheme.',
+              required: true,
+              options: [
+                { id: 'generic-ios-device', label: 'Any iOS Device', platform: 'ios' },
+                { id: 'generic-ios-simulator', label: 'Any iOS Simulator Device', platform: 'ios' }
+              ]
+            }
+          ]
+        })
+      ],
+      [],
+      '/repo/app'
+    )
+
+    expect(rows[0]).toMatchObject({
+      action: 'disabled',
+      state: 'blocked',
+      subtitle: expect.stringContaining('Run destination: 2 options'),
+      reason: 'Choose a device, simulator, or Mac destination before launching this Xcode scheme.'
+    })
+  })
+
   it('filters targets and attempts by workspace', () => {
     const rows = buildLaunchPreviewTargets(
       [target({ id: 'inside' }), target({ id: 'outside', workspacePath: '/repo/other' })],

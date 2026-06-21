@@ -237,6 +237,25 @@ let package = Package(
       source: 'xcode',
       kind: 'run',
       platform: 'ios',
+      requirements: [
+        {
+          kind: 'destination',
+          label: 'Run destination',
+          required: true,
+          options: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'generic-ios-device',
+              label: 'Any iOS Device',
+              available: true
+            }),
+            expect.objectContaining({
+              id: 'generic-ios-simulator',
+              label: 'Any iOS Simulator Device',
+              available: false
+            })
+          ])
+        }
+      ],
       blockers: ['Run destination selection is required before launching an Xcode scheme.']
     })
     expect(xcodeRun?.command).toBeUndefined()
