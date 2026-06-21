@@ -1689,8 +1689,20 @@ export async function runOllamaProvider(
       Boolean(deps.executeTool && payload.workspace && payload.scope !== 'global') &&
       settings.agenticServices?.mcpTools !== 'deny'
     const ensembleRun = Boolean(payload.ensembleRun)
-    const baseToolControlTier = effectiveOllamaToolControlTier(settings, payload.workspace)
-    const runProfile = resolveOllamaRunProfile(settings, baseToolControlTier, model)
+    // Per-chat tier/profile (composer picker, via providerMetadata) override the
+    // global settings; absent → global default. Tier-4 parity still gated by the
+    // per-workspace grant inside effectiveOllamaToolControlTier.
+    const baseToolControlTier = effectiveOllamaToolControlTier(
+      settings,
+      payload.workspace,
+      payload.ollamaToolControlTier
+    )
+    const runProfile = resolveOllamaRunProfile(
+      settings,
+      baseToolControlTier,
+      model,
+      payload.ollamaRunProfile
+    )
     const toolControlTier = baseToolControlTier
     const nativeToolsSupported = ollamaModelSupportsNativeTools(modelInfo)
     const compactToolSchemas =

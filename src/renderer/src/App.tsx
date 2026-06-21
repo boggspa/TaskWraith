@@ -3466,7 +3466,19 @@ function App(): React.JSX.Element {
       claudeFastMode:
         typeof metadata.claudeFastMode === 'boolean' ? metadata.claudeFastMode : false,
       kimiThinkingEnabled:
-        typeof metadata.kimiThinkingEnabled === 'boolean' ? metadata.kimiThinkingEnabled : true
+        typeof metadata.kimiThinkingEnabled === 'boolean' ? metadata.kimiThinkingEnabled : true,
+      // Per-chat Ollama tier + run-profile (composer picker, stored in
+      // providerMetadata like approvalMode) coalescing to the GLOBAL default
+      // when this chat has never set one — so existing chats inherit the global
+      // value with no migration.
+      ollamaToolControlTier:
+        typeof metadata.ollamaToolControlTier === 'string'
+          ? metadata.ollamaToolControlTier
+          : ollamaToolControlTier,
+      ollamaRunProfile:
+        typeof metadata.ollamaRunProfile === 'string'
+          ? metadata.ollamaRunProfile
+          : ollamaDefaultRunProfile
     }
   }
 

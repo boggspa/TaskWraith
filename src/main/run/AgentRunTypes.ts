@@ -5,6 +5,8 @@ import type {
   EnsembleRunIdentity,
   ExternalPathGrant,
   GeminiWorktreeLaunchOption,
+  OllamaRunProfileId,
+  OllamaToolControlTier,
   ProviderId,
   RuntimeProfile,
   ProviderRunReroute
@@ -32,6 +34,14 @@ export interface AgentRunPayload {
   claudeFastMode?: boolean | null
   kimiThinking?: boolean | null
   approvalMode?: string
+  /** Per-chat Ollama tool-control tier override (sourced from the chat's
+   * providerMetadata, set by the composer tier picker). When present it takes
+   * precedence over the global settings.ollamaToolControlTier; an absent value
+   * falls back to the global default. Tier 4 (provider_parity) is still gated by
+   * the per-workspace parity grant regardless of where the tier was chosen. */
+  ollamaToolControlTier?: OllamaToolControlTier
+  /** Per-chat Ollama run-profile override (1:1 with the tier today). */
+  ollamaRunProfile?: OllamaRunProfileId
   imagePaths?: string[]
   providerSessionId?: string | null
   externalPathGrants?: ExternalPathGrant[]

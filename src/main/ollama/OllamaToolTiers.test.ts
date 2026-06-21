@@ -3,6 +3,7 @@ import type { AppSettings } from '../store/types'
 import {
   canonicalizeOllamaWorkspacePath,
   effectiveOllamaToolControlTier,
+  isOllamaToolControlTier,
   ollamaProviderParityWorkspaceGranted,
   ollamaToolNamesForTier
 } from './OllamaToolTiers'
@@ -94,6 +95,54 @@ describe('effectiveOllamaToolControlTier', () => {
     expect(effectiveOllamaToolControlTier(settingsWith('approved_shell'), '/tmp/x')).toBe(
       'approved_shell'
     )
+  })
+
+  describe('per-chat tier override', () => {
+    it('a per-chat tier wins over the global setting', () => {
+      const settings = settingsWith('read_only')
+      expect(effectiveOllamaToolControlTier(settings, '/tmp/x', 'approved_shell')).toBe(
+        'approved_shell'
+      )
+    })
+
+    it('falls back to the global tier when the chat tier is absent', () => {
+      const settings = settingsWith('approved_edits')
+      expect(effectiveOllamaToolControlTier(settings, '/tmp/x', undefined)).toBe('approved_edits')
+      expect(effectiveOllamaToolControlTier(settings, '/tmp/x', null)).toBe('approved_edits')
+    })
+
+    it('falls back to the global tier when the chat tier is unrecognised (NOT read_only)', () => {
+      const settings = settingsWith('approved_shell')
+      expect(effectiveOllamaToolControlTier(settings, '/tmp/x', 'bogus')).toBe('approved_shell')
+      expect(effectiveOllamaToolControlTier(settings, '/tmp/x', '')).toBe('approved_shell')
+    })
+
+    it('a per-chat provider_parity is STILL gated by the per-workspace grant', () => {
+      const settings = settingsWith('read_only', { '/tmp/granted': '2026-01-01T00:00:00Z' })
+      // Chat picks Tier 4; granted workspace → parity, ungranted → read_only.
+      expect(effectiveOllamaToolControlTier(settings, '/tmp/granted', 'provider_parity')).toBe(
+        'provider_parity'
+      )
+      expect(effectiveOllamaToolControlTier(settings, '/tmp/ungranted', 'provider_parity')).toBe(
+        'read_only'
+      )
+    })
+
+    it('a per-chat tier can DOWNGRADE below the global tier', () => {
+      const settings = settingsWith('provider_parity', { '/tmp/granted': '2026-01-01T00:00:00Z' })
+      expect(effectiveOllamaToolControlTier(settings, '/tmp/granted', 'read_only')).toBe('read_only')
+    })
+  })
+})
+
+describe('isOllamaToolControlTier', () => {
+  it('accepts the 4 tier values and rejects everything else', () => {
+    for (const v of ['read_only', 'approved_edits', 'approved_shell', 'provider_parity']) {
+      expect(isOllamaToolControlTier(v)).toBe(true)
+    }
+    for (const v of ['', 'bogus', null, undefined, 5, {}, 'plan']) {
+      expect(isOllamaToolControlTier(v)).toBe(false)
+    }
   })
 })
 

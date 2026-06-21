@@ -106,11 +106,17 @@ export function resolveOllamaRunProfile(
     'ollamaDefaultRunProfile' | 'ollamaRunProfiles' | 'ollamaToolControlTier'
   >,
   effectiveTier: OllamaToolControlTier,
-  modelId?: string | null
+  modelId?: string | null,
+  chatProfile?: string | null
 ): OllamaRunProfile {
-  const selectedId = isOllamaRunProfileId(settings.ollamaDefaultRunProfile)
-    ? settings.ollamaDefaultRunProfile
-    : profileIdForTier(effectiveTier)
+  // A per-chat run-profile (composer picker) wins over the global default; an
+  // absent/invalid value falls back to the global setting, then to the
+  // tier-derived profile.
+  const selectedId = isOllamaRunProfileId(chatProfile)
+    ? chatProfile
+    : isOllamaRunProfileId(settings.ollamaDefaultRunProfile)
+      ? settings.ollamaDefaultRunProfile
+      : profileIdForTier(effectiveTier)
   const baseId =
     selectedId === 'custom' ? profileIdForTier(effectiveTier) : selectedId
   const base = OLLAMA_RUN_PROFILE_PRESETS[baseId]

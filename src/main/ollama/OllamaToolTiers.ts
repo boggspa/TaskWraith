@@ -63,6 +63,20 @@ export function normalizeOllamaToolControlTier(value?: string | null): OllamaToo
   return 'read_only'
 }
 
+/** Strict membership test for the 4 tier values. Unlike
+ * normalizeOllamaToolControlTier (which coerces anything unknown to read_only),
+ * this distinguishes "a real tier was chosen" from "nothing/garbage" — so a
+ * per-chat override can fall back to the global default instead of silently
+ * downgrading to read_only when the stored value is absent or malformed. */
+export function isOllamaToolControlTier(value: unknown): value is OllamaToolControlTier {
+  return (
+    value === 'read_only' ||
+    value === 'approved_edits' ||
+    value === 'approved_shell' ||
+    value === 'provider_parity'
+  )
+}
+
 export function ollamaToolNamesForTier(
   tier: OllamaToolControlTier | string | undefined | null
 ): OllamaToolName[] {
@@ -149,9 +163,15 @@ export function ollamaProviderParityWorkspaceGranted(
 
 export function effectiveOllamaToolControlTier(
   settings: Pick<AppSettings, 'ollamaToolControlTier' | 'ollamaProviderParityWorkspaceGrants'>,
-  workspacePath?: string | null
+  workspacePath?: string | null,
+  chatTier?: OllamaToolControlTier | string | null
 ): OllamaToolControlTier {
-  const tier = normalizeOllamaToolControlTier(settings.ollamaToolControlTier)
+  // A per-chat tier (the composer tier picker) takes precedence over the global
+  // setting; an absent OR unrecognised chat tier falls back to the global
+  // default — NOT a silent read_only downgrade. Tier 4 (provider_parity) is
+  // still gated by the per-workspace parity grant wherever the tier was chosen.
+  const selected = isOllamaToolControlTier(chatTier) ? chatTier : settings.ollamaToolControlTier
+  const tier = normalizeOllamaToolControlTier(selected)
   if (tier !== 'provider_parity') return tier
   return ollamaProviderParityWorkspaceGranted(settings, workspacePath)
     ? 'provider_parity'
