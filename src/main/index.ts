@@ -594,6 +594,7 @@ import {
   isRecallMcpToolName,
   type RecallToolContext
 } from './mcp/RecallToolExecutors'
+import { isRemoteOriginRun, markRemoteOriginRun } from './RemoteOriginRuns'
 import {
   brokerRequest as mcpBridgeBrokerRequest,
   createMcpBridgeRuntime,
@@ -1626,6 +1627,11 @@ const recallToolExecutors = createRecallToolExecutors({
     const ctx = context as RecallToolContext & {
       effectivePermissions?: EffectiveRunPermissions
       sender?: Electron.WebContents
+    }
+    // Remote/phone-issued runs: block recall outright — "yesterday ~6pm" resolves
+    // in the host timezone, which may differ from the remote user's (Gap B).
+    if (isRemoteOriginRun(ctx.appRunId)) {
+      return { allowed: false, reason: 'remote_blocked' }
     }
     // Read-only seat / cross-thread reads disabled in settings → refuse outright.
     const effSettings = effectiveAgenticSettings(AppStore.getSettings(), ctx.effectivePermissions)
@@ -18160,6 +18166,9 @@ if (isGeminiMcpBridgeProcess) {
             appRunId: undefined
           } as AgentRunRoute)
           const runId = route.appRunId!
+          // Tag this run as remote/phone-issued so cross-thread recall is blocked
+          // from it — time references resolve in the host timezone (Gap B).
+          markRemoteOriginRun(runId)
           const promptMessageId =
             [...chat.messages].reverse().find((message) => message.role === 'user')?.id ?? ''
           const lastProviderRun = [...(chat.runs ?? [])]
