@@ -78,15 +78,16 @@ export interface RecallToolExecutorDeps {
   /** Mint the canonical ⟦recall:…⟧ citation for a served record AND record it
    * (host-side) against `currentRunId` for post-turn verification. */
   mintCitationToken: (input: { runId: string; kind: string; currentRunId?: string }) => string
-  /** Single access gate (Gaps A+B). Wired in the host to: block remote/phone-
-   * issued runs (tz-safety), deny under read-only / crossThreadRead:'deny',
-   * AUTO-ALLOW the caller's OWN workspace (no prompt), and prompt the
-   * crossThreadRead service for a different workspace. */
+  /** Single access gate. Wired in the host to: scope remote/phone-issued runs to
+   * the device-allowlisted workspaces (capability 'monitor'), deny under
+   * read-only / crossThreadRead:'deny', AUTO-ALLOW the caller's OWN workspace
+   * (no prompt), and prompt the crossThreadRead service for a different workspace. */
   resolveRecallAccess: (input: {
     context: RecallToolContext
     parentProvider: string
     crossWorkspace: boolean
     targetWorkspacePath?: string
+    targetWorkspaceId?: string
   }) => Promise<{ allowed: boolean; reason?: string }>
   now: () => number
   normalizePath?: (value: string) => string
@@ -136,11 +137,13 @@ function fail(toolName: string, message: string): McpToolExecutionResult {
 
 function gated(toolName: string, reason?: string): McpToolExecutionResult {
   const message =
-    reason === 'remote_blocked'
-      ? 'Cross-thread recall is not available from a phone-issued prompt yet — time references like "yesterday ~6pm" resolve in the host timezone. Ask again from the desktop app.'
-      : reason === 'denied'
-        ? 'Cross-thread recall is disabled for this run (a read-only seat, or cross-thread reads are turned off in settings).'
-        : 'The cross-thread read was not approved.'
+    reason === 'not_allowlisted'
+      ? "That workspace isn't shared with this device — add it to the remote workspace allowlist to investigate it from your phone."
+      : reason === 'remote_blocked'
+        ? 'Cross-thread recall is not available from a phone-issued prompt yet — time references like "yesterday ~6pm" resolve in the host timezone. Ask again from the desktop app.'
+        : reason === 'denied'
+          ? 'Cross-thread recall is disabled for this run (a read-only seat, or cross-thread reads are turned off in settings).'
+          : 'The cross-thread read was not approved.'
   return jsonResult({
     ok: true,
     tool: toolName,
@@ -161,13 +164,15 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
     context: RecallToolContext,
     parentProvider: string,
     crossWorkspace: boolean,
-    targetWorkspacePath?: string
+    targetWorkspacePath?: string,
+    targetWorkspaceId?: string
   ): Promise<McpToolExecutionResult | null> {
     const access = await deps.resolveRecallAccess({
       context,
       parentProvider,
       crossWorkspace,
-      targetWorkspacePath
+      targetWorkspacePath,
+      targetWorkspaceId
     })
     return access.allowed ? null : gated(toolName, access.reason)
   }
@@ -233,7 +238,8 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
       context,
       parentProvider,
       crossWorkspace,
-      targetWorkspacePath
+      targetWorkspacePath,
+      canonicalSearchWs ?? undefined
     )
     if (blocked) return blocked
 
@@ -312,7 +318,8 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
       context,
       parentProvider,
       crossWorkspace,
-      job?.workspacePath
+      job?.workspacePath,
+      targetWorkspaceId ?? undefined
     )
     if (blocked) return blocked
 
@@ -411,7 +418,8 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
       context,
       parentProvider,
       crossWorkspace,
-      job?.workspacePath
+      job?.workspacePath,
+      targetWorkspaceId ?? undefined
     )
     if (blocked) return blocked
 

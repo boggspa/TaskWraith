@@ -344,4 +344,31 @@ describe('recall access gate (Gaps A+B)', () => {
     )
     expect(captured.crossWorkspace).toBe(true)
   })
+
+  it('passes the searched workspace id to the gate (for the remote allowlist check)', async () => {
+    let captured: { targetWorkspaceId?: string } = {}
+    await find(
+      { workspace: 'Payments' },
+      deps({
+        listRunQueueJobs: () => [job({ runId: 'r1', workspaceId: 'ws-pay' })],
+        resolveRecallAccess: async (input) => {
+          captured = input
+          return { allowed: true }
+        }
+      })
+    )
+    expect(captured.targetWorkspaceId).toBe('ws-pay')
+  })
+
+  it('blocks with a not-allowlisted message when the gate refuses for that reason', async () => {
+    const out = await find(
+      { workspace: 'Payments' },
+      deps({
+        listRunQueueJobs: () => [job({ runId: 'r1', workspaceId: 'ws-pay' })],
+        resolveRecallAccess: async () => ({ allowed: false, reason: 'not_allowlisted' })
+      })
+    )
+    expect(out.blocked).toBe(true)
+    expect(String(out.message)).toMatch(/allowlist/i)
+  })
 })

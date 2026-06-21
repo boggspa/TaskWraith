@@ -1564,6 +1564,9 @@ const canvasToolExecutors = createCanvasToolExecutors({ controller: canvasServic
 registerCanvasEmbedIpc(ipcMain, { controller: canvasService, embed: canvasEmbedController })
 // Cross-thread retrospection (recall). Slice 1 wires it inert; Slice 2 passes
 // the resolver deps (run-queue / chat-list / workspaces / run-events).
+// Live remote-workspace allowlist (set at main-init below). Recall from a
+// remote/phone-issued run is scoped to the workspaces this device may monitor.
+let recallBridgeAllowlist: RemoteWorkspaceAllowlist | null = null
 const recallToolExecutors = createRecallToolExecutors({
   listRunQueueJobs: (filter) => AppStore.getRunQueueJobs(filter),
   getWorkspaces: () => AppStore.getWorkspaces(),
@@ -1632,15 +1635,28 @@ const recallToolExecutors = createRecallToolExecutors({
     if (currentRunId) recordRecallCitation(currentRunId, inner)
     return formatRecallCitation(inner)
   },
-  resolveRecallAccess: async ({ context, parentProvider, crossWorkspace, targetWorkspacePath }) => {
+  resolveRecallAccess: async ({
+    context,
+    parentProvider,
+    crossWorkspace,
+    targetWorkspacePath,
+    targetWorkspaceId
+  }) => {
     const ctx = context as RecallToolContext & {
       effectivePermissions?: EffectiveRunPermissions
       sender?: Electron.WebContents
     }
-    // Remote/phone-issued runs: block recall outright — "yesterday ~6pm" resolves
-    // in the host timezone, which may differ from the remote user's (Gap B).
+    // Remote/phone-issued runs may only investigate workspaces this device is
+    // allowlisted to monitor. Times resolve in the Mac's LOCAL timezone (echoed
+    // in the interpretation) — no phone-tz propagation needed.
     if (isRemoteOriginRun(ctx.appRunId)) {
-      return { allowed: false, reason: 'remote_blocked' }
+      const decision =
+        targetWorkspaceId && recallBridgeAllowlist
+          ? recallBridgeAllowlist.evaluate({ workspaceId: targetWorkspaceId, capability: 'monitor' })
+          : { allowed: false }
+      if (!decision.allowed) {
+        return { allowed: false, reason: 'not_allowlisted' }
+      }
     }
     // Read-only seat / cross-thread reads disabled in settings → refuse outright.
     const effSettings = effectiveAgenticSettings(AppStore.getSettings(), ctx.effectivePermissions)
@@ -16011,6 +16027,9 @@ if (isGeminiMcpBridgeProcess) {
         console.log(line)
       }
     })
+    // Expose the live allowlist to the cross-thread recall gate (remote/phone
+    // recall is scoped to workspaces this device may monitor).
+    recallBridgeAllowlist = bridgeAllowlist
     const workspaceService = new WorkspaceService({
       appStore: AppStore,
       allowlist: bridgeAllowlist,
