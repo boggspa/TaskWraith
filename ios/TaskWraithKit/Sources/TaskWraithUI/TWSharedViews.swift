@@ -4298,6 +4298,7 @@ public struct MastheadLogoView: View {
 public struct AppSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var themes = TWThemeStore.shared
+    @State private var appIcon: TWAppIconVariant = TWAppIconController.selected
 
     public init() {}
 
@@ -4401,6 +4402,46 @@ public struct AppSettingsSheet: View {
                         .font(.caption)
                         .foregroundStyle(TWTheme.textMuted)
                 }
+                #if os(iOS)
+                    Section("App Icon") {
+                        HStack(spacing: 14) {
+                            ForEach(TWAppIconVariant.available()) { variant in
+                                Button {
+                                    appIcon = variant
+                                    TWAppIconController.select(variant)
+                                } label: {
+                                    VStack(spacing: 6) {
+                                        Image(variant.thumbnailAssetName)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fit)
+                                            .frame(width: 56, height: 56)
+                                            .clipShape(
+                                                RoundedRectangle(cornerRadius: 13, style: .continuous))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                                    .strokeBorder(
+                                                        appIcon == variant
+                                                            ? themes.accentTheme.color : Color.clear,
+                                                        lineWidth: 2)
+                                            )
+                                        Text(variant.label)
+                                            .font(.caption)
+                                            .foregroundStyle(
+                                                appIcon == variant ? Color.primary : Color.secondary)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 4)
+                        Text(
+                            "Changes your home-screen icon. Light, dark, and tinted versions follow iOS automatically."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textMuted)
+                    }
+                #endif
                 Section("About") {
                     LabeledContent("App", value: "TaskWraith Remote")
                     LabeledContent("Transport", value: "taskwraith-e2ee-v1")

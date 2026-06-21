@@ -57,6 +57,13 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UN
         return true
     }
 
+    func applicationDidBecomeActive(_: UIApplication) {
+        // Reconcile the home-screen icon with the stored preference on foreground.
+        // Cheap no-op when already in sync (iOS persists the choice itself), so
+        // this never re-triggers the system "changed icon" alert.
+        TWAppIconController.reconcile()
+    }
+
     private func registerNotificationCategories() {
         // .authenticationRequired is MANDATORY: Face ID / passcode must clear
         // before the handler fires, so a bystander can't approve from a locked
