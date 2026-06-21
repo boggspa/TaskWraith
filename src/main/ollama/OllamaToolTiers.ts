@@ -17,7 +17,13 @@ export const OLLAMA_READ_TOOL_NAMES = [
   'goal_read',
   'goal_update',
   'goal_complete',
-  'goal_blocked'
+  'goal_blocked',
+  // Cross-thread recall is read-only retrospection — default-tier Ollama (the
+  // local-model persona this feature targets) can call it. Cross-workspace
+  // reads are still gated by the crossThreadRead approval service.
+  'tw_recall_find',
+  'tw_recall_read',
+  'tw_recall_read_events'
 ] as const satisfies readonly OllamaToolName[]
 
 export const OLLAMA_FILE_EDIT_TOOL_NAMES = [
@@ -39,7 +45,9 @@ export const OLLAMA_TIER3_COORDINATION_TOOL_NAMES = [
 const OLLAMA_TIER4_EXTRA_TOOL_NAMES = TASKWRAITH_MCP_TOOLS.filter(
   (toolName) =>
     !OLLAMA_READ_TOOL_NAMES.includes(toolName as (typeof OLLAMA_READ_TOOL_NAMES)[number]) &&
-    !OLLAMA_FILE_EDIT_TOOL_NAMES.includes(toolName as (typeof OLLAMA_FILE_EDIT_TOOL_NAMES)[number]) &&
+    !OLLAMA_FILE_EDIT_TOOL_NAMES.includes(
+      toolName as (typeof OLLAMA_FILE_EDIT_TOOL_NAMES)[number]
+    ) &&
     !OLLAMA_SHELL_TOOL_NAMES.includes(toolName as (typeof OLLAMA_SHELL_TOOL_NAMES)[number]) &&
     !OLLAMA_TIER3_COORDINATION_TOOL_NAMES.includes(
       toolName as (typeof OLLAMA_TIER3_COORDINATION_TOOL_NAMES)[number]
@@ -48,14 +56,8 @@ const OLLAMA_TIER4_EXTRA_TOOL_NAMES = TASKWRAITH_MCP_TOOLS.filter(
 
 export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TOOLS)
 
-export function normalizeOllamaToolControlTier(
-  value?: string | null
-): OllamaToolControlTier {
-  if (
-    value === 'approved_edits' ||
-    value === 'approved_shell' ||
-    value === 'provider_parity'
-  ) {
+export function normalizeOllamaToolControlTier(value?: string | null): OllamaToolControlTier {
+  if (value === 'approved_edits' || value === 'approved_shell' || value === 'provider_parity') {
     return value
   }
   return 'read_only'
@@ -151,7 +153,9 @@ export function effectiveOllamaToolControlTier(
 ): OllamaToolControlTier {
   const tier = normalizeOllamaToolControlTier(settings.ollamaToolControlTier)
   if (tier !== 'provider_parity') return tier
-  return ollamaProviderParityWorkspaceGranted(settings, workspacePath) ? 'provider_parity' : 'read_only'
+  return ollamaProviderParityWorkspaceGranted(settings, workspacePath)
+    ? 'provider_parity'
+    : 'read_only'
 }
 
 export function ollamaToolAllowedInTier(
@@ -163,8 +167,9 @@ export function ollamaToolAllowedInTier(
 
 export function ollamaToolRequiresIntent(toolName: string): boolean {
   return (
-    OLLAMA_FILE_EDIT_TOOL_NAMES.includes(toolName as (typeof OLLAMA_FILE_EDIT_TOOL_NAMES)[number]) ||
-    OLLAMA_SHELL_TOOL_NAMES.includes(toolName as (typeof OLLAMA_SHELL_TOOL_NAMES)[number])
+    OLLAMA_FILE_EDIT_TOOL_NAMES.includes(
+      toolName as (typeof OLLAMA_FILE_EDIT_TOOL_NAMES)[number]
+    ) || OLLAMA_SHELL_TOOL_NAMES.includes(toolName as (typeof OLLAMA_SHELL_TOOL_NAMES)[number])
   )
 }
 

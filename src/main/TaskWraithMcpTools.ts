@@ -143,7 +143,15 @@ export const TASKWRAITH_MCP_TOOLS = [
   // P2 arbitrary eval (RCE) — runs agent-supplied JS in the page. Signed-elevated:
   // gated via the canvasEval service (never auto-allowed), egress-cut while running.
   'canvas_eval',
-  'canvas_close'
+  'canvas_close',
+  // Cross-thread retrospection (recall) — an in-thread agent resolves a vague
+  // {provider, workspace, time, task} reference to a past run on ANOTHER
+  // thread/provider/workspace and reads how far it got. Read-only; `find` is
+  // NOT auto-allowed and cross-workspace reads are gated by the crossThreadRead
+  // approval service. See src/main/mcp/RecallToolExecutors.ts.
+  'tw_recall_find',
+  'tw_recall_read',
+  'tw_recall_read_events'
 ] as const
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]

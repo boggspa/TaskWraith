@@ -175,7 +175,13 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   // P1: annotate overlays a Set-of-Mark layer for the human — authoring, not an
   // app mutation. canvas_click / canvas_fill DO mutate the app and fall through
   // to workspace_write (read-only-DENY) by the default below.
-  'canvas_annotate'
+  'canvas_annotate',
+  // Cross-thread recall — read-only retrospection over OTHER runs. Non-
+  // workspace-mutating reads; cross-workspace exposure is enforced by the
+  // crossThreadRead approval service (Slice 3), not by the tool class.
+  'tw_recall_find',
+  'tw_recall_read',
+  'tw_recall_read_events'
 ])
 
 /** Bucket a single tool name. Unknown → workspace_write (safe default). */

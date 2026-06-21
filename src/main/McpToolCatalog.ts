@@ -147,8 +147,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     },
     {
       name: 'web_fetch',
-      description:
-        'Fetch the text contents of an absolute http(s) URL. Read-only network access.',
+      description: 'Fetch the text contents of an absolute http(s) URL. Read-only network access.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1393,23 +1392,23 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       inputSchema: {
         type: 'object',
         properties: {
-	          question: {
-	            type: 'string',
-	            maxLength: 600,
-	            description: 'The question to ask the user. One sentence; ends with a question mark.'
-	          },
-	          options: {
-	            type: 'array',
-	            minItems: 2,
-	            maxItems: 4,
-	            items: { type: 'string', maxLength: 96 },
-	            description:
-	              'Optional 2-4 pre-set answer choices. The renderer renders each as a button. Omit for free-text questions.'
-	          },
-	          context: {
-	            type: 'string',
-	            maxLength: 240,
-	            description:
+          question: {
+            type: 'string',
+            maxLength: 600,
+            description: 'The question to ask the user. One sentence; ends with a question mark.'
+          },
+          options: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 4,
+            items: { type: 'string', maxLength: 96 },
+            description:
+              'Optional 2-4 pre-set answer choices. The renderer renders each as a button. Omit for free-text questions.'
+          },
+          context: {
+            type: 'string',
+            maxLength: 240,
+            description:
               'Optional sub-paragraph (≤ 240 chars) of additional context shown beneath the question. Use for "why I\'m asking" framing.'
           }
         },
@@ -1969,6 +1968,98 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         type: 'object',
         properties: { canvasId: { type: 'string' } },
         required: ['canvasId']
+      }
+    },
+    {
+      name: 'tw_recall_find',
+      description:
+        'Find past runs on OTHER threads to answer "how far did <provider> get with <task> <when> in <workspace>?". Resolves deliberately-vague references (a provider alias, an approximate time like "yesterday ~6pm", a workspace name, a task description) to a ranked, bounded set of candidate runs. Returns the host interpretation, a verdict (one|many|none), and STRUCTURAL candidate metadata only — never prompt or transcript text. Call tw_recall_read with a candidate runId to read how far it got. Read-only. Discovery in your OWN workspace is allowed; other workspaces require user approval. On "many" disambiguate from the metadata or ask the user; on "none" say you could not find it — never guess.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          provider: {
+            type: 'string',
+            description:
+              'Which agent ran it, e.g. "ollama" / "the local model", "claude", "codex" / "gpt". Optional.'
+          },
+          workspace: {
+            type: 'string',
+            description: 'Workspace name or id the run belonged to. Optional.'
+          },
+          timeApprox: {
+            type: 'string',
+            description:
+              'Approximate time, e.g. "yesterday ~6pm", "this morning", "last 3 days". Resolved in the host timezone. Optional.'
+          },
+          taskQuery: {
+            type: 'string',
+            description: 'A few words describing the task, e.g. "auth refactor". Optional.'
+          },
+          freeText: {
+            type: 'string',
+            description: "The user's raw phrasing, used as extra topic signal. Optional."
+          },
+          limit: { type: 'number', description: 'Max candidates to return (capped at 10).' }
+        }
+      }
+    },
+    {
+      name: 'tw_recall_read',
+      description:
+        'Read how far a specific past run got: a durable timeline rollup (start/end, status, tool/diff counts), its final assistant message, and structured plan/todo progress. Take the runId from a tw_recall_find candidate. Read-only; reading a run in a DIFFERENT workspace than the current chat requires user approval. Fails closed if the run forensic record was deleted. Every served record carries a citation token — quote it (in the form provided) so the claim is verifiable.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          runId: {
+            type: 'string',
+            description: 'The run to read (from a tw_recall_find candidate).'
+          },
+          depth: {
+            type: 'string',
+            enum: ['summary', 'full'],
+            description:
+              'summary (default) = rollup + final message + plan progress; full = also a bounded slice of timeline events.'
+          }
+        },
+        required: ['runId']
+      }
+    },
+    {
+      name: 'tw_recall_read_events',
+      description:
+        "Read the raw tool/diff/timeline event bodies for a specific past run, truncated. Use only when tw_recall_read's summary is not enough. Take the runId from a tw_recall_find candidate. Read-only; cross-workspace reads require approval. Long transcripts are compacted on disk, so older detail may be summarized rather than verbatim.",
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          runId: {
+            type: 'string',
+            description: 'The run to read (from a tw_recall_find candidate).'
+          },
+          kind: {
+            type: 'string',
+            description: 'Optional event-kind filter, e.g. "tool", "diff", "final_message".'
+          },
+          limit: { type: 'number', description: 'Max events to return (bounded).' }
+        },
+        required: ['runId']
       }
     }
   ]
