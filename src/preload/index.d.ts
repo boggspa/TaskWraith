@@ -58,6 +58,13 @@ import type {
 import type { UpdateStateSnapshot } from '../main/UpdateService'
 import type { LocalServersSnapshot } from '../main/localServers/types'
 import type { LaunchTargetsSnapshot } from '../main/launchTargets/types'
+import type {
+  LaunchSnapshot,
+  LaunchStartInput,
+  LaunchStartResult,
+  LaunchStopInput,
+  LaunchStopResult
+} from '../main/launch/types'
 import type { NativeCapabilitySnapshot } from '../main/NativeCapabilities'
 import type { GrokUsageSnapshot } from '../main/grok/GrokUsage'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
@@ -660,6 +667,10 @@ declare global {
       localServersStopAll: () => Promise<{ stopped: number }>
       onLocalServersChanged: (callback: (snapshot: LocalServersSnapshot) => void) => () => void
       launchTargetsSnapshot: (workspacePath: string) => Promise<LaunchTargetsSnapshot>
+      launchAttemptsSnapshot: () => Promise<LaunchSnapshot>
+      launchStart: (input: LaunchStartInput) => Promise<LaunchStartResult>
+      launchStop: (input: LaunchStopInput) => Promise<LaunchStopResult>
+      onLaunchAttemptsChanged: (callback: (snapshot: LaunchSnapshot) => void) => () => void
       bridgeNetworkingStatus: () => Promise<{
         lan: {
           enabled: boolean

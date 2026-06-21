@@ -276,6 +276,8 @@ import {
   type UpdateStateSnapshot
 } from './UpdateService'
 import { LocalServersService } from './LocalServersService'
+import { LaunchAttemptStore } from './launch/LaunchAttemptStore'
+import { LaunchManager } from './launch/LaunchManager'
 import { discoverLaunchTargets } from './launchTargets/discovery'
 import { SpawnRegistry } from './localServers/SpawnRegistry'
 import { getNativeCapabilitySnapshot } from './NativeCapabilities'
@@ -658,6 +660,7 @@ import {
 } from './ProductOperations'
 import { installIpcValidation } from './IpcValidation'
 import { registerPtyHandlers } from './ipc/ptyHandlers'
+import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
@@ -19101,6 +19104,29 @@ if (isGeminiMcpBridgeProcess) {
       localServersService.stopServer(Number(pid))
     )
     ipcMain.handle('local-servers-stop-all', () => localServersService.stopAll())
+    const launchManager = new LaunchManager({
+      store: new LaunchAttemptStore(join(app.getPath('userData'), 'launch-attempts.json')),
+      platform: process.platform,
+      requestApproval: requestAgenticServiceApproval,
+      createEnv: createCliEnv,
+      trackSpawn: (spawn) => spawnRegistry.track(spawn),
+      untrackSpawn: (pid) => spawnRegistry.untrack(pid),
+      log: (line) => console.log(line)
+    })
+    launchManager.subscribe((snapshot) => {
+      try {
+        mainWindow?.webContents.send('launch-attempts-changed', snapshot)
+      } catch {
+        // Window may be gone — ignore.
+      }
+    })
+    registerLaunchHandlers({
+      launchManager,
+      requireRegisteredWorkspace,
+      findWorkspaceId: (workspacePath) => findRegisteredWorkspace(workspacePath)?.id,
+      localServersSnapshot: () => localServersService.snapshot(),
+      platform: process.platform
+    })
     ipcMain.handle('launch-targets-snapshot', (_event, workspacePath) => {
       if (typeof workspacePath !== 'string') {
         throw new Error('Workspace path is required.')

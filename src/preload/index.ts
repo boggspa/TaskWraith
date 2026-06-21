@@ -536,6 +536,15 @@ const api = {
   },
   launchTargetsSnapshot: (workspacePath: string) =>
     ipcRenderer.invoke('launch-targets-snapshot', workspacePath),
+  launchAttemptsSnapshot: () => ipcRenderer.invoke('launch-attempts-snapshot'),
+  launchStart: (input: unknown) => ipcRenderer.invoke('launch-start', input),
+  launchStop: (input: unknown) => ipcRenderer.invoke('launch-stop', input),
+  onLaunchAttemptsChanged: (callback: (snapshot: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: unknown): void =>
+      callback(snapshot)
+    ipcRenderer.on('launch-attempts-changed', listener)
+    return () => ipcRenderer.removeListener('launch-attempts-changed', listener)
+  },
   bridgeFinalizePairing: (sessionID: string, userConfirmed: boolean) =>
     ipcRenderer.invoke('bridge-finalize-pairing', sessionID, userConfirmed),
   bridgeBeginPairing: (displayName?: string, options?: { force?: boolean }) =>
