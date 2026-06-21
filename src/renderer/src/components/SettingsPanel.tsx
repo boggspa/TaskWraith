@@ -50,6 +50,10 @@ import {
 } from '../lib/providerAuthSummary'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { availableIconVariants, type AppIconVariant } from '../../../shared/iconVariants'
+import {
+  OLLAMA_RUN_PROFILE_OPTIONS,
+  OLLAMA_TOOL_CONTROL_TIERS
+} from '../../../shared/ollamaTierTables'
 import appIconRegularThumb from '../assets/app-icons/regular.png'
 import appIconWwdc26Thumb from '../assets/app-icons/wwdc26.png'
 import appIconMonolineThumb from '../assets/app-icons/monoline.png'
@@ -669,64 +673,9 @@ const FUN_FX_MODES: Array<{ value: AppSettings['funFxMode']; label: string; help
   { value: 'epic', label: 'Epic', helper: 'Adds additional ambient scene accents.' }
 ]
 
-const OLLAMA_TOOL_CONTROL_TIERS: Array<{
-  value: NonNullable<AppSettings['ollamaToolControlTier']>
-  label: string
-  helper: string
-}> = [
-  {
-    value: 'read_only',
-    label: 'Tier 1 · Read-only',
-    helper: 'Workspace listing, file reads, and search only.'
-  },
-  {
-    value: 'approved_edits',
-    label: 'Tier 2 · Approved edits',
-    helper: 'write_file, replace, and apply_patch with intent plus modal approval.'
-  },
-  {
-    value: 'approved_shell',
-    label: 'Tier 3 · Approved shell',
-    helper: 'Adds shell commands. Every command still requires modal approval.'
-  },
-  {
-    value: 'provider_parity',
-    label: 'Tier 4 · Provider parity',
-    helper: 'Full TaskWraith tool surface after explicit risk acknowledgement.'
-  }
-]
-
-const OLLAMA_RUN_PROFILE_OPTIONS: Array<{
-  value: NonNullable<AppSettings['ollamaDefaultRunProfile']>
-  label: string
-  tier: NonNullable<AppSettings['ollamaToolControlTier']>
-  helper: string
-}> = [
-  {
-    value: 'local_scout',
-    label: 'Local Scout',
-    tier: 'read_only',
-    helper: 'Read/search/symbol/git inspection with GPT-OSS medium thinking.'
-  },
-  {
-    value: 'approved_patcher',
-    label: 'Approved Patcher',
-    tier: 'approved_edits',
-    helper: 'Bounded file edits with approval and GPT-OSS high thinking.'
-  },
-  {
-    value: 'verify_with_shell',
-    label: 'Verify With Shell',
-    tier: 'approved_shell',
-    helper: 'Adds approved task/shell verification for scoped patches.'
-  },
-  {
-    value: 'provider_parity',
-    label: 'Provider Parity',
-    tier: 'provider_parity',
-    helper: 'Full TaskWraith tool surface after workspace acknowledgement.'
-  }
-]
+// OLLAMA_TOOL_CONTROL_TIERS + OLLAMA_RUN_PROFILE_OPTIONS now live in the shared
+// table module (src/shared/ollamaTierTables.ts) so the composer's per-chat tier
+// picker reuses the exact same labels/helpers. Imported at the top of the file.
 
 // 1.0.6-CRUX41 — cursor + grok are first-class; surface them in the MCP tab's
 // connected-surfaces grid (and the refresh-all loop) alongside the core four.
