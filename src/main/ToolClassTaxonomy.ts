@@ -156,7 +156,22 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'goal_complete',
   'goal_blocked',
   // 1.4.2 — structured goal-step checklist (no workspace mutation).
-  'todo_write'
+  'todo_write',
+  // TaskWraith Canvas — non-mutating preview verbs. list/status are metadata;
+  // snapshot/inspect run fixed inspection scripts; network/console are read
+  // buffers; screenshot is a capture (like appwatch_latest_frame); resize/close
+  // are window control. canvas_open is the navigation/SSRF surface and stays
+  // workspace_write (the default below) — denied under read-only, like
+  // browser_open.
+  'canvas_list',
+  'canvas_status',
+  'canvas_snapshot',
+  'canvas_inspect',
+  'canvas_network',
+  'canvas_console',
+  'canvas_screenshot',
+  'canvas_resize',
+  'canvas_close'
 ])
 
 /** Bucket a single tool name. Unknown → workspace_write (safe default). */

@@ -119,7 +119,23 @@ export const TASKWRAITH_MCP_TOOLS = [
   // M4 — explicit shared scratchpad writes. Participants use this
   // for durable agreed facts / risks / decisions; conversational
   // participant-to-participant messages use `ensemble_send`.
-  'blackboard_post'
+  'blackboard_post',
+  // TaskWraith Canvas (P0) — exclusive preview/runtime surface. Agents open a
+  // sandboxed preview of a running app (web driver = an http(s) dev server),
+  // then snapshot (a stable-ref element tree), screenshot, inspect, and read
+  // console/network. Read-only verbs are auto-allowed; open/screenshot/resize/
+  // close are gated like browser_open. Interaction (click/fill) + annotation
+  // land in P1; arbitrary `eval` is deferred to P2.
+  'canvas_open',
+  'canvas_list',
+  'canvas_status',
+  'canvas_snapshot',
+  'canvas_screenshot',
+  'canvas_inspect',
+  'canvas_network',
+  'canvas_console',
+  'canvas_resize',
+  'canvas_close'
 ] as const
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]

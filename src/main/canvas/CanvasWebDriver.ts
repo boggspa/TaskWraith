@@ -1,0 +1,409 @@
+/**
+ * CanvasWebDriver — the P0 `web` driver.
+ *
+ * Hosts the app-under-test in a sandboxed, VISIBLE Electron BrowserWindow and
+ * drives it WITHOUT the CDP `webContents.debugger` (which is mutually exclusive
+ * with an open DevTools window and adds attach/version churn). Instead it uses
+ * proven Electron primitives:
+ *   - snapshot / inspect → `webContents.executeJavaScript` (fixed inspection
+ *     scripts, NOT model-supplied JS — arbitrary eval is the deferred P2 verb)
+ *   - screenshot         → `webContents.capturePage().toPNG()`
+ *   - network            → per-partition `session.webRequest` ring buffer
+ *   - console            → `webContents.on('console-message')` ring buffer
+ *   - resize             → `setContentSize`
+ *
+ * Each canvas gets its own in-memory session partition so its network buffer and
+ * cookies are isolated. The window blocks popups and enforces the origin
+ * allowlist on every page-initiated navigation (server-side SSRF guard).
+ */
+import { BrowserWindow } from 'electron'
+import { createHash } from 'crypto'
+import type {
+  CanvasConsoleEntry,
+  CanvasConsoleLevel,
+  CanvasDriver,
+  CanvasElementDetail,
+  CanvasElementTree,
+  CanvasFrame,
+  CanvasNetworkEntry,
+  CanvasOpenInput,
+  CanvasSessionHandle,
+  CanvasViewport
+} from './canvasTypes'
+import { isCanvasRequestBlocked, resolveViewport, validateCanvasUrl } from './canvasTypes'
+
+const NETWORK_BUFFER = 200
+const CONSOLE_BUFFER = 200
+const LOAD_TIMEOUT_MS = 20000
+
+const DEFAULT_INSPECT_STYLES = [
+  'color',
+  'background-color',
+  'font-size',
+  'font-family',
+  'font-weight',
+  'padding',
+  'margin',
+  'border',
+  'display',
+  'width',
+  'height'
+]
+
+// Injected DOM-walk that assigns stable refs (e1, e2, …), stashes the elements
+// on window.__twCanvas__.refs for canvas_inspect, and returns a compact tree.
+// NOTE: this is a template literal — every regex backslash is DOUBLED so it
+// survives into the evaluated JS string (`\\s` here → `\s` in the page).
+const SNAPSHOT_SCRIPT = `(() => {
+  const MAX_NODES = 400, TEXT_TRUNCATE = 200;
+  const reg = (window.__twCanvas__ = { refs: {}, seq: 0 });
+  let count = 0;
+  const truncate = (s) => { s = (s || '').replace(/\\s+/g, ' ').trim(); return s.length > TEXT_TRUNCATE ? s.slice(0, TEXT_TRUNCATE) + '\\u2026' : s; };
+  const isVisible = (el) => {
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden' || st.opacity === '0') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const INTERACTIVE = new Set(['A','BUTTON','INPUT','SELECT','TEXTAREA','SUMMARY','LABEL','OPTION']);
+  const LANDMARK = new Set(['NAV','MAIN','HEADER','FOOTER','SECTION','ARTICLE','ASIDE','FORM','IMG']);
+  const SKIP = new Set(['SCRIPT','STYLE','NOSCRIPT','TEMPLATE','SVG','PATH','HEAD','META','LINK']);
+  const isHeading = (t) => /^H[1-6]$/.test(t);
+  const implicitRole = (el) => {
+    const t = el.tagName;
+    if (t === 'A' && el.hasAttribute('href')) return 'link';
+    if (t === 'BUTTON') return 'button';
+    if (t === 'INPUT') return (el.getAttribute('type') || 'text');
+    if (t === 'SELECT') return 'combobox';
+    if (t === 'TEXTAREA') return 'textbox';
+    if (isHeading(t)) return 'heading';
+    if (t === 'NAV') return 'navigation';
+    if (t === 'MAIN') return 'main';
+    if (t === 'IMG') return 'img';
+    return t.toLowerCase();
+  };
+  const accName = (el) => truncate(
+    el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') ||
+    el.getAttribute('placeholder') || (INTERACTIVE.has(el.tagName) ? el.textContent : '') || ''
+  );
+  const directText = (el) => {
+    let t = '';
+    for (const n of el.childNodes) if (n.nodeType === 3) t += n.textContent;
+    return truncate(t);
+  };
+  const meaningful = (el) => INTERACTIVE.has(el.tagName) || el.hasAttribute('role') ||
+    isHeading(el.tagName) || LANDMARK.has(el.tagName) || Boolean(directText(el));
+  const build = (el) => {
+    if (count >= MAX_NODES || SKIP.has(el.tagName) || !isVisible(el)) return null;
+    const childNodes = [];
+    for (const child of el.children) {
+      const c = build(child);
+      if (c) childNodes.push(c);
+      if (count >= MAX_NODES) break;
+    }
+    const mine = meaningful(el);
+    if (!mine && childNodes.length === 0) return null;
+    if (!mine && childNodes.length === 1) return childNodes[0];
+    const ref = 'e' + (++reg.seq);
+    reg.refs[ref] = el; count++;
+    const r = el.getBoundingClientRect();
+    const node = { ref, tag: el.tagName.toLowerCase(), role: el.getAttribute('role') || implicitRole(el),
+      bbox: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)] };
+    const name = accName(el); if (name) node.name = name;
+    const text = directText(el); if (text) node.text = text;
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+      const itype = (el.getAttribute('type') || '').toLowerCase();
+      if (el.tagName === 'INPUT' && (itype === 'password' || itype === 'hidden')) {
+        node.value = itype === 'password' ? '[redacted]' : '[hidden]';
+      } else if (itype === 'checkbox' || itype === 'radio') {
+        node.value = el.checked ? 'checked' : 'unchecked';
+      } else {
+        const v = el.value; if (v) node.value = String(v).slice(0, 200);
+      }
+    }
+    if (childNodes.length) node.children = childNodes;
+    return node;
+  };
+  const root = (document.body && build(document.body)) || { ref: 'e0', tag: 'body', role: 'document' };
+  return { url: location.href, title: document.title,
+    viewport: { width: window.innerWidth, height: window.innerHeight }, root,
+    nodeCount: reg.seq, truncated: count >= MAX_NODES };
+})()`
+
+function inspectScript(args: { ref?: string; selector?: string; styles?: string[] }): string {
+  const ref = JSON.stringify(args.ref || null)
+  const selector = JSON.stringify(args.selector || null)
+  const props = JSON.stringify(
+    args.styles && args.styles.length ? args.styles : DEFAULT_INSPECT_STYLES
+  )
+  return `(() => {
+    const ref = ${ref}, selector = ${selector}, props = ${props};
+    let el = null;
+    if (ref && window.__twCanvas__ && window.__twCanvas__.refs) el = window.__twCanvas__.refs[ref] || null;
+    if (!el && selector) { try { el = document.querySelector(selector); } catch (e) { el = null; } }
+    if (!el) return { found: false };
+    const r = el.getBoundingClientRect();
+    const cs = window.getComputedStyle(el);
+    const styles = {};
+    for (const p of props) styles[p] = cs.getPropertyValue(p);
+    return { found: true, tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role') || el.tagName.toLowerCase(),
+      text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 200),
+      bbox: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], styles };
+  })()`
+}
+
+function normalizeConsoleLevel(level: unknown): CanvasConsoleLevel {
+  if (typeof level === 'number') {
+    return level >= 3 ? 'error' : level === 2 ? 'warn' : level === 0 ? 'debug' : 'info'
+  }
+  const s = String(level || '').toLowerCase()
+  if (s.includes('err')) return 'error'
+  if (s.includes('warn')) return 'warn'
+  if (s.includes('debug') || s.includes('verbose')) return 'debug'
+  if (s === 'log') return 'log'
+  return 'info'
+}
+
+export class CanvasWebDriver implements CanvasDriver {
+  readonly kind = 'web' as const
+
+  private win: BrowserWindow | null = null
+  private readonly partition: string
+  private allowlist: string[] = []
+  private readonly networkBuffer: CanvasNetworkEntry[] = []
+  private readonly networkById = new Map<number, CanvasNetworkEntry>()
+  private readonly consoleEntries: CanvasConsoleEntry[] = []
+
+  constructor(sessionId: string) {
+    // In-memory partition (no "persist:" prefix) — isolated, ephemeral session.
+    this.partition = `canvas-${sessionId}`
+  }
+
+  private requireWindow(): BrowserWindow {
+    if (!this.win || this.win.isDestroyed()) {
+      throw new Error('Canvas window is not open (or was closed).')
+    }
+    return this.win
+  }
+
+  async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
+    const rawUrl = (input.url || '').trim()
+    this.allowlist = Array.isArray(input.originAllowlist) ? input.originAllowlist : []
+    const verdict = validateCanvasUrl(rawUrl, this.allowlist)
+    if (!verdict.ok || !verdict.normalizedUrl) {
+      throw new Error(verdict.reason || 'Canvas URL was rejected.')
+    }
+    const viewport = resolveViewport({
+      width: input.viewport?.width,
+      height: input.viewport?.height
+    })
+
+    const win = new BrowserWindow({
+      width: viewport.width,
+      height: viewport.height,
+      title: 'TaskWraith Canvas',
+      backgroundColor: '#111111',
+      show: true,
+      webPreferences: {
+        partition: this.partition,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        allowRunningInsecureContent: false,
+        experimentalFeatures: false
+      }
+    })
+    this.win = win
+
+    // Block popups / window.open — no new windows escape the canvas.
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    // The origin allowlist is enforced per-request in attachNetwork via
+    // webRequest.onBeforeRequest (covers the main frame, subframes, subresources
+    // and websockets — the navigation events only see the main frame).
+    win.webContents.on('console-message', (details) => {
+      this.pushConsole({
+        level: normalizeConsoleLevel((details as { level?: unknown }).level),
+        message: String((details as { message?: unknown }).message ?? ''),
+        line: (details as { lineNumber?: number }).lineNumber,
+        sourceId: (details as { sourceId?: string }).sourceId,
+        at: new Date().toISOString()
+      })
+    })
+    this.attachNetwork(win)
+    win.on('closed', () => {
+      if (this.win === win) this.win = null
+    })
+
+    await this.loadUrl(win, verdict.normalizedUrl)
+    return {
+      url: win.webContents.getURL() || verdict.normalizedUrl,
+      title: win.getTitle(),
+      viewport
+    }
+  }
+
+  private loadUrl(win: BrowserWindow, url: string): Promise<void> {
+    return new Promise<void>((resolvePromise, reject) => {
+      let settled = false
+      const finish = (err?: Error): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        win.webContents.removeListener('did-finish-load', onLoad)
+        win.webContents.removeListener('did-fail-load', onFail)
+        err ? reject(err) : resolvePromise()
+      }
+      const onLoad = (): void => finish()
+      const onFail = (
+        _e: unknown,
+        errorCode: number,
+        errorDescription: string,
+        validatedURL: string,
+        isMainFrame: boolean
+      ): void => {
+        // -3 ERR_ABORTED fires when a main-frame load is superseded by a client/
+        // server redirect that then succeeds; ignore it (mirrors the proven
+        // browser path, which only logs did-fail-load) and let did-finish-load
+        // or the timeout settle.
+        if (isMainFrame && errorCode !== -3) {
+          finish(new Error(`Navigation failed (${errorCode}): ${errorDescription} [${validatedURL}]`))
+        }
+      }
+      const timer = setTimeout(() => finish(new Error(`Canvas load timed out after ${LOAD_TIMEOUT_MS}ms.`)), LOAD_TIMEOUT_MS)
+      win.webContents.on('did-finish-load', onLoad)
+      win.webContents.on('did-fail-load', onFail)
+      win.loadURL(url).catch((err) => finish(err instanceof Error ? err : new Error(String(err))))
+    })
+  }
+
+  private attachNetwork(win: BrowserWindow): void {
+    const wr = win.webContents.session.webRequest
+    // SSRF enforcement for EVERY request (any frame / subresource / websocket):
+    // cancel requests to link-local/metadata, or to a private host not in the
+    // allowlist. This is the real guard the navigation events cannot provide.
+    wr.onBeforeRequest((details, callback) => {
+      callback({ cancel: isCanvasRequestBlocked(details.url, this.allowlist) })
+    })
+    const push = (entry: CanvasNetworkEntry): void => {
+      this.networkById.set(entry.id, entry)
+      this.networkBuffer.push(entry)
+      while (this.networkBuffer.length > NETWORK_BUFFER) {
+        const dropped = this.networkBuffer.shift()
+        if (dropped) this.networkById.delete(dropped.id)
+      }
+    }
+    wr.onSendHeaders((details) => {
+      push({
+        id: details.id,
+        url: details.url,
+        method: details.method,
+        resourceType: details.resourceType,
+        startedAt: new Date().toISOString()
+      })
+    })
+    wr.onCompleted((details) => {
+      const entry = this.networkById.get(details.id)
+      if (entry) {
+        entry.status = details.statusCode
+        entry.ok = details.statusCode < 400
+        entry.completedAt = new Date().toISOString()
+      }
+    })
+    wr.onErrorOccurred((details) => {
+      const entry = this.networkById.get(details.id)
+      if (entry) {
+        entry.errorText = details.error
+        entry.ok = false
+        entry.completedAt = new Date().toISOString()
+      }
+    })
+  }
+
+  private pushConsole(entry: CanvasConsoleEntry): void {
+    this.consoleEntries.push(entry)
+    while (this.consoleEntries.length > CONSOLE_BUFFER) this.consoleEntries.shift()
+  }
+
+  async snapshot(): Promise<CanvasElementTree> {
+    const win = this.requireWindow()
+    const result = (await win.webContents.executeJavaScript(SNAPSHOT_SCRIPT, true)) as Omit<
+      CanvasElementTree,
+      'capturedAt'
+    >
+    return { ...result, capturedAt: new Date().toISOString() }
+  }
+
+  async screenshot(): Promise<CanvasFrame> {
+    const win = this.requireWindow()
+    const image = await win.webContents.capturePage()
+    const png = image.toPNG()
+    const size = image.getSize()
+    return {
+      mimeType: 'image/png',
+      data: png.toString('base64'),
+      width: size.width,
+      height: size.height,
+      byteLength: png.byteLength,
+      hash: createHash('sha256').update(png).digest('hex'),
+      capturedAt: new Date().toISOString()
+    }
+  }
+
+  async inspect(args: {
+    ref?: string
+    selector?: string
+    styles?: string[]
+  }): Promise<CanvasElementDetail> {
+    const win = this.requireWindow()
+    const detail = (await win.webContents.executeJavaScript(
+      inspectScript(args),
+      true
+    )) as Omit<CanvasElementDetail, 'ref' | 'selector'>
+    return { ...detail, ref: args.ref, selector: args.selector }
+  }
+
+  async network(args: { filter?: 'all' | 'failed'; requestId?: number }): Promise<CanvasNetworkEntry[]> {
+    this.requireWindow()
+    let entries = [...this.networkBuffer]
+    if (typeof args.requestId === 'number') {
+      entries = entries.filter((entry) => entry.id === args.requestId)
+    }
+    if (args.filter === 'failed') {
+      entries = entries.filter((entry) => entry.ok === false || (entry.status ?? 0) >= 400)
+    }
+    return entries
+  }
+
+  async console(args: { level?: 'all' | 'warn' | 'error'; lines?: number }): Promise<CanvasConsoleEntry[]> {
+    this.requireWindow()
+    let entries = [...this.consoleEntries]
+    if (args.level === 'error') entries = entries.filter((entry) => entry.level === 'error')
+    else if (args.level === 'warn') entries = entries.filter((entry) => entry.level === 'warn' || entry.level === 'error')
+    const requested = Math.trunc(Number(args.lines))
+    const lines = Math.max(1, Math.min(200, Number.isFinite(requested) ? requested : 50))
+    return entries.slice(-lines)
+  }
+
+  async resize(viewport: CanvasViewport): Promise<CanvasViewport> {
+    const win = this.requireWindow()
+    win.setContentSize(viewport.width, viewport.height)
+    return viewport
+  }
+
+  async close(): Promise<void> {
+    const win = this.win
+    this.win = null
+    if (!win || win.isDestroyed()) return
+    try {
+      const wr = win.webContents.session.webRequest
+      wr.onBeforeRequest(null)
+      wr.onSendHeaders(null)
+      wr.onCompleted(null)
+      wr.onErrorOccurred(null)
+    } catch {
+      // Session may already be torn down.
+    }
+    win.destroy()
+  }
+}

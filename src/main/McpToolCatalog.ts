@@ -1680,6 +1680,185 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         },
         required: ['key', 'value']
       }
+    },
+    {
+      name: 'canvas_open',
+      description:
+        'Open a TaskWraith Canvas: a sandboxed preview of a running app the agent can inspect. Driver "web" loads an http(s) URL (typically a local dev server, e.g. http://localhost:3000). Returns a canvasId used by every other canvas_* tool. Gated (asks once per session); blocks file://, link-local and cloud-metadata addresses.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          driver: { type: 'string', enum: ['web'] },
+          url: { type: 'string' },
+          width: { type: 'number' },
+          height: { type: 'number' },
+          originAllowlist: { type: 'array', items: { type: 'string' } }
+        },
+        required: ['url']
+      }
+    },
+    {
+      name: 'canvas_list',
+      description:
+        'List currently open Canvas sessions (canvasId, driver, url, status). Read-only; carries no pixels.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: { type: 'object', properties: {} }
+    },
+    {
+      name: 'canvas_status',
+      description:
+        'Return metadata for one Canvas session (status, url, viewport). Read-only; carries no pixels.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { canvasId: { type: 'string' } },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_snapshot',
+      description:
+        'Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"), roles, accessible names, text and bounding boxes. PREFER this over a screenshot for reading structure/text — it is cheaper and deterministic, and its refs are how you target canvas_inspect.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { canvasId: { type: 'string' } },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_screenshot',
+      description:
+        'Capture the Canvas as a PNG (image content block) plus dimensions. Use as a VISUAL SUPPLEMENT to canvas_snapshot — e.g. to check layout/spacing/colour you cannot read from the tree. Gated (pixel egress).',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { canvasId: { type: 'string' } },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_inspect',
+      description:
+        'Inspect ONE element — by `ref` (from canvas_snapshot) or CSS `selector` — returning tag, role, text, bounding box and computed styles. BEST tool for verifying exact colours, fonts, spacing and dimensions (more accurate than a screenshot). Read-only.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          ref: { type: 'string' },
+          selector: { type: 'string' },
+          styles: { type: 'array', items: { type: 'string' } }
+        },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_network',
+      description:
+        'List network requests observed by the Canvas (url, method, status). Pass `requestId` for a single entry; `filter:"failed"` for 4xx/5xx and errors. Read-only.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          requestId: { type: 'number' },
+          filter: { type: 'string', enum: ['all', 'failed'] }
+        },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_console',
+      description:
+        'Return Canvas console output (log/info/warn/error). `level:"error"` or `"warn"` filters. Read-only.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          level: { type: 'string', enum: ['all', 'warn', 'error'] },
+          lines: { type: 'number' }
+        },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_resize',
+      description:
+        'Resize the Canvas viewport to test responsive layouts. Use `preset` (mobile 375x812 / tablet 768x1024 / desktop 1280x800) or explicit width/height. Gated.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          preset: { type: 'string', enum: ['mobile', 'tablet', 'desktop'] },
+          width: { type: 'number' },
+          height: { type: 'number' }
+        },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_close',
+      description: 'Close a Canvas session and free its preview window. Gated.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { canvasId: { type: 'string' } },
+        required: ['canvasId']
+      }
     }
   ]
   return orderTaskWraithMcpToolDefinitions(definitions)

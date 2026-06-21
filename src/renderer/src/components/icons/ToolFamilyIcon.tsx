@@ -163,7 +163,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
 
   // Pattern buckets — order matters (more-specific patterns first).
   if (normalised.startsWith('git_') || normalised === 'git') return 'git'
-  if (normalised.startsWith('browser_')) return 'browser'
+  if (normalised.startsWith('browser_') || normalised.startsWith('canvas_')) return 'browser'
   if (normalised.startsWith('appwatch_')) return 'window-context'
   if (normalised.startsWith('ensemble_') || normalised === 'list_ensemble_participants') {
     return 'yield'

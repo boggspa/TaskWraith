@@ -1,0 +1,306 @@
+/**
+ * CanvasService — the trusted main-process orchestrator behind the canvas_*
+ * MCP tools. Owns the live session registry, routes to a driver, persists
+ * session records + audit events, and broadcasts events to the renderer.
+ *
+ * It implements {@link CanvasController}; the MCP executor depends on that
+ * interface, so the service can be swapped for a fake in tests. Drivers are
+ * injected via `createDriver` for the same reason (the real `web` driver needs
+ * Electron, which vitest does not provide).
+ *
+ * Audit discipline: every action appends a CanvasEventRecord whose `detail` is
+ * REDACTED metadata only — a screenshot records `{ frameHash, width, height }`,
+ * never the PNG bytes; network/console record counts, not bodies.
+ */
+import type {
+  CanvasController,
+  CanvasCallContext,
+  CanvasConsoleEntry,
+  CanvasDriver,
+  CanvasDriverKind,
+  CanvasElementDetail,
+  CanvasElementTree,
+  CanvasEventKind,
+  CanvasEventRecord,
+  CanvasFrame,
+  CanvasNetworkEntry,
+  CanvasOpenInput,
+  CanvasSessionHandle,
+  CanvasSessionRecord,
+  CanvasSessionSummary,
+  CanvasViewport
+} from './canvasTypes'
+import { redactUrlQuery, resolveViewport, validateCanvasUrl } from './canvasTypes'
+import type { CanvasStore } from './CanvasStore'
+
+export interface CanvasServiceDeps {
+  createDriver: (kind: CanvasDriverKind, sessionId: string) => CanvasDriver
+  store: CanvasStore
+  uuid: () => string
+  now: () => string
+  /** Broadcast an audit event to the renderer (already persisted by the service). */
+  broadcast?: (event: CanvasEventRecord) => void
+  logger?: Pick<Console, 'warn' | 'error'>
+}
+
+interface LiveSession {
+  driver: CanvasDriver
+  record: CanvasSessionRecord
+}
+
+const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set(['web'])
+
+function toSummary(record: CanvasSessionRecord): CanvasSessionSummary {
+  return {
+    canvasId: record.id,
+    driver: record.driver,
+    url: record.url,
+    title: record.title,
+    status: record.status,
+    viewport: record.viewport,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt
+  }
+}
+
+export class CanvasService implements CanvasController {
+  private readonly sessions = new Map<string, LiveSession>()
+
+  constructor(private readonly deps: CanvasServiceDeps) {}
+
+  private emit(
+    canvasId: string,
+    kind: CanvasEventKind,
+    ctx: CanvasCallContext,
+    detail?: Record<string, unknown>
+  ): void {
+    const event: CanvasEventRecord = {
+      schemaVersion: 1,
+      id: this.deps.uuid(),
+      canvasId,
+      kind,
+      provider: ctx.provider,
+      chatId: ctx.chatId,
+      runId: ctx.runId,
+      detail,
+      createdAt: this.deps.now()
+    }
+    try {
+      this.deps.store.appendEvent(event)
+    } catch (err) {
+      this.deps.logger?.warn?.(`canvas: failed to persist event ${kind}: ${String(err)}`)
+    }
+    try {
+      this.deps.broadcast?.(event)
+    } catch {
+      // Renderer may be gone — events are already persisted.
+    }
+  }
+
+  /**
+   * Chat-scoped ownership: a session is reachable only from the chat that
+   * opened it (sessions opened in a global-scope run share the no-chat scope).
+   * This stops an agent in chat A from inspecting/closing chat B's canvas even
+   * if it learns the id.
+   */
+  private owns(record: CanvasSessionRecord, ctx: CanvasCallContext): boolean {
+    return (record.chatId ?? null) === (ctx.chatId ?? null)
+  }
+
+  private require(canvasId: string, ctx: CanvasCallContext): LiveSession {
+    const session = this.sessions.get(canvasId)
+    if (!session || !this.owns(session.record, ctx)) {
+      // Same message whether absent or cross-chat — never reveal another chat's id.
+      throw new Error(`No open canvas with id "${canvasId}". Call canvas_open first.`)
+    }
+    return session
+  }
+
+  async open(
+    input: CanvasOpenInput,
+    ctx: CanvasCallContext
+  ): Promise<{ canvasId: string } & CanvasSessionHandle> {
+    const driverKind = input.driver ?? 'web'
+    if (!SUPPORTED_DRIVERS.has(driverKind)) {
+      throw new Error(
+        `Canvas driver "${driverKind}" is not available in this build (P0 supports "web" only).`
+      )
+    }
+    // Validate up front so a bad URL never even spawns a window.
+    const verdict = validateCanvasUrl((input.url || '').trim(), input.originAllowlist ?? [])
+    if (!verdict.ok) throw new Error(verdict.reason || 'Canvas URL was rejected.')
+
+    const canvasId = this.deps.uuid()
+    const nowIso = this.deps.now()
+    const viewport = resolveViewport({
+      width: input.viewport?.width,
+      height: input.viewport?.height
+    })
+    const baseRecord: CanvasSessionRecord = {
+      schemaVersion: 1,
+      id: canvasId,
+      driver: driverKind,
+      url: redactUrlQuery(verdict.normalizedUrl ?? (input.url || '')),
+      title: '',
+      viewport,
+      originAllowlist: input.originAllowlist ?? [],
+      status: 'opening',
+      chatId: ctx.chatId,
+      runId: ctx.runId,
+      workspacePath: ctx.workspacePath,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    }
+    this.deps.store.upsertSession(baseRecord)
+
+    const driver = this.deps.createDriver(driverKind, canvasId)
+    try {
+      const handle = await driver.open(input)
+      const record: CanvasSessionRecord = {
+        ...baseRecord,
+        status: 'active',
+        url: redactUrlQuery(handle.url),
+        title: handle.title,
+        viewport: handle.viewport,
+        updatedAt: this.deps.now()
+      }
+      this.sessions.set(canvasId, { driver, record })
+      this.deps.store.upsertSession(record)
+      this.emit(canvasId, 'session.opened', ctx, {
+        driver: driverKind,
+        host: verdict.host,
+        url: redactUrlQuery(handle.url)
+      })
+      return { canvasId, ...handle }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.deps.store.upsertSession({
+        ...baseRecord,
+        status: 'error',
+        error: message,
+        updatedAt: this.deps.now()
+      })
+      this.emit(canvasId, 'session.error', ctx, { error: message })
+      try {
+        await driver.close()
+      } catch {
+        // Best effort — the open already failed.
+      }
+      throw err
+    }
+  }
+
+  list(ctx: CanvasCallContext): CanvasSessionSummary[] {
+    return [...this.sessions.values()]
+      .filter((session) => this.owns(session.record, ctx))
+      .map((session) => toSummary(session.record))
+  }
+
+  status(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary | null {
+    const live = this.sessions.get(canvasId)
+    if (live) return this.owns(live.record, ctx) ? toSummary(live.record) : null
+    const persisted = this.deps.store.getSession(canvasId)
+    return persisted && this.owns(persisted, ctx) ? toSummary(persisted) : null
+  }
+
+  async snapshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasElementTree> {
+    const { driver } = this.require(canvasId, ctx)
+    const tree = await driver.snapshot()
+    this.emit(canvasId, 'snapshot', ctx, { nodeCount: tree.nodeCount, url: tree.url })
+    return tree
+  }
+
+  async screenshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasFrame> {
+    const { driver } = this.require(canvasId, ctx)
+    const frame = await driver.screenshot()
+    this.emit(canvasId, 'screenshot', ctx, {
+      frameHash: frame.hash,
+      width: frame.width,
+      height: frame.height,
+      byteLength: frame.byteLength
+    })
+    return frame
+  }
+
+  async inspect(
+    canvasId: string,
+    args: { ref?: string; selector?: string; styles?: string[] },
+    ctx: CanvasCallContext
+  ): Promise<CanvasElementDetail> {
+    const { driver } = this.require(canvasId, ctx)
+    const detail = await driver.inspect(args)
+    this.emit(canvasId, 'inspect', ctx, {
+      ref: args.ref,
+      selector: args.selector,
+      found: detail.found
+    })
+    return detail
+  }
+
+  async network(
+    canvasId: string,
+    args: { filter?: 'all' | 'failed'; requestId?: number },
+    ctx: CanvasCallContext
+  ): Promise<CanvasNetworkEntry[]> {
+    const { driver } = this.require(canvasId, ctx)
+    const entries = await driver.network(args)
+    this.emit(canvasId, 'network', ctx, { count: entries.length, filter: args.filter ?? 'all' })
+    return entries
+  }
+
+  async console(
+    canvasId: string,
+    args: { level?: 'all' | 'warn' | 'error'; lines?: number },
+    ctx: CanvasCallContext
+  ): Promise<CanvasConsoleEntry[]> {
+    const { driver } = this.require(canvasId, ctx)
+    const entries = await driver.console(args)
+    this.emit(canvasId, 'console', ctx, { count: entries.length, level: args.level ?? 'all' })
+    return entries
+  }
+
+  async resize(
+    canvasId: string,
+    viewport: CanvasViewport,
+    ctx: CanvasCallContext
+  ): Promise<CanvasViewport> {
+    const session = this.require(canvasId, ctx)
+    const applied = await session.driver.resize(viewport)
+    session.record = { ...session.record, viewport: applied, updatedAt: this.deps.now() }
+    this.deps.store.upsertSession(session.record)
+    this.emit(canvasId, 'resize', ctx, { width: applied.width, height: applied.height })
+    return applied
+  }
+
+  async close(canvasId: string, ctx: CanvasCallContext): Promise<void> {
+    const session = this.sessions.get(canvasId)
+    if (!session || !this.owns(session.record, ctx)) return
+    await this.teardown(canvasId, session, ctx)
+  }
+
+  private async teardown(
+    canvasId: string,
+    session: LiveSession,
+    ctx: CanvasCallContext
+  ): Promise<void> {
+    this.sessions.delete(canvasId)
+    try {
+      await session.driver.close()
+    } catch (err) {
+      this.deps.logger?.warn?.(`canvas: driver close failed for ${canvasId}: ${String(err)}`)
+    }
+    this.deps.store.upsertSession({
+      ...session.record,
+      status: 'closed',
+      closedAt: this.deps.now(),
+      updatedAt: this.deps.now()
+    })
+    this.emit(canvasId, 'session.closed', ctx)
+  }
+
+  /** Close every live session regardless of owner — call on app shutdown. */
+  async closeAll(): Promise<void> {
+    const entries = [...this.sessions.entries()]
+    await Promise.all(entries.map(([id, session]) => this.teardown(id, session, {})))
+  }
+}

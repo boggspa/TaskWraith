@@ -69,7 +69,18 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'read_file',
   'list_directory',
   'workspace_search',
-  'workspace_symbols'
+  'workspace_symbols',
+  // TaskWraith Canvas read-only verbs. No pixels, no mutation: list/status are
+  // metadata the user already sees; snapshot/inspect run FIXED inspection
+  // scripts (not agent-supplied JS); network/console are read-only buffers.
+  // canvas_open / canvas_screenshot / canvas_resize / canvas_close stay GATED
+  // (window lifecycle + pixel egress), like browser_open.
+  'canvas_list',
+  'canvas_status',
+  'canvas_snapshot',
+  'canvas_inspect',
+  'canvas_network',
+  'canvas_console'
 ])
 
 export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
