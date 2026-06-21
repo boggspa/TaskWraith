@@ -112,6 +112,12 @@ function SettingsTabSymbolIcon({ tab }: { tab: SettingsTab }) {
         <path d="M8 2.2 12.8 4v3.4c0 3-1.8 5.2-4.8 6.4-3-1.2-4.8-3.4-4.8-6.4V4Z" />
         <path d="m5.8 8 1.4 1.4 3-3.2" />
       </svg>
+    ) : tab === 'safety-privacy' ? (
+      <svg {...common}>
+        <path d="M8 2.2 12.7 4v3.5c0 2.8-1.7 5-4.7 6.3-3-1.3-4.7-3.5-4.7-6.3V4Z" />
+        <path d="M5.3 8.1c.8-1.3 1.7-1.9 2.7-1.9s1.9.6 2.7 1.9c-.8 1.3-1.7 1.9-2.7 1.9S6.1 9.4 5.3 8.1Z" />
+        <circle cx="8" cy="8.1" r=".8" />
+      </svg>
     ) : tab === 'mcp' ? (
       <svg {...common}>
         <path d="M4.2 5.2h3.2v3.2H4.2zM8.6 7.6h3.2v3.2H8.6z" />

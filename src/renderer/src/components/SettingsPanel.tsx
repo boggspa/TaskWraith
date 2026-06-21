@@ -1098,6 +1098,7 @@ export type SettingsTab =
   | 'mcp'
   | 'key-commands'
   | 'approval-ledger'
+  | 'safety-privacy'
   | 'messages'
   | 'pairing'
   | 'workspaces'
@@ -1238,6 +1239,26 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     description: 'Local and self-hosted message channel gateway controls.',
     aliases: ['imessage', 'sms', 'gateway', 'channel', 'messages bridge'],
     scope: 'device'
+  },
+  {
+    id: 'safety-privacy',
+    label: 'Safety & Privacy',
+    group: 'data',
+    description: 'Risk posture, local history, provider data flow, mobile visibility, and grant status.',
+    aliases: [
+      'privacy',
+      'safety',
+      'security',
+      'risk',
+      'data',
+      'history',
+      'grants',
+      'permissions',
+      'mobile visibility',
+      'screen watch',
+      'canvas'
+    ],
+    scope: 'global'
   },
   {
     id: 'pinned-messages',
@@ -2115,6 +2136,142 @@ export function SettingsPanel({
   const activeKeyCommandCount = keyCommandRows.filter((command) => command.binding !== null).length
   const customizedKeyCommandCount = keyCommandRows.filter((command) => command.customized).length
   const conflictKeyCommandCount = keyCommandRows.filter((command) => command.conflict).length
+  const policyTone = (value: AgenticServicePolicy | AgenticNetworkPolicy): 'ok' | 'watch' | 'risk' => {
+    if (value === 'allow') return 'risk'
+    if (value === 'workspace') return 'watch'
+    return 'ok'
+  }
+  const agenticPolicyLabel = (value: AgenticServicePolicy): string =>
+    AGENTIC_SERVICE_POLICY_OPTIONS.find((option) => option.value === value)?.label ?? value
+  const networkPolicyLabel = (value: AgenticNetworkPolicy): string =>
+    NETWORK_POLICY_OPTIONS.find((option) => option.value === value)?.label ?? value
+  const canvasInteractionPolicy = agenticServices.canvasInteraction ?? 'ask'
+  const safetyPolicyRows = [
+    {
+      id: 'shell',
+      label: 'Shell commands',
+      scope: 'Workspace',
+      value: agenticServices.shellCommands,
+      display: agenticPolicyLabel(agenticServices.shellCommands),
+      tone: policyTone(agenticServices.shellCommands),
+      description: 'Provider runs can request terminal commands inside the active workspace.'
+    },
+    {
+      id: 'files',
+      label: 'File changes',
+      scope: 'Workspace',
+      value: agenticServices.fileChanges,
+      display: agenticPolicyLabel(agenticServices.fileChanges),
+      tone: policyTone(agenticServices.fileChanges),
+      description: 'Write, replace, and patch tools stay inside the workspace boundary.'
+    },
+    {
+      id: 'mcp',
+      label: 'MCP and tools',
+      scope: 'Provider',
+      value: agenticServices.mcpTools,
+      display: agenticPolicyLabel(agenticServices.mcpTools),
+      tone: policyTone(agenticServices.mcpTools),
+      description: 'TaskWraith MCP tools expose workspace, audit, editor, and app-control surfaces.'
+    },
+    {
+      id: 'subthread',
+      label: 'Sub-thread delegation',
+      scope: 'Provider',
+      value: agenticServices.subThreadDelegation,
+      display: agenticPolicyLabel(agenticServices.subThreadDelegation),
+      tone: policyTone(agenticServices.subThreadDelegation),
+      description: 'Agents can spawn or resume provider sub-threads under the current workspace.'
+    },
+    {
+      id: 'canvas',
+      label: 'Canvas interaction',
+      scope: 'Workspace',
+      value: canvasInteractionPolicy,
+      display: agenticPolicyLabel(canvasInteractionPolicy),
+      tone: policyTone(canvasInteractionPolicy),
+      description: 'Agents can click and fill preview UI when the workspace policy permits it.'
+    },
+    {
+      id: 'network',
+      label: 'Network access',
+      scope: 'Provider',
+      value: agenticServices.networkAccess,
+      display: networkPolicyLabel(agenticServices.networkAccess),
+      tone: policyTone(agenticServices.networkAccess),
+      description: 'Provider tool loops may fetch from the network when this is allowed.'
+    }
+  ]
+  const riskyPolicyCount = safetyPolicyRows.filter((row) => row.tone === 'risk').length
+  const watchPolicyCount = safetyPolicyRows.filter((row) => row.tone === 'watch').length
+  const providerPrivacyRows = [
+    { label: 'Codex', summary: codexAuthSummary },
+    { label: 'Claude', summary: claudeAuthSummary },
+    { label: 'Kimi', summary: kimiSetupSummary },
+    { label: 'Cursor', summary: cursorAuthSummary },
+    { label: 'Grok', summary: grokAuthSummary },
+    { label: 'Ollama', summary: ollamaAuthSummary }
+  ]
+  const visibleProviderSurfaceCount = providerPrivacyRows.filter((row) =>
+    ['signed-in', 'partial', 'out-of-usage'].includes(row.summary.variant)
+  ).length
+  type SafetySurfaceRow = {
+    id: string
+    label: string
+    scope: string
+    detail: string
+    action: string
+    tab: SettingsTab
+  }
+  const safetySurfaceRows = ([
+    {
+      id: 'history',
+      label: 'Local history and audit records',
+      scope: 'Global',
+      detail:
+        'Chats, run events, approval decisions, usage snapshots, and pinned messages are kept in TaskWraith storage on this Mac unless you delete them.',
+      action: 'Open General',
+      tab: 'behavior'
+    },
+    {
+      id: 'providers',
+      label: 'Provider accounts and usage visibility',
+      scope: 'Provider',
+      detail:
+        'TaskWraith shows provider availability and usage state, but provider sign-in remains in each provider CLI, OAuth profile, or API-key flow.',
+      action: 'Open Providers',
+      tab: 'providers'
+    },
+    {
+      id: 'mcp',
+      label: 'MCP tools and connector surfaces',
+      scope: 'Provider',
+      detail:
+        'The TaskWraith MCP bridge exposes workspace, audit, editor, and orchestration tools according to the active service policies.',
+      action: 'Open Tools',
+      tab: 'mcp'
+    },
+    {
+      id: 'devices',
+      label: 'Paired iOS device visibility',
+      scope: 'Device',
+      detail:
+        remoteAllowlist.length > 0
+          ? `${pluralizeCount(remoteAllowlist.length, 'workspace')} can be projected to paired devices. Remote write attempts still flow through desktop policy and approval gates.`
+          : 'No remote workspace allowlist entries are currently loaded for paired devices.',
+      action: 'Open Devices',
+      tab: 'pairing'
+    },
+    {
+      id: 'capture',
+      label: 'Window capture, browser previews, and Canvas control',
+      scope: 'Workspace',
+      detail:
+        'Screen Watch frames, browser previews, and Canvas clicks are transient tool inputs; interaction is governed by the Canvas and MCP policy rows.',
+      action: 'Open Approvals',
+      tab: 'approval-ledger'
+    }
+  ] satisfies SafetySurfaceRow[]).filter((row) => isSettingsTabVisible(row.tab))
   const updateKeyCommandOverrides = (next: AppSettings['keyCommandBindings']): void => {
     onChange({ keyCommandBindings: sanitizeKeyCommandOverrides(next) })
   }
@@ -5491,6 +5648,163 @@ export function SettingsPanel({
                 {filteredKeyCommands.length === 0 && (
                   <div className="settings-audit-empty">No shortcuts match that search.</div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Safety & Privacy ─────────────────────────────── */}
+        {activeTab === 'safety-privacy' && (
+          <div className="settings-safety-page">
+            <div className="settings-group span-all settings-safety-overview">
+              <div className="settings-safety-header">
+                <div>
+                  <div className="settings-section-title-row">
+                    <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                      Safety & Privacy
+                    </h4>
+                    <span className="settings-scope-pill">Overview</span>
+                  </div>
+                  <p className="settings-hint">
+                    A single read of TaskWraith&apos;s policy posture, provider data flow, saved
+                    grants, mobile visibility, and local history controls.
+                  </p>
+                </div>
+                <div className="settings-safety-header-actions">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => setActiveTab('approval-ledger')}
+                  >
+                    Open grants
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => setActiveTab('providers')}
+                  >
+                    Edit policies
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-safety-summary-grid">
+                <article className="settings-safety-summary-card">
+                  <span>Always-allow policies</span>
+                  <strong>{riskyPolicyCount}</strong>
+                  <small>{watchPolicyCount} workspace-granted policy rows</small>
+                </article>
+                <article className="settings-safety-summary-card">
+                  <span>Saved workspace grants</span>
+                  <strong>{agenticWorkspaceGrantCount}</strong>
+                  <small>revoke in Approvals & Grants</small>
+                </article>
+                <article className="settings-safety-summary-card">
+                  <span>Provider surfaces</span>
+                  <strong>
+                    {visibleProviderSurfaceCount}/{providerPrivacyRows.length}
+                  </strong>
+                  <small>available, signed in, or usage-visible</small>
+                </article>
+                <article className="settings-safety-summary-card">
+                  <span>MCP bridge</span>
+                  <strong>{geminiMcpBridgeEnabled ? connectedMcpProviderCount : 0}</strong>
+                  <small>
+                    {geminiMcpBridgeEnabled
+                      ? `of ${providerMcpSummaries.length} provider surfaces reporting`
+                      : 'disabled'}
+                  </small>
+                </article>
+                {isSettingsTabVisible('pairing') && (
+                  <article className="settings-safety-summary-card">
+                    <span>Remote workspaces</span>
+                    <strong>{remoteAllowlist.length}</strong>
+                    <small>visible to paired devices when the bridge is active</small>
+                  </article>
+                )}
+              </div>
+            </div>
+
+            <div className="settings-group span-all">
+              <div className="settings-safety-section-title">
+                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                  Policy posture
+                </h4>
+                <p className="settings-hint">
+                  Scope badges show where each policy applies. Warning rows are the settings most
+                  likely to surprise a user during autonomous runs.
+                </p>
+              </div>
+              <div className="settings-safety-policy-list">
+                {safetyPolicyRows.map((row) => (
+                  <article
+                    key={row.id}
+                    className={`settings-safety-policy-row tone-${row.tone}`}
+                  >
+                    <div className="settings-safety-policy-main">
+                      <strong>{row.label}</strong>
+                      <p>{row.description}</p>
+                    </div>
+                    <div className="settings-safety-policy-meta">
+                      <span className="settings-scope-pill">{row.scope}</span>
+                      <span className="settings-risk-pill">{row.display}</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="settings-group span-all">
+              <div className="settings-safety-section-title">
+                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                  Data surfaces
+                </h4>
+                <p className="settings-hint">
+                  The overview does not duplicate every setting; it points to the page that owns
+                  each surface.
+                </p>
+              </div>
+              <div className="settings-safety-surface-grid">
+                {safetySurfaceRows.map((row) => (
+                  <article key={row.id} className="settings-safety-surface-card">
+                    <div className="settings-safety-surface-card-header">
+                      <strong>{row.label}</strong>
+                      <span className="settings-scope-pill">{row.scope}</span>
+                    </div>
+                    <p>{row.detail}</p>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => setActiveTab(row.tab)}
+                    >
+                      {row.action}
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="settings-group span-all">
+              <div className="settings-safety-section-title">
+                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                  Provider data flow
+                </h4>
+                <p className="settings-hint">
+                  Provider cards report local availability and sign-in state. Transcript content
+                  still goes to whichever provider runtime you choose for a run.
+                </p>
+              </div>
+              <div className="settings-safety-provider-grid">
+                {providerPrivacyRows.map((row) => (
+                  <article
+                    key={row.label}
+                    className={`settings-safety-provider-card variant-${row.summary.variant}`}
+                  >
+                    <strong>{row.label}</strong>
+                    <span>{row.summary.statusText}</span>
+                    <p>{row.summary.hint}</p>
+                  </article>
+                ))}
               </div>
             </div>
           </div>

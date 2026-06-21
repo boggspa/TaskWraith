@@ -2949,6 +2949,192 @@
   margin: 0;
 }
 
+.settings-safety-page {
+  column-span: all;
+  -webkit-column-span: all;
+}
+
+.settings-safety-overview {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--success, #35c178) 8%, transparent),
+      color-mix(in srgb, var(--warning, #d29922) 7%, transparent)
+    ),
+    color-mix(in srgb, var(--panel-bg) 44%, transparent);
+}
+
+.settings-safety-header,
+.settings-safety-header-actions,
+.settings-safety-section-title,
+.settings-safety-surface-card-header {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.settings-safety-header {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.settings-safety-header-actions {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.settings-safety-section-title {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-safety-summary-grid,
+.settings-safety-surface-grid,
+.settings-safety-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.settings-safety-policy-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-safety-summary-card,
+.settings-safety-policy-row,
+.settings-safety-surface-card,
+.settings-safety-provider-card {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 54%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-bg) 38%, transparent);
+}
+
+.settings-safety-summary-card,
+.settings-safety-surface-card,
+.settings-safety-provider-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+
+.settings-safety-summary-card span,
+.settings-safety-summary-card small,
+.settings-safety-policy-main p,
+.settings-safety-surface-card p,
+.settings-safety-provider-card p,
+.settings-safety-provider-card span {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
+.settings-safety-summary-card strong {
+  color: var(--text-primary);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.settings-safety-policy-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+}
+
+.settings-safety-policy-main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.settings-safety-policy-main strong,
+.settings-safety-surface-card strong,
+.settings-safety-provider-card strong {
+  color: var(--text-primary);
+}
+
+.settings-safety-policy-main p,
+.settings-safety-surface-card p,
+.settings-safety-provider-card p {
+  margin: 0;
+}
+
+.settings-safety-policy-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.settings-scope-pill,
+.settings-risk-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.settings-risk-pill {
+  color: color-mix(in srgb, var(--success, #35c178) 84%, var(--text-primary) 16%);
+}
+
+.settings-safety-policy-row.tone-watch {
+  border-color: color-mix(in srgb, var(--warning, #d29922) 30%, transparent);
+}
+
+.settings-safety-policy-row.tone-watch .settings-risk-pill {
+  color: color-mix(in srgb, var(--warning, #d29922) 84%, var(--text-primary) 16%);
+}
+
+.settings-safety-policy-row.tone-risk {
+  border-color: color-mix(in srgb, var(--danger, #ff5f57) 36%, transparent);
+  background: color-mix(in srgb, var(--danger, #ff5f57) 7%, var(--panel-bg) 38%);
+}
+
+.settings-safety-policy-row.tone-risk .settings-risk-pill {
+  color: color-mix(in srgb, var(--danger, #ff5f57) 86%, var(--text-primary) 14%);
+}
+
+.settings-safety-surface-card-header {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.settings-safety-surface-card .btn {
+  justify-self: start;
+}
+
+.settings-safety-provider-card {
+  border-color: color-mix(in srgb, currentColor 22%, var(--panel-border) 58%);
+  color: var(--text-secondary);
+}
+
+.settings-safety-provider-card.variant-signed-in {
+  color: var(--success, #35c178);
+}
+
+.settings-safety-provider-card.variant-partial,
+.settings-safety-provider-card.variant-out-of-usage {
+  color: var(--warning, #d29922);
+}
+
+.settings-safety-provider-card.variant-not-available,
+.settings-safety-provider-card.variant-not-signed-in {
+  color: var(--text-tertiary);
+}
+
 .settings-key-commands-page {
   column-span: all;
   -webkit-column-span: all;

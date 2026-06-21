@@ -58,11 +58,30 @@ describe('Settings tabs', () => {
     expect(tabsById['key-commands']?.label).toBe('Keyboard shortcuts')
     expect(tabsById.mcp?.label).toBe('Tools & MCPs')
     expect(tabsById['approval-ledger']?.label).toBe('Approvals & Grants')
+    expect(tabsById['safety-privacy']?.label).toBe('Safety & Privacy')
 
     expect(settingsTabMatchesQuery(tabsById['key-commands'], 'hotkeys')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById.mcp, 'extensions')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['safety-privacy'], 'mobile visibility')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['safety-privacy'], 'screen watch')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById.pairing, 'iphone')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['model-usage'], 'quota')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById.appearance, 'billing')).toBe(false)
+  })
+
+  it('surfaces Safety & Privacy in the Data group', () => {
+    const html = renderToStaticMarkup(
+      <SettingsSidebar
+        activeTab="safety-privacy"
+        onTabChange={vi.fn()}
+        onBackToApp={vi.fn()}
+        appVersion="1.1.0"
+      />
+    )
+
+    expect(getVisibleSettingsTabs().map((tab) => tab.id)).toContain('safety-privacy')
+    expect(html).toContain('Safety &amp; Privacy')
+    expect(html).toContain('Data')
+    expect(html).toContain('aria-selected="true"')
   })
 })
