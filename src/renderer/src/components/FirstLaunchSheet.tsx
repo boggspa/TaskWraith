@@ -146,6 +146,10 @@ interface ProviderRowSpec {
   optional?: boolean
   /** Local setup rows do not show provider-owned sign-in / sign-out actions. */
   localOnly?: boolean
+  /** Local-first rows (Ollama) that still expose an OPTIONAL cloud sign-in
+   * button (e.g. `ollama signin` for ollama.com) without the generic sign-out
+   * (which is driven by run status, not cloud auth). */
+  cloudSignIn?: boolean
   /** Set when the provider is signed in but its quota window is at
    * ~100% — drives the "out of usage" card treatment + progress bar. */
   usage?: { fraction: number; resetAt?: string }
@@ -519,7 +523,7 @@ export function FirstLaunchSheet({
       id: 'ollama',
       label: 'Ollama',
       description:
-        'Local models running through Ollama. Best for people who already want on-device Qwen, Granite, Gemma, GPT OSS, MiniCPM, or Nemotron testing. No cloud account is needed.',
+        'Local models running through Ollama. Best for on-device Qwen, Granite, Gemma, GPT OSS, MiniCPM, or Nemotron testing — no cloud account needed. Sign in to ollama.com to also use Ollama Cloud / Turbo and private models.',
       variant: ollamaProviderAvailable ? 'signed-in' : 'partial',
       statusText: ollamaProviderAvailable ? 'Local runtime ready' : 'Local setup optional',
       hint: ollamaProviderAvailable
@@ -527,7 +531,8 @@ export function FirstLaunchSheet({
         : 'Install Ollama, then pull a model such as `qwen3:4b-instruct`, `qwen3.6:35b`, `granite4.1:30b`, `minicpm-v4.5:8b`, or `gpt-oss:20b`.',
       deemphasised: true,
       optional: true,
-      localOnly: true
+      localOnly: true,
+      cloudSignIn: true
     }
   ]
   // Flip any signed-in provider whose quota window is maxed to the
@@ -1280,14 +1285,17 @@ function ProviderCard({
       <p className="first-launch-sheet-provider-card-description">{row.description}</p>
       <p className="first-launch-sheet-provider-card-hint">{row.hint}</p>
       <div className="first-launch-sheet-provider-card-actions">
-        {!row.localOnly && onProviderLogin && (
+        {(!row.localOnly || row.cloudSignIn) && onProviderLogin && (
           <button
             type="button"
-            className="btn btn-sm btn-primary"
+            // cloudSignIn rows (Ollama) are local-FIRST — the cloud sign-in is
+            // optional, so it's a ghost button, not the primary "you must sign
+            // in" CTA the cloud providers use.
+            className={`btn btn-sm ${row.cloudSignIn ? 'btn-ghost' : 'btn-primary'}`}
             onClick={() => onProviderLogin(row.id)}
-            aria-label={`Sign in to ${row.label}`}
+            aria-label={row.cloudSignIn ? `Sign in to ${row.label} Cloud` : `Sign in to ${row.label}`}
           >
-            Sign in
+            {row.cloudSignIn ? 'Sign in to Cloud' : 'Sign in'}
           </button>
         )}
         {row.variant === 'signed-in' && !row.localOnly && onProviderLogout && (

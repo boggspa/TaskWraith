@@ -234,7 +234,7 @@ describe('FirstLaunchSheet', () => {
     expect(badges!.length).toBe(4)
   })
 
-  it('renders Ollama as a local-only optional provider without sign-in copy', () => {
+  it('renders Ollama as a local-first provider; no sign-in shown without a login handler', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -242,15 +242,37 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}        ollamaProviderAvailable={true}
+        kimiAuthStatus={null}
+        ollamaProviderAvailable={true}
       />
     )
     expect(html).toContain('Local runtime ready')
     expect(providerCardMarkup(html, 'ollama')).toContain(
       'first-launch-sheet-provider-status-dot-signed-in'
     )
-    expect(html).toContain('No cloud account is needed')
-    expect(html).not.toContain('aria-label="Sign in to Ollama"')
+    expect(html).toContain('no cloud account needed')
+    // Without an onProviderLogin handler the optional cloud sign-in is not shown.
+    expect(html).not.toContain('aria-label="Sign in to Ollama Cloud"')
+    expect(html).not.toContain('aria-label="Sign out of Ollama"')
+  })
+
+  it('exposes the optional ollama.com cloud Sign in when a login handler is wired', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        ollamaProviderAvailable={true}
+      />
+    )
+    // Local-first Ollama surfaces the optional cloud sign-in as a ghost button...
+    expect(html).toContain('aria-label="Sign in to Ollama Cloud"')
+    expect(html).toContain('Sign in to Cloud')
+    // ...but never a sign-out (local-runtime-ready is not cloud-signed-in).
     expect(html).not.toContain('aria-label="Sign out of Ollama"')
   })
 
