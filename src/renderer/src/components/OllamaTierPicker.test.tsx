@@ -42,6 +42,38 @@ describe('OllamaTierPicker', () => {
     expect(html).toContain('data-composer-control="ollama-tier"')
     expect(html).toContain('Tier 4')
   })
+
+  it('flags an ineffective Tier 4 on the chip when the workspace is ungranted', () => {
+    const html = renderToStaticMarkup(
+      <OllamaTierPicker
+        provider="ollama"
+        composerStyle="codex"
+        selectedTier="provider_parity"
+        onSelectTier={() => undefined}
+        selectedRunProfile="provider_parity"
+        onSelectRunProfile={() => undefined}
+        tier4Granted={false}
+      />
+    )
+    expect(html).toContain('data-ollama-tier-ineffective="true"')
+    expect(html).toContain('composer-ollama-tier-warning')
+  })
+
+  it('does NOT flag Tier 4 when the workspace is explicitly granted', () => {
+    const html = renderToStaticMarkup(
+      <OllamaTierPicker
+        provider="ollama"
+        composerStyle="codex"
+        selectedTier="provider_parity"
+        onSelectTier={() => undefined}
+        selectedRunProfile="provider_parity"
+        onSelectRunProfile={() => undefined}
+        tier4Granted={true}
+      />
+    )
+    expect(html).not.toContain('data-ollama-tier-ineffective')
+    expect(html).not.toContain('composer-ollama-tier-warning')
+  })
 })
 
 describe('shouldGateOllamaTier4 (security gate routing)', () => {

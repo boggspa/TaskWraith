@@ -8135,6 +8135,19 @@
   font-weight: 400;
 }
 
+/* Ollama Tier-4 "selected but not granted → runs read-only" indicator on the
+ * tier picker chip. Amber so a stale/revoked parity choice can't masquerade as
+ * full tools. */
+.composer-ollama-tier-warning {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--color-warning, #d29922);
+  flex-shrink: 0;
+}
+.composer-combined-picker-trigger[data-ollama-tier-ineffective="true"] {
+  border-color: color-mix(in srgb, var(--color-warning, #d29922) 45%, var(--panel-border));
+}
+
 /* Popover ------------------------------------------------------ */
 
 .composer-combined-picker-popover {

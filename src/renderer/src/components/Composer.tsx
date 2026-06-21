@@ -40,6 +40,7 @@ import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
 import { OllamaHealthChip } from '../components/OllamaHealthChip'
 import { OllamaTierPicker } from '../components/OllamaTierPicker'
+import { ollamaProviderParityWorkspaceGranted } from '../../../main/ollama/OllamaToolTiers'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
 import { ProviderBadgeIcon } from '../components/Sidebar'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
@@ -688,8 +689,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     : settings?.ollamaDefaultRunProfile || 'local_scout'
   // Tier 4 is only live once THIS workspace has been granted parity (else the
   // runtime silently downgrades to read_only — see MEMORY.md ollama-edit-tiers).
-  const ollamaTier4GrantedForWorkspace = Boolean(
-    currentWorkspacePath && settings?.ollamaProviderParityWorkspaceGrants?.[currentWorkspacePath]
+  // Use the SAME canonicalization-tolerant check as the runtime gate so a grant
+  // stored under a differently-normalized path form (trailing slash, `.`/`..`)
+  // can't make the chip falsely warn "read-only" while the model runs parity.
+  const ollamaTier4GrantedForWorkspace = ollamaProviderParityWorkspaceGranted(
+    settings || {},
+    currentWorkspacePath
   )
   // Default run profile for a tier (the picker keeps tier↔profile coupled 1:1).
   const defaultOllamaRunProfileForTier = (

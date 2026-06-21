@@ -359,6 +359,16 @@ export function OllamaTierPicker({
     </div>
   )
 
+  // The selected tier is Tier 4 but it will NOT take effect — the workspace
+  // isn't granted parity (or it's a global chat), so the runtime silently
+  // downgrades to read_only. Surface it on the chip so a revoked grant (or a
+  // chat carrying a stale Tier-4 choice) can't masquerade as "full tools".
+  const parityIneffective = shouldGateOllamaTier4({
+    tier: selectedTier,
+    tier4Granted,
+    tier4Unavailable
+  })
+
   return (
     <>
       <button
@@ -367,15 +377,30 @@ export function OllamaTierPicker({
         className="composer-combined-picker-trigger composer-ollama-tier-trigger"
         data-composer-control="ollama-tier"
         data-ollama-tier={selectedTier}
+        data-ollama-tier-ineffective={parityIneffective ? 'true' : undefined}
         onClick={() => setOpen((prev) => !prev)}
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="Ollama tool-control tier and run profile for this chat"
+        title={
+          parityIneffective
+            ? tier4Unavailable
+              ? 'Tier 4 is selected but is unavailable in global chats — the model runs read-only. Open a workspace chat to use Tier 4.'
+              : 'Tier 4 is selected but this workspace has not been granted provider parity — the model runs read-only. Open the picker to re-acknowledge Tier 4 and enable it.'
+            : 'Ollama tool-control tier and run profile for this chat'
+        }
       >
         <span className="composer-combined-picker-trigger-primary">{chipPieces.primary}</span>
         {chipPieces.suffix && (
           <span className="composer-combined-picker-trigger-suffix">{chipPieces.suffix}</span>
+        )}
+        {parityIneffective && (
+          <span
+            className="composer-ollama-tier-warning"
+            aria-label="Tier 4 not active for this workspace"
+          >
+            ⚠
+          </span>
         )}
       </button>
       {popoverContent ? createPortal(popoverContent, document.body) : null}
