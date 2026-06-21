@@ -37,13 +37,22 @@ const path = require('path')
 
 const REPO_ROOT = path.join(__dirname, '..')
 
-// Modules the Electron-main bundle must NEVER reach. Matched against resolved,
-// posix-normalized file paths.
-const FORBIDDEN_MODULE_MATCHERS = [
-  /\/relay\/src\/apnsGateway\.ts$/, // the gateway implementation (cli-only)
-  /\/apnsSendCore\.ts$/, // the keyless Apple sender (lands in P1; cli/relay-reachable, never server)
-  /\.p8['"]?$/ // any direct .p8 reference
-]
+// Matched against resolved, posix-normalized file paths.
+const FORBIDDEN_P8 = /\.p8['"]?$/ // any direct .p8 reference
+const FORBIDDEN_GATEWAY_IMPL = /\/relay\/src\/apnsGateway\.ts$/ // gateway impl (cli-only)
+const FORBIDDEN_SEND_CORE = /\/apnsSendCore\.ts$/ // keyless Apple sender
+
+// relay/src/server.ts is bundled into Electron main; it does NO APNs sending and
+// holds NO key, so its import graph must reach none of these.
+const SERVER_GRAPH_FORBIDDEN = [FORBIDDEN_GATEWAY_IMPL, FORBIDDEN_SEND_CORE, FORBIDDEN_P8]
+
+// Electron main MAY use the keyless send-core (Tier-1's Http2ApnsPusher imports
+// it — no key, no secret), but must never import the relay GATEWAY impl or a
+// .p8 directly.
+const MAIN_DIRECT_FORBIDDEN = [FORBIDDEN_GATEWAY_IMPL, FORBIDDEN_P8]
+
+// Back-compat alias (the colocated test's "real server.ts passes" check).
+const FORBIDDEN_MODULE_MATCHERS = SERVER_GRAPH_FORBIDDEN
 
 // server.ts is the relay entrypoint bundled into Electron main; it is what we
 // protect transitively.
@@ -232,8 +241,8 @@ function main() {
   const problems = []
 
   // 1 + 2. Import boundary (always).
-  problems.push(...collectImportViolations(GUARDED_ENTRY, FORBIDDEN_MODULE_MATCHERS))
-  problems.push(...collectDirectForbiddenImports(MAIN_SCAN_DIRS, FORBIDDEN_MODULE_MATCHERS))
+  problems.push(...collectImportViolations(GUARDED_ENTRY, SERVER_GRAPH_FORBIDDEN))
+  problems.push(...collectDirectForbiddenImports(MAIN_SCAN_DIRS, MAIN_DIRECT_FORBIDDEN))
 
   // 3. Bundle scan (when present).
   const targets = bundleScanTargets()
@@ -274,6 +283,8 @@ module.exports = {
   scanBufferForSecrets,
   PEM_PRIVATE_KEY_BODY,
   FORBIDDEN_MODULE_MATCHERS,
+  SERVER_GRAPH_FORBIDDEN,
+  MAIN_DIRECT_FORBIDDEN,
   GUARDED_ENTRY
 }
 

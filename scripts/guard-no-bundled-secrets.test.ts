@@ -8,16 +8,22 @@ const require = createRequire(import.meta.url)
 const {
   parseImports,
   collectImportViolations,
+  collectDirectForbiddenImports,
   scanBufferForSecrets,
   PEM_PRIVATE_KEY_BODY,
   FORBIDDEN_MODULE_MATCHERS,
+  SERVER_GRAPH_FORBIDDEN,
+  MAIN_DIRECT_FORBIDDEN,
   GUARDED_ENTRY
 }: {
   parseImports: (source: string) => Array<{ specifier: string; typeOnly: boolean }>
   collectImportViolations: (entry: string, matchers: RegExp[]) => string[]
+  collectDirectForbiddenImports: (dirs: string[], matchers: RegExp[]) => string[]
   scanBufferForSecrets: (label: string, text: string, fingerprints: string[]) => string[]
   PEM_PRIVATE_KEY_BODY: RegExp
   FORBIDDEN_MODULE_MATCHERS: RegExp[]
+  SERVER_GRAPH_FORBIDDEN: RegExp[]
+  MAIN_DIRECT_FORBIDDEN: RegExp[]
   GUARDED_ENTRY: string
 } = require('./guard-no-bundled-secrets.cjs')
 
@@ -113,5 +119,21 @@ describe('guard-no-bundled-secrets: forbidden-import boundary', () => {
     const entry = path.join(dir, 'server.ts')
     fs.writeFileSync(entry, "import type { M } from './mid'\n")
     expect(collectImportViolations(entry, [/\/apnsGateway\.ts$/])).toEqual([])
+  })
+})
+
+describe('guard-no-bundled-secrets: matcher scoping (keyless send-core)', () => {
+  it('forbids the send-core in the server.ts graph but allows it in Electron main', () => {
+    const sendCorePath = '/repo/src/shared/apns/apnsSendCore.ts'
+    expect(SERVER_GRAPH_FORBIDDEN.some((re) => re.test(sendCorePath))).toBe(true)
+    expect(MAIN_DIRECT_FORBIDDEN.some((re) => re.test(sendCorePath))).toBe(false)
+  })
+
+  it('passes the real src/main tree under the main rules (Tier-1 imports the send-core)', () => {
+    // Http2ApnsPusher (src/main) legitimately imports apnsSendCore; the main
+    // flat scan must flag only the gateway impl / .p8, never the keyless core.
+    expect(collectDirectForbiddenImports(['src/main', 'src/preload'], MAIN_DIRECT_FORBIDDEN)).toEqual(
+      []
+    )
   })
 })

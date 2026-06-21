@@ -1,6 +1,6 @@
-import { createSign } from 'crypto'
 import { readFileSync } from 'fs'
-import * as http2 from 'http2'
+import type * as http2 from 'http2'
+import { ApnsClient } from '../shared/apns/apnsSendCore'
 import type {
   BridgeApnsEnv,
   BridgeApnsPusher,
@@ -10,45 +10,31 @@ import type {
   BridgeRemoteAttentionReason
 } from './BridgeApnsPusher'
 
+// derEcdsaToConcat moved to the shared keyless send-core (src/shared/apns); it
+// is re-exported here so existing importers (and Http2ApnsPusher.test.ts) keep
+// resolving it from this module.
+export { derEcdsaToConcat } from '../shared/apns/apnsSendCore'
+
 /**
- * Http2ApnsPusher — production APNs delivery via Apple's HTTP/2 endpoint.
+ * Http2ApnsPusher — production APNs delivery for Tier-1 (the host owner's OWN
+ * .p8).
  *
- * Replaces the Phase C5 `NoopApnsPusher` scaffold once credentials are
- * configured. Authenticates with Apple using a JWT signed (ES256) by
- * an APNs Authentication Key (.p8 file from Apple Developer → Keys).
- * One key + key id + team id triplet works for both production and
- * sandbox APNs gateways; the iOS device's reported env (from
- * `BridgeActionPayload.registerApnsToken`) picks which Apple host to
- * target per push.
+ * Thin wrapper over the keyless shared send-core (`ApnsClient`,
+ * src/shared/apns). This class owns the Tier-1 concerns: loading the .p8 (from
+ * a path or a safeStorage-decrypted PEM) and building the privacy-safe,
+ * routing-only aps bodies. JWT minting + HTTP/2 delivery are delegated to
+ * `ApnsClient`, which the Tier-2 relay gateway reuses with a project-held key
+ * loaded OUTSIDE Electron main (docs/ios-push-gateway-design.md §7).
  *
- * Wire format references:
- *   - JWT spec: Apple "Establishing a Token-Based Connection to APNs"
- *     https://developer.apple.com/documentation/usernotifications/sending_notification_requests_to_apns
- *   - HTTP/2 endpoints:
- *     - Production: https://api.push.apple.com:443
- *     - Sandbox:    https://api.sandbox.push.apple.com:443
- *   - Per-push request:
- *     POST /3/device/<hex-device-token>
- *     :authority, :method, :path are HTTP/2 pseudo-headers
- *     authorization: bearer <jwt>
- *     apns-topic: <bundle-id>
- *     apns-push-type: alert | background
- *     apns-priority: 10 (alert) or 5 (background)
- *     content-type: application/json
- *     body: { "aps": { ... } }
- *
- * Lifecycle:
- *   - JWT refreshed proactively at ~50min intervals (Apple rejects
- *     tokens older than 60min).
- *   - HTTP/2 session is single + sticky per env. Re-established on
- *     session error or after a long idle.
- *   - Errors are caught + returned as `delivered: false` with a
- *     reason; never throws. Caller (ApprovalService) can log + retry.
+ * One key + key id + team id triplet works for both production and sandbox APNs
+ * gateways; the iOS device's reported env (from
+ * `BridgeActionPayload.registerApnsToken`) picks which Apple host to target per
+ * push.
  *
  * Token cleanup: when Apple returns `:status 410 Unregistered` or
- * `400 BadDeviceToken`, the device token is permanently invalid and
- * should be removed from `BridgeApnsTokenStore`. This pusher reports
- * the reason in the result; the caller decides whether to delete.
+ * `400 BadDeviceToken`, the device token is permanently invalid and should be
+ * removed from `BridgeApnsTokenStore`. The send result reports the reason; the
+ * caller decides whether to delete.
  */
 
 export interface Http2ApnsPusherConfig {
@@ -89,80 +75,56 @@ export interface Http2ApnsPusherConfig {
   now?: () => Date
 }
 
-const DEFAULT_JWT_LIFETIME_SECONDS = 50 * 60
-const APNS_HOST_PRODUCTION = 'https://api.push.apple.com'
-const APNS_HOST_SANDBOX = 'https://api.sandbox.push.apple.com'
-
-interface CachedJwt {
-  token: string
-  expiresAt: number // ms since epoch
-}
-
-interface CachedSession {
-  session: http2.ClientHttp2Session
-  authority: string
-}
-
 export class Http2ApnsPusher implements BridgeApnsPusher {
-  private readonly authKey: string
-  private readonly keyId: string
-  private readonly teamId: string
-  private readonly bundleId: string
-  private readonly forceEnv?: BridgeApnsEnv
-  private readonly log: (line: string) => void
-  private readonly connectFn: (authority: string) => http2.ClientHttp2Session
-  private readonly jwtLifetimeMs: number
+  /** Keyless shared transport (JWT mint + sticky HTTP/2 sessions + send). The
+   * Tier-2 relay gateway uses the same ApnsClient with a project-held key
+   * loaded outside Electron main. */
+  private readonly client: ApnsClient
+  /** Retained for the per-push apns-expiration window calc below. */
   private readonly now: () => Date
 
-  private cachedJwt: CachedJwt | null = null
-  /** One persistent session per environment; lazily opened. */
-  private sessions: Partial<Record<BridgeApnsEnv, CachedSession>> = {}
-
   constructor(config: Http2ApnsPusherConfig) {
-    // Phase E1: accept either an in-memory PEM (`authKeyPem`) or a
-    // filesystem path (`authKeyPath`). Settings-UI path uses the
-    // former (decrypted from safeStorage); env-var path uses the
-    // latter. Exactly one must be provided; we trust the caller's
-    // intent if both happen to be set (PEM wins, since it's already
-    // been validated through the secure-storage round-trip).
+    // Phase E1: accept either an in-memory PEM (`authKeyPem`) or a filesystem
+    // path (`authKeyPath`). Settings-UI path uses the former (decrypted from
+    // safeStorage); env-var path uses the latter. Exactly one must be provided;
+    // PEM wins if both are set (it's already been validated through the
+    // secure-storage round-trip). KEY LOAD stays here (Tier-1); the keyless
+    // ApnsClient never reads files or secrets.
+    let authKey: string
     if (config.authKeyPem && config.authKeyPem.trim()) {
-      this.authKey = config.authKeyPem
+      authKey = config.authKeyPem
     } else if (config.authKeyPath) {
-      this.authKey = readFileSync(config.authKeyPath, 'utf-8')
+      authKey = readFileSync(config.authKeyPath, 'utf-8')
     } else {
       throw new Error('Http2ApnsPusher: must provide either authKeyPem or authKeyPath')
     }
-    if (!this.authKey.includes('BEGIN PRIVATE KEY')) {
+    if (!authKey.includes('BEGIN PRIVATE KEY')) {
       throw new Error(
         config.authKeyPath
           ? `Http2ApnsPusher: ${config.authKeyPath} does not look like a PEM-encoded PKCS8 private key (.p8)`
           : 'Http2ApnsPusher: provided authKeyPem does not look like a PEM-encoded PKCS8 private key (.p8)'
       )
     }
-    this.keyId = config.keyId
-    this.teamId = config.teamId
-    this.bundleId = config.bundleId
-    this.forceEnv = config.forceEnv
-    this.log = config.log ?? (() => {})
-    this.connectFn = config.connect ?? ((authority) => http2.connect(authority))
-    this.jwtLifetimeMs = (config.jwtLifetimeSeconds ?? DEFAULT_JWT_LIFETIME_SECONDS) * 1000
-    this.now = config.now ?? (() => new Date())
+    this.now = config.now ?? ((): Date => new Date())
+    this.client = new ApnsClient({
+      authKeyPem: authKey,
+      keyId: config.keyId,
+      teamId: config.teamId,
+      bundleId: config.bundleId,
+      forceEnv: config.forceEnv,
+      log: config.log,
+      connect: config.connect,
+      jwtLifetimeSeconds: config.jwtLifetimeSeconds,
+      now: config.now
+    })
   }
 
   async pushApprovalNeeded(_payload: BridgeApprovalPushPayload): Promise<BridgeApnsPushResult> {
     // The caller (ApprovalService) passes the device token via a
     // separate path. This signature predates the credentialed pusher;
     // we keep the BridgeApnsPusher contract intact and read the token
-    // from a lookup the caller has separately threaded through. For
-    // the v1 wiring, the desktop's BridgeApnsTokenStore is the source
-    // of truth and the caller looks up before calling — we get
-    // `payload.pairID` and trust that a token exists.
-    //
-    // TODO Phase C-late+1: refactor BridgeApnsPusher to take an
-    // explicit `deviceToken + env` parameter rather than just pairID,
-    // so this method doesn't need to depend on an out-of-band lookup.
-    // For now: returning a structured "not delivered, lookup not
-    // wired" so the caller can fail gracefully.
+    // from a lookup the caller has separately threaded through. Use
+    // pushApprovalToToken instead.
     return {
       delivered: false,
       apnsId: '',
@@ -200,7 +162,7 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
   ): Promise<BridgeApnsPushResult> {
     const apsBody = this.buildApprovalApsBody(payload)
     const nowSec = Math.floor(this.now().getTime() / 1000)
-    return this.deliver({
+    return this.client.send({
       deviceTokenHex,
       env,
       pushType: 'alert',
@@ -222,7 +184,7 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
   ): Promise<BridgeApnsPushResult> {
     const body = this.buildSilentApsBody(payload)
     const nowSec = Math.floor(this.now().getTime() / 1000)
-    return this.deliver({
+    return this.client.send({
       deviceTokenHex,
       env,
       pushType: 'background',
@@ -242,7 +204,7 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
   ): Promise<BridgeApnsPushResult> {
     const body = this.buildRemoteAttentionApsBody(payload)
     const nowSec = Math.floor(this.now().getTime() / 1000)
-    return this.deliver({
+    return this.client.send({
       deviceTokenHex,
       env,
       pushType: 'alert',
@@ -255,108 +217,10 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
 
   /** Tear down all open HTTP/2 sessions. Idempotent. */
   close(): void {
-    for (const env of Object.keys(this.sessions) as BridgeApnsEnv[]) {
-      const cached = this.sessions[env]
-      if (cached) {
-        try {
-          cached.session.close()
-        } catch {
-          /* best effort */
-        }
-        delete this.sessions[env]
-      }
-    }
-    this.cachedJwt = null
+    this.client.close()
   }
 
-  // MARK: - Internal
-
-  private async deliver(args: {
-    deviceTokenHex: string
-    env: BridgeApnsEnv
-    pushType: 'alert' | 'background'
-    priority: 5 | 10
-    body: string
-    /** Absolute unix-seconds deadline; APNs stores+retries until then. */
-    expirationSeconds?: number
-    /** apns-collapse-id (<=64 bytes) so re-sends of the same item replace
-     * rather than stack, and a tool-call flood can't trip per-app throttling. */
-    collapseId?: string
-  }): Promise<BridgeApnsPushResult> {
-    const env = this.forceEnv ?? args.env
-    try {
-      const session = await this.ensureSession(env)
-      const jwt = this.ensureJwt()
-      const result = await this.sendRequest({ session, jwt, ...args, env })
-      return result
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      this.log(`[Http2ApnsPusher] deliver failed: ${message}`)
-      return { delivered: false, apnsId: '', reason: message }
-    }
-  }
-
-  private ensureSession(env: BridgeApnsEnv): http2.ClientHttp2Session {
-    const existing = this.sessions[env]
-    if (existing && !existing.session.closed && !existing.session.destroyed) {
-      return existing.session
-    }
-    const authority = env === 'production' ? APNS_HOST_PRODUCTION : APNS_HOST_SANDBOX
-    const session = this.connectFn(authority)
-    session.on('error', (err) => {
-      this.log(`[Http2ApnsPusher] session error (${env}): ${err.message}`)
-    })
-    session.on('close', () => {
-      // Lazy reconnect on next deliver; just drop the cache.
-      delete this.sessions[env]
-    })
-    this.sessions[env] = { session, authority }
-    this.log(`[Http2ApnsPusher] opened HTTP/2 session to ${authority}`)
-    return session
-  }
-
-  private ensureJwt(): string {
-    const nowMs = this.now().getTime()
-    if (this.cachedJwt && this.cachedJwt.expiresAt > nowMs + 60_000) {
-      return this.cachedJwt.token
-    }
-    const token = this.signJwt(nowMs)
-    this.cachedJwt = { token, expiresAt: nowMs + this.jwtLifetimeMs }
-    this.log(`[Http2ApnsPusher] minted new JWT (kid=${this.keyId})`)
-    return token
-  }
-
-  /** Build the JWT Apple requires: ES256-signed `{header.claims}` where
-   * header = {alg:ES256, kid, typ:JWT} and claims = {iss:teamId, iat}. */
-  private signJwt(nowMs: number): string {
-    const header = base64url(
-      Buffer.from(
-        JSON.stringify({
-          alg: 'ES256',
-          kid: this.keyId,
-          typ: 'JWT'
-        })
-      )
-    )
-    const claims = base64url(
-      Buffer.from(
-        JSON.stringify({
-          iss: this.teamId,
-          iat: Math.floor(nowMs / 1000)
-        })
-      )
-    )
-    const signingInput = `${header}.${claims}`
-    // Node's createSign for ES256 returns ASN.1 DER signature by
-    // default; APNs requires raw r||s concatenation. Convert.
-    const signer = createSign('SHA256')
-    signer.update(signingInput)
-    signer.end()
-    const der = signer.sign(this.authKey)
-    const raw = derEcdsaToConcat(der, 32)
-    const signature = base64url(raw)
-    return `${signingInput}.${signature}`
-  }
+  // MARK: - aps body builders (Tier-1; privacy-safe, routing identifiers only)
 
   private buildApprovalApsBody(payload: BridgeApprovalPushPayload): string {
     return JSON.stringify(
@@ -427,70 +291,6 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
       })
     )
   }
-
-  private sendRequest(args: {
-    session: http2.ClientHttp2Session
-    jwt: string
-    deviceTokenHex: string
-    env: BridgeApnsEnv
-    pushType: 'alert' | 'background'
-    priority: 5 | 10
-    body: string
-    expirationSeconds?: number
-    collapseId?: string
-  }): Promise<BridgeApnsPushResult> {
-    return new Promise<BridgeApnsPushResult>((resolve) => {
-      const headers: http2.OutgoingHttpHeaders = {
-        ':method': 'POST',
-        ':path': `/3/device/${args.deviceTokenHex}`,
-        authorization: `bearer ${args.jwt}`,
-        'apns-topic': this.bundleId,
-        'apns-push-type': args.pushType,
-        'apns-priority': String(args.priority),
-        'content-type': 'application/json',
-        'content-length': String(Buffer.byteLength(args.body))
-      }
-      if (typeof args.expirationSeconds === 'number' && Number.isFinite(args.expirationSeconds)) {
-        headers['apns-expiration'] = String(Math.max(0, Math.floor(args.expirationSeconds)))
-      }
-      if (args.collapseId) {
-        // apns-collapse-id is capped at 64 bytes by Apple.
-        headers['apns-collapse-id'] = args.collapseId.slice(0, 64)
-      }
-      const req = args.session.request(headers)
-      let status = 0
-      let apnsId = ''
-      let responseBody = ''
-      req.on('response', (headers) => {
-        status = (headers[':status'] as number) ?? 0
-        apnsId = (headers['apns-id'] as string) ?? ''
-      })
-      req.on('data', (chunk: Buffer) => {
-        responseBody += chunk.toString('utf-8')
-      })
-      req.on('end', () => {
-        if (status === 200) {
-          resolve({ delivered: true, apnsId })
-          return
-        }
-        // Apple returns a JSON body with `reason: "..."` on errors.
-        let reason = `HTTP ${status}`
-        try {
-          const parsed = JSON.parse(responseBody) as { reason?: string }
-          if (parsed.reason) reason = parsed.reason
-        } catch {
-          /* keep status-only reason */
-        }
-        resolve({ delivered: false, apnsId, reason })
-      })
-      req.on('error', (err) => {
-        resolve({ delivered: false, apnsId: '', reason: err.message })
-      })
-      req.setEncoding('utf-8')
-      req.write(args.body)
-      req.end()
-    })
-  }
 }
 
 // MARK: - Helpers
@@ -543,48 +343,4 @@ function privacySafeWorkspaceId(workspaceId: string | null | undefined): string 
     return null
   }
   return trimmed
-}
-
-function base64url(buf: Buffer): string {
-  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-/** Convert Node's DER-encoded ECDSA signature to APNs's required
- * fixed-length r||s concatenation.
- *
- * DER ECDSA signature format:
- *   SEQUENCE { INTEGER r, INTEGER s }
- *
- * The INTEGER values may have a leading 0x00 byte to disambiguate
- * sign — strip those. The output is two `size`-byte values
- * concatenated, left-zero-padded to `size`.
- */
-export function derEcdsaToConcat(der: Buffer, sizePerInt: number): Buffer {
-  if (der[0] !== 0x30) {
-    throw new Error('derEcdsaToConcat: expected SEQUENCE tag 0x30')
-  }
-  // Skip SEQUENCE length byte(s). For ES256 sigs (~70-72 bytes total)
-  // it's always a single length byte.
-  let offset = 2
-  if (der[1] & 0x80) {
-    const lengthBytes = der[1] & 0x7f
-    offset = 2 + lengthBytes
-  }
-  // Read r
-  if (der[offset] !== 0x02) throw new Error('derEcdsaToConcat: expected INTEGER tag for r')
-  const rLen = der[offset + 1]
-  let r = der.subarray(offset + 2, offset + 2 + rLen)
-  offset += 2 + rLen
-  // Read s
-  if (der[offset] !== 0x02) throw new Error('derEcdsaToConcat: expected INTEGER tag for s')
-  const sLen = der[offset + 1]
-  let s = der.subarray(offset + 2, offset + 2 + sLen)
-  // Strip leading 0x00 if INTEGER was padded for sign.
-  if (r[0] === 0x00 && r.length > sizePerInt) r = r.subarray(1)
-  if (s[0] === 0x00 && s.length > sizePerInt) s = s.subarray(1)
-  // Left-zero-pad to fixed size.
-  const out = Buffer.alloc(sizePerInt * 2)
-  r.copy(out, sizePerInt - r.length)
-  s.copy(out, sizePerInt * 2 - s.length)
-  return out
 }
