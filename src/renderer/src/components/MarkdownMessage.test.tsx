@@ -46,6 +46,24 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('<strong>safe</strong>')
   })
 
+  it('renders markdown image syntax as inert text instead of loading images', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={[
+          'Remote ![remote preview](https://example.com/pixel.png)',
+          'Local ![local preview](file:///Users/example/secret.png)',
+          'Data ![inline preview](data:image/png;base64,aaaa)'
+        ].join('\n')}
+      />
+    )
+
+    expect(html).not.toContain('<img')
+    expect(html).toContain('markdown-image-placeholder')
+    expect(html).toContain('Image: remote preview')
+    expect(html).toContain('Image: local preview')
+    expect(html).toContain('Image: inline preview')
+  })
+
   it('renders external markdown links with favicon presentation metadata', () => {
     const html = renderToStaticMarkup(
       <MarkdownMessage content={'Open [here](https://github.com/boggspa/TaskWraith).'} />

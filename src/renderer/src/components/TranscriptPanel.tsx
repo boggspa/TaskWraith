@@ -1413,51 +1413,63 @@ export const TranscriptPanel = memo(
                         )
                       })()
                     ) : (
-                      <div
-                        className={`message-bubble ${
-                          isGuestReply ? 'assistant guest-participant-reply' : msg.role
-                        }${ensembleRoundStatusClass(msg)}`}
-                        onContextMenu={
-                          (msg.role === 'assistant' || msg.role === 'system' || isGuestReply) &&
-                          msg.content
-                            ? (event) =>
-                                openMessageContextMenu(
-                                  event,
-                                  msg,
-                                  msg.content || '',
-                                  `${isGuestReply ? 'guest participant' : msg.role} message`
-                                )
-                            : undefined
-                        }
-                      >
-                        {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
-                          <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
-                        ) : (
-                          msg.content
-                        )}
-                        {/* 1.0.4-AQ4 — Copy + Delete on hover. Both assistant
-                            and "other" role bubbles get the chip; for system
-                            bubbles (status notes etc.) the chip is harmless
-                            but rarely useful. */}
-                        {(msg.role === 'assistant' || msg.role === 'system' || isGuestReply) &&
-                          msg.content && (
-                          <MessageActionsChip
-                            onCopy={() => onCopyMessage(msg.id, msg.content)}
-                            onTogglePin={
-                              onTogglePinMessage ? () => onTogglePinMessage(msg.id) : undefined
-                            }
-                            onDelete={() => onDeleteMessage(msg.id)}
-                            onOpenSideChat={
-                              onOpenSideChatFromMessage
-                                ? () => onOpenSideChatFromMessage(msg)
+                      (() => {
+                        const mediaRefs = collectMessageMediaRefs(msg)
+                        return (
+                          <div
+                            className={`message-bubble ${
+                              isGuestReply ? 'assistant guest-participant-reply' : msg.role
+                            }${ensembleRoundStatusClass(msg)}`}
+                            onContextMenu={
+                              (msg.role === 'assistant' || msg.role === 'system' || isGuestReply) &&
+                              msg.content
+                                ? (event) =>
+                                    openMessageContextMenu(
+                                      event,
+                                      msg,
+                                      msg.content || '',
+                                      `${isGuestReply ? 'guest participant' : msg.role} message`
+                                    )
                                 : undefined
                             }
-                            pinned={isPinned}
-                            copied={copiedId === msg.id}
-                            label={`${isGuestReply ? 'guest participant' : msg.role} message`}
-                          />
-                        )}
-                      </div>
+                          >
+                            {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
+                              <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
+                            ) : (
+                              msg.content
+                            )}
+                            {mediaRefs.length > 0 && (
+                              <ChatMessageMediaStrip
+                                refs={mediaRefs}
+                                workspacePath={currentChat?.workspacePath}
+                                onPreviewImage={onPreviewImage}
+                              />
+                            )}
+                            {/* 1.0.4-AQ4 — Copy + Delete on hover. Both assistant
+                                and "other" role bubbles get the chip; for system
+                                bubbles (status notes etc.) the chip is harmless
+                                but rarely useful. */}
+                            {(msg.role === 'assistant' || msg.role === 'system' || isGuestReply) &&
+                              msg.content && (
+                              <MessageActionsChip
+                                onCopy={() => onCopyMessage(msg.id, msg.content)}
+                                onTogglePin={
+                                  onTogglePinMessage ? () => onTogglePinMessage(msg.id) : undefined
+                                }
+                                onDelete={() => onDeleteMessage(msg.id)}
+                                onOpenSideChat={
+                                  onOpenSideChatFromMessage
+                                    ? () => onOpenSideChatFromMessage(msg)
+                                    : undefined
+                                }
+                                pinned={isPinned}
+                                copied={copiedId === msg.id}
+                                label={`${isGuestReply ? 'guest participant' : msg.role} message`}
+                              />
+                            )}
+                          </div>
+                        )
+                      })()
                     )}
                     {pendingPlanChoice && pendingPlanChoice.messageId === msg.id && (
                       <div className="plan-choice-card">

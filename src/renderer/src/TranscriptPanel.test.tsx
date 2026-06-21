@@ -340,6 +340,56 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('mcp_TaskWraith_git_status')
   })
 
+  it('renders assistant message media refs below assistant markdown', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          currentProviderLabel: 'Codex',
+          currentProvider: 'codex',
+          currentChat: {
+            appChatId: 'chat-assistant-media',
+            provider: 'codex',
+            chatKind: 'single',
+            workspacePath: '/repo'
+          },
+          messages: [
+            {
+              id: 'assistant-media',
+              role: 'assistant',
+              content: '**Generated image attached**',
+              timestamp: '2026-01-01T00:00:00.000Z',
+              metadata: {
+                mediaRefs: [
+                  {
+                    id: 'media-1',
+                    kind: 'image',
+                    format: 'raster',
+                    source: 'tool_result',
+                    name: 'Generated preview',
+                    mimeType: 'image/png',
+                    thumbnail: {
+                      dataBase64: 'thumb',
+                      mimeType: 'image/jpeg',
+                      width: 2,
+                      height: 1
+                    },
+                    status: 'available'
+                  }
+                ]
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('<strong>Generated image attached</strong>')
+    expect(html).toContain('message-attachment-thumb is-image')
+    expect(html).toContain('src="data:image/jpeg;base64,thumb"')
+    expect(html).toContain('Generated preview')
+  })
+
   it('keeps assistant markdown around grouped tool traces', () => {
     const firstTool: ToolActivity = {
       id: 'activity-read-one',

@@ -1,11 +1,18 @@
 import { useEffect, useState } from 'react'
-import type { ChatRecord, ChatMessage, ExternalPathGrant } from '../../../main/store/types'
+import type {
+  ChatRecord,
+  ChatMessage,
+  ExternalPathGrant,
+  TranscriptMediaRef,
+  TranscriptMediaStatus,
+  TranscriptMediaThumbnail
+} from '../../../main/store/types'
 import { collectExternalPathGrantsFromMetadata } from '../../../main/store/ExternalPathGrants'
 import { XSymbolIcon } from './AppChromeSymbols'
 import { FileTypeIcon } from './FileTypeIcon'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
 
-export type ChatMediaSource = 'upload' | 'external_path'
+export type ChatMediaSource = TranscriptMediaRef['source'] | 'external_path'
 export type ChatMediaKind = 'image' | 'file' | 'folder'
 
 export interface ChatMediaRef {
@@ -14,6 +21,11 @@ export interface ChatMediaRef {
   source: ChatMediaSource
   name: string
   path: string
+  mimeType?: string
+  thumbnail?: TranscriptMediaThumbnail
+  status?: TranscriptMediaStatus
+  alt?: string
+  caption?: string
   access?: ExternalPathGrant['access']
 }
 
@@ -24,6 +36,11 @@ export type MediaAttachmentLike = {
   kind?: ChatMediaKind
   source?: ChatMediaSource
   access?: ExternalPathGrant['access']
+  mimeType?: string
+  thumbnail?: TranscriptMediaThumbnail
+  status?: TranscriptMediaStatus
+  alt?: string
+  caption?: string
 }
 
 export function isChatMediaImagePath(path: string): boolean {
@@ -36,13 +53,21 @@ export function chatMediaNameFromPath(path: string): string {
   return trimmed.split('/').pop() || trimmed
 }
 
-export function chatMediaPreviewSrc(path: string): string {
+export function chatMediaPreviewSrc(mediaRef: ChatMediaRef): string {
+  const thumbnail = mediaRef.thumbnail
+  if (thumbnail?.dataBase64 && /^image\/(png|jpe?g|webp)$/i.test(thumbnail.mimeType || '')) {
+    return `data:${thumbnail.mimeType};base64,${thumbnail.dataBase64}`
+  }
+  const path = mediaRef.path
+  if (!path) return ''
+  if (mediaRef.source !== 'upload' && mediaRef.source !== 'external_path') return ''
   if (/^(file|https?):\/\//i.test(path)) return path
   if (!path.startsWith('/')) return ''
   return `file://${encodeURI(path)}`
 }
 
 export function formatChatMediaLocation(path: string, workspacePath?: string): string {
+  if (!path) return 'Transcript media'
   if (workspacePath && path.startsWith(`${workspacePath}/`)) {
     return path.slice(workspacePath.length + 1)
   }
@@ -80,6 +105,26 @@ export function collectChatMediaRefs(
     })
   }
 
+  const addMediaRef = (mediaRef: TranscriptMediaRef | null | undefined) => {
+    if (!mediaRef || mediaRef.kind !== 'image') return
+    const source = mediaRef.source || 'generated'
+    const path = typeof mediaRef.path === 'string' ? mediaRef.path.trim() : ''
+    const id = mediaRef.id || mediaRef.assetId || `${source}:${mediaRef.sha256 || mediaRef.name}`
+    if (!id || (!path && !mediaRef.thumbnail && mediaRef.status === 'available')) return
+    addRef({
+      id,
+      kind: 'image',
+      source,
+      name: mediaRef.name || chatMediaNameFromPath(path) || 'Image',
+      path,
+      mimeType: mediaRef.mimeType,
+      thumbnail: mediaRef.thumbnail,
+      status: mediaRef.status,
+      alt: mediaRef.alt,
+      caption: mediaRef.caption
+    })
+  }
+
   const addGrant = (grant: Partial<ExternalPathGrant> | null | undefined) => {
     const path = typeof grant?.path === 'string' ? grant.path.trim() : ''
     if (!path) return
@@ -108,11 +153,14 @@ export function collectChatMediaRefs(
   const messages = Array.isArray(chatAny?.messages) ? chatAny.messages : []
   messages.forEach((message: any) => {
     const metadata = message?.metadata || {}
-    ;[metadata.imageAttachments, metadata.attachments, metadata.mediaRefs].forEach((candidate) => {
+    ;[metadata.imageAttachments, metadata.attachments].forEach((candidate) => {
       if (Array.isArray(candidate)) {
         candidate.forEach((attachment) => addAttachment(attachment))
       }
     })
+    if (Array.isArray(metadata.mediaRefs)) {
+      metadata.mediaRefs.forEach((mediaRef) => addMediaRef(mediaRef as TranscriptMediaRef))
+    }
   })
 
   const runs = Array.isArray(chatAny?.runs) ? chatAny.runs : []
@@ -181,11 +229,37 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
     })
   }
 
-  ;[metadata.imageAttachments, metadata.attachments, metadata.mediaRefs].forEach((candidate) => {
+  const addMediaRef = (mediaRef: TranscriptMediaRef | null | undefined) => {
+    if (!mediaRef || mediaRef.kind !== 'image') return
+    const path = typeof mediaRef.path === 'string' ? mediaRef.path.trim() : ''
+    const source = mediaRef.source || 'generated'
+    const id = mediaRef.id || mediaRef.assetId || `${source}:${mediaRef.sha256 || mediaRef.name}`
+    if (!id || (!path && !mediaRef.thumbnail && mediaRef.status === 'available')) return
+    const key = `${source}:${id}:${path}:${mediaRef.status || ''}`
+    if (seen.has(key)) return
+    seen.add(key)
+    refs.push({
+      id,
+      kind: 'image',
+      source,
+      name: mediaRef.name || chatMediaNameFromPath(path) || 'Image',
+      path,
+      mimeType: mediaRef.mimeType,
+      thumbnail: mediaRef.thumbnail,
+      status: mediaRef.status,
+      alt: mediaRef.alt,
+      caption: mediaRef.caption
+    })
+  }
+
+  ;[metadata.imageAttachments, metadata.attachments].forEach((candidate) => {
     if (Array.isArray(candidate)) {
       candidate.forEach((attachment) => addAttachment(attachment as MediaAttachmentLike))
     }
   })
+  if (Array.isArray(metadata.mediaRefs)) {
+    metadata.mediaRefs.forEach((mediaRef) => addMediaRef(mediaRef as TranscriptMediaRef))
+  }
 
   return refs
     .map((ref, index) => ({ ref, index }))
@@ -195,6 +269,23 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
       return rank(a.ref) - rank(b.ref) || a.index - b.index
     })
     .map(({ ref }) => ref)
+}
+
+function chatMediaStatusLabel(status?: TranscriptMediaStatus): string {
+  switch (status) {
+    case 'unsafe_svg':
+      return 'SVG preview disabled'
+    case 'too_large':
+      return 'Image too large'
+    case 'denied':
+      return 'Preview denied'
+    case 'missing':
+      return 'Image missing'
+    case 'unsupported':
+      return 'Unsupported image'
+    default:
+      return ''
+  }
 }
 
 function ChatMessageAttachmentCard({
@@ -213,6 +304,7 @@ function ChatMessageAttachmentCard({
   onClick: () => void
 }) {
   const visualKind = mediaRef.kind === 'folder' ? 'folder' : 'file'
+  const statusLabel = chatMediaStatusLabel(mediaRef.status)
   return (
     <button
       type="button"
@@ -229,7 +321,7 @@ function ChatMessageAttachmentCard({
       <span className="message-attachment-copy">
         <span className="message-attachment-name">{mediaRef.name}</span>
         <span className="message-attachment-path">
-          {isCopied ? 'Copied' : formatChatMediaLocation(mediaRef.path, workspacePath)}
+          {isCopied ? 'Copied' : statusLabel || formatChatMediaLocation(mediaRef.path, workspacePath)}
         </span>
       </span>
     </button>
@@ -256,12 +348,17 @@ function ChatMessageImageAttachment({
     setPreviewFailed(false)
   }, [mediaRef.path, previewSrc])
 
-  const title = onPreviewImage
+  const statusLabel = chatMediaStatusLabel(mediaRef.status)
+  const title = statusLabel
+    ? `${mediaRef.name}: ${statusLabel}`
+    : onPreviewImage
     ? `Preview ${mediaRef.name}`
     : isCopied
       ? 'Copied'
       : `Copy ${mediaRef.name} path`
-  const ariaLabel = onPreviewImage
+  const ariaLabel = statusLabel
+    ? `${mediaRef.name}: ${statusLabel}`
+    : onPreviewImage
     ? `Preview image ${mediaRef.name}`
     : `Copy ${mediaRef.name} path`
   const onClick = (): void => {
@@ -318,7 +415,7 @@ export function ChatMessageMediaStrip({
   return (
     <div className="message-attachment-strip" aria-label="Message attachments">
       {refs.map((ref) => {
-        const previewSrc = ref.kind === 'image' ? chatMediaPreviewSrc(ref.path) : ''
+        const previewSrc = ref.kind === 'image' ? chatMediaPreviewSrc(ref) : ''
         const isCopied = copiedId === ref.id
         if (ref.kind === 'image') {
           return (
@@ -375,12 +472,13 @@ export function ChatMediaPreviewOverlay({
 
   if (!mediaRef) return null
 
-  const previewSrc = mediaRef.kind === 'image' ? chatMediaPreviewSrc(mediaRef.path) : ''
+  const previewSrc = mediaRef.kind === 'image' ? chatMediaPreviewSrc(mediaRef) : ''
   const copyId = `preview:${mediaRef.id}`
   const isCopied = copiedId === copyId
   const location = formatChatMediaLocation(mediaRef.path, workspacePath)
 
   const openPath = (): void => {
+    if (!mediaRef.path) return
     const api = typeof window !== 'undefined' ? window.api : undefined
     void api?.openExternalOrPath?.(mediaRef.path)
   }
@@ -427,12 +525,16 @@ export function ChatMediaPreviewOverlay({
         </div>
 
         <footer className="chat-media-preview-actions">
-          <button type="button" className="btn btn-sm" onClick={() => copy(copyId, mediaRef.path)}>
-            {isCopied ? 'Copied' : 'Copy path'}
-          </button>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={openPath}>
-            Open file
-          </button>
+          {mediaRef.path && (
+            <button type="button" className="btn btn-sm" onClick={() => copy(copyId, mediaRef.path)}>
+              {isCopied ? 'Copied' : 'Copy path'}
+            </button>
+          )}
+          {mediaRef.path && (
+            <button type="button" className="btn btn-sm btn-ghost" onClick={openPath}>
+              Open file
+            </button>
+          )}
           <button type="button" className="btn btn-sm btn-ghost" onClick={onClose}>
             Close
           </button>
@@ -487,7 +589,7 @@ export function ChatMediaFloatingPanel({
               <div className="chat-media-section-title">Images</div>
               <div className="chat-media-image-grid">
                 {imageRefs.map((ref) => {
-                  const previewSrc = chatMediaPreviewSrc(ref.path)
+                  const previewSrc = chatMediaPreviewSrc(ref)
                   const isCopied = copiedId === ref.id
                   return (
                     <button

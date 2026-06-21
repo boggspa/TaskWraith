@@ -197,6 +197,14 @@ const MARKDOWN_COMPONENTS: Components = {
       </a>
     )
   },
+  img({ alt }) {
+    const label = typeof alt === 'string' && alt.trim() ? `Image: ${alt.trim()}` : 'Image'
+    return (
+      <span className="markdown-image-placeholder" role="note" aria-label={label}>
+        {label}
+      </span>
+    )
+  },
   pre({ children }) {
     return <>{children}</>
   },
