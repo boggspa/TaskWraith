@@ -17754,6 +17754,50 @@ if (isGeminiMcpBridgeProcess) {
               iosImageThumbnails = []
             }
           }
+          // Proposed-plan implement-run idempotency (slice 2c-iii). An
+          // Approve-origin run names the plan it implements. We re-read OUR
+          // canonical status (never the phone's) and, in ONE synchronous block
+          // (no await between the pending check and the flip, so it is atomic
+          // against a second device tapping Approve): reject if the plan is no
+          // longer 'pending' — at most ONE write-capable implement run per plan —
+          // otherwise flip status to 'approved' and persist BEFORE dispatch, so
+          // the flip can never be lost (no stuck-pending card) and the pending
+          // check stays authoritative for any later tap. The 'default' allowlist
+          // gate is upstream, so a read-only workspace's run is denied there and
+          // never reaches here (the no-lie property holds); a global chat is
+          // read-only and cannot implement a plan.
+          if (action.proposedPlanImplementOf) {
+            if (isGlobalScope) {
+              return {
+                dispatched: false,
+                appRunId: null,
+                reason: 'Global chats are read-only from the phone'
+              }
+            }
+            const planChat = AppStore.getChat(action.threadId)
+            const planIdx =
+              planChat?.messages.findIndex((m) => m.id === action.proposedPlanImplementOf) ?? -1
+            const planMsg = planIdx >= 0 ? planChat!.messages[planIdx] : undefined
+            const planMeta = planMsg?.metadata as Record<string, unknown> | undefined
+            const plan = planMeta?.proposedPlan as Record<string, unknown> | undefined
+            if (!plan || plan.status !== 'pending') {
+              return { dispatched: false, appRunId: null, reason: 'Plan already decided' }
+            }
+            const planMessages = [...planChat!.messages]
+            planMessages[planIdx] = {
+              ...planMsg!,
+              metadata: { ...planMeta, proposedPlan: { ...plan, status: 'approved' } }
+            } as ChatMessage
+            const flipped: ChatRecord = {
+              ...planChat!,
+              messages: planMessages,
+              updatedAt: Date.now()
+            }
+            AppStore.saveChat(flipped)
+            broadcastChatUpdated(flipped)
+            const planCanonical = canonicalRemoteWorkspaceId(flipped.workspaceId)
+            if (planCanonical) pushRemoteThreadSnapshot(flipped, planCanonical)
+          }
           let chat = prepareIosComposerPromptChat({
             action,
             workspace: workspaceRecord,
