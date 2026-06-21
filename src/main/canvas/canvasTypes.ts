@@ -20,6 +20,11 @@ export interface CanvasViewport {
   height: number
 }
 
+export interface CanvasDeviceTarget {
+  /** Simulator UDID (uppercase UUID) or 'booted'. Omit → the booted simulator. */
+  udid?: string
+}
+
 export interface CanvasOpenInput {
   driver?: CanvasDriverKind
   url?: string
@@ -30,6 +35,13 @@ export interface CanvasOpenInput {
    * blocked regardless (SSRF guard), so an allowlist can never re-enable them.
    */
   originAllowlist?: string[]
+  // --- device driver (iOS simulator; P4) ---
+  /** Target simulator. Omit → the currently-booted sim. */
+  device?: CanvasDeviceTarget
+  /** Absolute path to a built .app to install before launch (optional). */
+  appPath?: string
+  /** Bundle id to launch + screenshot. REQUIRED for the device driver. */
+  bundleId?: string
 }
 
 export interface CanvasElementNode {
@@ -529,4 +541,50 @@ export function redactUrlQuery(rawUrl: string): string {
   } catch {
     return rawUrl.split('?')[0].split('#')[0]
   }
+}
+
+// ---------------------------------------------------------------------------
+// Device-driver (iOS simulator) input validators. The driver shells out to
+// `xcrun simctl` via execFile with an argv ARRAY (never a shell string), so
+// these are defence-in-depth + good error messages, not the sole guard.
+// ---------------------------------------------------------------------------
+
+/** A reverse-DNS-ish bundle id, e.g. "com.example.App". No spaces / shell chars. */
+export function isValidBundleId(value: string): boolean {
+  return value.length <= 255 && /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(value)
+}
+
+/** A simulator UDID (uppercase or lowercase UUID) or the literal 'booted'. */
+export function isValidSimUdid(value: string): boolean {
+  return (
+    value === 'booted' ||
+    /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/.test(value)
+  )
+}
+
+/** An absolute path to a `.app` bundle, with no shell metacharacters. */
+export function isSafeAppBundlePath(value: string): boolean {
+  return (
+    value.startsWith('/') &&
+    value.endsWith('.app') &&
+    value.length <= 4096 &&
+    !/[;&|`$<>\n\r"'\\*?]/.test(value)
+  )
+}
+
+/** Read the pixel dimensions from a PNG buffer's IHDR chunk (0 if not a PNG). */
+export function readPngDimensions(buf: Uint8Array): { width: number; height: number } {
+  // PNG signature (8) + IHDR length(4) + "IHDR"(4) + width(4) + height(4).
+  if (
+    buf.length >= 24 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47
+  ) {
+    const u32 = (o: number): number =>
+      ((buf[o] << 24) | (buf[o + 1] << 16) | (buf[o + 2] << 8) | buf[o + 3]) >>> 0
+    return { width: u32(16), height: u32(20) }
+  }
+  return { width: 0, height: 0 }
 }

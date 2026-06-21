@@ -4,6 +4,10 @@ import {
   classifyCanvasHost,
   isCanvasRequestBlocked,
   isLoopbackHost,
+  isSafeAppBundlePath,
+  isValidBundleId,
+  isValidSimUdid,
+  readPngDimensions,
   redactUrlQuery,
   resolveViewport,
   validateCanvasUrl
@@ -138,5 +142,43 @@ describe('redactUrlQuery', () => {
     )
     expect(redactUrlQuery('https://example.com/?a=1&b=2')).toBe('https://example.com/')
     expect(redactUrlQuery('http://localhost:3000/plain')).toBe('http://localhost:3000/plain')
+  })
+})
+
+describe('device-driver input validators', () => {
+  it('isValidBundleId accepts reverse-DNS ids and rejects injection', () => {
+    expect(isValidBundleId('com.example.App')).toBe(true)
+    expect(isValidBundleId('io.taskwraith.preview-app')).toBe(true)
+    expect(isValidBundleId('noDotsHere')).toBe(false)
+    expect(isValidBundleId('com.x; rm -rf /')).toBe(false)
+    expect(isValidBundleId('com.x && curl evil')).toBe(false)
+    expect(isValidBundleId('com.$(whoami).app')).toBe(false)
+    expect(isValidBundleId('')).toBe(false)
+  })
+
+  it('isValidSimUdid accepts a UUID or "booted" only', () => {
+    expect(isValidSimUdid('booted')).toBe(true)
+    expect(isValidSimUdid('AAAAAAAA-1111-2222-3333-444444444444')).toBe(true)
+    expect(isValidSimUdid('aaaaaaaa-1111-2222-3333-444444444444')).toBe(true)
+    expect(isValidSimUdid('not-a-uuid')).toBe(false)
+    expect(isValidSimUdid('booted; ls')).toBe(false)
+  })
+
+  it('isSafeAppBundlePath requires an absolute .app with no shell metachars', () => {
+    expect(isSafeAppBundlePath('/Users/me/Build/Example.app')).toBe(true)
+    expect(isSafeAppBundlePath('relative/Example.app')).toBe(false)
+    expect(isSafeAppBundlePath('/Users/me/Example.txt')).toBe(false)
+    expect(isSafeAppBundlePath('/x/$(touch pwned).app')).toBe(false)
+    expect(isSafeAppBundlePath('/x/`id`.app')).toBe(false)
+    expect(isSafeAppBundlePath('/x/a;rm.app')).toBe(false)
+  })
+
+  it('readPngDimensions reads IHDR width/height (0 for non-PNG)', () => {
+    const png = Buffer.alloc(24)
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+    png.writeUInt32BE(1170, 16)
+    png.writeUInt32BE(2532, 20)
+    expect(readPngDimensions(png)).toEqual({ width: 1170, height: 2532 })
+    expect(readPngDimensions(Buffer.from('not a png'))).toEqual({ width: 0, height: 0 })
   })
 })
