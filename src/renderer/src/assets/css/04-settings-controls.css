@@ -6022,6 +6022,23 @@ input:disabled, select:disabled, textarea:disabled {
   opacity: 0.5;
 }
 
+.settings-roster-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.settings-roster-option {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-roster-number {
+  width: 72px;
+  flex: 0 0 auto;
+}
+
 /* Participant editor rows */
 .settings-roster-participants {
   display: flex;

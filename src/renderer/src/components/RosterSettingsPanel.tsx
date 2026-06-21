@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'rea
 import type {
   AgenticServicesSettings,
   ComposerStyle,
+  EnsembleOrchestrationMode,
   EnsembleParticipant,
   PermissionPresetId,
   ProviderId
@@ -544,8 +545,31 @@ export function RosterSettingsPanel({
     if (!current || current.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS) return
     const id = freshWorkingId(current.participants)
     const participant = defaultParticipantForProvider('claude', id, current.participants.length + 1)
-    commit({ ...current, participants: [...current.participants, participant] })
+    const participants = [...current.participants, participant]
+    // Keep the cap >= the roster size (mirrors applyEnsembleRosterPreset).
+    const maxParticipants = Math.max(current.meta.maxParticipants, participants.length)
+    commit({ ...current, meta: { ...current.meta, maxParticipants }, participants })
   }, [commit])
+
+  const setOrchestrationMode = useCallback(
+    (mode: EnsembleOrchestrationMode): void => {
+      const current = editingRef.current
+      if (!current) return
+      commit({ ...current, meta: { ...current.meta, orchestrationMode: mode } })
+    },
+    [commit]
+  )
+
+  const setMaxParticipants = useCallback(
+    (value: number): void => {
+      const current = editingRef.current
+      if (!current || !Number.isFinite(value)) return
+      const floor = Math.max(MIN_ROSTER_PRESET_PARTICIPANTS, current.participants.length)
+      const clamped = Math.max(floor, Math.min(MAX_ROSTER_PRESET_PARTICIPANTS, Math.round(value)))
+      commit({ ...current, meta: { ...current.meta, maxParticipants: clamped } })
+    },
+    [commit]
+  )
 
   const removeParticipant = useCallback(
     (id: string): void => {
@@ -698,13 +722,36 @@ export function RosterSettingsPanel({
                 <span className="settings-roster-meta-dot" aria-hidden>
                   ·
                 </span>
-                <span>
-                  {editing.meta.orchestrationMode === 'continuous' ? 'Continuous' : 'Turn-based'}
-                </span>
-                <span className="settings-roster-meta-dot" aria-hidden>
-                  ·
-                </span>
                 <span>Updated {formatTimestamp(editing.meta.updatedAt)}</span>
+              </div>
+
+              <div className="settings-roster-options">
+                <label className="settings-roster-option">
+                  <span className="settings-roster-field-label">Turn order</span>
+                  <select
+                    className="settings-roster-select"
+                    value={
+                      editing.meta.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
+                    }
+                    onChange={(event) =>
+                      setOrchestrationMode(event.target.value as EnsembleOrchestrationMode)
+                    }
+                  >
+                    <option value="turn_bound">Turn-based (in order)</option>
+                    <option value="continuous">Continuous (all at once)</option>
+                  </select>
+                </label>
+                <label className="settings-roster-option">
+                  <span className="settings-roster-field-label">Max participants</span>
+                  <input
+                    type="number"
+                    className="settings-roster-input settings-roster-number"
+                    min={Math.max(MIN_ROSTER_PRESET_PARTICIPANTS, editing.participants.length)}
+                    max={MAX_ROSTER_PRESET_PARTICIPANTS}
+                    value={editing.meta.maxParticipants}
+                    onChange={(event) => setMaxParticipants(Number(event.target.value))}
+                  />
+                </label>
               </div>
 
               <ul className="settings-roster-participants">
