@@ -30,6 +30,7 @@ export interface CodexRunState {
   commandOutputByItemId: Map<string, string>
   filePatchByItemId: Map<string, any>
   hostRerunRequestedItemIds: Set<string>
+  providerMediaRefKeys?: Set<string>
   completed: boolean
 }
 
@@ -113,4 +114,5 @@ export interface CliProviderStreamState {
    */
   grokToolErrorCount?: number
   grokLastToolError?: string
+  providerMediaRefKeys?: Set<string>
 }

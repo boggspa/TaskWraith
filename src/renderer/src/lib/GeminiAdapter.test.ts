@@ -267,6 +267,28 @@ describe('GeminiStreamAdapter', () => {
     })
   })
 
+  it('normalizes media_refs compat events for assistant media rendering', () => {
+    const onEvent = vi.fn()
+    const adapter = new GeminiStreamAdapter(onEvent)
+
+    adapter.appendChunk(
+      '{"type":"media_refs","mediaRefs":[{"id":"img-1","kind":"image","source":"generated","mimeType":"image/png","name":"Generated image"}]}\n'
+    )
+
+    expect(onEvent).toHaveBeenCalledWith({
+      type: 'assistant_media_refs',
+      mediaRefs: [
+        {
+          id: 'img-1',
+          kind: 'image',
+          source: 'generated',
+          mimeType: 'image/png',
+          name: 'Generated image'
+        }
+      ]
+    })
+  })
+
   it('skips emitting an event for empty Codex completion sentinels', () => {
     const onEvent = vi.fn()
     const adapter = new GeminiStreamAdapter(onEvent)

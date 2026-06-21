@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   createToolResultMediaRefs,
   extractMcpImageBlocksFromRawResult,
+  extractProviderImageBlocksFromRawEvent,
   sniffImageMime,
   validateWorkspaceImagePath
 } from './TranscriptMediaService'
@@ -75,6 +76,47 @@ describe('TranscriptMediaService', () => {
     })
 
     expect(blocks).toEqual([{ type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }])
+  })
+
+  it('extracts provider assistant image blocks from common base64 content shapes', () => {
+    const blocks = extractProviderImageBlocksFromRawEvent({
+      type: 'assistant',
+      message: {
+        content: [
+          { type: 'text', text: 'Here is the image.' },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: PNG_1X1_BASE64 }
+          },
+          {
+            inlineData: { mimeType: 'image/png', data: PNG_1X1_BASE64 }
+          },
+          {
+            type: 'output_image',
+            image_url: `data:image/png;base64,${PNG_1X1_BASE64}`
+          }
+        ]
+      }
+    })
+
+    expect(blocks).toEqual([{ type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }])
+  })
+
+  it('creates generated media refs for provider image outputs', () => {
+    const refs = createToolResultMediaRefs({
+      messageId: 'msg-1',
+      runId: 'run-1',
+      source: 'generated',
+      namePrefix: 'Provider image',
+      blocks: [{ type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }],
+      thumbnailer: () => null
+    })
+
+    expect(refs[0]).toMatchObject({
+      source: 'generated',
+      name: 'Provider image',
+      assetId: expect.stringContaining('run:run-1:generated-image:')
+    })
   })
 
   it('uses a small safe raster block as its own bounded thumbnail when native thumbnailing is absent', () => {

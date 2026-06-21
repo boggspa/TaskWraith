@@ -356,6 +356,10 @@ import {
   buildChatMarkdownTranscript,
   estimateChatMarkdownTranscriptChars
 } from './TranscriptMarkdownExport'
+import {
+  createToolResultMediaRefs,
+  extractProviderImageBlocksFromRawEvent
+} from './services/TranscriptMediaService'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
 import {
   clearStickyAppWatch,
@@ -417,7 +421,8 @@ import {
   EnsembleParticipant,
   EnsembleWakeupRecord,
   RunEventKind,
-  WorkflowDefinition
+  WorkflowDefinition,
+  TranscriptMediaRef
 } from './store/types'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
 import {
@@ -1388,6 +1393,7 @@ type BridgeRunTranscriptState = {
     id: string
     kind: 'text' | 'tools'
     content: string
+    mediaRefs?: TranscriptMediaRef[]
     activities: ToolActivity[]
   }>
   streamBuffer?: string
@@ -2466,7 +2472,10 @@ async function maybePropagateSubThreadResult(chatId: string | undefined): Promis
   // Find the sub-thread's final assistant message — that's the
   // "answer" the parent wants surfaced.
   const lastAssistant = [...subThread.messages].reverse().find((m) => m.role === 'assistant')
-  if (!lastAssistant || !lastAssistant.content.trim()) return
+  const returnedMediaRefs = Array.isArray(lastAssistant?.metadata?.mediaRefs)
+    ? lastAssistant.metadata.mediaRefs
+    : []
+  if (!lastAssistant || (!lastAssistant.content.trim() && returnedMediaRefs.length === 0)) return
   const parent = AppStore.getChat(subThread.parentChatId)
   if (!parent) return
   const existingReturnForAssistant = parent.messages.some(
@@ -2508,7 +2517,8 @@ async function maybePropagateSubThreadResult(chatId: string | undefined): Promis
       sourceRunId: lastAssistant.runId,
       resultTrust: 'untrusted-child-output',
       lifecycleState: 'returned',
-      returnedAt
+      returnedAt,
+      ...(returnedMediaRefs.length > 0 ? { mediaRefs: returnedMediaRefs } : {})
     }
   }
   const updatedParent: ChatRecord = {
@@ -3260,20 +3270,26 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
   const timestamp = new Date().toISOString()
   let messages = [...current.messages]
   const assistantIndex = messages.findIndex((message) => message.id === state.assistantMessageId)
-  if (state.content.length > 0) {
+  if (state.content.length > 0 || (state.mediaRefs && state.mediaRefs.length > 0)) {
+    const mediaMetadata =
+      state.mediaRefs && state.mediaRefs.length > 0 ? { mediaRefs: state.mediaRefs } : undefined
     const assistantMessage: ChatMessage =
       assistantIndex >= 0
         ? {
             ...messages[assistantIndex],
             content: state.content,
-            timestamp
+            timestamp,
+            ...(mediaMetadata
+              ? { metadata: { ...(messages[assistantIndex].metadata || {}), ...mediaMetadata } }
+              : {})
           }
         : {
             id: state.assistantMessageId,
             role: 'assistant',
             content: state.content,
             timestamp,
-            runId: state.runId
+            runId: state.runId,
+            ...(mediaMetadata ? { metadata: mediaMetadata } : {})
           }
     if (assistantIndex >= 0) {
       messages[assistantIndex] = assistantMessage
@@ -3413,7 +3429,13 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
   // calls above the response.
   let insertAfter = messages.findIndex((message) => message.id === state.promptMessageId)
   for (const part of state.parts) {
-    if (part.kind === 'text' && part.content.trim().length === 0) continue
+    if (
+      part.kind === 'text' &&
+      part.content.trim().length === 0 &&
+      (!part.mediaRefs || part.mediaRefs.length === 0)
+    ) {
+      continue
+    }
     const assistantMetadata =
       part.kind === 'text'
         ? bridgeAssistantMessageMetadata({
@@ -3421,6 +3443,13 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
             actualModel: state.actualModel,
             modelLabel: state.modelLabel
           })
+        : undefined
+    const messageMetadata =
+      assistantMetadata || part.mediaRefs?.length
+        ? {
+            ...(assistantMetadata || {}),
+            ...(part.mediaRefs?.length ? { mediaRefs: part.mediaRefs } : {})
+          }
         : undefined
     const partMessage: ChatMessage =
       part.kind === 'text'
@@ -3430,7 +3459,7 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
             content: part.content,
             timestamp,
             runId: state.runId,
-            ...(assistantMetadata ? { metadata: assistantMetadata } : {})
+            ...(messageMetadata ? { metadata: messageMetadata } : {})
           }
         : {
             id: part.id,
@@ -3673,6 +3702,12 @@ function appendBridgeRunJsonLine(state: BridgeRunTranscriptState, line: string):
       }
       return
     }
+    if (parsed.type === 'media_refs' && Array.isArray(parsed.mediaRefs)) {
+      appendBridgeRunMediaRefs(state, parsed.mediaRefs as TranscriptMediaRef[])
+      if (!state.flushedOnce) flushBridgeRunTranscript(state.runId)
+      else scheduleBridgeRunFlush(state.runId)
+      return
+    }
     if (parsed.type === 'result') {
       if (parsed.stats && typeof parsed.stats === 'object') {
         state.stats = parsed.stats as Record<string, unknown>
@@ -3699,9 +3734,44 @@ function appendBridgeRunTextFragment(state: BridgeRunTranscriptState, fragment: 
       id: `${state.assistantMessageId}-p${state.parts.length}`,
       kind: 'text',
       content: fragment,
+      mediaRefs: [],
       activities: []
     })
   }
+}
+
+function mergeTranscriptMediaRefs(
+  existing: readonly TranscriptMediaRef[] | undefined,
+  incoming: readonly TranscriptMediaRef[]
+): TranscriptMediaRef[] {
+  const refs: TranscriptMediaRef[] = []
+  const seen = new Set<string>()
+  for (const ref of [...(existing || []), ...incoming]) {
+    const key = ref.sha256 || ref.assetId || ref.id
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    refs.push(ref)
+  }
+  return refs
+}
+
+function appendBridgeRunMediaRefs(
+  state: BridgeRunTranscriptState,
+  mediaRefs: readonly TranscriptMediaRef[]
+): void {
+  if (mediaRefs.length === 0) return
+  const last = state.parts[state.parts.length - 1]
+  if (last && last.kind === 'text') {
+    last.mediaRefs = mergeTranscriptMediaRefs(last.mediaRefs, mediaRefs)
+    return
+  }
+  state.parts.push({
+    id: `${state.assistantMessageId}-p${state.parts.length}`,
+    kind: 'text',
+    content: '',
+    mediaRefs: [...mediaRefs],
+    activities: []
+  })
 }
 
 /** Assemble an incoming assistant text event into the run's interleaved
@@ -3735,6 +3805,7 @@ function ingestBridgeRunToolUse(state: BridgeRunTranscriptState, payload: any): 
       id: `${state.toolMessageId}-p${state.parts.length}`,
       kind: 'tools',
       content: '',
+      mediaRefs: [],
       activities: [activity]
     })
   }
@@ -3892,6 +3963,12 @@ function materializeBridgeRunProviderOutput(
     scheduleBridgeRunFlush(runId)
     return
   }
+  if (payload?.type === 'media_refs' && Array.isArray(payload.mediaRefs)) {
+    appendBridgeRunMediaRefs(state, payload.mediaRefs as TranscriptMediaRef[])
+    if (!state.flushedOnce) flushBridgeRunTranscript(runId)
+    else scheduleBridgeRunFlush(runId)
+    return
+  }
   if (payload?.type === 'content' || payload?.type === 'token') {
     // `cumulative: true` marks the trailing full-turn restatement the CLI
     // emits when its envelope diverged from the streamed deltas. The
@@ -4008,6 +4085,18 @@ function materializeBackgroundSubThreadProviderOutput(
         state.content = fold.kind === 'tail' ? payload.text : state.content + payload.text
       }
     }
+    if (!state.flushedOnce) {
+      flushBackgroundSubThreadTranscript(runId)
+    } else {
+      scheduleBackgroundSubThreadFlush(runId)
+    }
+    return
+  }
+  if (payload?.type === 'media_refs' && Array.isArray(payload.mediaRefs)) {
+    state.mediaRefs = mergeTranscriptMediaRefs(
+      state.mediaRefs,
+      payload.mediaRefs as TranscriptMediaRef[]
+    )
     if (!state.flushedOnce) {
       flushBackgroundSubThreadTranscript(runId)
     } else {
@@ -5647,6 +5736,62 @@ function claudeProgrammaticUsageWarning(runtime: 'sdk' | 'cli-print', usesApiKey
 // back to a unique generated id only when no identifier is present at all (which
 // keeps two genuinely id-less calls from merging).
 
+function providerEventIsToolResultLike(event: unknown): boolean {
+  if (!isRecord(event)) return false
+  const params = nestedRecord(event, 'params')
+  const directType = String(event.type || event.method || params.type || '').toLowerCase()
+  if (
+    directType === 'tool_result' ||
+    directType === 'tool_output' ||
+    directType === 'tool_response' ||
+    directType === 'toolresult'
+  ) {
+    return true
+  }
+  const message = nestedRecord(event, 'message')
+  const contentItems = Array.isArray(message.content)
+    ? message.content
+    : Array.isArray(event.content)
+      ? event.content
+      : []
+  return contentItems.some(
+    (item) => isRecord(item) && String(item.type || '').toLowerCase() === 'tool_result'
+  )
+}
+
+function emitCliProviderMediaRefs(state: CliProviderStreamState, event: unknown): void {
+  if (providerEventIsToolResultLike(event)) return
+  const blocks = extractProviderImageBlocksFromRawEvent(event)
+  if (blocks.length === 0) return
+  const refs = createToolResultMediaRefs({
+    messageId: state.appRunId || state.runId || `${state.provider}-${state.startedAt}`,
+    runId: state.appRunId || state.runId || undefined,
+    toolName: `${state.provider} output`,
+    source: 'generated',
+    blocks
+  })
+  if (refs.length === 0) return
+  const seen = state.providerMediaRefKeys ?? new Set<string>()
+  state.providerMediaRefKeys = seen
+  const fresh = refs.filter((ref) => {
+    const key = ref.sha256 || ref.assetId || ref.id
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  if (fresh.length === 0) return
+  sendAgentCompatLine(
+    state.sender,
+    state.provider,
+    {
+      type: 'media_refs',
+      mediaRefs: fresh,
+      provider: state.provider
+    },
+    state
+  )
+}
+
 function emitCliProviderToolEvent(state: CliProviderStreamState, event: unknown): void {
   if (!isRecord(event)) return
   const params = nestedRecord(event, 'params')
@@ -5950,6 +6095,7 @@ function handleGrokStreamEvent(state: CliProviderStreamState, event: unknown) {
   // top-level tool_use/tool_result handled by grokEventToRunEvents above, so no
   // double-emit; a no-op when nothing matches.
   emitCliProviderToolEvent(state, event)
+  emitCliProviderMediaRefs(state, event)
 }
 
 // CR4 — Cursor (Composer 2.5) read-only runtime stream handling. Mirrors the
@@ -6046,6 +6192,7 @@ function handleCursorStreamEvent(state: CliProviderStreamState, event: unknown) 
   // Belt-and-suspenders: also run the shared multi-shape tool recognizer for any
   // nested / bridge tool shapes (disjoint from the flattened events above).
   emitCliProviderToolEvent(state, event)
+  emitCliProviderMediaRefs(state, event)
 }
 
 /**
@@ -6147,6 +6294,8 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
       )
     }
   }
+
+  emitCliProviderMediaRefs(state, event)
 
   const eventType = String(event?.type || event?.method || event?.params?.type || '')
   if (
@@ -9202,6 +9351,38 @@ function emitCodexReasoningDelta(state: CodexRunState, params: any, label: strin
   sendCodexSyntheticToolResult(state, itemId, next, 'running')
 }
 
+function emitCodexProviderMediaRefs(state: CodexRunState, raw: unknown): void {
+  const blocks = extractProviderImageBlocksFromRawEvent(raw)
+  if (blocks.length === 0) return
+  const refs = createToolResultMediaRefs({
+    messageId: state.appRunId || state.turnId || state.threadId,
+    runId: state.appRunId || state.turnId || undefined,
+    toolName: 'codex output',
+    source: 'generated',
+    blocks
+  })
+  if (refs.length === 0) return
+  const seen = state.providerMediaRefKeys ?? new Set<string>()
+  state.providerMediaRefKeys = seen
+  const fresh = refs.filter((ref) => {
+    const key = ref.sha256 || ref.assetId || ref.id
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  if (fresh.length === 0) return
+  sendAgentCompatLine(
+    state.sender,
+    'codex',
+    {
+      type: 'media_refs',
+      mediaRefs: fresh,
+      provider: 'codex'
+    },
+    state
+  )
+}
+
 function emitCodexCommandOutputDelta(state: CodexRunState, params: any) {
   const itemId = codexTimelineItemId(params, 'codex-command')
   const delta = codexString(
@@ -9438,6 +9619,7 @@ function handleCodexNotification(message: any) {
           // re-emit the same tail.
           state.assistantTextByItemId.set(itemId, finalText)
         }
+        emitCodexProviderMediaRefs(state, item)
         sendAgentCompatLine(
           state.sender,
           'codex',
@@ -9451,6 +9633,7 @@ function handleCodexNotification(message: any) {
           state
         )
       }
+      emitCodexProviderMediaRefs(state, item)
       return
     }
     if (item?.type === 'plan') {

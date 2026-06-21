@@ -1,4 +1,4 @@
-import type { ProviderId } from './store/types'
+import type { ProviderId, TranscriptMediaRef } from './store/types'
 export type McpToolContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; mimeType: string; data: string }
@@ -41,6 +41,7 @@ export interface BackgroundSubThreadTranscriptState {
   assistantMessageId: string
   startedAt: string
   content: string
+  mediaRefs?: TranscriptMediaRef[]
   actualModel?: string
   providerSessionId?: string
   stats?: unknown

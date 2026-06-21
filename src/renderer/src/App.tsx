@@ -63,7 +63,8 @@ import {
   PinnedMessageSummary,
   AuditRunRecord,
   ActiveGoal,
-  ActiveGoalStatus
+  ActiveGoalStatus,
+  TranscriptMediaRef
 } from '../../main/store/types'
 import {
   activeGoalModeLabel,
@@ -496,6 +497,21 @@ const WORKSPACE_ADD_POINTER_DURATION_MS = 6000
 // the chat is available for `[@Name](agent://uuid)` chip lookups.)
 
 // clampContextTurns moved to `src/main/PromptComposition.ts` and re-exported below.
+
+function mergeTranscriptMediaRefs(
+  existing: readonly TranscriptMediaRef[] | undefined,
+  incoming: readonly TranscriptMediaRef[]
+): TranscriptMediaRef[] {
+  const refs: TranscriptMediaRef[] = []
+  const seen = new Set<string>()
+  for (const ref of [...(existing || []), ...incoming]) {
+    const key = ref.sha256 || ref.assetId || ref.id
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    refs.push(ref)
+  }
+  return refs
+}
 
 const EMPTY_AGENT_QUESTION_QUEUE: readonly AgentQuestionState[] = Object.freeze([])
 // Slice H: the command-palette group order is a fixed constant — hoisted to
@@ -9366,6 +9382,8 @@ function App(): React.JSX.Element {
           return `Tool ${event.isResult ? 'result' : 'event'}: ${event.name || event.data?.tool_name || event.data?.toolName || 'unknown'}`
         if (event.type === 'assistant_message_complete') return 'Assistant final message'
         if (event.type === 'assistant_message_delta') return 'Assistant message delta'
+        if (event.type === 'assistant_media_refs')
+          return `Assistant media refs: ${event.mediaRefs.length}`
         if (event.type === 'run_started')
           return `Provider run started${event.model ? `: ${event.model}` : ''}`
         if (event.type === 'run_finished')
@@ -9638,6 +9656,49 @@ function App(): React.JSX.Element {
                   content: event.content,
                   timestamp: new Date().toISOString(),
                   ...(metadata ? { metadata } : {})
+                }
+              ]
+            }
+          } else if (event.type === 'assistant_media_refs') {
+            if (updated.chatKind === 'ensemble') {
+              return updated
+            }
+            const incomingRefs = event.mediaRefs.filter(
+              (ref): ref is TranscriptMediaRef => !!ref && typeof ref === 'object'
+            )
+            if (incomingRefs.length === 0) {
+              return updated
+            }
+            const trailingIndex = updated.messages.length - 1
+            const trailing =
+              trailingIndex >= 0 && updated.messages[trailingIndex].role === 'assistant'
+                ? updated.messages[trailingIndex]
+                : null
+            if (trailing) {
+              const mediaRefs = mergeTranscriptMediaRefs(
+                trailing.metadata?.mediaRefs,
+                incomingRefs
+              )
+              updated.messages = [
+                ...updated.messages.slice(0, trailingIndex),
+                {
+                  ...trailing,
+                  metadata: {
+                    ...(trailing.metadata || {}),
+                    mediaRefs
+                  }
+                },
+                ...updated.messages.slice(trailingIndex + 1)
+              ]
+            } else {
+              updated.messages = [
+                ...updated.messages,
+                {
+                  id: createMessageId(),
+                  role: 'assistant',
+                  content: '',
+                  timestamp: new Date().toISOString(),
+                  metadata: { mediaRefs: incomingRefs }
                 }
               ]
             }

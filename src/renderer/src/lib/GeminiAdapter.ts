@@ -21,6 +21,7 @@ export type NormalizedEvent =
       model?: string
       modelLabel?: string
     }
+  | { type: 'assistant_media_refs'; mediaRefs: any[] }
   | { type: 'assistant_message_complete'; content: string; itemId?: string }
   | {
       type: 'tool_event'
@@ -127,6 +128,14 @@ export class GeminiStreamAdapter {
         })
         break
       }
+      case 'media_refs':
+        if (Array.isArray(parsed.mediaRefs)) {
+          this.onEvent({
+            type: 'assistant_media_refs',
+            mediaRefs: parsed.mediaRefs
+          })
+        }
+        break
       case 'message':
         if (parsed.role === 'user') {
           this.onEvent({

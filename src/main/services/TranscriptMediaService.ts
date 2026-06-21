@@ -4,6 +4,7 @@ import path from 'path'
 import type {
   ExternalPathGrant,
   TranscriptMediaRef,
+  TranscriptMediaSource,
   TranscriptMediaThumbnail
 } from '../store/types'
 
@@ -37,6 +38,8 @@ export interface CreateToolResultMediaRefsOptions {
   runId?: string
   toolName?: string
   blocks: readonly unknown[]
+  source?: Extract<TranscriptMediaSource, 'generated' | 'tool_result'>
+  namePrefix?: string
   thumbnailer?: TranscriptMediaThumbnailer
   maxBytes?: number
   maxRefs?: number
@@ -169,6 +172,49 @@ function imageBlockFromUnknown(value: unknown): McpImageContentBlock | null {
   return { type: 'image', mimeType, data }
 }
 
+function imageBlockFromProviderUnknown(value: unknown): McpImageContentBlock | null {
+  const direct = imageBlockFromUnknown(value)
+  if (direct) return direct
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const source = record.source
+  if (record.type === 'image' && source && typeof source === 'object' && !Array.isArray(source)) {
+    const sourceRecord = source as Record<string, unknown>
+    const mimeType = normalizedMimeType(sourceRecord.media_type ?? sourceRecord.mimeType)
+    const data = typeof sourceRecord.data === 'string' ? sourceRecord.data.trim() : ''
+    if ((sourceRecord.type === undefined || sourceRecord.type === 'base64') && mimeType && data) {
+      return { type: 'image', mimeType, data }
+    }
+  }
+  const inlineData = record.inlineData ?? record.inline_data
+  if (inlineData && typeof inlineData === 'object' && !Array.isArray(inlineData)) {
+    const inlineRecord = inlineData as Record<string, unknown>
+    const mimeType = normalizedMimeType(inlineRecord.mimeType ?? inlineRecord.mime_type)
+    const data = typeof inlineRecord.data === 'string' ? inlineRecord.data.trim() : ''
+    if (mimeType && data) return { type: 'image', mimeType, data }
+  }
+  const imageUrl = record.image_url ?? record.imageUrl
+  const url =
+    typeof imageUrl === 'string'
+      ? imageUrl
+      : imageUrl && typeof imageUrl === 'object' && !Array.isArray(imageUrl)
+        ? (imageUrl as Record<string, unknown>).url
+        : undefined
+  if (typeof url === 'string') {
+    return imageBlockFromDataUrl(url)
+  }
+  return null
+}
+
+function imageBlockFromDataUrl(value: string): McpImageContentBlock | null {
+  const match = value.trim().match(/^data:([^;,]+);base64,(.+)$/i)
+  if (!match) return null
+  const mimeType = normalizedMimeType(match[1])
+  const data = match[2].trim()
+  if (!mimeType || !data) return null
+  return { type: 'image', mimeType, data }
+}
+
 function parseJsonObjectLike(value: unknown): unknown {
   if (typeof value !== 'string') return value
   const trimmed = value.trim()
@@ -210,6 +256,40 @@ export function extractMcpImageBlocksFromRawResult(raw: unknown): McpImageConten
   })
 }
 
+export function extractProviderImageBlocksFromRawEvent(raw: unknown): McpImageContentBlock[] {
+  const parsed = parseJsonObjectLike(raw)
+  const blocks: McpImageContentBlock[] = []
+  const seenObjects = new Set<unknown>()
+  const visit = (node: unknown, depth: number): void => {
+    if (blocks.length >= TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE || depth > 10) return
+    const parsedNode = parseJsonObjectLike(node)
+    if (!parsedNode || typeof parsedNode !== 'object') return
+    if (seenObjects.has(parsedNode)) return
+    seenObjects.add(parsedNode)
+    if (Array.isArray(parsedNode)) {
+      parsedNode.forEach((entry) => visit(entry, depth + 1))
+      return
+    }
+    const block = imageBlockFromProviderUnknown(parsedNode)
+    if (block) {
+      blocks.push(block)
+      return
+    }
+    const record = parsedNode as Record<string, unknown>
+    for (const key of ['content', 'parts', 'message', 'delta', 'candidate', 'candidates']) {
+      visit(record[key], depth + 1)
+    }
+  }
+  visit(parsed, 0)
+  const seen = new Set<string>()
+  return blocks.filter((block) => {
+    const key = `${block.mimeType}:${block.data.length}:${block.data.slice(0, 48)}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function decodedImageBlock(
   block: McpImageContentBlock,
   maxBytes: number
@@ -234,11 +314,14 @@ export function createToolResultMediaRefs({
   runId,
   toolName,
   blocks,
+  source = 'tool_result',
+  namePrefix,
   thumbnailer = defaultTranscriptMediaThumbnailer,
   maxBytes = TRANSCRIPT_MEDIA_MAX_TOOL_IMAGE_BYTES,
   maxRefs = TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE
 }: CreateToolResultMediaRefsOptions): TranscriptMediaRef[] {
   const refs: TranscriptMediaRef[] = []
+  const sourceSegment = source === 'generated' ? 'generated-image' : 'tool-image'
   for (const rawBlock of blocks) {
     if (refs.length >= maxRefs) break
     const block = imageBlockFromUnknown(rawBlock)
@@ -247,11 +330,17 @@ export function createToolResultMediaRefs({
     const index = refs.length + 1
     if ('error' in decoded) {
       refs.push({
-        id: `${messageId}:tool-image:${index}`,
+        id: `${messageId}:${sourceSegment}:${index}`,
         kind: 'image',
         format: isTranscriptSvgMime(block.mimeType) ? 'svg' : 'raster',
-        source: 'tool_result',
-        name: toolName ? `${toolName} image ${index}` : `Tool result image ${index}`,
+        source,
+        name:
+          namePrefix ||
+          (toolName
+            ? `${toolName} image ${index}`
+            : source === 'generated'
+              ? `Generated image ${index}`
+              : `Tool result image ${index}`),
         mimeType: normalizedMimeType(block.mimeType) || 'application/octet-stream',
         status: decoded.error
       })
@@ -267,15 +356,21 @@ export function createToolResultMediaRefs({
           }
         : undefined)
     refs.push({
-      id: `${messageId}:tool-image:${hash.slice(0, 16)}`,
+      id: `${messageId}:${sourceSegment}:${hash.slice(0, 16)}`,
       kind: 'image',
       format: 'raster',
-      source: 'tool_result',
-      name: toolName ? `${toolName} image ${index}` : `Tool result image ${index}`,
+      source,
+      name:
+        namePrefix ||
+        (toolName
+          ? `${toolName} image ${index}`
+          : source === 'generated'
+            ? `Generated image ${index}`
+            : `Tool result image ${index}`),
       mimeType: decoded.mimeType,
       byteLength: decoded.buffer.length,
       sha256: hash,
-      assetId: runId ? `run:${runId}:tool-image:${hash}` : `tool-image:${hash}`,
+      assetId: runId ? `run:${runId}:${sourceSegment}:${hash}` : `${sourceSegment}:${hash}`,
       thumbnail,
       status: 'available'
     })
