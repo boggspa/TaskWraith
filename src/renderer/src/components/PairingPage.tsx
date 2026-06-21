@@ -303,14 +303,24 @@ export function PairingPage(): JSX.Element {
         <RemoteWorkspacesPanel />
       </section>
 
+      <section className="pairing-page__section pairing-page__tailscale">
+        <header className="pairing-page__section-header">
+          <h3 className="pairing-page__section-title">Tailscale · remote access</h3>
+          <p className="pairing-page__section-subtitle">
+            The recommended way to reach this Mac from your iPhone or iPad beyond the local
+            network — free, encrypted, and no port-forwarding.
+          </p>
+        </header>
+        <TailscaleSetupPanel />
+      </section>
+
       {/*
-        Third section: bridge daemon networking + APNs (off-LAN wake).
-        Both are paired-device infrastructure — Bonjour publishes the
-        Mac on the local network so iOS can reach it; APNs handles the
-        wake path when the iPad isn't on the same network. Used to be
-        its own "Bridge Networking" tab; consolidated here so the
-        whole device-management workflow (pair → allowlist → reach)
-        reads top-to-bottom.
+        Bridge daemon networking + APNs (off-LAN wake). Both are
+        paired-device infrastructure — Bonjour publishes the Mac on the
+        local network so iOS can reach it; APNs handles the wake path
+        when the iPad isn't on the same network. Used to be its own
+        "Bridge Networking" tab; consolidated here. Sits below the
+        Tailscale helper so remote-access setup reads top-to-bottom.
       */}
       <section className="pairing-page__section pairing-page__networking">
         <header className="pairing-page__section-header">
@@ -322,17 +332,6 @@ export function PairingPage(): JSX.Element {
         </header>
         <BridgeNetworkingPanel />
         {APNS_PANEL_ENABLED && <ApnsConfigPanel />}
-      </section>
-
-      <section className="pairing-page__section pairing-page__tailscale">
-        <header className="pairing-page__section-header">
-          <h3 className="pairing-page__section-title">Tailscale · remote access</h3>
-          <p className="pairing-page__section-subtitle">
-            The recommended way to reach this Mac from your iPhone or iPad beyond the local
-            network — free, encrypted, and no port-forwarding.
-          </p>
-        </header>
-        <TailscaleSetupPanel />
       </section>
 
       {/* Maximised QR overlay — covers the screen so the iPad camera
