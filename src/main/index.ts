@@ -574,6 +574,11 @@ import {
   createDesktopToolExecutors,
   isDesktopMcpToolName
 } from './mcp/DesktopToolExecutors'
+import { CanvasService } from './canvas/CanvasService'
+import { CanvasStore } from './canvas/CanvasStore'
+import { CanvasWebDriver } from './canvas/CanvasWebDriver'
+import type { CanvasDriverKind, CanvasEventRecord } from './canvas/canvasTypes'
+import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
 import {
   brokerRequest as mcpBridgeBrokerRequest,
   createMcpBridgeRuntime,
@@ -1490,6 +1495,28 @@ const desktopToolExecutors = createDesktopToolExecutors({
   },
   logger: console
 })
+
+// TaskWraith Canvas (P0) — exclusive preview/runtime surface. CanvasService owns
+// the live session registry + drivers; the canvas_* MCP tools route through
+// canvasToolExecutors (see executeGeminiMcpTool). Persistence + audit events live
+// in a self-contained CanvasStore (own atomic JSON) and broadcast to the renderer
+// as 'canvas-event'. The web driver opens one sandboxed BrowserWindow per session.
+const canvasService = new CanvasService({
+  createDriver: (kind: CanvasDriverKind, sessionId: string) => {
+    if (kind !== 'web') {
+      throw new Error(`Canvas driver "${kind}" is not available in this build (web only).`)
+    }
+    return new CanvasWebDriver(sessionId)
+  },
+  store: new CanvasStore(join(app.getPath('userData'), 'canvas')),
+  uuid: () => randomUUID(),
+  now: () => new Date().toISOString(),
+  broadcast: (event: CanvasEventRecord) => {
+    safeSendToWebContents(mainWindow, 'canvas-event', event)
+  },
+  logger: console
+})
+const canvasToolExecutors = createCanvasToolExecutors({ controller: canvasService })
 
 // M11 (1.0.7) — sticky AppWatch: per-chat remembered attachment snapshots,
 // persisted so they survive an app restart. The pure store logic lives in
@@ -13687,6 +13714,10 @@ async function executeGeminiMcpTool(
       toolName === 'browser_console'
     ) {
       applyRichResult(await executeBrowserTool(toolName, args, context))
+    } else if (isCanvasMcpToolName(toolName)) {
+      applyRichResult(
+        await canvasToolExecutors.executeCanvasTool(toolName, args, context, parentProvider)
+      )
     } else if (isDesktopMcpToolName(toolName)) {
       applyRichResult(
         await desktopToolExecutors.executeDesktopTool(toolName, args, context, parentProvider)
@@ -17773,6 +17804,18 @@ if (isGeminiMcpBridgeProcess) {
                 dispatched: false,
                 appRunId: null,
                 reason: 'Global chats are read-only from the phone'
+              }
+            }
+            // The atomic dedup relies on the flip being DURABLE — a 2nd device
+            // re-reads status='approved' from the store. With local chat history
+            // OFF, AppStore.saveChat no-ops, so the flip never persists and the
+            // duplicate-run race reopens. Refuse the elevated implement run here
+            // (the plan-card feature already assumes metadata persistence).
+            if (!AppStore.getSettings().storeLocalChatHistory) {
+              return {
+                dispatched: false,
+                appRunId: null,
+                reason: 'Approving a plan from the phone needs local chat history enabled'
               }
             }
             const planChat = AppStore.getChat(action.threadId)
