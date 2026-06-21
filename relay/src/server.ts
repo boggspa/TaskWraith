@@ -35,6 +35,17 @@ export interface RelayOptions {
   maxConnectionsPerIp?: number
   /** Trusted-reconnect directory tuning (freshness window, max TTL). */
   resolve?: ResolveDirectoryOptions
+  /**
+   * Read-only host advertisement for QR-optional multi-host discovery. When set
+   * (the per-host embedded relay), GET /v1/hostinfo returns this object so another
+   * tailnet peer can learn whether the machine runs TaskWraith and fetch its
+   * PUBLIC bootstrap material (identity pubkey + relay URLs). Returns null to
+   * advertise nothing; absent on a shared relay that fronts many hosts (→ 404).
+   * The relay stays dumb: it serializes whatever the provider returns and holds
+   * no opinion on the shape. Trust is still the 6-digit SAS — nothing here is
+   * secret.
+   */
+  hostInfo?: () => Record<string, unknown> | null
 }
 
 export interface RelayServerHandle {
@@ -66,6 +77,26 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
   const http = createServer((req: IncomingMessage, res: ServerResponse) => {
     if ((req.url || '').startsWith('/v1/resolve')) {
       resolveDirectory.handle(req, res)
+      return
+    }
+    if ((req.url || '').split('?')[0] === '/v1/hostinfo') {
+      // Read-only discovery advertisement (see RelayOptions.hostInfo). GET/HEAD
+      // only; 404 when no provider is configured or it advertises nothing.
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.statusCode = 405
+        res.end('method not allowed')
+        return
+      }
+      const info = options.hostInfo?.() ?? null
+      if (!info) {
+        res.statusCode = 404
+        res.end('not found')
+        return
+      }
+      res.statusCode = 200
+      res.setHeader('content-type', 'application/json')
+      res.setHeader('cache-control', 'no-store')
+      res.end(req.method === 'HEAD' ? undefined : JSON.stringify(info))
       return
     }
     res.statusCode = 404
