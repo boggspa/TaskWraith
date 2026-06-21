@@ -336,6 +336,7 @@ export function RunRailPanel({
                     <span title={`Git branch: ${row.branchLabel}`}>{row.branchLabel}</span>
                   )}
                   <span>{row.executionLabel}</span>
+                  {row.previewUrl && <span title={row.previewUrl}>preview detected</span>}
                   <span title={row.cwd}>{row.cwd.split(/[\\/]/).pop() || row.cwd}</span>
                   {row.pid && <span>pid {row.pid}</span>}
                   {row.duration && <span>{row.duration}</span>}
@@ -347,6 +348,16 @@ export function RunRailPanel({
                 )}
                 {row.lastError && <div className="run-rail-error">{row.lastError}</div>}
                 <div className="run-rail-actions">
+                  {row.previewUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (row.previewUrl) void window.api.openExternalOrPath(row.previewUrl)
+                      }}
+                    >
+                      Open
+                    </button>
+                  )}
                   {row.chatId && (
                     <button type="button" onClick={() => onOpenThread(row.chatId)}>
                       Thread

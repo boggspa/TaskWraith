@@ -145,7 +145,8 @@ describe('LaunchManager', () => {
     expect(persisted).toMatchObject({
       status: 'stopped',
       exitCode: 0,
-      outputTail: 'ready on http://localhost:5173\n'
+      outputTail: 'ready on http://localhost:5173\n',
+      detectedUrls: ['http://localhost:5173']
     })
     expect(fixture.untracked).toEqual([4321])
   })

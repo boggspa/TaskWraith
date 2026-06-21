@@ -13,6 +13,7 @@ export interface LaunchAttemptRow {
   workspacePath: string
   workspaceName: string
   branchLabel?: string
+  previewUrl?: string
   command: string
   cwd: string
   pid?: number
@@ -139,6 +140,7 @@ export function buildLaunchAttemptRows(
         workspacePath: attempt.workspacePath,
         workspaceName: basename(attempt.workspacePath),
         branchLabel: branchLabel(attempt),
+        previewUrl: attempt.detectedUrls?.[0],
         command: attempt.commandRaw || attempt.argv.join(' '),
         cwd: attempt.cwd,
         pid: attempt.pid,

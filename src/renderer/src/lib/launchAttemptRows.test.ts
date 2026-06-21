@@ -102,6 +102,7 @@ describe('buildLaunchAttemptRows', () => {
             branch: 'feature/run-button'
           },
           cwd: '/repo/app/packages/web',
+          detectedUrls: ['http://localhost:5173/'],
           outputTail: Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join('\n'),
           outputTruncated: true
         })
@@ -115,6 +116,7 @@ describe('buildLaunchAttemptRows', () => {
       cwd: '/repo/app/packages/web',
       pid: 12345,
       branchLabel: 'feature/run-button',
+      previewUrl: 'http://localhost:5173/',
       executionLabel: 'long-running',
       duration: '1m 5s',
       canStop: true,

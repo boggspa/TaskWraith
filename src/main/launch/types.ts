@@ -38,6 +38,7 @@ export interface LaunchAttempt {
   outputTail: string
   outputTailBytes: number
   outputTruncated: boolean
+  detectedUrls?: string[]
   chatId?: string
   runId?: string
 }

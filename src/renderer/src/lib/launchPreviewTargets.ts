@@ -97,7 +97,12 @@ function targetStateFromAttempt(attempt: LaunchAttempt): LaunchPreviewTargetStat
   return 'stale'
 }
 
+function attemptPreviewUrl(attempt: LaunchAttempt): string | undefined {
+  return attempt.detectedUrls?.[0]
+}
+
 function actionFromAttempt(attempt: LaunchAttempt): LaunchPreviewTargetAction {
+  if (attemptPreviewUrl(attempt)) return 'open'
   return attempt.status === 'starting' || attempt.status === 'running' ? 'stop' : 'disabled'
 }
 
@@ -116,7 +121,8 @@ function buildTargetRow(target: LaunchTarget, attempt?: LaunchAttempt): LaunchPr
       action: actionFromAttempt(attempt),
       state: targetStateFromAttempt(attempt),
       target,
-      attempt
+      attempt,
+      url: attemptPreviewUrl(attempt)
     }
   }
 
@@ -185,7 +191,8 @@ function staleAttemptRow(attempt: LaunchAttempt): LaunchPreviewTarget {
     workspacePath: attempt.workspacePath,
     action: actionFromAttempt(attempt),
     state: targetStateFromAttempt(attempt),
-    attempt
+    attempt,
+    url: attemptPreviewUrl(attempt)
   }
 }
 

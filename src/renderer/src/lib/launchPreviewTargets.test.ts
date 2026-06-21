@@ -101,6 +101,28 @@ describe('buildLaunchPreviewTargets', () => {
     })
   })
 
+  it('opens URLs detected from running launch output', () => {
+    const rows = buildLaunchPreviewTargets(
+      [target({ id: 'dev' })],
+      [
+        attempt({
+          id: 'attempt-active',
+          targetId: 'dev',
+          status: 'running',
+          detectedUrls: ['http://localhost:5173/']
+        })
+      ],
+      '/repo/app'
+    )
+
+    expect(rows[0]).toMatchObject({
+      id: 'attempt:attempt-active',
+      action: 'open',
+      state: 'running',
+      url: 'http://localhost:5173/'
+    })
+  })
+
   it('keeps stale active attempts stop-able when the target disappears', () => {
     const rows = buildLaunchPreviewTargets(
       [target({ id: 'other', label: 'npm run preview' })],

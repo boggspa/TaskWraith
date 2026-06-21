@@ -21,6 +21,7 @@ import type {
 } from './types'
 
 const OUTPUT_TAIL_LIMIT = 32_000
+const DETECTED_URL_LIMIT = 8
 const ACTIVE_STATUSES = new Set<LaunchAttempt['status']>(['starting', 'running', 'stopping'])
 type LaunchListener = (snapshot: LaunchSnapshot) => void
 
@@ -308,10 +309,12 @@ export class LaunchManager {
     const nextTail = `${attempt.outputTail}${text}`
     const outputTruncated = attempt.outputTruncated || nextTail.length > OUTPUT_TAIL_LIMIT
     const outputTail = nextTail.length > OUTPUT_TAIL_LIMIT ? nextTail.slice(-OUTPUT_TAIL_LIMIT) : nextTail
+    const detectedUrls = mergeDetectedUrls(attempt.detectedUrls, detectLaunchUrls(text))
     this.store.update(attemptId, {
       outputTail,
       outputTailBytes: Buffer.byteLength(outputTail, 'utf8'),
       outputTruncated,
+      ...(detectedUrls.length > 0 ? { detectedUrls } : {}),
       updatedAt: this.isoNow()
     })
     this.publishSoon()
@@ -359,4 +362,24 @@ function isTerminal(status: LaunchAttempt['status']): boolean {
 
 function hashTargetSnapshot(target: LaunchTarget): string {
   return createHash('sha256').update(JSON.stringify(target)).digest('hex')
+}
+
+function detectLaunchUrls(text: string): string[] {
+  const matches = text.match(
+    /https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/[^\s'"<]*)?/gi
+  )
+  return matches ? matches.map((url) => url.replace(/[),.;]+$/, '')) : []
+}
+
+function mergeDetectedUrls(existing: string[] | undefined, next: string[]): string[] {
+  if (next.length === 0) return existing || []
+  const seen = new Set<string>()
+  const merged: string[] = []
+  for (const url of [...(existing || []), ...next]) {
+    if (seen.has(url)) continue
+    seen.add(url)
+    merged.push(url)
+    if (merged.length >= DETECTED_URL_LIMIT) break
+  }
+  return merged
 }
