@@ -3,7 +3,9 @@ import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  createWorkspacePathMediaRefs,
   createToolResultMediaRefs,
+  extractMarkdownImagePathCandidates,
   extractMcpImageBlocksFromRawResult,
   extractProviderImageBlocksFromRawEvent,
   sniffImageMime,
@@ -100,6 +102,96 @@ describe('TranscriptMediaService', () => {
     })
 
     expect(blocks).toEqual([{ type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }])
+  })
+
+  it('extracts local markdown image paths while ignoring remote, data, and code-block refs', () => {
+    const candidates = extractMarkdownImagePathCandidates(
+      [
+        '![Preview](./image.png)',
+        '![External](https://example.test/image.png)',
+        '![Data](data:image/png;base64,abc)',
+        '`![Inline](inline.png)`',
+        '```',
+        '![Fenced](fenced.png)',
+        '```',
+        '![Spaced](<folder/image with spaces.png>)'
+      ].join('\n')
+    )
+
+    expect(candidates).toEqual([
+      { alt: 'Preview', path: './image.png' },
+      { alt: 'Spaced', path: 'folder/image with spaces.png' }
+    ])
+  })
+
+  it('creates workspace-path media refs for safe assistant markdown image paths', () => {
+    const workspace = makeTempRoot()
+    const imagePath = path.join(workspace, 'image.png')
+    fs.writeFileSync(imagePath, PNG_BUFFER)
+
+    const refs = createWorkspacePathMediaRefs({
+      messageId: 'msg-1',
+      workspaceId: 'ws-1',
+      workspacePath: workspace,
+      content: 'Here is the output:\n\n![Result](image.png)',
+      thumbnailer: () => ({
+        dataBase64: 'thumb',
+        mimeType: 'image/jpeg',
+        width: 1,
+        height: 1
+      })
+    })
+
+    expect(refs).toHaveLength(1)
+    expect(refs[0]).toMatchObject({
+      kind: 'image',
+      format: 'raster',
+      source: 'workspace_path',
+      name: 'image.png',
+      alt: 'Result',
+      mimeType: 'image/png',
+      path: fs.realpathSync.native(imagePath),
+      workspaceId: 'ws-1',
+      workspaceRelativePath: 'image.png',
+      thumbnail: { dataBase64: 'thumb', mimeType: 'image/jpeg', width: 1, height: 1 },
+      status: 'available'
+    })
+  })
+
+  it('creates non-preview status refs for unsafe or outside markdown image paths', () => {
+    const root = makeTempRoot()
+    const workspace = path.join(root, 'workspace')
+    const outside = path.join(root, 'outside')
+    fs.mkdirSync(workspace)
+    fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(workspace, 'diagram.svg'), '<svg><title>fixture</title></svg>')
+    fs.writeFileSync(path.join(outside, 'secret.png'), PNG_BUFFER)
+
+    const refs = createWorkspacePathMediaRefs({
+      messageId: 'msg-1',
+      workspacePath: workspace,
+      content: ['![Vector](diagram.svg)', '![Outside](../outside/secret.png)'].join('\n'),
+      thumbnailer: () => null
+    })
+
+    expect(refs).toHaveLength(2)
+    expect(refs[0]).toMatchObject({
+      source: 'workspace_path',
+      name: 'diagram.svg',
+      alt: 'Vector',
+      status: 'unsafe_svg',
+      format: 'svg'
+    })
+    expect(refs[0].path).toBeUndefined()
+    expect(refs[0].thumbnail).toBeUndefined()
+    expect(refs[1]).toMatchObject({
+      source: 'workspace_path',
+      name: 'secret.png',
+      alt: 'Outside',
+      status: 'denied'
+    })
+    expect(refs[1].path).toBeUndefined()
+    expect(refs[1].thumbnail).toBeUndefined()
   })
 
   it('creates generated media refs for provider image outputs', () => {

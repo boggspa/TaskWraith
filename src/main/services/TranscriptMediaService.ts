@@ -45,6 +45,17 @@ export interface CreateToolResultMediaRefsOptions {
   maxRefs?: number
 }
 
+export interface CreateWorkspacePathMediaRefsOptions {
+  messageId: string
+  content: string
+  workspaceId?: string
+  workspacePath: string
+  externalPathGrants?: readonly ExternalPathGrant[]
+  thumbnailer?: TranscriptMediaThumbnailer
+  maxBytes?: number
+  maxRefs?: number
+}
+
 export interface WorkspaceImageValidationOptions {
   workspaceId?: string
   workspacePath: string
@@ -63,6 +74,11 @@ export type WorkspaceImageValidationResult =
       sha256: string
     }
   | { ok: false; reason: 'invalid_path' | 'outside_allowed_roots' | 'missing' | 'not_file' | 'too_large' | 'unsupported' | 'unsafe_svg' }
+
+type MarkdownImageCandidate = {
+  alt?: string
+  path: string
+}
 
 function normalizedMimeType(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -226,6 +242,72 @@ function parseJsonObjectLike(value: unknown): unknown {
   }
 }
 
+function blankMarkdownCodeRanges(value: string): string {
+  const chars = value.split('')
+  const lines = value.match(/[^\n]*(?:\n|$)/g) || []
+  let offset = 0
+  let inFence = false
+  for (const line of lines) {
+    if (!line) continue
+    const fenceMatch = line.match(/^\s*(```|~~~)/)
+    if (inFence || fenceMatch) {
+      for (let i = offset; i < offset + line.length; i += 1) chars[i] = ' '
+      if (fenceMatch) inFence = !inFence
+      offset += line.length
+      continue
+    }
+    for (const match of line.matchAll(/`[^`\n]*`/g)) {
+      const start = offset + (match.index ?? 0)
+      for (let i = start; i < start + match[0].length; i += 1) chars[i] = ' '
+    }
+    offset += line.length
+  }
+  return chars.join('')
+}
+
+function markdownDestinationFromRaw(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return ''
+  if (trimmed.startsWith('<')) {
+    const end = trimmed.indexOf('>')
+    return end > 1 ? trimmed.slice(1, end).trim() : ''
+  }
+  const quote = trimmed[0]
+  if (quote === '"' || quote === "'") return ''
+  const match = trimmed.match(/^(\S+)/)
+  return match?.[1]?.trim() || ''
+}
+
+function isLocalMarkdownImagePath(value: string): boolean {
+  if (!value || value.includes('\0')) return false
+  if (/^(https?|data|blob|javascript|mailto):/i.test(value)) return false
+  const scheme = value.match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase()
+  return !scheme || scheme === 'file'
+}
+
+export function extractMarkdownImagePathCandidates(content: string): MarkdownImageCandidate[] {
+  if (!content || !content.includes('![')) return []
+  const scan = blankMarkdownCodeRanges(content)
+  const candidates: MarkdownImageCandidate[] = []
+  const seen = new Set<string>()
+  const imagePattern = /!\[([^\]\n]{0,240})\]\(([^)\n]{1,2048})\)/g
+  let match: RegExpExecArray | null
+  while ((match = imagePattern.exec(scan)) !== null) {
+    const candidatePath = markdownDestinationFromRaw(match[2] || '')
+    if (!isLocalMarkdownImagePath(candidatePath)) continue
+    const key = candidatePath
+    if (seen.has(key)) continue
+    seen.add(key)
+    const alt = (match[1] || '').trim()
+    candidates.push({
+      path: candidatePath,
+      ...(alt ? { alt } : {})
+    })
+    if (candidates.length >= TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE) break
+  }
+  return candidates
+}
+
 export function extractMcpImageBlocksFromRawResult(raw: unknown): McpImageContentBlock[] {
   const parsed = parseJsonObjectLike(raw)
   const blocks: McpImageContentBlock[] = []
@@ -371,6 +453,100 @@ export function createToolResultMediaRefs({
       byteLength: decoded.buffer.length,
       sha256: hash,
       assetId: runId ? `run:${runId}:${sourceSegment}:${hash}` : `${sourceSegment}:${hash}`,
+      thumbnail,
+      status: 'available'
+    })
+  }
+  return refs
+}
+
+function workspaceValidationStatus(
+  reason: Exclude<WorkspaceImageValidationResult, { ok: true }>['reason']
+): TranscriptMediaRef['status'] {
+  switch (reason) {
+    case 'unsafe_svg':
+      return 'unsafe_svg'
+    case 'too_large':
+      return 'too_large'
+    case 'missing':
+    case 'not_file':
+      return 'missing'
+    case 'unsupported':
+      return 'unsupported'
+    default:
+      return 'denied'
+  }
+}
+
+export function createWorkspacePathMediaRefs({
+  messageId,
+  content,
+  workspaceId,
+  workspacePath,
+  externalPathGrants = [],
+  thumbnailer = defaultTranscriptMediaThumbnailer,
+  maxBytes = TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES,
+  maxRefs = TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE
+}: CreateWorkspacePathMediaRefsOptions): TranscriptMediaRef[] {
+  const refs: TranscriptMediaRef[] = []
+  const candidates = extractMarkdownImagePathCandidates(content)
+  for (const candidate of candidates) {
+    if (refs.length >= maxRefs) break
+    const index = refs.length + 1
+    const validation = validateWorkspaceImagePath({
+      workspaceId,
+      workspacePath,
+      candidatePath: candidate.path,
+      externalPathGrants,
+      maxBytes
+    })
+    const fallbackIdHash = sha256Base64Url(Buffer.from(`${candidate.path}:${index}`))
+    const name = path.basename(candidate.path.replace(/\/+$/, '')) || `Image ${index}`
+    if (!validation.ok) {
+      refs.push({
+        id: `${messageId}:workspace-image:${fallbackIdHash.slice(0, 16)}`,
+        kind: 'image',
+        format: validation.reason === 'unsafe_svg' ? 'svg' : 'raster',
+        source: 'workspace_path',
+        name,
+        ...(candidate.alt ? { alt: candidate.alt } : {}),
+        mimeType:
+          validation.reason === 'unsafe_svg' ? 'image/svg+xml' : 'application/octet-stream',
+        status: workspaceValidationStatus(validation.reason)
+      })
+      continue
+    }
+
+    let thumbnail: TranscriptMediaThumbnail | undefined
+    try {
+      const buffer = fs.readFileSync(validation.realPath)
+      thumbnail =
+        thumbnailer({ buffer, mimeType: validation.mimeType, maxEdge: 512 }) ??
+        (isTranscriptThumbnailMime(validation.mimeType) && buffer.length <= 180_000
+          ? {
+              dataBase64: buffer.toString('base64'),
+              mimeType: validation.mimeType
+            }
+          : undefined)
+    } catch {
+      // The file passed validation but disappeared before thumbnailing.
+    }
+
+    refs.push({
+      id: `${messageId}:workspace-image:${validation.sha256.slice(0, 16)}`,
+      kind: 'image',
+      format: 'raster',
+      source: 'workspace_path',
+      name,
+      ...(candidate.alt ? { alt: candidate.alt } : {}),
+      mimeType: validation.mimeType,
+      byteLength: validation.byteLength,
+      sha256: validation.sha256,
+      path: validation.realPath,
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(validation.workspaceRelativePath
+        ? { workspaceRelativePath: validation.workspaceRelativePath }
+        : {}),
       thumbnail,
       status: 'available'
     })

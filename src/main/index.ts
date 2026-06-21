@@ -358,6 +358,7 @@ import {
 } from './TranscriptMarkdownExport'
 import {
   createToolResultMediaRefs,
+  createWorkspacePathMediaRefs,
   extractProviderImageBlocksFromRawEvent
 } from './services/TranscriptMediaService'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
@@ -2916,19 +2917,99 @@ function safeSendToWebContents(
   }
 }
 
-function saveAndBroadcastChat(chat: ChatRecord): void {
-  const previous = AppStore.getChat(chat.appChatId)
-  AppStore.saveChat(chat)
-  broadcastChatUpdated(chat)
-  maybeScheduleCodexNativeGoalSync(previous, chat, 'chat-save')
+function saveAndBroadcastChat(chat: ChatRecord): ChatRecord {
+  const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
+  const previous = AppStore.getChat(normalized.appChatId)
+  AppStore.saveChat(normalized)
+  broadcastChatUpdated(normalized)
+  maybeScheduleCodexNativeGoalSync(previous, normalized, 'chat-save')
   // 1.0.5-PO2 — Notify open workspace popouts that something in
   // their workspace may have changed. The popout debounces a
   // re-fetch on its end; we just need to tell it something
   // happened. Filter on workspacePath so a chat update in a
   // *different* workspace doesn't churn unrelated popouts.
-  if (chat.workspacePath) {
-    broadcastWorkspacePopoutRefresh(chat.workspacePath, 'chat-updated')
+  if (normalized.workspacePath) {
+    broadcastWorkspacePopoutRefresh(normalized.workspacePath, 'chat-updated')
   }
+  return normalized
+}
+
+function providerForTranscriptMessage(chat: ChatRecord, message: ChatMessage): ProviderId | undefined {
+  const metadata = message.metadata || {}
+  const metadataProvider =
+    typeof metadata.subThreadProvider === 'string'
+      ? metadata.subThreadProvider
+      : typeof metadata.guestProvider === 'string'
+        ? metadata.guestProvider
+        : undefined
+  if (metadataProvider) return metadataProvider as ProviderId
+  if (message.runId) {
+    const runProvider = chat.runs?.find((run) => run.runId === message.runId)?.provider
+    if (runProvider) return runProvider
+  }
+  return chat.provider
+}
+
+function normalizeTranscriptMarkdownMediaForChat(chat: ChatRecord): ChatRecord {
+  if (!chat.workspacePath || !Array.isArray(chat.messages) || chat.messages.length === 0) {
+    return chat
+  }
+  const allGrants = normalizeExternalPathGrants(
+    collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+  )
+  let changed = false
+  const messages = chat.messages.map((message) => {
+    if (message.role !== 'assistant' && message.role !== 'system') return message
+    const existingRefs = Array.isArray(message.metadata?.mediaRefs)
+      ? (message.metadata.mediaRefs as TranscriptMediaRef[])
+      : []
+    const managedPrefix = `${message.id}:workspace-image:`
+    const hasManagedRefs = existingRefs.some(
+      (ref) => ref.source === 'workspace_path' && ref.id.startsWith(managedPrefix)
+    )
+    if (!message.content.includes('![') && !hasManagedRefs) return message
+
+    const provider = providerForTranscriptMessage(chat, message)
+    const externalPathGrants = provider
+      ? allGrants.filter((grant) => grant.provider === provider)
+      : allGrants
+    const nextWorkspaceRefs = message.content.includes('![')
+      ? createWorkspacePathMediaRefs({
+          messageId: message.id,
+          content: message.content,
+          workspaceId: chat.workspaceId,
+          workspacePath: chat.workspacePath!,
+          externalPathGrants
+        })
+      : []
+    const preservedRefs = existingRefs.filter(
+      (ref) => !(ref.source === 'workspace_path' && ref.id.startsWith(managedPrefix))
+    )
+    const mediaRefs = mergeTranscriptMediaRefs(preservedRefs, nextWorkspaceRefs)
+    const sameLength = mediaRefs.length === existingRefs.length
+    const sameRefs =
+      sameLength &&
+      mediaRefs.every((ref, index) => {
+        const existing = existingRefs[index]
+        return (
+          existing &&
+          existing.id === ref.id &&
+          existing.status === ref.status &&
+          existing.path === ref.path &&
+          existing.sha256 === ref.sha256
+        )
+      })
+    if (sameRefs) return message
+    changed = true
+    return {
+      ...message,
+      metadata: {
+        ...(message.metadata || {}),
+        mediaRefs
+      }
+    }
+  })
+  return changed ? { ...chat, messages } : chat
 }
 
 const pendingCodexNativeGoalSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -3545,7 +3626,7 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
     runs,
     updatedAt: Date.now()
   }
-  saveAndBroadcastChat(updated)
+  const saved = saveAndBroadcastChat(updated)
   if (final) {
     // The 1s broadcast throttle has NO trailing retry — during a busy run
     // the FINAL snapshot (the one flipping status running→terminal) often
@@ -3554,7 +3635,7 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
     // bypass the throttle.
     bridgeBroadcasterRef?.resetThrottle()
   }
-  pushBridgeRunSnapshot?.(updated)
+  pushBridgeRunSnapshot?.(saved)
   state.flushedOnce = true
   if (final) {
     bridgeRunTranscripts.delete(runId)
@@ -19764,12 +19845,13 @@ if (isGeminiMcpBridgeProcess) {
       return result
     })
     ipcMain.handle('save-chat', (_, chat: ChatRecord) => {
-      const previous = AppStore.getChat(chat.appChatId)
-      chatService.saveChat(chat)
-      broadcastChatPopoutUpdate(chat)
-      maybeScheduleCodexNativeGoalSync(previous, chat, 'renderer-save-chat')
-      broadcastThreadUpdate(chat?.appChatId)
-      const latestRun = chat.runs?.[chat.runs.length - 1]
+      const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
+      const previous = AppStore.getChat(normalized.appChatId)
+      chatService.saveChat(normalized)
+      broadcastChatUpdated(normalized)
+      maybeScheduleCodexNativeGoalSync(previous, normalized, 'renderer-save-chat')
+      broadcastThreadUpdate(normalized?.appChatId)
+      const latestRun = normalized.runs?.[normalized.runs.length - 1]
       const previousRun = previous?.runs?.find((run) => run.runId === latestRun?.runId)
       const runHasDiff = (run: ChatRun | undefined): boolean =>
         Boolean(
@@ -19778,11 +19860,11 @@ if (isGeminiMcpBridgeProcess) {
         )
       if (latestRun?.endedAt && runHasDiff(latestRun) && !runHasDiff(previousRun)) {
         const workspaceId =
-          canonicalRemoteWorkspaceId(chat.workspaceId) ??
-          (!chat.workspaceId || chat.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
+          canonicalRemoteWorkspaceId(normalized.workspaceId) ??
+          (!normalized.workspaceId || normalized.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
         if (workspaceId) {
           bridgeBroadcasterRef?.resetThrottle()
-          pushRemoteThreadSnapshot(chat, workspaceId)
+          pushRemoteThreadSnapshot(normalized, workspaceId)
         }
       }
     })
