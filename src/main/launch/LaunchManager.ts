@@ -26,6 +26,22 @@ const ACTIVE_STATUSES = new Set<LaunchAttempt['status']>(['starting', 'running',
 const RECOVERED_STOPPABLE_STATUSES = new Set<LaunchAttempt['status']>(['interrupted'])
 type LaunchListener = (snapshot: LaunchSnapshot) => void
 
+export type LaunchLifecycleEventType =
+  | 'launch_started'
+  | 'launch_failed'
+  | 'launch_stop_requested'
+  | 'launch_stop_failed'
+  | 'launch_cancelled'
+  | 'launch_stopped'
+  | 'launch_interrupted'
+
+export interface LaunchLifecycleRecord {
+  eventType: LaunchLifecycleEventType
+  attempt: LaunchAttempt
+  summary: string
+  payload?: Record<string, unknown>
+}
+
 export interface LaunchManagerDeps {
   store: LaunchAttemptStore
   platform?: NodeJS.Platform
@@ -50,6 +66,7 @@ export interface LaunchManagerDeps {
   untrackSpawn?: (pid: number) => void
   createKillController?: (pid: number, pgid?: number) => KillController
   killProcess?: (pid: number, pgid?: number) => Promise<KillResult>
+  recordLifecycleEvent?: (event: LaunchLifecycleRecord) => void
   log?: (line: string) => void
 }
 
@@ -73,6 +90,7 @@ export class LaunchManager {
   private readonly untrackSpawn: (pid: number) => void
   private readonly createKillController: (pid: number, pgid?: number) => KillController
   private readonly killProcess: (pid: number, pgid?: number) => Promise<KillResult>
+  private readonly recordLifecycle: (event: LaunchLifecycleRecord) => void
   private readonly log: (line: string) => void
   private readonly listeners = new Set<LaunchListener>()
   private publishTimer: ReturnType<typeof setTimeout> | null = null
@@ -94,8 +112,16 @@ export class LaunchManager {
           : createUnixKillController(pid, pgid))
     this.killProcess =
       deps.killProcess || ((pid, pgid) => escalateKill(this.createKillController(pid, pgid)))
+    this.recordLifecycle = deps.recordLifecycleEvent || (() => {})
     this.log = deps.log || (() => {})
-    this.store.recoverInterrupted(this.isoNow())
+    for (const attempt of this.store.recoverInterrupted(this.isoNow())) {
+      this.recordLifecycleEvent(
+        'launch_interrupted',
+        attempt,
+        `Launch interrupted after restart: ${attempt.targetLabel}`,
+        { reason: attempt.lastError }
+      )
+    }
   }
 
   subscribe(listener: LaunchListener): () => void {
@@ -198,6 +224,12 @@ export class LaunchManager {
         lastError: err instanceof Error ? err.message : String(err)
       })
       this.publishSoon()
+      this.recordLifecycleEvent(
+        'launch_failed',
+        failed || attempt,
+        `Launch failed before start: ${target.label}`,
+        { phase: 'spawn', error: failed?.lastError || (err instanceof Error ? err.message : String(err)) }
+      )
       return { ok: false, attempt: failed || attempt, error: failed?.lastError || 'Launch failed.' }
     }
 
@@ -222,6 +254,12 @@ export class LaunchManager {
       })
     }
     this.attachChild(attempt.id, child)
+    this.recordLifecycleEvent(
+      'launch_started',
+      running || attempt,
+      `Launch started: ${target.label}`,
+      { pid, pgid }
+    )
     this.publishSoon()
     return { ok: true, attempt: running || attempt }
   }
@@ -240,6 +278,12 @@ export class LaunchManager {
         lastError: 'Launch process is no longer owned by this TaskWraith session.'
       })
       this.publishSoon()
+      this.recordLifecycleEvent(
+        'launch_interrupted',
+        interrupted || attempt,
+        `Launch interrupted: ${attempt.targetLabel}`,
+        { reason: interrupted?.lastError || 'missing_pid' }
+      )
       return { ok: false, attempt: interrupted || attempt, error: interrupted?.lastError }
     }
     if (!child && !recoveredStoppable) {
@@ -250,12 +294,24 @@ export class LaunchManager {
         lastError: 'Launch process is no longer owned by this TaskWraith session.'
       })
       this.publishSoon()
+      this.recordLifecycleEvent(
+        'launch_interrupted',
+        interrupted || attempt,
+        `Launch interrupted: ${attempt.targetLabel}`,
+        { reason: interrupted?.lastError || 'missing_child' }
+      )
       return { ok: false, attempt: interrupted || attempt, error: interrupted?.lastError }
     }
     const stopping = this.store.update(attemptId, {
       status: 'stopping',
       updatedAt: this.isoNow()
     })
+    this.recordLifecycleEvent(
+      'launch_stop_requested',
+      stopping || attempt,
+      `Launch stop requested: ${attempt.targetLabel}`,
+      { pid: attempt.pid, pgid: attempt.pgid }
+    )
     const result = await this.killProcess(attempt.pid, attempt.pgid)
     if (!result.ok) {
       const failed = this.store.update(attemptId, {
@@ -264,6 +320,12 @@ export class LaunchManager {
         lastError: 'Failed to stop launch process.'
       })
       this.publishSoon()
+      this.recordLifecycleEvent(
+        'launch_stop_failed',
+        failed || stopping || attempt,
+        `Launch stop failed: ${attempt.targetLabel}`,
+        { pid: attempt.pid, pgid: attempt.pgid }
+      )
       return { ok: false, attempt: failed || stopping || attempt, error: 'Failed to stop launch process.' }
     }
     const cancelled = this.store.update(attemptId, {
@@ -273,6 +335,12 @@ export class LaunchManager {
     })
     if (attempt.pid) this.untrackSpawn(attempt.pid)
     this.activeChildren.delete(attemptId)
+    this.recordLifecycleEvent(
+      'launch_cancelled',
+      cancelled || stopping || attempt,
+      `Launch stopped by user: ${attempt.targetLabel}`,
+      { pid: attempt.pid, pgid: attempt.pgid }
+    )
     this.publishSoon()
     return { ok: true, attempt: cancelled || stopping || attempt }
   }
@@ -290,6 +358,13 @@ export class LaunchManager {
         updatedAt: this.isoNow(),
         lastError: err.message
       })
+      const failed = this.store.get(attemptId)
+      this.recordLifecycleEvent(
+        'launch_failed',
+        failed || attempt,
+        `Launch failed: ${attempt?.targetLabel || attemptId}`,
+        { phase: 'process_error', error: err.message }
+      )
       this.publishSoon()
       this.log(`[LaunchManager] ${attemptId} failed: ${err.message}`)
     })
@@ -312,6 +387,17 @@ export class LaunchManager {
         updatedAt: this.isoNow(),
         ...(status === 'failed' ? { lastError: `Process exited ${exitCode ?? signal ?? 'unknown'}.` } : {})
       })
+      const updated = this.store.get(attemptId)
+      this.recordLifecycleEvent(
+        status === 'failed'
+          ? 'launch_failed'
+          : status === 'cancelled'
+            ? 'launch_cancelled'
+            : 'launch_stopped',
+        updated || attempt,
+        launchTerminalSummary(status, attempt.targetLabel),
+        { exitCode, signal }
+      )
       this.publishSoon()
     })
   }
@@ -368,6 +454,22 @@ export class LaunchManager {
       }
     }, 100)
   }
+
+  private recordLifecycleEvent(
+    eventType: LaunchLifecycleEventType,
+    attempt: LaunchAttempt | null | undefined,
+    summary: string,
+    payload?: Record<string, unknown>
+  ): void {
+    if (!attempt) return
+    try {
+      this.recordLifecycle({ eventType, attempt, summary, payload })
+    } catch (err) {
+      this.log(
+        `[LaunchManager] lifecycle recorder failed: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  }
 }
 
 function isTerminal(status: LaunchAttempt['status']): boolean {
@@ -376,6 +478,12 @@ function isTerminal(status: LaunchAttempt['status']): boolean {
 
 function hashTargetSnapshot(target: LaunchTarget): string {
   return createHash('sha256').update(JSON.stringify(target)).digest('hex')
+}
+
+function launchTerminalSummary(status: LaunchAttempt['status'], label: string): string {
+  if (status === 'failed') return `Launch failed: ${label}`
+  if (status === 'cancelled') return `Launch cancelled: ${label}`
+  return `Launch completed: ${label}`
 }
 
 function detectLaunchUrls(text: string): string[] {

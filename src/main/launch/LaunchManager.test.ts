@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
+import type { KillResult } from '../localServers/killer'
 import type { LaunchTarget } from '../launchTargets/types'
 import { LaunchAttemptStore } from './LaunchAttemptStore'
 import { LaunchManager } from './LaunchManager'
@@ -46,6 +47,7 @@ function managerFixture(storagePath: string, workspacePath: string) {
   const approvals: unknown[] = []
   const tracked: unknown[] = []
   const untracked: number[] = []
+  const lifecycleEvents: unknown[] = []
   const spawnProcess = vi.fn(
     (_command: string, _args: string[], _options: SpawnOptions) => child as unknown as ChildProcess
   )
@@ -53,7 +55,7 @@ function managerFixture(storagePath: string, workspacePath: string) {
     approvals.push(request)
     return true
   })
-  const killProcess = vi.fn(async () => ({ ok: true, escalated: false }))
+  const killProcess = vi.fn(async (): Promise<KillResult> => ({ ok: true, escalated: false }))
   const manager = new LaunchManager({
     store: new LaunchAttemptStore(storagePath),
     platform: 'darwin',
@@ -63,9 +65,21 @@ function managerFixture(storagePath: string, workspacePath: string) {
     createEnv: (extra) => ({ PATH: '/usr/bin', ...extra }),
     trackSpawn: (spawn) => tracked.push(spawn),
     untrackSpawn: (pid) => untracked.push(pid),
-    killProcess
+    killProcess,
+    recordLifecycleEvent: (event) => lifecycleEvents.push(event)
   })
-  return { manager, child, approvals, tracked, untracked, spawnProcess, requestApproval, killProcess, workspacePath }
+  return {
+    manager,
+    child,
+    approvals,
+    tracked,
+    untracked,
+    lifecycleEvents,
+    spawnProcess,
+    requestApproval,
+    killProcess,
+    workspacePath
+  }
 }
 
 describe('LaunchManager', () => {
@@ -148,6 +162,21 @@ describe('LaunchManager', () => {
         branch: 'feature/run-button'
       }
     })
+    expect(fixture.lifecycleEvents).toEqual([
+      expect.objectContaining({
+        eventType: 'launch_started',
+        summary: 'Launch started: npm run dev',
+        attempt: expect.objectContaining({
+          id: persisted.id,
+          status: 'running',
+          pid: 4321
+        }),
+        payload: {
+          pid: 4321,
+          pgid: 4321
+        }
+      })
+    ])
   })
 
   it('persists bounded output and terminal state from the child process', async () => {
@@ -172,6 +201,19 @@ describe('LaunchManager', () => {
       detectedUrls: ['http://localhost:5173']
     })
     expect(fixture.untracked).toEqual([4321])
+    expect(fixture.lifecycleEvents.at(-1)).toMatchObject({
+      eventType: 'launch_stopped',
+      summary: 'Launch completed: npm run dev',
+      attempt: {
+        id: attemptId,
+        status: 'stopped',
+        detectedUrls: ['http://localhost:5173']
+      },
+      payload: {
+        exitCode: 0,
+        signal: null
+      }
+    })
   })
 
   it('rejects renderer-tampered shell targets before approval', async () => {
@@ -236,12 +278,51 @@ describe('LaunchManager', () => {
     expect(stopped.ok).toBe(true)
     expect(stopped.attempt).toMatchObject({ status: 'cancelled' })
     expect(fixture.untracked).toEqual([4321])
+    expect(fixture.lifecycleEvents.slice(-2)).toEqual([
+      expect.objectContaining({
+        eventType: 'launch_stop_requested',
+        attempt: expect.objectContaining({ status: 'stopping' })
+      }),
+      expect.objectContaining({
+        eventType: 'launch_cancelled',
+        summary: 'Launch stopped by user: npm run dev',
+        attempt: expect.objectContaining({ status: 'cancelled' })
+      })
+    ])
+  })
+
+  it('records stop failures in the launch lifecycle audit stream', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
+    const storagePath = await tempFile()
+    const fixture = managerFixture(storagePath, workspacePath)
+    fixture.killProcess.mockResolvedValueOnce({ ok: false, escalated: false })
+    const started = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath)
+    })
+
+    const stopped = await fixture.manager.stopAttempt(started.attempt?.id as string)
+
+    expect(stopped.ok).toBe(false)
+    expect(stopped.attempt).toMatchObject({ status: 'failed' })
+    expect(fixture.lifecycleEvents.slice(-2)).toEqual([
+      expect.objectContaining({
+        eventType: 'launch_stop_requested'
+      }),
+      expect.objectContaining({
+        eventType: 'launch_stop_failed',
+        summary: 'Launch stop failed: npm run dev',
+        attempt: expect.objectContaining({ status: 'failed' })
+      })
+    ])
   })
 
   it('recovers active attempts as interrupted on startup', async () => {
     const storagePath = await tempFile()
     const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
     const store = new LaunchAttemptStore(storagePath)
+    const lifecycleEvents: unknown[] = []
     store.save({
       schemaVersion: 1,
       id: 'attempt-1',
@@ -268,13 +349,24 @@ describe('LaunchManager', () => {
       store,
       now: () => new Date('2026-06-21T12:00:00.000Z'),
       requestApproval: vi.fn(),
-      createEnv: (extra) => extra
+      createEnv: (extra) => extra,
+      recordLifecycleEvent: (event) => lifecycleEvents.push(event)
     })
 
     expect(store.get('attempt-1')).toMatchObject({
       status: 'interrupted',
       endedAt: '2026-06-21T12:00:00.000Z'
     })
+    expect(lifecycleEvents).toEqual([
+      expect.objectContaining({
+        eventType: 'launch_interrupted',
+        summary: 'Launch interrupted after restart: npm run dev',
+        attempt: expect.objectContaining({
+          id: 'attempt-1',
+          status: 'interrupted'
+        })
+      })
+    ])
   })
 
   it('can stop a recovered interrupted attempt through its persisted pid', async () => {

@@ -277,7 +277,7 @@ import {
 } from './UpdateService'
 import { LocalServersService } from './LocalServersService'
 import { LaunchAttemptStore } from './launch/LaunchAttemptStore'
-import { LaunchManager } from './launch/LaunchManager'
+import { LaunchManager, type LaunchLifecycleRecord } from './launch/LaunchManager'
 import { discoverLaunchTargets } from './launchTargets/discovery'
 import { SpawnRegistry } from './localServers/SpawnRegistry'
 import { getNativeCapabilitySnapshot } from './NativeCapabilities'
@@ -4611,6 +4611,45 @@ function recordStartupRecoveryEvents(records: RunRecoveryRecord[]): void {
       payload: record
     })
   }
+}
+
+function appendLaunchLifecycleRunEvent(record: LaunchLifecycleRecord): void {
+  const { attempt, eventType, summary, payload } = record
+  appendDurableRunEvent({
+    runId: attempt.runId || attempt.id,
+    chatId: attempt.chatId,
+    workspaceId: attempt.workspaceId,
+    workspacePath: attempt.workspacePath,
+    provider: attempt.provider,
+    kind: 'lifecycle',
+    phase: 'control',
+    source: 'main',
+    summary,
+    payload: {
+      eventType,
+      attemptId: attempt.id,
+      targetId: attempt.targetId,
+      targetLabel: attempt.targetLabel,
+      targetSource: attempt.targetSource,
+      targetKind: attempt.targetKind,
+      targetSnapshotHash: attempt.targetSnapshotHash,
+      status: attempt.status,
+      pid: attempt.pid,
+      pgid: attempt.pgid,
+      cwd: attempt.cwd,
+      commandRaw: attempt.commandRaw,
+      argv: attempt.argv,
+      git: attempt.git,
+      startedAt: attempt.startedAt,
+      updatedAt: attempt.updatedAt,
+      endedAt: attempt.endedAt,
+      exitCode: attempt.exitCode,
+      signal: attempt.signal,
+      lastError: attempt.lastError,
+      detectedUrls: attempt.detectedUrls,
+      ...payload
+    }
+  })
 }
 
 function approvalRouteContext(provider: ProviderId, route?: AgentRunRoute | null) {
@@ -19302,6 +19341,7 @@ if (isGeminiMcpBridgeProcess) {
       createEnv: createCliEnv,
       trackSpawn: (spawn) => spawnRegistry.track(spawn),
       untrackSpawn: (pid) => spawnRegistry.untrack(pid),
+      recordLifecycleEvent: appendLaunchLifecycleRunEvent,
       log: (line) => console.log(line)
     })
     launchManager.subscribe((snapshot) => {
