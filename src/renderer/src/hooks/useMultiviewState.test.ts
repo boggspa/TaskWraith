@@ -4,7 +4,6 @@ import {
   applyAssignToNextPane,
   applyClosePane,
   applyFocusPane,
-  applyOpenCanvasInNewPane,
   applyOpenInNewPane,
   applyResetTrackSizes,
   applyResizeTrack,
@@ -343,39 +342,6 @@ describe('applyOpenInNewPane', () => {
     expect(next.layout).toBe('quad')
     expect(chatIds(next)).toEqual(['a', 'z', 'c', 'd'])
     expect(next.focusedPaneIndex).toBe(0)
-  })
-})
-
-describe('applyOpenCanvasInNewPane', () => {
-  it('grows single -> vertical-2 and puts the canvas in the new pane, keeping focus', () => {
-    const { state: next, index } = applyOpenCanvasInNewPane(
-      state({ layout: 'single', panes: panesOf(['a']), focusedPaneIndex: 0 }),
-      'cv1'
-    )
-    expect(next.layout).toBe('vertical-2')
-    expect(index).toBe(1)
-    expect(next.panes[1].canvasId).toBe('cv1')
-    expect(next.panes[1].chatId).toBeNull()
-    expect(next.focusedPaneIndex).toBe(0)
-    expect(next.panes[0]).toEqual({ id: 't0', chatId: 'a' }) // focused chat pane untouched
-  })
-
-  it('uses an existing spare (chat-less AND canvas-less) cell without growing', () => {
-    const { state: next, index } = applyOpenCanvasInNewPane(
-      state({ layout: 'vertical-2', panes: panesOf(['a', null]), focusedPaneIndex: 0 }),
-      'cv1'
-    )
-    expect(next.layout).toBe('vertical-2')
-    expect(index).toBe(1)
-    expect(next.panes[1].canvasId).toBe('cv1')
-  })
-
-  it('never targets the focused pane', () => {
-    const { index } = applyOpenCanvasInNewPane(
-      state({ layout: 'vertical-2', panes: panesOf([null, null]), focusedPaneIndex: 0 }),
-      'cv1'
-    )
-    expect(index).toBe(1)
   })
 })
 

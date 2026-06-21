@@ -1,11 +1,11 @@
-// Composer telemetry-row button that opens a live-embedded web Canvas in a
-// multiview pane (the one-click entry point — vs. splitting the view + the
-// empty-pane launcher, or asking an agent to canvas_open). It mirrors the other
-// footer icons (Multiview / Screen Watch / Goal): a bare icon-only trigger
-// (composer-canvas-trigger) with a hover/focus hint pill (composer-hint-pill +
-// data-hint-label), and a portaled URL popover (so the composer-surface's
-// overflow:hidden can't clip it). On submit the host opens the canvas + places it
-// in a new pane (window.api.canvas.openEmbedded -> multiview.openCanvasInNewPane).
+// Composer telemetry-row button that opens a web Canvas in a standalone floating
+// window (the one-click entry point — vs. the multiview empty-pane launcher, or
+// asking an agent to canvas_open). It mirrors the other footer icons (Multiview /
+// Screen Watch / Goal): a bare icon-only trigger (composer-canvas-trigger) with a
+// hover/focus hint pill (composer-hint-pill + data-hint-label), and a portaled URL
+// popover (so the composer-surface's overflow:hidden can't clip it). On submit the
+// host opens the canvas as a movable/closable window (window.api.canvas.openWindow)
+// — self-contained, with no in-pane DOM-overlay positioning to get wrong.
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'

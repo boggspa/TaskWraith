@@ -407,34 +407,6 @@ export function applyOpenInNewPane(
 }
 
 /**
- * Open a live-embedded CANVAS in a NON-focused pane WITHOUT moving focus — the
- * composer "Open web canvas" button. Grows the layout by one pane when there is no
- * spare (chat-less AND canvas-less) non-focused cell; once at quad, overwrites a
- * non-focused cell. The focused chat pane is never disturbed. Returns the target
- * pane index so the caller can wire the embed there.
- */
-export function applyOpenCanvasInNewPane(
-  state: MultiviewCoreState,
-  canvasId: string
-): { state: MultiviewCoreState; index: number } {
-  let next = state
-  const hasSpare = next.panes.some(
-    (pane, i) => i !== next.focusedPaneIndex && pane.chatId == null && pane.canvasId == null
-  )
-  if (!hasSpare) {
-    const grown = UPGRADE_LAYOUT[next.layout]
-    if (grown !== next.layout) next = applySetLayout(next, grown)
-  }
-  let target = next.panes.findIndex(
-    (pane, i) => i !== next.focusedPaneIndex && pane.chatId == null && pane.canvasId == null
-  )
-  if (target < 0) target = next.panes.findIndex((_, i) => i !== next.focusedPaneIndex)
-  if (target < 0) target = next.focusedPaneIndex
-  next = applySetPaneCanvas(next, target, canvasId)
-  return { state: next, index: target }
-}
-
-/**
  * Set a pane's FX override flag, keyed by STABLE pane id. A missing entry/field
  * means "follow the app-global flag", so callers pass the next EFFECTIVE value
  * (e.g. `!effectiveSky`) so the first toggle visibly flips regardless of where
@@ -638,8 +610,6 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   assignToNextPane: (chatId: string) => number
   /** Open a chat in a non-focused pane (grows the layout if needed); keeps focus. */
   openInNewPane: (chatId: string, outgoingFocusedChatId?: string | null) => void
-  /** Open a live-embedded canvas in a new/spare non-focused pane; returns its index. */
-  openCanvasInNewPane: (canvasId: string) => number
   /** Drag a gutter: move `deltaPx` between two adjacent tracks (clamped at min). */
   resizeTrack: (args: ApplyResizeTrackArgs) => void
   /** Double-click a gutter: reset a layout's fractions to the spec defaults. */
@@ -716,12 +686,6 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     },
     []
   )
-  const openCanvasInNewPane = useCallback((canvasId: string) => {
-    const result = applyOpenCanvasInNewPane(stateRef.current, canvasId)
-    stateRef.current = result.state
-    setState(result.state)
-    return result.index
-  }, [])
   const resizeTrack = useCallback((args: ApplyResizeTrackArgs) => {
     setState((s) => applyResizeTrack(s, args))
   }, [])
@@ -776,7 +740,6 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     closePane,
     assignToNextPane,
     openInNewPane,
-    openCanvasInNewPane,
     resizeTrack,
     resetTrackSizes,
     paneFx,
