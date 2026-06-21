@@ -674,6 +674,7 @@ import {
   type OllamaToolExecutionResult
 } from './ollama/OllamaProvider'
 import {
+  chatOllamaToolControlTier,
   effectiveOllamaToolControlTier,
   ollamaToolAllowedInTier,
   ollamaToolNamesForTier,
@@ -11614,7 +11615,17 @@ async function executeOllamaLocalTool(
   request: OllamaToolExecutionRequest
 ): Promise<OllamaToolExecutionResult> {
   const workspacePath = canonicalPath(requireNonEmptyString(request.workspacePath, 'Workspace'))
-  const tier = effectiveOllamaToolControlTier(AppStore.getSettings(), workspacePath)
+  // Per-chat tier: a chat that picked e.g. approved_shell in the composer must be
+  // able to run shell tools even when the GLOBAL default is read_only (and vice
+  // versa — a chat can downgrade). Read the chat's validated tier and fall back
+  // to the global default when absent. This mirrors the run dispatch, which
+  // carries the same effective tier on the payload at compose time.
+  const gateChat = request.appChatId ? AppStore.getChat(request.appChatId) : undefined
+  const tier = effectiveOllamaToolControlTier(
+    AppStore.getSettings(),
+    workspacePath,
+    chatOllamaToolControlTier(gateChat?.providerMetadata)
+  )
   const context: WorkspaceToolContext = {
     scope: 'workspace',
     cwd: workspacePath,
@@ -13783,7 +13794,13 @@ async function executeGeminiMcpTool(
       : approvalPreview.service
   const ollamaTier =
     parentProvider === 'ollama'
-      ? effectiveOllamaToolControlTier(AppStore.getSettings(), context.workspacePath)
+      ? effectiveOllamaToolControlTier(
+          AppStore.getSettings(),
+          context.workspacePath,
+          chatOllamaToolControlTier(
+            context.appChatId ? AppStore.getChat(context.appChatId)?.providerMetadata : undefined
+          )
+        )
       : null
   const ollamaMustPrompt =
     parentProvider === 'ollama' && ollamaToolRequiresModalApproval(toolName, ollamaTier)
@@ -18348,7 +18365,8 @@ if (isGeminiMcpBridgeProcess) {
               ? {
                   ollamaToolControlTier: effectiveOllamaToolControlTier(
                     AppStore.getSettings(),
-                    workspaceRecord?.path ?? globalRunCwd()
+                    workspaceRecord?.path ?? globalRunCwd(),
+                    chatOllamaToolControlTier(chat.providerMetadata)
                   ),
                   ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
                 }

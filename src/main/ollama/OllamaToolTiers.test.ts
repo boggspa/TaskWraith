@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AppSettings } from '../store/types'
 import {
   canonicalizeOllamaWorkspacePath,
+  chatOllamaToolControlTier,
   effectiveOllamaToolControlTier,
   isOllamaToolControlTier,
   ollamaProviderParityWorkspaceGranted,
@@ -143,6 +144,46 @@ describe('isOllamaToolControlTier', () => {
     for (const v of ['', 'bogus', null, undefined, 5, {}, 'plan']) {
       expect(isOllamaToolControlTier(v)).toBe(false)
     }
+  })
+})
+
+describe('chatOllamaToolControlTier (mid-run gate reader)', () => {
+  it('returns the per-chat tier when providerMetadata holds a valid tier', () => {
+    expect(chatOllamaToolControlTier({ ollamaToolControlTier: 'approved_shell' })).toBe(
+      'approved_shell'
+    )
+    expect(chatOllamaToolControlTier({ ollamaToolControlTier: 'provider_parity' })).toBe(
+      'provider_parity'
+    )
+  })
+
+  it('returns undefined (→ global fallback) for absent, empty, or invalid metadata', () => {
+    expect(chatOllamaToolControlTier(undefined)).toBeUndefined()
+    expect(chatOllamaToolControlTier(null)).toBeUndefined()
+    expect(chatOllamaToolControlTier({})).toBeUndefined()
+    expect(chatOllamaToolControlTier({ ollamaToolControlTier: 'bogus' })).toBeUndefined()
+    expect(chatOllamaToolControlTier({ ollamaToolControlTier: '' })).toBeUndefined()
+    expect(chatOllamaToolControlTier({ ollamaToolControlTier: 5 })).toBeUndefined()
+    // an unrelated metadata key must not be mistaken for the tier
+    expect(chatOllamaToolControlTier({ approvalMode: 'plan' })).toBeUndefined()
+  })
+
+  it('composes with effectiveOllamaToolControlTier — chat tier wins, invalid falls back', () => {
+    const settings = settingsWith('read_only')
+    expect(
+      effectiveOllamaToolControlTier(
+        settings,
+        '/tmp/x',
+        chatOllamaToolControlTier({ ollamaToolControlTier: 'approved_shell' })
+      )
+    ).toBe('approved_shell')
+    expect(
+      effectiveOllamaToolControlTier(
+        settingsWith('approved_edits'),
+        '/tmp/x',
+        chatOllamaToolControlTier({ ollamaToolControlTier: 'bogus' })
+      )
+    ).toBe('approved_edits')
   })
 })
 

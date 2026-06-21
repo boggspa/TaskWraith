@@ -77,6 +77,22 @@ export function isOllamaToolControlTier(value: unknown): value is OllamaToolCont
   )
 }
 
+/**
+ * Read a chat's per-chat Ollama tool-control tier out of its (untyped)
+ * `providerMetadata`, validated. Returns `undefined` when the field is absent or
+ * not one of the four tier ids, so callers fall back to the GLOBAL tier via
+ * `effectiveOllamaToolControlTier` (never a silent read_only). Mirrors the
+ * renderer coalesce in App.tsx `getChatComposerSelection` and the desktop
+ * `ComposerService` read — the single source of truth for "what tier did this
+ * chat pick" used by the mid-run tool gates.
+ */
+export function chatOllamaToolControlTier(
+  providerMetadata: Record<string, unknown> | null | undefined
+): OllamaToolControlTier | undefined {
+  const raw = providerMetadata?.ollamaToolControlTier
+  return isOllamaToolControlTier(raw) ? raw : undefined
+}
+
 export function ollamaToolNamesForTier(
   tier: OllamaToolControlTier | string | undefined | null
 ): OllamaToolName[] {
