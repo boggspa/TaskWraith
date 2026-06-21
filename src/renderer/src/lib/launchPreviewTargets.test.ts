@@ -177,5 +177,11 @@ describe('launchPreviewActionTitle', () => {
         true
       )
     ).toBe('Stop npm run dev')
+    expect(
+      launchPreviewActionTitle(
+        buildLaunchPreviewTargets([target({ blockers: ['Pick a device first.'] })], [], '/repo/app'),
+        true
+      )
+    ).toBe('Pick a device first.')
   })
 })

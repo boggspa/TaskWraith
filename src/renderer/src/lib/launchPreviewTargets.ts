@@ -219,6 +219,7 @@ export function launchPreviewActionTitle(
     if (first.action === 'open' && first.url) return `Open preview at ${first.url}`
     if (first.action === 'start') return `Start ${first.label}`
     if (first.action === 'stop') return `Stop ${first.label}`
+    if (first.action === 'disabled') return first.reason || 'Launch target unavailable'
   }
   return `Choose launch target (${targets.length})`
 }

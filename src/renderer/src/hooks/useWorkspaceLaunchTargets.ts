@@ -36,9 +36,10 @@ export function normalizeLaunchWorkspacePaths(
 export function useWorkspaceLaunchTargets(
   workspacePaths: Array<string | null | undefined>
 ): WorkspaceLaunchTargetState {
+  const workspacePathKey = workspacePathListKey(workspacePaths)
   const normalizedWorkspacePaths = useMemo(
     () => normalizeLaunchWorkspacePaths(workspacePaths),
-    [workspacePathListKey(workspacePaths)]
+    [workspacePathKey]
   )
   const workspacePathsRef = useRef(normalizedWorkspacePaths)
   const requestSeqRef = useRef(0)

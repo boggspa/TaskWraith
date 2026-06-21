@@ -196,7 +196,8 @@ import { useExternalPathRepoMetadata } from './hooks/useExternalPathRepoMetadata
 import { useUpdateStatus } from './hooks/useUpdateStatus'
 import { useHostWeather } from './hooks/useHostWeather'
 import { useAppVersion } from './hooks/useAppVersion'
-import { useLocalServers } from './hooks/useLocalServers'
+import { useLaunchAttempts } from './hooks/useLaunchAttempts'
+import { useWorkspaceLaunchTargets } from './hooks/useWorkspaceLaunchTargets'
 import {
   filterDispatchExternalPathGrants,
   findExternalPathGrantGaps,
@@ -380,7 +381,11 @@ import {
   type WorkspaceSelectIntent
 } from './lib/workspaceSelection'
 import { buildWelcomeCopy } from './lib/welcomeCopy'
-import { buildPreviewServerTargets, type PreviewServerTarget } from './lib/previewServerTargets'
+import {
+  buildLaunchPreviewTargets,
+  launchPreviewActionTitle,
+  type LaunchPreviewTarget
+} from './lib/launchPreviewTargets'
 import type {
   DiscordContextReadMetadata,
   DiscordContextSelection,
@@ -1318,7 +1323,11 @@ function App(): React.JSX.Element {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([])
   const [workspacesHydrated, setWorkspacesHydrated] = useState(false)
   const [currentWorkspace, setCurrentWorkspace] = useState<WorkspaceRecord | null>(null)
-  const { servers: localPreviewServers } = useLocalServers()
+  const {
+    attempts: launchAttempts,
+    start: startLaunchAttempt,
+    stop: stopLaunchAttempt
+  } = useLaunchAttempts()
   // After a NEW workspace is added via the folder picker, offer to grant it
   // remote (iOS) access in the same breath. Navigation into the workspace is
   // deferred until this modal closes (next()).
@@ -2506,6 +2515,27 @@ function App(): React.JSX.Element {
     : null
   const sidePanelKindLabel = sideChat ? getLinkedChatKindLabel(sideChat) : 'Isolated side chat'
   const sidePanelAgentIdentity = getLinkedChatAgentIdentity(sideChat)
+  const launchWorkspacePaths = useMemo(() => {
+    const paths: Array<string | null | undefined> = []
+    const addChatWorkspace = (chat: ChatRecord | null | undefined): void => {
+      if (!chat || isGlobalChat(chat)) return
+      if (currentWorkspace && currentWorkspace.id === chat.workspaceId) {
+        paths.push(currentWorkspace.path)
+        return
+      }
+      paths.push(chat.workspacePath)
+    }
+    addChatWorkspace(currentChat)
+    addChatWorkspace(sideChat)
+    for (const chatId of multiview.paneChatIds) {
+      if (!chatId) continue
+      addChatWorkspace(
+        chatByIdRef.current.get(chatId) || chats.find((chat) => chat.appChatId === chatId)
+      )
+    }
+    return paths
+  }, [chats, currentChat, currentWorkspace?.id, currentWorkspace?.path, multiview.paneChatIds, sideChat])
+  const launchTargetCache = useWorkspaceLaunchTargets(launchWorkspacePaths)
   const sideChatPresentationForCurrentParent: SidePanelPresentation =
     sideChat && currentChat && sideChat.parentChatId === currentChat.appChatId
       ? sidePanelPresentation
@@ -3460,18 +3490,45 @@ function App(): React.JSX.Element {
       pinned: false
     }
   }
-  const getPreviewTargetsForChat = (chat?: ChatRecord | null): PreviewServerTarget[] => {
+  const getPreviewTargetsForChat = (chat?: ChatRecord | null): LaunchPreviewTarget[] => {
     const workspace = getWorkspaceForChat(chat)
-    return buildPreviewServerTargets(localPreviewServers, workspace?.path || chat?.workspacePath)
+    const workspacePath = workspace?.path || chat?.workspacePath
+    return buildLaunchPreviewTargets(
+      launchTargetCache.targetsForWorkspace(workspacePath),
+      launchAttempts,
+      workspacePath
+    )
   }
-  const openPreviewTarget = (target: PreviewServerTarget): void => {
+  const runPreviewTargetAction = (
+    target: LaunchPreviewTarget,
+    chat?: ChatRecord | null
+  ): void => {
     setPreviewMenuTarget(null)
-    void window.api.openExternalOrPath(target.url)
+    if (target.action === 'open' && target.url) {
+      void window.api.openExternalOrPath(target.url)
+      return
+    }
+    if (target.action === 'start' && target.target) {
+      const workspace = getWorkspaceForChat(chat)
+      const workspacePath = workspace?.path || target.target.workspacePath
+      const provider = chat ? getChatProvider(chat) : currentProvider
+      void startLaunchAttempt({
+        workspacePath,
+        targetId: target.target.id,
+        provider,
+        chatId: chat?.appChatId
+      })
+      return
+    }
+    if (target.action === 'stop' && target.attempt) {
+      void stopLaunchAttempt({ attemptId: target.attempt.id })
+    }
   }
   const renderPreviewTargetMenu = (
-    targets: PreviewServerTarget[],
+    targets: LaunchPreviewTarget[],
     paneIndex: number,
-    chatId: string
+    chatId: string,
+    chat?: ChatRecord | null
   ): ReactNode => {
     if (
       targets.length <= 1 ||
@@ -3490,22 +3547,16 @@ function App(): React.JSX.Element {
             key={target.id}
             type="button"
             role="menuitem"
-            onClick={() => openPreviewTarget(target)}
-            title={target.url}
+            onClick={() => runPreviewTargetAction(target, chat)}
+            disabled={target.action === 'disabled'}
+            title={target.reason || target.url || target.subtitle}
           >
             <span>{target.label}</span>
-            <small>{target.subtitle || target.url}</small>
+            <small>{target.reason || target.subtitle || target.url}</small>
           </button>
         ))}
       </div>
     )
-  }
-  const previewActionTitle = (targets: PreviewServerTarget[], hasWorkspace: boolean): string => {
-    if (!hasWorkspace) return 'Preview unavailable for global chats'
-    if (targets.length === 0) return 'No detected preview target'
-    const firstTarget = targets[0]
-    if (targets.length === 1 && firstTarget) return `Open preview at ${firstTarget.url}`
-    return `Choose preview target (${targets.length})`
   }
   const sideWorkspace = sideChat ? getWorkspaceForChat(sideChat) : null
 
@@ -18049,12 +18100,12 @@ function App(): React.JSX.Element {
       },
       {
         id: 'preview',
-        title: previewActionTitle(viewerPreviewTargets, Boolean(viewerWorkspace)),
+        title: launchPreviewActionTitle(viewerPreviewTargets, Boolean(viewerWorkspace)),
         ariaLabel: 'Open preview',
         icon: <PreviewSymbolIcon />,
         active: viewerPreviewMenuOpen,
         disabled: viewerPreviewTargets.length === 0,
-        menu: renderPreviewTargetMenu(viewerPreviewTargets, viewerPaneIndex, viewerChatId),
+        menu: renderPreviewTargetMenu(viewerPreviewTargets, viewerPaneIndex, viewerChatId, viewerChat),
         menuOpen: viewerPreviewMenuOpen,
         onClick: (paneIndex, chatId) => {
           focusPaneForChromeAction(paneIndex, chatId)
@@ -18062,7 +18113,7 @@ function App(): React.JSX.Element {
           setPopoutMenuOpen(false)
           if (viewerPreviewTargets.length === 1) {
             const target = viewerPreviewTargets[0]
-            if (target) openPreviewTarget(target)
+            if (target) runPreviewTargetAction(target, viewerChat)
             return
           }
           if (viewerPreviewTargets.length > 1) {
@@ -20227,7 +20278,7 @@ function App(): React.JSX.Element {
                   setPopoutMenuOpen(false)
                   if (currentPreviewTargets.length === 1) {
                     const target = currentPreviewTargets[0]
-                    if (target) openPreviewTarget(target)
+                    if (target) runPreviewTargetAction(target, currentChat)
                     return
                   }
                   if (currentPreviewTargets.length > 1) {
@@ -20240,7 +20291,7 @@ function App(): React.JSX.Element {
                     )
                   }
                 }}
-                title={previewActionTitle(currentPreviewTargets, hasWorkspaceContext)}
+                title={launchPreviewActionTitle(currentPreviewTargets, hasWorkspaceContext)}
                 aria-label="Open preview"
                 aria-haspopup={currentPreviewTargets.length > 1 ? 'menu' : undefined}
                 aria-expanded={currentPreviewTargets.length > 1 ? currentPreviewMenuOpen : undefined}
@@ -20253,7 +20304,8 @@ function App(): React.JSX.Element {
                 renderPreviewTargetMenu(
                   currentPreviewTargets,
                   multiview.focusedPaneIndex,
-                  currentChat.appChatId
+                  currentChat.appChatId,
+                  currentChat
                 )}
             </div>
             <button
