@@ -5,6 +5,12 @@ export type KeyCommandId =
   | 'settings'
   | 'close-overlays'
   | 'run-prompt'
+  | 'new-chat'
+  | 'stop-run'
+  | 'copy-transcript'
+  | 'review-current-diff'
+  | 'attach-files'
+  | 'attach-window'
   | 'toggle-sidebar'
   | 'toggle-inspector'
   | 'toggle-file-editor'
@@ -12,7 +18,7 @@ export type KeyCommandId =
   | 'open-file-editor-window'
   | 'popout-chat-window'
 
-export type KeyCommandGroup = 'Global' | 'Panels' | 'Windows'
+export type KeyCommandGroup = 'Global' | 'Chat' | 'Composer' | 'Actions' | 'Panels' | 'Windows'
 
 export type KeyCommandBinding = Exclude<
   NonNullable<AppSettings['keyCommandBindings']>[string],
@@ -25,7 +31,7 @@ export type KeyCommandDefinition = {
   group: KeyCommandGroup
   command: string
   description: string
-  defaultBinding: KeyCommandBinding
+  defaultBinding: KeyCommandBinding | null
   allowWhenEditable?: boolean
 }
 
@@ -48,7 +54,14 @@ const MODIFIER_KEYS = new Set([
   'SymbolLock'
 ])
 
-export const KEY_COMMAND_GROUPS: KeyCommandGroup[] = ['Global', 'Panels', 'Windows']
+export const KEY_COMMAND_GROUPS: KeyCommandGroup[] = [
+  'Global',
+  'Chat',
+  'Composer',
+  'Actions',
+  'Panels',
+  'Windows'
+]
 
 export const KEY_COMMAND_DEFINITIONS: KeyCommandDefinition[] = [
   {
@@ -82,6 +95,52 @@ export const KEY_COMMAND_DEFINITIONS: KeyCommandDefinition[] = [
     description: 'Submit the current composer prompt even when focus is inside the composer.',
     defaultBinding: { key: 'Enter', modifiers: [PRIMARY_MODIFIER] },
     allowWhenEditable: true
+  },
+  {
+    id: 'new-chat',
+    group: 'Chat',
+    command: 'New chat',
+    description: 'Create a new chat in the current workspace, or a global chat when no workspace is active.',
+    defaultBinding: { key: 'N', modifiers: [PRIMARY_MODIFIER] },
+    allowWhenEditable: true
+  },
+  {
+    id: 'stop-run',
+    group: 'Chat',
+    command: 'Stop current run',
+    description: 'Cancel the current chat run when that chat has an active task.',
+    defaultBinding: { key: '.', modifiers: [PRIMARY_MODIFIER] },
+    allowWhenEditable: true
+  },
+  {
+    id: 'copy-transcript',
+    group: 'Chat',
+    command: 'Copy transcript',
+    description: 'Copy the current chat transcript as Markdown.',
+    defaultBinding: null
+  },
+  {
+    id: 'attach-files',
+    group: 'Composer',
+    command: 'Attach files',
+    description: 'Open the file picker for composer attachments.',
+    defaultBinding: null,
+    allowWhenEditable: true
+  },
+  {
+    id: 'attach-window',
+    group: 'Composer',
+    command: 'Attach window',
+    description: 'Pick a window for Screen Watch / attached-window context.',
+    defaultBinding: null,
+    allowWhenEditable: true
+  },
+  {
+    id: 'review-current-diff',
+    group: 'Actions',
+    command: 'Review current diff',
+    description: 'Open Diff Studio and start a review of the current workspace diff.',
+    defaultBinding: null
   },
   {
     id: 'toggle-sidebar',

@@ -5340,7 +5340,7 @@ export function SettingsPanel({
                 <article className="settings-key-commands-summary-card">
                   <span>Command groups</span>
                   <strong>{KEY_COMMAND_GROUPS.length}</strong>
-                  <small>global, panels, windows</small>
+                  <small>{KEY_COMMAND_GROUPS.map((group) => group.toLowerCase()).join(', ')}</small>
                 </article>
                 <article className="settings-key-commands-summary-card">
                   <span>Visible now</span>

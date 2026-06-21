@@ -13948,24 +13948,95 @@ function App(): React.JSX.Element {
     [currentChat?.appChatId, isChatPopoutWindow, prompt]
   )
 
+  const createNewChatFromKeyboard = (): boolean => {
+    if (isChatPopoutWindow) return false
+    const workspace =
+      currentWorkspace ||
+      (currentChat?.scope === 'workspace' ? getWorkspaceForChat(currentChat) : null)
+    if (workspace?.id && workspace.path) {
+      void handleNewChat(workspace.id, workspace.path)
+    } else {
+      void handleNewGlobalChat()
+    }
+    return true
+  }
+
+  const stopCurrentRunFromKeyboard = (): boolean => {
+    const chatId = currentChat?.appChatId
+    const ensembleRoundRunning = currentChat?.ensemble?.activeRound?.status === 'running'
+    if (!chatId || (!isChatBusy(chatId) && !ensembleRoundRunning)) return false
+    void handleCancel()
+    return true
+  }
+
+  const copyCurrentTranscriptFromKeyboard = (): boolean => {
+    if (!currentChat?.appChatId) return false
+    void handleCopyCurrentTranscript()
+    return true
+  }
+
+  const pickImagesFromKeyboard = (): boolean => {
+    if (!currentChat?.appChatId) return false
+    void handlePickImages()
+    return true
+  }
+
+  const attachWindowFromKeyboard = (): boolean => {
+    if (!currentChat?.appChatId || isAttachingWindow) return false
+    void handleAttachWindow()
+    return true
+  }
+
+  const reviewCurrentDiffFromKeyboard = (): boolean => {
+    if (!currentWorkspace || !currentChat || isPreparingDiffReview) return false
+    void handleReviewCurrentDiff()
+    return true
+  }
+
+  const openWorkspacePopoutWindowFromKeyboard = (
+    kind: 'file-editor' | 'diff-studio'
+  ): boolean => {
+    if (!currentWorkspacePopoutPath) return false
+    openWorkspacePopoutWindow(kind)
+    return true
+  }
+
+  const openChatPopoutWindowFromKeyboard = (): boolean => {
+    if (!currentChat?.appChatId) return false
+    openChatPopoutWindow()
+    return true
+  }
+
   const keyboardActionsRef = useRef({
+    attachWindowFromKeyboard,
     clearImagePermissions,
+    copyCurrentTranscriptFromKeyboard,
+    createNewChatFromKeyboard,
     handleRun,
-    openChatPopoutWindow,
-    openWorkspacePopoutWindow,
+    openChatPopoutWindowFromKeyboard,
+    openWorkspacePopoutWindowFromKeyboard,
+    pickImagesFromKeyboard,
     rememberCurrentChatComposerSelection,
+    reviewCurrentDiffFromKeyboard,
     setCommandPaletteQuery,
     setIsCommandPaletteOpen,
+    stopCurrentRunFromKeyboard,
     syncPersistentModelSelection
   })
   keyboardActionsRef.current = {
+    attachWindowFromKeyboard,
     clearImagePermissions,
+    copyCurrentTranscriptFromKeyboard,
+    createNewChatFromKeyboard,
     handleRun,
-    openChatPopoutWindow,
-    openWorkspacePopoutWindow,
+    openChatPopoutWindowFromKeyboard,
+    openWorkspacePopoutWindowFromKeyboard,
+    pickImagesFromKeyboard,
     rememberCurrentChatComposerSelection,
+    reviewCurrentDiffFromKeyboard,
     setCommandPaletteQuery,
     setIsCommandPaletteOpen,
+    stopCurrentRunFromKeyboard,
     syncPersistentModelSelection
   }
 
@@ -13988,20 +14059,20 @@ function App(): React.JSX.Element {
         return
       }
 
-      const runKeyCommand = (commandId: KeyCommandId): void => {
+      const runKeyCommand = (commandId: KeyCommandId): boolean => {
         if (commandId === 'close-overlays') {
           if (isCommandPaletteOpen) {
             keyboardActions.setIsCommandPaletteOpen(false)
             keyboardActions.setCommandPaletteQuery('')
-            return
+            return true
           }
           if (showSettings) {
             setShowSettings(false)
-            return
+            return true
           }
           if (permissionRequestPaths.length > 0) {
             keyboardActions.clearImagePermissions()
-            return
+            return true
           }
           if (selectedModelType === 'custom') {
             setCustomModel('')
@@ -14013,59 +14084,78 @@ function App(): React.JSX.Element {
             if (currentProvider === 'gemini') {
               keyboardActions.syncPersistentModelSelection(lastNonCustomModelType)
             }
+            return true
           }
-          return
+          return false
         }
         if (commandId === 'run-prompt') {
           keyboardActions.handleRun()
-          return
+          return true
         }
         if (commandId === 'command-palette') {
           keyboardActions.setIsCommandPaletteOpen(true)
-          return
+          return true
         }
         if (commandId === 'settings') {
-          if (isChatPopoutWindow) return
+          if (isChatPopoutWindow) return false
           setShowSettings(true)
-          return
+          return true
+        }
+        if (commandId === 'new-chat') {
+          return keyboardActions.createNewChatFromKeyboard()
+        }
+        if (commandId === 'stop-run') {
+          return keyboardActions.stopCurrentRunFromKeyboard()
+        }
+        if (commandId === 'copy-transcript') {
+          return keyboardActions.copyCurrentTranscriptFromKeyboard()
+        }
+        if (commandId === 'attach-files') {
+          return keyboardActions.pickImagesFromKeyboard()
+        }
+        if (commandId === 'attach-window') {
+          return keyboardActions.attachWindowFromKeyboard()
+        }
+        if (commandId === 'review-current-diff') {
+          return keyboardActions.reviewCurrentDiffFromKeyboard()
         }
         if (commandId === 'toggle-sidebar') {
-          if (isChatPopoutWindow) return
+          if (isChatPopoutWindow) return false
           setShowWorkspaceSidebar((current) => !current)
-          return
+          return true
         }
         if (commandId === 'toggle-inspector') {
-          if (isChatPopoutWindow) return
+          if (isChatPopoutWindow) return false
           const nextShowInspector = !appearance.showInspector
           appearance.update({ showInspector: nextShowInspector })
           setRightDockTab('inspector')
-          return
+          return true
         }
         if (commandId === 'toggle-file-editor') {
-          if (isChatPopoutWindow) return
-          if (!hasWorkspaceContext) return
+          if (isChatPopoutWindow) return false
+          if (!hasWorkspaceContext) return false
           setShowFileEditor((current) => {
             const nextShowFileEditor = !current
             if (nextShowFileEditor) setRightDockTab('files')
             return nextShowFileEditor
           })
-          return
+          return true
         }
         if (commandId === 'open-diff-studio-window') {
-          keyboardActions.openWorkspacePopoutWindow('diff-studio')
-          return
+          return keyboardActions.openWorkspacePopoutWindowFromKeyboard('diff-studio')
         }
         if (commandId === 'open-file-editor-window') {
-          keyboardActions.openWorkspacePopoutWindow('file-editor')
-          return
+          return keyboardActions.openWorkspacePopoutWindowFromKeyboard('file-editor')
         }
         if (commandId === 'popout-chat-window') {
-          keyboardActions.openChatPopoutWindow()
+          return keyboardActions.openChatPopoutWindowFromKeyboard()
         }
+        return false
       }
 
-      event.preventDefault()
-      runKeyCommand(command.id)
+      if (runKeyCommand(command.id)) {
+        event.preventDefault()
+      }
     }
 
     window.addEventListener('keydown', handleAppKeyDown)
