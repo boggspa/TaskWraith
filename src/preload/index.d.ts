@@ -570,12 +570,16 @@ declare global {
         openEmbedded: (args: {
           url: string
           originAllowlist?: string[]
-        }) => Promise<{
-          canvasId: string
-          url: string
-          title: string
-          viewport: { width: number; height: number }
-        }>
+        }) => Promise<
+          | {
+              ok: true
+              canvasId: string
+              url: string
+              title: string
+              viewport: { width: number; height: number }
+            }
+          | { ok: false; error: string }
+        >
         setBounds: (
           canvasId: string,
           rect: { x: number; y: number; width: number; height: number }

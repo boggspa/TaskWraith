@@ -4464,13 +4464,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  composerStyle={appearance.composerStyle}
 	                />
 	                <CanvasComposerButton
-	                  onOpenCanvas={(url) => {
-	                    // Open a live-embedded web Canvas in a new multiview pane;
-	                    // the driver still enforces the SSRF policy on the url.
-	                    void window.api.canvas
-	                      ?.openEmbedded({ url })
-	                      .then((opened) => multiview.openCanvasInNewPane(opened.canvasId))
-	                      .catch(() => {})
+	                  onCanvasOpened={(canvasId) => {
+	                    // The button does the SSRF-guarded openEmbedded + shows any
+	                    // load error inline; here we just place the opened canvas in
+	                    // a new multiview pane.
+	                    void multiview.openCanvasInNewPane(canvasId)
 	                  }}
 	                />
 	                {/* 1.0.5-AR12c — Workspace switcher in its new home.

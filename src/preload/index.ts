@@ -331,12 +331,16 @@ const api = {
     openEmbedded: (args: {
       url: string
       originAllowlist?: string[]
-    }): Promise<{
-      canvasId: string
-      url: string
-      title: string
-      viewport: { width: number; height: number }
-    }> => ipcRenderer.invoke('canvas:open-embedded', args),
+    }): Promise<
+      | {
+          ok: true
+          canvasId: string
+          url: string
+          title: string
+          viewport: { width: number; height: number }
+        }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('canvas:open-embedded', args),
     setBounds: (
       canvasId: string,
       rect: { x: number; y: number; width: number; height: number }

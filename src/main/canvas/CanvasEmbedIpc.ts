@@ -19,20 +19,31 @@ export function registerCanvasEmbedIpc(ipcMain: IpcMain, deps: CanvasEmbedIpcDep
   ipcMain.handle(
     'canvas:open-embedded',
     async (_e, args: { url?: string; originAllowlist?: string[] } | undefined) => {
-      const opened = await deps.controller.open(
-        {
-          driver: 'web',
-          url: args?.url,
-          originAllowlist: Array.isArray(args?.originAllowlist) ? args.originAllowlist : undefined,
-          embed: true
-        },
-        {}
-      )
-      return {
-        canvasId: opened.canvasId,
-        url: opened.url,
-        title: opened.title,
-        viewport: opened.viewport
+      // A bad/unreachable url (e.g. no dev server) is a normal outcome, NOT an
+      // exception — return it as a result so ipcMain doesn't log an unhandled
+      // handler rejection and the renderer can surface it. CanvasService already
+      // tears the half-opened view down on a failed navigation.
+      try {
+        const opened = await deps.controller.open(
+          {
+            driver: 'web',
+            url: args?.url,
+            originAllowlist: Array.isArray(args?.originAllowlist)
+              ? args.originAllowlist
+              : undefined,
+            embed: true
+          },
+          {}
+        )
+        return {
+          ok: true as const,
+          canvasId: opened.canvasId,
+          url: opened.url,
+          title: opened.title,
+          viewport: opened.viewport
+        }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
       }
     }
   )

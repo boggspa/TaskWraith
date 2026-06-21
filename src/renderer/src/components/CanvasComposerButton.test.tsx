@@ -4,7 +4,7 @@ import { CanvasComposerButton } from './CanvasComposerButton'
 
 describe('CanvasComposerButton (static render)', () => {
   it('renders a bare hint-pill trigger consistent with the other footer icons', () => {
-    const html = renderToStaticMarkup(<CanvasComposerButton onOpenCanvas={() => {}} />)
+    const html = renderToStaticMarkup(<CanvasComposerButton onCanvasOpened={() => {}} />)
     expect(html).toContain('aria-label="Open a web canvas"')
     // Same affordances as Multiview/Goal: bare trigger + hover hint pill.
     expect(html).toContain('composer-canvas-trigger')
@@ -18,7 +18,7 @@ describe('CanvasComposerButton (static render)', () => {
   })
 
   it('reflects the disabled prop on the trigger', () => {
-    const html = renderToStaticMarkup(<CanvasComposerButton onOpenCanvas={() => {}} disabled />)
+    const html = renderToStaticMarkup(<CanvasComposerButton onCanvasOpened={() => {}} disabled />)
     expect(html).toContain('disabled')
   })
 })

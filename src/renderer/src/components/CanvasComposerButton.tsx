@@ -11,8 +11,19 @@ import { createPortal } from 'react-dom'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 
 export interface CanvasComposerButtonProps {
-  onOpenCanvas: (url: string) => void
+  /** Called with the new canvasId once the embed has loaded; the host places it
+   *  in a pane (multiview.openCanvasInNewPane). */
+  onCanvasOpened: (canvasId: string) => void
   disabled?: boolean
+}
+
+/** A user-facing hint for the common embed failures (no server / bad url). */
+function friendlyCanvasError(raw: string | undefined): string {
+  const msg = raw || 'Could not open the canvas.'
+  if (/CONNECTION_REFUSED|ERR_|NAME_NOT_RESOLVED|timed out/i.test(msg)) {
+    return "Couldn't load that URL — is a dev server running there?"
+  }
+  return msg
 }
 
 function CanvasGlyph() {
@@ -24,11 +35,36 @@ function CanvasGlyph() {
   )
 }
 
-export function CanvasComposerButton({ onOpenCanvas, disabled }: CanvasComposerButtonProps) {
+export function CanvasComposerButton({ onCanvasOpened, disabled }: CanvasComposerButtonProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  // Clear any stale error when the popover closes, so reopening starts fresh.
+  useEffect(() => {
+    if (!open) setError(null)
+  }, [open])
+
+  const handleOpen = async (url: string): Promise<void> => {
+    setError(null)
+    setBusy(true)
+    try {
+      const result = await window.api.canvas?.openEmbedded({ url })
+      if (result?.ok) {
+        onCanvasOpened(result.canvasId)
+        setOpen(false)
+      } else {
+        setError(friendlyCanvasError(result?.error))
+      }
+    } catch (err) {
+      setError(friendlyCanvasError(err instanceof Error ? err.message : String(err)))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   // Anchor the popover above the trigger (mirrors ComposerPlusPicker), clamped
   // into the viewport so it never overflows at narrow widths / in split panes.
@@ -93,12 +129,23 @@ export function CanvasComposerButton({ onOpenCanvas, disabled }: CanvasComposerB
             <div style={{ font: '11px/1.4 system-ui, sans-serif', opacity: 0.7, marginBottom: 6 }}>
               Open a running app (e.g. a dev server) in a Canvas pane
             </div>
-            <CanvasPaneLauncher
-              onOpen={(url) => {
-                onOpenCanvas(url)
-                setOpen(false)
-              }}
-            />
+            <CanvasPaneLauncher onOpen={(url) => void handleOpen(url)} />
+            {error ? (
+              <div
+                role="alert"
+                style={{
+                  marginTop: 6,
+                  font: '11px/1.35 system-ui, sans-serif',
+                  color: 'var(--status-failed, #e5484d)'
+                }}
+              >
+                {error}
+              </div>
+            ) : busy ? (
+              <div style={{ marginTop: 6, font: '11px/1.35 system-ui, sans-serif', opacity: 0.6 }}>
+                Opening…
+              </div>
+            ) : null}
           </div>,
           document.body
         )

@@ -52,6 +52,7 @@ describe('registerCanvasEmbedIpc', () => {
     registerCanvasEmbedIpc(ipc.ipcMain, deps)
     const result = await ipc.invoke('canvas:open-embedded', { url: 'http://localhost:3000' })
     expect(result).toEqual({
+      ok: true,
       canvasId: 'c1',
       url: 'http://localhost:3000/',
       title: 'T',
@@ -59,6 +60,21 @@ describe('registerCanvasEmbedIpc', () => {
     })
     const openCall = deps.calls.find((c) => c[0] === 'open')!
     expect(openCall[1][0]).toMatchObject({ driver: 'web', embed: true, url: 'http://localhost:3000' })
+  })
+
+  it('open-embedded returns { ok:false, error } instead of throwing on a failed open', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    ;(deps.controller as { open: unknown }).open = async () => {
+      throw new Error('Navigation failed (-102): ERR_CONNECTION_REFUSED')
+    }
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    const result = (await ipc.invoke('canvas:open-embedded', { url: 'http://localhost:3000' })) as {
+      ok: boolean
+      error?: string
+    }
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('ERR_CONNECTION_REFUSED')
   })
 
   it('set-bounds / set-visible delegate to the embed controller for a string id', async () => {
