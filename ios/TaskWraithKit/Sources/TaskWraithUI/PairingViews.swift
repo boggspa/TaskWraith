@@ -16,6 +16,17 @@ import TaskWraithKit
     import UIKit
 #endif
 
+/// SF Symbol for a host's OS, so a Windows/Linux machine doesn't wear the Mac
+/// glyph. Falls back to a neutral desktop icon when the platform is unknown
+/// (records paired before the field, or hosts that didn't advertise one).
+func twHostGlyph(_ platform: String?) -> String {
+    switch platform {
+    case "windows": return "pc"
+    case "linux": return "terminal"
+    default: return "desktopcomputer"  // mac + unknown
+    }
+}
+
 struct PairingView: View {
     @ObservedObject var model: RemoteSessionModel
     @State private var pastedCode = ""
@@ -61,7 +72,7 @@ struct PairingView: View {
                 Text("TaskWraith")
                     .font(.largeTitle.bold())
                     .foregroundStyle(TWTheme.textPrimary)
-                Text("Your Mac's coding agents, in your pocket.")
+                Text("Your computer's coding agents, in your pocket.")
                     .font(.subheadline)
                     .foregroundStyle(TWTheme.textSecondary)
                     .multilineTextAlignment(.center)
@@ -95,8 +106,7 @@ struct PairingView: View {
                     Circle()
                         .fill(isActive ? TWTheme.statusSuccess : TWTheme.textMuted)
                         .frame(width: 8, height: 8)
-                    // desktopcomputer for now; Slice 4 makes the glyph per-OS.
-                    Image(systemName: "desktopcomputer")
+                    Image(systemName: twHostGlyph(host.hostPlatform))
                         .font(.title3)
                         .foregroundStyle(isActive ? TWTheme.chroma1 : TWTheme.textSecondary)
                     VStack(alignment: .leading, spacing: 2) {
@@ -135,7 +145,7 @@ struct PairingView: View {
         labeledSection(model.hasStoredPairing ? "Add another host" : "Pair with a host") {
             card {
                 Text(
-                    "In TaskWraith on your Mac, open Settings → Devices, then scan the ghost QR — or paste the pairing code."
+                    "In TaskWraith on the computer you want to pair, open Settings → Devices, then scan the ghost QR — or paste the pairing code."
                 )
                 .font(.footnote)
                 .foregroundStyle(TWTheme.textSecondary)
@@ -216,14 +226,17 @@ struct PairingView: View {
                 }
             }
         case .awaitingMacConfirm(let code):
-            labeledSection("Confirm on your Mac") {
+            labeledSection(
+                model.macDisplayName.isEmpty
+                    ? "Confirm on the host" : "Confirm on \(model.macDisplayName)"
+            ) {
                 card {
                     Text(code)
                         .font(.system(size: 42, weight: .bold, design: .monospaced))
                         .foregroundStyle(TWTheme.chroma3)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 4)
-                    Text("Check this 6-digit code matches the one on your Mac, then confirm there.")
+                    Text("Check this 6-digit code matches the one on your computer, then confirm there.")
                         .font(.footnote)
                         .foregroundStyle(TWTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

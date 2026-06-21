@@ -132,6 +132,9 @@ export interface RemoteBridgeRuntimeOptions {
   advertiseRelayUrls?: string[]
   /** Shown on the iPhone's pairing sheet ("Pair with <macDisplayName>"). */
   macDisplayName: string
+  /** Host OS advertised in the bootstrap — 'mac' | 'windows' | 'linux'. Lets the
+   * phone pick a per-OS glyph + host-generic copy. Optional/additive. */
+  hostPlatform?: string
   identity: KeyPair
   socketFactory: TransportSocketFactory
   appStore: BridgeBroadcasterAppStore
@@ -327,6 +330,7 @@ export class RemoteBridgeRuntime {
         sessionId,
         macIdentityPubKey: b64.encode(client.macIdentityRaw()),
         macDisplayName: this.opts.macDisplayName,
+        hostPlatform: this.opts.hostPlatform,
         expiresAt: Date.now() + windowMs
       }
     }

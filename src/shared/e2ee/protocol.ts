@@ -157,6 +157,11 @@ export interface PairingBootstrapPayload {
   /** base64 raw 32B Ed25519 Mac identity public key. */
   macIdentityPubKey: string
   macDisplayName: string
+  /** Host OS — 'mac' | 'windows' | 'linux'. Additive on v1 (old phones ignore
+   * it); new phones use it to pick a per-OS glyph and host-generic copy so a
+   * Windows/Linux host doesn't read as "your Mac". NOT part of the transcript
+   * hash, so it never affects the 6-digit SAS. */
+  hostPlatform?: string
   /** ms epoch; the pairing window closes after this. */
   expiresAt: number
 }

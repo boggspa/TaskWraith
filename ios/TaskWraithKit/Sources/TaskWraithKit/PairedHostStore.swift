@@ -51,6 +51,11 @@ public struct PairedHostRecord: Codable, Sendable, Equatable, Identifiable {
     /// Human label for the host (e.g. "TaskWraith on studio.local"). Display
     /// only; never used for identity (hosts can collide on display name).
     public let macDisplayName: String
+    /// Host OS — "mac" | "windows" | "linux" — captured at pairing so the glyph
+    /// is right even on trusted reconnect (whose synthesized bootstrap carries
+    /// no platform). Optional: nil on records paired before this field, and on
+    /// hosts that didn't advertise one → callers fall back to a neutral glyph.
+    public let hostPlatform: String?
     /// ISO8601 timestamp of the pairing (optional; absent on migrated legacy
     /// records). Used to order the host list newest-first.
     public let pairedAt: String?
@@ -63,12 +68,14 @@ public struct PairedHostRecord: Codable, Sendable, Equatable, Identifiable {
         macIdentityPubKey: String,
         macDisplayName: String,
         relayUrls: [String]? = nil,
+        hostPlatform: String? = nil,
         pairedAt: String? = nil
     ) {
         self.relayUrl = relayUrl
         self.relayUrls = relayUrls
         self.macIdentityPubKey = macIdentityPubKey
         self.macDisplayName = macDisplayName
+        self.hostPlatform = hostPlatform
         self.pairedAt = pairedAt
     }
 }

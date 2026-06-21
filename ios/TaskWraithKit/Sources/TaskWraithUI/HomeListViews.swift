@@ -157,7 +157,7 @@ struct HomeView: View {
                             }
                         } else {
                             Button("Disconnect", role: .destructive) { model.disconnect() }
-                            Button("Forget this Mac", role: .destructive) { model.forgetPairing() }
+                            Button("Forget this host", role: .destructive) { model.forgetPairing() }
                             Divider()
                             Button("Enter demo mode", systemImage: "play.circle") {
                                 showDemoConfirm = true
@@ -179,7 +179,7 @@ struct HomeView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This disconnects \(model.macDisplayName.isEmpty ? "your Mac" : model.macDisplayName) and shows sample data only. Your chats stay private and won't appear in the demo."
+                "This disconnects \(model.macDisplayName.isEmpty ? "your computer" : model.macDisplayName) and shows sample data only. Your chats stay private and won't appear in the demo."
             )
         }
     }
@@ -188,10 +188,12 @@ struct HomeView: View {
     /// for a single host; wrapped in a Menu switcher when several are paired.
     /// The chevron signals the row is tappable in the multi-host case.
     private func hostIdentityRow(showChevron: Bool) -> some View {
-        HStack(spacing: 8) {
+        let activePlatform = model.pairedHosts
+            .first { $0.macIdentityPubKey == model.selectedHostId }?.hostPlatform
+        return HStack(spacing: 8) {
             Circle().fill(model.isDemo ? TWTheme.textMuted : TWTheme.statusSuccess)
                 .frame(width: 8, height: 8)
-            Image(systemName: "desktopcomputer")
+            Image(systemName: twHostGlyph(activePlatform))
                 .foregroundStyle(TWTheme.textSecondary)
             Text(model.macDisplayName.isEmpty ? "Connected" : model.macDisplayName)
                 .font(.subheadline)
@@ -223,7 +225,7 @@ struct HomeView: View {
                             Label(
                                 host.macDisplayName.isEmpty ? "Host" : host.macDisplayName,
                                 systemImage: host.macIdentityPubKey == model.selectedHostId
-                                    ? "checkmark.circle.fill" : "desktopcomputer")
+                                    ? "checkmark.circle.fill" : twHostGlyph(host.hostPlatform))
                         }
                     }
                 } label: {

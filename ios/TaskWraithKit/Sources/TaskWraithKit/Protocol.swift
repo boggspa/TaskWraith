@@ -156,11 +156,16 @@ public struct PairingBootstrapPayload: Codable, Sendable {
     public var sessionId: String
     public var macIdentityPubKey: String  // base64 raw 32B Ed25519
     public var macDisplayName: String
+    /// Host OS — "mac" | "windows" | "linux". Additive on v1 (absent in old
+    /// payloads → nil); drives a per-OS glyph + host-generic copy. NOT part of
+    /// the transcript hash, so it never affects the 6-digit SAS.
+    public var hostPlatform: String?
     public var expiresAt: Double          // ms epoch
 
     public init(
         v: Int, protocol p: String, relayUrl: String, relayUrls: [String]? = nil,
-        sessionId: String, macIdentityPubKey: String, macDisplayName: String, expiresAt: Double
+        sessionId: String, macIdentityPubKey: String, macDisplayName: String,
+        hostPlatform: String? = nil, expiresAt: Double
     ) {
         self.v = v
         self.protocol = p
@@ -169,6 +174,7 @@ public struct PairingBootstrapPayload: Codable, Sendable {
         self.sessionId = sessionId
         self.macIdentityPubKey = macIdentityPubKey
         self.macDisplayName = macDisplayName
+        self.hostPlatform = hostPlatform
         self.expiresAt = expiresAt
     }
 }

@@ -618,6 +618,9 @@ public final class RemoteSessionModel: ObservableObject {
     /// The bootstrap's full candidate set, persisted into the pairing
     /// record on establish (T70 multi-door reconnects).
     private var lastRelayUrls: [String]?
+    /// The active host's OS ("mac"/"windows"/"linux"), captured from the
+    /// bootstrap (fresh pair) or the record (reconnect), persisted for the glyph.
+    private var lastHostPlatform: String?
 
     private func connect(bootstrap: PairingBootstrapPayload) {
         guard identityReady() else { return }
@@ -643,6 +646,7 @@ public final class RemoteSessionModel: ObservableObject {
         macDisplayName = bootstrap.macDisplayName
         pinnedMacIdentityB64 = bootstrap.macIdentityPubKey
         lastRelayUrls = bootstrap.relayUrls
+        lastHostPlatform = bootstrap.hostPlatform
         phase = .connecting
         connectAttempt += 1
         let attempt = connectAttempt
@@ -740,6 +744,7 @@ public final class RemoteSessionModel: ObservableObject {
         macDisplayName = Self.sanitizedMacName(record.macDisplayName)
         pinnedMacIdentityB64 = record.macIdentityPubKey
         lastRelayUrls = record.relayUrls
+        lastHostPlatform = record.hostPlatform
         relayUrl = record.relayUrl
         phase = .connecting
         connectAttempt += 1
@@ -1526,6 +1531,7 @@ public final class RemoteSessionModel: ObservableObject {
         pinnedMacIdentityB64 = nil
         relayUrl = nil
         lastRelayUrls = nil
+        lastHostPlatform = nil
         disconnect()
         // Security review: forgetting the active host must leave NOTHING
         // readable — disconnect() clears the live lists, but cached snapshots,
@@ -1547,6 +1553,7 @@ public final class RemoteSessionModel: ObservableObject {
         pinnedMacIdentityB64 = nil
         relayUrl = nil
         lastRelayUrls = nil
+        lastHostPlatform = nil
         macDisplayName = ""
         disconnect()
         wipeProjectionCaches()
@@ -1571,6 +1578,7 @@ public final class RemoteSessionModel: ObservableObject {
         pinnedMacIdentityB64 = nil
         relayUrl = nil
         lastRelayUrls = nil
+        lastHostPlatform = nil
         disconnect()  // teardown + .idle + clear live lists
         wipeProjectionCaches()  // clear the outgoing host's cached projection
         pairingStore.setSelectedHostId(id)
@@ -1641,13 +1649,16 @@ public final class RemoteSessionModel: ObservableObject {
         // every reconnect read; never let that (or any transient empty) clobber
         // a good persisted name — fall back to what we already stored.
         let name = macDisplayName.isEmpty ? (existing?.macDisplayName ?? "") : macDisplayName
+        // Prefer the freshly-observed platform; fall back to whatever we stored
+        // (reconnect carries none, and an old host may not advertise one).
+        let hostPlatform = lastHostPlatform ?? existing?.hostPlatform
         pairingStore.upsert(
             PairedHostRecord(
                 relayUrl: relayUrl, macIdentityPubKey: macId, macDisplayName: name,
                 // The full candidate set from the bootstrap (LAN + wss) —
                 // ONE pairing then reconnects from home Wi-Fi or cellular
                 // alike; `relayUrl` holds the door that last worked.
-                relayUrls: lastRelayUrls, pairedAt: pairedAt))
+                relayUrls: lastRelayUrls, hostPlatform: hostPlatform, pairedAt: pairedAt))
         // The host we just connected to is the active one.
         pairingStore.setSelectedHostId(macId)
         refreshPairedHostsPublished()

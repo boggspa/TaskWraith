@@ -2722,7 +2722,7 @@ struct DiffSummaryPanel: View {
                     }
                 }
                 if diff.truncated == true {
-                    Text("More changes on your Mac — open Review changes there for the full diff.")
+                    Text("More changes on your computer — open Review changes there for the full diff.")
                         .font(.caption2)
                         .foregroundStyle(TWTheme.textMuted)
                 }
@@ -4349,7 +4349,7 @@ public struct AppSettingsSheet: View {
                     } label: {
                         Label("Tool Call Theme", systemImage: "wrench.and.screwdriver")
                     }
-                    Text("Mirrors your Mac's Appearance settings where sensible.")
+                    Text("Mirrors your computer's Appearance settings where sensible.")
                         .font(.caption)
                         .foregroundStyle(TWTheme.textMuted)
                 }
@@ -4688,7 +4688,7 @@ public func twFriendlyMessage(_ raw: String) -> String {
         return "This workspace doesn't allow that action from paired devices."
     }
     if lower.contains("did not dispatch") {
-        return "The run couldn't start — check the provider's setup on your Mac."
+        return "The run couldn't start — check the provider's setup on your computer."
     }
     return raw
 }
@@ -4826,7 +4826,7 @@ public struct ConnectionBanner: View {
                 ProgressView()
                     .controlSize(.small)
                     .tint(.white)
-                Text("Reconnecting to your Mac…")
+                Text("Reconnecting…")
                     .font(.footnote.weight(.semibold))
             case .offline(let detail):
                 Image(systemName: "wifi.exclamationmark")
@@ -6110,7 +6110,7 @@ struct MiniThreadView: View {
                     .foregroundStyle(TWTheme.textMuted)
                     .padding(.vertical, 10)
             } else {
-                HydrationTicker("Loading side chat from your Mac…")
+                HydrationTicker("Loading side chat…")
             }
         } else {
             LazyVStack(alignment: .leading, spacing: 6) {
@@ -6256,7 +6256,7 @@ struct UsagePanel: View {
                     Image(systemName: "gauge.with.dots.needle.50percent")
                         .font(.title2)
                         .foregroundStyle(TWTheme.textTertiary)
-                    Text("Usage data arrives from your Mac within a few minutes of connecting.")
+                    Text("Usage data arrives from your computer within a few minutes of connecting.")
                         .font(.footnote)
                         .foregroundStyle(TWTheme.textSecondary)
                         .multilineTextAlignment(.center)

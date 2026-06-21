@@ -17950,6 +17950,17 @@ if (isGeminiMcpBridgeProcess) {
           advertiseRelayUrl,
           advertiseRelayUrls,
           macDisplayName: `${app.getName() || 'TaskWraith'} on ${os.hostname()}`,
+          // Host OS for the phone's per-OS glyph + host-generic copy ("your Mac"
+          // is wrong on a Windows/Linux host). darwin/win32/linux → mac/windows/
+          // linux; anything else is left undefined (phone falls back neutral).
+          hostPlatform:
+            process.platform === 'darwin'
+              ? 'mac'
+              : process.platform === 'win32'
+                ? 'windows'
+                : process.platform === 'linux'
+                  ? 'linux'
+                  : undefined,
           identity,
           socketFactory: wsTransportSocketFactory,
           appStore: AppStore,
