@@ -22,6 +22,7 @@ import type {
 import { collectExternalPathGrantsFromMetadata } from './store/ExternalPathGrants'
 import { isContentlessRemoteDraftChat } from './remote/RemoteDraftChats'
 import { computeMergedTodosByLane, TODO_SOLO_LANE, type TodoStatus } from './TodoList'
+import type { CanvasSessionSummary } from './canvas/canvasTypes'
 
 export type RemoteProjectionKind =
   | 'taskCard'
@@ -101,6 +102,49 @@ export interface RemoteTodoLane {
   items: RemoteTodoItem[]
 }
 
+/**
+ * Read-only projection of an OPEN TaskWraith Canvas preview to the phone (P3). No
+ * pixels — just the metadata the user already sees in the desktop pill (driver +
+ * query-redacted url + title + status + viewport). Phone write-actions are a
+ * later slice; this card is view-only.
+ */
+export interface RemoteCanvasPreview {
+  canvasId: string
+  driver: string
+  url: string
+  title: string
+  status: string
+  viewport: { width: number; height: number }
+}
+
+const REMOTE_CANVAS_URL_MAX = 512
+const REMOTE_CANVAS_TITLE_MAX = 160
+
+function boundCanvasString(value: unknown, max: number): string {
+  const s = typeof value === 'string' ? value : ''
+  return s.length > max ? s.slice(0, max) : s
+}
+
+/** Map live CanvasSessionSummary[] (chat-scoped) to the bounded projection shape. */
+export function buildRemoteCanvasPreviews(
+  summaries: ReadonlyArray<CanvasSessionSummary>
+): RemoteCanvasPreview[] {
+  if (!Array.isArray(summaries)) return []
+  return summaries
+    .filter((s) => s && typeof s.canvasId === 'string' && s.canvasId.length > 0)
+    .map((s) => ({
+      canvasId: s.canvasId,
+      driver: typeof s.driver === 'string' ? s.driver : 'web',
+      url: boundCanvasString(s.url, REMOTE_CANVAS_URL_MAX),
+      title: boundCanvasString(s.title, REMOTE_CANVAS_TITLE_MAX),
+      status: typeof s.status === 'string' ? s.status : 'active',
+      viewport: {
+        width: Math.max(0, Math.round(Number(s.viewport?.width) || 0)),
+        height: Math.max(0, Math.round(Number(s.viewport?.height) || 0))
+      }
+    }))
+}
+
 export interface RemoteProjectionEnvelope<TPayload = unknown> {
   schemaVersion: 1
   envelopeId: string
@@ -174,6 +218,8 @@ export interface RemoteTaskCard {
   /** Per-author working plans (PlanRail). Ensemble chats carry one lane per
    * participant; solo/guest collapse to a single TODO_SOLO_LANE lane. */
   todoLanes?: RemoteTodoLane[]
+  /** Open Canvas previews in this chat (read-only; P3). Omitted when none open. */
+  canvasPreviews?: RemoteCanvasPreview[]
   capabilities?: RemoteTaskCapabilities
   diffSummary?: MobileDiffSummary
   additionalWorkspaces?: RemoteAdditionalWorkspace[]
@@ -455,6 +501,8 @@ export interface BuildRemoteTaskCardOptions {
    * the desktop renders, never re-derived). */
   agentIdentity?: { name: string; accent?: string; slug?: string }
   queuedComposerJobs?: RunQueueJob[]
+  /** Open Canvas sessions scoped to this chat (canvasService.list({chatId})). */
+  openCanvases?: ReadonlyArray<CanvasSessionSummary>
 }
 
 export interface BuildRemoteTaskFeedSnapshotInput {
@@ -819,6 +867,8 @@ export function buildRemoteTaskCard(
   if (activeGoal) card.activeGoal = activeGoal
   const todoLanes = buildRemoteTodoLanes(chat)
   if (todoLanes.length > 0) card.todoLanes = todoLanes
+  const canvasPreviews = buildRemoteCanvasPreviews(options.openCanvases ?? [])
+  if (canvasPreviews.length > 0) card.canvasPreviews = canvasPreviews
   if (options.capabilities) card.capabilities = options.capabilities
   const diffSummary = latestRun
     ? buildMobileDiffSummary(latestRun, {

@@ -3,11 +3,13 @@ import type { ChatRecord, ChatRun, DiffFileSummary, ExternalPathGrant } from './
 import {
   buildMobileDiffSummary,
   buildMobileQuestionCard,
+  buildRemoteCanvasPreviews,
   buildRemoteProjectionEnvelope,
   buildRemoteShellAppearance,
   buildRemoteTaskCard,
   buildRemoteTaskFeedSnapshot
 } from './RemoteTaskProjection'
+import type { CanvasSessionSummary } from './canvas/canvasTypes'
 
 const NOW = Date.UTC(2026, 4, 30, 12, 0, 0)
 const ISO = new Date(NOW).toISOString()
@@ -538,5 +540,56 @@ describe('RemoteTaskProjection', () => {
     ])
     // No todo activities → field omitted entirely (keeps the wire lean).
     expect(buildRemoteTaskCard(chat()).todoLanes).toBeUndefined()
+  })
+})
+
+describe('canvasPreviews (P3 read-only Canvas projection)', () => {
+  const summary = (over: Partial<CanvasSessionSummary> = {}): CanvasSessionSummary => ({
+    canvasId: 'cv1',
+    driver: 'web',
+    url: 'http://localhost:3000/',
+    title: 'Preview',
+    status: 'active',
+    viewport: { width: 1280, height: 800 },
+    createdAt: ISO,
+    updatedAt: ISO,
+    ...over
+  })
+
+  it('maps + bounds CanvasSessionSummary into the projection shape', () => {
+    const longUrl = 'http://localhost:3000/' + 'a'.repeat(600)
+    const out = buildRemoteCanvasPreviews([
+      summary({ url: longUrl, title: 'b'.repeat(300), viewport: { width: 375.6, height: 812.2 } })
+    ])
+    expect(out).toHaveLength(1)
+    expect(out[0].canvasId).toBe('cv1')
+    expect(out[0].driver).toBe('web')
+    expect(out[0].url.length).toBe(512)
+    expect(out[0].title.length).toBe(160)
+    expect(out[0].status).toBe('active')
+    expect(out[0].viewport).toEqual({ width: 376, height: 812 })
+  })
+
+  it('drops entries with no canvasId', () => {
+    expect(buildRemoteCanvasPreviews([summary({ canvasId: '' })])).toEqual([])
+    expect(buildRemoteCanvasPreviews([])).toEqual([])
+  })
+
+  it('attaches openCanvases to the task card, omits the field when none', () => {
+    const card = buildRemoteTaskCard(chat(), {
+      openCanvases: [summary({ canvasId: 'cvA', title: 'Dashboard' })]
+    })
+    expect(card.canvasPreviews).toEqual([
+      {
+        canvasId: 'cvA',
+        driver: 'web',
+        url: 'http://localhost:3000/',
+        title: 'Dashboard',
+        status: 'active',
+        viewport: { width: 1280, height: 800 }
+      }
+    ])
+    // No open canvases → field omitted entirely (keeps the wire lean).
+    expect(buildRemoteTaskCard(chat()).canvasPreviews).toBeUndefined()
   })
 })

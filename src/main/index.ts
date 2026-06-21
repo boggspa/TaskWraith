@@ -18694,7 +18694,9 @@ if (isGeminiMcpBridgeProcess) {
           pendingApprovalCount: approvalCounts.get(chat.appChatId) ?? 0,
           capabilities,
           agentIdentity: remoteAgentIdentityForChat(chat),
-          queuedComposerJobs
+          queuedComposerJobs,
+          // P3: project this chat's OPEN canvas previews (read-only) to the phone.
+          openCanvases: canvasService.list({ chatId: chat.appChatId })
         })
         maybeNotifyRemoteTaskNeedsAttention(taskCard)
         envelopes.push(
