@@ -165,6 +165,10 @@ import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../shared/run
 import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../shared/retiredProviders'
 import { BridgeBroadcaster } from './BridgeBroadcaster'
 import {
+  buildRemoteFirstLaunchState,
+  type RemoteFirstLaunchWorkspaceSummary
+} from './RemoteFirstLaunchState'
+import {
   REMOTE_QUESTION_MAX_ANSWER_CHARS,
   REMOTE_QUESTION_MAX_CONTEXT_CHARS,
   REMOTE_QUESTION_MAX_OPTION_CHARS,
@@ -347,6 +351,8 @@ import {
 import { getExternalUsageCached, buildExternalUsageRollup, prewarmExternalUsageCache } from './ExternalProviderActivity'
 import { buildDailyTokenSeries } from './DailyTokenSeries'
 import { buildRemoteWelcomeDashboardThrottled } from './WelcomeDashboardRemote'
+import type { NormalizedProviderUsageSnapshot } from './ProviderQuotaSnapshots'
+import { summarizeProviderUsage, type ProviderUsageSummary } from './ProviderUsageStatus'
 import {
   canonicalizeExternalPathGrantMetadata,
   coalesceExternalPathGrants,
@@ -888,6 +894,10 @@ const registerRemoteUsageRollupTrigger = (trigger: () => void): void => {
 let remoteModelUsageTrigger: (() => void) | null = null
 const registerRemoteModelUsageTrigger = (trigger: () => void): void => {
   remoteModelUsageTrigger = trigger
+}
+let remoteFirstLaunchStateTrigger: (() => void) | null = null
+const registerRemoteFirstLaunchStateTrigger = (trigger: () => void): void => {
+  remoteFirstLaunchStateTrigger = trigger
 }
 const registerRemoteProviderModelsTrigger = (fn: () => void): void => {
   remoteProviderModelsTrigger = fn
@@ -19050,6 +19060,7 @@ if (isGeminiMcpBridgeProcess) {
             remoteProviderModelsTrigger?.()
             remoteUsageRollupTrigger?.()
             remoteModelUsageTrigger?.()
+            remoteFirstLaunchStateTrigger?.()
             // Rehydrate guard (Codex-diagnosed): the establish-time
             // broadcastSnapshot can fire while the store/allowlist state is
             // still settling after a Mac restart — the phone then accepts an
@@ -19077,6 +19088,7 @@ if (isGeminiMcpBridgeProcess) {
               }
               broadcaster.resetThrottle()
               broadcaster.broadcastSnapshot()
+              remoteFirstLaunchStateTrigger?.()
               console.log('[remote-bridge] post-establish rehydrate snapshot sent')
             }, 1500).unref?.()
           },
@@ -20726,6 +20738,109 @@ if (isGeminiMcpBridgeProcess) {
     registerRemoteModelUsageTrigger(broadcastModelUsageToRemote)
     setTimeout(() => broadcastModelUsageToRemote(), 6000).unref?.()
     setInterval(() => broadcastModelUsageToRemote(), 7.5 * 60 * 1000).unref?.()
+
+    const FIRST_LAUNCH_REMOTE_PROVIDERS: ProviderId[] = [
+      'codex',
+      'claude',
+      'kimi',
+      'cursor',
+      'grok',
+      'ollama'
+    ]
+    const FIRST_LAUNCH_WORKSPACE_CAPABILITIES: Array<
+      keyof RemoteFirstLaunchWorkspaceSummary['capabilities']
+    > = ['monitor', 'approve', 'answer', 'startTurn', 'steer', 'fileRead', 'fileWrite']
+    const FIRST_LAUNCH_USAGE_FETCHERS: Partial<
+      Record<ProviderId, () => Promise<NormalizedProviderUsageSnapshot | null>>
+    > = {
+      codex: fetchCodexUsageSnapshot,
+      claude: fetchClaudeUsageSnapshot,
+      kimi: fetchKimiUsageSnapshot,
+      cursor: fetchCursorUsageSnapshot as () => Promise<NormalizedProviderUsageSnapshot | null>
+    }
+    const buildFirstLaunchWorkspaceSummary = (): RemoteFirstLaunchWorkspaceSummary => {
+      const allWorkspaces = AppStore.getWorkspaces()
+      const visibleWorkspaces = allWorkspaces.filter((workspace) =>
+        bridgeAllowlist.evaluate({ workspaceId: workspace.id, capability: 'monitor' }).allowed
+      )
+      const visibleWorkspaceIds = new Set(visibleWorkspaces.map((workspace) => workspace.id))
+      const visibleChats = AppStore.getChats().filter((chat) => {
+        const workspaceId = canonicalRemoteWorkspaceId(chat.workspaceId)
+        return workspaceId ? visibleWorkspaceIds.has(workspaceId) : false
+      })
+      const runningCount = visibleChats.filter((chat) =>
+        (chat.runs ?? []).some((run) => run.status === 'running')
+      ).length
+      const capability = (name: keyof RemoteFirstLaunchWorkspaceSummary['capabilities']) =>
+        visibleWorkspaces.some((workspace) =>
+          bridgeAllowlist.evaluate({ workspaceId: workspace.id, capability: name }).allowed
+        )
+      return {
+        visibleCount: visibleWorkspaces.length,
+        totalCount: allWorkspaces.length,
+        runningCount,
+        hasVisibleWorkspaces: visibleWorkspaces.length > 0,
+        capabilities: Object.fromEntries(
+          FIRST_LAUNCH_WORKSPACE_CAPABILITIES.map((name) => [name, capability(name)])
+        ) as RemoteFirstLaunchWorkspaceSummary['capabilities']
+      }
+    }
+    const buildFirstLaunchProviderContracts = async (): Promise<
+      Partial<Record<ProviderId, ProviderCapabilityContract | null>>
+    > => {
+      const entries = await Promise.all(
+        FIRST_LAUNCH_REMOTE_PROVIDERS.map(async (provider) => {
+          try {
+            return [provider, await getProviderCapabilityContract(provider)] as const
+          } catch {
+            return [provider, null] as const
+          }
+        })
+      )
+      return Object.fromEntries(entries) as Partial<
+        Record<ProviderId, ProviderCapabilityContract | null>
+      >
+    }
+    const buildFirstLaunchProviderUsage = async (): Promise<
+      Partial<Record<ProviderId, ProviderUsageSummary | null>>
+    > => {
+      const entries = await Promise.all(
+        FIRST_LAUNCH_REMOTE_PROVIDERS.map(async (provider) => {
+          const fetcher = FIRST_LAUNCH_USAGE_FETCHERS[provider]
+          if (!fetcher) return [provider, null] as const
+          try {
+            return [provider, summarizeProviderUsage(provider, await fetcher())] as const
+          } catch {
+            return [provider, null] as const
+          }
+        })
+      )
+      return Object.fromEntries(entries) as Partial<Record<ProviderId, ProviderUsageSummary | null>>
+    }
+    const broadcastFirstLaunchStateToRemote = (): void => {
+      void (async () => {
+        const broadcaster = bridgeBroadcasterRef
+        if (!broadcaster) return
+        const generatedAt = new Date().toISOString()
+        const [providers, usage] = await Promise.all([
+          buildFirstLaunchProviderContracts(),
+          buildFirstLaunchProviderUsage()
+        ])
+        broadcaster.broadcastFirstLaunchState({
+          state: buildRemoteFirstLaunchState({
+            generatedAt,
+            providers,
+            usage,
+            workspace: buildFirstLaunchWorkspaceSummary()
+          })
+        })
+      })().catch((err) => {
+        console.error('[remote] first-launch state broadcast failed:', err)
+      })
+    }
+    registerRemoteFirstLaunchStateTrigger(broadcastFirstLaunchStateToRemote)
+    setTimeout(() => broadcastFirstLaunchStateToRemote(), 8000).unref?.()
+    setInterval(() => broadcastFirstLaunchStateToRemote(), 10 * 60 * 1000).unref?.()
     // Prewarm: the external-activity scan is multi-second on busy machines;
     // warm it shortly after launch (off the critical path) + keep it fresh
     // on the heatmap's natural cadence so opens always render hydrated.

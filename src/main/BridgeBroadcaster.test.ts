@@ -316,6 +316,28 @@ describe('BridgeBroadcaster', () => {
     expect(params).toEqual(message)
   })
 
+  it('broadcastFirstLaunchState ships the caller-assembled redacted state', () => {
+    const notify = vi.fn()
+    const broadcaster = new BridgeBroadcaster({
+      daemon: { notify },
+      appStore: makeFakeStore([], []),
+      now: () => 1000
+    })
+    const message = {
+      state: {
+        schemaVersion: 1,
+        generatedAt: '2026-06-21T18:02:00.000Z',
+        providerCards: [],
+        notifications: []
+      }
+    }
+    broadcaster.broadcastFirstLaunchState(message)
+    expect(notify).toHaveBeenCalledTimes(1)
+    const [method, params] = notify.mock.calls[0]
+    expect(method).toBe(BRIDGE_BROADCAST_METHODS.firstLaunchState)
+    expect(params).toEqual(message)
+  })
+
   it('canonicalChatWorkspaceId rescues legacy display-name chat ids in lists + counts', () => {
     const notify = vi.fn()
     // One chat keyed by uuid, one by the legacy display-name convention.

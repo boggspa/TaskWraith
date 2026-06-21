@@ -144,7 +144,8 @@ export const BRIDGE_BROADCAST_METHODS = {
   remoteProjectionSnapshot: 'bridge.broadcastRemoteProjectionSnapshot',
   usageRollup: 'bridge.broadcastUsageRollup',
   modelUsage: 'bridge.broadcastModelUsage',
-  welcomeDashboard: 'bridge.broadcastWelcomeDashboard'
+  welcomeDashboard: 'bridge.broadcastWelcomeDashboard',
+  firstLaunchState: 'bridge.broadcastFirstLaunchState'
 } as const
 
 /** Convert a `WorkspaceRecord` plus the chats living inside it to the
@@ -336,6 +337,13 @@ export class BridgeBroadcaster {
    * (see RemoteWelcomeDashboard / Swift WelcomeDashboard). */
   broadcastWelcomeDashboard(message: Record<string, unknown>): void {
     const method = BRIDGE_BROADCAST_METHODS.welcomeDashboard
+    if (!this.shouldEmit(method)) return
+    this.sendNotify(method, message)
+  }
+
+  /** Redacted first-launch orientation state for paired iOS clients. */
+  broadcastFirstLaunchState(message: Record<string, unknown>): void {
+    const method = BRIDGE_BROADCAST_METHODS.firstLaunchState
     if (!this.shouldEmit(method)) return
     this.sendNotify(method, message)
   }
