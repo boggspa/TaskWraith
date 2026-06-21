@@ -677,6 +677,8 @@ import { registerPtyHandlers } from './ipc/ptyHandlers'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
+import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
+import { getCachedRemoteEnsemblePresets } from './remote/EnsembleRosterPresetsCache'
 import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // 1.0.5-EW26 — Kimi compatibility filter (curated + user-
 // editable keyword list, redacts matched sentences before the
@@ -18645,6 +18647,20 @@ if (isGeminiMcpBridgeProcess) {
           })
         )
       }
+      // Ensemble roster presets (iOS Roster page) — GLOBAL (not workspace-
+      // bound). The renderer (source of truth) syncs them up via
+      // 'ensemble-roster-presets:sync'; one envelope per preset, re-broadcast
+      // whenever the cache changes.
+      for (const preset of getCachedRemoteEnsemblePresets()) {
+        envelopes.push(
+          buildRemoteProjectionEnvelope({
+            kind: 'ensemblePresets',
+            payload: preset,
+            generatedAt,
+            envelopeId: `remote-ensemble-preset:${preset.id}:${preset.updatedAt ?? 0}`
+          })
+        )
+      }
       return envelopes
     }
 
@@ -24073,6 +24089,13 @@ if (isGeminiMcpBridgeProcess) {
     // the collaborators stay in index.ts (openSafeShellTarget has a second
     // caller) and are injected.
     registerShellHandlers({ openSafeShellTarget, revealPathInFinder, getFaviconService })
+
+    // Ensemble roster presets: the renderer (localStorage source of truth)
+    // syncs its list up via 'ensemble-roster-presets:sync' so the bridge can
+    // project presets to iOS. A sync re-broadcasts the projection snapshot.
+    registerEnsembleRosterPresetsHandlers({
+      onChanged: () => bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+    })
 
     // PTY (Trust Assistant terminal) handlers: start-pty / stop-pty /
     // pty-write / pty-resize. Extracted to ./ipc/ptyHandlers — `ipcMain` is

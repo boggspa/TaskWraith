@@ -33,6 +33,7 @@ export type RemoteProjectionKind =
   | 'ensembleState'
   | 'shellAppearance'
   | 'workflows'
+  | 'ensemblePresets'
 
 /**
  * A workflow projected to paired devices (iOS Workflows tab). Flattened from a
@@ -352,6 +353,20 @@ export interface RemoteEnsembleRosterEntry {
   reasoningEffort?: string
   fastModeEnabled?: boolean
   thinkingEnabled?: boolean
+}
+
+/** A saved ensemble roster preset projected to paired devices (iOS Roster
+ * page). GLOBAL (not workspace-bound). One envelope per preset,
+ * `kind: 'ensemblePresets'`. The renderer owns the store; this is a read-only
+ * projection of it. Participants reuse the roster-entry shape so the phone can
+ * apply a preset by replaying them through the existing roster-update action. */
+export interface RemoteEnsemblePreset {
+  id: string
+  name: string
+  orchestrationMode?: string
+  maxParticipants?: number
+  updatedAt?: number
+  participants: RemoteEnsembleRosterEntry[]
 }
 
 export interface RemoteEnsembleState {

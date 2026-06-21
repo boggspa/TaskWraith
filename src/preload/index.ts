@@ -856,6 +856,10 @@ const api = {
     ) as Promise<WorkspaceActivitySnapshot>,
   getScheduledTasks: (workspaceId?: string) =>
     ipcRenderer.invoke('get-scheduled-tasks', workspaceId),
+  // Push the renderer's roster-preset list to main so the bridge can project
+  // it to paired iOS devices (the renderer's localStorage is the source of truth).
+  syncEnsembleRosterPresets: (presets: unknown[]) =>
+    ipcRenderer.invoke('ensemble-roster-presets:sync', presets),
   saveScheduledTask: (task: any) => ipcRenderer.invoke('save-scheduled-task', task),
   updateScheduledTask: (id: string, partial: any) =>
     ipcRenderer.invoke('update-scheduled-task', id, partial),

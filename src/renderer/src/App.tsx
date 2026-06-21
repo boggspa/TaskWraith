@@ -273,7 +273,9 @@ import { extractHttpUrls } from './lib/urlPresentation'
 import { useCopyFeedback } from './lib/useCopyFeedback'
 import { reasoningDisplayLabel, shortModelName } from './lib/composerChipFormat'
 import {
+  listEnsembleRosterPresets,
   materializeParticipantsFromPreset,
+  subscribeEnsembleRosterPresets,
   type EnsembleRosterPreset
 } from './lib/ensembleRosterPresets'
 import {
@@ -1370,6 +1372,22 @@ function App(): React.JSX.Element {
     }
     previousYoloEnabledRef.current = isEnabled
   }, [sessionYoloMode.enabled])
+
+  // Push roster presets (renderer localStorage = source of truth) up to main on
+  // mount + on every change, so the bridge can project them to paired iOS
+  // devices (the Roster page). The same subscription fires when an iOS-driven
+  // save/delete round-trips back to the renderer (slice B3).
+  useEffect(() => {
+    const push = (): void => {
+      try {
+        void window.api.syncEnsembleRosterPresets?.(listEnsembleRosterPresets())
+      } catch {
+        // Best-effort: an older preload without the bridge just skips iOS sync.
+      }
+    }
+    push()
+    return subscribeEnsembleRosterPresets(push)
+  }, [])
 
   const [composerDraftsByChatId, setComposerDraftForChat] = usePerChatState('')
   const [isRunning, setIsRunning] = useState(false)

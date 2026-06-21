@@ -1127,6 +1127,7 @@ declare global {
         dayCount?: number
       ) => Promise<WorkspaceActivitySnapshot>
       getScheduledTasks: (workspaceId?: string) => Promise<ScheduledTask[]>
+      syncEnsembleRosterPresets: (presets: unknown[]) => Promise<void>
       saveScheduledTask: (
         task: Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'> &
           Partial<Pick<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'>>

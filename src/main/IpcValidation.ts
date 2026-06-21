@@ -91,6 +91,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-usage': ['optionalString', 'optionalString'],
   'get-scheduled-tasks': ['optionalString'],
   'save-scheduled-task': ['object'],
+  // Renderer pushes its localStorage roster-preset list up so the bridge can
+  // project presets to iOS (the renderer is the source of truth).
+  'ensemble-roster-presets:sync': ['array'],
   'update-scheduled-task': ['string', 'object'],
   'delete-scheduled-task': ['string'],
   'get-workflow-definitions': ['optionalString'],
