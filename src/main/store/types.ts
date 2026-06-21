@@ -224,7 +224,15 @@ export type ChatKind = 'single' | 'ensemble'
 export type ChatParentRelation = 'subThread' | 'sideChat'
 export type SideChatMode = 'ensembleClone' | 'singleProvider' | 'fanOut' | 'guestParticipant'
 export type SideChatLifecycleState = 'active' | 'closed' | 'terminated'
-export type AgenticServiceId = 'shellCommands' | 'fileChanges' | 'mcpTools' | 'subThreadDelegation'
+export type AgenticServiceId =
+  | 'shellCommands'
+  | 'fileChanges'
+  | 'mcpTools'
+  | 'subThreadDelegation'
+  // Canvas click/fill — a DEDICATED grant bucket so a session/workspace grant on
+  // the generic `mcpTools` service can't silently auto-allow app-mutating canvas
+  // interactions (the P1-review exfil concern).
+  | 'canvasInteraction'
 export type OllamaToolControlTier =
   | 'read_only'
   | 'approved_edits'
@@ -358,6 +366,7 @@ export interface AgenticServicesSettings {
   fileChanges: AgenticServicePolicy
   mcpTools: AgenticServicePolicy
   subThreadDelegation: AgenticServicePolicy
+  canvasInteraction: AgenticServicePolicy
   networkAccess: AgenticNetworkPolicy
 }
 
@@ -1050,7 +1059,9 @@ export type ProviderCapabilityState =
   | 'unavailable'
 export type ProviderCapabilityWarningSeverity = 'info' | 'warning' | 'error'
 export type ProviderToolingCapabilityId =
-  | Exclude<AgenticServiceId, 'subThreadDelegation'>
+  // canvasInteraction is an approval-grant bucket, not a provider-capability
+  // contract row — excluded like subThreadDelegation.
+  | Exclude<AgenticServiceId, 'subThreadDelegation' | 'canvasInteraction'>
   | 'creativeApps'
   | 'networkAccess'
   | 'elicit'

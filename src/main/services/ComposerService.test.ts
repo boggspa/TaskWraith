@@ -60,6 +60,7 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
       fileChanges: 'ask',
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
+      canvasInteraction: 'ask',
       networkAccess: 'allow'
     },
     agenticWorkspaceGrants: [],
@@ -802,7 +803,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
       shellCommands: 'deny',
       fileChanges: 'deny',
       mcpTools: 'ask',
-      subThreadDelegation: 'ask'
+      subThreadDelegation: 'ask',
+      canvasInteraction: 'ask'
     },
     networkAccess: 'deny',
     externalPathGrants: [],
@@ -954,7 +956,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
             shellCommands: 'allow',
             fileChanges: 'allow',
             mcpTools: 'allow',
-            subThreadDelegation: 'allow'
+            subThreadDelegation: 'allow',
+            canvasInteraction: 'ask'
           },
           networkAccess: 'allow',
           readOnly: false

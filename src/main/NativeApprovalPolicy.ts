@@ -51,6 +51,13 @@ export function effectiveAgenticSettings(
         current.subThreadDelegation,
         effective.subThreadDelegation
       ),
+      // Without this, the read_only preset's canvasInteraction:'deny' is dropped
+      // here and canvas_click/fill would only PROMPT (or a grant could auto-allow)
+      // under read_only — see the P1 adversarial review.
+      canvasInteraction: preserveCurrentDeny(
+        current.canvasInteraction,
+        effective.canvasInteraction
+      ),
       networkAccess: current.networkAccess === 'deny' ? 'deny' : effectivePermissions.networkAccess
     }
   }
@@ -129,6 +136,9 @@ export function taskWraithToolAgenticService(toolName: string): AgenticServiceId
     return 'fileChanges'
   if (toolName === 'delegate_to_subthread' || toolName === 'cancel_subthread')
     return 'subThreadDelegation'
+  // Dedicated grant bucket (Codex path): keep app-mutating canvas interactions
+  // out of the generic mcpTools session/workspace grant.
+  if (toolName === 'canvas_click' || toolName === 'canvas_fill') return 'canvasInteraction'
   return 'mcpTools'
 }
 

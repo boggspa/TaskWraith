@@ -3,6 +3,7 @@ import {
   canonicalTaskWraithToolName,
   effectiveAgenticSettings,
   resolveNativeApprovalPreflightDecision,
+  taskWraithToolAgenticService,
   taskWraithToolServiceIfKnown
 } from './NativeApprovalPolicy'
 import type {
@@ -29,7 +30,8 @@ const effectivePermissions = (
     shellCommands: 'deny',
     fileChanges: 'deny',
     mcpTools: 'ask',
-    subThreadDelegation: 'ask'
+    subThreadDelegation: 'ask',
+    canvasInteraction: 'deny'
   }
 ): EffectiveRunPermissions => ({
   presetId: readOnly ? 'read_only' : 'default',
@@ -67,6 +69,14 @@ describe('taskWraithToolServiceIfKnown', () => {
   it('leaves non-TaskWraith tool names unclassified', () => {
     expect(taskWraithToolServiceIfKnown('mcp__other_server__totally_unknown')).toBeNull()
     expect(taskWraithToolServiceIfKnown('totally_unknown')).toBeNull()
+  })
+})
+
+describe('taskWraithToolAgenticService — canvas interaction bucket', () => {
+  it('routes canvas_click/canvas_fill to canvasInteraction, leaves reads on mcpTools', () => {
+    expect(taskWraithToolAgenticService('canvas_click')).toBe('canvasInteraction')
+    expect(taskWraithToolAgenticService('canvas_fill')).toBe('canvasInteraction')
+    expect(taskWraithToolAgenticService('canvas_snapshot')).toBe('mcpTools')
   })
 })
 
@@ -154,6 +164,9 @@ describe('effectiveAgenticSettings', () => {
     expect(merged.agenticServices.fileChanges).toBe('deny')
     expect(merged.agenticServices.mcpTools).toBe('ask')
     expect(merged.agenticServices.networkAccess).toBe('deny')
+    // Read-only canvasInteraction deny must survive the effective-settings merge
+    // (it previously got dropped here — P1 review GAP 2).
+    expect(merged.agenticServices.canvasInteraction).toBe('deny')
   })
 
   it('preserves current explicit deny when merging stale effective permissions', () => {
@@ -170,7 +183,8 @@ describe('effectiveAgenticSettings', () => {
       shellCommands: 'allow',
       fileChanges: 'allow',
       mcpTools: 'allow',
-      subThreadDelegation: 'allow'
+      subThreadDelegation: 'allow',
+      canvasInteraction: 'ask'
     })
     effective.networkAccess = 'allow'
 

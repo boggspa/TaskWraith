@@ -65,7 +65,8 @@ function makeEffectivePermissions(
       shellCommands: 'deny',
       fileChanges: 'deny',
       mcpTools: 'ask',
-      subThreadDelegation: 'deny'
+      subThreadDelegation: 'deny',
+      canvasInteraction: 'ask'
     },
     networkAccess: 'deny',
     externalPathGrants,

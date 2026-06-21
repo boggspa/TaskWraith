@@ -7,6 +7,7 @@ const defaultServices: AgenticServicesSettings = {
   fileChanges: 'ask',
   mcpTools: 'ask',
   subThreadDelegation: 'ask',
+  canvasInteraction: 'ask',
   networkAccess: 'allow'
 }
 

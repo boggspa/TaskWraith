@@ -206,6 +206,10 @@ export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | nu
         base.agenticServices?.subThreadDelegation,
         profile.agenticServices.subThreadDelegation
       ),
+      canvasInteraction: stricterServicePolicy(
+        base.agenticServices?.canvasInteraction,
+        profile.agenticServices.canvasInteraction
+      ),
       networkAccess:
         base.agenticServices?.networkAccess === 'deny'
           ? 'deny'

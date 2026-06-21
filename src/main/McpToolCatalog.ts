@@ -639,7 +639,13 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           service: {
             type: 'string',
-            enum: ['shellCommands', 'fileChanges', 'mcpTools', 'subThreadDelegation'],
+            enum: [
+              'shellCommands',
+              'fileChanges',
+              'mcpTools',
+              'subThreadDelegation',
+              'canvasInteraction'
+            ],
             description: 'Filter to one approval-service kind. Omit to return all kinds.'
           },
           approvalId: {

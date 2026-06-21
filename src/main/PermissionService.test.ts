@@ -53,6 +53,7 @@ const settings: AppSettings = {
     fileChanges: 'ask',
     mcpTools: 'deny',
     subThreadDelegation: 'ask',
+    canvasInteraction: 'ask',
     networkAccess: 'allow'
   },
   agenticWorkspaceGrants: [],

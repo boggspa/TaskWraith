@@ -44,6 +44,7 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
       fileChanges: 'ask',
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
+      canvasInteraction: 'ask',
       networkAccess: 'allow'
     },
     agenticWorkspaceGrants: [],
@@ -75,6 +76,24 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.shellCommands).toBe('deny')
   })
 
+  it('denies canvasInteraction under read_only and allows it under full_access', () => {
+    const readOnly = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'read_only'
+    })
+    expect(readOnly.agenticServices.canvasInteraction).toBe('deny')
+
+    const fullAccess = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'full_access'
+    })
+    expect(fullAccess.agenticServices.canvasInteraction).toBe('allow')
+  })
+
   it('keeps global deny stronger than participant overrides', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'codex',
@@ -85,6 +104,7 @@ describe('resolveEffectiveRunPermissions', () => {
           fileChanges: 'ask',
           mcpTools: 'ask',
           subThreadDelegation: 'ask',
+          canvasInteraction: 'ask',
           networkAccess: 'deny'
         }
       }),

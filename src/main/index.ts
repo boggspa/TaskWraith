@@ -5606,6 +5606,23 @@ function previewForGeminiMcpTool(
     }
   }
 
+  // Canvas click/fill mutate the previewed app — route them to the dedicated
+  // `canvasInteraction` grant service so a prior `mcpTools` session/workspace
+  // grant can't silently auto-allow them (and so the read-only preset denies
+  // them via canvasInteraction:'deny').
+  if (toolName === 'canvas_click' || toolName === 'canvas_fill') {
+    return {
+      title: `Approve ${providerName} canvas interaction`,
+      body: toolName,
+      service: 'canvasInteraction' as AgenticServiceId,
+      preview: {
+        kind: 'tool',
+        toolName,
+        params: args
+      }
+    }
+  }
+
   return {
     title: `Approve ${providerName} tool call`,
     body: toolName,
@@ -7044,6 +7061,12 @@ function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null 
     normalized.includes('str_replace')
   ) {
     return 'fileChanges'
+  }
+  // Canvas click/fill get the dedicated grant bucket on the Claude canUseTool
+  // gate too (it fires before previewForGeminiMcpTool), so a prior mcpTools
+  // grant can't silently auto-allow app-mutating canvas interactions.
+  if (normalized.includes('canvas_click') || normalized.includes('canvas_fill')) {
+    return 'canvasInteraction'
   }
   if (normalized.startsWith('mcp__') || normalized.includes('__')) {
     return 'mcpTools'

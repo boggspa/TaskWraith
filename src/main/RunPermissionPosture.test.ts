@@ -21,7 +21,8 @@ function readOnlyPerms(): EffectiveRunPermissions {
       shellCommands: 'deny',
       fileChanges: 'deny',
       mcpTools: 'ask',
-      subThreadDelegation: 'ask'
+      subThreadDelegation: 'ask',
+      canvasInteraction: 'ask'
     },
     networkAccess: 'deny',
     externalPathGrants: [],
@@ -38,7 +39,8 @@ function fullAccessPerms(): EffectiveRunPermissions {
       shellCommands: 'allow',
       fileChanges: 'allow',
       mcpTools: 'allow',
-      subThreadDelegation: 'allow'
+      subThreadDelegation: 'allow',
+      canvasInteraction: 'ask'
     },
     networkAccess: 'allow',
     externalPathGrants: [],
@@ -55,7 +57,8 @@ function defaultPerms(): EffectiveRunPermissions {
       shellCommands: 'workspace',
       fileChanges: 'ask',
       mcpTools: 'ask',
-      subThreadDelegation: 'ask'
+      subThreadDelegation: 'ask',
+      canvasInteraction: 'ask'
     },
     networkAccess: 'allow',
     externalPathGrants: [],
@@ -119,6 +122,7 @@ describe('canonical posture + sign/verify', () => {
       networkAccess: 'allow',
       agenticServices: {
         subThreadDelegation: 'allow',
+        canvasInteraction: 'ask',
         mcpTools: 'allow',
         fileChanges: 'allow',
         shellCommands: 'allow'

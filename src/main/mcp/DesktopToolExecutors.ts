@@ -70,7 +70,8 @@ const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'shellCommands',
   'fileChanges',
   'mcpTools',
-  'subThreadDelegation'
+  'subThreadDelegation',
+  'canvasInteraction'
 ])
 
 export type McpToolContentBlock =

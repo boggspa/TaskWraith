@@ -5,5 +5,6 @@ export const DEFAULT_AGENTIC_SERVICES: AgenticServicesSettings = {
   fileChanges: 'ask',
   mcpTools: 'ask',
   subThreadDelegation: 'ask',
+  canvasInteraction: 'ask',
   networkAccess: 'allow'
 }

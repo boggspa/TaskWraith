@@ -988,6 +988,7 @@ function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
     return 'fileChanges'
   }
   if (tool.includes('subthread') || tool === 'delegate_to_subthread') return 'subThreadDelegation'
+  if (tool === 'canvas_click' || tool === 'canvas_fill') return 'canvasInteraction'
   return 'mcpTools'
 }
 
@@ -4186,6 +4187,33 @@ export function SettingsPanel({
                       onChange={(e) =>
                         updateAgenticService(
                           'subThreadDelegation',
+                          e.target.value as AgenticServicePolicy
+                        )
+                      }
+                    >
+                      {AGENTIC_SERVICE_POLICY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="settings-service-row">
+                    <span>
+                      Canvas interaction
+                      <small>
+                        Whether agents can click and fill elements in a Canvas preview. Default
+                        &apos;ask&apos; prompts before each interaction; &apos;Always allow&apos;
+                        lets agents drive the preview without prompting. Denied under read-only.
+                      </small>
+                    </span>
+                    <select
+                      className="settings-select"
+                      value={agenticServices.canvasInteraction ?? 'ask'}
+                      onChange={(e) =>
+                        updateAgenticService(
+                          'canvasInteraction',
                           e.target.value as AgenticServicePolicy
                         )
                       }

@@ -17,7 +17,8 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'shellCommands',
   'fileChanges',
   'mcpTools',
-  'subThreadDelegation'
+  'subThreadDelegation',
+  'canvasInteraction'
 ]
 
 export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPreset> = {
@@ -29,7 +30,11 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       shellCommands: 'deny',
       fileChanges: 'deny',
       mcpTools: 'ask',
-      subThreadDelegation: 'ask'
+      subThreadDelegation: 'ask',
+      // Load-bearing: with canvas_click/fill now on their own service, the gate's
+      // mcpTools->shellCommands read-only reroute no longer fires for them, so the
+      // read-only DENY must come from THIS preset entry.
+      canvasInteraction: 'deny'
     },
     networkAccess: 'deny'
   },
@@ -55,7 +60,8 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       shellCommands: 'allow',
       fileChanges: 'allow',
       mcpTools: 'allow',
-      subThreadDelegation: 'allow'
+      subThreadDelegation: 'allow',
+      canvasInteraction: 'allow'
     },
     networkAccess: 'allow'
   },
@@ -143,7 +149,8 @@ function servicesFromSettings(
     shellCommands: normalizePolicy(settings?.shellCommands, 'ask'),
     fileChanges: normalizePolicy(settings?.fileChanges, 'ask'),
     mcpTools: normalizePolicy(settings?.mcpTools, 'ask'),
-    subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask')
+    subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask'),
+    canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask')
   }
 }
 

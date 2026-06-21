@@ -10,7 +10,8 @@ describe('workspacePolicyServices', () => {
       'Shell commands',
       'File changes',
       'Tool calls',
-      'Sub-thread delegation'
+      'Sub-thread delegation',
+      'Canvas interaction'
     ])
   })
 

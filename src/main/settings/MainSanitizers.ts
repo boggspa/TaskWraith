@@ -29,6 +29,7 @@ const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   fileChanges: 'ask',
   mcpTools: 'ask',
   subThreadDelegation: 'ask',
+  canvasInteraction: 'ask',
   networkAccess: 'allow'
 }
 const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
@@ -666,6 +667,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
             subThreadDelegation: sanitizeAgenticServicePolicy(
               input.agenticServices.subThreadDelegation,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.subThreadDelegation
+            ),
+            canvasInteraction: sanitizeAgenticServicePolicy(
+              input.agenticServices.canvasInteraction,
+              DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.canvasInteraction
             ),
             networkAccess: sanitizeAgenticNetworkPolicy(
               input.agenticServices.networkAccess,
