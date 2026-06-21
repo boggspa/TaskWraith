@@ -13,6 +13,20 @@ import type {
 } from '../RemoteTaskProjection'
 import type { ProviderId } from '../store/types'
 
+// Live, runnable providers (gemini is retired; see src/shared/retiredProviders).
+// Preset participants whose provider isn't here are dropped from the projection
+// so the phone never shows an unrunnable member AND a single retired/garbage
+// entry can't fail an otherwise-valid apply (ensembleRosterUpdateFn's
+// assertProviderId would throw on a malformed string and reject the whole roster).
+const LIVE_PROVIDERS: ReadonlySet<string> = new Set([
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama'
+])
+
 let cached: RemoteEnsemblePreset[] = []
 
 /** Projection-shaped snapshot of the renderer's roster presets (iOS-facing). */
@@ -63,6 +77,7 @@ function mapSnapshot(
   if (!snapshot || typeof snapshot !== 'object') return null
   const entry = snapshot as Record<string, unknown>
   if (typeof entry.provider !== 'string') return null
+  if (!LIVE_PROVIDERS.has(entry.provider)) return null
   const brief =
     typeof entry.instructions === 'string' && entry.instructions
       ? entry.instructions.slice(0, 500)

@@ -81,6 +81,22 @@ describe('EnsembleRosterPresetsCache.mapRawPresetsToRemote', () => {
     expect(out[0].participants[0].brief?.length).toBe(500)
   })
 
+  it('drops retired (gemini) + garbage-provider participants from the projection', () => {
+    const out = mapRawPresetsToRemote([
+      {
+        id: 'p',
+        name: 'Legacy',
+        participants: [
+          { provider: 'codex', role: 'Builder' },
+          { provider: 'gemini', role: 'Old' },
+          { provider: 'gemni', role: 'Typo' },
+          { provider: 'claude', role: 'Reviewer' }
+        ]
+      }
+    ])
+    expect(out[0].participants.map((entry) => entry.provider)).toEqual(['codex', 'claude'])
+  })
+
   it('returns [] for non-array input', () => {
     expect(mapRawPresetsToRemote(undefined)).toEqual([])
     expect(mapRawPresetsToRemote({})).toEqual([])

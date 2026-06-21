@@ -170,6 +170,8 @@ public struct EnsembleRosterSheet: View {
                 return
             }
             draft = fresh
+            // Retry a pending chip-tap focus once the roster has synced.
+            consumeFocusIfNeeded()
         }
     }
 
@@ -362,7 +364,10 @@ public struct EnsembleRosterSheet: View {
     }
 
     private func commit() {
-        guard !draft.isEmpty else { return }
+        // The Mac rejects a roster with zero ENABLED participants, so don't send
+        // an optimistic update that would only error + leave the UI diverged from
+        // the (unchanged) Mac state. A later valid edit re-commits.
+        guard !draft.isEmpty, draft.contains(where: { $0.enabled }) else { return }
         pendingOrderIds = draft.map(\.id)
         model.updateEnsembleRoster(
             workspaceId: workspaceId, threadId: threadId, entries: draft)
@@ -370,10 +375,12 @@ public struct EnsembleRosterSheet: View {
 
     private func consumeFocusIfNeeded() {
         guard !didConsumeFocus, let focusId = model.rosterFocusParticipantId else { return }
+        // Wait until the roster has synced (the entry exists) before consuming —
+        // otherwise a chip-tap deep link fired before hydration is lost. Retried
+        // from onChange(remoteRoster) as the draft fills in.
+        guard let entry = draft.first(where: { $0.id == focusId }) else { return }
         didConsumeFocus = true
         model.rosterFocusParticipantId = nil
-        if let entry = draft.first(where: { $0.id == focusId }) {
-            editingEntry = entry
-        }
+        editingEntry = entry
     }
 }

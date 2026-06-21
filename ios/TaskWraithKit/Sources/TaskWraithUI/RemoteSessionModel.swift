@@ -3293,11 +3293,12 @@ public final class RemoteSessionModel: ObservableObject {
         } else {
             workflows = workflowCards
         }
-        // Roster presets mirror the workflows settling-guard: keep cached presets
-        // only when the WHOLE snapshot is empty (Mac mid-restart); a populated
-        // snapshot with no presets is authoritative (the user deleted them).
-        if presetCards.isEmpty, !ensemblePresets.isEmpty, tasks.isEmpty {
-            // Settling snapshot — keep cached presets.
+        // Roster presets: keep the cached list only DURING first-connect settling
+        // (before the projection has hydrated). Unlike workflows we can't key this
+        // on `tasks.isEmpty` — "no presets + no active tasks" is a perfectly normal
+        // steady state, and using it would resurrect a just-deleted last preset.
+        if presetCards.isEmpty, !ensemblePresets.isEmpty, !projectionHydrated {
+            // Pre-hydration settling snapshot — keep cached presets.
         } else {
             ensemblePresets = presetCards
         }
