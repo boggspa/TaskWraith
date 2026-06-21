@@ -29,6 +29,7 @@ const settings: AppSettings = {
   themeAccentStyle: 'system',
   toolIconAccent: 'system',
   userBubbleColor: 'system',
+  appIconVariant: 'regular',
   promptSurfaceStyle: 'liquid_glass',
   composerStyle: 'default',
   funFxEnabled: true,

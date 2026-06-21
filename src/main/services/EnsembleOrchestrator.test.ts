@@ -87,6 +87,7 @@ function makeSettings(): AppSettings {
     themeAccentStyle: 'system',
     toolIconAccent: 'system',
     userBubbleColor: 'system',
+    appIconVariant: 'regular',
     promptSurfaceStyle: 'theme',
     composerStyle: 'default',
     funFxEnabled: false,
