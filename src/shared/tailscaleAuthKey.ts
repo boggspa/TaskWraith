@@ -21,3 +21,16 @@ export function looksLikeTailscaleAuthKey(value: string): boolean {
   if (!AUTH_KEY_RE.test(trimmed)) return false
   return !NON_AUTH_PREFIXES.some((prefix) => trimmed.startsWith(prefix))
 }
+
+/**
+ * OAuth client SECRET for the multi-host discovery enumerator — distinct from a
+ * node auth key. Tailscale OAuth client secrets are `tskey-client-<id>-<secret>`.
+ * This is the credential the user provisions with the `devices:core:read` scope;
+ * it lives HOST-SIDE only (never the phone) and is exchanged for a short-lived
+ * access token. Same charset/length bounds as auth keys (no whitespace, capped).
+ */
+const OAUTH_CLIENT_SECRET_RE = /^tskey-client-[A-Za-z0-9-]{10,200}$/
+
+export function looksLikeTailscaleOAuthClientSecret(value: string): boolean {
+  return OAUTH_CLIENT_SECRET_RE.test(value.trim())
+}
