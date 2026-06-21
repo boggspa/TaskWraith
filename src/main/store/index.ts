@@ -2846,6 +2846,21 @@ export class AppStore {
     return createRunEventReplay(runId, readRunEventFile(runEventFilePath(runId)))
   }
 
+  /** Cheap forensics-availability check for cross-thread recall: false when a
+   * run's durable event file was deleted/tombstoned, so recall excludes it
+   * rather than returning an empty-but-plausible shell (the #1 confabulation
+   * trap). `existsSync` stays correct across restarts — the file is rm'd on
+   * delete — while the in-memory `deletedRunIds` set is the same-session fast
+   * path (a deleted run keeps its RunQueueJob, so it would otherwise rank). */
+  static hasRunForensics(runId: string): boolean {
+    if (!runId || deletedRunIds.has(runId)) return false
+    try {
+      return fs.existsSync(runEventFilePath(runId))
+    } catch {
+      return false
+    }
+  }
+
   // Workspace change model
   /** Same mtime+size-validated caching as chat records: the change ledger
    * reached 19MB on disk and was re-parsed on the main process per read. */
