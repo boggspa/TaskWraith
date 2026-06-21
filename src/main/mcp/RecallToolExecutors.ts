@@ -75,8 +75,9 @@ export interface RecallToolExecutorDeps {
     done: number
     total: number
   } | null
-  /** Mint an opaque per-serving citation token (Slice 5 makes it verifiable). */
-  mintCitationToken: (input: { runId: string; kind: string }) => string
+  /** Mint the canonical ⟦recall:…⟧ citation for a served record AND record it
+   * (host-side) against `currentRunId` for post-turn verification. */
+  mintCitationToken: (input: { runId: string; kind: string; currentRunId?: string }) => string
   /** Single access gate (Gaps A+B). Wired in the host to: block remote/phone-
    * issued runs (tz-safety), deny under read-only / crossThreadRead:'deny',
    * AUTO-ALLOW the caller's OWN workspace (no prompt), and prompt the
@@ -353,7 +354,11 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
       startedAt && endedAt ? Math.max(0, Date.parse(endedAt) - Date.parse(startedAt)) : null
     const finalMessage = deps.loadFinalAssistantMessage({ runId, chatId: job?.chatId ?? null })
     const planProgress = deps.loadPlanProgress?.({ runId, chatId: job?.chatId ?? null }) ?? null
-    const citationToken = deps.mintCitationToken({ runId, kind: 'read' })
+    const citationToken = deps.mintCitationToken({
+      runId,
+      kind: 'read',
+      currentRunId: context.appRunId
+    })
 
     const result: Record<string, unknown> = {
       ok: true,
@@ -420,7 +425,11 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
     const requested = asOptNumber(args.limit)
     const limit = requested && requested > 0 ? Math.min(100, Math.floor(requested)) : 30
     const sliced = filtered.slice(-limit)
-    const citationToken = deps.mintCitationToken({ runId, kind: 'read_events' })
+    const citationToken = deps.mintCitationToken({
+      runId,
+      kind: 'read_events',
+      currentRunId: context.appRunId
+    })
 
     return jsonResult({
       ok: true,

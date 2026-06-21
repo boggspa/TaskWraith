@@ -96,3 +96,49 @@ export function verifyRecallCitations(
  */
 export const RECALL_GROUNDING_SYSTEM_RULE =
   'Cross-thread recall: when you answer a question about how another thread, run, or provider went, ground every claim ONLY in records you read THIS turn via tw_recall_read / tw_recall_read_events, and quote the citation token each returned, verbatim, in the form ⟦recall:…⟧. If tw_recall_find returned "none", or you did not actually read the run, say you could not find or verify it — never describe progress you did not read.'
+
+// ── Host-side per-run served-token ledger ────────────────────────────────
+//
+// The recall read tools record each citation token they serve, keyed by the
+// CURRENT run (the turn making the recall call). When that run's final
+// assistant message is persisted, `annotateRecallCitations` checks the quoted
+// tokens against what was actually served and visibly flags any that were not.
+// In-memory + bounded; lost on restart (a run that outlives a restart is
+// terminal and won't issue new tool calls).
+
+const servedTokensByRun = new Map<string, Set<string>>()
+const MAX_TRACKED_RUNS = 2000
+
+/** Record an inner citation token (e.g. "read:r1") as served during `runId`'s turn. */
+export function recordRecallCitation(runId: string | null | undefined, innerToken: string): void {
+  if (!runId || !innerToken) return
+  let set = servedTokensByRun.get(runId)
+  if (!set) {
+    if (servedTokensByRun.size >= MAX_TRACKED_RUNS) {
+      const oldest = servedTokensByRun.keys().next().value
+      if (oldest) servedTokensByRun.delete(oldest)
+    }
+    set = new Set<string>()
+    servedTokensByRun.set(runId, set)
+  }
+  set.add(innerToken)
+}
+
+/** Annotate any recall citations in `text` that `runId` did NOT actually serve
+ * with a visible "unverified" marker. Fast no-op when the text has no recall
+ * citation at all (the overwhelmingly common case). */
+export function annotateRecallCitations(runId: string | null | undefined, text: string): string {
+  if (!text || !text.includes(RECALL_CITATION_OPEN)) return text
+  const served = (runId && servedTokensByRun.get(runId)) || new Set<string>()
+  return verifyRecallCitations(text, served).annotatedText
+}
+
+/** Drop a finished run's ledger entry (optional — the registry is also bounded). */
+export function clearRecallCitations(runId: string | null | undefined): void {
+  if (runId) servedTokensByRun.delete(runId)
+}
+
+/** Test-only reset of the per-run ledger. */
+export function __resetRecallCitationLedger(): void {
+  servedTokensByRun.clear()
+}

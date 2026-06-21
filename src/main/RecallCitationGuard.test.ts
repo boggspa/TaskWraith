@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
+  __resetRecallCitationLedger,
+  annotateRecallCitations,
   createRecallCitationLedger,
   extractRecallCitations,
   formatRecallCitation,
+  recordRecallCitation,
   verifyRecallCitations
 } from './RecallCitationGuard'
 
@@ -61,5 +64,28 @@ describe('verifyRecallCitations', () => {
     expect(result.hadServedCitation).toBe(true)
     expect(result.annotatedText).toContain('⟦recall:read:r1⟧')
     expect(result.annotatedText).toContain('⟦recall:read:r2 — unverified⟧')
+  })
+})
+
+describe('per-run citation ledger', () => {
+  afterEach(() => __resetRecallCitationLedger())
+
+  it('annotates only the tokens the run did not actually serve', () => {
+    recordRecallCitation('run-1', 'read:r1')
+    const text = 'A ⟦recall:read:r1⟧ and ghost ⟦recall:read:ghost⟧'
+    const out = annotateRecallCitations('run-1', text)
+    expect(out).toContain('⟦recall:read:r1⟧')
+    expect(out).toContain('⟦recall:read:ghost — unverified⟧')
+  })
+
+  it('flags every citation when the run served nothing', () => {
+    const out = annotateRecallCitations('run-x', 'It finished cleanly ⟦recall:read:r1⟧')
+    expect(out).toContain('⟦recall:read:r1 — unverified⟧')
+  })
+
+  it('is a fast no-op for text without any citation', () => {
+    recordRecallCitation('run-1', 'read:r1')
+    expect(annotateRecallCitations('run-1', 'plain answer')).toBe('plain answer')
+    expect(annotateRecallCitations(null, 'plain answer')).toBe('plain answer')
   })
 })

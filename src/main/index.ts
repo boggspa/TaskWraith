@@ -596,6 +596,11 @@ import {
 } from './mcp/RecallToolExecutors'
 import { isRemoteOriginRun, markRemoteOriginRun } from './RemoteOriginRuns'
 import {
+  annotateRecallCitations,
+  formatRecallCitation,
+  recordRecallCitation
+} from './RecallCitationGuard'
+import {
   brokerRequest as mcpBridgeBrokerRequest,
   createMcpBridgeRuntime,
   GEMINI_MCP_AUDIT_SUBSET_ARG,
@@ -1622,7 +1627,11 @@ const recallToolExecutors = createRecallToolExecutors({
       return null
     }
   },
-  mintCitationToken: ({ runId, kind }) => `recall:${kind}:${runId}`,
+  mintCitationToken: ({ runId, kind, currentRunId }) => {
+    const inner = `${kind}:${runId}`
+    if (currentRunId) recordRecallCitation(currentRunId, inner)
+    return formatRecallCitation(inner)
+  },
   resolveRecallAccess: async ({ context, parentProvider, crossWorkspace, targetWorkspacePath }) => {
     const ctx = context as RecallToolContext & {
       effectivePermissions?: EffectiveRunPermissions
@@ -3773,11 +3782,14 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
   if (state.content.length > 0 || (state.mediaRefs && state.mediaRefs.length > 0)) {
     const mediaMetadata =
       state.mediaRefs && state.mediaRefs.length > 0 ? { mediaRefs: state.mediaRefs } : undefined
+    // Annotate any recall citations this run did NOT actually serve with a
+    // visible "unverified" marker before the final message is persisted.
+    const annotatedContent = annotateRecallCitations(state.runId, state.content)
     const assistantMessage: ChatMessage =
       assistantIndex >= 0
         ? {
             ...messages[assistantIndex],
-            content: state.content,
+            content: annotatedContent,
             timestamp,
             ...(mediaMetadata
               ? { metadata: { ...(messages[assistantIndex].metadata || {}), ...mediaMetadata } }
@@ -3786,7 +3798,7 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
         : {
             id: state.assistantMessageId,
             role: 'assistant',
-            content: state.content,
+            content: annotatedContent,
             timestamp,
             runId: state.runId,
             ...(mediaMetadata ? { metadata: mediaMetadata } : {})
@@ -3956,7 +3968,7 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
         ? {
             id: part.id,
             role: 'assistant',
-            content: part.content,
+            content: annotateRecallCitations(state.runId, part.content),
             timestamp,
             runId: state.runId,
             ...(messageMetadata ? { metadata: messageMetadata } : {})
