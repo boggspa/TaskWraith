@@ -13,10 +13,17 @@
  */
 import * as fs from 'fs'
 import * as path from 'path'
-import type { CanvasEventRecord, CanvasSessionRecord, CanvasViewport } from './canvasTypes'
+import type {
+  CanvasAnnotation,
+  CanvasEventRecord,
+  CanvasMark,
+  CanvasSessionRecord,
+  CanvasViewport
+} from './canvasTypes'
 
 const SESSION_HISTORY_LIMIT = 100
 const EVENT_HISTORY_LIMIT = 2000
+const ANNOTATION_HISTORY_LIMIT = 500
 
 function readJson<T>(filePath: string, defaultData: T): T {
   try {
@@ -138,13 +145,52 @@ function normalizeEventRecord(value: unknown): CanvasEventRecord | null {
   }
 }
 
+function normalizeMark(value: unknown): CanvasMark | null {
+  if (!value || typeof value !== 'object') return null
+  const input = value as Partial<CanvasMark>
+  const label = asString(input.label).trim()
+  if (!label) return null
+  const mark: CanvasMark = { label: label.slice(0, 200) }
+  if (typeof input.ref === 'string' && input.ref) mark.ref = input.ref
+  if (
+    Array.isArray(input.bbox) &&
+    input.bbox.length === 4 &&
+    input.bbox.every((n) => typeof n === 'number' && Number.isFinite(n))
+  ) {
+    mark.bbox = [input.bbox[0], input.bbox[1], input.bbox[2], input.bbox[3]]
+  }
+  if (input.severity === 'info' || input.severity === 'warn' || input.severity === 'error') {
+    mark.severity = input.severity
+  }
+  return mark
+}
+
+function normalizeAnnotation(value: unknown): CanvasAnnotation | null {
+  if (!value || typeof value !== 'object') return null
+  const input = value as Partial<CanvasAnnotation>
+  if (!input.id || !input.canvasId) return null
+  const marks = Array.isArray(input.marks)
+    ? input.marks.map((m) => normalizeMark(m)).filter((m): m is CanvasMark => Boolean(m))
+    : []
+  return {
+    schemaVersion: 1,
+    id: input.id,
+    canvasId: input.canvasId,
+    marks,
+    author: input.author === 'human' ? 'human' : 'agent',
+    createdAt: asString(input.createdAt) || new Date().toISOString()
+  }
+}
+
 export class CanvasStore {
   private readonly sessionsPath: string
   private readonly eventsPath: string
+  private readonly annotationsPath: string
 
   constructor(baseDir: string) {
     this.sessionsPath = path.join(baseDir, 'canvas-sessions.json')
     this.eventsPath = path.join(baseDir, 'canvas-events.json')
+    this.annotationsPath = path.join(baseDir, 'canvas-annotations.json')
   }
 
   listSessions(): CanvasSessionRecord[] {
@@ -183,6 +229,21 @@ export class CanvasStore {
     if (!normalized) throw new Error('Canvas event record is invalid.')
     const events = [...this.listEvents(), normalized].slice(-EVENT_HISTORY_LIMIT)
     writeJson(this.eventsPath, events)
+    return normalized
+  }
+
+  listAnnotations(canvasId?: string): CanvasAnnotation[] {
+    const annotations = readJson<unknown[]>(this.annotationsPath, [])
+      .map((item) => normalizeAnnotation(item))
+      .filter((item): item is CanvasAnnotation => Boolean(item))
+    return canvasId ? annotations.filter((a) => a.canvasId === canvasId) : annotations
+  }
+
+  appendAnnotation(annotation: CanvasAnnotation): CanvasAnnotation {
+    const normalized = normalizeAnnotation(annotation)
+    if (!normalized) throw new Error('Canvas annotation is invalid.')
+    const annotations = [...this.listAnnotations(), normalized].slice(-ANNOTATION_HISTORY_LIMIT)
+    writeJson(this.annotationsPath, annotations)
     return normalized
   }
 }

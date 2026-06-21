@@ -12,7 +12,7 @@
  * close) flow through the host approval gate like browser_open.
  */
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
-import type { CanvasCallContext, CanvasController } from '../canvas/canvasTypes'
+import type { CanvasCallContext, CanvasController, CanvasMark } from '../canvas/canvasTypes'
 import { resolveViewport } from '../canvas/canvasTypes'
 
 export const CANVAS_MCP_TOOL_NAMES = [
@@ -25,6 +25,9 @@ export const CANVAS_MCP_TOOL_NAMES = [
   'canvas_network',
   'canvas_console',
   'canvas_resize',
+  'canvas_click',
+  'canvas_fill',
+  'canvas_annotate',
   'canvas_close'
 ] as const
 
@@ -78,6 +81,29 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.map((v) => asString(v).trim()).filter((v): v is string => Boolean(v))
     : []
+}
+
+function parseMarks(value: unknown): CanvasMark[] {
+  if (!Array.isArray(value)) return []
+  const marks: CanvasMark[] = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue
+    const r = raw as Record<string, unknown>
+    const label = asString(r.label).trim()
+    if (!label) continue
+    const mark: CanvasMark = { label: label.slice(0, 200) }
+    const ref = asOptString(r.ref)
+    if (ref) mark.ref = ref
+    if (Array.isArray(r.bbox) && r.bbox.length === 4 && r.bbox.every((n) => typeof n === 'number')) {
+      mark.bbox = [r.bbox[0] as number, r.bbox[1] as number, r.bbox[2] as number, r.bbox[3] as number]
+    }
+    if (r.severity === 'info' || r.severity === 'warn' || r.severity === 'error') {
+      mark.severity = r.severity
+    }
+    // A mark needs a target (ref or bbox) to render.
+    if (mark.ref || mark.bbox) marks.push(mark)
+  }
+  return marks
 }
 
 function jsonResult(
@@ -203,6 +229,42 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           })
           const applied = await controller.resize(needsId(), viewport, ctx)
           return jsonResult({ ok: true, tool: toolName, viewport: applied })
+        }
+        case 'canvas_click': {
+          const ref = asOptString(args.ref)
+          const selector = asOptString(args.selector)
+          const x = asOptNumber(args.x)
+          const y = asOptNumber(args.y)
+          if (!ref && !selector && (x === undefined || y === undefined)) {
+            return fail(toolName, 'Provide a `ref`, a `selector`, or both `x` and `y`.')
+          }
+          const result = await controller.click(needsId(), { kind: 'click', ref, selector, x, y }, ctx)
+          return jsonResult({ ...result, tool: toolName })
+        }
+        case 'canvas_fill': {
+          const ref = asOptString(args.ref)
+          const selector = asOptString(args.selector)
+          if (!ref && !selector) return fail(toolName, 'Provide a `ref` or a `selector`.')
+          if (typeof args.value !== 'string') return fail(toolName, '`value` (string) is required.')
+          const result = await controller.fill(
+            needsId(),
+            { kind: 'fill', ref, selector, value: args.value },
+            ctx
+          )
+          return jsonResult({ ...result, tool: toolName })
+        }
+        case 'canvas_annotate': {
+          const marks = parseMarks(args.marks)
+          if (marks.length === 0) {
+            return fail(toolName, '`marks` must be a non-empty array of { ref | bbox, label }.')
+          }
+          const annotation = await controller.annotate(needsId(), marks, ctx)
+          return jsonResult({
+            ok: true,
+            tool: toolName,
+            annotationId: annotation.id,
+            count: annotation.marks.length
+          })
         }
         case 'canvas_close': {
           await controller.close(needsId(), ctx)

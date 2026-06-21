@@ -13,6 +13,9 @@
  * never the PNG bytes; network/console record counts, not bodies.
  */
 import type {
+  CanvasActionInput,
+  CanvasActResult,
+  CanvasAnnotation,
   CanvasController,
   CanvasCallContext,
   CanvasConsoleEntry,
@@ -23,6 +26,7 @@ import type {
   CanvasEventKind,
   CanvasEventRecord,
   CanvasFrame,
+  CanvasMark,
   CanvasNetworkEntry,
   CanvasOpenInput,
   CanvasSessionHandle,
@@ -46,9 +50,13 @@ export interface CanvasServiceDeps {
 interface LiveSession {
   driver: CanvasDriver
   record: CanvasSessionRecord
+  interactions: number
 }
 
 const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set(['web'])
+// Defence-in-depth cap so a hijacked agent (or a session-granted approval)
+// cannot machine-gun clicks/fills against a live app. Per live session.
+const MAX_INTERACTIONS_PER_SESSION = 200
 
 function toSummary(record: CanvasSessionRecord): CanvasSessionSummary {
   return {
@@ -164,7 +172,7 @@ export class CanvasService implements CanvasController {
         viewport: handle.viewport,
         updatedAt: this.deps.now()
       }
-      this.sessions.set(canvasId, { driver, record })
+      this.sessions.set(canvasId, { driver, record, interactions: 0 })
       this.deps.store.upsertSession(record)
       this.emit(canvasId, 'session.opened', ctx, {
         driver: driverKind,
@@ -270,6 +278,73 @@ export class CanvasService implements CanvasController {
     this.deps.store.upsertSession(session.record)
     this.emit(canvasId, 'resize', ctx, { width: applied.width, height: applied.height })
     return applied
+  }
+
+  private chargeInteraction(session: LiveSession): void {
+    if (session.interactions >= MAX_INTERACTIONS_PER_SESSION) {
+      throw new Error(
+        `Canvas interaction budget exhausted (${MAX_INTERACTIONS_PER_SESSION} per session).`
+      )
+    }
+    session.interactions += 1
+  }
+
+  async click(
+    canvasId: string,
+    args: CanvasActionInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasActResult> {
+    const session = this.require(canvasId, ctx)
+    this.chargeInteraction(session)
+    const result = await session.driver.act({ ...args, kind: 'click' })
+    this.emit(canvasId, 'interaction', ctx, {
+      action: 'click',
+      ref: args.ref,
+      selector: args.selector,
+      found: result.found
+    })
+    return result
+  }
+
+  async fill(
+    canvasId: string,
+    args: CanvasActionInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasActResult> {
+    const session = this.require(canvasId, ctx)
+    this.chargeInteraction(session)
+    const result = await session.driver.act({ ...args, kind: 'fill' })
+    // Audit records the field targeted, NEVER the value typed.
+    this.emit(canvasId, 'interaction', ctx, {
+      action: 'fill',
+      ref: args.ref,
+      selector: args.selector,
+      found: result.found
+    })
+    return result
+  }
+
+  async annotate(
+    canvasId: string,
+    marks: CanvasMark[],
+    ctx: CanvasCallContext
+  ): Promise<CanvasAnnotation> {
+    const session = this.require(canvasId, ctx)
+    // Annotate shares the per-session interaction budget so overlay-spam can't
+    // flush the capped canvas audit-event history.
+    this.chargeInteraction(session)
+    await session.driver.annotate(marks)
+    const annotation: CanvasAnnotation = {
+      schemaVersion: 1,
+      id: this.deps.uuid(),
+      canvasId,
+      marks,
+      author: 'agent',
+      createdAt: this.deps.now()
+    }
+    this.deps.store.appendAnnotation(annotation)
+    this.emit(canvasId, 'annotation', ctx, { annotationId: annotation.id, count: marks.length })
+    return annotation
   }
 
   async close(canvasId: string, ctx: CanvasCallContext): Promise<void> {

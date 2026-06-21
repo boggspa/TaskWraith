@@ -5,12 +5,15 @@ import { join } from 'path'
 import { CanvasService } from './CanvasService'
 import { CanvasStore } from './CanvasStore'
 import type {
+  CanvasActionInput,
+  CanvasActResult,
   CanvasConsoleEntry,
   CanvasDriver,
   CanvasElementDetail,
   CanvasElementTree,
   CanvasEventRecord,
   CanvasFrame,
+  CanvasMark,
   CanvasNetworkEntry,
   CanvasOpenInput,
   CanvasSessionHandle,
@@ -65,6 +68,18 @@ class FakeDriver implements CanvasDriver {
   }
   async resize(viewport: CanvasViewport): Promise<CanvasViewport> {
     return viewport
+  }
+  async act(action: CanvasActionInput): Promise<CanvasActResult> {
+    return {
+      ok: action.ref !== 'missing',
+      action: action.kind,
+      found: action.ref !== 'missing',
+      ref: action.ref,
+      selector: action.selector
+    }
+  }
+  async annotate(marks: CanvasMark[]): Promise<{ count: number }> {
+    return { count: marks.length }
   }
   async close(): Promise<void> {
     this.closed = true
@@ -145,6 +160,40 @@ describe('CanvasService', () => {
     await expect(service.open({ url: 'http://localhost:3000' }, {})).rejects.toThrow('boom')
     expect(events.map((e) => e.kind)).toContain('session.error')
     expect(fake.closed).toBe(true)
+  })
+
+  it('click/fill emit interaction events; the typed value never enters the audit', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    await service.click(c.canvasId, { kind: 'click', ref: 'e1' }, {})
+    await service.fill(c.canvasId, { kind: 'fill', ref: 'e2', value: 'SECRET-VALUE' }, {})
+    expect(events.map((e) => e.kind)).toContain('interaction')
+    expect(JSON.stringify(events)).not.toContain('SECRET-VALUE')
+  })
+
+  it('caps interactions per session (click/fill/annotate share the budget)', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    for (let i = 0; i < 200; i++) {
+      await service.click(c.canvasId, { kind: 'click', ref: 'e1' }, {})
+    }
+    await expect(service.click(c.canvasId, { kind: 'click', ref: 'e1' }, {})).rejects.toThrow(
+      /budget/
+    )
+    // annotate is now charged against the same budget → also rejected when full.
+    await expect(
+      service.annotate(c.canvasId, [{ ref: 'e1', label: 'x' }], {})
+    ).rejects.toThrow(/budget/)
+  })
+
+  it('annotate persists an annotation + emits an annotation event', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    const ann = await service.annotate(
+      c.canvasId,
+      [{ ref: 'e1', label: 'misaligned', severity: 'warn' }],
+      {}
+    )
+    expect(ann.id).toBeTruthy()
+    expect(store.listAnnotations(c.canvasId)).toHaveLength(1)
+    expect(events.map((e) => e.kind)).toContain('annotation')
   })
 
   it('scopes sessions by chat — chat B cannot see, read, or close chat A canvas', async () => {

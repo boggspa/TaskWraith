@@ -135,6 +135,11 @@ export const TASKWRAITH_MCP_TOOLS = [
   'canvas_network',
   'canvas_console',
   'canvas_resize',
+  // P1 interaction + annotation. click/fill mutate the app (gated; read-only-DENY);
+  // annotate overlays numbered Set-of-Mark boxes for the human (gated).
+  'canvas_click',
+  'canvas_fill',
+  'canvas_annotate',
   'canvas_close'
 ] as const
 

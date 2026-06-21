@@ -19,12 +19,15 @@
 import { BrowserWindow } from 'electron'
 import { createHash } from 'crypto'
 import type {
+  CanvasActionInput,
+  CanvasActResult,
   CanvasConsoleEntry,
   CanvasConsoleLevel,
   CanvasDriver,
   CanvasElementDetail,
   CanvasElementTree,
   CanvasFrame,
+  CanvasMark,
   CanvasNetworkEntry,
   CanvasOpenInput,
   CanvasSessionHandle,
@@ -125,6 +128,10 @@ const SNAPSHOT_SCRIPT = `(() => {
     return node;
   };
   const root = (document.body && build(document.body)) || { ref: 'e0', tag: 'body', role: 'document' };
+  // Freeze the ref map so a malicious page cannot reassign refs[eN] to point a
+  // later canvas_click/canvas_inspect at an attacker-chosen element. (The next
+  // snapshot replaces window.__twCanvas__ wholesale, so this is per-snapshot.)
+  try { Object.freeze(reg.refs); Object.freeze(reg); } catch (e) {}
   return { url: location.href, title: document.title,
     viewport: { width: window.innerWidth, height: window.innerHeight }, root,
     nodeCount: reg.seq, truncated: count >= MAX_NODES };
@@ -150,6 +157,100 @@ function inspectScript(args: { ref?: string; selector?: string; styles?: string[
       role: el.getAttribute('role') || el.tagName.toLowerCase(),
       text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 200),
       bbox: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], styles };
+  })()`
+}
+
+// P1 click/fill. Resolves an element by ref (preferred), selector, or x/y, then
+// performs a realistic interaction. Fill uses the native value setter +
+// input/change events so React's controlled inputs notice the change.
+function actScript(action: CanvasActionInput): string {
+  const a = JSON.stringify({
+    kind: action.kind,
+    ref: action.ref ?? null,
+    selector: action.selector ?? null,
+    x: typeof action.x === 'number' ? action.x : null,
+    y: typeof action.y === 'number' ? action.y : null,
+    value: typeof action.value === 'string' ? action.value : null
+  })
+  return `(() => {
+    const a = ${a};
+    let el = null;
+    if (a.ref && window.__twCanvas__ && window.__twCanvas__.refs) el = window.__twCanvas__.refs[a.ref] || null;
+    if (!el && a.selector) { try { el = document.querySelector(a.selector); } catch (e) { el = null; } }
+    if (!el && a.x != null && a.y != null) el = document.elementFromPoint(a.x, a.y);
+    if (!el) return { ok: false, found: false, action: a.kind, message: 'Element not found.' };
+    if (typeof el.scrollIntoView === 'function') { try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {} }
+    if (a.kind === 'fill') {
+      const tag = el.tagName;
+      if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+        return { ok: false, found: true, action: 'fill', message: 'Target is not a fillable field.' };
+      }
+      const itype = (el.getAttribute('type') || '').toLowerCase();
+      try { el.focus(); } catch (e) {}
+      if (tag === 'INPUT' && (itype === 'checkbox' || itype === 'radio')) {
+        const want = a.value === 'true' || a.value === 'checked' || a.value === '1' || a.value === 'on';
+        el.checked = want;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true, found: true, action: 'fill', message: 'checked=' + want };
+      }
+      if (tag === 'INPUT' && itype === 'file') {
+        return { ok: false, found: true, action: 'fill', message: 'File inputs cannot be set programmatically.' };
+      }
+      const next = a.value == null ? '' : String(a.value);
+      const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+      if (desc && desc.set) desc.set.call(el, next); else el.value = next;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return { ok: true, found: true, action: 'fill' };
+    }
+    try { el.focus(); } catch (e) {}
+    const r = el.getBoundingClientRect();
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+    el.dispatchEvent(new MouseEvent('mousedown', opts));
+    el.dispatchEvent(new MouseEvent('mouseup', opts));
+    if (typeof el.click === 'function') { try { el.click(); } catch (e) { el.dispatchEvent(new MouseEvent('click', opts)); } }
+    else el.dispatchEvent(new MouseEvent('click', opts));
+    return { ok: true, found: true, action: 'click' };
+  })()`
+}
+
+// Set-of-Mark overlay: a fixed, pointer-events:none layer of numbered boxes the
+// agent draws over elements (by ref or explicit bbox) to flag issues for the
+// human. Numbers are the mark order; colour encodes severity.
+function annotateScript(marks: CanvasMark[]): string {
+  const m = JSON.stringify(marks)
+  return `(() => {
+    const marks = ${m};
+    const SEV = { info: '#3b82f6', warn: '#f59e0b', error: '#ef4444' };
+    const existing = document.getElementById('__twCanvasAnnotations');
+    if (existing) existing.remove();
+    const layer = document.createElement('div');
+    layer.id = '__twCanvasAnnotations';
+    // position:absolute (document-anchored) + page coords so boxes scroll WITH
+    // the content instead of detaching on scroll (position:fixed would float).
+    layer.style.cssText = 'position:absolute;top:0;left:0;z-index:2147483647;pointer-events:none;';
+    let count = 0;
+    marks.forEach((mk, i) => {
+      let rect = Array.isArray(mk.bbox) ? { x: mk.bbox[0], y: mk.bbox[1], w: mk.bbox[2], h: mk.bbox[3] } : null;
+      if (!rect && mk.ref && window.__twCanvas__ && window.__twCanvas__.refs && window.__twCanvas__.refs[mk.ref]) {
+        const r = window.__twCanvas__.refs[mk.ref].getBoundingClientRect();
+        rect = { x: r.x, y: r.y, w: r.width, h: r.height };
+      }
+      if (!rect) return;
+      const left = rect.x + window.scrollX, top = rect.y + window.scrollY;
+      const color = SEV[mk.severity] || SEV.info;
+      const box = document.createElement('div');
+      box.style.cssText = 'position:absolute;left:' + left + 'px;top:' + top + 'px;width:' + rect.w + 'px;height:' + rect.h + 'px;border:2px solid ' + color + ';border-radius:3px;box-sizing:border-box;';
+      const tag = document.createElement('div');
+      tag.textContent = (i + 1) + (mk.label ? ': ' + mk.label : '');
+      tag.style.cssText = 'position:absolute;left:0;top:-18px;background:' + color + ';color:#fff;font:11px/14px sans-serif;padding:1px 4px;border-radius:3px;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis;';
+      box.appendChild(tag);
+      layer.appendChild(box);
+      count++;
+    });
+    document.body.appendChild(layer);
+    return { count };
   })()`
 }
 
@@ -389,6 +490,30 @@ export class CanvasWebDriver implements CanvasDriver {
     const win = this.requireWindow()
     win.setContentSize(viewport.width, viewport.height)
     return viewport
+  }
+
+  async act(action: CanvasActionInput): Promise<CanvasActResult> {
+    const win = this.requireWindow()
+    const result = (await win.webContents.executeJavaScript(actScript(action), true)) as {
+      ok: boolean
+      found: boolean
+      action: 'click' | 'fill'
+      message?: string
+    }
+    return {
+      ...result,
+      ref: action.ref,
+      selector: action.selector,
+      url: win.webContents.getURL(),
+      title: win.getTitle()
+    }
+  }
+
+  async annotate(marks: CanvasMark[]): Promise<{ count: number }> {
+    const win = this.requireWindow()
+    return (await win.webContents.executeJavaScript(annotateScript(marks), true)) as {
+      count: number
+    }
   }
 
   async close(): Promise<void> {

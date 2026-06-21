@@ -171,7 +171,11 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'canvas_console',
   'canvas_screenshot',
   'canvas_resize',
-  'canvas_close'
+  'canvas_close',
+  // P1: annotate overlays a Set-of-Mark layer for the human — authoring, not an
+  // app mutation. canvas_click / canvas_fill DO mutate the app and fall through
+  // to workspace_write (read-only-DENY) by the default below.
+  'canvas_annotate'
 ])
 
 /** Bucket a single tool name. Unknown → workspace_write (safe default). */

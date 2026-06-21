@@ -81,6 +81,49 @@ export interface CanvasElementDetail {
   styles?: Record<string, string>
 }
 
+/** P1 interaction. ref-first; selector/xy are explicit fallbacks. */
+export interface CanvasActionInput {
+  kind: 'click' | 'fill'
+  ref?: string
+  selector?: string
+  x?: number
+  y?: number
+  value?: string
+}
+
+export interface CanvasActResult {
+  ok: boolean
+  action: 'click' | 'fill'
+  ref?: string
+  selector?: string
+  found: boolean
+  message?: string
+  /**
+   * URL/title at action completion. NB: a click that triggers a navigation may
+   * not have settled yet (executeJavaScript resolves before navigation
+   * completes), so re-run canvas_snapshot to confirm the resulting page.
+   */
+  url?: string
+  title?: string
+}
+
+/** A Set-of-Mark annotation cell — agent→human redline by ref or explicit bbox. */
+export interface CanvasMark {
+  ref?: string
+  bbox?: [number, number, number, number]
+  label: string
+  severity?: 'info' | 'warn' | 'error'
+}
+
+export interface CanvasAnnotation {
+  schemaVersion: 1
+  id: string
+  canvasId: string
+  marks: CanvasMark[]
+  author: 'agent' | 'human'
+  createdAt: string
+}
+
 export interface CanvasNetworkEntry {
   id: number
   url: string
@@ -124,6 +167,9 @@ export interface CanvasDriver {
   network(args: { filter?: 'all' | 'failed'; requestId?: number }): Promise<CanvasNetworkEntry[]>
   console(args: { level?: 'all' | 'warn' | 'error'; lines?: number }): Promise<CanvasConsoleEntry[]>
   resize(viewport: CanvasViewport): Promise<CanvasViewport>
+  // P1 interaction + annotation.
+  act(action: CanvasActionInput): Promise<CanvasActResult>
+  annotate(marks: CanvasMark[]): Promise<{ count: number }>
   close(): Promise<void>
 }
 
@@ -168,6 +214,8 @@ export type CanvasEventKind =
   | 'network'
   | 'console'
   | 'resize'
+  | 'interaction'
+  | 'annotation'
 
 /**
  * Audit event. `detail` is REDACTED, structured metadata only — never pixel
@@ -216,6 +264,13 @@ export interface CanvasController {
     ctx: CanvasCallContext
   ): Promise<CanvasConsoleEntry[]>
   resize(canvasId: string, viewport: CanvasViewport, ctx: CanvasCallContext): Promise<CanvasViewport>
+  click(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
+  fill(canvasId: string, args: CanvasActionInput, ctx: CanvasCallContext): Promise<CanvasActResult>
+  annotate(
+    canvasId: string,
+    marks: CanvasMark[],
+    ctx: CanvasCallContext
+  ): Promise<CanvasAnnotation>
   close(canvasId: string, ctx: CanvasCallContext): Promise<void>
 }
 

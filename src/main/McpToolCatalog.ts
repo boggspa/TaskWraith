@@ -1846,6 +1846,80 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'canvas_click',
+      description:
+        'Click an element in the Canvas by `ref` (from canvas_snapshot — preferred), CSS `selector`, or `x`/`y` coordinates. Dispatches a realistic mouse interaction. Gated; denied under read-only. Re-run canvas_snapshot afterwards to observe the result.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          ref: { type: 'string' },
+          selector: { type: 'string' },
+          x: { type: 'number' },
+          y: { type: 'number' }
+        },
+        required: ['canvasId']
+      }
+    },
+    {
+      name: 'canvas_fill',
+      description:
+        'Set the value of an input/textarea/select in the Canvas by `ref` or CSS `selector`, firing input+change events (React-compatible). Gated; denied under read-only. The typed value is never recorded in the audit log.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          ref: { type: 'string' },
+          selector: { type: 'string' },
+          value: { type: 'string' }
+        },
+        required: ['canvasId', 'value']
+      }
+    },
+    {
+      name: 'canvas_annotate',
+      description:
+        'Overlay numbered Set-of-Mark boxes on the Canvas to flag elements for the human (agent→human redlines). Each mark targets a `ref` or explicit `bbox` [x,y,w,h] with a `label` and optional `severity` (info/warn/error). Persisted and visible in a subsequent canvas_screenshot. Gated.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          canvasId: { type: 'string' },
+          marks: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                ref: { type: 'string' },
+                bbox: { type: 'array', items: { type: 'number' } },
+                label: { type: 'string' },
+                severity: { type: 'string', enum: ['info', 'warn', 'error'] }
+              },
+              required: ['label']
+            }
+          }
+        },
+        required: ['canvasId', 'marks']
+      }
+    },
+    {
       name: 'canvas_close',
       description: 'Close a Canvas session and free its preview window. Gated.',
       annotations: {
