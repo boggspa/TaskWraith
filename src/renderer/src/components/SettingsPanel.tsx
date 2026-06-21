@@ -1106,14 +1106,37 @@ export type SettingsTab =
   | 'local-servers'
 
 /**
- * Tab grouping discriminator. The settings sidebar renders a visual
- * divider between groups so user-facing categories stay distinct.
- * "settings" — the canonical app-configuration tabs (Appearance,
- * Behavior, ...).
- * "devices" — pairing / device-management pages, anchored at the
- * bottom of the sidebar.
+ * Tab grouping discriminator. The settings sidebar renders user-facing
+ * group labels so the takeover scales beyond a flat list while the
+ * underlying tab ids remain stable for persisted state.
  */
-export type SettingsTabGroup = 'settings' | 'devices'
+export type SettingsTabGroup =
+  | 'app'
+  | 'ai-providers'
+  | 'automation'
+  | 'workspaces'
+  | 'integrations'
+  | 'data'
+
+export const SETTINGS_TAB_GROUP_LABELS: Record<SettingsTabGroup, string> = {
+  app: 'App',
+  'ai-providers': 'AI & Providers',
+  automation: 'Automation',
+  workspaces: 'Workspaces',
+  integrations: 'Integrations',
+  data: 'Data'
+}
+
+export type SettingsScope = 'global' | 'provider' | 'workspace' | 'device'
+
+export interface SettingsTabDefinition {
+  id: SettingsTab
+  label: string
+  group: SettingsTabGroup
+  description: string
+  aliases: string[]
+  scope: SettingsScope
+}
 
 /**
  * Canonical settings-tab list. Exported so `SettingsSidebar` (used in
@@ -1127,48 +1150,111 @@ export type SettingsTabGroup = 'settings' | 'devices'
  * list, but `getVisibleSettingsTabs` hides it while the iOS remote
  * feature flag is off.
  */
-export const SETTINGS_TABS: Array<{
-  id: SettingsTab
-  label: string
-  group: SettingsTabGroup
-}> = [
-  // 1.0.6 — explicit order requested by the maintainer: General, Appearance, Approvals,
-  // Key commands, Providers, MCP, Workspaces, Channels, Model usage, Devices. All one group so NO
-  // divider renders (the sidebar inserts a divider only when `group` changes;
-  // keeping every tab in `settings` collapses the old settings/devices split).
-  // "General" merges the legacy "Behavior" + "System" tabs (canonical id
-  // `behavior`).
-  { id: 'behavior', label: 'General', group: 'settings' },
-  { id: 'appearance', label: 'Appearance', group: 'settings' },
-  { id: 'approval-ledger', label: 'Approvals', group: 'settings' },
-  { id: 'key-commands', label: 'Key commands', group: 'settings' },
-  { id: 'providers', label: 'Providers', group: 'settings' },
-  // "Roster" — manage saved ensemble roster presets and richly configure each
-  // participant (provider / model / reasoning / permissions / role / brief /
-  // order). The composer keeps its compact inline editor; this is the
-  // expansive surface. Sits next to Providers (which agents) — Roster is how
-  // they're composed into ensembles.
-  { id: 'roster', label: 'Roster', group: 'settings' },
-  { id: 'mcp', label: 'MCP', group: 'settings' },
-  // "Workspaces" — Codex Environments-style page listing every workspace loaded
-  // into TaskWraith; a row opens it in a fresh chat surface.
-  { id: 'workspaces', label: 'Workspaces', group: 'settings' },
-  { id: 'pinned-messages', label: 'Pinned Messages', group: 'settings' },
-  // "Channels" — local/self-hosted message channel gateway controls. The current
-  // debug-only adapter is iMessage local experimental; the tab id remains
-  // `messages` so existing settings/sidebar state remains compatible.
-  { id: 'messages', label: 'Channels', group: 'settings' },
-  // "Model usage" — richer cross-provider usage page (quota meters + context
-  // tiles). Not in the maintainer's explicit order list, kept at the tail of the settings
-  // group rather than dropped.
-  { id: 'model-usage', label: 'Model usage', group: 'settings' },
-  // "Local servers" — dev servers/watchers running under the user's workspaces,
-  // with Stop controls + the lifecycle toggles (mirrors the sidebar section).
-  { id: 'local-servers', label: 'Local servers', group: 'settings' },
-  // "Devices" merges the legacy Pairing + Remote Workspaces + Bridge Networking
-  // tabs (canonical id `pairing`). It stays hidden until the iOS remote
-  // TestFlight surface is ready.
-  { id: 'pairing', label: 'Devices', group: 'settings' }
+export const SETTINGS_TABS: SettingsTabDefinition[] = [
+  {
+    id: 'behavior',
+    label: 'General',
+    group: 'app',
+    description: 'Core app behavior, dashboard defaults, updates, approval timeouts, and desktop operations.',
+    aliases: ['behavior', 'system', 'updates', 'timeouts', 'currency', 'dashboard', 'desktop'],
+    scope: 'global'
+  },
+  {
+    id: 'appearance',
+    label: 'Appearance',
+    group: 'app',
+    description: 'Themes, composer shells, fonts, density, motion, transparency, and visual effects.',
+    aliases: ['theme', 'font', 'motion', 'transparency', 'density', 'accessibility', 'composer'],
+    scope: 'global'
+  },
+  {
+    id: 'key-commands',
+    label: 'Keyboard shortcuts',
+    group: 'app',
+    description: 'Editable app keybindings and command shortcuts.',
+    aliases: ['key commands', 'hotkeys', 'keybindings', 'commands', 'record shortcut'],
+    scope: 'global'
+  },
+  {
+    id: 'providers',
+    label: 'Providers',
+    group: 'ai-providers',
+    description: 'Provider sign-in, runtime health, CLI/API setup, and agentic service policies.',
+    aliases: ['models', 'auth', 'login', 'codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'gemini'],
+    scope: 'provider'
+  },
+  {
+    id: 'roster',
+    label: 'Ensemble roster',
+    group: 'ai-providers',
+    description: 'Saved Ensemble participant presets, roles, provider chains, and orchestration defaults.',
+    aliases: ['roster', 'ensemble', 'participants', 'roles', 'multi-provider', 'panel'],
+    scope: 'provider'
+  },
+  {
+    id: 'approval-ledger',
+    label: 'Approvals & Grants',
+    group: 'automation',
+    description: 'Approval history, durable audit entries, and saved workspace grants.',
+    aliases: ['approvals', 'audit', 'ledger', 'grants', 'permissions', 'risk', 'safety'],
+    scope: 'workspace'
+  },
+  {
+    id: 'workspaces',
+    label: 'Workspaces',
+    group: 'workspaces',
+    description: 'Registered workspaces, launch targets, pinning, removal, and paired-device access shortcuts.',
+    aliases: ['projects', 'folders', 'environments', 'remote access', 'workspace list'],
+    scope: 'workspace'
+  },
+  {
+    id: 'mcp',
+    label: 'Tools & MCPs',
+    group: 'integrations',
+    description: 'TaskWraith MCP bridge status, tool catalog, provider surfaces, and connector planning.',
+    aliases: ['mcp', 'tools', 'servers', 'extensions', 'skills', 'connectors', 'bridge'],
+    scope: 'provider'
+  },
+  {
+    id: 'local-servers',
+    label: 'Local servers',
+    group: 'integrations',
+    description: 'Dev servers and watchers running under workspaces, with stop and lifecycle controls.',
+    aliases: ['localhost', 'ports', 'preview', 'vite', 'next', 'watchers', 'browser'],
+    scope: 'workspace'
+  },
+  {
+    id: 'pairing',
+    label: 'Devices',
+    group: 'integrations',
+    description: 'iPhone and iPad pairing, remote workspace access, Tailscale, bridge networking, and push wake.',
+    aliases: ['ios', 'iphone', 'ipad', 'remote', 'pairing', 'tailscale', 'apns', 'mobile', 'bridge'],
+    scope: 'device'
+  },
+  {
+    id: 'messages',
+    label: 'Channels',
+    group: 'integrations',
+    description: 'Local and self-hosted message channel gateway controls.',
+    aliases: ['imessage', 'sms', 'gateway', 'channel', 'messages bridge'],
+    scope: 'device'
+  },
+  {
+    id: 'pinned-messages',
+    label: 'Pinned messages',
+    group: 'data',
+    description: 'Pinned transcript snippets and saved context across chats.',
+    aliases: ['pins', 'messages', 'saved context', 'notes'],
+    scope: 'global'
+  },
+  {
+    id: 'model-usage',
+    label: 'Model usage',
+    group: 'data',
+    description: 'Cross-provider quota, token, usage, cost, and context snapshots.',
+    aliases: ['usage', 'quota', 'tokens', 'cost', 'credits', 'billing', 'context'],
+    scope: 'provider'
+  }
 ]
 
 const FEATURE_GATED_SETTINGS_TABS = new Set<SettingsTab>([
@@ -1180,12 +1266,28 @@ export function isSettingsTabVisible(tab: SettingsTab): boolean {
   return !FEATURE_GATED_SETTINGS_TABS.has(tab)
 }
 
-export function getVisibleSettingsTabs(): typeof SETTINGS_TABS {
+export function getVisibleSettingsTabs(): SettingsTabDefinition[] {
   return SETTINGS_TABS.filter((tab) => isSettingsTabVisible(tab.id))
 }
 
 export function resolveVisibleSettingsTab(tab: SettingsTab): SettingsTab {
   return isSettingsTabVisible(tab) ? tab : 'behavior'
+}
+
+export function settingsTabMatchesQuery(tab: SettingsTabDefinition, query: string): boolean {
+  const normalized = query.trim().toLowerCase()
+  if (!normalized) return true
+  const haystack = [
+    tab.label,
+    tab.id,
+    tab.description,
+    tab.scope,
+    SETTINGS_TAB_GROUP_LABELS[tab.group],
+    ...tab.aliases
+  ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(normalized)
 }
 
 type LocalFontData = {

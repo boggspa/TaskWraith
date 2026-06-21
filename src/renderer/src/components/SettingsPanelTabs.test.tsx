@@ -1,9 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  SETTINGS_TABS,
   getVisibleSettingsTabs,
   isSettingsTabVisible,
-  resolveVisibleSettingsTab
+  resolveVisibleSettingsTab,
+  settingsTabMatchesQuery
 } from './SettingsPanel'
 import { SettingsSidebar } from './SettingsSidebar'
 
@@ -30,7 +32,8 @@ describe('Settings tabs', () => {
         appVersion="1.1.0"
       />
     )
-    expect(html).toContain('Roster')
+    expect(html).toContain('Ensemble roster')
+    expect(html).toContain('AI &amp; Providers')
   })
 
   it('omits Channels from the Settings sidebar while showing Devices', () => {
@@ -45,6 +48,21 @@ describe('Settings tabs', () => {
 
     expect(html).not.toContain('Channels')
     expect(html).toContain('Devices')
+    expect(html).toContain('Search settings...')
     expect(html).toContain('aria-selected="true"')
+  })
+
+  it('uses clearer labels and search aliases for common settings terms', () => {
+    const tabsById = Object.fromEntries(SETTINGS_TABS.map((tab) => [tab.id, tab]))
+
+    expect(tabsById['key-commands']?.label).toBe('Keyboard shortcuts')
+    expect(tabsById.mcp?.label).toBe('Tools & MCPs')
+    expect(tabsById['approval-ledger']?.label).toBe('Approvals & Grants')
+
+    expect(settingsTabMatchesQuery(tabsById['key-commands'], 'hotkeys')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById.mcp, 'extensions')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById.pairing, 'iphone')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['model-usage'], 'quota')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById.appearance, 'billing')).toBe(false)
   })
 })

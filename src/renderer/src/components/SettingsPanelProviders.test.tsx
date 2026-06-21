@@ -15,6 +15,7 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
     themeCornerStyle: 'rounded',
     themeAccentStyle: 'blue',
     toolIconAccent: 'system',
+    appIconVariant: 'regular',
     userBubbleColor: 'system',
     promptSurfaceStyle: 'theme',
     composerStyle: 'default',

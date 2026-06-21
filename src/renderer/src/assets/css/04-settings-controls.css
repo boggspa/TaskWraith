@@ -2133,11 +2133,66 @@
   height: 14px;
 }
 
+.settings-sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--sidebar-border) 52%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sidebar-text) 5%, transparent);
+  color: var(--sidebar-text-secondary, var(--text-secondary));
+}
+
+.settings-sidebar-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.settings-sidebar-search-icon,
+.settings-sidebar-search-icon .sf-symbol-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.settings-sidebar-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--sidebar-text);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+}
+
+.settings-sidebar-search input::placeholder {
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 82%, transparent);
+}
+
 .settings-sidebar-tabs {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 12px;
   margin-top: 4px;
+}
+
+.settings-sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.settings-sidebar-group-label {
+  padding: 6px 10px 4px;
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 84%, transparent);
+  font-size: 10px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 /* Slot wraps each tab so a divider can sit directly above it when
@@ -2158,6 +2213,7 @@
 .settings-sidebar-tab {
   display: flex;
   align-items: center;
+  gap: 9px;
   width: 100%;
   padding: 8px 10px;
   border: 0;
@@ -2169,6 +2225,28 @@
   text-align: left;
   cursor: pointer;
   transition: background 100ms ease, color 100ms ease;
+}
+
+.settings-sidebar-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  color: color-mix(in srgb, currentColor 88%, transparent);
+}
+
+.settings-sidebar-tab-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.settings-sidebar-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-sidebar-tab:hover {
@@ -2185,6 +2263,16 @@
 .settings-sidebar-tab:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 56%, transparent);
   outline-offset: -2px;
+}
+
+.settings-sidebar-empty {
+  margin: 4px 8px;
+  padding: 10px;
+  border: 1px dashed color-mix(in srgb, var(--sidebar-border) 70%, transparent);
+  border-radius: 10px;
+  color: var(--sidebar-text-secondary, var(--text-secondary));
+  font-size: var(--font-size-xs, 12px);
+  line-height: 1.35;
 }
 
 .settings-sidebar-version {
