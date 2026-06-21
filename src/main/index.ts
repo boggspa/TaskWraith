@@ -276,6 +276,7 @@ import {
   type UpdateStateSnapshot
 } from './UpdateService'
 import { LocalServersService } from './LocalServersService'
+import { discoverLaunchTargets } from './launchTargets/discovery'
 import { SpawnRegistry } from './localServers/SpawnRegistry'
 import { getNativeCapabilitySnapshot } from './NativeCapabilities'
 import { AuditService } from './services/AuditService'
@@ -19100,6 +19101,19 @@ if (isGeminiMcpBridgeProcess) {
       localServersService.stopServer(Number(pid))
     )
     ipcMain.handle('local-servers-stop-all', () => localServersService.stopAll())
+    ipcMain.handle('launch-targets-snapshot', (_event, workspacePath) => {
+      if (typeof workspacePath !== 'string') {
+        throw new Error('Workspace path is required.')
+      }
+      const registeredWorkspacePath = requireRegisteredWorkspace(workspacePath, 'Workspace')
+      const workspace = findRegisteredWorkspace(registeredWorkspacePath)
+      return discoverLaunchTargets({
+        workspacePath: registeredWorkspacePath,
+        workspaceId: workspace?.id,
+        localServers: localServersService.snapshot().servers,
+        platform: process.platform
+      })
+    })
 
     const updateSnapshotToChangelog = (
       snapshot: UpdateStateSnapshot

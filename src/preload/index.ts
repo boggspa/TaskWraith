@@ -534,6 +534,8 @@ const api = {
     ipcRenderer.on('local-servers-changed', listener)
     return () => ipcRenderer.removeListener('local-servers-changed', listener)
   },
+  launchTargetsSnapshot: (workspacePath: string) =>
+    ipcRenderer.invoke('launch-targets-snapshot', workspacePath),
   bridgeFinalizePairing: (sessionID: string, userConfirmed: boolean) =>
     ipcRenderer.invoke('bridge-finalize-pairing', sessionID, userConfirmed),
   bridgeBeginPairing: (displayName?: string, options?: { force?: boolean }) =>

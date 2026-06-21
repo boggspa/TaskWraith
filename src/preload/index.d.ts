@@ -57,6 +57,7 @@ import type {
 } from '../main/RemoteWorkspaceAllowlist'
 import type { UpdateStateSnapshot } from '../main/UpdateService'
 import type { LocalServersSnapshot } from '../main/localServers/types'
+import type { LaunchTargetsSnapshot } from '../main/launchTargets/types'
 import type { NativeCapabilitySnapshot } from '../main/NativeCapabilities'
 import type { GrokUsageSnapshot } from '../main/grok/GrokUsage'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
@@ -658,6 +659,7 @@ declare global {
       localServersStop: (pid: number) => Promise<{ ok: boolean }>
       localServersStopAll: () => Promise<{ stopped: number }>
       onLocalServersChanged: (callback: (snapshot: LocalServersSnapshot) => void) => () => void
+      launchTargetsSnapshot: (workspacePath: string) => Promise<LaunchTargetsSnapshot>
       bridgeNetworkingStatus: () => Promise<{
         lan: {
           enabled: boolean

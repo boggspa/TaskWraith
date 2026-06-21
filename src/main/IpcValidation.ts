@@ -142,6 +142,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'local-servers-refresh': [],
   'local-servers-stop': ['number'],
   'local-servers-stop-all': [],
+  'launch-targets-snapshot': ['workspacePath'],
   // Changelog sheet (update-pill feature): `changelog-snapshot` is a no-arg
   // read returning ProductChangelogSnapshot | null; `mark-changelog-seen`
   // persists the last-seen version. The handler coerces a missing/empty
