@@ -154,6 +154,11 @@ describe('device-driver input validators', () => {
     expect(isValidBundleId('com.x && curl evil')).toBe(false)
     expect(isValidBundleId('com.$(whoami).app')).toBe(false)
     expect(isValidBundleId('')).toBe(false)
+    // No leading '-' on the whole string or any segment (simctl option-injection
+    // defence-in-depth — see review LOW-1).
+    expect(isValidBundleId('-x.-y')).toBe(false)
+    expect(isValidBundleId('--foo.bar')).toBe(false)
+    expect(isValidBundleId('com.-evil')).toBe(false)
   })
 
   it('isValidSimUdid accepts a UUID or "booted" only', () => {
@@ -171,6 +176,8 @@ describe('device-driver input validators', () => {
     expect(isSafeAppBundlePath('/x/$(touch pwned).app')).toBe(false)
     expect(isSafeAppBundlePath('/x/`id`.app')).toBe(false)
     expect(isSafeAppBundlePath('/x/a;rm.app')).toBe(false)
+    // No `..` traversal segment (review LOW-2).
+    expect(isSafeAppBundlePath('/a/../../etc/x.app')).toBe(false)
   })
 
   it('readPngDimensions reads IHDR width/height (0 for non-PNG)', () => {

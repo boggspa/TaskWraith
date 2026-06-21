@@ -549,9 +549,15 @@ export function redactUrlQuery(rawUrl: string): string {
 // these are defence-in-depth + good error messages, not the sole guard.
 // ---------------------------------------------------------------------------
 
-/** A reverse-DNS-ish bundle id, e.g. "com.example.App". No spaces / shell chars. */
+/**
+ * A reverse-DNS-ish bundle id, e.g. "com.example.App". No spaces / shell chars,
+ * and NO leading '-' on the whole string OR any dotted segment — so the value can
+ * never be read by `simctl` as an option flag (argument-injection defence-in-depth
+ * that does not lean on simctl's positional-arg grammar). Real bundle ids never
+ * start a segment with '-'.
+ */
 export function isValidBundleId(value: string): boolean {
-  return value.length <= 255 && /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(value)
+  return value.length <= 255 && /^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(value)
 }
 
 /** A simulator UDID (uppercase or lowercase UUID) or the literal 'booted'. */
@@ -562,13 +568,17 @@ export function isValidSimUdid(value: string): boolean {
   )
 }
 
-/** An absolute path to a `.app` bundle, with no shell metacharacters. */
+/**
+ * An absolute path to a `.app` bundle, with no shell metacharacters and no `..`
+ * traversal segment. (Absolute → can never be a '-'-leading option token.)
+ */
 export function isSafeAppBundlePath(value: string): boolean {
   return (
     value.startsWith('/') &&
     value.endsWith('.app') &&
     value.length <= 4096 &&
-    !/[;&|`$<>\n\r"'\\*?]/.test(value)
+    !/[;&|`$<>\n\r"'\\*?]/.test(value) &&
+    !value.split('/').includes('..')
   )
 }
 
