@@ -43,7 +43,7 @@ export function registerLaunchHandlers(deps: LaunchHandlerDeps): void {
   })
 }
 
-function parseLaunchStartInput(input: unknown): {
+export function parseLaunchStartInput(input: unknown): {
   workspacePath: string
   targetId: string
   provider: ProviderId
@@ -64,7 +64,7 @@ function parseLaunchStartInput(input: unknown): {
   }
 }
 
-function parseLaunchStopInput(input: unknown): { attemptId: string } {
+export function parseLaunchStopInput(input: unknown): { attemptId: string } {
   if (!input || typeof input !== 'object') throw new Error('launch-stop input is required.')
   return {
     attemptId: requiredString((input as Record<string, unknown>).attemptId, 'attemptId')
