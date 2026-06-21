@@ -20983,6 +20983,21 @@ if (isGeminiMcpBridgeProcess) {
             postscript =
               'Grok CLI does not expose a logout subcommand yet. Use the opened Grok session to manage account state, then close this window.'
           }
+        } else if (provider === 'ollama') {
+          // Ollama cloud auth (ollama.com). `signin` opens a browser to
+          // authorize this machine for Ollama Cloud / Turbo + private model
+          // pulls; local models need no account. The subcommands are
+          // `signin` / `signout` — `ollama login` is NOT a valid command.
+          label = 'Ollama'
+          const resolved = await resolveCliProviderBinary('ollama')
+          if (action === 'upgrade') {
+            rawCommand = 'curl -fsSL https://ollama.com/install.sh | sh'
+          } else {
+            commandParts = [
+              resolved.binaryPath || 'ollama',
+              action === 'logout' ? 'signout' : 'signin'
+            ]
+          }
         } else {
           return { ok: false, error: `No terminal ${action} for ${provider}.` }
         }
