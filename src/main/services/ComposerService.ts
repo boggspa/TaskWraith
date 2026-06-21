@@ -9,7 +9,11 @@ import {
   type DiscordContextSnapshot
 } from '../channels/DiscordContextService'
 import { normalizeOllamaSessionMemory } from '../ollama/OllamaRunMemory'
-import { effectiveOllamaToolControlTier } from '../ollama/OllamaToolTiers'
+import { isOllamaRunProfileId } from '../ollama/OllamaRunProfiles'
+import {
+  effectiveOllamaToolControlTier,
+  isOllamaToolControlTier
+} from '../ollama/OllamaToolTiers'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
   approvalModeRank,
@@ -223,6 +227,15 @@ export class ComposerService {
       codexNativeAvailable: Boolean(chat.providerMetadata?.codexGoalNativeAvailable),
       claudeNativeAvailable: Boolean(chat.providerMetadata?.claudeGoalNativeAvailable)
     })
+    // Per-chat Ollama tier/profile (composer picker, stored in providerMetadata
+    // like approvalMode). Absent → undefined → the resolvers fall back to the
+    // GLOBAL default; the per-workspace Tier-4 parity grant still applies.
+    const rawChatOllamaTier = chat.providerMetadata?.ollamaToolControlTier
+    const chatOllamaTier = isOllamaToolControlTier(rawChatOllamaTier) ? rawChatOllamaTier : undefined
+    const rawChatOllamaRunProfile = chat.providerMetadata?.ollamaRunProfile
+    const chatOllamaRunProfile = isOllamaRunProfileId(rawChatOllamaRunProfile)
+      ? rawChatOllamaRunProfile
+      : undefined
     const composed = composeRunPrompt({
       provider,
       finalPrompt: contextualFinalPrompt,
@@ -244,7 +257,8 @@ export class ComposerService {
         ? {
             ollamaToolControlTier: effectiveOllamaToolControlTier(
               settings,
-              scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath
+              scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
+              chatOllamaTier
             ),
             ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
           }
@@ -293,6 +307,13 @@ export class ComposerService {
           }),
       ...(input.providerReroute || dispatchResolution.reroute
         ? { providerReroute: input.providerReroute || dispatchResolution.reroute }
+        : {}),
+      // Carry the per-chat Ollama tier/profile onto the run payload so the
+      // OllamaProvider tool gate uses the chat's choice (it re-resolves the
+      // Tier-4 grant). Absent → the gate falls back to the global default.
+      ...(provider === 'ollama' && chatOllamaTier ? { ollamaToolControlTier: chatOllamaTier } : {}),
+      ...(provider === 'ollama' && chatOllamaRunProfile
+        ? { ollamaRunProfile: chatOllamaRunProfile }
         : {}),
       prompt: composed.contextualPrompt,
       appRunId,
