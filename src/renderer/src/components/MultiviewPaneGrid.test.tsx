@@ -44,6 +44,28 @@ describe('MultiviewPaneGrid', () => {
     expect(out).not.toContain('multiview-ambient-backdrop')
   })
 
+  it('renders a canvas cell for a pane with a canvasId (not the chat viewer)', () => {
+    const canvas = vi.fn((canvasId: string) => <div className="canvas-cell">{canvasId}</div>)
+    const viewerFn = vi.fn(viewer)
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        panes={[
+          { id: 'p0', chatId: 'a' },
+          { id: 'p1', chatId: null, canvasId: 'cv1' }
+        ]}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewerFn}
+        renderCanvasCell={canvas}
+      />
+    )
+    expect(out).toContain('canvas-cell')
+    expect(out).toContain('cv1')
+    expect(canvas).toHaveBeenCalledWith('cv1', 1)
+    expect(viewerFn).not.toHaveBeenCalled() // canvas pane does not fall through to chat
+  })
+
   it('renders no shared ambient backdrop in a split layout (per-pane inline FX)', () => {
     // The focused cell is the FIRST grid child (no backdrop layer precedes it),
     // and no `.multiview-ambient-backdrop` is emitted anywhere.

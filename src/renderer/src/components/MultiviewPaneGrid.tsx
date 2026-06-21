@@ -46,6 +46,8 @@ export interface MultiviewPaneGridProps {
   renderFocusedCell: () => ReactNode
   /** A pane-scoped ChatViewPane (hosting the shared Composer) for a non-focused, populated cell. */
   renderViewerCell: (chatId: string, paneIndex: number) => ReactNode
+  /** A pane hosting a live-embedded Canvas (web preview) — when the record has a canvasId. */
+  renderCanvasCell?: (canvasId: string, paneIndex: number) => ReactNode
   /** Placeholder for a non-focused empty cell. */
   renderEmptyCell?: (paneIndex: number) => ReactNode
   /** Close a pane — non-focused cells get a close affordance. */
@@ -182,7 +184,13 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
 
   const renderCell = (paneIndex: number): ReactNode => {
     if (paneIndex === props.focusedPaneIndex) return props.renderFocusedCell()
-    const chatId = props.panes[paneIndex]?.chatId ?? null
+    const pane = props.panes[paneIndex]
+    // A canvas pane (live-embedded web preview) takes precedence over the chat path;
+    // canvasId and chatId are mutually exclusive on a record.
+    if (pane?.canvasId && props.renderCanvasCell) {
+      return props.renderCanvasCell(pane.canvasId, paneIndex)
+    }
+    const chatId = pane?.chatId ?? null
     if (chatId) return props.renderViewerCell(chatId, paneIndex)
     return props.renderEmptyCell ? props.renderEmptyCell(paneIndex) : null
   }

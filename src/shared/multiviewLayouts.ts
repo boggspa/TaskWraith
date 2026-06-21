@@ -34,6 +34,12 @@ export type MultiviewLayout = (typeof MULTIVIEW_LAYOUT_IDS)[number]
 export interface MultiviewPaneRecord {
   id: string
   chatId: string | null
+  /**
+   * When set, this pane hosts a live-embedded Canvas (a web preview rendered as a
+   * WebContentsView floated over the cell) instead of a chat — `chatId` is null.
+   * Mutually exclusive with chatId; absent on every ordinary chat pane.
+   */
+  canvasId?: string | null
 }
 
 export interface MultiviewLayoutSpec {

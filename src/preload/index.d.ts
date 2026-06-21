@@ -566,6 +566,25 @@ declare global {
       onAgenticYoloState: (
         handler: (state: { enabled: boolean; enabledAt: string | null }) => void
       ) => () => void
+      canvas: {
+        openEmbedded: (args: {
+          url: string
+          originAllowlist?: string[]
+        }) => Promise<{
+          canvasId: string
+          url: string
+          title: string
+          viewport: { width: number; height: number }
+        }>
+        setBounds: (
+          canvasId: string,
+          rect: { x: number; y: number; width: number; height: number }
+        ) => Promise<void>
+        setVisible: (canvasId: string, visible: boolean) => Promise<void>
+        close: (canvasId: string) => Promise<void>
+        list: () => Promise<unknown[]>
+        onEvent: (handler: (event: unknown) => void) => () => void
+      }
       onAgentQuestionRequested: (
         handler: (request: {
           questionId: string
