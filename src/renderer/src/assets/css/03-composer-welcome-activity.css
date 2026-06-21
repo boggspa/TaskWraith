@@ -9059,14 +9059,22 @@ button.diff-file-row {
   color: var(--text-secondary);
 }
 
+/* Add/delete lines carry the classic diff signal three ways so the red/green
+ * reads clearly and survives any parent cascade muting the inherited text
+ * colour: the theme add/delete hue on the TEXT, a visible tint on the
+ * BACKGROUND (theme-derived via color-mix so it tracks the active theme rather
+ * than a hardcoded rgba), and a left ACCENT BAR (inset shadow) that marks the
+ * line as added/removed even when the text itself isn't tinted. */
 .activity-diff-line-add {
   color: var(--success);
-  background: rgba(76, 195, 138, 0.08);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--success);
 }
 
 .activity-diff-line-delete {
   color: var(--danger);
-  background: rgba(229, 77, 77, 0.08);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--danger);
 }
 
 .activity-output-terminal {
