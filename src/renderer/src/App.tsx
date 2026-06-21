@@ -2178,8 +2178,11 @@ function App(): React.JSX.Element {
     useState<SidePanelPresentation>('split')
   const [sideChatMenuOpen, setSideChatMenuOpen] = useState(false)
   const [popoutMenuOpen, setPopoutMenuOpen] = useState(false)
+  // Which pane's preview-target dropdown is open. Keyed by the pane's STABLE id
+  // (not its index) so closing/reordering another pane can't reattribute the
+  // open menu to the wrong pane — see useMultiviewState's pane records.
   const [previewMenuTarget, setPreviewMenuTarget] = useState<{
-    paneIndex: number
+    paneId: string
     chatId: string
   } | null>(null)
   const [sideChatSeedMessageId, setSideChatSeedMessageId] = useState<string | null>(null)
@@ -2527,14 +2530,15 @@ function App(): React.JSX.Element {
     }
     addChatWorkspace(currentChat)
     addChatWorkspace(sideChat)
-    for (const chatId of multiview.paneChatIds) {
-      if (!chatId) continue
+    for (const pane of multiview.panes) {
+      if (!pane.chatId) continue
       addChatWorkspace(
-        chatByIdRef.current.get(chatId) || chats.find((chat) => chat.appChatId === chatId)
+        chatByIdRef.current.get(pane.chatId) ||
+          chats.find((chat) => chat.appChatId === pane.chatId)
       )
     }
     return paths
-  }, [chats, currentChat, currentWorkspace?.id, currentWorkspace?.path, multiview.paneChatIds, sideChat])
+  }, [chats, currentChat, currentWorkspace?.id, currentWorkspace?.path, multiview.panes, sideChat])
   const launchTargetCache = useWorkspaceLaunchTargets(launchWorkspacePaths)
   const sideChatPresentationForCurrentParent: SidePanelPresentation =
     sideChat && currentChat && sideChat.parentChatId === currentChat.appChatId
@@ -3526,13 +3530,14 @@ function App(): React.JSX.Element {
   }
   const renderPreviewTargetMenu = (
     targets: LaunchPreviewTarget[],
-    paneIndex: number,
+    paneId: string | null,
     chatId: string,
     chat?: ChatRecord | null
   ): ReactNode => {
     if (
       targets.length <= 1 ||
-      previewMenuTarget?.paneIndex !== paneIndex ||
+      !paneId ||
+      previewMenuTarget?.paneId !== paneId ||
       previewMenuTarget.chatId !== chatId
     ) {
       return null
@@ -16633,7 +16638,8 @@ function App(): React.JSX.Element {
   }, [currentChat?.messages])
   const currentPreviewTargets = getPreviewTargetsForChat(currentChat)
   const currentPreviewMenuOpen =
-    previewMenuTarget?.paneIndex === multiview.focusedPaneIndex &&
+    previewMenuTarget?.paneId != null &&
+    previewMenuTarget.paneId === multiview.focusedPaneId &&
     previewMenuTarget.chatId === currentChat?.appChatId
   const currentBlackboardEntries = useMemo(
     () => currentChat?.ensemble?.blackboard || [],
@@ -17718,8 +17724,11 @@ function App(): React.JSX.Element {
     const viewerIsGlobalChat = isGlobalChat(viewerChat)
     const viewerWorkspace = getWorkspaceForChat(viewerChat)
     const viewerPreviewTargets = getPreviewTargetsForChat(viewerChat)
+    const viewerPaneId = multiview.panes[viewerPaneIndex]?.id ?? null
     const viewerPreviewMenuOpen =
-      previewMenuTarget?.paneIndex === viewerPaneIndex && previewMenuTarget.chatId === viewerChatId
+      viewerPaneId != null &&
+      previewMenuTarget?.paneId === viewerPaneId &&
+      previewMenuTarget.chatId === viewerChatId
     const viewerWorkspaceName = viewerIsGlobalChat
       ? 'Global Chat'
       : viewerWorkspace?.displayName ||
@@ -18105,7 +18114,7 @@ function App(): React.JSX.Element {
         icon: <PreviewSymbolIcon />,
         active: viewerPreviewMenuOpen,
         disabled: viewerPreviewTargets.length === 0,
-        menu: renderPreviewTargetMenu(viewerPreviewTargets, viewerPaneIndex, viewerChatId, viewerChat),
+        menu: renderPreviewTargetMenu(viewerPreviewTargets, viewerPaneId, viewerChatId, viewerChat),
         menuOpen: viewerPreviewMenuOpen,
         onClick: (paneIndex, chatId) => {
           focusPaneForChromeAction(paneIndex, chatId)
@@ -18117,10 +18126,12 @@ function App(): React.JSX.Element {
             return
           }
           if (viewerPreviewTargets.length > 1) {
+            const paneId = multiview.panes[paneIndex]?.id
+            if (!paneId) return
             setPreviewMenuTarget((current) =>
-              current?.paneIndex === paneIndex && current.chatId === chatId
+              current?.paneId === paneId && current.chatId === chatId
                 ? null
-                : { paneIndex, chatId }
+                : { paneId, chatId }
             )
           }
         }
@@ -19885,7 +19896,7 @@ function App(): React.JSX.Element {
             {isFxEnabled && <SkyFogFilterDefs />}
             <MultiviewPaneGrid
               layout={multiview.layout}
-              paneChatIds={multiview.paneChatIds}
+              panes={multiview.panes}
               focusedPaneIndex={multiview.focusedPaneIndex}
               onClosePane={multiview.closePane}
               columnFractions={multiview.tracks.columns}
@@ -20282,12 +20293,13 @@ function App(): React.JSX.Element {
                     return
                   }
                   if (currentPreviewTargets.length > 1) {
-                    const paneIndex = multiview.focusedPaneIndex
+                    const paneId = multiview.focusedPaneId
                     const chatId = currentChat.appChatId
+                    if (!paneId) return
                     setPreviewMenuTarget((current) =>
-                      current?.paneIndex === paneIndex && current.chatId === chatId
+                      current?.paneId === paneId && current.chatId === chatId
                         ? null
-                        : { paneIndex, chatId }
+                        : { paneId, chatId }
                     )
                   }
                 }}
@@ -20303,7 +20315,7 @@ function App(): React.JSX.Element {
               {currentChat &&
                 renderPreviewTargetMenu(
                   currentPreviewTargets,
-                  multiview.focusedPaneIndex,
+                  multiview.focusedPaneId,
                   currentChat.appChatId,
                   currentChat
                 )}

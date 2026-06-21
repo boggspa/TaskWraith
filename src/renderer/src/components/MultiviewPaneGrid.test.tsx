@@ -1,17 +1,22 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MultiviewPaneGrid } from './MultiviewPaneGrid'
+import type { MultiviewPaneRecord } from '../../../shared/multiviewLayouts'
 
 const focused = () => <div id="focused-cell" />
 const viewer = (chatId: string) => <div className="viewer-cell">{chatId}</div>
 const empty = (i: number) => <div className="empty-cell" data-empty-index={i} />
+
+/** Build pane records (stable ids `p0`, `p1`, …) from a chatId-per-cell list. */
+const makePanes = (chatIds: (string | null)[]): MultiviewPaneRecord[] =>
+  chatIds.map((chatId, i) => ({ id: `p${i}`, chatId }))
 
 describe('MultiviewPaneGrid', () => {
   it('single layout renders the focused content with no grid wrapper (zero-diff)', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="single"
-        paneChatIds={['a']}
+        panes={makePanes(['a'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -29,7 +34,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="single"
-        paneChatIds={['a']}
+        panes={makePanes(['a'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -45,7 +50,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="quad"
-        paneChatIds={['a', 'b', 'c', 'd']}
+        panes={makePanes(['a', 'b', 'c', 'd'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -60,7 +65,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="vertical-2"
-        paneChatIds={['a', 'b']}
+        panes={makePanes(['a', 'b'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -75,11 +80,30 @@ describe('MultiviewPaneGrid', () => {
     expect(out).toContain('grid-area:b') // viewer pane in cell area 'b'
   })
 
+  it('tags each cell with its stable pane id (data-pane-id) in cell order', () => {
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        panes={[
+          { id: 'pane-7', chatId: 'a' },
+          { id: 'pane-3', chatId: 'b' }
+        ]}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+      />
+    )
+    // The grid surfaces the pane records' stable ids for styling/diagnostics,
+    // independent of the (still index-based) data-pane-index.
+    expect(out).toContain('data-pane-id="pane-7"')
+    expect(out).toContain('data-pane-id="pane-3"')
+  })
+
   it('renders the focused cell in whichever area the focused index maps to', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="vertical-2"
-        paneChatIds={['a', 'b']}
+        panes={makePanes(['a', 'b'])}
         focusedPaneIndex={1}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -94,7 +118,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="vertical-2"
-        paneChatIds={['a', null]}
+        panes={makePanes(['a', null])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -109,7 +133,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="quad"
-        paneChatIds={['a', 'b', 'c', 'd']}
+        panes={makePanes(['a', 'b', 'c', 'd'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -125,7 +149,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="vertical-2"
-        paneChatIds={['a', 'b']}
+        panes={makePanes(['a', 'b'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -140,7 +164,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="vertical-2"
-        paneChatIds={['a', 'b']}
+        panes={makePanes(['a', 'b'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -155,7 +179,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="quad"
-        paneChatIds={['a', 'b', 'c', 'd']}
+        panes={makePanes(['a', 'b', 'c', 'd'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -171,7 +195,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="vertical-2"
-        paneChatIds={['a', 'b']}
+        panes={makePanes(['a', 'b'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -186,7 +210,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="vertical-2"
-        paneChatIds={['a', 'b']}
+        panes={makePanes(['a', 'b'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -207,7 +231,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="single"
-        paneChatIds={['a']}
+        panes={makePanes(['a'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -225,7 +249,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="quad"
-        paneChatIds={['a', 'b', 'c', 'd']}
+        panes={makePanes(['a', 'b', 'c', 'd'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}
@@ -240,7 +264,7 @@ describe('MultiviewPaneGrid', () => {
     const out = renderToStaticMarkup(
       <MultiviewPaneGrid
         layout="one-left-two-right"
-        paneChatIds={['a', 'b', 'c']}
+        panes={makePanes(['a', 'b', 'c'])}
         focusedPaneIndex={0}
         renderFocusedCell={focused}
         renderViewerCell={viewer}

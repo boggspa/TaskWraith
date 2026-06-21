@@ -1,10 +1,17 @@
-import { useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode
+} from 'react'
 import {
   computeGutterSegments,
   fractionsToTrackList,
   getMultiviewLayoutSpec,
   type MultiviewGutterSegment,
-  type MultiviewLayout
+  type MultiviewLayout,
+  type MultiviewPaneRecord
 } from '../../../shared/multiviewLayouts'
 
 /**
@@ -32,7 +39,8 @@ import {
  */
 export interface MultiviewPaneGridProps {
   layout: MultiviewLayout
-  paneChatIds: (string | null)[]
+  /** Stable per-pane records (id + chatId) in cell order; length === paneCount. */
+  panes: MultiviewPaneRecord[]
   focusedPaneIndex: number
   /** The existing inline main-pane content (transcript + composer). */
   renderFocusedCell: () => ReactNode
@@ -174,7 +182,7 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
 
   const renderCell = (paneIndex: number): ReactNode => {
     if (paneIndex === props.focusedPaneIndex) return props.renderFocusedCell()
-    const chatId = props.paneChatIds[paneIndex] ?? null
+    const chatId = props.panes[paneIndex]?.chatId ?? null
     if (chatId) return props.renderViewerCell(chatId, paneIndex)
     return props.renderEmptyCell ? props.renderEmptyCell(paneIndex) : null
   }
@@ -190,6 +198,10 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
       }}
     >
       {spec.cellAreas.map((area, paneIndex) => (
+        // Keyed by paneIndex (not pane id) on purpose: the refs pool and the
+        // focused-cell placement are index-based, so changing the React key
+        // would reshuffle DOM/refs. Stable identity for per-pane SETTINGS lives
+        // in `paneSettings`; `data-pane-id` exposes it for styling/diagnostics.
         <div
           key={paneIndex}
           className={`multiview-cell${
@@ -197,6 +209,7 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
           }`}
           style={{ gridArea: area }}
           data-pane-index={paneIndex}
+          data-pane-id={props.panes[paneIndex]?.id}
         >
           {props.onClosePane && paneIndex !== props.focusedPaneIndex && (
             <button
