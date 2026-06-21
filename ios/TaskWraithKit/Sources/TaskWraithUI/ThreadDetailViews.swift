@@ -27,6 +27,10 @@ private final class TranscriptFollowPin {
 struct ThreadDetailView: View {
     @ObservedObject var model: RemoteSessionModel
     let taskId: String
+    /// Reduce Motion collapses the composer focus spring/slide to a short
+    /// opacity crossfade (see ComposerMotion). Read here so the focus-gated row
+    /// groups can pick their transition without a second source of truth.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var followUp = ""
     /// Mirrors the Composer's expanded state (focused / drafting / queued /
     /// ensemble) so the host hides the secondary rows + telemetry rail when the
@@ -921,6 +925,8 @@ struct ThreadDetailView: View {
                             onTap: { openComposerDiff(workspaceId: primaryWorkspaceId) }
                         )
                         .padding(.horizontal, 10)
+                        // Lifts in as the keyboard drops; fades when focus returns.
+                        .transition(ComposerMotion.compactPillTransition(reduceMotion: reduceMotion))
                     }
                     VStack(spacing: tuckedTab ? -10 : (detached ? 6 : 0)) {
                         // Above-rows group: inner VStack spacing matches the outer so
@@ -1017,6 +1023,12 @@ struct ThreadDetailView: View {
                         // renders behind an explicit-zIndex sibling on insertion — which
                         // ate grok's tucked tab when it returned on focus. Make it explicit.
                         .zIndex(0)
+                        // Spring the whole above-rows card group up from behind
+                        // the composer on focus; opacity-only on blur so a
+                        // dropping keyboard never yanks rows down through the
+                        // input. Applied to the (already-shelled) group, not its
+                        // children — the shell mask would clip an inner slide.
+                        .transition(ComposerMotion.aboveRowsTransition(reduceMotion: reduceMotion))
                         }  // end focus-gated above-rows group
                         // (the blurred diff pill now floats above the shell — see
                         // the outer stack above)
@@ -1034,6 +1046,9 @@ struct ThreadDetailView: View {
                                     card: card, hasAttachedRows: hasAttachedRows,
                                     onOwnCards: false, suppressFill: true,
                                     resolved: resolved)
+                                // These tuck INSIDE the masked core card, so fade
+                                // only — a slide would clip against the shell mask.
+                                .transition(.opacity)
                             }
                             Composer(
                                 model: model, card: card, runModel: snapshot?.runSummary?.model,
@@ -1046,30 +1061,48 @@ struct ThreadDetailView: View {
                                 attachedBottom: composerFocused,
                                 extraWorkspaceIds: extraWorkspaceIdsForSend(card: card),
                                 allowsProviderChange: allowsFirstTurnProviderChange,
-                                onFocusChange: { composerFocused = $0 },
+                                onFocusChange: { focused in
+                                    // Drive the focus-gated row transitions with a
+                                    // damped spring (flat fade under Reduce Motion).
+                                    // Follow-pin scrolls disable animation via their
+                                    // own Transaction, so this never animates scroll.
+                                    withAnimation(
+                                        ComposerMotion.focusAnimation(reduceMotion: reduceMotion)
+                                    ) {
+                                        composerFocused = focused
+                                    }
+                                },
                                 // Every chat (incl. ensemble) collapses to one line
                                 // when the keyboard drops — above rows + telemetry
                                 // follow focus, not draft/queue presence.
                                 forcesExpanded: false,
                                 text: $followUp)
                             if composerFocused {
-                                if !bareTelemetry {
-                                    Rectangle().fill(TWTheme.border).frame(height: 1)
+                                // Group so the hairline + rail transition as one
+                                // unit; Group is layout-transparent inside a VStack
+                                // (spacing applies across it identically).
+                                Group {
+                                    if !bareTelemetry {
+                                        Rectangle().fill(TWTheme.border).frame(height: 1)
+                                    }
+                                    TelemetryFooterRail(
+                                        run: snapshot?.runSummary,
+                                        workspaceName: model.workspaceName(for: card.workspaceId),
+                                        workspaceOptions: model.workspaces.map {
+                                            (id: $0.id, name: $0.displayName)
+                                        },
+                                        primaryWorkspaceId: card.workspaceId,
+                                        secondaryWorkspaceId: secondaryWorkspaceBinding,
+                                        activeGoal: card.activeGoal,
+                                        onGoalUpdate: { op, objective, reason in
+                                            model.updateGoal(
+                                                card, op: op, objective: objective, reason: reason)
+                                        },
+                                        planLanes: card.todoLanes ?? [])
                                 }
-                                TelemetryFooterRail(
-                                    run: snapshot?.runSummary,
-                                    workspaceName: model.workspaceName(for: card.workspaceId),
-                                    workspaceOptions: model.workspaces.map {
-                                        (id: $0.id, name: $0.displayName)
-                                    },
-                                    primaryWorkspaceId: card.workspaceId,
-                                    secondaryWorkspaceId: secondaryWorkspaceBinding,
-                                    activeGoal: card.activeGoal,
-                                    onGoalUpdate: { op, objective, reason in
-                                        model.updateGoal(
-                                            card, op: op, objective: objective, reason: reason)
-                                    },
-                                    planLanes: card.todoLanes ?? [])
+                                // Drops down from behind the composer's bottom edge
+                                // on focus; opacity-only on blur.
+                                .transition(ComposerMotion.telemetryTransition(reduceMotion: reduceMotion))
                             }
                         }
                         .composerShellIf((detached && !inputOwnsSurface) || tuckedShell, resolved)
