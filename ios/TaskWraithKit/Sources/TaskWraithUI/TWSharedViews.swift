@@ -3661,7 +3661,6 @@ public struct EditableRosterStrip: View {
     let workspaceId: String
 
     @State private var draft: [RemoteSessionModel.RosterDraftEntry] = []
-    @State private var editingEntry: RemoteSessionModel.RosterDraftEntry? = nil
     @State private var draggingId: String? = nil
     /// Id-order we last committed; suppress reconcile until the Mac echoes a
     /// matching order so an in-flight snapshot can't snap a reorder back.
@@ -3780,8 +3779,9 @@ public struct EditableRosterStrip: View {
         .padding(.horizontal, attached ? 0 : 12)
         .onAppear { if draft.isEmpty { draft = remoteRoster } }
         .onChange(of: remoteRoster) { _, fresh in
-            // Reconcile from the Mac unless mid-edit (popover open / drag).
-            guard editingEntry == nil, draggingId == nil else { return }
+            // Reconcile from the Mac unless mid-drag. (Per-participant editing
+            // now happens in the dedicated Roster page, not a strip sheet.)
+            guard draggingId == nil else { return }
             // Don't let an in-flight snapshot clobber a just-committed reorder:
             // hold the optimistic order until the Mac echoes a matching id-order
             // (it force-broadcasts it). Adopt immediately if membership changed.
@@ -3794,40 +3794,6 @@ public struct EditableRosterStrip: View {
                 return
             }
             draft = fresh
-        }
-        // Present from a stable @State entry, NOT a binding re-derived from
-        // `draft` every render — that computed binding collapsed to nil on the
-        // keyboard-driven re-render when the role field was focused, dismissing
-        // the sheet. @State survives parent re-renders.
-        .sheet(item: $editingEntry) { entry in
-            RosterChipEditor(
-                entry: entry,
-                catalogs: catalogs,
-                canRemove: draft.count > 1,
-                onApply: { updated in
-                    if let index = draft.firstIndex(where: { $0.id == updated.id }) {
-                        draft[index] = updated
-                    }
-                    editingEntry = nil
-                    commit()
-                },
-                onMove: { direction in
-                    guard let index = draft.firstIndex(where: { $0.id == entry.id }) else {
-                        return
-                    }
-                    let target = index + direction
-                    guard target >= 0, target < draft.count else { return }
-                    draft.swapAt(index, target)
-                    commit()
-                },
-                onRemove: {
-                    draft.removeAll { $0.id == entry.id }
-                    editingEntry = nil
-                    commit()
-                }
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
         }
     }
 
@@ -3846,7 +3812,10 @@ public struct EditableRosterStrip: View {
         let title =
             entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
         return Button {
-            editingEntry = entry
+            // Open the dedicated Roster page focused on this participant —
+            // supersedes the old cramped per-chip editor sheet.
+            model.rosterFocusParticipantId = entry.id
+            model.rosterPresented = true
         } label: {
             HStack(spacing: 5) {
                 if retired {
