@@ -206,8 +206,16 @@ export function CombinedModelPicker({
   const [modelHighlight, setModelHighlight] = useState(0)
   const [reasoningHighlight, setReasoningHighlight] = useState(0)
 
-  const selectedModelOption = modelOptions.find((option) => option.id === selectedModelId) ||
-    modelOptions[0] || { id: selectedModelId, label: selectedModelId }
+  const selectedModelOption =
+    modelOptions.find((option) => option.id === selectedModelId) ||
+    // Show the real id when it isn't in the list (e.g. a server-hydrated or
+    // since-dropped model id from a saved preset) rather than silently
+    // mislabeling it as the first option. Fall back to the first option only
+    // when no id is set at all.
+    (selectedModelId ? { id: selectedModelId, label: selectedModelId } : modelOptions[0]) || {
+      id: selectedModelId,
+      label: selectedModelId
+    }
 
   const chipText = useMemo(
     () =>

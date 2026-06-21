@@ -82,6 +82,16 @@ function uniqueNewName(existing: EnsembleRosterPreset[]): string {
   return `${base} ${names.size + 1}`
 }
 
+/**
+ * The editor's left-list order: stable creation-order (newest first) so editing
+ * a preset doesn't make its row jump under the cursor. `listEnsembleRosterPresets`
+ * sorts by `updatedAt` (which the composer picker wants — most-recently-used
+ * first — but the editor list does not).
+ */
+function loadPresets(): EnsembleRosterPreset[] {
+  return [...listEnsembleRosterPresets()].sort((a, b) => b.createdAt - a.createdAt)
+}
+
 function formatTimestamp(ms: number): string {
   try {
     return new Date(ms).toLocaleDateString(undefined, {
@@ -204,6 +214,11 @@ function RosterParticipantRow({
 
   const resolved = resolveEnsembleParticipantSettings(participant)
   const defaults = getEnsembleModelDefaults(participant.provider)
+  // SettingsPanel always supplies agenticServices; the empty-object fallback
+  // only guards a hypothetical caller that doesn't (the grants column reads it
+  // for sub-labels). Avoids a runtime crash without coupling a literal default
+  // to the churning AgenticServicesSettings shape.
+  const services = agenticServices ?? ({} as AgenticServicesSettings)
 
   const modelOptions: CombinedModelPickerModelOption[] = defaults.modelOptions
   // Display the participant's model, mapping the agnostic 'cli-default' seed to
@@ -313,7 +328,7 @@ function RosterParticipantRow({
             }
             grantServices={WORKSPACE_POLICY_SERVICES}
             enabledGrantIds={enabledGrantIds}
-            agenticServices={agenticServices as AgenticServicesSettings}
+            agenticServices={services}
             onToggleGrant={(service, enabled) =>
               onPatch(participant.id, buildParticipantToolGrantPatch(participant, service, enabled))
             }
@@ -404,17 +419,21 @@ export function RosterSettingsPanel({
   grokAvailable = false,
   cursorAvailable = false
 }: RosterSettingsPanelProps): JSX.Element {
-  const [presets, setPresets] = useState<EnsembleRosterPreset[]>(() => listEnsembleRosterPresets())
-  const [selectedId, setSelectedId] = useState<string | null>(
-    () => listEnsembleRosterPresets()[0]?.id ?? null
-  )
+  const [presets, setPresets] = useState<EnsembleRosterPreset[]>(() => loadPresets())
+  const [selectedId, setSelectedId] = useState<string | null>(() => loadPresets()[0]?.id ?? null)
   const [editing, setEditing] = useState<RosterEditing | null>(null)
   const [nameDraft, setNameDraft] = useState('')
+  const [maxDraft, setMaxDraft] = useState('')
   const nameInputRef = useRef<HTMLInputElement | null>(null)
 
   // Always-latest editing snapshot for the flush-on-switch safety net below.
+  // Kept in sync during render AND synchronously inside commit/patch so a
+  // batched handler (or a blur→switch sequence) never reads a stale copy.
   const editingRef = useRef<RosterEditing | null>(null)
   editingRef.current = editing
+  // True when there are unblurred text edits not yet persisted; the
+  // switch-cleanup only flushes when this is set, avoiding double-writes.
+  const dirtyRef = useRef(false)
 
   const writePreset = useCallback((next: RosterEditing): void => {
     try {
@@ -430,6 +449,8 @@ export function RosterSettingsPanel({
   const commit = useCallback(
     (next: RosterEditing): void => {
       const stamped: RosterEditing = { ...next, meta: { ...next.meta, updatedAt: Date.now() } }
+      editingRef.current = stamped
+      dirtyRef.current = false
       setEditing(stamped)
       writePreset(stamped)
     },
@@ -438,7 +459,7 @@ export function RosterSettingsPanel({
 
   // Live refresh of the LIST only — never re-materializes the open editor.
   useEffect(() => {
-    const refresh = (): void => setPresets(listEnsembleRosterPresets())
+    const refresh = (): void => setPresets(loadPresets())
     return subscribeEnsembleRosterPresets(refresh)
   }, [])
 
@@ -460,11 +481,28 @@ export function RosterSettingsPanel({
       return
     }
     const { participants, ...meta } = preset
-    setEditing({ meta, participants: materializeParticipantsFromPreset(participants) })
+    const loaded: RosterEditing = {
+      meta,
+      participants: materializeParticipantsFromPreset(participants)
+    }
+    editingRef.current = loaded
+    dirtyRef.current = false
+    setEditing(loaded)
     setNameDraft(meta.name)
     return () => {
+      // Flush ONLY genuinely-unpersisted text edits, and never resurrect a
+      // preset deleted while open — getEnsembleRosterPreset returning null
+      // means it's gone, so skip the write (guards the delete-resurrection bug).
       const pending = editingRef.current
-      if (pending && pending.meta.id === preset.id) writePreset(pending)
+      if (
+        dirtyRef.current &&
+        pending &&
+        pending.meta.id === preset.id &&
+        getEnsembleRosterPreset(preset.id)
+      ) {
+        writePreset(pending)
+      }
+      dirtyRef.current = false
     }
   }, [selectedId, writePreset])
 
@@ -473,25 +511,35 @@ export function RosterSettingsPanel({
     [presets, selectedId]
   )
 
+  // Keep the Max-participants field freely typeable: sync the draft from the
+  // model on preset switch + when the stored value changes (add bumps it, blur
+  // clamps it), but let intermediate keystrokes stay raw until blur.
+  useEffect(() => {
+    if (editing) setMaxDraft(String(editing.meta.maxParticipants))
+  }, [editing?.meta.id, editing?.meta.maxParticipants])
+
   const handleCreate = useCallback((): void => {
-    const created = createEmptyEnsembleRosterPreset(uniqueNewName(listEnsembleRosterPresets()))
-    setPresets(listEnsembleRosterPresets())
+    const created = createEmptyEnsembleRosterPreset(uniqueNewName(loadPresets()))
+    setPresets(loadPresets())
     setSelectedId(created.id)
     requestAnimationFrame(() => nameInputRef.current?.select())
   }, [])
 
   const handleDuplicate = useCallback((): void => {
     if (!selectedId) return
+    // Flush unblurred text edits so the copy includes them (duplicate reads
+    // from the persisted store).
+    if (dirtyRef.current && editingRef.current) commit(editingRef.current)
     const copy = duplicateEnsembleRosterPreset(selectedId)
-    setPresets(listEnsembleRosterPresets())
+    setPresets(loadPresets())
     if (copy) setSelectedId(copy.id)
-  }, [selectedId])
+  }, [selectedId, commit])
 
   const handleDelete = useCallback((preset: EnsembleRosterPreset): void => {
     const ok = window.confirm(`Delete the "${preset.name}" roster preset? This can't be undone.`)
     if (!ok) return
     deleteEnsembleRosterPreset(preset.id)
-    setPresets(listEnsembleRosterPresets())
+    setPresets(loadPresets())
   }, [])
 
   const commitName = useCallback((): void => {
@@ -513,14 +561,19 @@ export function RosterSettingsPanel({
         participant.id === id ? { ...participant, ...patch } : participant
       )
       const next = { ...current, participants }
-      if (doPersist) commit(next)
-      else setEditing(next)
+      if (doPersist) {
+        commit(next)
+      } else {
+        editingRef.current = next
+        dirtyRef.current = true
+        setEditing(next)
+      }
     },
     [commit]
   )
 
   const flushText = useCallback((): void => {
-    if (editingRef.current) commit(editingRef.current)
+    if (dirtyRef.current && editingRef.current) commit(editingRef.current)
   }, [commit])
 
   const moveParticipant = useCallback(
@@ -748,8 +801,12 @@ export function RosterSettingsPanel({
                     className="settings-roster-input settings-roster-number"
                     min={Math.max(MIN_ROSTER_PRESET_PARTICIPANTS, editing.participants.length)}
                     max={MAX_ROSTER_PRESET_PARTICIPANTS}
-                    value={editing.meta.maxParticipants}
-                    onChange={(event) => setMaxParticipants(Number(event.target.value))}
+                    value={maxDraft}
+                    onChange={(event) => setMaxDraft(event.target.value)}
+                    onBlur={() => setMaxParticipants(Number(maxDraft))}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') event.currentTarget.blur()
+                    }}
                   />
                 </label>
               </div>
