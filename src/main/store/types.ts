@@ -1,4 +1,5 @@
 import type { TodoItem } from '../TodoList'
+import type { AppIconVariant } from '../../shared/iconVariants'
 
 export type AppearanceMode = 'solid' | 'soft_glass' | 'native_glass'
 export type VisualEffectStyle = 'auto' | 'liquid_glass' | 'thin_material' | 'classic'
@@ -1388,6 +1389,8 @@ export interface AppSettings {
   themeAccentStyle: ThemeAccentStyle
   toolIconAccent: ToolIconAccent
   userBubbleColor: UserBubbleColor
+  /** Selected app-icon variant; Dock/taskbar swap on desktop. See src/shared/iconVariants.ts. */
+  appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
   composerStyle: ComposerStyle
   transcriptFontFamily?: string

@@ -405,6 +405,7 @@ const defaultSettings: AppSettings = {
   themeAccentStyle: 'system',
   toolIconAccent: 'system',
   userBubbleColor: 'system',
+  appIconVariant: 'regular',
   promptSurfaceStyle: 'liquid_glass',
   composerStyle: 'default',
   transcriptFontFamily: TASKWRAITH_DEFAULT_FONT_STACK,

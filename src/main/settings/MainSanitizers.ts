@@ -20,6 +20,7 @@ import type {
 } from '../store/types'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
+import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -55,6 +56,8 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'themeAppearance',
   'themeCornerStyle',
   'themeAccentStyle',
+  'toolIconAccent',
+  'userBubbleColor',
   'promptSurfaceStyle',
   'composerStyle',
   'transcriptFontFamily',
@@ -98,7 +101,8 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'lastSeenChangelogVersion',
   'pendingUpdateChangelog',
   'approvalTimeouts',
-  'auditOrchestration'
+  'auditOrchestration',
+  'appIconVariant'
 ])
 
 export const MIN_INSPECTOR_WIDTH = 300
@@ -898,6 +902,17 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('modelUsagePanelView' in sanitized) {
       const value = sanitized.modelUsagePanelView
       if (value !== 'plan' && value !== 'spend') delete sanitized.modelUsagePanelView
+    }
+    if ('appIconVariant' in sanitized) {
+      // Drop invalid ids, and refuse a NEW wwdc26 selection once the limited-time
+      // window has closed. This gates the incoming patch (an OFFER surface) only —
+      // an already-stored wwdc26 value is never touched, so it stays grandfathered.
+      const value = sanitized.appIconVariant
+      if (!isAppIconVariant(value)) {
+        delete sanitized.appIconVariant
+      } else if (value === 'wwdc26' && !isWwdc26IconAvailable(Date.now())) {
+        delete sanitized.appIconVariant
+      }
     }
     if ('modelUsageExternalUsage' in sanitized) {
       const value = sanitized.modelUsageExternalUsage

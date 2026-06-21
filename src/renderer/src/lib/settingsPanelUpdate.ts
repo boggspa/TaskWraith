@@ -14,6 +14,7 @@ export type SettingsPanelUpdate = {
   themeAccentStyle?: AppSettings['themeAccentStyle']
   toolIconAccent?: AppSettings['toolIconAccent']
   userBubbleColor?: AppSettings['userBubbleColor']
+  appIconVariant?: AppSettings['appIconVariant']
   promptSurfaceStyle?: AppSettings['promptSurfaceStyle']
   composerStyle?: AppSettings['composerStyle']
   transcriptFontFamily?: AppSettings['transcriptFontFamily']

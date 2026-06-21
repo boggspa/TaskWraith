@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   createMainSanitizers,
   normalizeAuditRunIdentity,
@@ -205,6 +205,39 @@ describe('MainSanitizers settings patches', () => {
       'modelUsagePanelView' in
         sanitizeSettingsPatch({ modelUsagePanelView: 'bogus' as unknown as 'plan' })
     ).toBe(false)
+  })
+
+  it('persists a valid appIconVariant and drops invalid ones (SETTINGS_PATCH_KEYS guard)', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    // Guards the landmine: appIconVariant must be in SETTINGS_PATCH_KEYS or the
+    // whole key is silently dropped before it can persist.
+    expect(sanitizeSettingsPatch({ appIconVariant: 'monoline' }).appIconVariant).toBe('monoline')
+    expect(sanitizeSettingsPatch({ appIconVariant: 'regular' }).appIconVariant).toBe('regular')
+    expect(
+      'appIconVariant' in sanitizeSettingsPatch({ appIconVariant: 'bogus' as unknown as 'regular' })
+    ).toBe(false)
+  })
+
+  it('gates a NEW wwdc26 selection by the limited-time window', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-08-31T12:00:00Z'))
+      expect(sanitizeSettingsPatch({ appIconVariant: 'wwdc26' }).appIconVariant).toBe('wwdc26')
+      vi.setSystemTime(new Date('2026-09-02T12:00:00Z'))
+      expect('appIconVariant' in sanitizeSettingsPatch({ appIconVariant: 'wwdc26' })).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('persists toolIconAccent and userBubbleColor (regression: both were missing from the allowlist)', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ toolIconAccent: 'cyan' }).toolIconAccent).toBe('cyan')
+    expect(sanitizeSettingsPatch({ userBubbleColor: 'green' }).userBubbleColor).toBe('green')
   })
 
   it('accepts a boolean modelUsageExternalUsage and drops non-boolean values', () => {
