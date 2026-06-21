@@ -1,13 +1,16 @@
-// Read-only "Canvas open" card, projected from the Mac (RemoteTaskCard.canvasPreviews,
-// built by RemoteTaskProjection.buildRemoteCanvasPreviews). It tells the phone that
-// one or more TaskWraith Canvas web previews are open in this chat — driver-agnostic,
-// VIEW-ONLY (no pixels, no actions). Phone write-actions land in a later slice; the
-// Codable shape is kept in sync with the TS projection by CanvasPreviewDecodeTests.
+// "Canvas open" card, projected from the Mac (RemoteTaskCard.canvasPreviews, built by
+// RemoteTaskProjection.buildRemoteCanvasPreviews). Tells the phone that one or more
+// TaskWraith Canvas web previews are open in this chat (driver-agnostic, no pixels),
+// and — P3 slice 2b — lets the user CLOSE or RELOAD one via a bridge write-action
+// (RemoteSessionModel.canvasClose/canvasReload). The Codable shape is kept in sync
+// with the TS projection by CanvasPreviewDecodeTests.
 
 import SwiftUI
 import TaskWraithKit
 
 struct CanvasPreviewCard: View {
+    @ObservedObject var model: RemoteSessionModel
+    let threadId: String
     let previews: [RemoteCanvasPreview]
 
     var body: some View {
@@ -62,6 +65,25 @@ struct CanvasPreviewCard: View {
             }
             Spacer(minLength: 6)
             statusPill(preview)
+            if let id = preview.canvasId {
+                Menu {
+                    Button {
+                        model.canvasReload(threadId: threadId, canvasId: id)
+                    } label: {
+                        Label("Reload", systemImage: "arrow.clockwise")
+                    }
+                    Button(role: .destructive) {
+                        model.canvasClose(threadId: threadId, canvasId: id)
+                    } label: {
+                        Label("Close canvas", systemImage: "xmark")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .accessibilityLabel("Canvas actions")
+                }
+                .menuStyle(.borderlessButton)
+            }
         }
     }
 

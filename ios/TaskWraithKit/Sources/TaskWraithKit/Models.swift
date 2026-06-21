@@ -1377,6 +1377,19 @@ public enum BridgeAction {
         ])
     }
 
+    /// Phone close/reload of an open Canvas preview (P3). `action` is "close" or
+    /// "reload"; the Mac owns the canvas by chatId (== threadId).
+    public static func canvasAction(
+        workspaceId: String, threadId: String, canvasId: String, action: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "canvasAction", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId,
+            "canvasId": canvasId, "action": action,
+        ])
+    }
+
     /// Cancel a running agent.
     public static func cancelRun(
         provider: String, runId: String, workspaceId: String, threadId: String,

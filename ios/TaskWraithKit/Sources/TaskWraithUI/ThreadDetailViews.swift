@@ -618,7 +618,7 @@ struct ThreadDetailView: View {
                 }
                 // P3: read-only "Canvas open" card for this chat's live web previews.
                 if let canvases = card?.canvasPreviews, !canvases.isEmpty {
-                    CanvasPreviewCard(previews: canvases)
+                    CanvasPreviewCard(model: model, threadId: taskId, previews: canvases)
                         .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)

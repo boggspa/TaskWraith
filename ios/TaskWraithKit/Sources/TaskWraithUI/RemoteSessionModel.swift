@@ -3631,6 +3631,23 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefresh(threadId)
     }
 
+    /// P3 phone Canvas write-actions: close or reload an open preview. No local
+    /// optimistic state to roll back — the projection re-broadcast updates the card.
+    public func canvasClose(threadId: String, canvasId: String) {
+        sendCanvasAction(threadId: threadId, canvasId: canvasId, action: "close")
+    }
+    public func canvasReload(threadId: String, canvasId: String) {
+        sendCanvasAction(threadId: threadId, canvasId: canvasId, action: "reload")
+    }
+    private func sendCanvasAction(threadId: String, canvasId: String, action: String) {
+        guard let ws = remoteScopeForThread(threadId) else { return }
+        send(
+            BridgeAction.canvasAction(
+                workspaceId: ws, threadId: threadId, canvasId: canvasId, action: action),
+            successLabel: action == "close" ? "Canvas closed." : "Canvas reloaded.")
+        scheduleThreadRefresh(threadId)
+    }
+
     public func cancelRun(_ card: RemoteTaskCard) {
         guard let thread = card.threadId else { return }
         // Global chats carry no workspaceId; present the reserved "global" scope
