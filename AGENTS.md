@@ -35,8 +35,10 @@ chat threads against workspaces. Each thread:
   approval policy.
 - Lives under a workspace in the sidebar topology.
 
-The desktop hosts the runtime and keeps approvals, run state, and local history
-inside the user's workspace environment.
+The desktop hosts the runtime and keeps settings, chats, run state, approvals,
+usage, and pairing records under Electron `userData` by default, with provider
+tools operating on workspace files through the configured workspace and policy
+boundaries.
 
 ---
 
@@ -50,16 +52,16 @@ The intent is cross-provider orchestration. Common patterns:
 
 - A long-context **Claude** thread hands the noisy CLI work off to a
   **Codex** sub-thread, then continues planning while Codex runs.
-- A **Gemini** project-aware thread delegates a careful diff edit to
+- A **Kimi** or **Cursor** project-aware thread delegates a careful diff edit to
   a **Claude** sub-thread.
 - A **Codex** runtime delegates "research this codebase" reading work
-  to a **Gemini** sub-thread (large context window).
+  to a **Claude**, **Kimi**, or **Cursor** sub-thread.
 
 ### How it appears in the UI
 
-1. The user (or, in future revs, the parent agent itself) opens a
-   chat and clicks the **↪ delegate** affordance on a parent thread
-   in the sidebar.
+1. The user opens a chat and clicks the **↪ delegate** affordance on a parent
+   thread in the sidebar, or an agent calls the `delegate_to_subthread` MCP tool
+   when policy allows it.
 2. A modal asks: provider, delegation prompt, "return result on
    completion?" toggle.
 3. On confirm, TaskWraith creates a new sub-thread:
@@ -106,7 +108,7 @@ sub-thread's agent) types in.
 When `returnResultToParent: true` was selected at spawn time AND the
 sub-thread's run completes successfully, the sub-thread's final
 assistant message is automatically appended to the parent transcript
-as a synthetic `role: 'system'` ChatMessage with:
+as an untrusted synthetic `role: 'tool'` ChatMessage with:
 
 ```
 ↩ Result from <Provider> sub-thread (<title>):
@@ -114,12 +116,12 @@ as a synthetic `role: 'system'` ChatMessage with:
 <final assistant message content>
 ```
 
-The synthetic message carries `metadata.kind = 'subThreadReturn'`
-and a back-pointer (`subThreadId`, `subThreadProvider`,
-`subThreadTitle`) so a future renderer can show a "view sub-thread"
-affordance. Propagation is idempotent — `delegationContext.resultReturnedAt`
-is set on the sub-thread record and the helper short-circuits on
-re-invocation.
+The synthetic message carries `metadata.kind = 'subThreadReturn'`,
+`metadata.resultTrust = 'untrusted-child-output'`, and a back-pointer
+(`subThreadId`, `subThreadProvider`, `subThreadTitle`) so renderers can show a
+"view sub-thread" affordance. Propagation is idempotent —
+`delegationContext.resultReturnedAt` is set on the sub-thread record and the
+helper short-circuits on re-invocation.
 
 The trigger is the run-completion event from `RunManager.onChange`.
 Failed or cancelled sub-thread runs don't propagate (the parent
@@ -130,19 +132,12 @@ A `subthread_returned` durable run-event is written under the
 
 ### How a parent-thread agent should think about delegation
 
-For now, the parent agent doesn't trigger delegation directly — the
-user clicks the button. But the parent agent **can** suggest delegation
-in its response, e.g.:
-
-> "This step requires running `swift build` repeatedly. I'd recommend
-> delegating it to a **Codex** sub-thread so the CLI work doesn't burn
-> through this thread's context window. Click the ↪ delegate button on
-> this chat to spawn it."
-
-In Phase F2 the parent agent will be able to invoke delegation via an
-MCP tool call: `taskwraith__delegate_to_subthread({ provider, prompt,
-returnResult })`. When that ships, this section will document the tool
-contract; for now, it's UI-only.
+Agents can request delegation with
+`delegate_to_subthread({ provider, prompt, returnResult, subThreadId? })`.
+That request is approval-gated by the current workspace's agentic-service
+policy. Treat the tool result as fallible: if policy declines or recall fails,
+do not loop or retry; continue the parent turn and tell the user what was
+declined.
 
 ### Audit trail
 
@@ -155,10 +150,10 @@ broader-scope audit log.
 
 ---
 
-## Ensemble mode (1.0.3) — multi-provider in a single thread
+## Ensemble mode (1.6.0) — multi-provider in a single thread
 
 Ensemble chats put multiple providers in the **same** thread (vs
-sub-threads which are isolated). Each chat has up to 6 named
+sub-threads which are isolated). Each chat can have up to 12 named
 participants with their own provider + model + permission preset +
 role. Participants take turns speaking in `order` ascending; each
 participant sees the full transcript so far (their own messages +
@@ -183,7 +178,7 @@ target:
 - **By role** (recommended): `ensemble_yield({ target: 'Planner',
   reason: 'Need a high-level plan before I implement.' })`.
 - **By provider**: `ensemble_yield({ target: 'codex' })`.
-- **By model alias** (1.0.3): `ensemble_yield({ target: 'GPT 5.5' })`
+- **By model alias**: `ensemble_yield({ target: 'GPT 5.5' })`
   / `{ target: 'Sonnet 4.7' }` / `{ target: 'Flash Lite' }` /
   `{ target: 'Kimi K2.6' }`. Multi-word model names are supported —
   the resolver matches across spaced + hyphenated forms.
@@ -225,7 +220,7 @@ The user picks the mode via the composer's Turn / Continuous chip.
 If the round is currently running, the toggle reflects the active
 round's mode (not editable mid-round).
 
-### Same-provider participants (1.0.3+)
+### Same-provider participants
 
 Ensembles can include MULTIPLE participants of the same provider
 running DIFFERENT models — e.g. one `claude-sonnet-4-7` + one
@@ -252,9 +247,10 @@ outside the workspace, MCP elicitations):
 
 1. The runtime pauses the turn and emits an approval request to the
    desktop UI.
-2. An auto-deny timer arms in parallel (per-provider defaults: Codex
-   30s, Claude/Gemini 120s, Kimi 60s; user-tunable in Settings →
-   Behavior).
+2. An auto-deny timer arms in parallel. Current defaults are Codex 30s,
+   Kimi 60s, Claude/Gemini/Grok/Cursor/Ollama 120s, and main-authority
+   actions 60s, with special action-kind overrides such as 90s/180s.
+   User-visible policy remains tunable in Settings.
 3. The first responder wins — desktop modal or timer.
 4. A decision is written to the durable Approval Ledger (Settings →
    Approval Ledger) including `decisionSource` (`'user'` vs
@@ -267,9 +263,10 @@ the situation gracefully and offer to retry once the user is back.
 
 ## MCP
 
-TaskWraith exposes a bundled MCP server (`TaskWraith`) that gives every
-provider's agent (Gemini / Codex / Claude / Kimi as of 1.0.3) access
-to the same tool surface. The canonical list lives in
+TaskWraith exposes a bundled MCP server (`TaskWraith`) to provider runtimes that
+support brokered tools. Current live run providers are Codex, Claude, Kimi,
+Grok, Cursor, and local Ollama; Gemini is historical/retired for new runs. The
+canonical list lives in
 `src/main/TaskWraithMcpTools.ts` (`TASKWRAITH_MCP_TOOLS`); the most
 relevant tools an agent reaches for during day-to-day work:
 
@@ -288,12 +285,12 @@ demands):**
   surface routed through the same approval gate as `run_shell_command`
   so the user sees the staged hunks before they land.
 
-**Delegation + orchestration (1.0.3 expansion):**
+**Delegation + orchestration:**
 
 - `delegate_to_subthread` — Phase F3 agent-driven sub-thread spawn,
   with **Phase J2 recall mode**.
-  Inputs: `{ provider: 'gemini'|'codex'|'claude'|'kimi', prompt:
-  string, returnResult?: boolean, subThreadId?: string }`. By default
+  Inputs: `{ provider: ProviderId, prompt: string, returnResult?: boolean,
+  subThreadId?: string }`, constrained to live selectable providers. By default
   (when `subThreadId` is omitted) the call spawns a fresh
   context-isolated sub-thread under the current parent. The
   tool_result includes the sub-thread id; pass that id as
@@ -303,21 +300,17 @@ demands):**
   multiple turns.
 
   Recall validates strictly: the id must belong to a sub-thread of
-  THIS parent AND match the requested `provider` AND not be archived.
-  Mismatches return a structured error tool_result and dispatch
-  nothing. When recall succeeds, TaskWraith injects the sub-thread's
-  linked provider session id into the dispatched run so the target
-  provider's native session resumes (Codex `thread/resume`, Claude
-  SDK `resume:` / CLI `--resume`, Kimi `--resume`, Gemini `--resume`).
-  If the recalled sub-thread hasn't completed its first turn yet, the
-  transcript still continues at the TaskWraith chat level but the
-  provider runtime starts a fresh session — the tool_result includes
-  a `Note:` line so you know.
+  THIS parent, match the requested `provider`, not be archived, not be
+  currently running, and have a resumable provider session. Mismatches
+  return a structured error tool_result and dispatch nothing. When
+  recall succeeds, TaskWraith injects the sub-thread's linked provider
+  session id into the dispatched run so the target provider's native
+  session resumes where that provider supports resume.
 
   When `returnResult` is true (default), the sub-thread's final
   assistant message auto-appends to the parent transcript on
-  completion (Phase F2 back-propagation) — works for both spawn and
-  recall paths.
+  completion as untrusted child output (Phase F2 back-propagation) —
+  works for both spawn and recall paths.
 
   **Approval gate (Phase I1):** every call routes through TaskWraith's
   `subThreadDelegation` agentic-service policy before any sub-thread
@@ -361,12 +354,12 @@ demands):**
       conversation with this same sub-agent."
 
       → if declined: "Sub-thread delegation to Codex was declined by
-      TaskWraith policy. Gemini continues without delegating; the user
+      TaskWraith policy. The parent turn continues without delegating; the user
       can change the policy in Settings → Behavior → Agentic Services
       → Sub-thread delegation."
 
       Agent then continues the parent turn with non-CLI work; the
-      result auto-arrives later as a synthetic system message (only
+      result auto-arrives later as an untrusted tool message (only
       if the delegation was approved).
 
   Recall — second call (continue the SAME sub-thread):
@@ -400,24 +393,15 @@ demands):**
     - The sub-thread runs with `approvalMode: 'default'` and
       `model: 'cli-default'`. Future revs may expose the full
       composer surface as additional tool args.
-    - **Phase I2-I4 (landed by 1.0.3): the four CLI/SDK providers
-      below share the full TaskWraith MCP tool surface.** TaskWraith
-      registers the `TaskWraith` MCP server with each of their runtimes
-      at spawn time:
-        - **Gemini** — via the TaskWraith MCP bridge (CLI) or function
-          calling (API path).
-        - **Codex** — via `-c mcp_servers.TaskWraith.*` overrides on
-          the `app-server` invocation.
-        - **Claude** — via the Claude Agent SDK's `mcpServers`
-          option (SDK path) or `--mcp-config <path>` (CLI fallback).
-          1.0.3 sets `alwaysLoad: true` on the server entry so the
-          SDK doesn't gate tools behind a `ToolSearch` round-trip
-          on first use (critical for plan-mode latency).
-        - **Kimi** — via Kimi Wire's MCP bridge subprocess.
-      Each bridge subprocess stamps `TASKWRAITH_PARENT_PROVIDER` on
-      its env so the approval modal reads "Claude wants to delegate
-      to Codex" and workspace grants apply per-provider — Gemini's
-      grant doesn't auto-allow Codex delegation in the same workspace.
+    - Codex, Claude, and Kimi register the full TaskWraith MCP surface with
+      their native runtimes where available. Cursor and Grok receive a brokered
+      `taskwraith` MCP surface alongside their native shell/file tooling.
+      Ollama runs through TaskWraith's local tool loop with tier-gated tool
+      subsets. Gemini is retained for historical decoding but is retired for new
+      runs.
+    - Bridge subprocesses stamp `TASKWRAITH_PARENT_PROVIDER` on their env so
+      approval modals name the requesting provider and workspace grants apply
+      per-provider.
 
 - `ensemble_yield(reason?, target?)` — used inside Ensemble chats
   (multi-provider single-thread, see "Ensemble mode" section below)
@@ -426,7 +410,7 @@ demands):**
   role / model alias. Round continues; user input is not required.
   Universal MCP tool — every provider has access.
 
-- `ask_user_question(question, options?, context?)` — **1.0.3
+- `ask_user_question(question, options?, context?)` — **current
   critical surface.** Pauses the agent's turn and surfaces a modal
   card to the user with the question + button options (or free-text
   fallback). Returns the user's answer as the tool result so the
@@ -442,12 +426,19 @@ demands):**
 - `read_subthread_result` / `list_subthreads` / `cancel_subthread` —
   inspect + cancel sub-threads spawned via `delegate_to_subthread`.
 
-- `agent_delegation_role`, `create_handoff_card`,
-  `switch_auth_profile`, `approval_status`, `provider_auth_status`,
-  `run_timeline`, `raw_provider_events`, `open_workspace_file`,
+- Provider/status and editor handoff: `agent_delegation_role`,
+  `create_handoff_card`, `switch_auth_profile`, `approval_status`,
+  `provider_auth_status`, `provider_usage_status`, `run_timeline`,
+  `raw_provider_events`, `open_workspace_file`,
   `open_in_ide`, `open_in_ide_at_position`, `reveal_in_finder`,
   `ide_app_status`, `ide_app_capabilities`, `list_running_ides` —
   meta / introspection / editor-handoff tools (Phase L).
+
+- Web, ensemble, goals, todos, recall, and shared-memory tools include
+  `web_search`, `web_fetch`, `ensemble_send`, `ensemble_fanout`,
+  `list_ensemble_participants`, goal/todo tools, blackboard tools, wakeups,
+  scout briefs, and `tw_recall_*`. Check `src/main/TaskWraithMcpTools.ts`
+  before assuming the list is complete.
 
 - `attached_window_capture`, `attached_window_status`,
   `appwatch_start`, `appwatch_stop`, `appwatch_status`,
@@ -479,27 +470,22 @@ demands):**
 
 ## Versioning
 
-This document is updated as features ship. Sections currently
-documented (as of **1.0.3**):
+This document is updated as features ship. Sections currently documented (as of
+**1.6.0**):
 
 - Sub-threads (Phase F1 + F2 back-propagation + F3 agent-driven
   delegation + J2 recall mode) — landed
-- **Ensemble mode (1.0.3)** — multi-provider single-thread, with
+- **Ensemble mode** — multi-provider single-thread, with
   ensemble_yield + @-mention auto-promotion + same-provider
   participants + turn/continuous modes
 - Approval flow + timeout policy (Phase E1)
 - Approval ledger UX (Phase E2)
 - **MCP tool surface** — full canonical list in
-  `src/main/TaskWraithMcpTools.ts`; key tools documented above
-  (including the 1.0.3 additions `ensemble_yield` +
-  `ask_user_question`).
-- Gemini / Codex / Claude / Kimi share the full brokered MCP tool
-  surface (Phase I2-I4, landed 1.0.3). The later-added providers
-  integrate TaskWraith tools through narrower surfaces: Cursor and Grok
-  get a brokered `taskwraith` MCP server but keep their native
-  shell/file tools (Cursor brokers web fetch/search; Grok's MCP tools
-  are often readonly-gated), while Ollama runs a TaskWraith-controlled
-  local tool loop with tier-gated tool subsets rather than a
-  provider-native MCP registration. See `ProviderCapabilities.ts`.
+  `src/main/TaskWraithMcpTools.ts`; key tools documented above.
+- Codex / Claude / Kimi share the full brokered MCP tool surface. Cursor and
+  Grok get a brokered `taskwraith` MCP server but keep their native shell/file
+  tools. Ollama runs a TaskWraith-controlled local tool loop with tier-gated tool
+  subsets rather than provider-native MCP registration. Gemini is retained for
+  historical chats and decode paths only. See `ProviderCapabilities.ts`.
 
 Internal roadmap notes are intentionally kept outside the public source tree.

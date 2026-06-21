@@ -14,6 +14,8 @@ Responsible for system-level operations:
 - Enforcing safety rules (denylists, workspace confinement).
 - Maintaining local run state, approval/audit ledgers, persistent thread goals,
   provider failover state, and model-usage summaries.
+- Hosting the optional iOS remote bridge: E2EE pairing, workspace allowlists,
+  remote projections, APNs token routing, and paired-device action validation.
 
 ## Renderer Process (`src/renderer/`)
 
@@ -28,8 +30,11 @@ Responsible for the UI:
 
 1. User clicks "Run" -> Renderer sends a provider run request with the prompt.
 2. Main process verifies workspace safety, resolves the effective provider
-   (including paused-provider failover), applies active goal context, and starts
-   the selected provider command, SDK, app-server, or Ollama harness.
+   (including paused-provider failover and retired-provider fallback), applies
+   active goal context, and starts the selected provider command, SDK,
+   app-server, or Ollama harness. Live selectable providers are Codex, Claude,
+   Kimi, Grok, Cursor, and local Ollama; Gemini is retained for historical
+   chats and decode paths only.
 3. Main process reads provider events and tool calls using the provider adapter.
 4. Sensitive actions route through TaskWraith policy, approval ledgers, and
    workspace confinement before execution.
@@ -44,6 +49,9 @@ Responsible for the UI:
 - **Sub-threads** create isolated child chats for delegated work.
 - **Audit runs** coordinate provider-backed review passes with structured phases,
   findings, verdicts, and synthesis.
+- **Workflows** are first-class chat/run definitions with scheduling,
+  restart recovery, read-only iOS projection, and optional ensemble execution
+  where enabled.
 - **Thread goals** store a persistent objective and stopping condition separate
   from `todo_write`; Codex can mirror native goal state when the installed
   app-server exposes it, while other providers use TaskWraith-managed goal
@@ -65,14 +73,16 @@ Responsible for the UI:
 
 - **Header**: draggable chrome area with workspace/chat title and run status indicator.
 - **Sidebar** (`src/renderer/src/components/Sidebar.tsx`): glass navigation surface with workspaces, recent chats, run summary, and settings access.
-- **Transcript** (`src/renderer/src/components/` via `App.tsx`): central scrollable content column with message bubbles, floating composer, and status chips.
+- **Transcript / Multiview** (`src/renderer/src/components/` via `App.tsx`):
+  one or more live panes with message bubbles, floating composer, per-pane run
+  routing, and status chips.
 - **Inspector** (`src/renderer/src/components/Inspector.tsx`): right-side panel with tabs for Diff Studio, Raw Events, and Safety.
 
 ### Components
 
 - **ActivityStack** (`src/renderer/src/components/ActivityStack.tsx`): compact timeline rows for tool calls with status icons, labels, file paths, durations, and expandable raw events.
 - **DiffViewer** (`src/renderer/src/components/DiffViewer.tsx`): Diff Studio with selectable file list, status badges, and unified diff detail view with syntax-highlighted additions/deletions.
-- **SettingsPanel** (`src/renderer/src/components/SettingsPanel.tsx`): modal for appearance mode, transparency, motion, density, and inspector visibility.
+- **SettingsPanel** (`src/renderer/src/components/SettingsPanel.tsx`): modal for appearance, providers, approvals, MCP/tools, workspaces, usage, devices, key commands, and local servers.
 - **FirstLaunchSheet** (`src/renderer/src/components/FirstLaunchSheet.tsx`):
   provider setup, workspace, appearance, goals, and ensemble onboarding.
 
@@ -81,4 +91,7 @@ Responsible for the UI:
 - App settings are saved to the OS user data directory.
 - Chats, run events, approval records, audit run state, usage summaries, and
   active goals are stored locally.
+- Paired-device records, remote bridge settings, APNs token routing data, and
+  first-launch/readiness projections are local to the Mac unless explicitly
+  transported over the paired E2EE bridge.
 - Secrets and release credentials must use the OS keychain or external CI secret store, not source files.

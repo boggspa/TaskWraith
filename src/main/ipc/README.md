@@ -1,7 +1,7 @@
 # `src/main/ipc/` — extracted IPC handler modules
 
-This directory exists to break up the ~21k-line main-process god-module
-`src/main/index.ts`, which registers ~240 `ipcMain.handle` channels across many
+This directory exists to break up the ~24.5k-line main-process god-module
+`src/main/index.ts`, which registers roughly 260 `ipcMain.handle` channels across many
 unrelated domains. Handlers are moved out **one cohesive domain at a time, with
 no behavior change**.
 
@@ -41,6 +41,9 @@ no behavior change**.
 | --- | --- |
 | `ptyHandlers.ts` | `start-pty`, `stop-pty`, `pty-write`, `pty-resize` (owns `ptyProcesses`/`stoppedPtySessions`; injects `requireRegisteredWorkspace`, `requestAgenticServiceApproval`) |
 | `shellHandlers.ts` | `shell:open-link`, `shell:reveal-in-finder`, `favicon:getForUrl` (stateless; injects `openSafeShellTarget`, `revealPathInFinder`, `getFaviconService`) |
+| `launchHandlers.ts` | launch-target discovery and launch/open helpers extracted from the startup/target domain |
+| `auditHandlers.ts` | audit-run lifecycle and audit-result handlers |
+| `ensembleRosterPresetsHandlers.ts` | ensemble roster preset CRUD/import/export handlers |
 
 ## Proposed module map for the rest
 
