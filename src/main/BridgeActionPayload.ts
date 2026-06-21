@@ -453,9 +453,12 @@ export interface BridgeProposedPlanDecisionAction extends BridgeActionMetadata {
   threadId: string
   /** Id of the assistant message the plan card anchors to (row.id). */
   messageId: string
-  /** Terminal status to stamp onto metadata.proposedPlan.status. The phone
-   * NEVER sends a body — the Mac re-reads its own canonical plan body. */
-  decision: 'approved' | 'dismissed'
+  /** Status to stamp onto metadata.proposedPlan.status. Only 'dismissed' — the
+   * Respond/Dismiss path. APPROVE no longer rides this action: it flips status to
+   * 'approved' ATOMICALLY with the implement run inside composerPromptFn (via the
+   * proposedPlanImplementOf marker), so there is no 'status flips with no run'
+   * channel. The phone never sends a body — the Mac re-reads its canonical plan. */
+  decision: 'dismissed'
 }
 
 export interface BridgeSetGuestParticipantAction extends BridgeActionMetadata {
@@ -1435,7 +1438,7 @@ function isProposedPlanDecision(v: Record<string, unknown>): boolean {
     isWorkspaceThreadAction(v) &&
     typeof v.messageId === 'string' &&
     v.messageId.trim().length > 0 &&
-    (v.decision === 'approved' || v.decision === 'dismissed')
+    v.decision === 'dismissed'
   )
 }
 

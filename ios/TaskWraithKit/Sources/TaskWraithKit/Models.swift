@@ -1228,15 +1228,14 @@ public enum BridgeAction {
         return encode(payload)
     }
 
-    /// Flip a Codex-style proposed plan's status (metadata.proposedPlan.status).
-    /// `decision` MUST be the Mac validator's union: approved | dismissed.
-    /// `messageId` is the transcript row id (row.id) the Mac executor uses to
-    /// locate the plan; the executor re-reads its OWN canonical
-    /// metadata.proposedPlan.body and only marks status — it NEVER re-dispatches
-    /// the run (the phone's separate composerPrompt does that, so an approve is
-    /// one run, not two). Approve elevation is satisfied trust-side: the
-    /// accompanying composerPrompt(approvalMode: "default") is re-signed by the
-    /// Mac's composerPromptFn via signRunPosture.
+    /// Mark a Codex-style proposed plan 'dismissed' (metadata.proposedPlan.status)
+    /// — the Respond/Dismiss path. APPROVE does NOT use this action: it flips
+    /// status to 'approved' ATOMICALLY with the implement run inside the Mac's
+    /// composerPromptFn (via composerPrompt's proposedPlanImplementOf marker), so
+    /// there is no 'status flips with no run' channel. `decision` is therefore
+    /// only ever "dismissed"; `messageId` is the transcript row id (row.id) the
+    /// Mac executor uses to locate the plan (it re-reads its OWN canonical plan,
+    /// never a phone-sent body). The Mac validator rejects any other decision.
     public static func proposedPlanDecision(
         workspaceId: String, threadId: String, messageId: String, decision: String,
         actionId: String = UUID().uuidString

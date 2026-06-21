@@ -147,7 +147,7 @@ const sample = {
     workspaceId: 'ws-1',
     threadId: 't-1',
     messageId: 'm7',
-    decision: 'approved'
+    decision: 'dismissed'
   } satisfies BridgeProposedPlanDecisionAction,
   togglePinChat: {
     kind: 'togglePinChat',

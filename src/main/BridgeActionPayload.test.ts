@@ -96,33 +96,37 @@ describe('decodeBridgeActionPayload', () => {
         workspaceId: 'ws-1',
         threadId: 't-1',
         messageId: 'm7',
-        decision: 'approved'
+        decision: 'dismissed'
       })
       const { payload } = decodeBridgeActionPayload(wire)
       expect(payload.kind).toBe('proposedPlanDecision')
       if (payload.kind === 'proposedPlanDecision') {
         expect(payload.messageId).toBe('m7')
-        expect(payload.decision).toBe('approved')
+        expect(payload.decision).toBe('dismissed')
       }
       expect(workspaceIdFromPayload(payload)).toBe('ws-1')
       expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
       expect(payloadIsMutating(payload)).toBe(true)
     })
 
-    it('rejects a proposedPlanDecision with a non-terminal decision', () => {
-      const { payload } = decodeBridgeActionPayload(
-        encode({
-          kind: 'proposedPlanDecision',
-          actionId: 'a-plan-2',
-          workspaceId: 'ws-1',
-          threadId: 't-1',
-          messageId: 'm7',
-          // 'pending' is not a terminal decision — the validator rejects it.
-          decision: 'pending'
-        })
-      )
-      expect(payload.kind).toBe('unknown')
-      if (payload.kind === 'unknown') expect(payload.rawKind).toBe('proposedPlanDecision')
+    it('rejects a proposedPlanDecision whose decision is not dismissed', () => {
+      // Approve no longer rides this action (it flips status atomically with the
+      // implement run via composerPromptFn), so 'approved' — like 'pending' — is
+      // now rejected; only 'dismissed' is a valid decision.
+      for (const decision of ['approved', 'pending']) {
+        const { payload } = decodeBridgeActionPayload(
+          encode({
+            kind: 'proposedPlanDecision',
+            actionId: 'a-plan-2',
+            workspaceId: 'ws-1',
+            threadId: 't-1',
+            messageId: 'm7',
+            decision
+          })
+        )
+        expect(payload.kind).toBe('unknown')
+        if (payload.kind === 'unknown') expect(payload.rawKind).toBe('proposedPlanDecision')
+      }
     })
 
     it('rejects oversized questionReply answers', () => {
