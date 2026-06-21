@@ -5786,3 +5786,299 @@ input:disabled, select:disabled, textarea:disabled {
   gap: 8px;
   margin-top: 8px;
 }
+
+/* ── Settings → Roster (ensemble roster preset editor) ─────────────────── */
+.settings-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.settings-roster-header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-roster-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 620;
+  color: var(--text-primary);
+}
+
+.settings-roster-intro {
+  margin: 0;
+  font-size: var(--font-size-sm, 13px);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.settings-roster-body {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+/* Left: preset list */
+.settings-roster-list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-roster-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-roster-list-label {
+  font-size: var(--font-size-sm, 13px);
+  color: var(--text-secondary);
+}
+
+.settings-roster-new {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+
+.settings-roster-new:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.settings-roster-list-empty {
+  padding: 14px;
+  border: 1px dashed color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm, 13px);
+  text-align: center;
+}
+
+.settings-roster-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.settings-roster-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+
+.settings-roster-list-row:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.settings-roster-list-row.is-active {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.settings-roster-list-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-roster-list-row-count {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: center;
+}
+
+/* Right: selected-preset detail */
+.settings-roster-detail-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.settings-roster-detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm, 13px);
+  text-align: center;
+}
+
+.settings-roster-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-roster-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 620;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+
+.settings-roster-name-input:hover {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.settings-roster-name-input:focus {
+  outline: none;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.settings-roster-detail-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.settings-roster-action {
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+
+.settings-roster-action:hover {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.settings-roster-action.is-danger {
+  color: color-mix(in srgb, var(--danger, #e5484d) 90%, var(--text-primary));
+  border-color: color-mix(in srgb, var(--danger, #e5484d) 30%, transparent);
+}
+
+.settings-roster-action.is-danger:hover {
+  background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
+}
+
+.settings-roster-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.settings-roster-meta-dot {
+  opacity: 0.5;
+}
+
+/* Read-only participant summary (replaced by the editor in slice 3). */
+.settings-roster-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.settings-roster-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 9%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  font-size: var(--font-size-sm, 13px);
+  color: var(--text-primary);
+}
+
+.settings-roster-summary-row.is-disabled {
+  opacity: 0.5;
+}
+
+.settings-roster-summary-order {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.settings-roster-summary-provider {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.settings-roster-summary-role {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.settings-roster-summary-off {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

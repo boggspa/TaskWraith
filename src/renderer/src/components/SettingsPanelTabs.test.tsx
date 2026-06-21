@@ -19,6 +19,20 @@ describe('Settings tabs', () => {
     expect(resolveVisibleSettingsTab('pairing')).toBe('pairing')
   })
 
+  it('exposes the Roster tab in the canonical list and the sidebar', () => {
+    expect(getVisibleSettingsTabs().map((tab) => tab.id)).toContain('roster')
+    expect(isSettingsTabVisible('roster')).toBe(true)
+    const html = renderToStaticMarkup(
+      <SettingsSidebar
+        activeTab="roster"
+        onTabChange={vi.fn()}
+        onBackToApp={vi.fn()}
+        appVersion="1.1.0"
+      />
+    )
+    expect(html).toContain('Roster')
+  })
+
   it('omits Channels from the Settings sidebar while showing Devices', () => {
     const html = renderToStaticMarkup(
       <SettingsSidebar

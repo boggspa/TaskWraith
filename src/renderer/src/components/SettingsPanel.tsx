@@ -92,6 +92,7 @@ import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
 import { PairingPage } from './PairingPage'
 import { MessagesBridgePanel } from './MessagesBridgePanel'
 import { LocalServersSettingsPanel } from './LocalServersSettingsPanel'
+import { RosterSettingsPanel } from './RosterSettingsPanel'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { UpdateStatusPane } from './UpdateStatusPane'
 import { ModelUsageCard } from './ModelUsageCard'
@@ -1093,6 +1094,7 @@ export type SettingsTab =
   | 'appearance'
   | 'behavior'
   | 'providers'
+  | 'roster'
   | 'mcp'
   | 'key-commands'
   | 'approval-ledger'
@@ -1141,6 +1143,12 @@ export const SETTINGS_TABS: Array<{
   { id: 'approval-ledger', label: 'Approvals', group: 'settings' },
   { id: 'key-commands', label: 'Key commands', group: 'settings' },
   { id: 'providers', label: 'Providers', group: 'settings' },
+  // "Roster" — manage saved ensemble roster presets and richly configure each
+  // participant (provider / model / reasoning / permissions / role / brief /
+  // order). The composer keeps its compact inline editor; this is the
+  // expansive surface. Sits next to Providers (which agents) — Roster is how
+  // they're composed into ensembles.
+  { id: 'roster', label: 'Roster', group: 'settings' },
   { id: 'mcp', label: 'MCP', group: 'settings' },
   // "Workspaces" — Codex Environments-style page listing every workspace loaded
   // into TaskWraith; a row opens it in a fresh chat surface.
@@ -5625,6 +5633,9 @@ export function SettingsPanel({
 
         {/* ── Channels (local/self-hosted message gateway) ─────────────── */}
         {activeTab === 'messages' && <MessagesBridgePanel />}
+
+        {/* ── Roster (ensemble roster presets + per-participant editor) ──── */}
+        {activeTab === 'roster' && <RosterSettingsPanel />}
 
         {/* ── Local servers (dev servers under workspaces) ─────────────── */}
         {activeTab === 'local-servers' && <LocalServersSettingsPanel />}

@@ -6,6 +6,7 @@ import {
   listEnsembleRosterPresets,
   renameEnsembleRosterPreset,
   saveEnsembleRosterPreset,
+  subscribeEnsembleRosterPresets,
   type EnsembleRosterPreset
 } from '../lib/ensembleRosterPresets'
 
@@ -50,6 +51,15 @@ export function EnsembleRosterPresetPicker({
   const refreshPresets = (): void => {
     setPresets(listEnsembleRosterPresets())
   }
+
+  // Stay in sync with the Settings → Roster editor (and other windows): any
+  // create / edit / delete / rename there fans out through the shared store's
+  // pub/sub so this compact picker reflects the change without a remount.
+  useEffect(() => {
+    return subscribeEnsembleRosterPresets(() => {
+      setPresets(listEnsembleRosterPresets())
+    })
+  }, [])
 
   useEffect(() => {
     if (!popoverOpen) return
