@@ -16619,6 +16619,36 @@ if (isGeminiMcpBridgeProcess) {
           bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           return { ok: true, goal: activeGoal }
         },
+        proposedPlanDecisionFn: async (action) => {
+          const chat = AppStore.getChat(action.threadId)
+          if (!chat) return { ok: false, error: 'Thread not found' }
+          const index = chat.messages.findIndex((message) => message.id === action.messageId)
+          if (index < 0) return { ok: false, error: 'Message not found' }
+          const message = chat.messages[index]
+          const metadata = { ...(message.metadata ?? {}) } as Record<string, unknown>
+          // Re-read OUR OWN canonical plan blob — never trust a phone-sent body.
+          const existingPlan = metadata.proposedPlan
+          if (!existingPlan || typeof existingPlan !== 'object') {
+            return { ok: false, error: 'Message carries no proposed plan' }
+          }
+          const planRecord = existingPlan as Record<string, unknown>
+          // Idempotency: only a pending plan is decidable. An already
+          // approved/dismissed plan is a no-op — a late/duplicate phone tap, or
+          // a desktop user who already decided, must not flip it back.
+          if (planRecord.status !== 'pending') return { ok: true }
+          metadata.proposedPlan = { ...planRecord, status: action.decision }
+          const messages = [...chat.messages]
+          messages[index] = { ...message, metadata } as ChatMessage
+          const updated: ChatRecord = { ...chat, messages, updatedAt: Date.now() }
+          AppStore.saveChat(updated)
+          broadcastChatUpdated(updated)
+          const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
+          if (canonical) pushRemoteThreadSnapshot(updated, canonical)
+          // Deliberately NO run dispatch here: the phone sends a SEPARATE
+          // composerPrompt for approve/respond, so an approve is ONE run, never
+          // two. This fn only flips the persisted status.
+          return { ok: true }
+        },
         toggleMessagePinFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat) return { ok: false, error: 'Thread not found' }
