@@ -56,11 +56,6 @@ interface OllamaTierPickerProps {
   repositionOnScroll?: boolean
 }
 
-/** The run profiles available for a given tier (dependent child column). */
-function runProfilesForTier(tier: OllamaToolControlTier) {
-  return OLLAMA_RUN_PROFILE_OPTIONS.filter((profile) => profile.tier === tier)
-}
-
 /**
  * The security-critical routing decision: must picking `tier` be gated behind the
  * Tier-4 acknowledgement flow? Tier 4 (provider parity) grants a LOCAL model the
@@ -110,14 +105,13 @@ export function OllamaTierPicker({
     OLLAMA_TOOL_CONTROL_TIERS.find((tier) => tier.value === selectedTier) ||
     OLLAMA_TOOL_CONTROL_TIERS[0]
 
-  // Child column: profiles for the SELECTED tier. The active profile is the
-  // chat override when it belongs to this tier, otherwise the tier's first
-  // (default) profile — defensive against a stale cross-tier profile id.
-  const childProfiles = useMemo(() => runProfilesForTier(selectedTier), [selectedTier])
-  const effectiveProfileValue = useMemo(() => {
-    const match = childProfiles.find((profile) => profile.value === selectedRunProfile)
-    return match?.value ?? childProfiles[0]?.value
-  }, [childProfiles, selectedRunProfile])
+  // Child column: ALL run profiles are selectable at ANY tier. The run profile
+  // is an independent "agent scope" preset (reasoning / context / protocol),
+  // NOT coupled to the tool-control tier — e.g. a Tier-2 chat can run the
+  // Provider-Parity scope (it'll just hit more approval modals), and a Tier-4
+  // chat can run Local Scout. The tier gates tools; the profile shapes the run.
+  const childProfiles = OLLAMA_RUN_PROFILE_OPTIONS
+  const effectiveProfileValue = selectedRunProfile
 
   // Tier-4 needs a per-workspace grant to actually take effect.
   const tier4Gated = (value: OllamaToolControlTier): boolean =>
