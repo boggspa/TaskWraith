@@ -69,6 +69,7 @@ function deps(over: Partial<RecallToolExecutorDeps> = {}): RecallToolExecutorDep
     getRunEvents: () => [],
     loadFinalAssistantMessage: () => null,
     mintCitationToken: ({ kind }) => `tok-${kind}`,
+    resolveRecallAccess: async () => ({ allowed: true }),
     now: () => NOW,
     ...over
   }
@@ -267,5 +268,80 @@ describe('tw_recall_read_events', () => {
       deps({ getRunEvents: () => events })
     )
     expect(out.count).toBe(2)
+  })
+})
+
+describe('recall access gate (Gaps A+B)', () => {
+  it('reports crossWorkspace=false for the caller own workspace (auto-allow path)', async () => {
+    let captured: { crossWorkspace?: boolean } = {}
+    await find(
+      {},
+      deps({
+        listRunQueueJobs: () => [job({ runId: 'r1', workspaceId: 'ws-home' })],
+        resolveRecallAccess: async (input) => {
+          captured = input
+          return { allowed: true }
+        }
+      })
+    )
+    expect(captured.crossWorkspace).toBe(false)
+  })
+
+  it('reports crossWorkspace=true for a different named workspace', async () => {
+    let captured: { crossWorkspace?: boolean } = {}
+    await find(
+      { workspace: 'Payments' },
+      deps({
+        listRunQueueJobs: () => [job({ runId: 'r1', workspaceId: 'ws-pay' })],
+        resolveRecallAccess: async (input) => {
+          captured = input
+          return { allowed: true }
+        }
+      })
+    )
+    expect(captured.crossWorkspace).toBe(true)
+  })
+
+  it('blocks find when the gate refuses — no candidates leaked', async () => {
+    const out = await find(
+      { workspace: 'Payments' },
+      deps({
+        listRunQueueJobs: () => [job({ runId: 'r1', workspaceId: 'ws-pay' })],
+        resolveRecallAccess: async () => ({ allowed: false, reason: 'declined' })
+      })
+    )
+    expect(out.blocked).toBe(true)
+    expect(out.candidates).toEqual([])
+  })
+
+  it('blocks read with a reason-specific message (remote)', async () => {
+    const { structuredContent: out } = await callTool(
+      'tw_recall_read',
+      { runId: 'r1' },
+      deps({
+        getRunQueueJob: () => job({ runId: 'r1', workspaceId: 'ws-pay' }),
+        resolveRecallAccess: async () => ({ allowed: false, reason: 'remote_blocked' })
+      })
+    )
+    expect(out.blocked).toBe(true)
+    expect(out.available).toBe(false)
+    expect(String(out.message)).toMatch(/phone-issued/i)
+  })
+
+  it('gates read by the run target workspace vs the caller', async () => {
+    let captured: { crossWorkspace?: boolean } = {}
+    await callTool(
+      'tw_recall_read',
+      { runId: 'r1' },
+      deps({
+        getRunQueueJob: () => job({ runId: 'r1', workspaceId: 'ws-pay' }),
+        getRunEvents: () => [ev({ runId: 'r1', kind: 'lifecycle' })],
+        resolveRecallAccess: async (input) => {
+          captured = input
+          return { allowed: true }
+        }
+      })
+    )
+    expect(captured.crossWorkspace).toBe(true)
   })
 })

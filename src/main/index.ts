@@ -589,7 +589,11 @@ import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type { CanvasDriverKind, CanvasEventRecord } from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
-import { createRecallToolExecutors, isRecallMcpToolName } from './mcp/RecallToolExecutors'
+import {
+  createRecallToolExecutors,
+  isRecallMcpToolName,
+  type RecallToolContext
+} from './mcp/RecallToolExecutors'
 import {
   brokerRequest as mcpBridgeBrokerRequest,
   createMcpBridgeRuntime,
@@ -1618,6 +1622,34 @@ const recallToolExecutors = createRecallToolExecutors({
     }
   },
   mintCitationToken: ({ runId, kind }) => `recall:${kind}:${runId}`,
+  resolveRecallAccess: async ({ context, parentProvider, crossWorkspace, targetWorkspacePath }) => {
+    const ctx = context as RecallToolContext & {
+      effectivePermissions?: EffectiveRunPermissions
+      sender?: Electron.WebContents
+    }
+    // Read-only seat / cross-thread reads disabled in settings → refuse outright.
+    const effSettings = effectiveAgenticSettings(AppStore.getSettings(), ctx.effectivePermissions)
+    if (effSettings.agenticServices.crossThreadRead === 'deny') {
+      return { allowed: false, reason: 'denied' }
+    }
+    // Caller's OWN workspace → auto-allow (no prompt). A different workspace
+    // prompts the dedicated crossThreadRead service (grantable/expiring).
+    if (!crossWorkspace) return { allowed: true }
+    const approved = await requestAgenticServiceApproval(
+      ctx.sender ?? null,
+      parentProvider as ProviderId,
+      'crossThreadRead',
+      targetWorkspacePath ?? ctx.workspacePath,
+      {
+        method: `${parentProvider}-mcp/tw_recall`,
+        title: `Approve ${providerLabel(parentProvider as ProviderId)} cross-thread read`,
+        body: 'cross-thread read',
+        preview: { kind: 'tool', toolName: 'tw_recall', params: {} },
+        runId: ctx.appRunId
+      }
+    )
+    return approved ? { allowed: true } : { allowed: false, reason: 'declined' }
+  },
   now: () => Date.now(),
   normalizePath: canonicalPath
 })
@@ -13702,7 +13734,9 @@ async function executeGeminiMcpTool(
   // delegation gate prompts them again — TWO modals for the same logical
   // action. Skip the generic one; the delegation gate is authoritative.
   const skipGenericApproval =
-    toolName === 'delegate_to_subthread' || MCP_AUTO_ALLOWED_TOOLS.has(toolName)
+    toolName === 'delegate_to_subthread' ||
+    isRecallMcpToolName(toolName) ||
+    MCP_AUTO_ALLOWED_TOOLS.has(toolName)
   // 1.0.72 — read-only hard-deny for side-effecting fall-through tools. The host
   // gate denies file/shell under read_only, but a mutating tool that classifies
   // as the generic mcpTools service (creative_blender_python, browser_open/click,

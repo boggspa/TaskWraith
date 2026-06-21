@@ -7,18 +7,15 @@
  * `tw_recall_read_events` read how far a chosen run got. All three are
  * READ-ONLY.
  *
- * Scope model (v1): a find is scoped to a SINGLE workspace — the one the agent
- * named, or (if it named none) the caller's own workspace. Searching the
- * caller's own workspace is auto-allowed; naming a DIFFERENT workspace is a
- * cross-workspace read. The host approval gate runs before this executor, so
- * the call is already user-approved by the time we resolve; Slice 3 refines
- * that gate into the scope-conditional `crossThreadRead` service (own-workspace
- * skips the prompt, cross-workspace uses a per-provider/expiring grant). The
- * `crossWorkspace` flag in the result tells the host which path applied.
+ * Scope model: a find is scoped to a SINGLE workspace — the one the agent
+ * named, or (if it named none) the caller's own workspace. Recall self-gates
+ * via the injected `resolveRecallAccess` (the tools sit in skipGenericApproval,
+ * NOT the generic gate): the caller's OWN workspace auto-allows with no prompt,
+ * a DIFFERENT workspace prompts the crossThreadRead service, and a remote/phone-
+ * issued run or a read-only / denied seat is refused outright.
  *
  * Like the canvas executor this is a factory over injected deps so it stays
- * unit-testable with no Electron. Slice 4 fills in the read verbs (they return
- * `not_implemented` here).
+ * unit-testable with no Electron.
  */
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
 import type { ProviderId, RunEventRecord, RunQueueJob, WorkspaceRecord } from '../store/types'
@@ -80,6 +77,16 @@ export interface RecallToolExecutorDeps {
   } | null
   /** Mint an opaque per-serving citation token (Slice 5 makes it verifiable). */
   mintCitationToken: (input: { runId: string; kind: string }) => string
+  /** Single access gate (Gaps A+B). Wired in the host to: block remote/phone-
+   * issued runs (tz-safety), deny under read-only / crossThreadRead:'deny',
+   * AUTO-ALLOW the caller's OWN workspace (no prompt), and prompt the
+   * crossThreadRead service for a different workspace. */
+  resolveRecallAccess: (input: {
+    context: RecallToolContext
+    parentProvider: string
+    crossWorkspace: boolean
+    targetWorkspacePath?: string
+  }) => Promise<{ allowed: boolean; reason?: string }>
   now: () => number
   normalizePath?: (value: string) => string
   timeZone?: string
@@ -126,8 +133,49 @@ function fail(toolName: string, message: string): McpToolExecutionResult {
   return { text, isError: true, structuredContent: value, content: [{ type: 'text', text }] }
 }
 
+function gated(toolName: string, reason?: string): McpToolExecutionResult {
+  const message =
+    reason === 'remote_blocked'
+      ? 'Cross-thread recall is not available from a phone-issued prompt yet — time references like "yesterday ~6pm" resolve in the host timezone. Ask again from the desktop app.'
+      : reason === 'denied'
+        ? 'Cross-thread recall is disabled for this run (a read-only seat, or cross-thread reads are turned off in settings).'
+        : 'The cross-thread read was not approved.'
+  return jsonResult({
+    ok: true,
+    tool: toolName,
+    available: false,
+    blocked: true,
+    reason: reason ?? 'declined',
+    matchKind: 'none',
+    candidates: [],
+    message
+  })
+}
+
 export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallToolExecutors {
-  function executeFind(rawArgs: unknown, context: RecallToolContext): McpToolExecutionResult {
+  /** Single scope/origin gate for every recall verb (Gaps A+B). Returns the
+   * blocked result, or null when the read may proceed. */
+  async function checkAccess(
+    toolName: string,
+    context: RecallToolContext,
+    parentProvider: string,
+    crossWorkspace: boolean,
+    targetWorkspacePath?: string
+  ): Promise<McpToolExecutionResult | null> {
+    const access = await deps.resolveRecallAccess({
+      context,
+      parentProvider,
+      crossWorkspace,
+      targetWorkspacePath
+    })
+    return access.allowed ? null : gated(toolName, access.reason)
+  }
+
+  async function executeFind(
+    rawArgs: unknown,
+    context: RecallToolContext,
+    parentProvider: string
+  ): Promise<McpToolExecutionResult> {
     const args = asRecord(rawArgs)
     const tool = 'tw_recall_find'
     const workspaces = deps.getWorkspaces()
@@ -173,6 +221,20 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
         note: 'That workspace is not in your allowlist.'
       })
     }
+
+    // Scope/origin gate (Gaps A+B): own-workspace auto-allows, a different
+    // workspace prompts crossThreadRead, remote/denied is refused.
+    const targetWorkspacePath = canonicalSearchWs
+      ? workspaces.find((w) => w.id === canonicalSearchWs)?.path
+      : undefined
+    const blocked = await checkAccess(
+      tool,
+      context,
+      parentProvider,
+      crossWorkspace,
+      targetWorkspacePath
+    )
+    if (blocked) return blocked
 
     const provider = normalizeProviderQuery(asOptString(args.provider)) ?? undefined
     const jobs = deps.listRunQueueJobs({ provider, includeTerminal: true })
@@ -225,12 +287,33 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
     return value.length > max ? `${value.slice(0, max)}…` : value
   }
 
-  function executeRead(rawArgs: unknown): McpToolExecutionResult {
+  async function executeRead(
+    rawArgs: unknown,
+    context: RecallToolContext,
+    parentProvider: string
+  ): Promise<McpToolExecutionResult> {
     const tool = 'tw_recall_read'
     const args = asRecord(rawArgs)
     const runId = asOptString(args.runId)
     if (!runId)
       return fail(tool, '`runId` is required (use a runId from a tw_recall_find candidate).')
+
+    const job = deps.getRunQueueJob(runId)
+    const callerWorkspaceId = deps.resolveCallerWorkspaceId(context)
+    const targetWorkspaceId = job
+      ? resolveCanonicalWorkspaceId(job.workspaceId, deps.getWorkspaces(), deps.normalizePath)
+      : null
+    const crossWorkspace = Boolean(
+      targetWorkspaceId && (!callerWorkspaceId || targetWorkspaceId !== callerWorkspaceId)
+    )
+    const blocked = await checkAccess(
+      tool,
+      context,
+      parentProvider,
+      crossWorkspace,
+      job?.workspacePath
+    )
+    if (blocked) return blocked
 
     // Fail closed when the run's forensics were deleted — never return an
     // empty-but-plausible shell (the #1 confabulation trap).
@@ -257,7 +340,6 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
       })
     }
 
-    const job = deps.getRunQueueJob(runId)
     const replay = createRunEventReplay(runId, events)
     const startedAt = job?.startedAt || replay.startedAt || null
     const endedAt =
@@ -300,12 +382,33 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
     return jsonResult(result)
   }
 
-  function executeReadEvents(rawArgs: unknown): McpToolExecutionResult {
+  async function executeReadEvents(
+    rawArgs: unknown,
+    context: RecallToolContext,
+    parentProvider: string
+  ): Promise<McpToolExecutionResult> {
     const tool = 'tw_recall_read_events'
     const args = asRecord(rawArgs)
     const runId = asOptString(args.runId)
     if (!runId)
       return fail(tool, '`runId` is required (use a runId from a tw_recall_find candidate).')
+
+    const job = deps.getRunQueueJob(runId)
+    const callerWorkspaceId = deps.resolveCallerWorkspaceId(context)
+    const targetWorkspaceId = job
+      ? resolveCanonicalWorkspaceId(job.workspaceId, deps.getWorkspaces(), deps.normalizePath)
+      : null
+    const crossWorkspace = Boolean(
+      targetWorkspaceId && (!callerWorkspaceId || targetWorkspaceId !== callerWorkspaceId)
+    )
+    const blocked = await checkAccess(
+      tool,
+      context,
+      parentProvider,
+      crossWorkspace,
+      job?.workspacePath
+    )
+    if (blocked) return blocked
 
     if (!deps.isForensicsAvailable(runId)) {
       return jsonResult({ ok: true, tool, runId, available: false, reason: 'forensics_deleted' })
@@ -346,16 +449,16 @@ export function createRecallToolExecutors(deps: RecallToolExecutorDeps): RecallT
     toolName: RecallMcpToolName,
     rawArgs: unknown,
     context: RecallToolContext,
-    _parentProvider: string
+    parentProvider: string
   ): Promise<McpToolExecutionResult> {
     try {
       switch (toolName) {
         case 'tw_recall_find':
-          return executeFind(rawArgs, context)
+          return await executeFind(rawArgs, context, parentProvider)
         case 'tw_recall_read':
-          return executeRead(rawArgs)
+          return await executeRead(rawArgs, context, parentProvider)
         case 'tw_recall_read_events':
-          return executeReadEvents(rawArgs)
+          return await executeReadEvents(rawArgs, context, parentProvider)
         default:
           return fail(toolName, `Unknown recall tool "${toolName}".`)
       }
