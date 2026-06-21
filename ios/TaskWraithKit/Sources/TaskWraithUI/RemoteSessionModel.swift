@@ -3415,6 +3415,10 @@ public final class RemoteSessionModel: ObservableObject {
     /// truncated) preview body.
     public func proposedPlanApprove(threadId: String, messageId: String) {
         guard let ws = remoteScopeForThread(threadId) else { return }
+        // Self-defending against a double-fire even though `.disabled(decided)`
+        // also gates the button (the Set insert below is synchronous on
+        // @MainActor, so the View binding usually flips first).
+        guard !repliedProposedPlanIds.contains(messageId) else { return }
         let provider = providerForThread(threadId)
         repliedProposedPlanIds.insert(messageId)
         send(
@@ -3446,6 +3450,7 @@ public final class RemoteSessionModel: ObservableObject {
     public func proposedPlanRespond(threadId: String, messageId: String, feedback: String) {
         let trimmed = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let ws = remoteScopeForThread(threadId) else { return }
+        guard !repliedProposedPlanIds.contains(messageId) else { return }
         let provider = providerForThread(threadId)
         repliedProposedPlanIds.insert(messageId)
         send(
@@ -3469,6 +3474,7 @@ public final class RemoteSessionModel: ObservableObject {
     /// Dismiss a proposed plan with no run — the executor only flips status.
     public func proposedPlanDismiss(threadId: String, messageId: String) {
         guard let ws = remoteScopeForThread(threadId) else { return }
+        guard !repliedProposedPlanIds.contains(messageId) else { return }
         repliedProposedPlanIds.insert(messageId)
         send(
             BridgeAction.proposedPlanDecision(
