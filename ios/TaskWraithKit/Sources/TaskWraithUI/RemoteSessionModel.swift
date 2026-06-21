@@ -2523,6 +2523,28 @@ public final class RemoteSessionModel: ObservableObject {
         rowExpansions[threadId]?[row.id] ?? row
     }
 
+    public func fetchThreadMedia(
+        threadId: String, rowId: String, mediaId: String, variant: String = "full",
+        maxBytes: Int = 8 * 1024 * 1024
+    ) async throws -> TranscriptMediaFetchResult {
+        guard !isDemo else { throw RemoteFileActionError.denied("Demo mode has no Mac media store.") }
+        guard let workspaceId = remoteScopeForThread(threadId)
+        else { throw RemoteFileActionError.denied("Thread is not in an allowlisted workspace.") }
+        let params = BridgeAction.threadMediaFetch(
+            workspaceId: workspaceId, threadId: threadId, rowId: rowId, mediaId: mediaId,
+            variant: variant, maxBytes: maxBytes)
+        do {
+            let ack = try await requestFileAction(params, timeoutMs: 30_000)
+            guard let media = ack.data?.media else { throw RemoteFileActionError.malformedAck }
+            return media
+        } catch {
+            await MainActor.run {
+                self.lastActionMessage = String(describing: error)
+            }
+            throw error
+        }
+    }
+
     /// Display name for a workspace id (telemetry rail / headers).
     public func workspaceName(for workspaceId: String?) -> String? {
         guard let workspaceId else { return nil }

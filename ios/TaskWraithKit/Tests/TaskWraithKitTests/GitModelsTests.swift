@@ -214,21 +214,31 @@ struct GitModelsTests {
 
     @Test("threadMediaFetch helper encodes bounded media request")
     func threadMediaFetchHelperEncodes() throws {
-        let params = BridgeAction.threadMediaFetch(
+        func decode(_ params: [String: Any]) throws -> [String: Any] {
+            let payloadBase64 = try #require(params["payloadBase64"] as? String)
+            let payloadData = try #require(Data(base64Encoded: payloadBase64))
+            return try #require(
+                try JSONSerialization.jsonObject(with: payloadData) as? [String: Any])
+        }
+
+        let thumbnail = BridgeAction.threadMediaFetch(
             workspaceId: "ws-1", threadId: "t-1", rowId: "m7", mediaId: "media-1",
             variant: "thumbnail", maxBytes: 128_000)
-        let payloadBase64 = try #require(params["payloadBase64"] as? String)
-        let payloadData = try #require(Data(base64Encoded: payloadBase64))
-        let payload = try #require(
-            try JSONSerialization.jsonObject(with: payloadData) as? [String: Any])
+        let thumbnailPayload = try decode(thumbnail)
+        #expect(thumbnailPayload["kind"] as? String == "threadMediaFetch")
+        #expect(thumbnailPayload["workspaceId"] as? String == "ws-1")
+        #expect(thumbnailPayload["threadId"] as? String == "t-1")
+        #expect(thumbnailPayload["rowId"] as? String == "m7")
+        #expect(thumbnailPayload["mediaId"] as? String == "media-1")
+        #expect(thumbnailPayload["variant"] as? String == "thumbnail")
+        #expect(thumbnailPayload["maxBytes"] as? Int == 128_000)
+        #expect(thumbnailPayload["actionId"] as? String != nil)
 
-        #expect(payload["kind"] as? String == "threadMediaFetch")
-        #expect(payload["workspaceId"] as? String == "ws-1")
-        #expect(payload["threadId"] as? String == "t-1")
-        #expect(payload["rowId"] as? String == "m7")
-        #expect(payload["mediaId"] as? String == "media-1")
-        #expect(payload["variant"] as? String == "thumbnail")
-        #expect(payload["maxBytes"] as? Int == 128_000)
-        #expect(payload["actionId"] as? String != nil)
+        let full = BridgeAction.threadMediaFetch(
+            workspaceId: "ws-1", threadId: "t-1", rowId: "m7", mediaId: "media-1",
+            variant: "full", maxBytes: 8 * 1024 * 1024)
+        let fullPayload = try decode(full)
+        #expect(fullPayload["variant"] as? String == "full")
+        #expect(fullPayload["maxBytes"] as? Int == 8 * 1024 * 1024)
     }
 }

@@ -1858,15 +1858,13 @@ struct ThreadRowView: View {
                         .foregroundStyle(TWTheme.textTertiary)
                     }
                 }
-                let mediaThumbnails = row.media?.compactMap(\.thumbnail) ?? []
-                if !mediaThumbnails.isEmpty {
+                if let media = row.media, !media.isEmpty {
                     #if canImport(UIKit)
-                        TranscriptImageThumbnails(thumbnails: mediaThumbnails)
+                        TranscriptMediaStrip(
+                            model: model, threadId: threadId, rowId: row.id, media: media)
                     #else
-                        imageAttachmentChip(mediaThumbnails.count)
+                        imageAttachmentChip(media.count)
                     #endif
-                } else if let media = row.media, !media.isEmpty {
-                    imageAttachmentChip(media.count)
                 } else if let thumbs = row.imageThumbnails, !thumbs.isEmpty {
                     #if canImport(UIKit)
                         TranscriptImageThumbnails(thumbnails: thumbs)
@@ -2018,6 +2016,197 @@ struct ThreadRowView: View {
         return TWTheme.textPrimary
     }
 }
+
+#if canImport(UIKit)
+    private struct TranscriptMediaStrip: View {
+        @ObservedObject var model: RemoteSessionModel
+        let threadId: String
+        let rowId: String
+        let media: [RemoteThreadSnapshot.Row.Media]
+        @State private var fetchingMediaId: String?
+        @State private var preview: TranscriptMediaPreview?
+        @State private var errorText: String?
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 5) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 6) {
+                        ForEach(media) { item in
+                            mediaTile(item)
+                        }
+                    }
+                }
+                if let errorText {
+                    Text(errorText)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(TWTheme.statusFailed)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.top, 2)
+            .sheet(item: $preview) { preview in
+                TranscriptMediaPreviewSheet(preview: preview)
+            }
+        }
+
+        @ViewBuilder
+        private func mediaTile(_ item: RemoteThreadSnapshot.Row.Media) -> some View {
+            let canFetch = item.status == nil || item.status == "available"
+            let isFetching = fetchingMediaId == item.id
+            Button {
+                startFetch(item)
+            } label: {
+                ZStack(alignment: .bottomTrailing) {
+                    mediaThumbnail(item)
+                    if isFetching {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.black.opacity(0.34))
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .tint(.white)
+                        }
+                    } else if canFetch {
+                        Image(systemName: "magnifyingglass")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(5)
+                            .background(Color.black.opacity(0.55), in: Circle())
+                            .padding(6)
+                    } else if let status = item.status, !status.isEmpty {
+                        Text(statusLabel(status))
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .background(Color.black.opacity(0.55), in: Capsule())
+                            .padding(6)
+                    }
+                }
+                .frame(width: 132, height: 132)
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canFetch || fetchingMediaId != nil)
+            .accessibilityLabel(item.alt ?? item.caption ?? item.name)
+        }
+
+        @ViewBuilder
+        private func mediaThumbnail(_ item: RemoteThreadSnapshot.Row.Media) -> some View {
+            if let thumbnail = item.thumbnail, let image = Self.decode(thumbnail.dataBase64) {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 132, height: 132)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color(UIColor.separator), lineWidth: 0.5)
+                    )
+            } else {
+                VStack(spacing: 7) {
+                    Image(systemName: "photo")
+                        .font(.title2.weight(.semibold))
+                    Text(item.name)
+                        .font(.caption2.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .padding(.horizontal, 8)
+                }
+                .foregroundStyle(TWTheme.textSecondary)
+                .frame(width: 132, height: 132)
+                .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color(UIColor.separator), lineWidth: 0.5)
+                )
+            }
+        }
+
+        private func startFetch(_ item: RemoteThreadSnapshot.Row.Media) {
+            guard fetchingMediaId == nil else { return }
+            fetchingMediaId = item.id
+            errorText = nil
+            Task {
+                do {
+                    let fetched = try await model.fetchThreadMedia(
+                        threadId: threadId, rowId: rowId, mediaId: item.id,
+                        variant: "full", maxBytes: 8 * 1024 * 1024)
+                    await MainActor.run {
+                        self.preview = TranscriptMediaPreview(media: fetched)
+                        self.fetchingMediaId = nil
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.errorText = "Full image unavailable"
+                        self.fetchingMediaId = nil
+                    }
+                }
+            }
+        }
+
+        private func statusLabel(_ status: String) -> String {
+            switch status {
+            case "missing": return "Missing"
+            case "denied": return "Denied"
+            case "unsafe": return "Unsafe"
+            default: return status
+            }
+        }
+
+        private static func decode(_ base64: String) -> UIImage? {
+            guard let data = Data(base64Encoded: base64) else { return nil }
+            return UIImage(data: data)
+        }
+    }
+
+    private struct TranscriptMediaPreview: Identifiable {
+        let id = UUID()
+        let media: TranscriptMediaFetchResult
+    }
+
+    private struct TranscriptMediaPreviewSheet: View {
+        let preview: TranscriptMediaPreview
+        @Environment(\.dismiss) private var dismiss
+
+        var body: some View {
+            NavigationStack {
+                Group {
+                    if let image {
+                        ScrollView([.horizontal, .vertical]) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .padding()
+                        }
+                    } else {
+                        VStack(spacing: 10) {
+                            Image(systemName: "photo")
+                                .font(.largeTitle.weight(.semibold))
+                            Text("Preview unavailable")
+                                .font(.headline)
+                        }
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+                .background(TWTheme.appBg.ignoresSafeArea())
+                .navigationTitle(preview.media.name ?? "Image")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                    }
+                }
+            }
+        }
+
+        private var image: UIImage? {
+            guard let data = Data(base64Encoded: preview.media.dataBase64) else { return nil }
+            return UIImage(data: data)
+        }
+    }
+#endif
 
 struct ToolBurstRowView: View {
     let rows: [RemoteThreadSnapshot.Row]
