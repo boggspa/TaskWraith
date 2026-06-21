@@ -9,7 +9,9 @@ import type {
   RunEventReplay
 } from '../../../main/store/types'
 import { compactPromptPreview, type RunLane } from '../lib/RunLanes'
+import { buildLaunchAttemptRows, type LaunchAttemptRow } from '../lib/launchAttemptRows'
 import { getProviderLabel } from '../lib/providerLabels'
+import { useLaunchAttempts } from '../hooks/useLaunchAttempts'
 import { RunInspector } from './RunInspector'
 import { ProviderBadgeIcon } from './Sidebar'
 import { ReviewSymbolIcon, RunSymbolIcon } from './AppChromeSymbols'
@@ -196,6 +198,8 @@ export function RunRailPanel({
   const [replayError, setReplayError] = useState('')
   const [analysis, setAnalysis] = useState<RunAnalystSnapshot | null>(null)
   const [analysisBusy, setAnalysisBusy] = useState(false)
+  const [launchActionError, setLaunchActionError] = useState('')
+  const { attempts: launchAttempts, stop: stopLaunchAttempt } = useLaunchAttempts()
 
   const source = useMemo(
     () => findRunSource({ lanes, chats, currentChat, currentRun, selectedRunId }),
@@ -211,6 +215,8 @@ export function RunRailPanel({
     lane.phase === 'queued' || lane.phase === 'scheduled' || lane.phase === 'paused'
   ).length
   const failedCount = lanes.filter((lane) => lane.phase === 'failed').length
+  const launchRows = useMemo(() => buildLaunchAttemptRows(launchAttempts), [launchAttempts])
+  const activeLaunchCount = launchRows.filter((row) => row.active).length
 
   useEffect(() => {
     setAnalysis(null)
@@ -257,6 +263,21 @@ export function RunRailPanel({
     }
   }, [source, replay, onPersistAnalysis])
 
+  const handleStopLaunch = useCallback(
+    async (row: LaunchAttemptRow) => {
+      setLaunchActionError('')
+      try {
+        const result = await stopLaunchAttempt({ attemptId: row.id })
+        if (result && !result.ok) {
+          setLaunchActionError(result.error || `Could not stop ${row.label}.`)
+        }
+      } catch (error) {
+        setLaunchActionError(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [stopLaunchAttempt]
+  )
+
   return (
     <div className="run-rail-panel">
       <header className="run-rail-header">
@@ -268,6 +289,7 @@ export function RunRailPanel({
           <span><strong>{activeCount}</strong> active</span>
           <span><strong>{waitingCount}</strong> waiting</span>
           <span><strong>{failedCount}</strong> failed</span>
+          <span><strong>{activeLaunchCount}</strong> launch</span>
         </div>
       </header>
 
@@ -282,6 +304,64 @@ export function RunRailPanel({
           )
         })}
       </div>
+
+      <section className="run-rail-section run-rail-launches">
+        <div className="run-rail-section-title">
+          <strong>Launches</strong>
+          <span>{launchRows.length} tracked</span>
+        </div>
+        {launchRows.length === 0 ? (
+          <div className="run-rail-empty">No launch targets have been started yet.</div>
+        ) : (
+          <div className="run-rail-launch-list" role="list">
+            {launchRows.slice(0, 12).map((row) => (
+              <article
+                key={row.id}
+                className={`run-rail-launch tone-${row.tone}`}
+                role="listitem"
+              >
+                <div className="run-rail-launch-top">
+                  <span className="run-rail-lane-provider">
+                    <ProviderBadgeIcon provider={row.provider} />
+                    <strong>{row.label}</strong>
+                  </span>
+                  <span className="run-rail-launch-status">{row.statusLabel}</span>
+                </div>
+                <div className="run-rail-launch-command" title={row.command}>
+                  {row.command}
+                </div>
+                <div className="run-rail-lane-meta">
+                  <span title={row.workspacePath}>{row.workspaceName}</span>
+                  <span title={row.cwd}>{row.cwd.split(/[\\/]/).pop() || row.cwd}</span>
+                  {row.pid && <span>pid {row.pid}</span>}
+                  {row.duration && <span>{row.duration}</span>}
+                </div>
+                {row.outputPreview && (
+                  <pre className="run-rail-launch-output">
+                    {`${row.outputTruncated ? '[truncated]\n' : ''}${row.outputPreview}`}
+                  </pre>
+                )}
+                {row.lastError && <div className="run-rail-error">{row.lastError}</div>}
+                <div className="run-rail-actions">
+                  {row.chatId && (
+                    <button type="button" onClick={() => onOpenThread(row.chatId)}>
+                      Thread
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleStopLaunch(row)}
+                    disabled={!row.canStop}
+                  >
+                    Stop
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+        {launchActionError && <div className="run-rail-error">{launchActionError}</div>}
+      </section>
 
       <section className="run-rail-section run-rail-runs">
         <div className="run-rail-section-title">

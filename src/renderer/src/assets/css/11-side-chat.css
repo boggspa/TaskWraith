@@ -612,6 +612,7 @@
 
 .run-rail-analyst,
 .run-rail-timeline,
+.run-rail-launches,
 .run-rail-handoffs-section {
   flex: 0 0 auto;
   padding: 10px;
@@ -631,10 +632,17 @@
 }
 
 .run-rail-lanes,
+.run-rail-launch-list,
 .run-rail-handoffs {
   display: flex;
   flex-direction: column;
   gap: 7px;
+}
+
+.run-rail-launch-list {
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .run-rail-lanes {
@@ -651,6 +659,7 @@
 }
 
 .run-rail-lane,
+.run-rail-launch,
 .run-rail-handoff {
   width: 100%;
   display: flex;
@@ -668,6 +677,26 @@
   cursor: pointer;
 }
 
+.run-rail-launch {
+  border-left: 3px solid color-mix(in srgb, var(--panel-border) 78%, transparent);
+}
+
+.run-rail-launch.tone-active {
+  border-left-color: color-mix(in srgb, #42c77a 58%, var(--panel-border));
+}
+
+.run-rail-launch.tone-pending {
+  border-left-color: color-mix(in srgb, #f4b740 58%, var(--panel-border));
+}
+
+.run-rail-launch.tone-warn {
+  border-left-color: color-mix(in srgb, #f4b740 44%, var(--panel-border));
+}
+
+.run-rail-launch.tone-bad {
+  border-left-color: color-mix(in srgb, #ff6b6b 52%, var(--panel-border));
+}
+
 .run-rail-lane:hover,
 .run-rail-lane.is-selected {
   border-color: color-mix(in srgb, var(--accent) 38%, var(--panel-border));
@@ -675,6 +704,7 @@
 }
 
 .run-rail-lane-top,
+.run-rail-launch-top,
 .run-rail-lane-provider,
 .run-rail-lane-meta,
 .run-rail-actions {
@@ -685,6 +715,11 @@
 
 .run-rail-lane-top {
   justify-content: space-between;
+}
+
+.run-rail-launch-top {
+  justify-content: space-between;
+  min-width: 0;
 }
 
 .run-rail-lane-provider {
@@ -708,6 +743,38 @@
   color: var(--text-muted);
   font-size: 10px;
   text-transform: uppercase;
+}
+
+.run-rail-launch-status {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.run-rail-launch-command {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-rail-launch-output {
+  max-height: 128px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 64%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, #000 18%, transparent);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.38;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .run-rail-lane-prompt,
