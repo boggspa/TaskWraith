@@ -8,9 +8,12 @@ workspace state on the user's machine.
 > **iOS companion status:** TaskWraith for iPhone/iPad is in **TestFlight beta**.
 > It is a **Mac companion** — it pairs with TaskWraith on macOS over an
 > end-to-end-encrypted connection to monitor runs, approve actions, and reply
-> from the phone; it is not a standalone AI app. Testers can also build it from
-> this repository with their own Apple Developer team. Push notifications are
-> opt-in after pairing and require APNs credentials on the Mac (see
+> from the phone; it is not a standalone AI app. Remote actions are governed by
+> the Mac's workspace allowlists and approval policy. Relay/APNs infrastructure
+> may see routing metadata, not plaintext prompts, commands, diffs, or model
+> output. Testers can also build it from this repository with their own Apple
+> Developer team. Push notifications are opt-in after pairing and require APNs
+> credentials on the Mac (see
 > `ios/TaskWraithApp/README.md`).
 
 <table>
@@ -30,7 +33,7 @@ workspace state on the user's machine.
   </tr>
   <tr>
     <td align="center" valign="top" width="33%">
-      <img width="100%" alt="Git-aware composer" src="https://github.com/user-attachments/assets/e50e5f5d-eb7b-4a34-9fe1-50eb8d54a5d1" /><br />
+      <img width="100%" alt="Pop-Out Chat Windows" src="https://github.com/user-attachments/assets/e50e5f5d-eb7b-4a34-9fe1-50eb8d54a5d1" /><br />
       <sub><b>Pop-Out Chat Windows</b></sub>
     </td>
     <td align="center" valign="top" width="33%">
@@ -50,15 +53,19 @@ workspace state on the user's machine.
 
 - **Workspace Safety**: Workspace selection, trust-state visibility, approval
   modes, and run-scoped safety state before agents operate on local files.
-- **Provider Runs**: Integrated run surfaces for Codex, Claude, Gemini, Kimi,
-  Grok, Cursor, and **local Ollama** (curated Qwen, Gemma, and GPT-OSS presets).
+- **Provider Runs**: Integrated run surfaces for Codex, Claude, Kimi, Grok,
+  Cursor, and **local Ollama** (curated Qwen, Gemma, and GPT-OSS presets).
+  Historical Gemini chats remain readable, but Gemini is retired for new runs.
   Provider names describe compatible integrations only — CLIs and accounts stay
   user-installed.
+- **Multiview and Workflows**: Split the workbench into live panes, and run
+  Workflows as first-class chat/run objects with scheduled recovery, dedicated
+  sidebar space, and optional ensemble execution where enabled.
 - **Thread Goals**: Set a persistent objective with `/goal <objective>` or the
   composer goal control. Codex uses native goal state when the installed runtime
   exposes it; every provider gets a TaskWraith-managed fallback with explicit
   complete/blocked lifecycle tools.
-- **Ensemble Mode**: Multi-provider single-thread chats with up to six named
+- **Ensemble Mode**: Multi-provider single-thread chats with up to twelve named
   participants, turn-bound or continuous orchestration, optional parallel fan-out,
   and TaskWraith MCP tools shared across providers.
 - **Audit Runs**: `/audit` can coordinate provider-backed review passes with
@@ -72,10 +79,14 @@ workspace state on the user's machine.
   current workspace changes, including previews for newly created text files.
 - **Local History and Usage**: Local-only chat, run, usage, approval-ledger, and
   audit state for repeat work without a hosted backend.
+- **iOS Companion**: TestFlight companion surfaces Demo Mode, Workflows,
+  first-launch/provider readiness, usage snapshots, approvals, questions,
+  transcript streaming, inline images, and remote file/diff inspection.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
-Current release: **v1.5.9** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+Current development version: **v1.6.0 unreleased**. Latest public release:
+**v1.5.9** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Public Source Boundary
 

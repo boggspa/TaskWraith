@@ -18,6 +18,11 @@ commands, automate apps, or answer approvals as security-sensitive.
   It does not silently commit, publish, or revert user files.
 - **Audit Logs**: Approval responses, automatic decisions, run events, and raw
   provider events are retained locally for review.
+- **Remote/iOS Bridge**: Paired-device actions are default-closed and revalidate
+  the pair, workspace ownership, capability, approval mode, provider, expiry,
+  and replay status for every action. Global scope stays plan-oriented; remote
+  file, git, pull-request, `pin`, and `yolo` actions require explicit allowlist
+  capabilities.
 - **Goal Lifecycle**: Persistent thread goals are stored separately from
   `todo_write` so agents can complete or block the objective explicitly instead
   of silently treating a checklist as the stopping condition.
@@ -26,6 +31,9 @@ commands, automate apps, or answer approvals as security-sensitive.
   provider account the user has not configured.
 - **Log Redaction**: Raw stdout/stderr displayed in the app is redacted for
   common secrets such as bearer tokens, email addresses, and local home paths.
+  This is best-effort redaction for display and preview surfaces only; local
+  transcripts, raw events, artifacts, provider output, and exported diagnostics
+  should still be treated as sensitive.
 
 ## Runtime Boundaries
 
@@ -33,6 +41,10 @@ commands, automate apps, or answer approvals as security-sensitive.
 false`, and a narrow preload bridge.
 - New filesystem, shell, network, automation, or keychain capabilities should be
   added only through explicit main-process APIs with validation.
+- High-risk native/MCP surfaces such as web fetch/search, browser capture,
+  attached-window capture, Screen Watch, creative-app bridges, Canvas tools, and
+  `canvas_eval` should be documented, policy-gated, and tested as code- or
+  data-execution boundaries.
 - External links and file paths should route through the safe shell-open policy;
   do not call `shell.openExternal` directly for untrusted renderer input.
 

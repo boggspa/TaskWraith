@@ -7,7 +7,8 @@ agents) with action controls — all end-to-end encrypted.
 The app target is a thin wrapper; the substance lives in the `TaskWraithKit`
 Swift package next door (the companion itself is feature-rich — pairing,
 approvals/questions, global + side chats, ensemble roster, diff/file views,
-token streaming, composer shells, APNs actions):
+token streaming, composer shells, first-launch guide, full-screen settings,
+offline Demo Mode, Workflows visibility, inline images, APNs actions):
 
 - **`TaskWraithKit`** — the CryptoKit port of `src/shared/e2ee` + the
   `RelayTransportClient` and Codable domain models. Validated byte-for-byte
@@ -107,8 +108,9 @@ Release/TestFlight builds request notification permission **after a successful
 pairing**, and register the APNs token to the user's paired Mac. The app works
 fine if the user denies (open to reconnect/refresh).
 
-Delivery requires the **Mac** to have APNs credentials configured — set these in
-the Mac's environment before `npm run dev` / the packaged app launch:
+Delivery requires the **Mac** to have APNs credentials configured. Use the
+desktop Devices/APNs settings surface when available, or set these in the Mac's
+environment before `npm run dev` / the packaged app launch:
 
 ```sh
 TASKWRAITH_APNS_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_XXXXXXXXXX.p8
@@ -118,15 +120,15 @@ TASKWRAITH_APNS_BUNDLE_ID=com.taskwraith.companion
 ```
 
 Without these the Mac uses a no-op pusher (pairing + manual reconnect still
-work; no pushes delivered). The relay does not send push. For a consumer App
-Store listing, don't market push as a hero feature unless the Mac ships with
-push pre-configured — see `AppStorePrivacyNotes.md`.
+work; no pushes delivered). APNs device tokens are local routing identifiers
+stored by the paired Mac. The relay does not send push. For a consumer App Store
+listing, don't market push as a hero feature unless the Mac ships with push
+pre-configured — see `AppStorePrivacyNotes.md`.
 
 ## Security
 
 The E2EE core is security-sensitive. An independent crypto review of
 `TaskWraithKit` (and the shared `src/shared/e2ee`) was completed 2026-06;
-CRITICAL/HIGH findings were fixed and the results are tracked in
-`docs/security/e2ee-review-findings.md` (one residual MED — silent identity
-regeneration if the Keychain/`safeStorage` is unavailable — is documented there
-and accepted for the companion-beta scope).
+CRITICAL/HIGH findings were fixed. The prior residual MED for silent identity
+regeneration is closed: the Mac refuses unreadable or unprotectable identities,
+and iOS only generates a new seed after a positive "not found" Keychain result.

@@ -12,9 +12,10 @@ history, and workspace state stay on your machine throughout.
   agent aura, and ambient FX; drag the dividers to resize. Welcome and split
   states render correctly per pane.
 - **Workflows are now a first-class chat type.** A dedicated Workflows welcome
-  screen with its own compose controls and a "Run as ensemble" toggle, plus a
-  Workflows sidebar section. Scheduled workflows recover after a restart, and
-  workflows project to paired iOS devices (read/view).
+  screen with its own compose controls and a "Run as ensemble" toggle where the
+  ensemble feature gate is enabled, plus a Workflows sidebar section. Scheduled
+  workflows recover after a restart, and workflows project to paired iOS devices
+  (read/view).
 - **Reusable notification area.** The welcome and first-launch screens now host
   a dismissable notice card for significant changes — provider deprecations, new
   models or providers, shipped features — rotating through more than one with the
@@ -33,10 +34,10 @@ history, and workspace state stay on your machine throughout.
 
 ### Changed
 - **Gemini has been retired.** Google ended the Gemini CLI sign-in, so Gemini is
-  no longer available for new runs and is removed from every picker, the sidebar
-  usage meter, Settings (Providers + MCP), onboarding, and the iOS app. Existing
-  Gemini chats, transcripts, and usage history are preserved; new chats default
-  to Claude with sticky last-used.
+  no longer available for new runs and is removed from new-run and picker
+  surfaces, the sidebar usage meter, Settings (Providers + MCP), onboarding, and
+  new iOS run surfaces. Existing Gemini chats, labels/glyphs, transcripts, and
+  usage history are preserved; new chats default to Claude with sticky last-used.
 - **Grok and Cursor are full first-class providers.** The experimental
   eligibility gate has been removed — both are accepted everywhere like the other
   providers, write-capable and gated by approval mode.

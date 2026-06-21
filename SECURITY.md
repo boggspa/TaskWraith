@@ -24,6 +24,30 @@ release signing as security-sensitive changes.
 - Route external links and file paths through the safe shell-open policy; do
   not call `shell.openExternal` directly for untrusted renderer input.
 
+## Remote Bridge And APNs
+
+- The Mac bridge identity is protected by `safeStorage` and must fail closed if
+  an existing identity cannot be read, protected, or persisted. Silent identity
+  replacement breaks paired-device trust and should remain release-blocking.
+- Pairing records store public-key metadata and routing state; APNs device
+  tokens are local routing identifiers stored on the user's Mac.
+- APNs payloads must remain generic and routing-only: reason, pair/device, and
+  thread/run identifiers are acceptable; prompts, commands, paths, diffs,
+  summaries, model output, and user messages are not.
+- `TASKWRAITH_BRIDGE_PERMISSIVE` and similar bridge bypasses are dev/test-only
+  switches. They should never be enabled in release builds or packaged app
+  defaults.
+
+## Provider Tooling Limits
+
+- Network denial, filesystem confinement, approval enforcement, and MCP tool
+  mediation are provider- and transport-dependent. Do not describe them as a
+  universal OS sandbox unless the current adapter actually enforces that
+  boundary.
+- Provider CLIs, SDKs, browser automations, and native app bridges can expose
+  user data outside TaskWraith's process. New integrations should document what
+  the provider/runtime sees and how approval policy is applied.
+
 ## Secrets and Release
 
 - Release signing, notarization, npm, GitHub, Apple, and provider API tokens
