@@ -6022,63 +6022,225 @@ input:disabled, select:disabled, textarea:disabled {
   opacity: 0.5;
 }
 
-/* Read-only participant summary (replaced by the editor in slice 3). */
-.settings-roster-summary {
+/* Participant editor rows */
+.settings-roster-participants {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   padding: 0;
   margin: 0;
   list-style: none;
 }
 
-.settings-roster-summary-row {
+.settings-roster-participant {
   display: flex;
-  align-items: center;
   gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--text-primary) 9%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
-  font-size: var(--font-size-sm, 13px);
-  color: var(--text-primary);
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 
-.settings-roster-summary-row.is-disabled {
-  opacity: 0.5;
+.settings-roster-participant.is-disabled {
+  opacity: 0.62;
 }
 
-.settings-roster-summary-order {
+.settings-roster-participant.is-retired {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--warning, #d8a657) 36%, transparent);
+  background: color-mix(in srgb, var(--warning, #d8a657) 7%, transparent);
+}
+
+.settings-roster-participant-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
   flex: 0 0 auto;
-  width: 18px;
+  padding-top: 2px;
+}
+
+.settings-roster-chevron {
+  width: 22px;
   height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-secondary);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.settings-roster-chevron:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  color: var(--text-primary);
+}
+
+.settings-roster-chevron:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.settings-roster-participant-order {
   font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
-.settings-roster-summary-provider {
-  flex: 0 0 auto;
-  font-weight: 600;
-}
-
-.settings-roster-summary-role {
+.settings-roster-participant-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.settings-roster-participant-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-roster-participant-provider {
+  font-weight: 620;
+  font-size: var(--font-size-sm, 13px);
+  color: var(--text-primary);
+}
+
+.settings-roster-retired-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning, #d8a657) 22%, transparent);
+  color: color-mix(in srgb, var(--warning, #d8a657) 88%, var(--text-primary));
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-roster-enable {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.settings-roster-remove {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.settings-roster-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
+  color: color-mix(in srgb, var(--danger, #e5484d) 90%, var(--text-primary));
+}
+
+.settings-roster-remove:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.settings-roster-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-roster-field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--text-secondary);
 }
 
-.settings-roster-summary-off {
+.settings-roster-role-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.settings-roster-input,
+.settings-roster-select,
+.settings-roster-textarea {
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-primary, #1c1c1e) 60%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+}
+
+.settings-roster-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-roster-role-preset {
   flex: 0 0 auto;
-  font-size: 11px;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  max-width: 140px;
+}
+
+.settings-roster-textarea {
+  resize: vertical;
+  min-height: 38px;
+  line-height: 1.45;
+}
+
+.settings-roster-input:focus,
+.settings-roster-select:focus,
+.settings-roster-textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.settings-roster-input:disabled,
+.settings-roster-select:disabled,
+.settings-roster-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.settings-roster-add-row {
+  margin-top: 2px;
+}
+
+.settings-roster-add {
+  width: 100%;
+  padding: 9px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 36%, transparent);
+  border-radius: 10px;
+  background: transparent;
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+
+.settings-roster-add:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.settings-roster-add:disabled {
+  opacity: 0.45;
+  cursor: default;
 }

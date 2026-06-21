@@ -345,7 +345,7 @@ function cloneSnapshot(
   }
 }
 
-function defaultParticipantForProvider(
+export function defaultParticipantForProvider(
   provider: ProviderId,
   id: string,
   order: number
