@@ -237,6 +237,37 @@ export function getDefaultEnsembleParticipantConfig(
 }
 
 /**
+ * Patch to apply when a participant's PROVIDER changes in an editor. Resets
+ * every provider-specific field to the new provider's defaults so a stale
+ * cross-provider value can't survive (e.g. a Claude model id on a Codex
+ * participant). Critically it also clears `permissionOverrides` and
+ * `runtimeProfileId`: the composer's live-chat provider-change handler omits
+ * `permissionOverrides`, which — because participant patches shallow-merge —
+ * silently leaks the previous provider's tool grants onto the new provider.
+ * Each field is present in the returned patch (with an explicit `undefined`
+ * where it should clear) so a `{ ...participant, ...patch }` shallow merge
+ * actually removes the old value rather than retaining it.
+ */
+export function buildProviderChangeParticipantPatch(
+  provider: ProviderId
+): Partial<EnsembleParticipant> {
+  const defaults = getDefaultEnsembleParticipantConfig(provider)
+  return {
+    provider,
+    model: defaults.model,
+    runtimeProfileId: undefined,
+    geminiAuthProfileId: null,
+    permissionPresetId: defaults.permissionPresetId,
+    permissionOverrides: undefined,
+    reasoningEffort: defaults.reasoningEffort,
+    fastModeEnabled: defaults.fastModeEnabled,
+    thinkingEnabled: defaults.thinkingEnabled,
+    serviceTier: defaults.serviceTier,
+    linkedProviderSessionId: null
+  }
+}
+
+/**
  * Resolve a participant's effective settings by layering its stored
  * fields on top of `getDefaultEnsembleParticipantConfig`. The returned
  * object always has concrete (non-undefined) values for the

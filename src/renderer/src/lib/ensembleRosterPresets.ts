@@ -6,8 +6,23 @@ import type {
   PermissionPresetId,
   ProviderId
 } from '../../../main/store/types'
+import { getDefaultEnsembleParticipantConfig } from './ensembleProviderDefaults'
+import { getProviderLabel } from './providerLabels'
 
 const STORAGE_KEY = 'taskwraith-ensemble-roster-presets'
+
+/**
+ * Ensemble roster floor / ceiling. Mirrors the live-chat guards:
+ * `MIN_ENSEMBLE_PARTICIPANTS` in EnsembleParticipantsAboveRow and the
+ * `Math.min(12, …)` clamp in App.tsx's `applyEnsembleRosterPreset`.
+ */
+export const MIN_ROSTER_PRESET_PARTICIPANTS = 2
+export const MAX_ROSTER_PRESET_PARTICIPANTS = 12
+const DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS = 6
+
+function newPresetId(now: number): string {
+  return `ensemble-roster-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
 
 export type EnsembleRosterParticipantSnapshot = {
   provider: ProviderId
@@ -44,12 +59,19 @@ function clonePermissionOverrides(
 ): PermissionOverrides | undefined {
   if (!overrides) return undefined
   return {
+    // `approvalMode` (string) and `networkAccess` ('allow' | 'deny' string
+    // union) are primitives, carried safely by the spread. `agenticServices`
+    // is a string→string map, so a one-level clone fully isolates it. Only
+    // `externalPathGrants` holds nested objects — its ELEMENTS must each be
+    // cloned. A bare `[...arr]` copies the array but aliases the grant
+    // objects, so an in-place edit of one snapshot's grant would mutate every
+    // other copy AND any live chat the preset was applied to.
     ...overrides,
     ...(overrides.agenticServices
       ? { agenticServices: { ...overrides.agenticServices } }
       : {}),
     ...(overrides.externalPathGrants
-      ? { externalPathGrants: [...overrides.externalPathGrants] }
+      ? { externalPathGrants: overrides.externalPathGrants.map((grant) => ({ ...grant })) }
       : {})
   }
 }
@@ -103,6 +125,55 @@ function writeRawPresets(presets: EnsembleRosterPreset[]): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(presets))
 }
 
+/*
+ * Cross-surface refresh. Presets are renderer-local (localStorage), but two
+ * surfaces read them — the composer's `EnsembleRosterPresetPicker` and the
+ * Settings → Roster tab — and Electron multiview / chat pop-out windows share
+ * the same origin (hence the same localStorage). Same-window writers fan out
+ * synchronously via `notifyPresetListeners`; other windows are reached by the
+ * browser's `storage` event (which fires only in OTHER documents, never the
+ * writer's own — so both paths are required). Listener callbacks MUST be
+ * read-only (re-read + setState); they must never write, or a storage-driven
+ * refresh in window B could write and ping-pong back to window A.
+ */
+const presetListeners = new Set<() => void>()
+let storageBridged = false
+
+function notifyPresetListeners(): void {
+  for (const listener of [...presetListeners]) {
+    try {
+      listener()
+    } catch {
+      // A misbehaving subscriber must never break a persist.
+    }
+  }
+}
+
+function ensureStorageBridge(): void {
+  if (storageBridged) return
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
+  storageBridged = true
+  window.addEventListener('storage', (event: StorageEvent) => {
+    if (event.storageArea && event.storageArea !== window.localStorage) return
+    if (event.key !== STORAGE_KEY || event.newValue === null) return
+    notifyPresetListeners()
+  })
+}
+
+/**
+ * Subscribe to roster-preset changes (this window's writes + other windows'
+ * `storage` events). Returns an unsubscribe to call from a `useEffect`
+ * cleanup. The callback should re-read via `listEnsembleRosterPresets()` and
+ * must not itself write.
+ */
+export function subscribeEnsembleRosterPresets(listener: () => void): () => void {
+  ensureStorageBridge()
+  presetListeners.add(listener)
+  return () => {
+    presetListeners.delete(listener)
+  }
+}
+
 export function listEnsembleRosterPresets(): EnsembleRosterPreset[] {
   return readRawPresets().sort((a, b) => b.updatedAt - a.updatedAt)
 }
@@ -120,6 +191,7 @@ export function saveEnsembleRosterPreset(
   const presets = readRawPresets()
   presets.unshift(preset)
   writeRawPresets(presets)
+  notifyPresetListeners()
   return preset
 }
 
@@ -136,11 +208,13 @@ export function renameEnsembleRosterPreset(id: string, name: string): EnsembleRo
   }
   presets[index] = next
   writeRawPresets(presets)
+  notifyPresetListeners()
   return next
 }
 
 export function deleteEnsembleRosterPreset(id: string): void {
   writeRawPresets(readRawPresets().filter((preset) => preset.id !== id))
+  notifyPresetListeners()
 }
 
 export function buildEnsembleRosterPresetFromConfig(
@@ -148,9 +222,8 @@ export function buildEnsembleRosterPresetFromConfig(
   ensemble: EnsembleConfig,
   now = Date.now()
 ): EnsembleRosterPreset {
-  const sorted = [...(ensemble.participants || [])].sort((a, b) => a.order - b.order)
   return {
-    id: `ensemble-roster-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    id: newPresetId(now),
     name: name.trim(),
     createdAt: now,
     updatedAt: now,
@@ -166,8 +239,21 @@ export function buildEnsembleRosterPresetFromConfig(
     ...(typeof ensemble.ensembleContextChars === 'number'
       ? { ensembleContextChars: ensemble.ensembleContextChars }
       : {}),
-    participants: sorted.map((participant, index) => snapshotParticipant(participant, index + 1))
+    participants: snapshotParticipantsForPreset(ensemble.participants || [])
   }
+}
+
+/**
+ * Snapshot a working list of live participants into preset snapshots,
+ * densely renumbering `order` to 1..N (sorted by current order) so a
+ * reorder/add/remove never persists fractional or duplicate orders. Reused by
+ * `buildEnsembleRosterPresetFromConfig` and the Settings → Roster editor.
+ */
+export function snapshotParticipantsForPreset(
+  participants: EnsembleParticipant[]
+): EnsembleRosterParticipantSnapshot[] {
+  const sorted = [...participants].sort((a, b) => a.order - b.order)
+  return sorted.map((participant, index) => snapshotParticipant(participant, index + 1))
 }
 
 function snapshotParticipant(
@@ -246,4 +332,128 @@ export function materializeParticipantsFromPreset(
       linkedProviderSessionId: null
     }
   })
+}
+
+function cloneSnapshot(
+  snapshot: EnsembleRosterParticipantSnapshot
+): EnsembleRosterParticipantSnapshot {
+  return {
+    ...snapshot,
+    ...(snapshot.permissionOverrides
+      ? { permissionOverrides: clonePermissionOverrides(snapshot.permissionOverrides) }
+      : {})
+  }
+}
+
+function defaultParticipantForProvider(
+  provider: ProviderId,
+  id: string,
+  order: number
+): EnsembleParticipant {
+  const defaults = getDefaultEnsembleParticipantConfig(provider)
+  return {
+    id,
+    provider,
+    enabled: true,
+    role: getProviderLabel(provider),
+    instructions: '',
+    order,
+    model: defaults.model,
+    geminiAuthProfileId: null,
+    permissionPresetId: defaults.permissionPresetId,
+    ...(defaults.reasoningEffort ? { reasoningEffort: defaults.reasoningEffort } : {}),
+    ...(typeof defaults.fastModeEnabled === 'boolean'
+      ? { fastModeEnabled: defaults.fastModeEnabled }
+      : {}),
+    ...(typeof defaults.thinkingEnabled === 'boolean'
+      ? { thinkingEnabled: defaults.thinkingEnabled }
+      : {}),
+    ...(defaults.serviceTier ? { serviceTier: defaults.serviceTier } : {}),
+    linkedProviderSessionId: null
+  }
+}
+
+/** Look up a single preset by id (null if unknown). */
+export function getEnsembleRosterPreset(id: string): EnsembleRosterPreset | null {
+  return readRawPresets().find((preset) => preset.id === id) ?? null
+}
+
+/**
+ * Create + persist a new roster preset seeded with the minimum two
+ * participants (the live ensemble floor). The returned preset already passes
+ * `isEnsembleRosterPreset`, so it survives the next `readRawPresets`.
+ */
+export function createEmptyEnsembleRosterPreset(name: string): EnsembleRosterPreset {
+  const trimmed = name.trim()
+  if (!trimmed) {
+    throw new Error('Preset name is required.')
+  }
+  const now = Date.now()
+  const seeded: EnsembleParticipant[] = [
+    defaultParticipantForProvider('claude', 'ensemble-participant-1', 1),
+    defaultParticipantForProvider('codex', 'ensemble-participant-2', 2)
+  ]
+  const preset: EnsembleRosterPreset = {
+    id: newPresetId(now),
+    name: trimmed,
+    createdAt: now,
+    updatedAt: now,
+    orchestrationMode: 'turn_bound',
+    maxParticipants: DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS,
+    participants: snapshotParticipantsForPreset(seeded)
+  }
+  const presets = readRawPresets()
+  presets.unshift(preset)
+  writeRawPresets(presets)
+  notifyPresetListeners()
+  return preset
+}
+
+/**
+ * Duplicate an existing preset under a fresh id + timestamps + a " copy"
+ * suffix. Participants are deep-cloned so the copy and original never share
+ * mutable permission objects. Returns null if the source id is unknown.
+ */
+export function duplicateEnsembleRosterPreset(id: string): EnsembleRosterPreset | null {
+  const presets = readRawPresets()
+  const source = presets.find((preset) => preset.id === id)
+  if (!source) return null
+  const now = Date.now()
+  const copy: EnsembleRosterPreset = {
+    ...source,
+    id: newPresetId(now),
+    name: `${source.name} copy`,
+    createdAt: now,
+    updatedAt: now,
+    participants: source.participants.map(cloneSnapshot)
+  }
+  presets.unshift(copy)
+  writeRawPresets(presets)
+  notifyPresetListeners()
+  return copy
+}
+
+/**
+ * Replace (or insert) a preset by id. Clobber-safe: it FRESH-READS the array
+ * immediately before writing and splices only the target preset, so a
+ * concurrent edit to a DIFFERENT preset in another window is preserved
+ * (mirrors the read-modify-write discipline in workspaceRemoteAccess.ts).
+ * `updatedAt` is caller-controlled so the editor can bump it on structural
+ * changes only, not every keystroke. Throws on an invalid preset rather than
+ * letting `readRawPresets` silently drop it on the next read.
+ */
+export function upsertEnsembleRosterPreset(preset: EnsembleRosterPreset): EnsembleRosterPreset {
+  if (!isEnsembleRosterPreset(preset)) {
+    throw new Error('Refusing to persist an invalid ensemble roster preset.')
+  }
+  const presets = readRawPresets()
+  const index = presets.findIndex((existing) => existing.id === preset.id)
+  if (index >= 0) {
+    presets[index] = preset
+  } else {
+    presets.unshift(preset)
+  }
+  writeRawPresets(presets)
+  notifyPresetListeners()
+  return preset
 }
