@@ -138,7 +138,7 @@ describe('buildLaunchPreviewTargets', () => {
     ])
   })
 
-  it('marks blocked and shell-backed targets disabled', () => {
+  it('marks blocked and unsupported shell-backed targets disabled', () => {
     const rows = buildLaunchPreviewTargets(
       [
         target({ id: 'blocked', blockers: ['Pick a device first.'] }),
@@ -164,6 +164,33 @@ describe('buildLaunchPreviewTargets', () => {
     expect(rows.find((row) => row.target?.id === 'shell')).toMatchObject({
       action: 'disabled',
       state: 'blocked'
+    })
+  })
+
+  it('marks VS Code shell tasks startable', () => {
+    const rows = buildLaunchPreviewTargets(
+      [
+        target({
+          id: 'vscode-shell',
+          source: 'vscode-task',
+          subtitle: 'VS Code task',
+          command: {
+            raw: 'npm run build',
+            cwd: '/repo/app',
+            longRunning: false,
+            shell: true
+          }
+        })
+      ],
+      [],
+      '/repo/app'
+    )
+
+    expect(rows[0]).toMatchObject({
+      id: 'start:vscode-shell',
+      action: 'start',
+      state: 'startable',
+      subtitle: expect.stringContaining('npm run build')
     })
   })
 

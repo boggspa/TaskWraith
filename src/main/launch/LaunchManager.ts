@@ -144,17 +144,20 @@ export class LaunchManager {
       return { ok: false, error: target.blockers.join(' ') }
     }
     const command = target.command
-    if (!command?.argv?.length) {
+    if (!command) {
       return { ok: false, error: 'Launch target is not executable by TaskWraith yet.' }
     }
-    if (command.shell) {
-      return { ok: false, error: 'Shell-backed launch targets are not executable yet.' }
+    if (command.shell && target.source !== 'vscode-task') {
+      return { ok: false, error: 'Shell-backed launch targets are only supported for VS Code tasks.' }
+    }
+    if (command.shell ? !command.raw.trim() : !command.argv?.length) {
+      return { ok: false, error: 'Launch target is not executable by TaskWraith yet.' }
     }
     if (!isPathInsideWorkspace(target.workspacePath, command.cwd)) {
       return { ok: false, error: 'Launch target cwd is outside the workspace.' }
     }
 
-    const commandText = command.raw || command.argv.join(' ')
+    const commandText = command.raw || command.argv?.join(' ') || ''
     const envDeltas = command.env || {}
     const allowed = await this.requestApproval(sender, provider, 'shellCommands', target.workspacePath, {
       method: 'launch/start',
@@ -169,6 +172,7 @@ export class LaunchManager {
         source: target.source,
         kindLabel: target.kind,
         command: commandText,
+        shell: Boolean(command.shell),
         cwd: command.cwd,
         workspacePath: target.workspacePath,
         git: target.git,
@@ -193,7 +197,8 @@ export class LaunchManager {
       git: target.git,
       cwd: command.cwd,
       commandRaw: commandText,
-      argv: command.argv,
+      argv: command.argv || [commandText],
+      shell: command.shell || undefined,
       status: 'starting',
       startedAt: now,
       updatedAt: now,
@@ -208,13 +213,16 @@ export class LaunchManager {
 
     let child: ChildProcess
     try {
-      const [binary, ...args] = command.argv
-      child = this.spawnProcess(binary, args, {
+      const [binary, ...args] = command.argv || [commandText]
+      child = this.spawnProcess(command.shell ? commandText : binary, command.shell ? [] : args, {
         cwd: command.cwd,
-        shell: false,
+        shell: Boolean(command.shell),
         detached: this.platform !== 'win32',
         windowsHide: true,
-        env: this.createEnv({ ...envDeltas, FORCE_COLOR: '0', NO_COLOR: '1' }, binary)
+        env: this.createEnv(
+          { ...envDeltas, FORCE_COLOR: '0', NO_COLOR: '1' },
+          command.shell ? undefined : binary
+        )
       })
     } catch (err) {
       const failed = this.store.update(attempt.id, {

@@ -216,6 +216,58 @@ describe('LaunchManager', () => {
     })
   })
 
+  it('starts approved VS Code shell tasks through an explicit shell spawn', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
+    const storagePath = await tempFile()
+    const fixture = managerFixture(storagePath, workspacePath)
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        source: 'vscode-task',
+        label: 'build web',
+        subtitle: 'VS Code task',
+        command: {
+          raw: 'npm run build',
+          cwd: workspacePath,
+          longRunning: false,
+          shell: true
+        }
+      })
+    })
+
+    expect(result.ok).toBe(true)
+    expect(fixture.requestApproval).toHaveBeenCalledWith(
+      null,
+      'codex',
+      'shellCommands',
+      workspacePath,
+      expect.objectContaining({
+        preview: expect.objectContaining({
+          source: 'vscode-task',
+          command: 'npm run build',
+          shell: true
+        })
+      })
+    )
+    expect(fixture.spawnProcess).toHaveBeenCalledWith(
+      'npm run build',
+      [],
+      expect.objectContaining({
+        cwd: workspacePath,
+        shell: true
+      })
+    )
+    const persisted = new LaunchAttemptStore(storagePath).list()[0]
+    expect(persisted).toMatchObject({
+      status: 'running',
+      commandRaw: 'npm run build',
+      argv: ['npm run build'],
+      shell: true
+    })
+  })
+
   it('rejects renderer-tampered shell targets before approval', async () => {
     const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
     const storagePath = await tempFile()

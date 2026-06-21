@@ -106,6 +106,13 @@ function actionFromAttempt(attempt: LaunchAttempt): LaunchPreviewTargetAction {
   return attempt.status === 'starting' || attempt.status === 'running' ? 'stop' : 'disabled'
 }
 
+function isStartableCommand(target: LaunchTarget): boolean {
+  const command = target.command
+  if (!command) return false
+  if (command.shell) return target.source === 'vscode-task' && Boolean(command.raw.trim())
+  return Boolean(command.argv?.length)
+}
+
 function buildTargetRow(target: LaunchTarget, attempt?: LaunchAttempt): LaunchPreviewTarget {
   if (attempt && ACTIVE_ATTEMPT_STATUSES.has(attempt.status)) {
     return {
@@ -153,12 +160,13 @@ function buildTargetRow(target: LaunchTarget, attempt?: LaunchAttempt): LaunchPr
     }
   }
 
-  if (target.command?.argv?.length && !target.command.shell) {
+  if (isStartableCommand(target) && target.command) {
+    const command = target.command
     const details = targetSubtitle(target)
     return {
       id: `start:${target.id}`,
       label: target.label,
-      subtitle: [target.command.raw, details].filter(Boolean).join(' · '),
+      subtitle: [command.raw, details].filter(Boolean).join(' · '),
       workspacePath: target.workspacePath,
       action: 'start',
       state: 'startable',

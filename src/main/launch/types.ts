@@ -26,6 +26,7 @@ export interface LaunchAttempt {
   cwd: string
   commandRaw: string
   argv: string[]
+  shell?: boolean
   pid?: number
   pgid?: number
   status: LaunchAttemptStatus
