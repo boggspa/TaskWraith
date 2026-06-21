@@ -35,6 +35,7 @@ import type {
   BridgeQuestionRejectAction,
   BridgeQuestionReplyAction,
   BridgeRegisterApnsTokenAction,
+  BridgeDiscoverTailnetHostsAction,
   BridgeSetYoloModeAction,
   BridgeTogglePinChatAction,
   BridgeTogglePinWorkspaceAction
@@ -152,6 +153,9 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeRegisterApnsToken(
     action: BridgeRegisterApnsTokenAction
+  ): Promise<BridgeActionExecutionResult>
+  executeDiscoverTailnetHosts(
+    action: BridgeDiscoverTailnetHostsAction
   ): Promise<BridgeActionExecutionResult>
   executeSetYoloMode(action: BridgeSetYoloModeAction): Promise<BridgeActionExecutionResult>
   executeTogglePinChat(action: BridgeTogglePinChatAction): Promise<BridgeActionExecutionResult>
@@ -336,6 +340,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult> {
     return notWired('registerApnsToken', action.pairID)
   }
+  async executeDiscoverTailnetHosts(
+    _action: BridgeDiscoverTailnetHostsAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('discoverTailnetHosts', 'oracle')
+  }
   async executeSetYoloMode(action: BridgeSetYoloModeAction): Promise<BridgeActionExecutionResult> {
     return notWired('setYoloMode', String(action.enabled))
   }
@@ -513,6 +522,17 @@ export interface MainProcessActionExecutorDependencies {
   }>
   registerApnsTokenFn?: (action: BridgeRegisterApnsTokenAction) => Promise<{
     registered: boolean
+    reason?: string
+  }>
+  /** QR-optional discovery (Slice 5e): enumerate the tailnet with the host's
+   * stored OAuth credential, probe each device's /v1/hostinfo, and return the
+   * TaskWraith hosts (self + already-paired dropped). Read-only — the result
+   * rides back UNICAST in the action ack, never a broadcast. Each host is a
+   * compact {macIdentityPubKey, macDisplayName?, relayUrls, hostPlatform?}; the
+   * fn caps the count so the ack stays inside the relay frame budget. */
+  discoverTailnetHostsFn?: () => Promise<{
+    ok: boolean
+    hosts?: Array<Record<string, unknown>>
     reason?: string
   }>
   setYoloModeFn?: (enabled: boolean) => Promise<{ enabled: boolean }>
@@ -1339,6 +1359,37 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
         executed: false,
         message: `APNs token registration failed: ${errMessage}`
       }
+    }
+  }
+
+  async executeDiscoverTailnetHosts(
+    _action: BridgeDiscoverTailnetHostsAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.discoverTailnetHostsFn) {
+      return notWired('discoverTailnetHosts', 'oracle')
+    }
+    try {
+      const result = await this.deps.discoverTailnetHostsFn()
+      if (result.ok) {
+        // Read-only enumeration: an empty tailnet is still a SUCCESS (mirror
+        // executeGitSnapshot — a read that finds nothing still executed). The
+        // hosts ride back unicast in the ack; the phone dedupes vs its own
+        // paired list defensively.
+        const hosts = result.hosts ?? []
+        return {
+          executed: true,
+          message:
+            hosts.length === 1
+              ? 'Found 1 other TaskWraith host on your tailnet.'
+              : `Found ${hosts.length} other TaskWraith hosts on your tailnet.`,
+          data: { hosts }
+        }
+      }
+      return { executed: false, message: result.reason ?? 'Could not enumerate the tailnet.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] discoverTailnetHosts failed: ${message}`)
+      return { executed: false, message: `Discovery failed: ${message}` }
     }
   }
 

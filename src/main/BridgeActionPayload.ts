@@ -303,6 +303,17 @@ export interface BridgeRegisterApnsTokenAction extends BridgeActionMetadata {
   env: 'production' | 'sandbox'
 }
 
+/** QR-optional multi-host discovery (Slice 5e). An already-paired phone asks
+ * THIS host (the "oracle") to enumerate the tailnet with its stored OAuth
+ * credential and report which machines run TaskWraith. No parameters: the host
+ * knows itself (own identity) and its paired devices, and drops both from the
+ * result. Paired-device-level (like `registerApnsToken`) — not workspace-scoped
+ * — and read-only (no desktop state changes). The result comes back UNICAST in
+ * the action ack, not via a broadcast. */
+export interface BridgeDiscoverTailnetHostsAction extends BridgeActionMetadata {
+  kind: 'discoverTailnetHosts'
+}
+
 export interface BridgeCancelRunAction extends BridgeActionMetadata {
   kind: 'cancelRun'
   workspaceId: string
@@ -544,6 +555,7 @@ export type BridgeActionPayload =
   | BridgeGoalUpdateAction
   | BridgeToggleMessagePinAction
   | BridgeRegisterApnsTokenAction
+  | BridgeDiscoverTailnetHostsAction
   | BridgeSetYoloModeAction
   | BridgeTogglePinChatAction
   | BridgeTogglePinWorkspaceAction
@@ -668,6 +680,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'togglePinWorkspace':
       return payload.workspaceId
     case 'registerApnsToken':
+    case 'discoverTailnetHosts':
     case 'unknown':
       return null
   }
@@ -729,6 +742,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'togglePinWorkspace':
       return true
     case 'registerApnsToken':
+    case 'discoverTailnetHosts':
       return false
     case 'unknown':
       // Unknown variants are rejected upstream; the gating question
@@ -806,6 +820,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'gitSnapshot':
     case 'githubPrStatus':
     case 'githubPrReadiness':
+    case 'discoverTailnetHosts':
       return false
     case 'unknown':
       return true
@@ -963,6 +978,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isRegisterApnsToken(parsed)
         ? (parsed as unknown as BridgeRegisterApnsTokenAction)
         : { kind: 'unknown', rawKind: 'registerApnsToken', raw: parsed }
+    case 'discoverTailnetHosts':
+      return isDiscoverTailnetHosts(parsed)
+        ? (parsed as unknown as BridgeDiscoverTailnetHostsAction)
+        : { kind: 'unknown', rawKind: 'discoverTailnetHosts', raw: parsed }
     case 'setYoloMode':
       return isSetYoloMode(parsed)
         ? (parsed as unknown as BridgeSetYoloModeAction)
@@ -1459,6 +1478,12 @@ function isRegisterApnsToken(v: Record<string, unknown>): boolean {
     /^[0-9a-fA-F]{64}$/.test(v.deviceToken) &&
     (v.env === 'production' || v.env === 'sandbox')
   )
+}
+
+function isDiscoverTailnetHosts(v: Record<string, unknown>): boolean {
+  // No payload fields beyond the shared metadata — the host derives everything
+  // (own identity, paired devices, stored OAuth credential) locally.
+  return hasValidActionMetadata(v)
 }
 
 function hasValidActionMetadata(v: Record<string, unknown>): boolean {

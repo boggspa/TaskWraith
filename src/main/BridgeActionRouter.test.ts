@@ -157,6 +157,11 @@ function makeStubExecutor(
       executed: true,
       message: 'registerApnsToken done'
     }),
+    executeDiscoverTailnetHosts: make('executeDiscoverTailnetHosts', {
+      executed: true,
+      message: 'discoverTailnetHosts done',
+      data: { hosts: [] }
+    }),
     executeSetYoloMode: make('executeSetYoloMode', { executed: true, message: 'setYoloMode done' }),
     executeTogglePinChat: make('executeTogglePinChat', {
       executed: true,

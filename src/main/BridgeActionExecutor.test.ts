@@ -13,6 +13,7 @@ import type {
   BridgeQuestionRejectAction,
   BridgeQuestionReplyAction,
   BridgeRegisterApnsTokenAction,
+  BridgeDiscoverTailnetHostsAction,
   BridgeSetYoloModeAction,
   BridgeThreadSnapshotRequestAction,
   BridgeWorkspaceFileListAction,
@@ -192,7 +193,10 @@ const sample = {
     kind: 'githubCreatePr',
     workspaceId: 'ws-1',
     title: 'Phone PR'
-  } satisfies BridgeGithubCreatePrAction
+  } satisfies BridgeGithubCreatePrAction,
+  discoverTailnetHosts: {
+    kind: 'discoverTailnetHosts'
+  } satisfies BridgeDiscoverTailnetHostsAction
 }
 
 describe('NoopActionExecutor', () => {
@@ -218,7 +222,8 @@ describe('NoopActionExecutor', () => {
       executor.executeWorkspaceFileList(sample.workspaceFileList),
       executor.executeWorkspaceFileRead(sample.workspaceFileRead),
       executor.executeWorkspaceFileWrite(sample.workspaceFileWrite),
-      executor.executeWorkspaceDiff(sample.workspaceDiff)
+      executor.executeWorkspaceDiff(sample.workspaceDiff),
+      executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts)
     ])
     for (const r of results) {
       expect(r.executed).toBe(false)
@@ -245,6 +250,7 @@ describe('NoopActionExecutor', () => {
     expect(results[17].message).toContain('README.md')
     expect(results[18].message).toContain('README.md')
     expect(results[19].message).toContain('ws-1')
+    expect(results[20].message).toContain('oracle')
   })
 })
 
@@ -848,6 +854,59 @@ describe('MainProcessActionExecutor.executeRegisterApnsToken', () => {
     const executor = new MainProcessActionExecutor({ cancelRunFn, registerApnsTokenFn })
     await executor.executeRegisterApnsToken({ ...sample.registerApnsToken, env: 'sandbox' })
     expect(registerApnsTokenFn.mock.calls[0][0].env).toBe('sandbox')
+  })
+})
+
+describe('MainProcessActionExecutor.executeDiscoverTailnetHosts', () => {
+  const cancelRunFn = vi.fn().mockResolvedValue(true)
+
+  it('returns executed=false when no discoverTailnetHostsFn is configured', async () => {
+    const executor = new MainProcessActionExecutor({ cancelRunFn })
+    const result = await executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/not yet wired/i)
+  })
+
+  it('returns the discovered hosts in ack data (read-only → executed=true)', async () => {
+    const hosts = [
+      { macIdentityPubKey: 'A', relayUrls: ['wss://a.ts.net'], hostPlatform: 'mac' },
+      { macIdentityPubKey: 'B', relayUrls: ['wss://b.ts.net'] }
+    ]
+    const discoverTailnetHostsFn = vi.fn().mockResolvedValue({ ok: true, hosts })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, discoverTailnetHostsFn })
+    const result = await executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts)
+    expect(discoverTailnetHostsFn).toHaveBeenCalledTimes(1)
+    expect(result.executed).toBe(true)
+    expect(result.message).toMatch(/2 other TaskWraith hosts/)
+    expect(result.data).toEqual({ hosts })
+  })
+
+  it('treats an empty tailnet as a successful enumeration', async () => {
+    const discoverTailnetHostsFn = vi.fn().mockResolvedValue({ ok: true, hosts: [] })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, discoverTailnetHostsFn })
+    const result = await executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts)
+    expect(result.executed).toBe(true)
+    expect(result.message).toMatch(/0 other TaskWraith hosts/)
+    expect(result.data).toEqual({ hosts: [] })
+  })
+
+  it('reports executed=false with the reason when enumeration fails', async () => {
+    const discoverTailnetHostsFn = vi.fn().mockResolvedValue({ ok: false, reason: 'no credential' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, discoverTailnetHostsFn })
+    const result = await executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/no credential/)
+  })
+
+  it('reports executed=false when the discovery fn throws', async () => {
+    const discoverTailnetHostsFn = vi.fn().mockRejectedValue(new Error('tailnet offline'))
+    const log = vi.fn()
+    const executor = new MainProcessActionExecutor({ cancelRunFn, discoverTailnetHostsFn, log })
+    const result = await executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/Discovery failed/)
+    expect(result.message).toMatch(/tailnet offline/)
+    expect(log).toHaveBeenCalled()
   })
 })
 

@@ -268,6 +268,7 @@ import {
   getTailscaleServeStatus
 } from './TailscaleServe'
 import { tailscaleUpWithAuthKey } from './TailscaleAuth'
+import { discoverTailnetHosts } from './TailnetDiscovery'
 import { selectAdvertisableRelayUrls } from './remote/relayReachability'
 import {
   resolveAutoUpdateServiceEnabled,
@@ -506,6 +507,7 @@ import {
   getStoredClaudeApiKey,
   getStoredKimiApiKey,
   importCodexUsageCredential,
+  loadTailscaleOAuthCredentials,
   markGeminiAuthProfileUsed,
   resolveGeminiAuthProfileEnv,
   saveGeminiAuthProfile,
@@ -15989,6 +15991,34 @@ if (isGeminiMcpBridgeProcess) {
               registered: false,
               reason: err instanceof Error ? err.message : String(err)
             }
+          }
+        },
+        // QR-optional discovery (Slice 5e): enumerate the tailnet with the
+        // host-side OAuth credential and probe each device's /v1/hostinfo. The
+        // credential never leaves this Mac. Self is dropped here (its own
+        // identity appears in the tailnet); the phone dedupes its already-paired
+        // hosts on its side. `iosRemoteRuntime` is captured from the enclosing
+        // whenReady scope and is live by the time this runs (request-time).
+        discoverTailnetHostsFn: async () => {
+          const creds = loadTailscaleOAuthCredentials()
+          if (!creds) {
+            return {
+              ok: false,
+              reason:
+                'Tailscale discovery is not set up on this host. Add a Tailscale OAuth client (devices:core:read) in Settings → Devices.'
+            }
+          }
+          const selfPubKey = iosRemoteRuntime?.describeHost().macIdentityPubKey
+          const result = await discoverTailnetHosts({
+            clientId: creds.clientId,
+            clientSecret: creds.clientSecret,
+            excludeMacIdentityPubKeys: selfPubKey ? [selfPubKey] : [],
+            log: (line) => console.log(line)
+          })
+          if (!result.ok) return { ok: false, reason: result.reason }
+          return {
+            ok: true,
+            hosts: result.hosts as unknown as Array<Record<string, unknown>>
           }
         },
         setYoloModeFn: async (enabled) => {

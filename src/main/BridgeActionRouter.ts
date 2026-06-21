@@ -566,6 +566,8 @@ export class BridgeActionRouter {
         return this.executor.executeToggleMessagePin(payload)
       case 'registerApnsToken':
         return this.executor.executeRegisterApnsToken(payload)
+      case 'discoverTailnetHosts':
+        return this.executor.executeDiscoverTailnetHosts(payload)
       case 'setYoloMode':
         return this.executor.executeSetYoloMode(payload)
       case 'togglePinChat':
@@ -1017,7 +1019,11 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'togglePinChat':
     case 'togglePinWorkspace':
       return 'pin'
+    // Paired-device-level system actions — no workspace capability applies
+    // (auth is the pair binding at the transport layer). discoverTailnetHosts
+    // enumerates the tailnet on the phone's behalf; it touches no workspace.
     case 'registerApnsToken':
+    case 'discoverTailnetHosts':
     case 'unknown':
       return null
   }

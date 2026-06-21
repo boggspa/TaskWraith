@@ -39,7 +39,14 @@ export interface TailscaleHttpResponse {
 
 export type TailscaleFetch = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body?: string }
+  init: {
+    method: string
+    headers?: Record<string, string>
+    body?: string
+    /** Optional abort signal — discovery probes pass AbortSignal.timeout so a
+     * slow/hung tailnet device can't stall the whole fan-out. */
+    signal?: AbortSignal
+  }
 ) => Promise<TailscaleHttpResponse>
 
 /** A tailnet machine as the phone-side discovery list cares about it. */
@@ -58,7 +65,7 @@ export type TailscaleDevicesResult =
   | { ok: true; devices: TailnetDevice[] }
   | { ok: false; message: string }
 
-const defaultFetch: TailscaleFetch = async (url, init) => {
+export const defaultFetch: TailscaleFetch = async (url, init) => {
   // Electron main / Node 18+ ship a global fetch; injected in tests.
   const f = (globalThis as { fetch?: (input: string, init?: unknown) => Promise<TailscaleHttpResponse> }).fetch
   if (!f) throw new Error('global fetch is unavailable in this runtime')
