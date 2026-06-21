@@ -701,11 +701,12 @@ function vsCodeTaskCommand(
   const rawCommand = substituteWorkspaceFolder(task.command, workspacePath)
   const isShell = task.type !== 'process'
   const raw = [rawCommand, ...args].join(' ')
+  const cwd = vsCodeTaskCwd(task.options, workspacePath)
   const env = taskOptionsEnv(task.options)
   return {
     raw,
     ...(isShell ? {} : { argv: [rawCommand, ...args] }),
-    cwd: workspacePath,
+    cwd,
     ...(env ? { env } : {}),
     longRunning: vsCodeTaskKind(task) === 'dev-server',
     shell: isShell
@@ -791,6 +792,11 @@ function envRecord(value: unknown): Record<string, string> | undefined {
 
 function taskOptionsEnv(value: unknown): Record<string, string> | undefined {
   return isObject(value) ? envRecord(value.env) : undefined
+}
+
+function vsCodeTaskCwd(value: unknown, workspacePath: string): string {
+  if (!isObject(value) || typeof value.cwd !== 'string') return workspacePath
+  return substituteWorkspaceFolder(value.cwd, workspacePath)
 }
 
 async function readText(filePath: string): Promise<string | null> {

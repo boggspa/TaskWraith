@@ -185,6 +185,7 @@ describe('discoverLaunchTargets', () => {
       command: {
         raw: 'npm run build',
         argv: ['npm', 'run', 'build'],
+        cwd: path.join(workspace, 'web'),
         env: {
           NODE_ENV: 'production'
         },
