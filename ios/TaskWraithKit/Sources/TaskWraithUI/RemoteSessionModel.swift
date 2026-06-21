@@ -277,6 +277,12 @@ public final class RemoteSessionModel: ObservableObject {
     /// `.inspector` at NavigationStack level (true side-by-side column on
     /// iPad instead of an overlay; sheet on iPhone).
     @Published public var inspectorPresented = false
+    /// Dedicated ensemble Roster page (transcript icon + chip-tap entry).
+    /// Ensemble chats only. Replaces the cramped per-chip editor sheet.
+    @Published public var rosterPresented = false
+    /// When the Roster page opens from a tapped participant chip, auto-open
+    /// that participant's detail editor (consumed once on appear, then cleared).
+    @Published public var rosterFocusParticipantId: String? = nil
     /// APNs token waiting for an established session (tokens can arrive
     /// before the transport connects on cold launch).
     private var pendingApnsToken: (hex: String, env: String)? = nil

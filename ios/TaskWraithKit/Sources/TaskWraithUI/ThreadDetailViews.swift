@@ -1320,12 +1320,28 @@ struct ThreadDetailView: View {
                     }
                 }
             }
+            // Roster — dedicated ensemble-only page (supersedes the cramped
+            // per-chip editor). Only meaningful for ensemble chats.
+            if card?.isEnsemble == true, card?.workspaceId != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        model.rosterPresented = true
+                    } label: {
+                        Label("Roster", systemImage: "person.3.fill")
+                    }
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     model.inspectorPresented.toggle()
                 } label: {
                     Label("Inspector", systemImage: "sidebar.right")
                 }
+            }
+        }
+        .sheet(isPresented: $model.rosterPresented) {
+            if let wsId = card?.workspaceId {
+                EnsembleRosterSheet(model: model, threadId: taskId, workspaceId: wsId)
             }
         }
 
