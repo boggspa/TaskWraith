@@ -270,6 +270,259 @@ extension View {
     }
 }
 
+struct ToolbarIconPillLabel: View {
+    let title: String
+    let systemImage: String
+    var isActive: Bool = false
+
+    init(_ title: String, systemImage: String, isActive: Bool = false) {
+        self.title = title
+        self.systemImage = systemImage
+        self.isActive = isActive
+    }
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .labelStyle(.iconOnly)
+            .toolbarIconPillChrome(isActive: isActive)
+            .accessibilityLabel(Text(title))
+            .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+}
+
+struct ToolbarIconSegmentLabel: View {
+    let title: String
+    let systemImage: String
+    var isActive: Bool = false
+    var leadingDivider: Bool = false
+
+    init(
+        _ title: String,
+        systemImage: String,
+        isActive: Bool = false,
+        leadingDivider: Bool = false
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.isActive = isActive
+        self.leadingDivider = leadingDivider
+    }
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .labelStyle(.iconOnly)
+            .toolbarIconSegmentChrome(isActive: isActive, leadingDivider: leadingDivider)
+            .accessibilityLabel(Text(title))
+            .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+}
+
+struct ToolbarIconPillGroup<Content: View>: View {
+    private let content: () -> Content
+
+    init(@ViewBuilder content: @escaping () -> Content) {
+        self.content = content
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            content()
+        }
+        .toolbarIconPillGroupChrome()
+    }
+}
+
+private struct ToolbarIconPillChromeModifier: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    var isActive: Bool = false
+
+    func body(content: Content) -> some View {
+        let isLight = TWThemeStore.shared.systemTheme.isLight
+        let fill =
+            reduceTransparency
+            ? (isLight ? TWTheme.surface1 : TWTheme.surface2)
+            : (isLight ? Color.white.opacity(0.80) : Color.black.opacity(0.80))
+        let rim = isLight ? Color.black : Color.white
+        let symbol = isLight ? Color.black.opacity(0.86) : Color.white.opacity(0.94)
+        let shadow = isLight ? Color.black.opacity(0.18) : Color.black.opacity(0.46)
+        let topRim = isLight ? rim.opacity(0.36) : rim.opacity(0.60)
+        let bottomRim = isLight ? rim.opacity(0.12) : rim.opacity(0.18)
+        let accent = TWTheme.chroma1
+        let shape = Capsule()
+
+        content
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(symbol)
+            .frame(width: 34, height: 34)
+            .background {
+                if !reduceTransparency && TWTheme.composerGlassEnabled {
+                    shape.fill(.ultraThinMaterial)
+                }
+                shape.fill(fill)
+            }
+            .overlay {
+                if isActive {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    accent.opacity(0.24),
+                                    accent.opacity(0.10),
+                                    Color.clear
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 29, height: 29)
+                }
+            }
+            .overlay(
+                shape.strokeBorder(rim.opacity(isLight ? 0.34 : 0.46), lineWidth: 0.85)
+            )
+            .overlay {
+                if isActive {
+                    Circle()
+                        .strokeBorder(accent.opacity(0.44), lineWidth: 1)
+                        .frame(width: 30, height: 30)
+                }
+            }
+            .overlay(
+                shape.inset(by: 0.75)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [topRim, rim.opacity(0.08), bottomRim],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.1
+                    )
+            )
+            .shadow(color: shadow, radius: isLight ? 6 : 8, x: 0, y: 2)
+            .contentShape(shape)
+            .opacity(isEnabled ? 1 : 0.42)
+    }
+}
+
+private struct ToolbarIconPillGroupChromeModifier: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        let isLight = TWThemeStore.shared.systemTheme.isLight
+        let fill =
+            reduceTransparency
+            ? (isLight ? TWTheme.surface1 : TWTheme.surface2)
+            : (isLight ? Color.white.opacity(0.80) : Color.black.opacity(0.80))
+        let rim = isLight ? Color.black : Color.white
+        let shadow = isLight ? Color.black.opacity(0.18) : Color.black.opacity(0.46)
+        let shape = Capsule()
+
+        content
+            .padding(.horizontal, 1)
+            .padding(.vertical, 1)
+            .background {
+                if !reduceTransparency && TWTheme.composerGlassEnabled {
+                    shape.fill(.ultraThinMaterial)
+                }
+                shape.fill(fill)
+            }
+            .overlay(
+                shape.strokeBorder(rim.opacity(isLight ? 0.34 : 0.46), lineWidth: 0.85)
+            )
+            .overlay(
+                shape.inset(by: 0.75)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                rim.opacity(isLight ? 0.28 : 0.52),
+                                rim.opacity(0.08),
+                                rim.opacity(isLight ? 0.10 : 0.16)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.1
+                    )
+            )
+            .shadow(color: shadow, radius: isLight ? 6 : 8, x: 0, y: 2)
+            .contentShape(shape)
+    }
+}
+
+private struct ToolbarIconSegmentChromeModifier: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+    var isActive: Bool = false
+    var leadingDivider: Bool = false
+
+    func body(content: Content) -> some View {
+        let isLight = TWThemeStore.shared.systemTheme.isLight
+        let rim = isLight ? Color.black : Color.white
+        let symbol = isLight ? Color.black.opacity(0.86) : Color.white.opacity(0.94)
+        let accent = TWTheme.chroma1
+
+        content
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(symbol)
+            .frame(width: 34, height: 34)
+            .background {
+                if isActive {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    accent.opacity(0.24),
+                                    accent.opacity(0.10),
+                                    Color.clear
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 29, height: 29)
+                }
+            }
+            .overlay {
+                if isActive {
+                    Circle()
+                        .strokeBorder(accent.opacity(0.44), lineWidth: 1)
+                        .frame(width: 30, height: 30)
+                }
+            }
+            .overlay(alignment: .leading) {
+                if leadingDivider {
+                    Rectangle()
+                        .fill(rim.opacity(0.24))
+                        .frame(width: 0.5, height: 20)
+                }
+            }
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.42)
+    }
+}
+
+extension View {
+    func toolbarIconPillChrome(isActive: Bool = false) -> some View {
+        modifier(ToolbarIconPillChromeModifier(isActive: isActive))
+    }
+
+    func toolbarIconPillGroupChrome() -> some View {
+        modifier(ToolbarIconPillGroupChromeModifier())
+    }
+
+    func toolbarIconSegmentChrome(
+        isActive: Bool = false,
+        leadingDivider: Bool = false
+    ) -> some View {
+        modifier(
+            ToolbarIconSegmentChromeModifier(
+                isActive: isActive,
+                leadingDivider: leadingDivider
+            )
+        )
+    }
+}
+
 private struct SidebarInnerRimModifier: ViewModifier {
     @Environment(\.horizontalSizeClass) private var sizeClass
     let edge: HorizontalEdge

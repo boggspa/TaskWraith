@@ -137,22 +137,29 @@ struct HomeView: View {
                     Button("New ensemble") { openCanvas(.ensemble) }
                     Button("New global chat") { openCanvas(.global) }
                 } label: {
-                    Label("New", systemImage: "square.and.pencil")
+                    ToolbarIconPillLabel("New", systemImage: "square.and.pencil")
                 }
                 .disabled(model.workspaces.isEmpty)
+                .buttonStyle(.plain)
             }
             ToolbarItem(placement: .cancellationAction) {
-                HStack(spacing: 8) {
+                ToolbarIconPillGroup {
                     Button {
                         model.refreshConnection()
                     } label: {
-                        Image(systemName: "arrow.clockwise")
+                        ToolbarIconSegmentLabel("Refresh", systemImage: "arrow.clockwise")
                     }
+                    .buttonStyle(.plain)
                     Button {
                         model.settingsPresented = true
                     } label: {
-                        Image(systemName: "gearshape")
+                        ToolbarIconSegmentLabel(
+                            "Settings",
+                            systemImage: "gearshape",
+                            leadingDivider: true
+                        )
                     }
+                    .buttonStyle(.plain)
                     Menu {
                         Button("First-launch guide", systemImage: "questionmark.circle") {
                             model.firstLaunchSheetPresented = true
@@ -178,8 +185,13 @@ struct HomeView: View {
                             }
                         }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        ToolbarIconSegmentLabel(
+                            "More",
+                            systemImage: "ellipsis.circle",
+                            leadingDivider: true
+                        )
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }

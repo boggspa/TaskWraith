@@ -49,6 +49,21 @@ struct ThreadDetailView: View {
     private var secondaryWorkspaceSelectionStore = "{}"
 
     private var card: RemoteTaskCard? { model.taskCards.first { $0.id == taskId } }
+    private var filesToolbarWorkspaceId: String? {
+        guard let workspaceId = card?.workspaceId, model.workspaceCanEditFiles(workspaceId) else {
+            return nil
+        }
+        return workspaceId
+    }
+    private var diffsToolbarWorkspaceId: String? {
+        guard let workspaceId = card?.workspaceId, model.workspaceCanReviewDiffs(workspaceId) else {
+            return nil
+        }
+        return workspaceId
+    }
+    private var showsRosterToolbarButton: Bool {
+        card?.isEnsemble == true && card?.workspaceId != nil
+    }
     private var snapshot: RemoteThreadSnapshot? { model.threadSnapshots[taskId] }
     private var thinkingProvider: String? {
         if let state = model.ensembleStates[taskId],
@@ -826,12 +841,7 @@ struct ThreadDetailView: View {
 
     private func floatingTranscriptPill(systemName: String) -> some View {
         Image(systemName: systemName)
-            .font(.system(size: 15, weight: .bold))
-            .foregroundStyle(.white)
-            .frame(width: 34, height: 34)
-            .background(Circle().fill(Color.black.opacity(0.85)))
-            .overlay(Circle().strokeBorder(Color.white.opacity(0.35), lineWidth: 1))
-            .shadow(color: .black.opacity(0.45), radius: 7, y: 2)
+            .toolbarIconPillChrome()
     }
 
     @ViewBuilder
@@ -1309,40 +1319,56 @@ struct ThreadDetailView: View {
     private func toolbarChrome(_ base: AnyView) -> some View {
         base
         .toolbar {
-            if let workspaceId = card?.workspaceId, model.workspaceCanEditFiles(workspaceId) {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        model.requestFilesMode(workspaceId: workspaceId)
-                    } label: {
-                        Label("Files", systemImage: "folder")
-                    }
-                }
-            }
-            if let workspaceId = card?.workspaceId, model.workspaceCanReviewDiffs(workspaceId) {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        model.requestDiffMode(workspaceId: workspaceId)
-                    } label: {
-                        Label("Diffs", systemImage: "plus.forwardslash.minus")
-                    }
-                }
-            }
-            // Roster — dedicated ensemble-only page (supersedes the cramped
-            // per-chip editor). Only meaningful for ensemble chats.
-            if card?.isEnsemble == true, card?.workspaceId != nil {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        model.rosterPresented = true
-                    } label: {
-                        Label("Roster", systemImage: "person.3.fill")
-                    }
-                }
-            }
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    model.inspectorPresented.toggle()
-                } label: {
-                    Label("Inspector", systemImage: "sidebar.right")
+                ToolbarIconPillGroup {
+                    if let workspaceId = filesToolbarWorkspaceId {
+                        Button {
+                            model.requestFilesMode(workspaceId: workspaceId)
+                        } label: {
+                            ToolbarIconSegmentLabel("Files", systemImage: "folder")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if let workspaceId = diffsToolbarWorkspaceId {
+                        Button {
+                            model.requestDiffMode(workspaceId: workspaceId)
+                        } label: {
+                            ToolbarIconSegmentLabel(
+                                "Diffs",
+                                systemImage: "plus.forwardslash.minus",
+                                leadingDivider: filesToolbarWorkspaceId != nil
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    // Roster — dedicated ensemble-only page (supersedes the cramped
+                    // per-chip editor). Only meaningful for ensemble chats.
+                    if showsRosterToolbarButton {
+                        Button {
+                            model.rosterPresented = true
+                        } label: {
+                            ToolbarIconSegmentLabel(
+                                "Roster",
+                                systemImage: "person.3.fill",
+                                leadingDivider: filesToolbarWorkspaceId != nil
+                                    || diffsToolbarWorkspaceId != nil
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button {
+                        model.inspectorPresented.toggle()
+                    } label: {
+                        ToolbarIconSegmentLabel(
+                            "Inspector",
+                            systemImage: "sidebar.right",
+                            isActive: model.inspectorPresented,
+                            leadingDivider: filesToolbarWorkspaceId != nil
+                                || diffsToolbarWorkspaceId != nil
+                                || showsRosterToolbarButton
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
