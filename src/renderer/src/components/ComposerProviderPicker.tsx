@@ -66,6 +66,12 @@ interface ComposerProviderPickerProps {
    * aria-label.
    */
   title: string
+  /**
+   * When true, the open popover re-anchors to the trigger on scroll/resize.
+   * Default false keeps the composer's behaviour byte-identical; Settings →
+   * Roster passes true because its pickers live inside a scrolling list.
+   */
+  repositionOnScroll?: boolean
 }
 
 interface ProviderRow {
@@ -191,7 +197,8 @@ export function ComposerProviderPicker({
   providerRunPauses,
   disabled,
   triggerIcon,
-  title
+  title,
+  repositionOnScroll
 }: ComposerProviderPickerProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -204,24 +211,35 @@ export function ComposerProviderPicker({
   // Position the popover above the trigger (cloned from
   // ComposerPlusPicker).
   useEffect(() => {
-    let cancelled = false
-    queueMicrotask(() => {
-      if (cancelled) return
-      if (!open) {
-        setPosition(null)
-        return
-      }
+    if (!open) {
+      setPosition(null)
+      return
+    }
+    const computePosition = (): void => {
       const trigger = triggerRef.current
       if (!trigger) return
       const rect = trigger.getBoundingClientRect()
       const left = Math.max(8, Math.min(rect.left, window.innerWidth - 340))
       const top = rect.top - 8
       setPosition({ left, top })
+    }
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) computePosition()
     })
+    if (!repositionOnScroll) {
+      return () => {
+        cancelled = true
+      }
+    }
+    window.addEventListener('scroll', computePosition, true)
+    window.addEventListener('resize', computePosition)
     return () => {
       cancelled = true
+      window.removeEventListener('scroll', computePosition, true)
+      window.removeEventListener('resize', computePosition)
     }
-  }, [open, rows.length])
+  }, [open, rows.length, repositionOnScroll])
 
   // Click-outside + Escape dismiss.
   useEffect(() => {

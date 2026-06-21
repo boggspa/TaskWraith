@@ -144,6 +144,13 @@ interface CombinedModelPickerProps {
    */
   onToggleFastMode?: () => void
   disabled?: boolean
+  /**
+   * When true, the open popover re-anchors to the trigger on scroll/resize
+   * (capture). Default false keeps the composer's behaviour byte-identical
+   * (the composer trigger is viewport-pinned). Settings → Roster passes true
+   * because its pickers live inside a scrolling list.
+   */
+  repositionOnScroll?: boolean
 }
 
 /**
@@ -182,7 +189,8 @@ export function CombinedModelPicker({
   fastModeCapableModelIds,
   fastModeEnabled,
   onToggleFastMode,
-  disabled
+  disabled,
+  repositionOnScroll
 }: CombinedModelPickerProps): React.JSX.Element {
   const fastModeCapable = Boolean(
     fastModeCapableModelIds && fastModeCapableModelIds.has(selectedModelId)
@@ -263,13 +271,11 @@ export function CombinedModelPicker({
 
   // Position the popover above-right of the chip when opened.
   useEffect(() => {
-    let cancelled = false
-    queueMicrotask(() => {
-      if (cancelled) return
-      if (!open) {
-        setPosition(null)
-        return
-      }
+    if (!open) {
+      setPosition(null)
+      return
+    }
+    const computePosition = (): void => {
       const trigger = triggerRef.current
       if (!trigger) return
       const rect = trigger.getBoundingClientRect()
@@ -278,11 +284,25 @@ export function CombinedModelPicker({
       // Anchor ABOVE the chip with a small gap.
       const top = rect.top - 8
       setPosition({ left, top })
+    }
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) computePosition()
     })
+    if (!repositionOnScroll) {
+      return () => {
+        cancelled = true
+      }
+    }
+    // Re-anchor to the trigger while the user scrolls the surrounding list.
+    window.addEventListener('scroll', computePosition, true)
+    window.addEventListener('resize', computePosition)
     return () => {
       cancelled = true
+      window.removeEventListener('scroll', computePosition, true)
+      window.removeEventListener('resize', computePosition)
     }
-  }, [open, reasoningOptions.length])
+  }, [open, reasoningOptions.length, repositionOnScroll])
 
   // Reset highlights when the popover opens.
   useEffect(() => {

@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import type { EnsembleParticipant } from '../../../main/store/types'
+import type {
+  AgenticServicesSettings,
+  ComposerStyle,
+  EnsembleParticipant,
+  PermissionPresetId,
+  ProviderId
+} from '../../../main/store/types'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import {
+  clonePermissionOverrides,
   createEmptyEnsembleRosterPreset,
   defaultParticipantForProvider,
   deleteEnsembleRosterPreset,
@@ -17,20 +24,51 @@ import {
   type EnsembleRosterPreset
 } from '../lib/ensembleRosterPresets'
 import {
+  buildProviderChangeParticipantPatch,
+  getEnsembleModelDefaults,
+  resolveEnsembleParticipantSettings
+} from '../lib/ensembleProviderDefaults'
+import {
+  buildParticipantToolGrantPatch,
+  getParticipantToolGrantIds
+} from '../lib/ensembleParticipantToolGrants'
+import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
+import {
   ENSEMBLE_ROLE_PRESETS,
   resolveRolePresetId,
   roleLabelForPresetId
 } from '../lib/ensembleRolePresets'
 import { getProviderLabel } from '../lib/providerLabels'
+import { CombinedModelPicker, type CombinedModelPickerModelOption } from './CombinedModelPicker'
+import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPermissionsPicker'
+import { ComposerProviderPicker } from './ComposerProviderPicker'
+import { ProviderBadgeIcon } from './Sidebar'
 
 /** The right-pane working copy: preset metadata + a live participant list
  * (materialized once on selection so the rows carry stable ids for React keys
- * and feed the per-participant pickers in slice 4). Persisted back as
- * snapshots on change. */
+ * and feed the per-participant pickers). Persisted back as snapshots on
+ * change. */
 type RosterEditing = {
   meta: Omit<EnsembleRosterPreset, 'participants'>
   participants: EnsembleParticipant[]
 }
+
+interface RosterSettingsPanelProps {
+  composerStyle?: ComposerStyle
+  agenticServices?: AgenticServicesSettings
+  grokAvailable?: boolean
+  cursorAvailable?: boolean
+}
+
+// Lossless permission options: the values ARE the PermissionPresetId, so
+// full_access + custom survive a round-trip (unlike the composer's 3-mode
+// collapse, which is fine for ephemeral live edits but not persisted data).
+const PERMISSION_PRESET_OPTIONS: PermissionOption[] = [
+  { value: 'read_only', label: 'Plan / Read-only' },
+  { value: 'default', label: 'Default approval' },
+  { value: 'workspace_write', label: 'Full workspace access' },
+  { value: 'full_access', label: 'Full access' }
+]
 
 function uniqueNewName(existing: EnsembleRosterPreset[]): string {
   const base = 'New roster'
@@ -64,6 +102,294 @@ function freshWorkingId(existing: EnsembleParticipant[]): string {
   return candidate
 }
 
+// ── Per-participant row ─────────────────────────────────────────────────────
+interface RosterParticipantRowProps {
+  participant: EnsembleParticipant
+  index: number
+  total: number
+  canRemove: boolean
+  composerStyle: ComposerStyle
+  agenticServices?: AgenticServicesSettings
+  grokAvailable: boolean
+  cursorAvailable: boolean
+  showApplyToAll: boolean
+  onMove: (id: string, direction: -1 | 1) => void
+  onRemove: (id: string) => void
+  onPatch: (id: string, patch: Partial<EnsembleParticipant>, persist?: boolean) => void
+  onFlush: () => void
+  onApplyPermissionsToAll: (source: EnsembleParticipant) => void
+}
+
+function RosterParticipantRow({
+  participant,
+  index,
+  total,
+  canRemove,
+  composerStyle,
+  agenticServices,
+  grokAvailable,
+  cursorAvailable,
+  showApplyToAll,
+  onMove,
+  onRemove,
+  onPatch,
+  onFlush,
+  onApplyPermissionsToAll
+}: RosterParticipantRowProps): JSX.Element {
+  const retired = isRetiredProvider(participant.provider)
+  const rolePresetId = resolveRolePresetId(participant.role)
+
+  const rail = (
+    <div className="settings-roster-participant-rail">
+      <button
+        type="button"
+        className="settings-roster-chevron"
+        onClick={() => onMove(participant.id, -1)}
+        disabled={index === 0}
+        aria-label="Move up"
+        title="Move up"
+      >
+        ▲
+      </button>
+      <span className="settings-roster-participant-order">{index + 1}</span>
+      <button
+        type="button"
+        className="settings-roster-chevron"
+        onClick={() => onMove(participant.id, 1)}
+        disabled={index === total - 1}
+        aria-label="Move down"
+        title="Move down"
+      >
+        ▼
+      </button>
+    </div>
+  )
+
+  if (retired) {
+    return (
+      <li className="settings-roster-participant is-retired">
+        {rail}
+        <div className="settings-roster-participant-body">
+          <div className="settings-roster-participant-top">
+            <span className="settings-roster-participant-provider">
+              {getProviderLabel(participant.provider)}
+            </span>
+            <span
+              className="settings-roster-retired-badge"
+              title="This provider is retired. Remove this participant to replace it."
+            >
+              retired
+            </span>
+            <button
+              type="button"
+              className="settings-roster-remove"
+              onClick={() => onRemove(participant.id)}
+              disabled={!canRemove}
+              title={canRemove ? 'Remove participant' : `Keep at least ${MIN_ROSTER_PRESET_PARTICIPANTS}`}
+              aria-label="Remove participant"
+              style={{ marginLeft: 'auto' }}
+            >
+              ✕
+            </button>
+          </div>
+          <p className="settings-roster-retired-note">
+            {participant.role || 'Untitled'} — retired providers can&apos;t run. Remove this row to
+            replace it with a live provider.
+          </p>
+        </div>
+      </li>
+    )
+  }
+
+  const resolved = resolveEnsembleParticipantSettings(participant)
+  const defaults = getEnsembleModelDefaults(participant.provider)
+
+  const modelOptions: CombinedModelPickerModelOption[] = defaults.modelOptions
+  // Display the participant's model, mapping the agnostic 'cli-default' seed to
+  // the provider's preferred id so the chip reads cleanly. The stored value is
+  // untouched until the user actually picks a model.
+  const selectedModelId =
+    participant.model && participant.model !== 'cli-default'
+      ? participant.model
+      : defaults.defaultModelId
+
+  const onSelectModel = (nextModel: string): void => {
+    const patch: Partial<EnsembleParticipant> = { model: nextModel }
+    // Drop fast mode when the new model can't support it (mirrors composer).
+    if (
+      (participant.provider === 'codex' || participant.provider === 'claude') &&
+      !defaults.fastModeCapableModelIds.has(nextModel)
+    ) {
+      patch.fastModeEnabled = false
+      if (participant.provider === 'codex') patch.serviceTier = ''
+    }
+    onPatch(participant.id, patch)
+  }
+
+  const selectedReasoning =
+    participant.provider === 'kimi'
+      ? resolved.thinkingEnabled
+        ? 'on'
+        : 'off'
+      : resolved.reasoningEffort
+  const onSelectReasoning = (value: string): void => {
+    if (participant.provider === 'kimi') {
+      onPatch(participant.id, { thinkingEnabled: value !== 'off' })
+    } else {
+      onPatch(participant.id, { reasoningEffort: value })
+    }
+  }
+
+  const fastModeEnabled =
+    participant.provider === 'codex'
+      ? resolved.serviceTier === 'fast'
+      : participant.provider === 'claude'
+        ? resolved.fastModeEnabled
+        : false
+  const onToggleFastMode =
+    participant.provider === 'codex'
+      ? (): void => {
+          const nextTier = resolved.serviceTier === 'fast' ? '' : 'fast'
+          onPatch(participant.id, { serviceTier: nextTier, fastModeEnabled: nextTier === 'fast' })
+        }
+      : participant.provider === 'claude'
+        ? (): void => onPatch(participant.id, { fastModeEnabled: !resolved.fastModeEnabled })
+        : undefined
+
+  const permissionOptions: PermissionOption[] = [
+    ...PERMISSION_PRESET_OPTIONS,
+    ...(resolved.permissionPresetId === 'custom' ? [{ value: 'custom', label: 'Custom' }] : [])
+  ]
+  const enabledGrantIds = getParticipantToolGrantIds(participant)
+
+  return (
+    <li className={`settings-roster-participant${participant.enabled ? '' : ' is-disabled'}`}>
+      {rail}
+      <div className="settings-roster-participant-body">
+        <div className="settings-roster-participant-top">
+          <ComposerProviderPicker
+            provider={participant.provider}
+            composerStyle={composerStyle}
+            grokAvailable={grokAvailable}
+            cursorAvailable={cursorAvailable}
+            onSelect={(next: ProviderId) =>
+              onPatch(participant.id, buildProviderChangeParticipantPatch(next))
+            }
+            triggerIcon={<ProviderBadgeIcon provider={participant.provider} />}
+            title="Participant provider"
+            repositionOnScroll
+          />
+          <CombinedModelPicker
+            provider={participant.provider}
+            composerStyle={composerStyle}
+            modelOptions={modelOptions}
+            selectedModelId={selectedModelId}
+            onSelectModel={onSelectModel}
+            reasoningOptions={defaults.reasoningOptions}
+            selectedReasoning={selectedReasoning}
+            onSelectReasoning={onSelectReasoning}
+            codexReasoningEffort={
+              participant.provider === 'codex' ? resolved.reasoningEffort : undefined
+            }
+            claudeReasoningEffort={
+              participant.provider === 'claude' ? resolved.reasoningEffort : undefined
+            }
+            kimiThinkingEnabled={
+              participant.provider === 'kimi' ? resolved.thinkingEnabled : undefined
+            }
+            fastModeCapableModelIds={defaults.fastModeCapableModelIds}
+            fastModeEnabled={fastModeEnabled}
+            onToggleFastMode={onToggleFastMode}
+            repositionOnScroll
+          />
+          <CombinedPermissionsPicker
+            provider={participant.provider}
+            composerStyle={composerStyle}
+            permissionOptions={permissionOptions}
+            selectedPermission={resolved.permissionPresetId}
+            onSelectPermission={(value) =>
+              onPatch(participant.id, { permissionPresetId: value as PermissionPresetId })
+            }
+            grantServices={WORKSPACE_POLICY_SERVICES}
+            enabledGrantIds={enabledGrantIds}
+            agenticServices={agenticServices as AgenticServicesSettings}
+            onToggleGrant={(service, enabled) =>
+              onPatch(participant.id, buildParticipantToolGrantPatch(participant, service, enabled))
+            }
+            grantScopeLabel="participant"
+            onApplyToAllParticipants={
+              showApplyToAll ? () => onApplyPermissionsToAll(participant) : undefined
+            }
+            repositionOnScroll
+          />
+          <label className="settings-roster-enable">
+            <input
+              type="checkbox"
+              checked={participant.enabled}
+              onChange={(event) => onPatch(participant.id, { enabled: event.target.checked })}
+            />
+            <span>Enabled</span>
+          </label>
+          <button
+            type="button"
+            className="settings-roster-remove"
+            onClick={() => onRemove(participant.id)}
+            disabled={!canRemove}
+            title={canRemove ? 'Remove participant' : `Keep at least ${MIN_ROSTER_PRESET_PARTICIPANTS}`}
+            aria-label="Remove participant"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="settings-roster-field settings-roster-field-role">
+          <span className="settings-roster-field-label">Role / nickname</span>
+          <div className="settings-roster-role-controls">
+            <input
+              type="text"
+              className="settings-roster-input"
+              value={participant.role}
+              placeholder="Role / nickname"
+              onChange={(event) => onPatch(participant.id, { role: event.target.value }, false)}
+              onBlur={onFlush}
+            />
+            <select
+              className="settings-roster-select settings-roster-role-preset"
+              value={rolePresetId === 'custom' ? '' : rolePresetId}
+              aria-label="Fill role from a preset"
+              onChange={(event) => {
+                const label = roleLabelForPresetId(event.target.value)
+                if (label) onPatch(participant.id, { role: label })
+              }}
+            >
+              <option value="">Preset…</option>
+              {ENSEMBLE_ROLE_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id} title={preset.description}>
+                  {preset.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="settings-roster-field">
+          <span className="settings-roster-field-label">Brief / goal</span>
+          <textarea
+            className="settings-roster-textarea"
+            rows={2}
+            value={participant.instructions}
+            placeholder="What should this participant focus on each turn?"
+            onChange={(event) =>
+              onPatch(participant.id, { instructions: event.target.value }, false)
+            }
+            onBlur={onFlush}
+          />
+        </div>
+      </div>
+    </li>
+  )
+}
+
 /**
  * Settings → Roster. The expansive home for ensemble roster presets: create /
  * duplicate / rename / delete on the left, and a per-participant editor on the
@@ -71,7 +397,12 @@ function freshWorkingId(existing: EnsembleParticipant[]): string {
  * both read the same renderer-local store and stay in sync via
  * `subscribeEnsembleRosterPresets`.
  */
-export function RosterSettingsPanel(): JSX.Element {
+export function RosterSettingsPanel({
+  composerStyle = 'default',
+  agenticServices,
+  grokAvailable = false,
+  cursorAvailable = false
+}: RosterSettingsPanelProps): JSX.Element {
   const [presets, setPresets] = useState<EnsembleRosterPreset[]>(() => listEnsembleRosterPresets())
   const [selectedId, setSelectedId] = useState<string | null>(
     () => listEnsembleRosterPresets()[0]?.id ?? null
@@ -84,8 +415,6 @@ export function RosterSettingsPanel(): JSX.Element {
   const editingRef = useRef<RosterEditing | null>(null)
   editingRef.current = editing
 
-  // Persist the working copy as snapshots. Floor/name guards keep it valid; the
-  // try/catch is defensive so a bad write can never wedge the editor.
   const writePreset = useCallback((next: RosterEditing): void => {
     try {
       upsertEnsembleRosterPreset({
@@ -93,11 +422,10 @@ export function RosterSettingsPanel(): JSX.Element {
         participants: snapshotParticipantsForPreset(next.participants)
       })
     } catch {
-      // ignore — see guards in add/remove + commitName
+      // floor/name guards keep this valid; defensive
     }
   }, [])
 
-  // Commit a working-copy change: stamp updatedAt, reflect locally, persist.
   const commit = useCallback(
     (next: RosterEditing): void => {
       const stamped: RosterEditing = { ...next, meta: { ...next.meta, updatedAt: Date.now() } }
@@ -107,23 +435,19 @@ export function RosterSettingsPanel(): JSX.Element {
     [writePreset]
   )
 
-  // Live refresh of the LIST from this window's writes + other windows' storage
-  // events. Read-only: it never re-materializes the open editor (that working
-  // copy is the authority while editing), only the left-pane list + selection.
+  // Live refresh of the LIST only — never re-materializes the open editor.
   useEffect(() => {
     const refresh = (): void => setPresets(listEnsembleRosterPresets())
     return subscribeEnsembleRosterPresets(refresh)
   }, [])
 
-  // Keep a valid selection when the list changes (e.g. deleted elsewhere).
   useEffect(() => {
     if (selectedId && presets.some((preset) => preset.id === selectedId)) return
     setSelectedId(presets[0]?.id ?? null)
   }, [presets, selectedId])
 
-  // Materialize the selected preset into the working copy ONCE per selection.
-  // The cleanup flushes any unblurred text edits of the OUTGOING preset before
-  // switching, so a fast row-to-row click never drops the last keystrokes.
+  // Materialize the selected preset into the working copy ONCE per selection;
+  // flush unblurred text edits of the outgoing preset on switch.
   useEffect(() => {
     if (!selectedId) {
       setEditing(null)
@@ -179,7 +503,7 @@ export function RosterSettingsPanel(): JSX.Element {
     commit({ ...editing, meta: { ...editing.meta, name: trimmed } })
   }, [editing, nameDraft, commit])
 
-  // ── participant mutators ────────────────────────────────────────────────
+  // ── participant mutators (read latest via editingRef to avoid stale closures)
   const patchParticipant = useCallback(
     (id: string, patch: Partial<EnsembleParticipant>, doPersist = true): void => {
       const current = editingRef.current
@@ -203,10 +527,10 @@ export function RosterSettingsPanel(): JSX.Element {
       const current = editingRef.current
       if (!current) return
       const ordered = [...current.participants].sort((a, b) => a.order - b.order)
-      const index = ordered.findIndex((participant) => participant.id === id)
-      const target = index + direction
-      if (index < 0 || target < 0 || target >= ordered.length) return
-      ;[ordered[index], ordered[target]] = [ordered[target], ordered[index]]
+      const idx = ordered.findIndex((participant) => participant.id === id)
+      const target = idx + direction
+      if (idx < 0 || target < 0 || target >= ordered.length) return
+      ;[ordered[idx], ordered[target]] = [ordered[target], ordered[idx]]
       commit({
         ...current,
         participants: ordered.map((participant, i) => ({ ...participant, order: i + 1 }))
@@ -235,10 +559,31 @@ export function RosterSettingsPanel(): JSX.Element {
     [commit]
   )
 
+  const applyPermissionsToAll = useCallback(
+    (source: EnsembleParticipant): void => {
+      const current = editingRef.current
+      if (!current) return
+      const participants = current.participants.map((participant) =>
+        // Don't mutate retired participants; otherwise mirror the source's
+        // permission preset + grants (deep-cloned so nothing aliases).
+        isRetiredProvider(participant.provider)
+          ? participant
+          : {
+              ...participant,
+              permissionPresetId: source.permissionPresetId,
+              permissionOverrides: clonePermissionOverrides(source.permissionOverrides)
+            }
+      )
+      commit({ ...current, participants })
+    },
+    [commit]
+  )
+
   const orderedParticipants = useMemo(
     () => (editing ? [...editing.participants].sort((a, b) => a.order - b.order) : []),
     [editing]
   )
+  const canRemove = orderedParticipants.length > MIN_ROSTER_PRESET_PARTICIPANTS
 
   return (
     <div className="settings-roster">
@@ -363,142 +708,25 @@ export function RosterSettingsPanel(): JSX.Element {
               </div>
 
               <ul className="settings-roster-participants">
-                {orderedParticipants.map((participant, index) => {
-                  const retired = isRetiredProvider(participant.provider)
-                  const rolePresetId = resolveRolePresetId(participant.role)
-                  return (
-                    <li
-                      key={participant.id}
-                      className={`settings-roster-participant${
-                        participant.enabled ? '' : ' is-disabled'
-                      }${retired ? ' is-retired' : ''}`}
-                    >
-                      <div className="settings-roster-participant-rail">
-                        <button
-                          type="button"
-                          className="settings-roster-chevron"
-                          onClick={() => moveParticipant(participant.id, -1)}
-                          disabled={index === 0}
-                          aria-label="Move up"
-                          title="Move up"
-                        >
-                          ▲
-                        </button>
-                        <span className="settings-roster-participant-order">{index + 1}</span>
-                        <button
-                          type="button"
-                          className="settings-roster-chevron"
-                          onClick={() => moveParticipant(participant.id, 1)}
-                          disabled={index === orderedParticipants.length - 1}
-                          aria-label="Move down"
-                          title="Move down"
-                        >
-                          ▼
-                        </button>
-                      </div>
-
-                      <div className="settings-roster-participant-body">
-                        <div className="settings-roster-participant-top">
-                          <span className="settings-roster-participant-provider">
-                            {getProviderLabel(participant.provider)}
-                          </span>
-                          {retired && (
-                            <span
-                              className="settings-roster-retired-badge"
-                              title="This provider is retired. Remove this participant to replace it."
-                            >
-                              retired
-                            </span>
-                          )}
-                          <label className="settings-roster-enable">
-                            <input
-                              type="checkbox"
-                              checked={participant.enabled}
-                              disabled={retired}
-                              onChange={(event) =>
-                                patchParticipant(participant.id, { enabled: event.target.checked })
-                              }
-                            />
-                            <span>Enabled</span>
-                          </label>
-                          <button
-                            type="button"
-                            className="settings-roster-remove"
-                            onClick={() => removeParticipant(participant.id)}
-                            disabled={
-                              orderedParticipants.length <= MIN_ROSTER_PRESET_PARTICIPANTS
-                            }
-                            title={
-                              orderedParticipants.length <= MIN_ROSTER_PRESET_PARTICIPANTS
-                                ? `An ensemble needs at least ${MIN_ROSTER_PRESET_PARTICIPANTS} participants`
-                                : 'Remove participant'
-                            }
-                            aria-label="Remove participant"
-                          >
-                            ✕
-                          </button>
-                        </div>
-
-                        <div className="settings-roster-field settings-roster-field-role">
-                          <span className="settings-roster-field-label">Role / nickname</span>
-                          <div className="settings-roster-role-controls">
-                            <input
-                              type="text"
-                              className="settings-roster-input"
-                              value={participant.role}
-                              disabled={retired}
-                              placeholder="Role / nickname"
-                              onChange={(event) =>
-                                patchParticipant(
-                                  participant.id,
-                                  { role: event.target.value },
-                                  false
-                                )
-                              }
-                              onBlur={flushText}
-                            />
-                            <select
-                              className="settings-roster-select settings-roster-role-preset"
-                              value={rolePresetId === 'custom' ? '' : rolePresetId}
-                              disabled={retired}
-                              aria-label="Fill role from a preset"
-                              onChange={(event) => {
-                                const label = roleLabelForPresetId(event.target.value)
-                                if (label) patchParticipant(participant.id, { role: label })
-                              }}
-                            >
-                              <option value="">Preset…</option>
-                              {ENSEMBLE_ROLE_PRESETS.map((preset) => (
-                                <option key={preset.id} value={preset.id} title={preset.description}>
-                                  {preset.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="settings-roster-field">
-                          <span className="settings-roster-field-label">Brief / goal</span>
-                          <textarea
-                            className="settings-roster-textarea"
-                            rows={2}
-                            value={participant.instructions}
-                            disabled={retired}
-                            placeholder="What should this participant focus on each turn?"
-                            onChange={(event) =>
-                              patchParticipant(
-                                participant.id,
-                                { instructions: event.target.value },
-                                false
-                              )
-                            }
-                            onBlur={flushText}
-                          />
-                        </div>
-                      </div>
-                    </li>
-                  )
-                })}
+                {orderedParticipants.map((participant, index) => (
+                  <RosterParticipantRow
+                    key={participant.id}
+                    participant={participant}
+                    index={index}
+                    total={orderedParticipants.length}
+                    canRemove={canRemove}
+                    composerStyle={composerStyle}
+                    agenticServices={agenticServices}
+                    grokAvailable={grokAvailable}
+                    cursorAvailable={cursorAvailable}
+                    showApplyToAll={orderedParticipants.length > 1}
+                    onMove={moveParticipant}
+                    onRemove={removeParticipant}
+                    onPatch={patchParticipant}
+                    onFlush={flushText}
+                    onApplyPermissionsToAll={applyPermissionsToAll}
+                  />
+                ))}
               </ul>
 
               <div className="settings-roster-add-row">

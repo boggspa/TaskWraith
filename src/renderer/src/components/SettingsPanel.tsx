@@ -5635,7 +5635,14 @@ export function SettingsPanel({
         {activeTab === 'messages' && <MessagesBridgePanel />}
 
         {/* ── Roster (ensemble roster presets + per-participant editor) ──── */}
-        {activeTab === 'roster' && <RosterSettingsPanel />}
+        {activeTab === 'roster' && (
+          <RosterSettingsPanel
+            composerStyle={composerStyle}
+            agenticServices={agenticServices}
+            grokAvailable={grokProviderAvailable}
+            cursorAvailable={cursorProviderAvailable}
+          />
+        )}
 
         {/* ── Local servers (dev servers under workspaces) ─────────────── */}
         {activeTab === 'local-servers' && <LocalServersSettingsPanel />}

@@ -20,7 +20,11 @@ const fake = vi.hoisted(() => {
   ;(globalThis as unknown as { window: unknown }).window = {
     localStorage,
     addEventListener: () => {},
-    removeEventListener: () => {}
+    removeEventListener: () => {},
+    // Sidebar.tsx (pulled in transitively via ComposerProviderPicker →
+    // ProviderBadgeIcon) registers a module-load interval; stub it for node.
+    setInterval: () => 0,
+    clearInterval: () => {}
   }
   return { store }
 })

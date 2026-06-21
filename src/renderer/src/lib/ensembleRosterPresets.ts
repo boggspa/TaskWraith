@@ -54,7 +54,7 @@ export type EnsembleRosterPreset = {
   participants: EnsembleRosterParticipantSnapshot[]
 }
 
-function clonePermissionOverrides(
+export function clonePermissionOverrides(
   overrides: PermissionOverrides | undefined
 ): PermissionOverrides | undefined {
   if (!overrides) return undefined

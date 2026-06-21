@@ -58,6 +58,12 @@ interface CombinedPermissionsPickerProps {
   disabled?: boolean
   /** Ensemble-only: copy the current permission preset + grants to every participant. */
   onApplyToAllParticipants?: () => void
+  /**
+   * When true, the open popover re-anchors to the trigger on scroll/resize.
+   * Default false keeps the composer's behaviour byte-identical; Settings →
+   * Roster passes true because its pickers live inside a scrolling list.
+   */
+  repositionOnScroll?: boolean
 }
 
 export function CombinedPermissionsPicker({
@@ -72,7 +78,8 @@ export function CombinedPermissionsPicker({
   onToggleGrant,
   grantScopeLabel = 'workspace',
   disabled,
-  onApplyToAllParticipants
+  onApplyToAllParticipants,
+  repositionOnScroll
 }: CombinedPermissionsPickerProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -104,24 +111,35 @@ export function CombinedPermissionsPicker({
 
   // Position the popover above-right of the chip when opened.
   useEffect(() => {
-    let cancelled = false
-    queueMicrotask(() => {
-      if (cancelled) return
-      if (!open) {
-        setPosition(null)
-        return
-      }
+    if (!open) {
+      setPosition(null)
+      return
+    }
+    const computePosition = (): void => {
       const trigger = triggerRef.current
       if (!trigger) return
       const rect = trigger.getBoundingClientRect()
       const left = Math.max(8, rect.left)
       const top = rect.top - 8
       setPosition({ left, top })
+    }
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) computePosition()
     })
+    if (!repositionOnScroll) {
+      return () => {
+        cancelled = true
+      }
+    }
+    window.addEventListener('scroll', computePosition, true)
+    window.addEventListener('resize', computePosition)
     return () => {
       cancelled = true
+      window.removeEventListener('scroll', computePosition, true)
+      window.removeEventListener('resize', computePosition)
     }
-  }, [open, grantServices.length])
+  }, [open, grantServices.length, repositionOnScroll])
 
   // Reset highlights when the popover opens.
   useEffect(() => {
