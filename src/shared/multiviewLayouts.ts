@@ -20,6 +20,22 @@ export const MULTIVIEW_LAYOUT_IDS = [
 
 export type MultiviewLayout = (typeof MULTIVIEW_LAYOUT_IDS)[number]
 
+/**
+ * A single Multiview pane (grid cell) as a STABLE record rather than a bare
+ * array slot. `id` is a per-pane identity that survives layout changes, focus
+ * moves, and the compaction that follows closing another pane — so per-pane
+ * settings (FX overrides today; preview target / device / platform later) key
+ * off `id`, NOT the array index, and are never misattributed when indices
+ * shift. `chatId` is the chat shown in the pane (null = an empty cell).
+ *
+ * Lives in this node-free contract module so the renderer (useMultiviewState,
+ * the pane grid) and any future persistence/validation share one shape.
+ */
+export interface MultiviewPaneRecord {
+  id: string
+  chatId: string | null
+}
+
 export interface MultiviewLayoutSpec {
   id: MultiviewLayout
   /** Human label for the layout picker. */
@@ -146,7 +162,7 @@ export function clampPaneChatIds(
   const count = paneCountForLayout(layout)
   const next: (string | null)[] = []
   for (let i = 0; i < count; i++) {
-    next.push(i < ids.length ? ids[i] ?? null : null)
+    next.push(i < ids.length ? (ids[i] ?? null) : null)
   }
   return next
 }

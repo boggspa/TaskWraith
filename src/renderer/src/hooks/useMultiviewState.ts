@@ -4,20 +4,30 @@ import {
   DEFAULT_MULTIVIEW_LAYOUT,
   MAX_MULTIVIEW_PANES,
   clampFocusedPaneIndex,
-  clampPaneChatIds,
   defaultColumnFractions,
   defaultRowFractions,
+  normalizeMultiviewLayout,
   paneCountForLayout,
   type MultiviewGutterOrientation,
-  type MultiviewLayout
+  type MultiviewLayout,
+  type MultiviewPaneRecord
 } from '../../../shared/multiviewLayouts'
 
 /**
  * useMultiviewState — owns the renderer-only Multiview state (which layout,
- * which chat is in each pane, and which pane is focused). It writes NO App.tsx
- * singleton; the focused pane is wired to the existing currentChat machinery in
- * a later slice. All the real logic lives in the pure `apply*` transitions
- * below so they can be unit-tested without a DOM (the repo avoids jsdom).
+ * which chat is in each pane, which pane is focused, and per-pane settings). The
+ * focused pane is wired to the existing currentChat machinery in App.tsx; this
+ * hook writes no App singleton. All real logic lives in the pure `apply*`
+ * transitions below so they can be unit-tested without a DOM (the repo avoids
+ * jsdom).
+ *
+ * STABLE PANE IDENTITIES: panes are stored as records (`{ id, chatId }`), not as
+ * a bare `(string | null)[]`. Each pane's `id` survives layout changes, focus
+ * moves, and the compaction that follows closing another pane, so per-pane
+ * settings (`paneSettings`, keyed by id) are never misattributed when indices
+ * shift — the foundation for persisting per-pane settings safely. For backward
+ * compatibility the hook still exposes a derived `paneChatIds` view, so existing
+ * index-based consumers (the grid, App) are unaffected.
  */
 
 /** Per-layout column/row track fractions (the `fr` weights the grid uses). */
@@ -36,23 +46,40 @@ export interface MultiviewLayoutTracks {
 export type MultiviewTrackSizes = Partial<Record<MultiviewLayout, MultiviewLayoutTracks>>
 
 /**
- * Per-pane FX overrides keyed by pane index. A missing entry (or a missing
- * `sky`/`ghost` field) means "follow the app-global FX flag" — App resolves the
- * effective value as `paneFx[i]?.sky ?? globalSky`. In-memory / session-only:
- * NOT persisted (cross-session Multiview persistence is a deliberate follow-up).
- * Keyed by index, so entries left behind by a close/reorder are harmless — they
- * are simply re-resolved against the new `paneChatIds` on the next render.
+ * Per-pane FX overrides. A missing entry (or a missing `sky`/`ghost` field)
+ * means "follow the app-global FX flag" — App resolves the effective value as
+ * `paneFx[i]?.sky ?? globalSky`.
  */
 export type MultiviewPaneFxOverride = { sky?: boolean; ghost?: boolean }
 export type MultiviewPaneFxFlag = keyof MultiviewPaneFxOverride
 
+/**
+ * Settings attached to a single pane, keyed by the pane's STABLE id (see
+ * `MultiviewCoreState.paneSettings`). Extensible: `fx` is the only field today,
+ * but preview target / device / platform belong here too. Because the key is a
+ * stable id, an entry follows its pane across close/compaction and is pruned
+ * only when that pane is actually removed.
+ */
+export interface MultiviewPaneSettings {
+  fx?: MultiviewPaneFxOverride
+}
+
 export interface MultiviewCoreState {
   layout: MultiviewLayout
-  /** index = grid cell; null = an empty cell. Length always === paneCount. */
-  paneChatIds: (string | null)[]
+  /** One record per grid cell, in cell order. Length always === paneCount. */
+  panes: MultiviewPaneRecord[]
   focusedPaneIndex: number
   /** Per-layout dragged track fractions; missing => use the spec defaults. */
   trackSizes: MultiviewTrackSizes
+  /** Per-pane settings keyed by STABLE pane id; pruned when a pane is removed. */
+  paneSettings: Record<string, MultiviewPaneSettings>
+  /**
+   * Monotonic source for fresh pane ids. Kept in state (not a module global) so
+   * id minting stays PURE and DETERMINISTIC — transitions depend only on their
+   * input, which keeps them unit-testable and reproducible across sessions and
+   * lets a future persisted state resume minting without id collisions.
+   */
+  nextPaneSeq: number
 }
 
 /** Minimum size (px) any pane may be shrunk to while dragging a gutter. */
@@ -90,15 +117,100 @@ const UPGRADE_LAYOUT: Record<MultiviewLayout, MultiviewLayout> = {
   quad: 'quad'
 }
 
+const PANE_ID_PREFIX = 'pane-'
+
+/** Mint a pane id from a monotonic sequence number (pure/deterministic). */
+function mintPaneId(seq: number): string {
+  return `${PANE_ID_PREFIX}${seq}`
+}
+
+/** Highest `pane-<n>` sequence among the given records (0 if none match). */
+function highestPaneSeq(panes: ReadonlyArray<MultiviewPaneRecord>): number {
+  let max = 0
+  for (const pane of panes) {
+    const match = /^pane-(\d+)$/.exec(pane.id)
+    if (match) max = Math.max(max, Number(match[1]))
+  }
+  return max
+}
+
+/**
+ * Pad with fresh records / truncate so the pane array length matches the
+ * layout's pane count. EXISTING records (the first N) keep their ids; newly
+ * created cells get freshly-minted ids. Truncation drops the tail records (their
+ * ids — and, via pruneSettings, their settings — disappear). Returns the new
+ * panes plus the advanced sequence number.
+ */
+function clampPanes(
+  panes: ReadonlyArray<MultiviewPaneRecord>,
+  layout: MultiviewLayout,
+  startSeq: number
+): { panes: MultiviewPaneRecord[]; nextPaneSeq: number } {
+  const count = paneCountForLayout(layout)
+  const next: MultiviewPaneRecord[] = []
+  let seq = startSeq
+  for (let i = 0; i < count; i += 1) {
+    if (i < panes.length) {
+      next.push(panes[i])
+    } else {
+      next.push({ id: mintPaneId(seq), chatId: null })
+      seq += 1
+    }
+  }
+  return { panes: next, nextPaneSeq: seq }
+}
+
+/**
+ * Drop settings entries whose pane id is no longer present. Returns the SAME
+ * reference when nothing is pruned, so identity-stable consumers don't churn.
+ */
+function pruneSettings(
+  paneSettings: Record<string, MultiviewPaneSettings>,
+  panes: ReadonlyArray<MultiviewPaneRecord>
+): Record<string, MultiviewPaneSettings> {
+  const live = new Set(panes.map((pane) => pane.id))
+  let changed = false
+  const next: Record<string, MultiviewPaneSettings> = {}
+  for (const [id, settings] of Object.entries(paneSettings)) {
+    if (live.has(id)) next[id] = settings
+    else changed = true
+  }
+  return changed ? next : paneSettings
+}
+
+/**
+ * Return a new panes array with the record at `index` showing `chatId` (id
+ * preserved). Returns the SAME reference for an out-of-range index or a no-op
+ * write, so callers can detect "nothing changed".
+ */
+function withChatAt(
+  panes: MultiviewPaneRecord[],
+  index: number,
+  chatId: string | null
+): MultiviewPaneRecord[] {
+  if (index < 0 || index >= panes.length) return panes
+  if (panes[index].chatId === chatId) return panes
+  const next = panes.slice()
+  next[index] = { ...next[index], chatId }
+  return next
+}
+
 export function createInitialMultiviewState(
   initialPaneChatId: string | null = null
 ): MultiviewCoreState {
   return {
     layout: DEFAULT_MULTIVIEW_LAYOUT,
-    paneChatIds: clampPaneChatIds([initialPaneChatId], DEFAULT_MULTIVIEW_LAYOUT),
+    panes: [{ id: mintPaneId(1), chatId: initialPaneChatId }],
     focusedPaneIndex: 0,
-    trackSizes: {}
+    trackSizes: {},
+    paneSettings: {},
+    nextPaneSeq: 2
   }
+}
+
+/** The chat ids in cell order — the backward-compatible index-based view. */
+export function paneChatIdsOf(state: MultiviewCoreState): (string | null)[] {
+  return state.panes.map((pane) => pane.chatId)
 }
 
 /**
@@ -130,7 +242,7 @@ export interface ApplySetLayoutOptions {
   seedChatId?: string | null
 }
 
-/** Switch layout, re-clamping pane assignments and the focused index to fit. */
+/** Switch layout, re-clamping pane records and the focused index to fit. */
 export function applySetLayout(
   state: MultiviewCoreState,
   next: MultiviewLayout,
@@ -142,35 +254,37 @@ export function applySetLayout(
   }
   const previousPaneCount = paneCountForLayout(state.layout)
   const nextPaneCount = paneCountForLayout(next)
-  const sourcePaneChatIds = state.paneChatIds.slice()
-  if (seedChatId) sourcePaneChatIds[state.focusedPaneIndex] = seedChatId
-  const paneChatIds = clampPaneChatIds(sourcePaneChatIds, next)
+  // Seed the focused pane's chat first (id preserved) before clamping.
+  const seededPanes = seedChatId
+    ? withChatAt(state.panes, state.focusedPaneIndex, seedChatId)
+    : state.panes
+  const clamped = clampPanes(seededPanes, next, state.nextPaneSeq)
+  let panes = clamped.panes
   if (seedChatId && nextPaneCount > previousPaneCount) {
-    for (let i = 0; i < paneChatIds.length; i += 1) {
-      if (paneChatIds[i] == null) paneChatIds[i] = seedChatId
-    }
+    panes = panes.map((pane) => (pane.chatId == null ? { ...pane, chatId: seedChatId } : pane))
   }
   return {
     layout: next,
-    paneChatIds,
+    panes,
     focusedPaneIndex: clampFocusedPaneIndex(state.focusedPaneIndex, next),
     // Track fractions are keyed by layout id, so they survive switching layouts
     // within a session (and a return to a previously-dragged layout restores it).
-    trackSizes: state.trackSizes
+    trackSizes: state.trackSizes,
+    // Shrinking drops tail panes; prune their now-orphaned settings.
+    paneSettings: pruneSettings(state.paneSettings, panes),
+    nextPaneSeq: clamped.nextPaneSeq
   }
 }
 
-/** Put a chat (or null) into a specific pane cell. */
+/** Put a chat (or null) into a specific pane cell (the pane's id is preserved). */
 export function applySetPaneChat(
   state: MultiviewCoreState,
   index: number,
   chatId: string | null
 ): MultiviewCoreState {
-  if (index < 0 || index >= state.paneChatIds.length) return state
-  if (state.paneChatIds[index] === chatId) return state
-  const paneChatIds = state.paneChatIds.slice()
-  paneChatIds[index] = chatId
-  return { ...state, paneChatIds }
+  const panes = withChatAt(state.panes, index, chatId)
+  if (panes === state.panes) return state
+  return { ...state, panes }
 }
 
 /** Move focus to a pane (clamped into the current layout's range). */
@@ -197,25 +311,29 @@ export function applyFocusPane(
 }
 
 /**
- * Close a pane: drop that cell, compact the rest in order, and downgrade the
- * layout one step. Focus follows: closing before the focused cell shifts focus
- * left by one; closing the focused cell keeps focus on the same slot index
- * (clamped). A no-op in single layout (nothing to collapse into).
+ * Close a pane: drop that cell, compact the rest in order (SURVIVING panes keep
+ * their ids and settings), and downgrade the layout one step. Focus follows:
+ * closing before the focused cell shifts focus left by one; closing the focused
+ * cell keeps focus on the same slot index (clamped). A no-op in single layout.
  */
 export function applyClosePane(state: MultiviewCoreState, index: number): MultiviewCoreState {
   if (state.layout === 'single') return state
-  if (index < 0 || index >= state.paneChatIds.length) return state
+  if (index < 0 || index >= state.panes.length) return state
   const nextLayout = DOWNGRADE_LAYOUT[state.layout]
-  const remaining = state.paneChatIds.filter((_, i) => i !== index)
-  const paneChatIds = clampPaneChatIds(remaining, nextLayout)
+  const remaining = state.panes.filter((_, i) => i !== index)
+  // Downgrade always reduces paneCount by exactly one, so `remaining` already
+  // matches nextLayout's count — clampPanes is a no-op pass-through here.
+  const clamped = clampPanes(remaining, nextLayout, state.nextPaneSeq)
   let nextFocus = state.focusedPaneIndex
   if (index < state.focusedPaneIndex) nextFocus -= 1
   else if (index === state.focusedPaneIndex) nextFocus = index
   return {
     layout: nextLayout,
-    paneChatIds,
+    panes: clamped.panes,
     focusedPaneIndex: clampFocusedPaneIndex(nextFocus, nextLayout),
-    trackSizes: state.trackSizes
+    trackSizes: state.trackSizes,
+    paneSettings: pruneSettings(state.paneSettings, clamped.panes),
+    nextPaneSeq: clamped.nextPaneSeq
   }
 }
 
@@ -231,16 +349,15 @@ export function applyAssignToNextPane(
 ): { state: MultiviewCoreState; index: number } {
   const count = paneCountForLayout(state.layout)
   let target: number
-  if (state.paneChatIds[state.focusedPaneIndex] == null) {
+  if (state.panes[state.focusedPaneIndex]?.chatId == null) {
     target = state.focusedPaneIndex
   } else {
-    const firstEmpty = state.paneChatIds.findIndex((chatId) => chatId == null)
+    const firstEmpty = state.panes.findIndex((pane) => pane.chatId == null)
     target = firstEmpty >= 0 ? firstEmpty : state.focusedPaneIndex
   }
   target = Math.max(0, Math.min(target, count - 1))
-  const paneChatIds = state.paneChatIds.slice()
-  paneChatIds[target] = chatId
-  return { state: { ...state, paneChatIds, focusedPaneIndex: target }, index: target }
+  const panes = withChatAt(state.panes, target, chatId)
+  return { state: { ...state, panes, focusedPaneIndex: target }, index: target }
 }
 
 /**
@@ -257,17 +374,37 @@ export function applyOpenInNewPane(
   let next = outgoingFocusedChatId
     ? applySetPaneChat(state, state.focusedPaneIndex, outgoingFocusedChatId)
     : state
-  const hasSpare = next.paneChatIds.some((id, i) => i !== next.focusedPaneIndex && id == null)
+  const hasSpare = next.panes.some((pane, i) => i !== next.focusedPaneIndex && pane.chatId == null)
   if (!hasSpare) {
     const grown = UPGRADE_LAYOUT[next.layout]
     if (grown !== next.layout) next = applySetLayout(next, grown)
   }
-  let target = next.paneChatIds.findIndex((id, i) => i !== next.focusedPaneIndex && id == null)
-  if (target < 0) target = next.paneChatIds.findIndex((_, i) => i !== next.focusedPaneIndex)
+  let target = next.panes.findIndex((pane, i) => i !== next.focusedPaneIndex && pane.chatId == null)
+  if (target < 0) target = next.panes.findIndex((_, i) => i !== next.focusedPaneIndex)
   if (target < 0) target = next.focusedPaneIndex
-  const paneChatIds = next.paneChatIds.slice()
-  paneChatIds[target] = chatId
-  return { ...next, paneChatIds }
+  const panes = withChatAt(next.panes, target, chatId)
+  return { ...next, panes }
+}
+
+/**
+ * Set a pane's FX override flag, keyed by STABLE pane id. A missing entry/field
+ * means "follow the app-global flag", so callers pass the next EFFECTIVE value
+ * (e.g. `!effectiveSky`) so the first toggle visibly flips regardless of where
+ * the global currently sits. No-op (same reference) when the value is unchanged.
+ */
+export function applySetPaneFxFlag(
+  state: MultiviewCoreState,
+  paneId: string,
+  flag: MultiviewPaneFxFlag,
+  value: boolean
+): MultiviewCoreState {
+  const prev = state.paneSettings[paneId]
+  if (prev?.fx?.[flag] === value) return state
+  const nextFx: MultiviewPaneFxOverride = { ...prev?.fx, [flag]: value }
+  return {
+    ...state,
+    paneSettings: { ...state.paneSettings, [paneId]: { ...prev, fx: nextFx } }
+  }
 }
 
 export interface ApplyResizeTrackArgs {
@@ -358,6 +495,68 @@ export function applyResetTrackSizes(
   return { ...state, trackSizes }
 }
 
+/**
+ * Coerce an unknown value (e.g. a future persisted setting, or a legacy
+ * index-keyed `{ paneChatIds }` blob) into a valid MultiviewCoreState. This is
+ * the backward-compatibility bridge for the deferred cross-session persistence
+ * slice: an old serialized layout that predates stable pane records is upgraded
+ * by minting fresh ids for its chat ids; an unrecognised blob falls back to the
+ * default single-pane state. Pure + deterministic so it is unit-testable.
+ */
+export function normalizeMultiviewCoreState(raw: unknown): MultiviewCoreState {
+  if (!raw || typeof raw !== 'object') return createInitialMultiviewState()
+  const record = raw as Record<string, unknown>
+  const layout = normalizeMultiviewLayout(record.layout)
+
+  let seq =
+    typeof record.nextPaneSeq === 'number' && record.nextPaneSeq > 0
+      ? Math.floor(record.nextPaneSeq)
+      : 1
+
+  // Build source records: prefer the new `panes` shape; else upgrade a legacy
+  // `paneChatIds` array; else start empty (clampPanes will seed a single cell).
+  let sourcePanes: MultiviewPaneRecord[] = []
+  if (Array.isArray(record.panes)) {
+    sourcePanes = record.panes.map((entry) => {
+      const pane = (entry ?? {}) as Record<string, unknown>
+      const chatId = typeof pane.chatId === 'string' ? pane.chatId : null
+      if (typeof pane.id === 'string' && pane.id) return { id: pane.id, chatId }
+      const minted = mintPaneId(seq)
+      seq += 1
+      return { id: minted, chatId }
+    })
+  } else if (Array.isArray(record.paneChatIds)) {
+    sourcePanes = record.paneChatIds.map((entry) => {
+      const minted = mintPaneId(seq)
+      seq += 1
+      return { id: minted, chatId: typeof entry === 'string' ? entry : null }
+    })
+  }
+
+  const clamped = clampPanes(sourcePanes, layout, seq)
+  // Never let the sequence trail behind an existing id, so future mints can't collide.
+  const nextPaneSeq = Math.max(clamped.nextPaneSeq, highestPaneSeq(clamped.panes) + 1)
+
+  const trackSizes =
+    record.trackSizes && typeof record.trackSizes === 'object'
+      ? (record.trackSizes as MultiviewTrackSizes)
+      : {}
+  const rawSettings =
+    record.paneSettings && typeof record.paneSettings === 'object'
+      ? (record.paneSettings as Record<string, MultiviewPaneSettings>)
+      : {}
+
+  return {
+    layout,
+    panes: clamped.panes,
+    focusedPaneIndex: clampFocusedPaneIndex(Number(record.focusedPaneIndex) || 0, layout),
+    trackSizes,
+    // Drop settings for any pane id not present after clamping.
+    paneSettings: pruneSettings(rawSettings, clamped.panes),
+    nextPaneSeq
+  }
+}
+
 export interface MultiviewPaneRefs {
   scrollRef: RefObject<HTMLDivElement | null>
   contentRef: RefObject<HTMLDivElement | null>
@@ -372,6 +571,10 @@ export interface UseMultiviewStateOptions {
 export interface UseMultiviewStateResult extends MultiviewCoreState {
   /** paneChatIds[focusedPaneIndex] (or null). The chat the sidebar/composer drive. */
   focusedChatId: string | null
+  /** The stable id of the focused pane (or null) — key future per-pane settings off this. */
+  focusedPaneId: string | null
+  /** The chats in cell order — the backward-compatible index-based view of `panes`. */
+  paneChatIds: (string | null)[]
   isMultiview: boolean
   /** Stable per-pane ref pool (length MAX_MULTIVIEW_PANES) for the grid panes. */
   paneRefs: MultiviewPaneRefs[]
@@ -391,29 +594,25 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   /** Double-click a gutter: reset a layout's fractions to the spec defaults. */
   resetTrackSizes: (layout?: MultiviewLayout) => void
   /**
-   * Per-pane FX overrides keyed by pane index. A missing entry/field => follow
-   * the app-global flag (App resolves `paneFx[i]?.sky ?? globalSky`). Session-
-   * only (not persisted).
+   * Per-pane FX overrides keyed by pane INDEX — a derived, backward-compatible
+   * view of the id-keyed `paneSettings`. A missing entry/field => follow the
+   * app-global flag (App resolves `paneFx[i]?.sky ?? globalSky`).
    */
   paneFx: Record<number, MultiviewPaneFxOverride>
   /**
-   * Set a pane's sky/ghost override to an EXPLICIT boolean. Because a missing
-   * entry means "follow global", callers pass the next effective value (e.g.
-   * `!effectiveSky`) so the first toggle visibly flips state regardless of where
-   * the global currently sits.
+   * Set a pane's sky/ghost override to an EXPLICIT boolean. Index-based for
+   * call-site compatibility; resolved to the pane's stable id internally so the
+   * override follows the pane across close/compaction. Because a missing entry
+   * means "follow global", callers pass the next effective value (e.g.
+   * `!effectiveSky`) so the first toggle visibly flips state.
    */
   setPaneFxFlag: (paneIndex: number, flag: MultiviewPaneFxFlag, value: boolean) => void
 }
 
-export function useMultiviewState(
-  options: UseMultiviewStateOptions = {}
-): UseMultiviewStateResult {
+export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMultiviewStateResult {
   const [state, setState] = useState<MultiviewCoreState>(() =>
     createInitialMultiviewState(options.initialPaneChatId ?? null)
   )
-  // Per-pane FX overrides (session-only; NOT part of the persisted/unit-tested
-  // core state). Keyed by pane index; missing entry/field => follow the global.
-  const [paneFx, setPaneFx] = useState<Record<number, MultiviewPaneFxOverride>>({})
 
   // Keep the latest state reachable synchronously so assignToNextPane can
   // return the chosen index without depending on a setState callback's timing.
@@ -421,7 +620,9 @@ export function useMultiviewState(
   stateRef.current = state
 
   // One stable ref-object pool for every possible pane. Plain { current }
-  // objects are valid React refs; memoized so identity never changes.
+  // objects are valid React refs; memoized so identity never changes. Kept
+  // index-keyed (transient DOM anchors, re-attached per render) — pane identity
+  // for SETTINGS lives in `paneSettings`, not here.
   const paneRefs = useMemo<MultiviewPaneRefs[]>(
     () =>
       Array.from({ length: MAX_MULTIVIEW_PANES }, () => ({
@@ -467,15 +668,31 @@ export function useMultiviewState(
   }, [])
   const setPaneFxFlag = useCallback(
     (paneIndex: number, flag: MultiviewPaneFxFlag, value: boolean) => {
-      setPaneFx((prev) => ({
-        ...prev,
-        [paneIndex]: { ...prev[paneIndex], [flag]: value }
-      }))
+      setState((s) => {
+        const paneId = s.panes[paneIndex]?.id
+        if (!paneId) return s
+        return applySetPaneFxFlag(s, paneId, flag, value)
+      })
     },
     []
   )
 
-  const focusedChatId = state.paneChatIds[state.focusedPaneIndex] ?? null
+  // Backward-compatible index-based views, memoized so their identity is stable
+  // across renders where the underlying records/settings are unchanged (the
+  // effects/memos in App that depend on `paneChatIds`/`paneFx` must not churn).
+  const paneChatIds = useMemo(() => state.panes.map((pane) => pane.chatId), [state.panes])
+  const paneFx = useMemo<Record<number, MultiviewPaneFxOverride>>(() => {
+    const map: Record<number, MultiviewPaneFxOverride> = {}
+    state.panes.forEach((pane, i) => {
+      const fx = state.paneSettings[pane.id]?.fx
+      if (fx) map[i] = fx
+    })
+    return map
+  }, [state.panes, state.paneSettings])
+
+  const focusedPane = state.panes[state.focusedPaneIndex]
+  const focusedChatId = focusedPane?.chatId ?? null
+  const focusedPaneId = focusedPane?.id ?? null
   const tracks = useMemo(
     () => getLayoutTracks(state.trackSizes, state.layout),
     [state.trackSizes, state.layout]
@@ -484,6 +701,8 @@ export function useMultiviewState(
   return {
     ...state,
     focusedChatId,
+    focusedPaneId,
+    paneChatIds,
     isMultiview: state.layout !== 'single',
     paneRefs,
     tracks,

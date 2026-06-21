@@ -79,11 +79,11 @@ describe('two-pane simultaneous streaming', () => {
     s = applySetLayout(s, 'vertical-2')
     s = applySetPaneChat(s, 1, 'B')
     s = applySetFocusedPane(s, 0)
-    const focusedChatId = s.paneChatIds[s.focusedPaneIndex]
+    const focusedChatId = s.panes[s.focusedPaneIndex]?.chatId
     expect(focusedChatId).toBe('A')
     // Switching focus to B does not stop A streaming, and vice versa.
     s = applySetFocusedPane(s, 1)
-    expect(s.paneChatIds[s.focusedPaneIndex]).toBe('B')
+    expect(s.panes[s.focusedPaneIndex]?.chatId).toBe('B')
     expect(deriveChatIsRunning({ chat: chatA, runningChatIds })).toBe(true)
     expect(deriveChatIsRunning({ chat: chatB, runningChatIds })).toBe(true)
   })
