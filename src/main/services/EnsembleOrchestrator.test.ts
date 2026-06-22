@@ -1539,6 +1539,123 @@ Next action:
     expect(geminiMessage?.content).toBe('Sunsets are beautiful.')
   })
 
+  it('does not double assistant content when a tagged cumulative content payload follows streamed deltas', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Say something short.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: 'Line one.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: 'Line one.',
+      cumulative: true
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    const claudeMessage = harness.chat.messages.find(
+      (message) => message.role === 'assistant' && message.metadata?.ensembleProvider === 'claude'
+    )
+    expect(claudeMessage?.content).toBe('Line one.')
+  })
+
+  it('keeps only the tail from an untagged cumulative content snapshot', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Say something short.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: 'Alpha'
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: 'Alpha beta'
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    const claudeMessage = harness.chat.messages.find(
+      (message) => message.role === 'assistant' && message.metadata?.ensembleProvider === 'claude'
+    )
+    expect(claudeMessage?.content).toBe('Alpha beta')
+  })
+
+  it('places only the post-tool tail from a cumulative content restatement', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Use a tool then summarize.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: 'Before.'
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_use',
+      tool_id: 'call-1',
+      tool_name: 'read_file',
+      parameters: { file_path: '/tmp/notes.md' }
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_result',
+      tool_id: 'call-1',
+      content: 'File contents...'
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: 'Before.After.',
+      cumulative: true
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    const participantMessages = harness.chat.messages.filter(
+      (message) =>
+        message.runId === harness.dispatched[0].appRunId &&
+        (message.role === 'assistant' || message.role === 'tool')
+    )
+    expect(participantMessages.map((message) => message.role)).toEqual([
+      'assistant',
+      'tool',
+      'assistant'
+    ])
+    expect(participantMessages[0].content).toBe('Before.')
+    expect(participantMessages[2].content).toBe('After.')
+  })
+
   it('1.0.4-AB: non-delta message-shape payload stands alone when no deltas streamed', async () => {
     // Companion to the AB regression test above. The fix must NOT
     // break providers that emit ONLY a single non-delta

@@ -63,6 +63,7 @@ import { concurrentLanesEnabled, concurrentWriteLanesEnabled } from '../featureG
 // + provider totals). Ensemble runs complete here, not via handleProviderExit.
 import { buildEnsembleUsageRecord } from '../ensembleUsageRecord'
 import { bridgeResultDiffStats, bridgeToolDiffStats } from '../bridge/BridgeToolDiffStats'
+import { foldBridgeRunText } from '../bridge/BridgeTextFold'
 import {
   formatDiscordContextPromptAppendix,
   normalizeDiscordContextSnapshots,
@@ -314,6 +315,41 @@ function appendTimelineContent(run: ActiveParticipantRun, text: string): void {
     return
   }
   run.timeline.push({ kind: 'content', text })
+}
+
+function replaceTimelineContent(run: ActiveParticipantRun, text: string): void {
+  run.content = text
+  run.timeline = text ? [{ kind: 'content', text }] : []
+}
+
+function appendProviderContent(
+  run: ActiveParticipantRun,
+  text: string,
+  options: { cumulative?: boolean } = {}
+): boolean {
+  if (!text) return false
+
+  if (run.content.length > 0) {
+    const fold = foldBridgeRunText(run.content, text)
+    if (fold.kind === 'skip') return false
+    if (fold.kind === 'tail') {
+      run.content = text
+      appendTimelineContent(run, fold.tail)
+      return true
+    }
+    if (options.cumulative) {
+      const hasToolBoundary = run.timeline?.some((entry) => entry.kind === 'tool') ?? false
+      if (hasToolBoundary) {
+        return false
+      }
+      replaceTimelineContent(run, text)
+      return true
+    }
+  }
+
+  run.content += text
+  appendTimelineContent(run, text)
+  return true
 }
 
 /** Push a tool entry into the timeline. The toolActivities array
@@ -2070,10 +2106,11 @@ export class EnsembleOrchestrator {
           itemId !== run.lastContentItemId &&
           run.content.length > 0
         const chunk = `${itemTransition ? '\n\n---\n\n' : ''}${text}`
-        run.content += chunk
-        appendTimelineContent(run, chunk)
+        const appended = appendProviderContent(run, chunk, {
+          cumulative: payload.cumulative === true
+        })
         if (itemId) run.lastContentItemId = itemId
-        this.scheduleFlush(run)
+        if (appended) this.scheduleFlush(run)
       } else if (itemId) {
         run.lastContentItemId = itemId
       }
@@ -2089,9 +2126,10 @@ export class EnsembleOrchestrator {
     if (payload?.type === 'token' && typeof payload.content === 'string') {
       const text = payload.content
       if (text) {
-        run.content += text
-        appendTimelineContent(run, text)
-        this.scheduleFlush(run)
+        const appended = appendProviderContent(run, text, {
+          cumulative: payload.cumulative === true
+        })
+        if (appended) this.scheduleFlush(run)
       }
       return true
     }
@@ -2128,9 +2166,7 @@ export class EnsembleOrchestrator {
       if (text) {
         const isDelta = payload.delta === true
         if (isDelta) {
-          run.content += text
-          appendTimelineContent(run, text)
-          this.scheduleFlush(run)
+          if (appendProviderContent(run, text)) this.scheduleFlush(run)
         } else if (run.content.length === 0) {
           // First and only message-shape payload for this turn —
           // treat as the authoritative body.
