@@ -180,6 +180,7 @@ import {
   type RemoteQuestionResolutionScope
 } from './RemoteQuestionRegistry'
 import {
+  buildMobileApprovalCard,
   buildMobileQuestionCard,
   buildRemoteEnsembleState,
   buildRemoteProjectionEnvelope,
@@ -290,6 +291,7 @@ import { AuditService } from './services/AuditService'
 import {
   ApprovalService,
   handleApprovalTimeout,
+  type ApprovalRunEvent,
   type PendingExternalPathDetection
 } from './services/ApprovalService'
 import { ChatService } from './services/ChatService'
@@ -16471,6 +16473,7 @@ if (isGeminiMcpBridgeProcess) {
         (!chat.workspaceId || chat.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
       if (!workspaceId) return
       pushRemoteThreadSnapshot(chat, workspaceId)
+      pushRemoteDiffSummaryDeltaForChat(chat.appChatId)
       bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
     }
 
@@ -16511,6 +16514,137 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     let scheduleRemoteComposerQueuePumpRef: (() => void) | null = null
+    const remoteGitService = new GitService()
+    const MAX_REMOTE_GIT_FILES = 200
+    const REMOTE_GIT_SNAPSHOT_DEBOUNCE_MS = 250
+    const REMOTE_GIT_SNAPSHOT_MIN_INTERVAL_MS = 1_200
+    const REMOTE_GIT_SNAPSHOT_MAX_AGE_MS = 8_000
+    const remoteGitSnapshotCache = new Map<
+      string,
+      { generatedAt: string; workspacePath?: string; payload: Record<string, unknown> }
+    >()
+    const remoteGitSnapshotTimers = new Map<string, ReturnType<typeof setTimeout>>()
+    const remoteGitSnapshotLastAttempt = new Map<string, number>()
+    const compactRemoteGitSnapshotForBridge = (
+      snapshot: GitRepositorySnapshot
+    ): Record<string, unknown> => ({
+      repoRoot: snapshot.repoRoot,
+      branch: snapshot.branch,
+      commit: snapshot.commit,
+      detached: snapshot.detached,
+      upstream: snapshot.upstream,
+      remoteName: snapshot.remoteName,
+      remoteUrl: snapshot.remoteUrl,
+      ahead: snapshot.ahead,
+      behind: snapshot.behind,
+      counts: snapshot.counts,
+      clean: snapshot.clean,
+      mergeState: snapshot.mergeState,
+      conflicts: snapshot.conflicts,
+      lineStats: snapshot.lineStats,
+      files: snapshot.files.slice(0, MAX_REMOTE_GIT_FILES).map((file) => ({
+        path: file.path,
+        kind: file.kind,
+        staged: file.staged,
+        unstaged: file.unstaged
+      })),
+      filesTruncated: snapshot.files.length > MAX_REMOTE_GIT_FILES
+    })
+    const remoteGitWorkspacePath = (workspaceId: string): string | null => {
+      const workspace = AppStore.getWorkspaces().find((entry) => entry.id === workspaceId)
+      return workspace ? workspace.path : null
+    }
+    const cacheRemoteGitSnapshot = (
+      workspaceId: string,
+      workspacePath: string,
+      snapshot: GitRepositorySnapshot
+    ): Record<string, unknown> => {
+      const payload = compactRemoteGitSnapshotForBridge(snapshot)
+      remoteGitSnapshotCache.set(workspaceId, {
+        generatedAt: new Date().toISOString(),
+        workspacePath,
+        payload
+      })
+      return payload
+    }
+    const pushRemoteGitSnapshotDelta = (workspaceId: string): void => {
+      const canonical = canonicalRemoteWorkspaceId(workspaceId)
+      if (!canonical) return
+      const cached = remoteGitSnapshotCache.get(canonical)
+      if (!cached) return
+      if (!bridgeAllowlist.evaluate({ workspaceId: canonical, capability: 'monitor' }).allowed) {
+        return
+      }
+      bridgeBroadcasterRef?.broadcastRemoteProjection(
+        buildRemoteProjectionEnvelope({
+          kind: 'gitSnapshot',
+          payload: cached.payload,
+          generatedAt: cached.generatedAt,
+          workspaceId: canonical,
+          workspacePath: cached.workspacePath,
+          envelopeId: `remote-git:${canonical}:${Date.parse(cached.generatedAt) || cached.generatedAt}`
+        })
+      )
+    }
+    const publishRemoteGitSnapshotCache = (workspaceId?: string): void => {
+      if (workspaceId) {
+        pushRemoteGitSnapshotDelta(workspaceId)
+      } else {
+        for (const cachedWorkspaceId of remoteGitSnapshotCache.keys()) {
+          pushRemoteGitSnapshotDelta(cachedWorkspaceId)
+        }
+      }
+      bridgeBroadcasterRef?.resetThrottle()
+      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+    }
+    const refreshRemoteGitSnapshot = async (
+      workspaceId: string,
+      options: { force?: boolean; broadcast?: boolean } = {}
+    ): Promise<void> => {
+      const canonical = canonicalRemoteWorkspaceId(workspaceId)
+      if (!canonical) return
+      const now = Date.now()
+      const lastAttempt = remoteGitSnapshotLastAttempt.get(canonical) ?? 0
+      if (!options.force && now - lastAttempt < REMOTE_GIT_SNAPSHOT_MIN_INTERVAL_MS) return
+      remoteGitSnapshotLastAttempt.set(canonical, now)
+      const workspacePath = remoteGitWorkspacePath(canonical)
+      if (!workspacePath) {
+        remoteGitSnapshotCache.delete(canonical)
+        if (options.broadcast !== false) publishRemoteGitSnapshotCache(canonical)
+        return
+      }
+      const result = await remoteGitService.snapshot(workspacePath)
+      if (result.ok) {
+        cacheRemoteGitSnapshot(canonical, workspacePath, result.data)
+      } else {
+        remoteGitSnapshotCache.delete(canonical)
+      }
+      if (options.broadcast !== false) publishRemoteGitSnapshotCache(canonical)
+    }
+    const scheduleRemoteGitSnapshotRefresh = (
+      workspaceId: string | null | undefined,
+      options: { delayMs?: number; force?: boolean } = {}
+    ): void => {
+      const canonical = canonicalRemoteWorkspaceId(workspaceId)
+      if (!canonical) return
+      const existing = remoteGitSnapshotTimers.get(canonical)
+      if (existing) clearTimeout(existing)
+      const timer = setTimeout(() => {
+        remoteGitSnapshotTimers.delete(canonical)
+        void refreshRemoteGitSnapshot(canonical, { force: options.force })
+      }, options.delayMs ?? REMOTE_GIT_SNAPSHOT_DEBOUNCE_MS)
+      timer.unref?.()
+      remoteGitSnapshotTimers.set(canonical, timer)
+    }
+    const ensureRemoteGitSnapshotFresh = (workspaceId: string | null | undefined): void => {
+      const canonical = canonicalRemoteWorkspaceId(workspaceId)
+      if (!canonical) return
+      const cached = remoteGitSnapshotCache.get(canonical)
+      const ageMs = cached ? Date.now() - Date.parse(cached.generatedAt) : Number.POSITIVE_INFINITY
+      if (!cached || !Number.isFinite(ageMs) || ageMs > REMOTE_GIT_SNAPSHOT_MAX_AGE_MS) {
+        scheduleRemoteGitSnapshotRefresh(canonical, { delayMs: 25 })
+      }
+    }
 
     const createBridgeActionExecutor = (): MainProcessActionExecutor => {
       // Phase C-late: action executor wires policy-cleared actions to real
@@ -17896,6 +18030,7 @@ if (isGeminiMcpBridgeProcess) {
             origin: 'ios-file-editor',
             recordChange: (input) => AppStore.recordWorkspaceEditorChange(input)
           })
+          scheduleRemoteGitSnapshotRefresh(workspace.id, { delayMs: 50, force: true })
           return {
             ok: true,
             file: file as unknown as Record<string, unknown>,
@@ -17932,7 +18067,9 @@ if (isGeminiMcpBridgeProcess) {
           }
           const result = await bridgeGitService.snapshot(path)
           if (!result.ok) return { ok: false, reason: result.error }
-          return { ok: true, git: compactGitSnapshotForBridge(result.data) }
+          const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
+          publishRemoteGitSnapshotCache(action.workspaceId)
+          return { ok: true, git }
         },
         gitStageAllFn: async (action) => {
           const path = bridgeGitWorkspacePath(action.workspaceId)
@@ -17941,7 +18078,9 @@ if (isGeminiMcpBridgeProcess) {
           }
           const result = await bridgeGitService.stage({ repoPath: path, all: true })
           if (!result.ok) return { ok: false, reason: result.error }
-          return { ok: true, git: compactGitSnapshotForBridge(result.data) }
+          const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
+          publishRemoteGitSnapshotCache(action.workspaceId)
+          return { ok: true, git }
         },
         gitCommitFn: async (action) => {
           const path = bridgeGitWorkspacePath(action.workspaceId)
@@ -17954,7 +18093,9 @@ if (isGeminiMcpBridgeProcess) {
           }
           const result = await bridgeGitService.commit({ repoPath: path, message: action.message })
           if (!result.ok) return { ok: false, reason: result.error }
-          return { ok: true, git: compactGitSnapshotForBridge(result.data) }
+          const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
+          publishRemoteGitSnapshotCache(action.workspaceId)
+          return { ok: true, git }
         },
         gitPushFn: async (action) => {
           const path = bridgeGitWorkspacePath(action.workspaceId)
@@ -17966,7 +18107,9 @@ if (isGeminiMcpBridgeProcess) {
             setUpstream: action.setUpstream
           })
           if (!result.ok) return { ok: false, reason: result.error }
-          return { ok: true, git: compactGitSnapshotForBridge(result.data) }
+          const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
+          publishRemoteGitSnapshotCache(action.workspaceId)
+          return { ok: true, git }
         },
         githubPrStatusFn: async (action) => {
           const path = bridgeGitWorkspacePath(action.workspaceId)
@@ -18515,7 +18658,9 @@ if (isGeminiMcpBridgeProcess) {
             if (!chat || !workspaceId) return
             bridgeBroadcasterRef?.resetThrottle()
             pushRemoteThreadSnapshot(chat, workspaceId)
+            pushRemoteDiffSummaryDeltaForChat(chat.appChatId)
             bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            scheduleRemoteGitSnapshotRefresh(workspaceId, { delayMs: 50, force: true })
             scheduleRemoteComposerQueuePumpRef?.()
           }, 900).unref?.()
           return
@@ -18529,6 +18674,8 @@ if (isGeminiMcpBridgeProcess) {
         const workspaceId = canonicalRemoteWorkspaceId(chat.workspaceId)
         if (!workspaceId) return
         pushRemoteThreadSnapshot(chat, workspaceId)
+        pushRemoteDiffSummaryDeltaForChat(chat.appChatId)
+        scheduleRemoteGitSnapshotRefresh(workspaceId)
       }
     })
 
@@ -18678,25 +18825,30 @@ if (isGeminiMcpBridgeProcess) {
      * open with their card and fetch transcripts in a later slice. */
     const REMOTE_THREAD_SNAPSHOT_CAP = 12
 
-    const listRemoteProjectionEnvelopes = (): RemoteProjectionEnvelope[] => {
-      const canonicalizeChat = <T extends { workspaceId?: string | null }>(record: T): T => {
-        const canonical = canonicalRemoteWorkspaceId(record.workspaceId)
-        return canonical && canonical !== record.workspaceId
-          ? { ...record, workspaceId: canonical }
-          : record
-      }
-      const chats = AppStore.getChats()
-        .map(canonicalizeChat)
-        .filter((chat) => remoteWorkspaceIsVisible(chat.workspaceId))
-      const approvalCards = (approvalService?.listProjectionCards() ?? [])
-        .map(canonicalizeChat)
+    const canonicalizeRemoteWorkspaceRecord = <T extends { workspaceId?: string | null }>(
+      record: T
+    ): T => {
+      const canonical = canonicalRemoteWorkspaceId(record.workspaceId)
+      return canonical && canonical !== record.workspaceId
+        ? { ...record, workspaceId: canonical }
+        : record
+    }
+
+    const visibleRemoteApprovalCards = (): ReturnType<ApprovalService['listProjectionCards']> =>
+      (approvalService?.listProjectionCards() ?? [])
+        .map(canonicalizeRemoteWorkspaceRecord)
         .filter((approval) => remoteWorkspaceIsVisible(approval.workspaceId))
-      const questionCards = remoteQuestionRegistry
+
+    const visibleRemoteQuestionCards = () =>
+      remoteQuestionRegistry
         .listProjectionCards()
-        .map(canonicalizeChat)
+        .map(canonicalizeRemoteWorkspaceRecord)
         .filter((question) => remoteWorkspaceIsVisible(question.workspaceId))
-      const generatedAt = new Date().toISOString()
-      const costDisplay = remoteCostDisplayOptions()
+
+    const pendingRemoteAttentionCounts = (
+      approvalCards = visibleRemoteApprovalCards(),
+      questionCards = visibleRemoteQuestionCards()
+    ): { approvalCounts: Map<string, number>; questionCounts: Map<string, number> } => {
       const questionCounts = new Map<string, number>()
       for (const question of questionCards) {
         if (!question.threadId) continue
@@ -18707,6 +18859,147 @@ if (isGeminiMcpBridgeProcess) {
         if (!approval.threadId) continue
         approvalCounts.set(approval.threadId, (approvalCounts.get(approval.threadId) ?? 0) + 1)
       }
+      return { approvalCounts, questionCounts }
+    }
+
+    const buildRemoteTaskCardForChat = (
+      chat: ChatRecord,
+      generatedAt: string,
+      counts = pendingRemoteAttentionCounts()
+    ): { chat: ChatRecord; taskCard: RemoteTaskCard } => {
+      const canonicalChat = canonicalizeRemoteWorkspaceRecord(chat)
+      const capabilities = remoteTaskCapabilitiesForWorkspace(canonicalChat.workspaceId)
+      const queuedComposerJobs = AppStore.getRunQueueJobs({
+        chatId: canonicalChat.appChatId,
+        statuses: ['queued']
+      }).filter((job) => job.request?.remoteComposer)
+      return {
+        chat: canonicalChat,
+        taskCard: buildRemoteTaskCard(canonicalChat, {
+          generatedAt,
+          pendingQuestionCount: counts.questionCounts.get(canonicalChat.appChatId) ?? 0,
+          pendingApprovalCount: counts.approvalCounts.get(canonicalChat.appChatId) ?? 0,
+          capabilities,
+          agentIdentity: remoteAgentIdentityForChat(canonicalChat),
+          queuedComposerJobs,
+          openCanvases: canvasService.list({ chatId: canonicalChat.appChatId })
+        })
+      }
+    }
+
+    const leanRemoteDiffSummary = (
+      diffSummary: NonNullable<RemoteTaskCard['diffSummary']>
+    ): Record<string, unknown> => {
+      const { hunks: _hunks, ...diffSummaryLean } = diffSummary
+      return {
+        ...diffSummaryLean,
+        files: diffSummary.files?.map(({ hunks: _fileHunks, ...file }) => file),
+        workspaces: diffSummary.workspaces?.map(({ files: _wsFiles, ...workspace }) => workspace)
+      }
+    }
+
+    const pushRemoteDiffSummaryDeltaForChat = (chatId: string): void => {
+      const chat = AppStore.getChat(chatId)
+      if (!chat || !remoteWorkspaceIsVisible(chat.workspaceId)) return
+      const generatedAt = new Date().toISOString()
+      const { chat: canonicalChat, taskCard } = buildRemoteTaskCardForChat(chat, generatedAt)
+      if (!taskCard.diffSummary) return
+      bridgeBroadcasterRef?.broadcastRemoteProjection(
+        buildRemoteProjectionEnvelope({
+          kind: 'diffSummary',
+          payload: leanRemoteDiffSummary(taskCard.diffSummary),
+          generatedAt,
+          workspaceId: canonicalChat.workspaceId ?? null,
+          workspacePath: canonicalChat.workspacePath,
+          threadId: canonicalChat.appChatId,
+          runId: taskCard.diffSummary.runId,
+          envelopeId: `remote-diff:${canonicalChat.appChatId}:${taskCard.diffSummary.runId}:${Date.parse(generatedAt) || generatedAt}`
+        })
+      )
+    }
+
+    const pushRemoteTaskCardDelta = (chatId: string): void => {
+      const chat = AppStore.getChat(chatId)
+      if (!chat || !remoteWorkspaceIsVisible(chat.workspaceId)) return
+      const generatedAt = new Date().toISOString()
+      const { chat: canonicalChat, taskCard } = buildRemoteTaskCardForChat(chat, generatedAt)
+      bridgeBroadcasterRef?.broadcastRemoteProjection(
+        buildRemoteProjectionEnvelope({
+          kind: 'taskCard',
+          payload: taskCard,
+          generatedAt,
+          workspaceId: canonicalChat.workspaceId ?? null,
+          workspacePath: canonicalChat.workspacePath,
+          threadId: canonicalChat.appChatId,
+          runId: taskCard.runId,
+          envelopeId: `remote-task:${canonicalChat.appChatId}:${taskCard.runId || 'no-run'}:${Date.parse(generatedAt) || generatedAt}`
+        })
+      )
+      if (taskCard.diffSummary) {
+        pushRemoteDiffSummaryDeltaForChat(canonicalChat.appChatId)
+      }
+    }
+
+    const pushRemoteApprovalCardDelta = (approvalEvent: ApprovalRunEvent): void => {
+      const status = approvalEvent.type === 'approval_pending' ? 'pending' : 'resolved'
+      const pendingCard = approvalService
+        ?.listProjectionCards()
+        .find((card) => card.toolCallId === approvalEvent.approvalId)
+      const workspaceId =
+        pendingCard?.workspaceId ??
+        (approvalEvent.workspaceId === GLOBAL_REMOTE_SCOPE || approvalEvent.workspaceId === 'global'
+          ? undefined
+          : approvalEvent.workspaceId)
+      const fallbackCard = buildMobileApprovalCard({
+        toolCallId: approvalEvent.approvalId,
+        threadId: approvalEvent.appChatId || approvalEvent.threadId,
+        workspaceId,
+        runId: approvalEvent.appRunId,
+        provider: approvalEvent.provider,
+        title: status === 'pending' ? 'Approval requested' : 'Approval resolved',
+        body: '',
+        actions: ['accept', 'decline'],
+        status
+      })
+      const card = canonicalizeRemoteWorkspaceRecord({
+        ...(pendingCard ?? fallbackCard),
+        status
+      })
+      if (!remoteWorkspaceIsVisible(card.workspaceId)) return
+      const generatedAt = new Date().toISOString()
+      bridgeBroadcasterRef?.broadcastRemoteProjection(
+        buildRemoteProjectionEnvelope({
+          kind: 'approvalCard',
+          payload: card,
+          generatedAt,
+          workspaceId: card.workspaceId,
+          workspacePath: card.workspacePath,
+          threadId: card.threadId,
+          runId: card.runId,
+          envelopeId: `remote-approval:${approvalEvent.approvalId}:${status}:${Date.parse(generatedAt) || generatedAt}`
+        })
+      )
+      const taskChatId = approvalEvent.appChatId || approvalEvent.threadId
+      if (!taskChatId) return
+      if (status === 'pending') {
+        pushRemoteTaskCardDelta(taskChatId)
+      } else {
+        const timer = setTimeout(() => {
+          pushRemoteTaskCardDelta(taskChatId)
+        }, 0)
+        timer.unref?.()
+      }
+    }
+
+    const listRemoteProjectionEnvelopes = (): RemoteProjectionEnvelope[] => {
+      const chats = AppStore.getChats()
+        .map(canonicalizeRemoteWorkspaceRecord)
+        .filter((chat) => remoteWorkspaceIsVisible(chat.workspaceId))
+      const approvalCards = visibleRemoteApprovalCards()
+      const questionCards = visibleRemoteQuestionCards()
+      const generatedAt = new Date().toISOString()
+      const costDisplay = remoteCostDisplayOptions()
+      const attentionCounts = pendingRemoteAttentionCounts(approvalCards, questionCards)
       const envelopes: RemoteProjectionEnvelope[] = []
       envelopes.push(
         buildRemoteProjectionEnvelope({
@@ -18717,22 +19010,29 @@ if (isGeminiMcpBridgeProcess) {
         })
       )
       const sortedChats = [...chats].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      const visibleWorkspaceIds = new Set(
+        sortedChats
+          .map((chat) => chat.workspaceId)
+          .filter((workspaceId): workspaceId is string => Boolean(workspaceId))
+      )
+      for (const workspaceId of visibleWorkspaceIds) {
+        ensureRemoteGitSnapshotFresh(workspaceId)
+        const cached = remoteGitSnapshotCache.get(workspaceId)
+        if (!cached) continue
+        envelopes.push(
+          buildRemoteProjectionEnvelope({
+            kind: 'gitSnapshot',
+            payload: cached.payload,
+            generatedAt: cached.generatedAt,
+            workspaceId,
+            workspacePath: cached.workspacePath,
+            envelopeId: `remote-git:${workspaceId}:${Date.parse(cached.generatedAt) || cached.generatedAt}`
+          })
+        )
+      }
       for (const [chatIndex, chat] of sortedChats.entries()) {
-        const capabilities = remoteTaskCapabilitiesForWorkspace(chat.workspaceId)
-        const queuedComposerJobs = AppStore.getRunQueueJobs({
-          chatId: chat.appChatId,
-          statuses: ['queued']
-        }).filter((job) => job.request?.remoteComposer)
-        const taskCard = buildRemoteTaskCard(chat, {
-          generatedAt,
-          pendingQuestionCount: questionCounts.get(chat.appChatId) ?? 0,
-          pendingApprovalCount: approvalCounts.get(chat.appChatId) ?? 0,
-          capabilities,
-          agentIdentity: remoteAgentIdentityForChat(chat),
-          queuedComposerJobs,
-          // P3: project this chat's OPEN canvas previews (read-only) to the phone.
-          openCanvases: canvasService.list({ chatId: chat.appChatId })
-        })
+        const { taskCard } = buildRemoteTaskCardForChat(chat, generatedAt, attentionCounts)
+        const capabilities = taskCard.capabilities ?? remoteTaskCapabilitiesForWorkspace(chat.workspaceId)
         maybeNotifyRemoteTaskNeedsAttention(taskCard)
         envelopes.push(
           buildRemoteProjectionEnvelope({
@@ -18787,16 +19087,7 @@ if (isGeminiMcpBridgeProcess) {
           // a wide refactor could blow the relay frame, and remote clients
           // render stats + per-file rows only. Ship the summary WITHOUT
           // hunks; a hunk-viewer slice can fetch them on demand.
-          const { hunks: _hunks, ...diffSummaryLean } = taskCard.diffSummary
-          const diffPayload = {
-            ...diffSummaryLean,
-            files: taskCard.diffSummary.files?.map(({ hunks: _fileHunks, ...file }) => file),
-            // Per-workspace breakdown rides stats-only: its nested
-            // files[].hunks were the one lane the hunk-strip missed.
-            workspaces: taskCard.diffSummary.workspaces?.map(
-              ({ files: _wsFiles, ...workspace }) => workspace
-            )
-          }
+          const diffPayload = leanRemoteDiffSummary(taskCard.diffSummary)
           envelopes.push(
             buildRemoteProjectionEnvelope({
               kind: 'diffSummary',
@@ -21697,7 +21988,7 @@ if (isGeminiMcpBridgeProcess) {
         baseEtag?: string | null
       ): Promise<WorkspaceFileReadResult> => {
         const registeredWorkspace = requireRegisteredWorkspace(workspace)
-        return writeWorkspaceFileForEditor({
+        const result = await writeWorkspaceFileForEditor({
           workspacePath: registeredWorkspace,
           filePath,
           content,
@@ -21705,6 +21996,9 @@ if (isGeminiMcpBridgeProcess) {
           origin: 'file-editor',
           recordChange: (input) => AppStore.recordWorkspaceEditorChange(input)
         })
+        const workspaceRecord = findRegisteredWorkspace(registeredWorkspace)
+        scheduleRemoteGitSnapshotRefresh(workspaceRecord?.id, { delayMs: 50, force: true })
+        return result
       }
     )
 
@@ -23952,6 +24246,11 @@ if (isGeminiMcpBridgeProcess) {
       workspaceIdForPath: workspaceIdForApprovalPush,
       publishApprovalRunEvent: (approvalEvent) => {
         publishRunEvent('agent-output', approvalEvent.provider, approvalEvent)
+        try {
+          pushRemoteApprovalCardDelta(approvalEvent)
+        } catch (err) {
+          console.error('[BridgeBroadcaster] approval projection failed:', err)
+        }
         if (approvalEvent.type === 'approval_resolved') {
           // Cross-surface acknowledgment: a decision from ANY source (a
           // paired iPhone, another window, the auto-deny timer) must clear

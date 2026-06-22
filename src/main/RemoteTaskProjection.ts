@@ -31,6 +31,7 @@ export type RemoteProjectionKind =
   | 'questionCard'
   | 'threadSnapshot'
   | 'diffSummary'
+  | 'gitSnapshot'
   | 'ensembleState'
   | 'shellAppearance'
   | 'workflows'
@@ -291,6 +292,7 @@ export interface MobileApprovalCard {
   requestedAt: string
   expiresAt?: string
   actions: string[]
+  status: 'pending' | 'resolved' | 'expired' | 'cancelled'
 }
 
 export interface MobileQuestionCard {
@@ -546,6 +548,7 @@ export interface BuildMobileApprovalCardInput {
   requestedAt?: string
   expiresAt?: string
   actions?: string[]
+  status?: MobileApprovalCard['status']
 }
 
 export interface BuildMobileQuestionCardInput {
@@ -946,7 +949,8 @@ export function buildMobileApprovalCard(input: BuildMobileApprovalCardInput): Mo
     body: sanitizeText(input.body || '', 400).preview,
     requestedAt: input.requestedAt ?? new Date().toISOString(),
     actions:
-      input.actions && input.actions.length > 0 ? input.actions.slice(0, 8) : ['accept', 'decline']
+      input.actions && input.actions.length > 0 ? input.actions.slice(0, 8) : ['accept', 'decline'],
+    status: input.status ?? 'pending'
   }
   if (input.threadId) card.threadId = input.threadId
   if (input.workspaceId !== undefined) card.workspaceId = input.workspaceId
