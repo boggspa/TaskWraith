@@ -6837,11 +6837,24 @@ public struct ComposerDiffPill: View {
         var isDragging: Bool { if case .dragging = self { return true } else { return false } }
     }
 
+    /// Keep-clear inset from each side of the measured slot. Must exceed the iPad
+    /// NavigationSplitView screen-edge-swipe gutter (~20pt for the system
+    /// UIScreenEdgePanGestureRecognizer) so the pill's long-press / drag hit-area
+    /// never sits in the gutter and swallows the sidebar swipe; with the call
+    /// site's `.padding(.horizontal, 10)` the pill's near edge lands 28 + 10 =
+    /// 38pt from the column edge. It also guarantees >=28pt of layout slack on the
+    /// pushed side so the single-line pill text can't be starved into a wrap.
+    private static let edgeMargin: CGFloat = 28
+
     /// Half the slack between the pill and its column — how far the pill may
-    /// travel before its edge meets the container. Unbounded until both measure.
+    /// travel before its edge meets the keep-clear margin. CLAMPED TO CENTRE (0)
+    /// until BOTH measurements land: a finite 0 keeps the onEnded commit bounded
+    /// even on the first/stale frame (the old .greatestFiniteMagnitude sentinel
+    /// turned clampOffset into a no-op, letting an unbounded offset be flung to
+    /// the very edge before measurement caught up).
     private var maxOffsetX: CGFloat {
-        guard containerWidth > 0, pillWidth > 0 else { return .greatestFiniteMagnitude }
-        return max(0, (containerWidth - pillWidth) / 2 - 4)
+        guard containerWidth > 0, pillWidth > 0 else { return 0 }
+        return max(0, (containerWidth - pillWidth) / 2 - Self.edgeMargin)
     }
 
     private func clampOffset(_ x: Double) -> Double {
@@ -6863,7 +6876,12 @@ public struct ComposerDiffPill: View {
     private var restingLeadingInset: CGFloat {
         guard containerWidth > 0, pillWidth > 0 else { return 0 }
         let centred = (containerWidth - pillWidth) / 2
-        return max(0, centred + CGFloat(clampOffset(persistedOffsetX)))
+        // Hard ceiling so the leading inset + pill can NEVER exceed the column,
+        // even if containerWidth and pillWidth were measured on different passes
+        // and a stale pair makes `centred` momentarily too large (which would
+        // overflow the HStack, compress the pill, and latch a multi-line wrap).
+        let ceiling = max(0, containerWidth - pillWidth - Self.edgeMargin)
+        return min(ceiling, max(0, centred + CGFloat(clampOffset(persistedOffsetX))))
     }
 
     /// Visual-only offset applied DURING a live drag (the finger is on the pill,
@@ -6927,6 +6945,7 @@ public struct ComposerDiffPill: View {
             }
         }
         .font(.caption.weight(.semibold).monospacedDigit())
+        .lineLimit(1)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         // Liquid Glass where the OS has it; ultra-thin material below. The
@@ -6967,6 +6986,14 @@ public struct ComposerDiffPill: View {
             // the empty transcript offers a tall column).
             Color.clear.frame(width: restingLeadingInset, height: 0)
             pillBody
+                // Pin to the intrinsic single-line width + outrank the flanking
+                // leading inset / trailing Spacer, so an over-constrained row near
+                // an edge makes the SPACERS yield — never the pill text (which used
+                // to compress into a multi-line wrap). fixedSize is BEFORE the
+                // GeometryReader so pillWidth is measured as the true single-line
+                // width, keeping maxOffsetX / restingLeadingInset stable.
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
                 .background(GeometryReader { proxy in
                     Color.clear
                         .onAppear { pillWidth = proxy.size.width }

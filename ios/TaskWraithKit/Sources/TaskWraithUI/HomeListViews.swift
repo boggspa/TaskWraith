@@ -141,6 +141,11 @@ struct HomeView: View {
                 }
                 .disabled(model.workspaces.isEmpty)
                 .buttonStyle(.plain)
+                // A Menu label inherits the accent tint (blue) over the pill
+                // chrome's black/white foreground; force the monochrome tint so the
+                // New + More menu pills match the Button pills (Refresh / Settings)
+                // and the inspector toolbar's black/white style.
+                .tint(TWTheme.textPrimary)
             }
             // Each control is its own ToolbarItem so the system lays them out
             // individually. A single wide custom pill GROUP at .cancellationAction
@@ -191,6 +196,7 @@ struct HomeView: View {
                     ToolbarIconPillLabel("More", systemImage: "ellipsis.circle")
                 }
                 .buttonStyle(.plain)
+                .tint(TWTheme.textPrimary)
             }
         }
         .navigationDestination(item: $canvasMode) { mode in
