@@ -213,6 +213,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'select-workspace': [],
   'select-image-files': [],
   'save-clipboard-image-attachment': [],
+  'read-image-preview': ['string'],
   'spellcheck:get-last-context': ['object'],
   'spellcheck:replace-misspelling': ['object'],
   'spellcheck:add-word-to-dictionary': ['object'],

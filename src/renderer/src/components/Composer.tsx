@@ -67,9 +67,9 @@ import { getMemoryPreviewText } from '../lib/geminiCommandDiscovery'
 import {
   MAX_IMAGE_ATTACHMENTS,
   collectClipboardAttachmentPaths,
-  collectDroppedAttachmentPaths,
-  getImagePreviewSrc
+  collectDroppedAttachmentPaths
 } from '../lib/imageAttachments'
+import { ComposerImageThumb } from './ComposerImageThumb'
 import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -1813,12 +1813,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       title={image.path}
                       aria-label={`Image attachment ${image.name}`}
                     >
-                      <img
-                        src={getImagePreviewSrc(image.path)}
-                        alt={image.name}
-                        className="composer-image-thumb"
-                        draggable={false}
-                      />
+                      <ComposerImageThumb path={image.path} name={image.name} />
                       <button
                         className="composer-image-remove"
                         type="button"

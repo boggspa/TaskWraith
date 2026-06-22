@@ -21661,6 +21661,23 @@ if (isGeminiMcpBridgeProcess) {
       return [filePath]
     })
 
+    // Composer attachment thumbnail. A raw file:// path can't be shown by the
+    // renderer (non-file origin + webSecurity), so read the image here and hand
+    // back a downscaled PNG data URL the <img> can actually load.
+    ipcMain.handle('read-image-preview', async (_event, rawPath: unknown) => {
+      try {
+        if (typeof rawPath !== 'string' || !rawPath) return null
+        const filePath = rawPath.startsWith('file://') ? fileURLToPath(rawPath) : rawPath
+        const img = nativeImage.createFromPath(filePath)
+        if (img.isEmpty()) return null
+        // Downscale tall images so a big screenshot isn't a multi-MB base64.
+        const thumb = img.getSize().height > 320 ? img.resize({ height: 320 }) : img
+        return thumb.toDataURL()
+      } catch {
+        return null
+      }
+    })
+
     ipcMain.handle('spellcheck:get-last-context', (event, point: unknown) => {
       const snapshot = latestSpellcheckContextByWebContentsId.get(event.sender.id) || null
       return spellcheckContextMatchesPoint(snapshot, point) ? snapshot : null

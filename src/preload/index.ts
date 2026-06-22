@@ -42,6 +42,7 @@ const api = {
   selectWorkspace: () => ipcRenderer.invoke('select-workspace'),
   selectImageFiles: () => ipcRenderer.invoke('select-image-files'),
   saveClipboardImageAttachment: () => ipcRenderer.invoke('save-clipboard-image-attachment'),
+  readImagePreview: (path: string) => ipcRenderer.invoke('read-image-preview', path),
   getLastSpellcheckContext: (point: { x: number; y: number }) =>
     ipcRenderer.invoke('spellcheck:get-last-context', point),
   replaceMisspelling: (payload: { suggestion: string; point: { x: number; y: number } }) =>

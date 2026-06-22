@@ -317,6 +317,7 @@ declare global {
       selectWorkspace: () => Promise<WorkspaceRecord | null>
       selectImageFiles: () => Promise<string[]>
       saveClipboardImageAttachment: () => Promise<string[]>
+      readImagePreview: (path: string) => Promise<string | null>
       getLastSpellcheckContext: (point: {
         x: number
         y: number
