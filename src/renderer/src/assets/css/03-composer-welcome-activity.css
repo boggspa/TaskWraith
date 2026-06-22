@@ -597,6 +597,23 @@
   isolation: isolate;
   text-align: left;
 }
+/* Fixed-height with internal scroll so a long workspace list can't trail past
+ * the viewport. `max-height` is computed from the trigger's space-below in
+ * WelcomeWorkspacePicker and applied inline; here the overflow list flex-grows
+ * and scrolls while the actions row (Add new / No workspace) stays pinned at
+ * the bottom. Scoped to `--portaled` so the in-composer switcher is untouched. */
+.welcome-workspace-popover--portaled {
+  overflow: hidden;
+}
+.welcome-workspace-popover--portaled
+  > .welcome-workspace-popover-section:not(.welcome-workspace-popover-actions) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.welcome-workspace-popover--portaled > .welcome-workspace-popover-actions {
+  flex: 0 0 auto;
+}
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .welcome-workspace-popover {
   background: color-mix(in srgb, var(--surface-1) 86%, transparent);
   border-color: var(--surface-border);

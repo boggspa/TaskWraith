@@ -49,6 +49,14 @@ export interface WelcomeWorkspacePickerProps {
  */
 export const WELCOME_WORKSPACE_INLINE_LIMIT = 3
 
+/**
+ * Compact max height (px) for the "More workspaces" popover. At open time it is
+ * clamped further to the trigger's space-to-viewport-bottom, so the list
+ * scrolls internally and the popover never trails off-screen. Kept below the
+ * in-composer switcher's 360px since welcome-surface workspace lists run long.
+ */
+export const WELCOME_WORKSPACE_POPOVER_MAX_HEIGHT = 320
+
 export function WelcomeWorkspacePicker({
   workspaces,
   currentWorkspace,
@@ -71,7 +79,11 @@ export function WelcomeWorkspacePicker({
   // document.body fully escapes the welcome's stacking context;
   // we just need to compute fixed-position coordinates from the
   // trigger's bounding rect on open + window resize.
-  const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
+  const [popoverPosition, setPopoverPosition] = useState<{
+    left: number
+    top: number
+    maxHeight: number
+  } | null>(null)
 
   // Close on outside click + Escape, so the popover behaves like every
   // other dropdown in the app (slash menu, mention picker, etc.).
@@ -118,7 +130,16 @@ export function WelcomeWorkspacePicker({
         margin,
         Math.min(window.innerWidth - popoverWidth - margin, idealLeft)
       )
-      setPopoverPosition({ left: clampedLeft, top: rect.bottom + 6 })
+      const top = rect.bottom + 6
+      // Bound the popover so a long workspace list scrolls internally instead
+      // of trailing off-screen: a compact fixed cap, clamped down to the gap
+      // between the trigger and the viewport bottom. The list scrolls; the
+      // actions stay pinned (CSS).
+      const maxHeight = Math.max(
+        0,
+        Math.min(WELCOME_WORKSPACE_POPOVER_MAX_HEIGHT, window.innerHeight - top - margin)
+      )
+      setPopoverPosition({ left: clampedLeft, top, maxHeight })
     }
     computePosition()
     window.addEventListener('resize', computePosition)
@@ -216,6 +237,7 @@ export function WelcomeWorkspacePicker({
               position: 'fixed',
               left: `${popoverPosition.left}px`,
               top: `${popoverPosition.top}px`,
+              maxHeight: `${popoverPosition.maxHeight}px`,
               transform: 'none'
             }}
           >
