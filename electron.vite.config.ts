@@ -15,25 +15,11 @@ export default defineConfig(({ mode }) => {
   const iosRemoteEnabled = iosRemoteOverride !== '0' && iosRemoteOverride !== 'false'
   const channelGatewayEnabled =
     process.env.IOS_CHANNELS_TRUE === '1' || env.IOS_CHANNELS_TRUE === '1'
-  const debugBuild = process.env.TASKWRAITH_DEBUG_BUILD === '1' || env.TASKWRAITH_DEBUG_BUILD === '1'
-  // Gemini Google-login refresh needs the maintainer's OAuth client secret.
-  // It must NEVER bake into a distributed (production/notarized) build — a
-  // security review found the literal baked into the 1.4.9 app.asar. Bake it
-  // ONLY for dev + debug builds (where the maintainer exercises the login
-  // flow); public builds get an empty string, which just disables that one
-  // refresh path — exactly like a fresh clone with no `.env`. Escape hatch:
-  // TASKWRAITH_BUNDLE_GEMINI_SECRET=1 force-bundles for an unusual build.
-  const bundleGeminiSecret =
-    mode === 'development' ||
-    debugBuild ||
-    process.env.TASKWRAITH_BUNDLE_GEMINI_SECRET === '1'
-  const geminiOauthClientSecret = bundleGeminiSecret ? (env.GEMINI_OAUTH_CLIENT_SECRET ?? '') : ''
   return {
-    main: {
-      define: {
-        'process.env.GEMINI_OAUTH_CLIENT_SECRET': JSON.stringify(geminiOauthClientSecret)
-      }
-    },
+    // No build-time secret baking. (Gemini's retired Google-login refresh used
+    // to bake the maintainer's OAuth client secret here — removed; a personal
+    // credential must never ship inside a distributed build.)
+    main: {},
     preload: {},
     renderer: {
       define: {

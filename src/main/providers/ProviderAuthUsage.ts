@@ -1041,23 +1041,13 @@ export async function fetchCodexUsageSnapshot(): Promise<NormalizedProviderUsage
   }
 }
 
-const GEMINI_OAUTH_CLIENT_ID =
-  '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com'
-// Gemini "Sign in with Google" OAuth client secret. Injected at build time from
-// a gitignored `.env` via electron.vite.config.ts (`define`), so the literal
-// lives only in your local .env — never in source or git. Empty when no .env is
-// present (e.g. a fresh clone): the Google-login token refresh then fails
-// gracefully, and API-key auth is unaffected.
-const GEMINI_OAUTH_CLIENT_SECRET = process.env.GEMINI_OAUTH_CLIENT_SECRET ?? ''
+// Gemini is retired and reads only the user's OWN local token from
+// ~/.gemini/oauth_creds.json. The maintainer-secret token-refresh path was
+// removed, so no OAuth client id/secret is bundled into the build any more.
 const GEMINI_QUOTA_FRESH_TTL_MS = 90_000
 const GEMINI_QUOTA_STALE_TTL_MS = 30 * 60_000
-const GEMINI_OAUTH_REFRESH_BUFFER_MS = 5 * 60_000
-const GEMINI_OAUTH_REFRESH_RETRY_MS = 60_000
 
 let geminiQuotaCache: { snapshot: NormalizedProviderUsageSnapshot; fetchedAt: number } | null = null
-let geminiRefreshedToken: { accessToken: string; expiresAt: number } | null = null
-let geminiRefreshPromise: Promise<string | null> | null = null
-let geminiLastRefreshFailureAt = 0
 
 export function geminiCliRootPath(): string {
   const configuredHome = process.env.GEMINI_CLI_HOME
@@ -1093,78 +1083,13 @@ export async function readGeminiOAuthCredentials(): Promise<{
   }
 }
 
-export async function refreshGeminiAccessToken(refreshToken: string): Promise<string | null> {
-  if (geminiRefreshPromise) {
-    return geminiRefreshPromise
-  }
-  geminiRefreshPromise = (async () => {
-    try {
-      const response = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Accept: 'application/json'
-        },
-        body: new URLSearchParams({
-          client_id: GEMINI_OAUTH_CLIENT_ID,
-          client_secret: GEMINI_OAUTH_CLIENT_SECRET,
-          refresh_token: refreshToken,
-          grant_type: 'refresh_token'
-        })
-      })
-      if (!response.ok) {
-        geminiLastRefreshFailureAt = Date.now()
-        return null
-      }
-      const payload = await response.json()
-      const accessToken = String(payload?.access_token || '').trim()
-      if (!accessToken) {
-        geminiLastRefreshFailureAt = Date.now()
-        return null
-      }
-      const expiresInSeconds = Math.max(60, Number(payload?.expires_in || 3600))
-      geminiRefreshedToken = {
-        accessToken,
-        expiresAt: Date.now() + expiresInSeconds * 1000
-      }
-      geminiLastRefreshFailureAt = 0
-      return accessToken
-    } catch {
-      geminiLastRefreshFailureAt = Date.now()
-      return null
-    } finally {
-      geminiRefreshPromise = null
-    }
-  })()
-  return geminiRefreshPromise
-}
-
 export async function getGeminiAccessToken(): Promise<string | null> {
-  if (
-    geminiRefreshedToken &&
-    Date.now() + GEMINI_OAUTH_REFRESH_BUFFER_MS < geminiRefreshedToken.expiresAt
-  ) {
-    return geminiRefreshedToken.accessToken
-  }
-
+  // No token refresh: Gemini is retired and the maintainer OAuth client secret
+  // the refresh required is no longer bundled. Return the user's own stored
+  // access token; an expired one just yields a 401 the caller already handles
+  // via the persisted-usage fallback.
   const credentials = await readGeminiOAuthCredentials()
-  if (!credentials) return null
-
-  if (
-    !credentials.expiresAt ||
-    Date.now() + GEMINI_OAUTH_REFRESH_BUFFER_MS < credentials.expiresAt
-  ) {
-    return credentials.accessToken
-  }
-
-  if (
-    !credentials.refreshToken ||
-    Date.now() - geminiLastRefreshFailureAt < GEMINI_OAUTH_REFRESH_RETRY_MS
-  ) {
-    return credentials.accessToken
-  }
-
-  return (await refreshGeminiAccessToken(credentials.refreshToken)) || credentials.accessToken
+  return credentials?.accessToken ?? null
 }
 
 function parseGeminiQuotaReset(value: unknown): string | undefined {
