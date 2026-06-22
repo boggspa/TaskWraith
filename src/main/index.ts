@@ -7989,7 +7989,8 @@ async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
     providerSessionId: payload.providerSessionId,
-    approvalMode: payload.approvalMode
+    approvalMode: payload.approvalMode,
+    activeGoal: payload.activeGoal
   })
   runCliProviderProcess(event, 'grok', resolved.binaryPath, args, payload, {
     fallback: false,
@@ -8360,7 +8361,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     // session/new (no Grok-side resume threads through here), so the steer must
     // ride each turn's prompt; there's no prior turn for Grok to remember it
     // from, hence no redundant re-injection to avoid.
-    prompt: buildGrokProviderPrompt(payload.prompt, payload.approvalMode),
+    prompt: buildGrokProviderPrompt(payload.prompt, payload.approvalMode, payload.activeGoal),
     cwd: payload.workspace!,
     mcpServers: grokMcpServers,
     spawnProcess: () => {

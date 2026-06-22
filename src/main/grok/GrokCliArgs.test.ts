@@ -4,6 +4,8 @@ import {
   buildGrokCliArgs,
   buildGrokProviderCliArgs,
   buildGrokProviderPrompt,
+  applyGrokNativeGoalPrompt,
+  formatGrokGoalSlashCommand,
   normalizeGrokEffortFlag,
   grokWriteCapable,
   applyGrokReadOnlyPromptPreamble,
@@ -13,6 +15,17 @@ import {
   GROK_READ_ONLY_DENY_RULES,
   GROK_WRITE_MODE_DENY_RULES
 } from './GrokCliArgs'
+import type { ActiveGoal } from '../store/types'
+
+const grokNativeGoal: ActiveGoal = {
+  id: 'goal-1',
+  objective: 'Migrate the auth module to the new API',
+  status: 'active',
+  mode: 'grok_native',
+  provider: 'grok',
+  createdAt: '2026-06-22T12:00:00Z',
+  updatedAt: '2026-06-22T12:00:00Z'
+}
 
 describe('normalizeGrokEffortFlag', () => {
   it('returns null for nullish, empty, or off values', () => {
@@ -177,6 +190,22 @@ describe('buildGrokCliArgs', () => {
     expect(prompt).toContain('<discord_messages')
   })
 
+  it('provider wrapper anchors native Grok goals before all steering text', () => {
+    const args = buildGrokProviderCliArgs({
+      ...base,
+      prompt: discordPrompt,
+      approvalMode: 'default',
+      activeGoal: grokNativeGoal
+    })
+    const prompt = args[args.indexOf('-p') + 1]
+
+    expect(prompt.startsWith('/goal Migrate the auth module to the new API')).toBe(true)
+    expect(prompt.indexOf('/goal')).toBe(0)
+    expect(prompt).toContain(GROK_WRITE_MODE_PROMPT_PREAMBLE)
+    expect(prompt.indexOf('/goal')).toBeLessThan(prompt.indexOf(GROK_WRITE_MODE_PROMPT_PREAMBLE))
+    expect(prompt.endsWith(discordPrompt)).toBe(true)
+  })
+
   it('maps reasoning effort onto --effort only for documented levels', () => {
     const args = buildGrokCliArgs({ ...base, reasoningEffort: 'high' })
     expect(args[args.indexOf('--effort') + 1]).toBe('high')
@@ -331,6 +360,39 @@ describe('applyGrokPromptPreamble', () => {
     expect(out.startsWith(GROK_READ_ONLY_PROMPT_PREAMBLE)).toBe(true)
     expect(out.endsWith(discordPrompt)).toBe(true)
     expect(out).toContain('<discord_messages')
+  })
+})
+
+describe('formatGrokGoalSlashCommand', () => {
+  it('formats active native Grok goals as a one-line slash command', () => {
+    expect(
+      formatGrokGoalSlashCommand({
+        ...grokNativeGoal,
+        objective: 'Migrate auth\n\nand keep tests passing'
+      })
+    ).toBe('/goal Migrate auth and keep tests passing')
+  })
+
+  it('formats blocked native Grok goals but ignores paused/completed or non-native goals', () => {
+    expect(formatGrokGoalSlashCommand({ ...grokNativeGoal, status: 'blocked' })).toBe(
+      '/goal Migrate the auth module to the new API'
+    )
+    expect(formatGrokGoalSlashCommand({ ...grokNativeGoal, status: 'paused' })).toBeNull()
+    expect(formatGrokGoalSlashCommand({ ...grokNativeGoal, status: 'completed' })).toBeNull()
+    expect(
+      formatGrokGoalSlashCommand({ ...grokNativeGoal, mode: 'taskwraith_steered' })
+    ).toBeNull()
+  })
+
+  it('keeps /goal as the first bytes of the provider prompt', () => {
+    const prompt = applyGrokNativeGoalPrompt(
+      `${GROK_READ_ONLY_PROMPT_PREAMBLE}\n\nInspect only.`,
+      grokNativeGoal
+    )
+
+    expect(prompt.startsWith('/goal Migrate the auth module to the new API')).toBe(true)
+    expect(prompt).toContain(GROK_READ_ONLY_PROMPT_PREAMBLE)
+    expect(prompt.indexOf('/goal')).toBeLessThan(prompt.indexOf(GROK_READ_ONLY_PROMPT_PREAMBLE))
   })
 })
 

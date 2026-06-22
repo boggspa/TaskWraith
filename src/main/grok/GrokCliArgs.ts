@@ -22,6 +22,8 @@
 //     approval ledger instead).
 // In NO mode is `--always-approve` ever emitted.
 
+import type { ActiveGoal } from '../store/types'
+
 const GROK_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 
 export function normalizeGrokEffortFlag(value: string | null | undefined): string | null {
@@ -125,11 +127,33 @@ export function applyGrokPromptPreamble(prompt: string, writeCapable: boolean): 
   return `${GROK_WRITE_MODE_PROMPT_PREAMBLE}\n\n${prompt}`
 }
 
+export function formatGrokGoalSlashCommand(goal: ActiveGoal | null | undefined): string | null {
+  if (!goal) return null
+  if (goal.mode !== 'grok_native') return null
+  if (goal.status !== 'active' && goal.status !== 'blocked') return null
+  const objective = goal.objective.replace(/\s+/g, ' ').trim()
+  if (!objective) return null
+  return `/goal ${objective}`
+}
+
+export function applyGrokNativeGoalPrompt(
+  prompt: string,
+  goal: ActiveGoal | null | undefined
+): string {
+  const command = formatGrokGoalSlashCommand(goal)
+  if (!command) return prompt
+  return `${command}\n\n${prompt}`
+}
+
 export function buildGrokProviderPrompt(
   prompt: string,
-  approvalMode: string | null | undefined
+  approvalMode: string | null | undefined,
+  activeGoal?: ActiveGoal | null
 ): string {
-  return applyGrokPromptPreamble(prompt, grokWriteCapable(approvalMode))
+  return applyGrokNativeGoalPrompt(
+    applyGrokPromptPreamble(prompt, grokWriteCapable(approvalMode)),
+    activeGoal
+  )
 }
 
 export interface BuildGrokCliArgsInput {
@@ -154,6 +178,7 @@ export interface BuildGrokCliArgsInput {
    * denied). Mirrors Claude's claudePermissionModeForApproval.
    */
   approvalMode?: string | null
+  activeGoal?: ActiveGoal | null
 }
 
 export interface BuildGrokAcpCliArgsInput {
@@ -223,6 +248,6 @@ export function buildGrokAcpCliArgs(input: BuildGrokAcpCliArgsInput): string[] {
 export function buildGrokProviderCliArgs(input: BuildGrokCliArgsInput): string[] {
   return buildGrokCliArgs({
     ...input,
-    prompt: buildGrokProviderPrompt(input.prompt, input.approvalMode)
+    prompt: buildGrokProviderPrompt(input.prompt, input.approvalMode, input.activeGoal)
   })
 }
