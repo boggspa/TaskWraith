@@ -1394,6 +1394,10 @@ public struct TokenRevealText: View {
         renderedText
             .font(font)
             .fixedSize(horizontal: false, vertical: true)
+            // VoiceOver + accessibility read the FULL target, never the
+            // partially-revealed prefix the animation is currently showing —
+            // the reveal is a visual effect over already-complete text.
+            .accessibilityLabel(Text(target))
             .onAppear {
                 goal = target
                 if reduceMotion || target.count > Self.coldRevealSnapThreshold {
@@ -1435,6 +1439,11 @@ public struct TokenRevealText: View {
             .onDisappear {
                 pump?.cancel()
                 pump = nil
+                // You can't perceive a reveal you can't see: force convergence
+                // so an offscreen (cancelled) pump can never freeze the cursor
+                // half-revealed and leave a stuck bubble when it scrolls back.
+                revealed = target.count
+                solidified = revealed
             }
     }
 
