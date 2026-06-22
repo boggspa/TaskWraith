@@ -87,14 +87,34 @@ function createSim() {
       if (!rec) return undefined
       return [...rec.messages].reverse().find((m) => m.role === 'assistant')?.content
     },
-    /** Models the SEPARATE [currentChat] effect at App.tsx:7341-7346, which
-     *  writes the (React-state-derived, possibly stale) currentChat straight
-     *  into the ref OUTSIDE the reconcile/preserve loop — a second clobber
-     *  vector the coalescer must keep fresh or make preserve-aware. */
-    currentChatEffect(currentChat: ChatRecord | null | undefined) {
-      if (currentChat?.appChatId) {
-        liveRef.set(currentChat.appChatId, currentChat)
-      }
+    /** Models the SEPARATE [currentChat] effect in App.tsx, now guarded for
+     *  #1: it seeds the ref from the (React-state-derived, possibly stale)
+     *  currentChat, but SKIPS a chat that is actively streaming so a lagging
+     *  currentChat under the coalescer can't clobber the byte-exact ref. Pass
+     *  the active set to exercise the guard. */
+    currentChatEffect(
+      currentChat: ChatRecord | null | undefined,
+      opts: { activeRunChatId?: string | null; activeRunChatIds?: ReadonlySet<string> } = {}
+    ) {
+      const id = currentChat?.appChatId
+      if (!id || !currentChat) return
+      const streaming = opts.activeRunChatId === id || (opts.activeRunChatIds?.has(id) ?? false)
+      if (!streaming) liveRef.set(id, currentChat)
+    },
+    /** Models the fixed handleSelectChat ref write (App.tsx): selecting a chat
+     *  writes a record into the ref, but for an actively-streaming chat it
+     *  prefers the byte-exact ref entry over the (possibly stale) list record,
+     *  so selection can't clobber in-flight tokens. */
+    selectChatEffect(
+      listRecord: ChatRecord,
+      opts: { activeRunChatId?: string | null; activeRunChatIds?: ReadonlySet<string> } = {}
+    ): ChatRecord {
+      const id = listRecord.appChatId
+      const cached = liveRef.get(id)
+      const streaming = opts.activeRunChatId === id || (opts.activeRunChatIds?.has(id) ?? false)
+      const selected = cached && streaming ? cached : listRecord
+      liveRef.set(id, selected)
+      return selected
     },
     /** A detached single-record snapshot — stand-in for a React currentChat. */
     recordSnapshot(chatId: string): ChatRecord | null {
@@ -273,36 +293,78 @@ describe('token-drop reconcile — randomized interleaving fuzz', () => {
 })
 
 describe('token-drop reconcile — the [currentChat] ref-write effect', () => {
-  // App.tsx has a SECOND ref write besides updateChatById + the reconcile:
-  // the effect keyed on [currentChat] (App.tsx:7341-7346) does
-  // chatByIdRef.set(currentChat.appChatId, currentChat). Today currentChat is
-  // advanced synchronously by updateChatById so it is always fresh; the
-  // coalescer will defer that setCurrentChat, so we model both states here.
-  it('is a no-op for the visible streaming chat while currentChat stays fresh (today)', () => {
+  // App.tsx has a SECOND ref write besides updateChatById + the reconcile: the
+  // effect keyed on [currentChat] does chatByIdRef.set(currentChat). Under #1
+  // setCurrentChat is deferred, so currentChat (React state) can lag the ref;
+  // the effect is now guarded to skip an actively-streaming chat.
+  it('keeps the visible streaming chat byte-exact while currentChat stays fresh', () => {
     const sim = createSim()
     sim.seed('A', [userMsg])
     for (const c of ['a', 'b', 'c']) {
       sim.applyDelta('A', c)
-      sim.currentChatEffect(sim.recordSnapshot('A')) // synchronous → fresh
+      sim.currentChatEffect(sim.recordSnapshot('A'), { activeRunChatIds: new Set(['A']) })
     }
     sim.applyDelta('A', 'd')
-    sim.currentChatEffect(sim.recordSnapshot('A'))
+    sim.currentChatEffect(sim.recordSnapshot('A'), { activeRunChatIds: new Set(['A']) })
     expect(sim.content('A')).toBe('abcd')
   })
 
-  it('HAZARD (coalescer constraint): a STALE currentChat effect clobbers the visible chat', () => {
-    // Documents why the coalescer must keep currentChat's ref write fresh (or
-    // make the [currentChat] effect preserve-aware): if setCurrentChat is
-    // deferred, this effect writes a lagging currentChat over fresher ref
-    // content, INDEPENDENT of the reconcile preserve loop. When #1 lands, the
-    // fix should flip this assertion to the byte-exact 'Hello world'.
+  it('FIXED: a stale currentChat effect does NOT clobber an actively-streaming chat', () => {
+    // The [currentChat] effect now skips a chat in the active set, so a lagging
+    // currentChat under the coalescer can't overwrite the byte-exact ref.
+    // Without the guard, " world" would be lost (the documented second vector).
     const sim = createSim()
     sim.seed('A', [userMsg])
     sim.applyDelta('A', 'Hello')
     const staleCurrent = sim.recordSnapshot('A') // captured at "Hello"
     sim.applyDelta('A', ' world') // ref → "Hello world"
-    sim.currentChatEffect(staleCurrent) // stale write, even though A is active
-    expect(sim.content('A')).toBe('Hello') // " world" lost via the currentChat path
+    sim.currentChatEffect(staleCurrent, { activeRunChatIds: new Set(['A']) })
+    expect(sim.content('A')).toBe('Hello world') // preserved, not clobbered
+  })
+
+  it('NEGATIVE CONTROL: without the active-set guard, a stale currentChat clobbers', () => {
+    // Proves the guard is what saves the content (the test has teeth).
+    const sim = createSim()
+    sim.seed('A', [userMsg])
+    sim.applyDelta('A', 'Hello')
+    const staleCurrent = sim.recordSnapshot('A')
+    sim.applyDelta('A', ' world')
+    sim.currentChatEffect(staleCurrent) // no active set → unguarded seed
+    expect(sim.content('A')).toBe('Hello')
+  })
+
+  it('still seeds a NON-streaming chat from currentChat (original purpose preserved)', () => {
+    const sim = createSim()
+    sim.seed('A', [userMsg])
+    const fresh = makeChat('B', [{ ...userMsg, content: 'fresh B' }])
+    sim.currentChatEffect(fresh, { activeRunChatIds: new Set() }) // B not streaming
+    expect(sim.ref.has('B')).toBe(true)
+  })
+})
+
+describe('token-drop reconcile — selecting a streaming chat (handleSelectChat)', () => {
+  it('FIXED: selecting an actively-streaming chat keeps its byte-exact ref content', () => {
+    // Clicking a chat in the sidebar writes a record into the ref. Under the
+    // coalescer the list record lags; for a streaming chat we must prefer the
+    // ref, or in-flight tokens are clobbered (incremental providers never
+    // recover them).
+    const sim = createSim()
+    sim.seed('A', [userMsg])
+    sim.applyDelta('A', 'Hello')
+    const staleListRecord = sim.recordSnapshot('A')! // sidebar still holds "Hello"
+    sim.applyDelta('A', ' world') // ref → "Hello world"
+    sim.selectChatEffect(staleListRecord, { activeRunChatIds: new Set(['A']) })
+    expect(sim.content('A')).toBe('Hello world')
+  })
+
+  it('NEGATIVE CONTROL: selecting without the streaming guard clobbers in-flight tokens', () => {
+    const sim = createSim()
+    sim.seed('A', [userMsg])
+    sim.applyDelta('A', 'Hello')
+    const staleListRecord = sim.recordSnapshot('A')!
+    sim.applyDelta('A', ' world')
+    sim.selectChatEffect(staleListRecord) // no active set → stale list record wins
+    expect(sim.content('A')).toBe('Hello')
   })
 })
 

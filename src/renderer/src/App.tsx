@@ -2423,6 +2423,14 @@ function App(): React.JSX.Element {
   const currentWorkspaceIdRef = useRef<string | null>(null)
   const currentChatIdRef = useRef<string | null>(null)
   const chatByIdRef = useRef<Map<string, ChatRecord>>(new Map())
+  // rAF render-coalescer for streamed deltas (#1). chatByIdRef above stays the
+  // synchronous, byte-exact source of truth; these defer the React commit
+  // (setChats/setCurrentChat) for coalesced updates to one flush per frame, so
+  // the on-screen cadence is decoupled from the provider's wire cadence. The
+  // token-drop reconcile preserves the ref for active runs, so a lagging commit
+  // never clobbers in-flight content (see lib/reconcileChatRefMap + its tests).
+  const pendingChatFlushRef = useRef<Set<string>>(new Set())
+  const chatFlushRafRef = useRef<number | null>(null)
   // Turn-based guest participation: a guest send is deferred here (keyed by
   // parent chatId) and dispatched only once the host run on that chat
   // completes, so the guest answers WITH the host's reply in context. The ref
@@ -3310,10 +3318,69 @@ function App(): React.JSX.Element {
     return null
   }
 
+  // Commit every pending coalesced chat from the (authoritative) ref into
+  // React state in one batch. Always reads chatByIdRef.current, so it commits
+  // the latest byte-exact content and never a stale closed-over snapshot.
+  const flushCoalescedChats = useCallback(() => {
+    const dirty = pendingChatFlushRef.current
+    if (dirty.size === 0) return
+    pendingChatFlushRef.current = new Set()
+    const byId = chatByIdRef.current
+    setChats((prev) => {
+      let changed = false
+      const seen = new Set<string>()
+      const mapped = prev.map((chat) => {
+        if (!dirty.has(chat.appChatId)) return chat
+        seen.add(chat.appChatId)
+        const updated = byId.get(chat.appChatId)
+        if (updated && updated !== chat) {
+          changed = true
+          return updated
+        }
+        return chat
+      })
+      const prepend: ChatRecord[] = []
+      for (const chatId of dirty) {
+        if (seen.has(chatId)) continue
+        const updated = byId.get(chatId)
+        if (updated) prepend.push(updated)
+      }
+      if (prepend.length > 0) return [...prepend, ...mapped]
+      return changed ? mapped : prev
+    })
+    setCurrentChat((prev) => {
+      if (!prev || !dirty.has(prev.appChatId)) return prev
+      const updated = byId.get(prev.appChatId)
+      return updated && updated !== prev ? updated : prev
+    })
+  }, [])
+
+  // Cancel any scheduled rAF and flush immediately. Used by the non-coalesced
+  // (synchronous) update path and on unmount.
+  const flushCoalescedChatsNow = useCallback(() => {
+    if (chatFlushRafRef.current !== null) {
+      cancelAnimationFrame(chatFlushRafRef.current)
+      chatFlushRafRef.current = null
+    }
+    flushCoalescedChats()
+  }, [flushCoalescedChats])
+
+  // On unmount, drop any scheduled flush so it can't fire into a torn-down tree.
+  // The 200ms saveChat debounce already persists the latest ref content.
+  useEffect(() => {
+    return () => {
+      if (chatFlushRafRef.current !== null) {
+        cancelAnimationFrame(chatFlushRafRef.current)
+        chatFlushRafRef.current = null
+      }
+    }
+  }, [])
+
   const updateChatById = useCallback(
     (
       chatId: string | null | undefined,
-      updater: (chat: ChatRecord) => ChatRecord
+      updater: (chat: ChatRecord) => ChatRecord,
+      options?: { coalesce?: boolean }
     ): ChatRecord | null => {
       if (!chatId) return null
       const base =
@@ -3329,7 +3396,7 @@ function App(): React.JSX.Element {
             if (!hydrated) return
             chatByIdRef.current.set(chatId, hydrated)
             setChats((prev) => mergeChatRecord(prev, hydrated))
-            updateChatById(chatId, updater)
+            updateChatById(chatId, updater, options)
           })
           .catch(() => {})
         return null
@@ -3340,12 +3407,23 @@ function App(): React.JSX.Element {
       if (activeRunChatIdRef.current === chatId) {
         activeRunChatSnapshotRef.current = updated
       }
-      setChats((prev) => {
-        const index = prev.findIndex((chat) => chat.appChatId === chatId)
-        if (index < 0) return [updated, ...prev]
-        return prev.map((chat) => (chat.appChatId === chatId ? updated : chat))
-      })
-      setCurrentChat((prev) => (prev?.appChatId === chatId ? updated : prev))
+      // #1 — render coalescing. The ref write above is the synchronous source
+      // of truth. For coalesced (streamed-delta) updates, defer the React
+      // commit to one rAF flush per frame; every other caller commits
+      // immediately. The flush always reads back from chatByIdRef, so a
+      // deferred commit can never write stale content, and an immediate caller
+      // also drains any pending coalesced deltas first (ordering preserved).
+      pendingChatFlushRef.current.add(chatId)
+      if (options?.coalesce) {
+        if (chatFlushRafRef.current === null) {
+          chatFlushRafRef.current = requestAnimationFrame(() => {
+            chatFlushRafRef.current = null
+            flushCoalescedChats()
+          })
+        }
+      } else {
+        flushCoalescedChatsNow()
+      }
       const existingTimer = saveChatTimersRef.current.get(chatId)
       if (existingTimer) clearTimeout(existingTimer)
       const timer = setTimeout(() => {
@@ -3356,7 +3434,7 @@ function App(): React.JSX.Element {
       saveChatTimersRef.current.set(chatId, timer)
       return updated
     },
-    []
+    [flushCoalescedChats, flushCoalescedChatsNow]
   )
 
   const updateChatByIdLocalOnly = useCallback(
@@ -6563,11 +6641,21 @@ function App(): React.JSX.Element {
     // instead: render #1 shows the full thread immediately and the hydrate
     // guard short-circuits — no empty flash, no redundant second render.
     const cachedHydratedChat = chatByIdRef.current.get(chat.appChatId)
+    // Prefer the live ref entry when it's a non-summary record: the original
+    // summary-hydration case (cached at least as fresh), AND — critically under
+    // the #1 render-coalescer — ALWAYS for an actively-streaming chat. The ref
+    // holds byte-exact in-flight content that the coalesced `chats` list record
+    // can lag by a frame; without this guard the `chatByIdRef.set(selectedChat)`
+    // below would overwrite fresh streamed tokens with the stale list record
+    // (incremental providers never recover them).
+    const chatIsStreaming =
+      activeRunChatIdRef.current === chat.appChatId ||
+      Array.from(activeRunsRef.current.values()).some((ctx) => ctx.chatId === chat.appChatId)
     const incoming =
-      isChatSummaryRecord(chat) &&
       cachedHydratedChat &&
       !isChatSummaryRecord(cachedHydratedChat) &&
-      (cachedHydratedChat.updatedAt ?? 0) >= (chat.updatedAt ?? 0)
+      (chatIsStreaming ||
+        (isChatSummaryRecord(chat) && (cachedHydratedChat.updatedAt ?? 0) >= (chat.updatedAt ?? 0)))
         ? cachedHydratedChat
         : chat
     const selectedChat =
@@ -7352,9 +7440,21 @@ function App(): React.JSX.Element {
   }, [usageInitialized])
 
   useEffect(() => {
-    currentChatIdRef.current = currentChat?.appChatId ?? null
-    if (currentChat?.appChatId) {
-      chatByIdRef.current.set(currentChat.appChatId, currentChat)
+    const id = currentChat?.appChatId ?? null
+    currentChatIdRef.current = id
+    if (id && currentChat) {
+      // Under the #1 render-coalescer, `currentChat` (React state) can lag the
+      // byte-exact chatByIdRef during an active run. Don't let this seed
+      // clobber a chat being actively streamed into — the streaming hot path
+      // keeps its ref entry authoritative and the reconcile preserves it. Only
+      // seed the ref for a non-streaming chat (the original purpose: ensure a
+      // freshly-opened chat's record is present in the ref after a switch).
+      const streaming =
+        activeRunChatIdRef.current === id ||
+        Array.from(activeRunsRef.current.values()).some((ctx) => ctx.chatId === id)
+      if (!streaming) {
+        chatByIdRef.current.set(id, currentChat)
+      }
     }
   }, [currentChat])
   useEffect(() => {
@@ -10286,7 +10386,7 @@ function App(): React.JSX.Element {
           }
 
           return updated
-        })
+        }, { coalesce: event.type === 'assistant_message_delta' })
       })
       Object.assign(runContext, {
         runId: currentRunId,
