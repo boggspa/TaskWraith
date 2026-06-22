@@ -695,6 +695,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentWorkspacePath
   )
 
+  // The composer's EFFECTIVE provider. For an ensemble this is the SELECTED
+  // participant (the provider the footer + model picker actually target), NOT
+  // the chat-level host provider — `currentProvider` = getChatProvider(chat)
+  // returns the ensemble's host, so gating the Ollama tier picker on it made the
+  // picker appear for EVERY participant of an Ollama-hosted ensemble. Gate on
+  // this instead so it shows only when Ollama is the selected provider.
+  const effectiveComposerProvider =
+    isCurrentEnsembleChat && selectedParticipant
+      ? selectedParticipant.provider
+      : currentProvider
+
   // ---------------------------------------------------------------------------
   // Composer-local editor state (Slices B + C of the multiview composer-parity
   // fix).
@@ -3952,9 +3963,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <span className="composer-yolo-chip-label">YOLO</span>
                           </button>
                         )}
-                        {currentProvider === 'ollama' && (
+                        {effectiveComposerProvider === 'ollama' && (
                           <OllamaTierPicker
-                            provider={currentProvider}
+                            provider={effectiveComposerProvider}
                             composerStyle={appearance.composerStyle}
                             selectedTier={chatOllamaTier}
                             onSelectTier={(tier) =>
