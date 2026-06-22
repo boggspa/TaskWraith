@@ -4340,6 +4340,9 @@ function App(): React.JSX.Element {
     if (next.currencyOverestimatePercent !== undefined) {
       settingsPatch.currencyOverestimatePercent = next.currencyOverestimatePercent
     }
+    if (next.showRunCompleteSummary !== undefined) {
+      settingsPatch.showRunCompleteSummary = next.showRunCompleteSummary
+    }
     // Sidebar Model Usage card view toggle (plan quota meters vs API
     // spend). Persist-only — the sidebar reads `settings.modelUsagePanelView`
     // directly when rendering the card.
@@ -20112,6 +20115,7 @@ function App(): React.JSX.Element {
               chatContextTurns={chatContextTurns}
               currency={displayCurrency}
               currencyOverestimatePercent={overestimatePercent}
+              showRunCompleteSummary={settings?.showRunCompleteSummary}
               dashboardStatPrefs={settings?.dashboardStatPrefs}
               welcomeHeatmapPrefs={settings?.welcomeHeatmapPrefs}
               providerRunPauses={settings?.providerRunPauses}
@@ -21061,6 +21065,7 @@ function App(): React.JSX.Element {
                 autoFollowRef={autoFollowRef}
                 currency={displayCurrency}
                 currencyOverestimatePercent={overestimatePercent}
+                showRunCompleteSummary={settings?.showRunCompleteSummary}
                 providerRates={providerRates}
               />
           </>
@@ -21402,6 +21407,7 @@ function App(): React.JSX.Element {
               autoFollowRef={sideAutoFollowRef}
               currency={displayCurrency}
               currencyOverestimatePercent={overestimatePercent}
+              showRunCompleteSummary={settings?.showRunCompleteSummary}
               providerRates={providerRates}
             />
             <form

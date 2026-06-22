@@ -619,6 +619,11 @@ export interface RemoteThreadSnapshot {
   hasMoreAbove: boolean
   hasMoreBelow: boolean
   runSummary?: RemoteRunSummary
+  /** Conversation-level spend estimate, summed across every run in the thread. */
+  conversationCostUsd?: number
+  conversationCostText?: string
+  /** Settings-driven visibility for Task Complete / Final Summary cards. */
+  showRunCompleteSummary?: boolean
   /** Thread notes (chat.pinnedNotes), clipped. */
   notes?: string
   /** Pinned messages (metadata.pinnedAt), newest first, capped — these may
@@ -657,6 +662,8 @@ export interface RemoteProjectionOptions {
   generatedAt?: string
   /** Currency-aware display options for run cost telemetry. */
   costDisplay?: RemoteCostDisplayOptions
+  /** Settings-driven visibility for Task Complete / Final Summary cards. */
+  showRunCompleteSummary?: boolean
   /** Ensemble speaker labeler — the bridge passes
    * `ensembleSpeakerForMessage(chat.ensemble.participants)` for ensemble
    * chats so each assistant row carries its participant identity. Solo
@@ -1355,6 +1362,25 @@ function extractRunCostUsd(
   return estimated > 0 ? { usd: estimated, estimated: true } : { usd: 0, estimated: false }
 }
 
+function buildConversationCostSummary(
+  runs: ChatRun[] | undefined,
+  costDisplay?: RemoteCostDisplayOptions
+): { usd: number; text: string; estimated: boolean } | undefined {
+  if (!Array.isArray(runs) || runs.length === 0) return undefined
+  let costUsd = 0
+  let anyEstimated = false
+  for (const run of runs) {
+    const { usd, estimated } = extractRunCostUsd(run, costDisplay)
+    if (usd <= 0) continue
+    costUsd += usd
+    if (estimated) anyEstimated = true
+  }
+  if (costUsd <= 0) return undefined
+  const formatted = formatRemoteCost(costUsd, costDisplay)
+  if (!formatted) return undefined
+  return { usd: costUsd, text: anyEstimated ? `~${formatted}` : formatted, estimated: anyEstimated }
+}
+
 /** Fold every participant run of one ensemble round into a single headline
  * summary. Tokens and cost are SUMMED across participants, file changes are
  * UNIONED, and the duration spans the whole round (earliest start → latest
@@ -1935,6 +1961,7 @@ export function projectRemoteThread(
   const previewMax = opts.previewMaxChars ?? DEFAULT_PREVIEW_MAX
   const generatedAt = opts.generatedAt ?? new Date().toISOString()
   const runSummary = buildRunSummary(runs, opts.costDisplay, all)
+  const conversationCost = buildConversationCostSummary(runs, opts.costDisplay)
   const runSummaries = (runs ?? [])
     .slice(-12)
     .map((run) => summarizeRun(run, opts.costDisplay, all))
@@ -1990,6 +2017,13 @@ export function projectRemoteThread(
     totalRows,
     generatedAt,
     ...(runSummary ? { runSummary } : {}),
+    ...(conversationCost
+      ? {
+          conversationCostUsd: conversationCost.usd,
+          conversationCostText: conversationCost.text
+        }
+      : {}),
+    showRunCompleteSummary: opts.showRunCompleteSummary !== false,
     ...(typeof opts.notes === 'string' && opts.notes.trim()
       ? { notes: sanitizePreview(opts.notes, 4000).preview }
       : {}),

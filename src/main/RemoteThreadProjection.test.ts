@@ -994,6 +994,32 @@ describe('RemoteThreadProjection', () => {
       expect(summary?.costText).toBe('~$1.75')
     })
 
+    it('projects cumulative conversation cost separately from the latest run cost', () => {
+      const snap = project(
+        { kind: 'latestN', n: 10 },
+        MESSAGES,
+        [
+          {
+            runId: 'run-1',
+            stats: { inputTokens: 1, outputTokens: 1, cost_usd: 10 }
+          } as unknown as ChatRun,
+          {
+            runId: 'run-2',
+            stats: { inputTokens: 2, outputTokens: 2, cost_usd: 2.24 }
+          } as unknown as ChatRun
+        ],
+        {
+          costDisplay: {
+            currency: 'USD'
+          }
+        }
+      )
+
+      expect(snap.runSummary?.costText).toBe('$2.24')
+      expect(snap.conversationCostUsd).toBeCloseTo(12.24)
+      expect(snap.conversationCostText).toBe('$12.24')
+    })
+
     it('includes runDiffByPath workspace changes when available', () => {
       const summary = buildRunSummary([
         {

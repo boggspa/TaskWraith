@@ -65,6 +65,7 @@ struct ThreadDetailView: View {
         card?.isEnsemble == true && card?.workspaceId != nil
     }
     private var snapshot: RemoteThreadSnapshot? { model.threadSnapshots[taskId] }
+    private var showsRunCompleteSummary: Bool { snapshot?.showRunCompleteSummary != false }
     private var thinkingProvider: String? {
         if let state = model.ensembleStates[taskId],
             let activeId = state.activeParticipantId
@@ -658,7 +659,7 @@ struct ThreadDetailView: View {
                         .listRowSeparator(.hidden)
                     // Desktop parity: each run's Task-complete card follows
                     // its final transcript row, persisting in the thread.
-                    if let runCard = runCardSummary(after: item.lastRow) {
+                    if showsRunCompleteSummary, let runCard = runCardSummary(after: item.lastRow) {
                         // Legacy diff lane keyed to ITS OWN run — a stale
                         // envelope from an older run must not decorate a
                         // newer no-edit card. run.fileChanges (per-run, in
@@ -738,7 +739,7 @@ struct ThreadDetailView: View {
                     Text("No transcript yet.").foregroundStyle(TWTheme.textSecondary)
                         .listRowBackground(Color.clear)
                 }
-                if let run = unanchoredRunCardSummary {
+                if showsRunCompleteSummary, let run = unanchoredRunCardSummary {
                     TaskCompleteCard(
                         run: run,
                         diff: model.diffSummaries[taskId]?.runId == run.runId
@@ -1118,6 +1119,7 @@ struct ThreadDetailView: View {
                                     }
                                     TelemetryFooterRail(
                                         run: snapshot?.runSummary,
+                                        conversationCostText: snapshot?.conversationCostText,
                                         workspaceName: model.workspaceName(for: card.workspaceId),
                                         workspaceOptions: model.workspaces.map {
                                             (id: $0.id, name: $0.displayName)

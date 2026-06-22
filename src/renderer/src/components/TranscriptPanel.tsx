@@ -234,6 +234,7 @@ export type TranscriptPanelProps = {
    */
   currency?: DisplayCurrency
   currencyOverestimatePercent?: number
+  showRunCompleteSummary?: boolean
   /**
    * 1.0.7 — per-provider rate table (USD per 1M tokens) from the
    * `providerRates:get` IPC. Used ONLY to project a clearly-badged
@@ -734,6 +735,7 @@ export const TranscriptPanel = memo(
     autoFollowRef,
     currency,
     currencyOverestimatePercent,
+    showRunCompleteSummary,
     providerRates
   }: TranscriptPanelProps) {
     const visibleMessages = useMemo(() => {
@@ -1622,7 +1624,7 @@ export const TranscriptPanel = memo(
               </div>
             </div>
           )}
-          {shouldShowRunCompleteNotice && runCompleteNotice && (
+          {showRunCompleteSummary !== false && shouldShowRunCompleteNotice && runCompleteNotice && (
             <div className="run-complete-card">
               <div className="run-complete-main">
                 <div className="run-complete-metadata">

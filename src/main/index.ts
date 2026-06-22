@@ -16390,6 +16390,8 @@ if (isGeminiMcpBridgeProcess) {
         providerRates: getCurrentProviderRates()
       }
     }
+    const remoteShowRunCompleteSummary = (): boolean =>
+      AppStore.getSettings().showRunCompleteSummary !== false
 
     const buildRemoteThreadSnapshotPayload = (
       chat: ChatRecord,
@@ -16425,6 +16427,7 @@ if (isGeminiMcpBridgeProcess) {
         previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
         generatedAt,
         costDisplay,
+        showRunCompleteSummary: remoteShowRunCompleteSummary(),
         speakerForMessage: remoteSpeakerForMessage(
           chat,
           chat.ensemble?.enabled
@@ -17844,6 +17847,7 @@ if (isGeminiMcpBridgeProcess) {
             previewMaxChars: maxChars,
             generatedAt,
             costDisplay,
+            showRunCompleteSummary: remoteShowRunCompleteSummary(),
             speakerForMessage: remoteSpeakerForMessage(
               chat,
               chat.ensemble?.enabled
@@ -17885,6 +17889,7 @@ if (isGeminiMcpBridgeProcess) {
             previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
             generatedAt,
             costDisplay: remoteCostDisplayOptions(),
+            showRunCompleteSummary: remoteShowRunCompleteSummary(),
             speakerForMessage: remoteSpeakerForMessage(
               chat,
               chat.ensemble?.enabled
@@ -19074,6 +19079,7 @@ if (isGeminiMcpBridgeProcess) {
             previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
             generatedAt,
             costDisplay,
+            showRunCompleteSummary: remoteShowRunCompleteSummary(),
             speakerForMessage: remoteSpeakerForMessage(
               chat,
               chat.ensemble?.enabled

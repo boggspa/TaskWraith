@@ -413,6 +413,7 @@ const defaultSettings: AppSettings = {
   // General lets the user dial 0–25%. Applied in `formatCost.ts`
   // before FX conversion so the bias is currency-agnostic.
   currencyOverestimatePercent: 0,
+  showRunCompleteSummary: true,
   dashboardStatPrefs: {
     dashboardSize: 'small'
   },

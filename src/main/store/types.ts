@@ -1438,6 +1438,10 @@ export interface AppSettings {
    * field so older settings files / test fixtures don't need to
    * round-trip a value they never set. */
   currencyOverestimatePercent?: number
+  /** Settings → General toggle for the desktop/iOS Task Complete / Final Summary
+   * cards. Defaults to true; optional so older settings files keep showing the
+   * card until the user explicitly disables it. */
+  showRunCompleteSummary?: boolean
   /**
    * Sidebar Model Usage card view toggle. `'plan'` (default) shows the
    * PLAN-subsidised quota meters; `'spend'` shows per-provider API/SDK

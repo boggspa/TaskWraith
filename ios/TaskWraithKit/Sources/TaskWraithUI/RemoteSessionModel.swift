@@ -1301,6 +1301,9 @@ public final class RemoteSessionModel: ObservableObject {
         var rows: [RemoteThreadSnapshot.Row]?
         var totalRows: Int?
         var runSummary: RemoteThreadSnapshot.RunSummary?
+        var conversationCostUsd: Double?
+        var conversationCostText: String?
+        var showRunCompleteSummary: Bool?
         var notes: String?
         var pinnedRows: [RemoteThreadSnapshot.Row]?
         var blackboardEntries: [RemoteThreadSnapshot.BlackboardEntry]?
@@ -1316,6 +1319,9 @@ public final class RemoteSessionModel: ObservableObject {
             rows = s.rows
             totalRows = s.totalRows
             runSummary = s.runSummary
+            conversationCostUsd = s.conversationCostUsd
+            conversationCostText = s.conversationCostText
+            showRunCompleteSummary = s.showRunCompleteSummary
             notes = s.notes
             pinnedRows = s.pinnedRows
             blackboardEntries = s.blackboardEntries
@@ -1328,7 +1334,9 @@ public final class RemoteSessionModel: ObservableObject {
             RemoteThreadSnapshot(
                 threadId: threadId, taskId: taskId, workspaceId: workspaceId,
                 provider: provider, rows: rows, totalRows: totalRows,
-                runSummary: runSummary, notes: notes, pinnedRows: pinnedRows,
+                runSummary: runSummary, conversationCostUsd: conversationCostUsd,
+                conversationCostText: conversationCostText,
+                showRunCompleteSummary: showRunCompleteSummary, notes: notes, pinnedRows: pinnedRows,
                 blackboardEntries: blackboardEntries, runSummaries: runSummaries,
                 windowStartIndex: windowStartIndex, hasMoreAbove: hasMoreAbove,
                 hasMoreBelow: hasMoreBelow)
@@ -2353,6 +2361,9 @@ public final class RemoteSessionModel: ObservableObject {
             rows: snapshot.rows,
             totalRows: snapshot.totalRows,
             runSummary: runSummary,
+            conversationCostUsd: snapshot.conversationCostUsd,
+            conversationCostText: snapshot.conversationCostText,
+            showRunCompleteSummary: snapshot.showRunCompleteSummary,
             notes: snapshot.notes,
             pinnedRows: snapshot.pinnedRows,
             blackboardEntries: snapshot.blackboardEntries,
@@ -2433,6 +2444,9 @@ public final class RemoteSessionModel: ObservableObject {
             rows: rows,
             totalRows: totalRows ?? base.totalRows ?? fallback.totalRows,
             runSummary: mergedRunSummary(base: base.runSummary, fallback: fallback.runSummary),
+            conversationCostUsd: base.conversationCostUsd ?? fallback.conversationCostUsd,
+            conversationCostText: base.conversationCostText ?? fallback.conversationCostText,
+            showRunCompleteSummary: base.showRunCompleteSummary ?? fallback.showRunCompleteSummary,
             notes: base.notes ?? fallback.notes,
             pinnedRows: base.pinnedRows ?? fallback.pinnedRows,
             blackboardEntries: base.blackboardEntries ?? fallback.blackboardEntries,

@@ -148,6 +148,8 @@ interface SettingsPanelProps {
    * `formatCost.ts` before FX conversion. Optional because older
    * settings files won't have the key. */
   currencyOverestimatePercent?: number
+  /** Settings → General toggle for Task Complete / Final Summary cards. */
+  showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
   /**
    * 1.0.5-EW49 — Dashboard statistics preferences. Per-stat
    * show/hide map + a global "reset all" timestamp. See
@@ -256,6 +258,8 @@ interface SettingsPanelProps {
     currency?: 'USD' | 'GBP' | 'EUR'
     /** 1.0.5-EW34 — Conservative-overestimate bias percent (0–25). */
     currencyOverestimatePercent?: number
+    /** Settings → General toggle for Task Complete / Final Summary cards. */
+    showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
     /**
      * 1.0.5-EW49 — Per-stat visibility map / global "reset all"
      * timestamp. Patches merge into AppSettings; passing a
@@ -1617,6 +1621,7 @@ export function SettingsPanel({
   chatContextTurns,
   currency,
   currencyOverestimatePercent,
+  showRunCompleteSummary,
   dashboardStatPrefs,
   welcomeHeatmapPrefs,
   providerRunPauses,
@@ -3454,6 +3459,21 @@ export function SettingsPanel({
                   {(currencyOverestimatePercent ?? 0) > 0
                     ? `+${currencyOverestimatePercent ?? 0}% safety bias applied to all cost displays. Useful when you want the on-screen running total to safely over-shoot the real bill.`
                     : 'Optional. Multiplies every cost display by 1 + your chosen percent (0–25%) so the displayed running total is a safe upper bound rather than the literal billed amount. Defaults to 0 (no bias).'}
+                </p>
+              </div>
+
+              <div className="settings-group">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={showRunCompleteSummary !== false}
+                    onChange={(e) => onChange({ showRunCompleteSummary: e.target.checked })}
+                  />
+                  <span>Show Task Complete summary cards</span>
+                </label>
+                <p className="settings-hint">
+                  Controls the Final Summary / Task Complete section after a run finishes. Turning
+                  this off hides the completion card while keeping the transcript and run telemetry.
                 </p>
               </div>
 

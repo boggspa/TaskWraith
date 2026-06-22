@@ -89,6 +89,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'advancedFx',
   'currency',
   'currencyOverestimatePercent',
+  'showRunCompleteSummary',
   'modelUsagePanelView',
   'modelUsageExternalUsage',
   'dashboardStatPrefs',
@@ -925,6 +926,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       } else {
         delete sanitized.currencyOverestimatePercent
       }
+    }
+    if ('showRunCompleteSummary' in sanitized) {
+      const value = sanitized.showRunCompleteSummary
+      sanitized.showRunCompleteSummary = typeof value === 'boolean' ? value : Boolean(value)
     }
     if ('modelUsagePanelView' in sanitized) {
       const value = sanitized.modelUsagePanelView

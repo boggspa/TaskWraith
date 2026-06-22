@@ -37,6 +37,8 @@ export type SettingsPanelUpdate = {
   currency?: AppSettings['currency']
   /** 1.0.5-EW34 — Conservative-overestimate bias percent (0–25). */
   currencyOverestimatePercent?: AppSettings['currencyOverestimatePercent']
+  /** Settings → General toggle for Task Complete / Final Summary cards. */
+  showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
   /** Sidebar Model Usage card view ('plan' quota meters | 'spend' API cost). */
   modelUsagePanelView?: AppSettings['modelUsagePanelView']
   /** Settings → Model usage table "External Usage" toggle (provider-wide vs

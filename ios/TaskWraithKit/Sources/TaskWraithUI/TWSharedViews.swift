@@ -3349,6 +3349,7 @@ public struct ChangesAttachedRow: View {
 /// workspace name center, token/cost telemetry right.
 public struct TelemetryFooterRail: View {
     let run: RemoteThreadSnapshot.RunSummary?
+    let conversationCostText: String?
     let workspaceName: String?
     let activeGoal: RemoteActiveGoal?
     let onGoalUpdate: ((String, String?, String?) -> Void)?
@@ -3365,7 +3366,8 @@ public struct TelemetryFooterRail: View {
     @State private var railWidth: CGFloat = 0
 
     public init(
-        run: RemoteThreadSnapshot.RunSummary?, workspaceName: String?,
+        run: RemoteThreadSnapshot.RunSummary?, conversationCostText: String? = nil,
+        workspaceName: String?,
         workspaceOptions: [(id: String, name: String)] = [],
         primaryWorkspaceId: String? = nil,
         secondaryWorkspaceId: Binding<String?>? = nil,
@@ -3375,6 +3377,7 @@ public struct TelemetryFooterRail: View {
         planLanes: [RemoteTodoLane] = []
     ) {
         self.run = run
+        self.conversationCostText = conversationCostText
         self.workspaceName = workspaceName
         self.activeGoal = activeGoal
         self.onGoalUpdate = onGoalUpdate
@@ -3433,7 +3436,8 @@ public struct TelemetryFooterRail: View {
     }
 
     private var costTelemetryText: String? {
-        guard let cost = run?.costText?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let raw = conversationCostText ?? run?.costText
+        guard let cost = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
             !cost.isEmpty
         else { return nil }
         return cost
@@ -7685,6 +7689,7 @@ struct MiniThreadView: View {
             Rectangle().fill(TWTheme.border).frame(height: 1)
             TelemetryFooterRail(
                 run: snapshot?.runSummary,
+                conversationCostText: snapshot?.conversationCostText,
                 workspaceName: model.workspaceName(for: card.workspaceId),
                 activeGoal: card.activeGoal,
                 onGoalUpdate: { op, objective, reason in

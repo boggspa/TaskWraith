@@ -1236,6 +1236,9 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
     public let rows: [Row]?
     public let totalRows: Int?
     public let runSummary: RunSummary?
+    public let conversationCostUsd: Double?
+    public let conversationCostText: String?
+    public let showRunCompleteSummary: Bool?
     /// Thread notes (markdown, clipped Mac-side).
     public let notes: String?
     /// Pinned messages — may fall outside the latestN row window.
@@ -1256,6 +1259,9 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         rows: [Row]? = nil,
         totalRows: Int? = nil,
         runSummary: RunSummary? = nil,
+        conversationCostUsd: Double? = nil,
+        conversationCostText: String? = nil,
+        showRunCompleteSummary: Bool? = nil,
         notes: String? = nil,
         pinnedRows: [Row]? = nil,
         blackboardEntries: [BlackboardEntry]? = nil,
@@ -1271,6 +1277,9 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         self.rows = rows
         self.totalRows = totalRows
         self.runSummary = runSummary
+        self.conversationCostUsd = conversationCostUsd
+        self.conversationCostText = conversationCostText
+        self.showRunCompleteSummary = showRunCompleteSummary
         self.notes = notes
         self.pinnedRows = pinnedRows
         self.blackboardEntries = blackboardEntries
