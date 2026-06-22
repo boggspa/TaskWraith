@@ -654,6 +654,35 @@ describe('RemoteThreadProjection', () => {
       const snap = project({ kind: 'latestN', n: 1 }, [toolMsg])
       expect(snap.rows[0].toolSummary?.status).toBe('running')
     })
+
+    it('projects single-file diff summaries into iOS tool entries when top-level fields are absent', () => {
+      const toolMsg = msg(0, {
+        role: 'tool',
+        toolActivities: [
+          activity({
+            id: 'edit',
+            toolName: 'Edit',
+            displayName: 'Edit',
+            category: 'write',
+            diffSummary: {
+              source: 'result_diff',
+              confidence: 'estimated',
+              files: [{ path: 'src/app.ts', status: 'modified', additions: 2, deletions: 1 }]
+            }
+          })
+        ]
+      })
+
+      const snap = project({ kind: 'latestN', n: 1 }, [toolMsg])
+
+      expect(snap.rows[0].toolSummary?.tools?.[0]).toMatchObject({
+        toolName: 'Edit',
+        category: 'write',
+        file: 'src/app.ts',
+        additions: 2,
+        deletions: 1
+      })
+    })
   })
 
   describe('buildRunSummary', () => {

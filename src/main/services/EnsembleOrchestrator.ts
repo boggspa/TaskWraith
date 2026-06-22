@@ -62,7 +62,7 @@ import { concurrentLanesEnabled, concurrentWriteLanesEnabled } from '../featureG
 // recordUsage payload, so ensemble runs reach usage.json (wall-clock + heatmaps
 // + provider totals). Ensemble runs complete here, not via handleProviderExit.
 import { buildEnsembleUsageRecord } from '../ensembleUsageRecord'
-import { bridgeToolDiffStats } from '../bridge/BridgeToolDiffStats'
+import { bridgeResultDiffStats, bridgeToolDiffStats } from '../bridge/BridgeToolDiffStats'
 import {
   formatDiscordContextPromptAppendix,
   normalizeDiscordContextSnapshots,
@@ -550,6 +550,10 @@ const FILE_WRITE_TOOL_NAMES = new Set([
   'create_file',
   'apply_patch',
   'patch_file',
+  'edit',
+  'replace',
+  'write',
+  'patch',
   'str_replace',
   'str_replace_editor',
   'multiedit',
@@ -558,6 +562,75 @@ const FILE_WRITE_TOOL_NAMES = new Set([
   'fs_patch',
   'create_directory'
 ])
+
+function singleDiffFilePath(
+  diffSummary: ToolActivity['diffSummary'] | undefined
+): string | undefined {
+  const files = diffSummary?.files
+  if (!Array.isArray(files) || files.length !== 1) return undefined
+  const path = files[0]?.path
+  return typeof path === 'string' && path.trim() ? path : undefined
+}
+
+function normalizeToolDiffSummary(
+  summary: ToolActivity['diffSummary'] | undefined,
+  filePath: string | undefined
+): ToolActivity['diffSummary'] | undefined {
+  if (!summary) return undefined
+  const files =
+    Array.isArray(summary.files) && summary.files.length > 0
+      ? summary.files.map((file) => ({
+          ...file,
+          path: file.path || filePath
+        }))
+      : filePath
+        ? [
+            {
+              path: filePath,
+              status: 'modified' as const,
+              additions: summary.additions,
+              deletions: summary.deletions
+            }
+          ]
+        : undefined
+  return {
+    ...summary,
+    ...(files ? { files } : {}),
+    source: summary.source || ('unknown' as const),
+    confidence: summary.confidence || ('estimated' as const)
+  }
+}
+
+function mergeToolDiffSummaries(
+  existing: ToolActivity['diffSummary'] | undefined,
+  result: ToolActivity['diffSummary'] | undefined,
+  filePath: string | undefined
+): ToolActivity['diffSummary'] | undefined {
+  const normalizedExisting = normalizeToolDiffSummary(existing, filePath)
+  const normalizedResult = normalizeToolDiffSummary(result, filePath)
+  if (!normalizedExisting) return normalizedResult
+  if (!normalizedResult) return normalizedExisting
+  const existingHasCounts =
+    typeof normalizedExisting.additions === 'number' ||
+    typeof normalizedExisting.deletions === 'number'
+  const resultHasCounts =
+    typeof normalizedResult.additions === 'number' ||
+    typeof normalizedResult.deletions === 'number'
+  if (resultHasCounts && !existingHasCounts) {
+    return normalizedResult
+  }
+  if (
+    (!normalizedExisting.files || normalizedExisting.files.length === 0) &&
+    normalizedResult.files &&
+    normalizedResult.files.length > 0
+  ) {
+    return {
+      ...normalizedExisting,
+      files: normalizedResult.files
+    }
+  }
+  return normalizedExisting
+}
 
 /**
  * How many consecutive failed edits to the SAME file (with no successful
@@ -609,7 +682,8 @@ function buildEnsembleToolActivity(
   const toolKind = extractToolKind(event)
   const canonicalToolName = stripToolNamespace(toolName)
   const parameters = extractToolParameters(event)
-  const filePath =
+  const category = getEnsembleToolCategory(toolName, toolKind)
+  const parameterFilePath =
     typeof parameters.file_path === 'string'
       ? (parameters.file_path as string)
       : typeof parameters.path === 'string'
@@ -621,36 +695,32 @@ function buildEnsembleToolActivity(
   // undefined instead of seeding fake +0/-0 stats that suppress richer
   // renderer-side derivation on the activity row.
   const inputDiffSummary =
-    filePath && FILE_WRITE_TOOL_NAMES.has(canonicalToolName)
-      ? bridgeToolDiffStats(canonicalToolName, parameters)
-      : undefined
+    category === 'write' ? bridgeToolDiffStats(canonicalToolName, parameters) : undefined
+  const filePath = parameterFilePath || singleDiffFilePath(inputDiffSummary)
   const diffSummary =
-    filePath && FILE_WRITE_TOOL_NAMES.has(canonicalToolName)
-      ? {
-          ...inputDiffSummary,
-          files:
-            inputDiffSummary?.files && inputDiffSummary.files.length > 0
-              ? inputDiffSummary.files.map((file) => ({
-                  ...file,
-                  path: file.path || filePath
-                }))
-              : [
-                  {
-                    path: filePath,
-                    status: 'modified' as const,
-                    additions: inputDiffSummary?.additions,
-                    deletions: inputDiffSummary?.deletions
-                  }
-                ],
-          source: inputDiffSummary?.source || ('unknown' as const),
-          confidence: inputDiffSummary?.confidence || ('estimated' as const)
-        }
+    category === 'write'
+      ? normalizeToolDiffSummary(
+          inputDiffSummary ||
+            (filePath
+              ? {
+                  files: [
+                    {
+                      path: filePath,
+                      status: 'modified' as const
+                    }
+                  ],
+                  source: 'unknown' as const,
+                  confidence: 'estimated' as const
+                }
+              : undefined),
+          filePath
+        )
       : undefined
   return {
     id: extractToolId(event),
     toolName,
     displayName: getEnsembleToolDisplayName(toolName, parameters, participant),
-    category: getEnsembleToolCategory(toolName, toolKind),
+    category,
     status: 'running',
     startedAt,
     parameters,
@@ -682,12 +752,33 @@ function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: str
     status === 'success' && stripToolNamespace(activity.toolName) === 'ensemble_yield'
       ? activity.displayName.replace(/\byielding\b/i, 'yielded')
       : activity.displayName
+  const resultRecord =
+    event?.result && typeof event.result === 'object' && !Array.isArray(event.result)
+      ? (event.result as Record<string, unknown>)
+      : {}
+  const resultDiffSummary =
+    activity.category === 'write'
+      ? bridgeResultDiffStats({
+          toolName: stripToolNamespace(activity.toolName),
+          summary: output,
+          changes: event?.changes ?? resultRecord.changes,
+          kind: event?.kind ?? resultRecord.kind ?? activity.parameters?.kind
+        })
+      : undefined
+  const diffSummary = mergeToolDiffSummaries(
+    activity.diffSummary,
+    resultDiffSummary,
+    activity.filePath || singleDiffFilePath(resultDiffSummary)
+  )
+  const filePath = activity.filePath || singleDiffFilePath(diffSummary)
   return {
     ...activity,
     status,
     displayName,
     endedAt,
     durationMs,
+    ...(filePath ? { filePath } : {}),
+    ...(diffSummary ? { diffSummary } : {}),
     resultSummary: truncated,
     outputPreview: truncated,
     rawResultEvent: event

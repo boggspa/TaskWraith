@@ -821,6 +821,10 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
   else if (error > 0) status = 'error'
   else status = 'success'
   const tools: RemoteToolEntry[] = activities.slice(0, 12).map((activity) => {
+    const singleDiffFile =
+      Array.isArray(activity.diffSummary?.files) && activity.diffSummary.files.length === 1
+        ? activity.diffSummary.files[0]
+        : null
     const entry: RemoteToolEntry = {
       toolName: activity.toolName,
       name: activity.displayName || activity.toolName,
@@ -834,12 +838,18 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
     }
     if (typeof activity.filePath === 'string' && activity.filePath) {
       entry.file = activity.filePath
+    } else if (typeof singleDiffFile?.path === 'string' && singleDiffFile.path) {
+      entry.file = singleDiffFile.path
     }
     if (typeof activity.diffSummary?.additions === 'number') {
       entry.additions = activity.diffSummary.additions
+    } else if (typeof singleDiffFile?.additions === 'number') {
+      entry.additions = singleDiffFile.additions
     }
     if (typeof activity.diffSummary?.deletions === 'number') {
       entry.deletions = activity.diffSummary.deletions
+    } else if (typeof singleDiffFile?.deletions === 'number') {
+      entry.deletions = singleDiffFile.deletions
     }
     // Desktop parity: an edit card is one line — "Edited <file> +N −M" —
     // with no result text underneath. Write entries that carry ± chips

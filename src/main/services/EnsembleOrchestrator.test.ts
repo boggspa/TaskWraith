@@ -2370,6 +2370,66 @@ Next action:
     })
   })
 
+  it('derives result-side diffs for plain ensemble Edit tool activities', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Edit a file.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_use',
+      tool_id: 'edit-1',
+      tool_name: 'Edit',
+      tool_kind: 'edit',
+      parameters: { path: 'src/app.ts' }
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'tool_result',
+      tool_id: 'edit-1',
+      content: [
+        '--- a/src/app.ts',
+        '+++ b/src/app.ts',
+        '@@ -1,2 +1,3 @@',
+        '-old line',
+        '+new line',
+        '+another line'
+      ].join('\n')
+    })
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 10 }
+    })
+
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.filter(
+          (message) => message.role === 'tool' && message.metadata?.ensembleProvider === 'claude'
+        )
+      ).toHaveLength(1)
+    )
+    const activity = harness.chat.messages.find((message) => message.role === 'tool')
+      ?.toolActivities?.[0]
+    expect(activity).toMatchObject({
+      toolName: 'Edit',
+      category: 'write',
+      filePath: 'src/app.ts',
+      diffSummary: {
+        additions: 2,
+        deletions: 1,
+        source: 'result_diff',
+        files: [{ path: 'src/app.ts', additions: 2, deletions: 1 }]
+      }
+    })
+  })
+
   it('skipActiveParticipant returns false when no round is active', async () => {
     const harness = makeHarness()
     const skipped = await harness.orchestrator.skipActiveParticipant('ensemble-chat')
