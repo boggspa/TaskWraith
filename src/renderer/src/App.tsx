@@ -20172,7 +20172,9 @@ function App(): React.JSX.Element {
                     onOpen={(url) => {
                       void window.api.canvas
                         .openEmbedded({ url })
-                        .then((opened) => multiview.setPaneCanvas(emptyPaneIndex, opened.canvasId))
+                        .then((opened) => {
+                          if (opened.ok) multiview.setPaneCanvas(emptyPaneIndex, opened.canvasId)
+                        })
                         .catch(() => {})
                     }}
                   />

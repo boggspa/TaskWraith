@@ -248,7 +248,10 @@ describe('ProviderCapabilities', () => {
       'goal_read',
       'goal_update',
       'goal_complete',
-      'goal_blocked'
+      'goal_blocked',
+      'tw_recall_find',
+      'tw_recall_read',
+      'tw_recall_read_events'
     ])
     expect(contract.tools.mcpTools.state).toBe('gated')
     expect(contract.tools.mcpTools.enforcedByTaskWraith).toBe(true)
@@ -387,7 +390,10 @@ describe('ProviderCapabilities', () => {
       'goal_read',
       'goal_update',
       'goal_complete',
-      'goal_blocked'
+      'goal_blocked',
+      'tw_recall_find',
+      'tw_recall_read',
+      'tw_recall_read_events'
     ])
     expect(contract.tools.fileChanges.state).toBe('unavailable')
     expect(contract.tools.shellCommands.state).toBe('unavailable')

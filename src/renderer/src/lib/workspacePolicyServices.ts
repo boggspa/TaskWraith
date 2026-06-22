@@ -25,7 +25,11 @@ export const WORKSPACE_POLICY_SERVICE_LABELS: Record<AgenticServiceId, string> =
   // canvasEval is NON-GRANTABLE (RCE / signed-elevated), so it is deliberately
   // ABSENT from WORKSPACE_POLICY_SERVICES below — no per-workspace grant row. The
   // label still exists for audit/ledger rendering of canvasEval rows.
-  canvasEval: 'Canvas eval'
+  canvasEval: 'Canvas eval',
+  // crossThreadRead is granted via the approval prompt (expiring), not the
+  // per-workspace WORKSPACE_POLICY_SERVICES list below, so — like canvasEval —
+  // it is absent from that array; the label is kept for audit/ledger rendering.
+  crossThreadRead: 'Cross-thread read'
 }
 
 export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
@@ -35,7 +39,9 @@ export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
   subThreadDelegation: 'Spawn cross-provider sub-threads without asking again.',
   canvasInteraction: 'Click and fill elements in a Canvas preview without asking again.',
   // Non-grantable: shown for completeness only; canvas_eval always re-prompts.
-  canvasEval: 'Arbitrary eval in a Canvas preview always asks (cannot be pre-authorised).'
+  canvasEval: 'Arbitrary eval in a Canvas preview always asks (cannot be pre-authorised).',
+  crossThreadRead:
+    'Read how far past runs on other threads got. Same-workspace reads are automatic; cross-workspace reads always ask.'
 }
 
 export function getWorkspacePolicyServiceLabel(service: AgenticServiceId): string {

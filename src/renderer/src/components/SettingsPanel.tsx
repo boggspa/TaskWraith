@@ -1007,7 +1007,7 @@ function getMcpPolicyLabel(
   agenticServices: AgenticServicesSettings,
   policyKey: McpToolPolicyKey
 ): string {
-  const value = agenticServices[policyKey]
+  const value = agenticServices[policyKey] ?? ''
   if (policyKey === 'networkAccess') {
     return NETWORK_POLICY_OPTIONS.find((option) => option.value === value)?.label ?? value
   }

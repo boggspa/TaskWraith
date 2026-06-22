@@ -1378,7 +1378,10 @@ describe('ollamaNativeToolDefinitions', () => {
       'goal_read',
       'goal_update',
       'goal_complete',
-      'goal_blocked'
+      'goal_blocked',
+      'tw_recall_find',
+      'tw_recall_read',
+      'tw_recall_read_events'
     ])
     const webSearch = defs.find((def) => def.function.name === 'web_search')
     expect(webSearch?.type).toBe('function')
@@ -1435,7 +1438,10 @@ describe('Ollama tool tiers', () => {
       'goal_read',
       'goal_update',
       'goal_complete',
-      'goal_blocked'
+      'goal_blocked',
+      'tw_recall_find',
+      'tw_recall_read',
+      'tw_recall_read_events'
     ])
     expect(ollamaToolAllowedInTier('ask_user_question', 'read_only')).toBe(true)
     expect(ollamaToolAllowedInTier('goal_read', 'read_only')).toBe(true)
