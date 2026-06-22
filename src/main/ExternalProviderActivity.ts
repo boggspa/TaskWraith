@@ -1,8 +1,10 @@
 import { execFile } from 'child_process'
 import { createHash } from 'crypto'
+import { createReadStream } from 'fs'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import os from 'os'
+import { createInterface } from 'readline'
 import { app } from 'electron'
 import type { ProviderId, UsageRecord } from './store/types'
 import {
@@ -42,7 +44,6 @@ interface ExternalUsageEvent {
 const DEFAULT_LOOKBACK_DAYS = 90
 const MAX_FILES_PER_PROVIDER = 260
 const MAX_CODEX_SESSION_FILES = 2_400
-const MAX_CLAUDE_SESSION_FILES = 1_200
 const MAX_GEMINI_SESSION_FILES = 1_200
 const MAX_TEXT_BYTES = 8 * 1024 * 1024
 const MAX_EXPANDED_SESSION_TEXT_BYTES = 128 * 1024 * 1024
@@ -333,43 +334,57 @@ async function readClaudeActivity(homeDir: string, sinceMs: number): Promise<Ext
     root,
     (path) => path.endsWith('.jsonl'),
     sinceMs,
-    MAX_CLAUDE_SESSION_FILES
+    // Claude keeps one JSONL per session. A newest-file cap silently drops
+    // still-in-window high-token sessions once enough newer chats exist, which
+    // makes 90-day totals move backwards. Keep the time window, but do not
+    // pre-truncate source files for Claude.
+    null
   )
   const events: ExternalUsageEvent[] = []
   const seen = new Set<string>()
   for (const filePath of files) {
-    const text = await readTextTail(filePath, MAX_EXPANDED_SESSION_TEXT_BYTES)
-    let lineIndex = 0
-    for (const json of parseJsonLines(text)) {
-      lineIndex += 1
-      const timestamp = parseTimestamp(json?.timestamp)
-      if (!timestamp || timestamp < sinceMs) continue
-      const usage = json?.usage || json?.message?.usage
-      if (!usage || typeof usage !== 'object') continue
-      const inputTokens =
-        numberValue(usage.input_tokens) + numberValue(usage.input_audio_tokens)
-      const cacheReadInputTokens = numberValue(usage.cache_read_input_tokens)
-      const cacheCreationInputTokens = numberValue(usage.cache_creation_input_tokens)
-      const outputTokens = numberValue(usage.output_tokens) + numberValue(usage.output_audio_tokens)
-      const totalTokens = inputTokens + cacheReadInputTokens + cacheCreationInputTokens + outputTokens
-      if (totalTokens <= 0) continue
-      const messageId = String(json?.message?.id || '')
-      const requestId = String(json?.requestId || json?.request_id || '')
-      const dedupeKey = `${requestId}|${messageId}|${timestamp}|${totalTokens}`
-      if (seen.has(dedupeKey)) continue
-      seen.add(dedupeKey)
-      events.push({
-        provider: 'claude',
-        timestamp,
-        model: String(json?.message?.model || json?.model || 'Claude'),
-        inputTokens,
-        cacheReadInputTokens,
-        cacheCreationInputTokens,
-        outputTokens,
-        totalTokens,
-        sourceKey: `${filePath}:${lineIndex}`
-      })
+    try {
+      events.push(...(await readClaudeActivityFile(filePath, sinceMs, seen)))
+    } catch {
+      continue
     }
+  }
+  return events
+}
+
+async function readClaudeActivityFile(
+  filePath: string,
+  sinceMs: number,
+  seen: Set<string>
+): Promise<ExternalUsageEvent[]> {
+  const events: ExternalUsageEvent[] = []
+  for await (const { json, lineIndex } of parseJsonLineFile(filePath)) {
+    const timestamp = parseTimestamp(json?.timestamp)
+    if (!timestamp || timestamp < sinceMs) continue
+    const usage = json?.usage || json?.message?.usage
+    if (!usage || typeof usage !== 'object') continue
+    const inputTokens = numberValue(usage.input_tokens) + numberValue(usage.input_audio_tokens)
+    const cacheReadInputTokens = numberValue(usage.cache_read_input_tokens)
+    const cacheCreationInputTokens = numberValue(usage.cache_creation_input_tokens)
+    const outputTokens = numberValue(usage.output_tokens) + numberValue(usage.output_audio_tokens)
+    const totalTokens = inputTokens + cacheReadInputTokens + cacheCreationInputTokens + outputTokens
+    if (totalTokens <= 0) continue
+    const messageId = String(json?.message?.id || '')
+    const requestId = String(json?.requestId || json?.request_id || '')
+    const dedupeKey = `${requestId}|${messageId}|${timestamp}|${totalTokens}`
+    if (seen.has(dedupeKey)) continue
+    seen.add(dedupeKey)
+    events.push({
+      provider: 'claude',
+      timestamp,
+      model: String(json?.message?.model || json?.model || 'Claude'),
+      inputTokens,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+      outputTokens,
+      totalTokens,
+      sourceKey: `${filePath}:${lineIndex}`
+    })
   }
   return events
 }
@@ -569,7 +584,7 @@ async function collectFiles(
   root: string,
   accepts: (path: string) => boolean,
   sinceMs: number,
-  maxFiles: number = MAX_FILES_PER_PROVIDER
+  maxFiles: number | null = MAX_FILES_PER_PROVIDER
 ): Promise<string[]> {
   try {
     const rootStat = await fs.stat(root)
@@ -604,10 +619,8 @@ async function collectFiles(
       }
     }
   }
-  return files
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)
-    .slice(0, maxFiles)
-    .map((file) => file.path)
+  const sorted = files.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  return (maxFiles === null ? sorted : sorted.slice(0, maxFiles)).map((file) => file.path)
 }
 
 async function readTextTail(filePath: string, maxBytes = MAX_TEXT_BYTES): Promise<string> {
@@ -641,6 +654,29 @@ function parseJsonLines(text: string): any[] {
     }
   }
   return parsed
+}
+
+async function* parseJsonLineFile(
+  filePath: string
+): AsyncGenerator<{ json: any; lineIndex: number }> {
+  const input = createReadStream(filePath, { encoding: 'utf8' })
+  const lines = createInterface({ input, crlfDelay: Infinity })
+  let lineIndex = 0
+  try {
+    for await (const line of lines) {
+      lineIndex += 1
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('{$set')) continue
+      try {
+        yield { json: JSON.parse(trimmed), lineIndex }
+      } catch {
+        continue
+      }
+    }
+  } finally {
+    lines.close()
+    input.destroy()
+  }
 }
 
 function parseGeminiSessionEntries(text: string): Array<{ json: any; sourceIndex: number }> {
