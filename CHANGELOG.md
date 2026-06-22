@@ -4,7 +4,7 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
-## 1.6.0 - Unreleased
+## 1.6.0 - 2026-06-22
 
 ### Added
 - **Multiview — split the workbench into up to four live panes.** Open several
@@ -31,6 +31,45 @@ history, and workspace state stay on your machine throughout.
   creation. Also new on iOS: a Workflows section, an iPad sidebar that opens
   collapsed to headers, a live "still working" anchor during tool calls, and
   attached images that render inline in the transcript.
+- **Ollama local models — per-chat tool tiers, run profiles, and Cloud
+  sign-in.** A two-pane composer picker sets how much tool access a local model
+  gets per chat (a four-step tier ladder, Tier 4 = full provider parity) with an
+  independent run profile; the run path and mid-run tool gates honor the per-chat
+  tier, and the chip warns when a Tier 4 selection can't take effect. You can
+  also sign in to Ollama's hosted Cloud models from the provider login terminal,
+  Settings → Providers, and onboarding.
+- **TaskWraith Canvas — a live web surface agents can see and drive.** A
+  read-only preview surface, then ref-based click / fill and Set-of-Mark
+  annotation, plus signed-elevated evaluation behind a dedicated, non-grantable
+  approval lockbox. Open it as a floating window or an embedded multiview pane
+  from the composer; read-only Canvas previews project to paired iPhones with
+  close / reload controls, and an iOS-simulator device driver can drive a
+  screenshot-only canvas.
+- **Multi-host iOS pairing.** One iPhone can pair with several Macs or PCs —
+  per-host session management and per-OS host glyphs — plus optional Tailscale
+  tailnet discovery and on-demand pairing.
+- **Settings → Roster, plus a dedicated iOS Roster page.** A full
+  ensemble-roster preset manager: per-participant provider, model, reasoning,
+  permissions, role, brief, and turn order, with orchestration controls and
+  cross-device preset load / save / delete on iOS.
+- **App icon switcher.** Choose between Regular, WWDC26, Monoline, and Glass app
+  icons from Settings → Appearance (the desktop dock) and the iOS Settings sheet.
+- **Proposed plans.** An agent can propose a structured plan that appears as an
+  inline card you approve before it implements — and the approve / respond /
+  dismiss round-trip works from paired iPhones too.
+- **Cross-thread recall.** An agent can resolve a vague reference to a past run
+  on another thread and read how far it got, through gated tools: zero-prompt for
+  your own workspace, gated across workspaces, allowlist-scoped from a phone, and
+  with verifiable citations.
+- **Inline transcript media.** Provider image outputs, tool image results, and
+  workspace images embedded in markdown become first-class transcript media with
+  full-size preview, and project to iOS.
+- **Run and launch targets.** Discover and run VS Code shell tasks and Xcode run
+  targets, and open previews straight from launch-output URLs, with launch
+  attempts surfaced in the run rail.
+- **Inline questions + an iOS first-launch guide.** `ask_user_question` renders
+  as an inline transcript card on desktop and iOS, and a new iOS first-launch
+  guide mirrors the desktop onboarding with live provider readiness from your Mac.
 
 ### Changed
 - **Gemini has been retired.** Google ended the Gemini CLI sign-in, so Gemini is
@@ -48,6 +87,12 @@ history, and workspace state stay on your machine throughout.
   shells; the iOS Pair-with-Mac screen was rebuilt in TaskWraith chrome;
   re-visiting a chat reuses its cached hydrated state to skip a redundant render;
   and iOS streaming auto-follow is smoother.
+- **Automatic provider failover (opt-in).** When a provider hits a quota wall,
+  TaskWraith can pause and reroute the run to a healthy provider without
+  escalating its permissions. Off by default, behind a setting.
+- **Settings, reorganised.** A more discoverable settings sidebar and a safety
+  overview on desktop and iOS, and the Tailscale remote-access helper now sits
+  above Bridge networking on the pairing screen.
 
 ### Fixed
 - **iOS image attachments work end to end.** Attached photos now reach the agent
@@ -62,6 +107,13 @@ history, and workspace state stay on your machine throughout.
   field, the jump-to-latest pill stops sticking, long markdown list/quote items
   wrap instead of truncating, and demo mode can't contaminate a real paired
   session.
+- **iOS no longer gets stuck "running" after backgrounding.** A run that finishes
+  while the app is backgrounded now reconciles its streaming state on reconnect,
+  so the thread leaves the running state and shows the final message.
+- **Read-only Grok seats can't hard-cancel a run.** The Composer `Shell` tool is
+  denied on read-only seats instead of cancelling the whole run.
+- **Clearer activity diffs.** Inline tool-diff add / delete lines read as red and
+  green through theme-aware tokens.
 
 ## 1.5.9 - 2026-06-18
 
