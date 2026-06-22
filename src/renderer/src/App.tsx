@@ -1,7 +1,8 @@
 import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
-import { resolveAssistantDeltaMerge } from './lib/assistantDeltaMerge'
+import { applyAssistantDelta } from './lib/applyAssistantDelta'
+import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
@@ -7390,52 +7391,27 @@ function App(): React.JSX.Element {
     // Those chats' content is being written directly to the ref by
     // the streaming hot path, and that ref content is strictly more
     // up-to-date than any React-state-derived snapshot.
-    const next = new Map<string, ChatRecord>()
-    chats.forEach((chat) => {
-      const existing = chatByIdRef.current.get(chat.appChatId)
-      next.set(
-        chat.appChatId,
-        existing && !isChatSummaryRecord(existing) && isChatSummaryRecord(chat) ? existing : chat
-      )
+    // Extracted to lib/reconcileChatRefMap (pure + unit-tested). The
+    // preserve set is built from the EARLY-set activeRunChatIdRef (which
+    // closes the run-start "Phase K" gap — the activeRuns registry entry is
+    // written ~790 lines later at activeRunsRef.set, so for the first part
+    // of a run this ref is the only guard), the activeRuns registry by
+    // chatId, and the recently-completed window. Full rationale + the
+    // token-drop regression tests live in that module and its *.test.ts.
+    const activeRunChatIds = new Set<string>()
+    for (const ctx of activeRunsRef.current.values()) {
+      activeRunChatIds.add(ctx.chatId)
+    }
+    chatByIdRef.current = reconcileChatRefMap({
+      chats,
+      currentChat,
+      prev: chatByIdRef.current,
+      activeRunChatId: activeRunChatIdRef.current,
+      activeRunChatIds,
+      recentlyCompleted: recentlyCompletedChatIdsRef.current,
+      now: Date.now(),
+      recentlyCompletedWindowMs: RECENTLY_COMPLETED_WINDOW_MS
     })
-    if (currentChat?.appChatId) {
-      next.set(currentChat.appChatId, currentChat)
-    }
-    const now = Date.now()
-    for (const [chatId, liveEntry] of chatByIdRef.current.entries()) {
-      let preserve = false
-      // Phase K-followup — H1 garbling fix. activeRunsRef.set() lives
-      // ~520 lines after the initial setChats() in runChat. A delta
-      // arriving in that window triggers this effect with no entry
-      // yet in activeRunsRef, so preserve=false → the live ref
-      // (carrying partial streaming content) gets clobbered by the
-      // React snapshot (which doesn't yet have the streaming content
-      // either). Consequence: tokens that arrived between the
-      // initial setChats and the activeRunsRef.set are lost.
-      // The early-set activeRunChatIdRef closes the gap — it's
-      // populated at line 8845, BEFORE the initial setChats call.
-      if (activeRunChatIdRef.current === chatId) {
-        preserve = true
-      }
-      if (!preserve) {
-        for (const ctx of activeRunsRef.current.values()) {
-          if (ctx.chatId === chatId) {
-            preserve = true
-            break
-          }
-        }
-      }
-      if (!preserve) {
-        const completedAt = recentlyCompletedChatIdsRef.current.get(chatId)
-        if (completedAt !== undefined && now - completedAt < RECENTLY_COMPLETED_WINDOW_MS) {
-          preserve = true
-        }
-      }
-      if (preserve) {
-        next.set(chatId, liveEntry)
-      }
-    }
-    chatByIdRef.current = next
   }, [chats, currentChat])
 
   useEffect(() => {
@@ -9909,22 +9885,11 @@ function App(): React.JSX.Element {
             // the first bubble of the turn, which pulled prose up out of its
             // position and left the tail a tool message — so every tool
             // burst coalesced into one ActivityStack rendered above the text.
-            const deltaTarget = resolveAssistantDeltaTarget(updated.messages, {
-              incoming: event.content,
-              cumulative: event.cumulative === true
-            })
-            // Phase K2 (b) — merge-with-separator. When Codex emits a new
-            // `agentMessage` item within the same turn (different `itemId`
-            // than the message we're streaming into), the deltas would
-            // otherwise concatenate seamlessly and the body + summary
-            // would visually merge into one continuous paragraph. We
-            // insert a horizontal-rule separator at the item boundary so
-            // the user can SEE where one item ended and the next began,
-            // without the larger UX shift of splitting into two bubbles
-            // (parked as Phase K3 if it ever becomes worth the change).
             const incomingItemId = (event as { itemId?: unknown }).itemId
             const incomingItemIdStr =
               typeof incomingItemId === 'string' && incomingItemId ? incomingItemId : undefined
+            // Ollama stamps the streaming bubble with its provider model so the
+            // transcript can show which local model produced the text.
             const providerModelMetadata =
               effectiveRunProvider === 'ollama'
                 ? (() => {
@@ -9945,112 +9910,20 @@ function App(): React.JSX.Element {
                     }
                   })()
                 : undefined
-            const mergeAssistantMetadata = (
-              base: ChatMessage['metadata'] | undefined
-            ): ChatMessage['metadata'] | undefined => {
-              const next = {
-                ...(base ?? {}),
-                ...(incomingItemIdStr ? { codexItemId: incomingItemIdStr } : {}),
-                ...(providerModelMetadata ?? {})
-              }
-              return Object.keys(next).length > 0 ? next : undefined
-            }
-            // Apply the routing decision. `merge`/`append` are the original
-            // genuine-increment + same-bubble-restatement paths (unchanged).
-            // `skip`/`appendText`/`replaceText` handle a cumulative
-            // restatement that SPANS a tool boundary: only its post-tool tail
-            // is placed (new bubble below the tool, or the trailing post-burst
-            // bubble), never the whole turn — that was the Cursor-clump /
-            // Claude-duplication regression.
-            if (deltaTarget.action === 'skip') {
-              // Restatement already covered by the rendered turn — no-op.
-            } else if (deltaTarget.action === 'appendText') {
-              const metadata = mergeAssistantMetadata(undefined)
-              updated.messages = [
-                ...updated.messages,
-                {
-                  id: createMessageId(),
-                  role: 'assistant',
-                  content: deltaTarget.text,
-                  timestamp: new Date().toISOString(),
-                  ...(metadata ? { metadata } : {})
-                }
-              ]
-            } else if (deltaTarget.action === 'replaceText') {
-              const idx = deltaTarget.index
-              const target = updated.messages[idx]
-              if (target) {
-                const nextMetadata = mergeAssistantMetadata(target.metadata)
-                updated.messages = [
-                  ...updated.messages.slice(0, idx),
-                  {
-                    ...target,
-                    content: deltaTarget.text,
-                    ...(nextMetadata ? { metadata: nextMetadata } : {})
-                  },
-                  ...updated.messages.slice(idx + 1)
-                ]
-              }
-            } else if (deltaTarget.action === 'merge') {
-              // 1.0.6 dup-fix — idempotent merge into the trailing assistant
-              // bubble. Claude (a cumulative envelope tagged by main) and
-              // Cursor (full snapshot frames) can deliver the WHOLE bubble
-              // again; a blind append would double it, so decide append vs
-              // replace vs skip. Genuine increments + new Codex items append.
-              const idx = deltaTarget.index
-              const target = updated.messages[idx]
-              const merge = resolveAssistantDeltaMerge(target.content, event.content, {
-                cumulative: event.cumulative === true
-              })
-              if (merge.action === 'skip') {
-                // Stale/duplicate re-statement we already render — untouched.
-              } else if (merge.action === 'replace') {
-                const nextMetadata = mergeAssistantMetadata(target.metadata)
-                updated.messages = [
-                  ...updated.messages.slice(0, idx),
-                  {
-                    ...target,
-                    content: merge.content,
-                    ...(nextMetadata ? { metadata: nextMetadata } : {})
-                  },
-                  ...updated.messages.slice(idx + 1)
-                ]
-              } else {
-                const lastItemId =
-                  typeof target.metadata?.codexItemId === 'string'
-                    ? target.metadata.codexItemId
-                    : undefined
-                const itemTransition =
-                  incomingItemIdStr !== undefined &&
-                  lastItemId !== undefined &&
-                  incomingItemIdStr !== lastItemId &&
-                  target.content.length > 0
-                const separator = itemTransition ? '\n\n---\n\n' : ''
-                const nextMetadata = mergeAssistantMetadata(target.metadata)
-                updated.messages = [
-                  ...updated.messages.slice(0, idx),
-                  {
-                    ...target,
-                    content: target.content + separator + event.content,
-                    ...(nextMetadata ? { metadata: nextMetadata } : {})
-                  },
-                  ...updated.messages.slice(idx + 1)
-                ]
-              }
-            } else {
-              // action === 'append' — open a fresh bubble with the incoming.
-              const metadata = mergeAssistantMetadata(undefined)
-              updated.messages = [
-                ...updated.messages,
-                {
-                  id: createMessageId(),
-                  role: 'assistant',
-                  content: event.content,
-                  timestamp: new Date().toISOString(),
-                  ...(metadata ? { metadata } : {})
-                }
-              ]
-            }
+            // Interleaving-preserving routing, idempotent increment-vs-
+            // restatement merge, and Codex item separators all live in
+            // lib/applyAssistantDelta (pure + unit-tested). It returns a new
+            // messages array; the ref write-back happens in updateChatById.
+            updated.messages = applyAssistantDelta(
+              updated.messages,
+              {
+                incoming: event.content,
+                cumulative: event.cumulative === true,
+                itemId: incomingItemIdStr,
+                providerModelMetadata
+              },
+              { createMessageId, now: () => new Date().toISOString() }
+            )
           } else if (event.type === 'assistant_media_refs') {
             if (updated.chatKind === 'ensemble') {
               return updated
