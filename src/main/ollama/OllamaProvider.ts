@@ -1433,7 +1433,7 @@ function shouldHoldOllamaContentForPublicStream(input: {
   return looksLikeOllamaToolIntent(trimmed, input.availableToolNames)
 }
 
-function shouldReleaseOllamaContentDelta(input: {
+export function shouldReleaseOllamaContentDelta(input: {
   content: string
   pending: string
   streamed: string
@@ -1452,11 +1452,18 @@ function shouldReleaseOllamaContentDelta(input: {
     return false
   }
   if (!input.toolProtocolEnabled) return true
-  const totalVisibleLength = input.streamed.length + input.pending.length
-  // In tool-capable turns, wait for enough prose to classify it as ordinary
-  // assistant text before exposing it. This keeps fallback JSON/tool stubs from
-  // flashing into the transcript while still letting normal pre-tool prose flow.
-  return totalVisibleLength >= 24 || /[.!?\n]\s*$/.test(input.content)
+  // Tool-capable turn: gate ONLY the first exposure so a fallback JSON/tool
+  // stub can't flash. The hold-guard above already vets the cumulative content
+  // on every chunk; once prose has begun streaming (streamed non-empty) the
+  // turn is classified as ordinary assistant text, so release per token.
+  // Otherwise the gate re-buffers ~24 chars after every short sentence (the
+  // threshold is relative to total visible length, which a short `streamed`
+  // keeps resetting) — the source of Ollama's uniquely choppy cadence in
+  // tool turns.
+  if (input.streamed.length > 0) return true
+  // First exposure (streamed empty): require enough prose, or a sentence end,
+  // before showing anything.
+  return input.pending.length >= 24 || /[.!?\n]\s*$/.test(input.content)
 }
 
 function shouldReleaseOllamaThinkingUpdate(input: {

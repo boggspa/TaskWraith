@@ -35,6 +35,7 @@ import {
   runOllamaProvider,
   resolveOllamaVisibleText,
   shouldEmitOllamaReasoning,
+  shouldReleaseOllamaContentDelta,
   unwrapOllamaStructuredResponseText,
   accumulateOllamaUsageStats,
   ollamaUsageStats,
@@ -1616,5 +1617,106 @@ describe('repeated-tool-call guard', () => {
     const nudge = ollamaRepeatedToolCallNudge('read_file')
     expect(nudge).toContain('read_file')
     expect(nudge).toContain('Do NOT call it again')
+  })
+})
+
+describe('shouldReleaseOllamaContentDelta — streaming cadence gate', () => {
+  const base = {
+    jsonToolFallback: false,
+    toolProtocolEnabled: false,
+    availableToolNames: ['read_file', 'edit_file']
+  }
+
+  it('never releases an empty pending buffer', () => {
+    expect(
+      shouldReleaseOllamaContentDelta({ ...base, content: 'hi', pending: '', streamed: '' })
+    ).toBe(false)
+  })
+
+  it('never releases while the json/tool fallback is active', () => {
+    expect(
+      shouldReleaseOllamaContentDelta({
+        ...base,
+        jsonToolFallback: true,
+        content: 'plain prose here',
+        pending: 'plain prose here',
+        streamed: ''
+      })
+    ).toBe(false)
+  })
+
+  it('releases immediately in a non-tool turn (no length gate)', () => {
+    expect(
+      shouldReleaseOllamaContentDelta({
+        ...base,
+        content: 'Hello there friend',
+        pending: 'Hello there friend',
+        streamed: ''
+      })
+    ).toBe(true)
+  })
+
+  it('holds the FIRST exposure in a tool turn until enough prose', () => {
+    expect(
+      shouldReleaseOllamaContentDelta({
+        ...base,
+        toolProtocolEnabled: true,
+        content: 'short',
+        pending: 'short',
+        streamed: ''
+      })
+    ).toBe(false)
+  })
+
+  it('releases the first exposure once it reaches 24 chars of prose', () => {
+    const text = 'This is ordinary prose text' // 27 chars, no trailing punctuation
+    expect(
+      shouldReleaseOllamaContentDelta({
+        ...base,
+        toolProtocolEnabled: true,
+        content: text,
+        pending: text,
+        streamed: ''
+      })
+    ).toBe(true)
+  })
+
+  it('releases a short first exposure when it ends a sentence', () => {
+    expect(
+      shouldReleaseOllamaContentDelta({
+        ...base,
+        toolProtocolEnabled: true,
+        content: 'Hi.',
+        pending: 'Hi.',
+        streamed: ''
+      })
+    ).toBe(true)
+  })
+
+  it('still holds a leading tool/JSON stub even past 24 chars (hold-guard intact)', () => {
+    const stub = '{"name":"read_file","arguments":{}}'
+    expect(
+      shouldReleaseOllamaContentDelta({
+        ...base,
+        toolProtocolEnabled: true,
+        content: stub,
+        pending: stub,
+        streamed: ''
+      })
+    ).toBe(false)
+  })
+
+  it('FIX: releases per token once prose is already streaming (no re-buffer after a short sentence)', () => {
+    // streamed already holds a released short sentence; a 3-char token would
+    // previously be re-buffered until total >= 24. It must now release per token.
+    expect(
+      shouldReleaseOllamaContentDelta({
+        ...base,
+        toolProtocolEnabled: true,
+        content: 'Sure, here you go. Now',
+        pending: 'Now',
+        streamed: 'Sure, here you go. '
+      })
+    ).toBe(true)
   })
 })
