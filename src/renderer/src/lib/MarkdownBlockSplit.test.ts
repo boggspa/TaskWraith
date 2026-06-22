@@ -154,4 +154,23 @@ describe('splitMarkdownIntoBlocks', () => {
     expect(a.stable.map((c) => c.id)).toEqual(b.stable.map((c) => c.id))
     expect(a.tail?.id ?? null).toBe(b.tail?.id ?? null)
   })
+
+  it('stable.length (the tail key) is constant within a block and grows only on commit', () => {
+    // MarkdownMessage keys the streaming tail by `tail-${stable.length}` so
+    // the tail re-renders IN PLACE while one block grows (key unchanged) and
+    // only remounts when a block commits (key changes). Lock that progression.
+    const len = (c: string) => splitMarkdownIntoBlocks(c).stable.length
+    // Intra-block growth of the first paragraph → stable.length stays 0.
+    expect(len('Hel')).toBe(0)
+    expect(len('Hello')).toBe(0)
+    expect(len('Hello wor')).toBe(0)
+    // Blank-line commit → stable.length increments; a fresh tail begins.
+    expect(len('Hello world\n\nN')).toBe(1)
+    // Second block grows in place → stable.length stays 1.
+    expect(len('Hello world\n\nNext par')).toBe(1)
+    // An open code fence is the tail (not yet committed) → still 1.
+    expect(len('Hello world\n\n```ts\nx')).toBe(1)
+    // A closed fence is a commit boundary → stable.length increments.
+    expect(len('Hello world\n\n```ts\nx\n```\n\nafter')).toBe(2)
+  })
 })

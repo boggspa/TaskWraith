@@ -21,11 +21,16 @@ interface MarkdownMessageProps {
  *      so a parent re-render driven by `assistant_message_delta` only
  *      diffs the tail.
  *   3. The tail is rendered through the same memoised component, keyed
- *      by `tail-<content-hash>` (the index portion is the literal
- *      string "tail" to avoid colliding with the highest stable
- *      index). Its hash changes per keystroke — React unmounts the
- *      old tail and mounts a new one. The stable prefix survives
- *      unchanged.
+ *      by `tail-<stable.length>` (the "tail" prefix avoids colliding
+ *      with the numeric stable-index keys). The key changes ONLY when a
+ *      block commits to the stable prefix (stable.length grows), so
+ *      across the deltas that grow a single block the tail re-renders
+ *      IN PLACE instead of unmount/remount. That lets a streaming code
+ *      fence reuse its CodeMirror EditorView (a cheap per-delta doc
+ *      transaction) instead of destroying + recreating the whole view
+ *      every keystroke. The stable prefix survives unchanged.
+ *      (Was `tail-<content-hash>`, which rolled every keystroke and
+ *      forced a full remount of the tail subtree per delta.)
  *
  * Position-aware keys (the `<index>-` prefix) fix a class of bugs where
  * two blocks within the SAME message share identical raw content —
@@ -59,7 +64,7 @@ export function MarkdownMessage({ content, chat }: MarkdownMessageProps) {
         {stable.map((block, index) => (
           <StableMarkdownBlock key={`${index}-${block.id}`} raw={block.raw} />
         ))}
-        {tail ? <StableMarkdownBlock key={`tail-${tail.id}`} raw={tail.raw} /> : null}
+        {tail ? <StableMarkdownBlock key={`tail-${stable.length}`} raw={tail.raw} /> : null}
       </div>
     </AgentIdentityContext.Provider>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { EditorView } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
@@ -153,6 +153,24 @@ export function HighlightedCodeBlock({ content, language }: HighlightedCodeBlock
   //     the event and the resulting re-pin do not feed back.
   const containerRef = useRef<HTMLDivElement | null>(null)
 
+  // Memoize the extension set on `language` only. @uiw/react-codemirror
+  // treats a new `extensions` array reference as a reconfigure
+  // (StateEffect.reconfigure.of(...)), so passing a fresh array literal on
+  // every render fires a full reconfigure on every streamed delta. With the
+  // stable tail key (MarkdownMessage), that reconfigure would become the
+  // dominant per-delta cost for a streaming code fence. The content updates
+  // cheaply through the `value` prop (a doc transaction on the reused view);
+  // the extensions only change when the language changes.
+  const extensions = useMemo<Extension[]>(
+    () => [
+      chatCodeTheme,
+      syntaxHighlighting(chatHighlightStyle),
+      EditorView.lineWrapping,
+      ...extensionsForLanguage(language)
+    ],
+    [language]
+  )
+
   useEffect(() => {
     const node = containerRef.current
     if (!node) return
@@ -182,12 +200,7 @@ export function HighlightedCodeBlock({ content, language }: HighlightedCodeBlock
         basicSetup={false}
         editable={false}
         readOnly
-        extensions={[
-          chatCodeTheme,
-          syntaxHighlighting(chatHighlightStyle),
-          EditorView.lineWrapping,
-          ...extensionsForLanguage(language)
-        ]}
+        extensions={extensions}
       />
     </div>
   )
