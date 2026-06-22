@@ -56,6 +56,10 @@ import TaskWraithKit
         /// Bridges the composer's focus state (was `@FocusState`) to the text
         /// view's first-responder status, both directions.
         @Binding var focused: Bool
+        /// Ensemble participants used to resolve @mention tokens to a provider hue
+        /// (empty = no tinting). Same resolution the transcript uses, so composer
+        /// and transcript colour identical tokens identically.
+        var participants: [RemoteEnsembleState.Participant] = []
         var font: UIFont
         var textColor: Color
         var placeholderColor: Color
@@ -119,6 +123,7 @@ import TaskWraithKit
 
             textView.text = text
             placeholderLabel.isHidden = !text.isEmpty
+            refreshHighlight(textView, coordinator: context.coordinator)
             return textView
         }
 
@@ -154,6 +159,11 @@ import TaskWraithKit
             placeholderLabel?.textColor = UIColor(placeholderColor)
             placeholderLabel?.isHidden = !textView.text.isEmpty
             textView.accessibilityLabel = placeholder
+
+            // Re-tint @mentions when the resolved ranges / shell style changed.
+            // Runs before the scroll measure so the cap sees the emphasised text;
+            // preserves the caret and resets typingAttributes.
+            refreshHighlight(textView, coordinator: context.coordinator)
 
             // Scroll only once content exceeds the visible-line cap; otherwise the
             // view hugs its content and `sizeThatFits` drives the frame height. Skip
@@ -208,6 +218,92 @@ import TaskWraithKit
             return CGSize(width: width, height: height)
         }
 
+        /// Re-tint @mentions, but ONLY when the resolved ranges or shell style
+        /// changed since the last apply. Ordinary keystrokes don't change the mention
+        /// set, so they skip the rebuild — important because re-installing
+        /// `attributedText` on every keystroke tears down iOS's live autocorrect /
+        /// predictive session and the double-space-period shortcut. IME-safe.
+        @MainActor
+        func refreshHighlight(_ textView: UITextView, coordinator: Coordinator) {
+            guard textView.markedTextRange == nil else { return }  // don't disturb IME
+            let plain = textView.text ?? ""
+            let ranges: [TWMentionRange] =
+                (participants.isEmpty || plain.isEmpty)
+                ? [] : twMentionRanges(in: plain, participants: participants)
+            let signature = highlightSignature(plain: plain, ranges: ranges)
+            guard signature != coordinator.lastHighlightSignature else { return }
+            applyHighlight(to: textView, ranges: ranges)
+            coordinator.lastHighlightSignature = signature
+        }
+
+        /// Signature of everything that affects the rendered tint: shell font + text
+        /// colour, and per resolved mention its range + accent + matched token text.
+        /// Deliberately EXCLUDES the raw text, so appending plain text (the common
+        /// case) leaves it stable and skips the rebuild; the token text is included
+        /// so swapping one mention for a same-length one still re-tints. Including the
+        /// accent also re-tints when the theme accent (chroma1 / @user) changes.
+        private func highlightSignature(plain: String, ranges: [TWMentionRange]) -> String {
+            var parts: [String] = [
+                font.fontName, "\(font.pointSize)", UIColor(textColor).description,
+            ]
+            let ns = plain as NSString
+            for range in ranges {
+                let token =
+                    (range.location >= 0 && range.location + range.length <= ns.length)
+                    ? ns.substring(with: NSRange(location: range.location, length: range.length))
+                    : ""
+                parts.append(
+                    "\(range.location):\(range.length):\(UIColor(range.accent).description):\(token)")
+            }
+            return parts.joined(separator: "\u{1}")
+        }
+
+        /// Build + install the attributed text from pre-resolved ranges. UTF-16
+        /// (NSRange) locations from `twMentionRanges` drop straight into
+        /// NSAttributedString. Selection-preserving; resets typingAttributes so text
+        /// typed AFTER a mention is not tinted/bold; keeps the caret on-screen.
+        @MainActor
+        func applyHighlight(to textView: UITextView, ranges: [TWMentionRange]) {
+            let plain = textView.text ?? ""
+            let base: [NSAttributedString.Key: Any] = [
+                .font: font, .foregroundColor: UIColor(textColor),
+            ]
+            let attributed = NSMutableAttributedString(string: plain, attributes: base)
+            let emphasis = emphasisFont(font)
+            let full = attributed.length
+            for range in ranges {
+                guard range.location >= 0, range.length > 0,
+                    range.location + range.length <= full
+                else { continue }
+                attributed.addAttributes(
+                    [.font: emphasis, .foregroundColor: UIColor(range.accent)],
+                    range: NSRange(location: range.location, length: range.length))
+            }
+            let selected = textView.selectedRange
+            textView.attributedText = attributed
+            let length = attributed.length
+            let location = min(selected.location, length)
+            textView.selectedRange = NSRange(
+                location: location, length: min(selected.length, length - location))
+            textView.typingAttributes = base
+            // A re-tint may have re-laid-out a scrolled (2-line) field — keep the
+            // caret visible.
+            if textView.isScrollEnabled, textView.isFirstResponder {
+                textView.scrollRangeToVisible(textView.selectedRange)
+            }
+        }
+
+        /// A SEMIBOLD variant of the shell font for mention tokens — matches the
+        /// transcript's `.semibold` weight while keeping the shell's design
+        /// (mono/serif). UIFont falls back to the nearest available face if a given
+        /// design lacks semibold, so the colour stays the guaranteed signal.
+        private func emphasisFont(_ base: UIFont) -> UIFont {
+            let descriptor = base.fontDescriptor.addingAttributes([
+                .traits: [UIFontDescriptor.TraitKey.weight: UIFont.Weight.semibold]
+            ])
+            return UIFont(descriptor: descriptor, size: base.pointSize)
+        }
+
         final class Coordinator: NSObject, UITextViewDelegate {
             var parent: MentionTextView
             weak var placeholderLabel: UILabel?
@@ -215,6 +311,10 @@ import TaskWraithKit
             // changes — Dynamic Type / shell font-design swaps invalidate it).
             private var cachedFont: UIFont?
             private var cachedLineHeight: CGFloat = 0
+            /// Last tint signature applied (see MentionTextView.highlightSignature)
+            /// so make/update/typing skip rebuilding the attributed text unless the
+            /// resolved mentions or shell style actually changed.
+            var lastHighlightSignature: String = "\u{0}"
 
             init(_ parent: MentionTextView) { self.parent = parent }
 
@@ -253,6 +353,9 @@ import TaskWraithKit
                 // committed characters.
                 guard textView.markedTextRange == nil else { return }
                 if parent.text != textView.text { parent.text = textView.text }
+                // Re-tint live so a just-completed @mention colours immediately
+                // (no-op when the mention set is unchanged — see refreshHighlight).
+                parent.refreshHighlight(textView, coordinator: self)
             }
 
             func textViewDidBeginEditing(_ textView: UITextView) {

@@ -423,6 +423,7 @@ struct Composer: View {
             MentionTextView(
                 text: $text,
                 focused: $inputFocused,
+                participants: model.ensembleStates[card.id]?.participants ?? [],
                 font: twUIComposerFont(shell.fontDesign),
                 textColor: shell.palette.textPrimary,
                 placeholderColor: shell.palette.placeholder,
