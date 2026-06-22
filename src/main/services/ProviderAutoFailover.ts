@@ -1,4 +1,10 @@
-import type { AppSettings, ChatScope, EffectiveRunPermissions, ProviderId } from '../store/types'
+import type {
+  ActiveGoal,
+  AppSettings,
+  ChatScope,
+  EffectiveRunPermissions,
+  ProviderId
+} from '../store/types'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import { selectFailoverTarget } from '../RerouteFailoverPosture'
@@ -22,6 +28,7 @@ export interface FailoverRunSnapshot {
   scope: ChatScope
   workspace?: string
   prompt: string
+  activeGoal?: ActiveGoal | null
   appChatId?: string
   approvalMode?: string
   effectivePermissions?: EffectiveRunPermissions
@@ -133,6 +140,7 @@ export async function runProviderAutoFailover(
     scope: snap.scope,
     workspace: snap.workspace,
     prompt: snap.prompt,
+    activeGoal: snap.activeGoal,
     appRunId: newRunId,
     appChatId: snap.appChatId,
     approvalMode: snap.approvalMode,

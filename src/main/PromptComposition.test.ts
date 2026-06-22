@@ -283,6 +283,34 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).not.toContain('Use Codex native goal state.')
   })
 
+  it('does not inject native Grok goals because the Grok runtime owns /goal steering', () => {
+    const result = composeRunPrompt({
+      provider: 'grok',
+      finalPrompt: 'Continue.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Grok',
+      activeGoal: {
+        id: 'goal-1',
+        objective: 'Use Grok native slash goal state.',
+        status: 'active',
+        mode: 'grok_native',
+        provider: 'grok',
+        createdAt: '2026-06-22T12:00:00Z',
+        updatedAt: '2026-06-22T12:00:00Z'
+      }
+    })
+
+    expect(result.contextualPrompt).not.toContain('<taskwraith_active_goal>')
+    expect(result.contextualPrompt).not.toContain('Use Grok native slash goal state.')
+    expect(result.contextualPrompt).toContain(
+      'this Grok workspace run has access to the TaskWraith MCP server'
+    )
+  })
+
   it('injects guest participant replies as labeled peer context', () => {
     const result = composeRunPrompt({
       provider: 'codex',

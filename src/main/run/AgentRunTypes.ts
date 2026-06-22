@@ -1,5 +1,6 @@
 import type {
   AuditRunIdentity,
+  ActiveGoal,
   ChatScope,
   EffectiveRunPermissions,
   EnsembleRunIdentity,
@@ -25,6 +26,7 @@ export interface AgentRunPayload {
   scope: ChatScope
   workspace?: string
   prompt: string
+  activeGoal?: ActiveGoal | null
   appRunId?: string
   appChatId?: string
   model?: string

@@ -195,6 +195,7 @@ export type ActiveGoalStatus = 'active' | 'paused' | 'blocked' | 'completed'
 export type ActiveGoalMode =
   | 'codex_native'
   | 'claude_native'
+  | 'grok_native'
   | 'taskwraith_steered'
   | 'ollama_harness'
 export interface ActiveGoal {

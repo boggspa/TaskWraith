@@ -225,7 +225,8 @@ export class ComposerService {
     const codexHandoffsApplied = provider === 'codex' ? getCodexModelContextAppliedKeys(chat) : []
     const activeGoal = resolveActiveGoalForProvider(chat.activeGoal, provider, {
       codexNativeAvailable: Boolean(chat.providerMetadata?.codexGoalNativeAvailable),
-      claudeNativeAvailable: Boolean(chat.providerMetadata?.claudeGoalNativeAvailable)
+      claudeNativeAvailable: Boolean(chat.providerMetadata?.claudeGoalNativeAvailable),
+      grokNativeAvailable: provider === 'grok'
     })
     // Per-chat Ollama tier/profile (composer picker, stored in providerMetadata
     // like approvalMode). Absent → undefined → the resolvers fall back to the
@@ -316,6 +317,7 @@ export class ComposerService {
         ? { ollamaRunProfile: chatOllamaRunProfile }
         : {}),
       prompt: composed.contextualPrompt,
+      activeGoal,
       appRunId,
       appChatId: chatId,
       model: requestedModel,

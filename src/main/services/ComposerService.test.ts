@@ -622,6 +622,33 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('Provider mode: Native Codex goal')
   })
 
+  it('carries Grok native goals as structured run state without prompt steering', () => {
+    const payload = compose(
+      {
+        provider: 'grok',
+        activeGoal: {
+          id: 'goal-1',
+          objective: 'Use the official Grok goal mode',
+          status: 'active',
+          mode: 'taskwraith_steered',
+          provider: 'gemini',
+          createdAt: '2026-06-22T12:00:00Z',
+          updatedAt: '2026-06-22T12:00:00Z'
+        }
+      },
+      {}
+    )
+
+    expect(payload.activeGoal).toMatchObject({
+      id: 'goal-1',
+      objective: 'Use the official Grok goal mode',
+      provider: 'grok',
+      mode: 'grok_native'
+    })
+    expect(payload.prompt).not.toContain('<taskwraith_active_goal>')
+    expect(payload.prompt).not.toContain('Use the official Grok goal mode')
+  })
+
   it('does not repeat Codex model-handoff context after the handoff key was applied', () => {
     const payload = compose(
       {

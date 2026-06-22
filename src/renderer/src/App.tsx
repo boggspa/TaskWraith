@@ -12817,7 +12817,8 @@ function App(): React.JSX.Element {
   const currentActiveGoal = currentChat?.activeGoal || null
   const currentGoalModeOptions = {
     codexNativeAvailable: Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
-    claudeNativeAvailable: Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable)
+    claudeNativeAvailable: Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
+    grokNativeAvailable: currentProvider === 'grok'
   }
   const currentResolvedGoal = resolveActiveGoalForProvider(
     currentActiveGoal,
@@ -12877,7 +12878,8 @@ function App(): React.JSX.Element {
     const now = new Date()
     const mode = resolveActiveGoalMode(currentProvider, {
       codexNativeAvailable: Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
-      claudeNativeAvailable: Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable)
+      claudeNativeAvailable: Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
+      grokNativeAvailable: currentProvider === 'grok'
     })
     const goal: ActiveGoal = existingGoal
       ? {
@@ -12888,10 +12890,11 @@ function App(): React.JSX.Element {
           status: existingGoal.status === 'completed' ? 'active' : existingGoal.status,
           updatedAt: now.toISOString()
         }
-      : createActiveGoal(currentProvider, objective, {
+        : createActiveGoal(currentProvider, objective, {
           now,
           codexNativeAvailable: Boolean(currentChat?.providerMetadata?.codexGoalNativeAvailable),
-          claudeNativeAvailable: Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable)
+          claudeNativeAvailable: Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
+          grokNativeAvailable: currentProvider === 'grok'
         })
     if (existingGoal?.status === 'completed') {
       delete goal.completedAt

@@ -15,10 +15,15 @@ export function normalizeActiveGoalReason(value: unknown): string {
 
 export function resolveActiveGoalMode(
   provider: ProviderId,
-  options: { codexNativeAvailable?: boolean; claudeNativeAvailable?: boolean } = {}
+  options: {
+    codexNativeAvailable?: boolean
+    claudeNativeAvailable?: boolean
+    grokNativeAvailable?: boolean
+  } = {}
 ): ActiveGoalMode {
   if (provider === 'codex' && options.codexNativeAvailable) return 'codex_native'
   if (provider === 'claude' && options.claudeNativeAvailable) return 'claude_native'
+  if (provider === 'grok' && options.grokNativeAvailable) return 'grok_native'
   if (provider === 'ollama') return 'ollama_harness'
   return 'taskwraith_steered'
 }
@@ -26,7 +31,11 @@ export function resolveActiveGoalMode(
 export function resolveActiveGoalForProvider(
   goal: ActiveGoal | null | undefined,
   provider: ProviderId,
-  options: { codexNativeAvailable?: boolean; claudeNativeAvailable?: boolean } = {}
+  options: {
+    codexNativeAvailable?: boolean
+    claudeNativeAvailable?: boolean
+    grokNativeAvailable?: boolean
+  } = {}
 ): ActiveGoal | null {
   if (!goal) return null
   const mode = resolveActiveGoalMode(provider, options)
@@ -40,6 +49,8 @@ export function activeGoalModeLabel(mode: ActiveGoalMode): string {
       return 'Native Codex goal'
     case 'claude_native':
       return 'Native Claude goal'
+    case 'grok_native':
+      return 'Native Grok goal'
     case 'ollama_harness':
       return 'Ollama managed'
     case 'taskwraith_steered':
@@ -51,7 +62,12 @@ export function activeGoalModeLabel(mode: ActiveGoalMode): string {
 export function createActiveGoal(
   provider: ProviderId,
   objective: string,
-  options: { now?: Date; codexNativeAvailable?: boolean; claudeNativeAvailable?: boolean } = {}
+  options: {
+    now?: Date
+    codexNativeAvailable?: boolean
+    claudeNativeAvailable?: boolean
+    grokNativeAvailable?: boolean
+  } = {}
 ): ActiveGoal {
   const now = options.now || new Date()
   const timestamp = now.toISOString()
@@ -65,7 +81,8 @@ export function createActiveGoal(
     status: 'active',
     mode: resolveActiveGoalMode(provider, {
       codexNativeAvailable: options.codexNativeAvailable,
-      claudeNativeAvailable: options.claudeNativeAvailable
+      claudeNativeAvailable: options.claudeNativeAvailable,
+      grokNativeAvailable: options.grokNativeAvailable
     }),
     provider,
     createdAt: timestamp,
@@ -82,7 +99,8 @@ export function shouldInjectActiveGoal(goal: ActiveGoal | null | undefined): goa
     goal &&
       (goal.status === 'active' || goal.status === 'blocked') &&
       goal.mode !== 'codex_native' &&
-      goal.mode !== 'claude_native'
+      goal.mode !== 'claude_native' &&
+      goal.mode !== 'grok_native'
   )
 }
 

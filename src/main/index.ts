@@ -402,6 +402,7 @@ import {
   ChatRecord,
   ChatMessage,
   ChatRun,
+  ActiveGoal,
   GuestParticipantConfig,
   ChatScope,
   ToolActivity,
@@ -2519,6 +2520,7 @@ function normalizeAgentRunPayload(rawPayload: unknown): AgentRunPayload {
     scope,
     workspace,
     prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+    activeGoal: normalizeAgentRunActiveGoal(payload.activeGoal),
     appRunId: optionalString(payload.appRunId),
     appChatId,
     model: optionalString(payload.model),
@@ -2643,6 +2645,57 @@ const appShellStatsService = new AppShellStatsService({
 appShellStatsService.onChange((snapshot) => {
   safeSendToWebContents(mainWindow, 'app-shell-stats-changed', snapshot)
 })
+
+function normalizeAgentRunActiveGoal(value: unknown): ActiveGoal | null | undefined {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  if (!isRecord(value)) return undefined
+  const id = optionalString(value.id)
+  const objective = normalizeActiveGoalObjective(value.objective)
+  const status = optionalString(value.status)
+  const mode = optionalString(value.mode)
+  const createdAt = optionalString(value.createdAt)
+  const updatedAt = optionalString(value.updatedAt)
+  if (!id || !objective || !createdAt || !updatedAt) return undefined
+  if (
+    status !== 'active' &&
+    status !== 'paused' &&
+    status !== 'blocked' &&
+    status !== 'completed'
+  ) {
+    return undefined
+  }
+  if (
+    mode !== 'codex_native' &&
+    mode !== 'claude_native' &&
+    mode !== 'grok_native' &&
+    mode !== 'taskwraith_steered' &&
+    mode !== 'ollama_harness'
+  ) {
+    return undefined
+  }
+  let provider: ProviderId
+  try {
+    provider = assertProviderId(value.provider)
+  } catch {
+    return undefined
+  }
+  return {
+    id,
+    objective,
+    status,
+    mode,
+    provider,
+    createdAt,
+    updatedAt,
+    pausedAt: optionalString(value.pausedAt),
+    blockedAt: optionalString(value.blockedAt),
+    blockedReason: optionalString(value.blockedReason),
+    completedAt: optionalString(value.completedAt),
+    completedSummary: optionalString(value.completedSummary),
+    lastStatusReason: optionalString(value.lastStatusReason)
+  }
+}
 
 const workspaceWriteIntentRegistry = new WorkspaceWriteIntentRegistry()
 
@@ -17259,7 +17312,8 @@ if (isGeminiMcpBridgeProcess) {
                   codexNativeAvailable: Boolean(
                     chat.providerMetadata?.codexGoalNativeAvailable
                   ),
-                  claudeNativeAvailable: Boolean(chat.providerMetadata?.claudeGoalNativeAvailable)
+                  claudeNativeAvailable: Boolean(chat.providerMetadata?.claudeGoalNativeAvailable),
+                  grokNativeAvailable: provider === 'grok'
                 }),
                 updatedAt: now.toISOString()
               }
@@ -17267,7 +17321,8 @@ if (isGeminiMcpBridgeProcess) {
               activeGoal = createActiveGoal(provider, objective, {
                 now,
                 codexNativeAvailable: Boolean(chat.providerMetadata?.codexGoalNativeAvailable),
-                claudeNativeAvailable: Boolean(chat.providerMetadata?.claudeGoalNativeAvailable)
+                claudeNativeAvailable: Boolean(chat.providerMetadata?.claudeGoalNativeAvailable),
+                grokNativeAvailable: provider === 'grok'
               })
             }
           } else {

@@ -39,6 +39,8 @@ describe('GoalState', () => {
     expect(resolveActiveGoalMode('codex', { codexNativeAvailable: true })).toBe('codex_native')
     expect(resolveActiveGoalMode('claude')).toBe('taskwraith_steered')
     expect(resolveActiveGoalMode('claude', { claudeNativeAvailable: true })).toBe('claude_native')
+    expect(resolveActiveGoalMode('grok')).toBe('taskwraith_steered')
+    expect(resolveActiveGoalMode('grok', { grokNativeAvailable: true })).toBe('grok_native')
   })
 
   it('resolves stored goals against the provider handling the next turn', () => {
@@ -57,6 +59,9 @@ describe('GoalState', () => {
     expect(
       resolveActiveGoalForProvider(goal, 'claude', { claudeNativeAvailable: true })?.mode
     ).toBe('claude_native')
+    expect(resolveActiveGoalForProvider(goal, 'grok', { grokNativeAvailable: true })?.mode).toBe(
+      'grok_native'
+    )
   })
 
   it('injects active and blocked goals, not paused or completed goals', () => {
@@ -79,6 +84,20 @@ describe('GoalState', () => {
     })
 
     expect(goal.mode).toBe('codex_native')
+    expect(shouldInjectActiveGoal(goal)).toBe(false)
+    expect(shouldInjectActiveGoal(updateActiveGoalLifecycle(goal, 'blocked', 'Need input'))).toBe(
+      false
+    )
+  })
+
+  it('does not inject native Grok goals that are handled by the Grok runtime', () => {
+    const goal = createActiveGoal('grok', 'Let Grok own the native goal', {
+      now: new Date('2026-06-22T12:00:00Z'),
+      grokNativeAvailable: true
+    })
+
+    expect(goal.mode).toBe('grok_native')
+    expect(activeGoalModeLabel(goal.mode)).toBe('Native Grok goal')
     expect(shouldInjectActiveGoal(goal)).toBe(false)
     expect(shouldInjectActiveGoal(updateActiveGoalLifecycle(goal, 'blocked', 'Need input'))).toBe(
       false
