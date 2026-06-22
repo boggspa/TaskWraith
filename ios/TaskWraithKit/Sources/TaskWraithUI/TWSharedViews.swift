@@ -5564,9 +5564,10 @@ public struct AppSettingsSheet: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Reuse the real composer-shell chrome (the same render the First Launch
-        // preview uses) rather than a bespoke card, so the preview matches the
-        // actual composer the user sees.
-        .composerShellUnlessInputOwns(twResolvedComposerShell(model: model, presentation: .welcome))
+        // preview uses). Draw it unconditionally — a static preview has no real
+        // input drawing the surface, so input-owns shells (claude / cursor / …)
+        // must be shelled here too or they render blank.
+        .composerShell(twResolvedComposerShell(model: model, presentation: .welcome))
     }
 
     #if os(iOS)
@@ -6961,7 +6962,10 @@ public struct ComposerDiffPill: View {
             // WITH the pill — previously a visual-only .offset left the tap /
             // long-press target stranded at centre, so after nudging the pill to
             // an edge you had to press the empty middle to move it again.
-            Color.clear.frame(width: restingLeadingInset)
+            // height 0 so this width-only spacer can't grab vertical space and
+            // float the pill to the screen's middle (Color is greedy in 2D, and
+            // the empty transcript offers a tall column).
+            Color.clear.frame(width: restingLeadingInset, height: 0)
             pillBody
                 .background(GeometryReader { proxy in
                     Color.clear

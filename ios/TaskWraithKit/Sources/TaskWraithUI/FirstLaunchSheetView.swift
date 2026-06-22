@@ -270,7 +270,11 @@ struct FirstLaunchSheetView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .composerShellUnlessInputOwns(shell)
+        // Static preview (no real input drawing the surface), so draw the shell
+        // for EVERY style — including the input-owns shells (claude / cursor /
+        // obsidian / alabaster) that composerShellUnlessInputOwns skips, which
+        // left those Provider-style shells blank in the preview.
+        .composerShell(shell)
     }
 
     private func previewPill(_ title: String, accent: Color) -> some View {
