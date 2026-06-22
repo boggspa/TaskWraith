@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { resolveAssistantDeltaMerge } from './lib/assistantDeltaMerge'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
+import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
 import {
@@ -8478,11 +8479,7 @@ function App(): React.JSX.Element {
           const liveById = new Map(liveChat.messages.map((m) => [m.id, m]))
           const mergedMessages = chat.messages.map((m) => {
             const live = liveById.get(m.id)
-            if (
-              live &&
-              live.role === 'assistant' &&
-              (live.content?.length ?? 0) > (m.content?.length ?? 0)
-            ) {
+            if (live && shouldPreferLiveAssistantContent(m, live)) {
               return { ...m, content: live.content }
             }
             return m
