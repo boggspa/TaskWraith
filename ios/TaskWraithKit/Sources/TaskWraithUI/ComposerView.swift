@@ -54,7 +54,11 @@ struct Composer: View {
 
     @State private var approvalMode = "default"
     /// Drives compact (idle) vs full composer — focusing the field expands it.
-    @FocusState private var inputFocused: Bool
+    /// Plain `@State` (not `@FocusState`): on iOS the input is the UIKit-backed
+    /// `MentionTextView`, which owns first-responder status and mirrors it back
+    /// through a Bool binding. `@FocusState`/`.focused()` only bind to SwiftUI
+    /// views, so a representable can't use them.
+    @State private var inputFocused: Bool = false
     /// Scope-global chat — every phone-origin turn is clamped to plan mode
     /// (no file mutation) by the Mac; the composer pins the picker to match.
     private var isGlobalChat: Bool {
@@ -407,6 +411,32 @@ struct Composer: View {
             .frame(width: 1, height: 18)
     }
 
+    /// The composer's editable text field. On iOS this is the UITextView-backed
+    /// `MentionTextView` (so @mentions can be tinted inline — a later slice); the
+    /// macOS compile-check build (no UIKit) keeps a plain SwiftUI `TextField`.
+    /// Both honour the same shell font design + text colour.
+    @ViewBuilder private var composerTextInput: some View {
+        #if canImport(UIKit)
+            // `.frame(maxWidth: .infinity)` makes the representable greedy-horizontal
+            // like the old TextField — without it, a representable falls back to its
+            // UITextView intrinsic width and won't fill the row.
+            MentionTextView(
+                text: $text,
+                focused: $inputFocused,
+                font: twUIComposerFont(shell.fontDesign),
+                textColor: shell.palette.textPrimary,
+                placeholderColor: shell.palette.placeholder,
+                placeholder: placeholder
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        #else
+            TextField(placeholder, text: $text, axis: .vertical)
+                .lineLimit(1...2)
+                .font(twComposerFont(shell.fontDesign))
+                .foregroundStyle(shell.palette.textPrimary)
+        #endif
+    }
+
     private var composerInputBody: some View {
         VStack(alignment: .leading, spacing: 6) {
             if !mentionCandidates.isEmpty {
@@ -471,11 +501,7 @@ struct Composer: View {
                         .font(twComposerFont(.monospaced).weight(.bold))
                         .foregroundStyle(shell.sendButton.tint)
                 }
-                TextField(placeholder, text: $text, axis: .vertical)
-                    .focused($inputFocused)
-                    .lineLimit(1...2)
-                    .font(twComposerFont(shell.fontDesign))
-                    .foregroundStyle(shell.palette.textPrimary)
+                composerTextInput
                 if canQueueCurrentPrompt {
                     queueButton
                 }

@@ -920,7 +920,8 @@ struct ThreadDetailView: View {
                     // `.composerShellIf` below toggle a ViewModifier on/off; because
                     // `composerShellIf` is a @ViewBuilder if/else, flipping it changes
                     // the subtree's structural identity, which tears down + rebuilds the
-                    // Composer and RESETS its @FocusState — so for grok (the only
+                    // Composer and RESETS its focus state (the `inputFocused` @State +
+                    // the text view's first responder) — so for grok (the only
                     // tuckedAboveTab shell) focus never latched and BOTH the above rows
                     // and the telemetry collapsed. Key placement off the STATIC recipe
                     // flag, not the focus-derived `tuckedTab`. (`tuckedTab` still drives
@@ -2447,6 +2448,11 @@ struct StreamingRowView: View {
     private var accent: Color { agentIdentity?.accent ?? TWTheme.providerAccent(provider) }
 
     var body: some View {
+        // Route the settled prefix through the markdown pipeline (parity with
+        // StreamingSegmentRow) so a half-typed `**bold` / `| cell` / ``` fence
+        // never reveals as literal syntax in side chats; only the plain growing
+        // tail gets the token-reveal shimmer.
+        let parts = StreamingMarkdownSplitter.split(text)
         HStack(alignment: .top, spacing: 8) {
             AgentTranscriptLeadingMark(
                 identity: agentIdentity,
@@ -2459,10 +2465,16 @@ struct StreamingRowView: View {
                         .foregroundStyle(accent)
                     StreamingDots(color: accent)
                 }
-                TokenRevealText(
-                    target: text,
-                    font: TWFont.transcript(),
-                    color: TWTheme.textPrimary)
+                if !parts.settled.isEmpty {
+                    MarkdownLite(parts.settled, baseColor: TWTheme.textPrimary)
+                        .textSelection(.enabled)
+                }
+                if !parts.tail.isEmpty {
+                    TokenRevealText(
+                        target: parts.tail,
+                        font: TWFont.transcript(),
+                        color: TWTheme.textPrimary)
+                }
             }
             .agentTranscriptRim(agentIdentity)
             .frame(maxWidth: .infinity, alignment: .leading)
