@@ -566,9 +566,10 @@ struct HomeView: View {
         // Satellite rows (desktop-sidebar parity): no container chrome unless
         // the thread is ACTIVE — running or waiting on the user — which gets
         // a faint accent wash so live work pops out of the list.
+        let pendingAttentionCount = model.pendingAttentionCount(for: card)
         let isActive =
             card.status == "running"
-            || (card.pendingApprovalCount ?? 0) + (card.pendingQuestionCount ?? 0) > 0
+            || pendingAttentionCount > 0
         let rowChrome = Group {
             if isActive {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -776,6 +777,15 @@ struct TaskRow: View {
         return nil
     }
 
+    private var pendingAttentionCount: Int {
+        model.pendingAttentionCount(for: card)
+    }
+
+    private var displayStatus: String? {
+        guard let status = card.status else { return nil }
+        return status == "awaitingApproval" && pendingAttentionCount == 0 ? "running" : status
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             if nested || card.parentChatId != nil {
@@ -833,14 +843,14 @@ struct TaskRow: View {
                             .background(TWTheme.surface3, in: Capsule())
                             .foregroundStyle(TWTheme.textTertiary)
                     }
-                    if let status = card.status {
+                    if let status = displayStatus {
                         HStack(spacing: 4) {
                             Circle().fill(TWTheme.statusColor(status)).frame(width: 6, height: 6)
                             Text(status).font(.caption)
                                 .foregroundStyle(TWTheme.statusColor(status))
                         }
                     }
-                    if (card.pendingApprovalCount ?? 0) + (card.pendingQuestionCount ?? 0) > 0 {
+                    if pendingAttentionCount > 0 {
                         Image(systemName: "exclamationmark.bubble.fill")
                             .font(.caption)
                             .foregroundStyle(TWTheme.statusAttention)

@@ -2148,6 +2148,16 @@ public final class RemoteSessionModel: ObservableObject {
             {
                 diffSummaries[key] = diff
             }
+        case "gitSnapshot":
+            if let git = envelope.decodePayload(GitWorkspaceSnapshot.self),
+                let workspaceId = envelope.workspaceId
+            {
+                gitSnapshots[workspaceId] = git
+            }
+        case "approvalCard":
+            if let card = envelope.decodePayload(MobileApprovalCard.self) {
+                mergeApprovalCard(card)
+            }
         case "questionCard":
             if let card = envelope.decodePayload(MobileQuestionCard.self) {
                 mergeQuestionCard(card)
@@ -2538,6 +2548,23 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    private func mergeApprovalCard(_ card: MobileApprovalCard) {
+        guard let id = card.toolCallId else { return }
+        if let status = card.status, status != "pending" {
+            approvals.removeAll { $0.toolCallId == id }
+            repliedApprovalToolCallIds.remove(id)
+            return
+        }
+        // Honor an optimistic dismissal: a pending delta for an approval the
+        // user just answered must not flash it back while the ack is in flight.
+        if repliedApprovalToolCallIds.contains(id) { return }
+        if let index = approvals.firstIndex(where: { $0.toolCallId == id }) {
+            approvals[index] = card
+        } else {
+            approvals.insert(card, at: 0)
+        }
+    }
+
     private func mergeQuestionCard(_ card: MobileQuestionCard) {
         guard let id = card.resolvedId else { return }
         if let status = card.status, status != "pending" {
@@ -2553,6 +2580,32 @@ public final class RemoteSessionModel: ObservableObject {
         } else {
             questions.insert(card, at: 0)
         }
+    }
+
+    private func cardThreadIds(_ card: RemoteTaskCard) -> Set<String> {
+        Set([card.id, card.threadId].compactMap { $0 })
+    }
+
+    public func pendingApprovalCount(for card: RemoteTaskCard) -> Int {
+        let ids = cardThreadIds(card)
+        guard !ids.isEmpty else { return 0 }
+        return approvals.filter { approval in
+            guard let threadId = approval.threadId else { return false }
+            return ids.contains(threadId)
+        }.count
+    }
+
+    public func pendingQuestionCount(for card: RemoteTaskCard) -> Int {
+        let ids = cardThreadIds(card)
+        guard !ids.isEmpty else { return 0 }
+        return questions.filter { question in
+            guard let threadId = question.threadId else { return false }
+            return ids.contains(threadId)
+        }.count
+    }
+
+    public func pendingAttentionCount(for card: RemoteTaskCard) -> Int {
+        pendingApprovalCount(for: card) + pendingQuestionCount(for: card)
     }
 
     private var pendingThreadRefresh: [String: Task<Void, Never>] = [:]
@@ -3254,6 +3307,7 @@ public final class RemoteSessionModel: ObservableObject {
         var snapshots: [String: RemoteThreadSnapshot] = [:]
         var ensembleSnapshots: [String: RemoteEnsembleState] = [:]
         var diffSnapshots: [String: MobileDiffSummary] = [:]
+        var incomingGitSnapshots: [String: GitWorkspaceSnapshot] = [:]
         var workflowCards: [RemoteWorkflow] = []
         var presetCards: [RemoteEnsemblePreset] = []
         for envelope in snapshot.projections {
@@ -3293,6 +3347,12 @@ public final class RemoteSessionModel: ObservableObject {
                     let key = diff.taskId ?? diff.threadId ?? envelope.threadId
                 {
                     diffSnapshots[key] = diff
+                }
+            case "gitSnapshot":
+                if let git = envelope.decodePayload(GitWorkspaceSnapshot.self),
+                    let workspaceId = envelope.workspaceId
+                {
+                    incomingGitSnapshots[workspaceId] = git
                 }
             case "shellAppearance":
                 if let appearance = envelope.decodePayload(TWRemoteShellAppearance.self) {
@@ -3364,6 +3424,9 @@ public final class RemoteSessionModel: ObservableObject {
         for (key, diff) in diffSnapshots {
             diffSummaries[key] = diff
         }
+        for (workspaceId, git) in incomingGitSnapshots {
+            gitSnapshots[workspaceId] = git
+        }
     }
 
     // ── Actions ────────────────────────────────────────────────────────────────
@@ -3415,13 +3478,33 @@ public final class RemoteSessionModel: ObservableObject {
             BridgeAction.approvalReply(
                 toolCallId: toolCallId, decision: decision, workspaceId: ws, threadId: thread),
             successLabel: label,
-            onAck: { [weak self] accepted in
-                guard let self, !accepted else { return }
-                // The Mac rejected the reply (e.g. the approval already expired)
-                // — stop suppressing + restore the card so the user can retry.
-                self.repliedApprovalToolCallIds.remove(toolCallId)
-                if !self.approvals.contains(where: { $0.toolCallId == toolCallId }) {
-                    self.approvals.insert(card, at: 0)
+            onAckResult: { [weak self] _, ack in
+                guard let self else { return }
+                switch Self.approvalAckOutcome(ack) {
+                case .succeeded:
+                    // Optimistic dismissal stands; the resolved-status delta will
+                    // also evict it. Nothing to do.
+                    return
+                case .alreadyResolved:
+                    // The approval resolved out from under us (auto-deny timer,
+                    // the desktop, or another surface). EVICT — re-presenting it
+                    // would loop forever because it will never be pending again.
+                    // (This was the root cause of the unbreakable modal loop.)
+                    self.repliedApprovalToolCallIds.remove(toolCallId)
+                    self.approvals.removeAll { $0.toolCallId == toolCallId }
+                case .rejected:
+                    // The Mac rejected the reply on policy/ownership grounds. Keep
+                    // it dismissed AND suppressed so a deterministic re-deny can't
+                    // trap the user in a tap loop; lastActionMessage explains why,
+                    // and the desktop / auto-deny timer finalizes the run.
+                    self.approvals.removeAll { $0.toolCallId == toolCallId }
+                case .transportError:
+                    // Couldn't reach the Mac — genuinely retryable. Stop
+                    // suppressing + restore the card so the user can try again.
+                    self.repliedApprovalToolCallIds.remove(toolCallId)
+                    if !self.approvals.contains(where: { $0.toolCallId == toolCallId }) {
+                        self.approvals.insert(card, at: 0)
+                    }
                 }
             })
         scheduleThreadRefresh(thread)
@@ -3888,7 +3971,8 @@ public final class RemoteSessionModel: ObservableObject {
         navigateToThreadId: String? = nil,
         navigateOnAck: Bool = true,
         onThreadCreated: ((String?) -> Void)? = nil,
-        onAck: ((Bool) -> Void)? = nil
+        onAck: ((Bool) -> Void)? = nil,
+        onAckResult: ((Bool, AckResult?) -> Void)? = nil
     ) {
         guard !isDemo, let client else { return }
         Task {
@@ -3905,6 +3989,7 @@ public final class RemoteSessionModel: ObservableObject {
                         onThreadCreated?(threadId)
                     }
                     onAck?(accepted)
+                    onAckResult?(accepted, ack)
                     // Connection-aware copy. A request ack can time out even while the
                     // session is fully ESTABLISHED — a momentarily slow Mac, a heavy op
                     // right after connect, or a dropped ack on a live socket. The Mac is
@@ -3924,10 +4009,36 @@ public final class RemoteSessionModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     onAck?(false)
+                    onAckResult?(false, nil)
                     self.lastActionMessage = String(describing: error)
                 }
             }
         }
+    }
+
+    /// Outcome of an approval-reply ack, fine-grained enough to avoid the
+    /// unbreakable approval-modal loop. The Mac returns `accepted:true,
+    /// executed:false` when the approval is no longer pending (auto-deny timer,
+    /// the desktop, or another paired surface resolved it). Treating that as a
+    /// plain failure and RESTORING the card re-presents a modal that can never
+    /// succeed — every re-tap hits the same already-resolved approval. So we
+    /// distinguish "already resolved" (evict) from "policy rejected" (keep
+    /// dismissed) from a "transport error" (genuinely retryable → restore).
+    enum ApprovalAckOutcome {
+        case succeeded
+        case alreadyResolved
+        case rejected
+        case transportError
+    }
+
+    private static func approvalAckOutcome(_ ack: AckResult?) -> ApprovalAckOutcome {
+        guard let ack, ack.ok else { return .transportError }
+        guard let data = ack.result,
+            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+        else { return .succeeded }
+        if actionAck.accepted == false { return .rejected }
+        if actionAck.executed == false { return .alreadyResolved }
+        return .succeeded
     }
 
     private static func actionAckSucceeded(_ ack: AckResult) -> Bool {

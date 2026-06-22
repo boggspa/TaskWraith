@@ -901,6 +901,7 @@ public struct MobileApprovalCard: Codable, Sendable {
     public let provider: String?
     public let requestedAt: String?
     public let expiresAt: String?
+    public let status: String?
     /// Advertised actions (today always ["accept","decline"]; the reply
     /// validator additionally accepts acceptForSession/acceptForWorkspace/
     /// cancel — the executor implements all five).
