@@ -2016,6 +2016,14 @@ function App(): React.JSX.Element {
   const [externalGitSnapshots, setExternalGitSnapshots] = useState<
     Record<string, GitRepositorySnapshot | null>
   >({})
+  // Multiview — live git snapshot per VISIBLE pane workspace path, so each pane's
+  // composer above-row shows its OWN "N files changed +A −B" instead of the
+  // focused workspace's global `workspaceDiffStats` (which leaked into every
+  // pane). Keyed by raw path (same convention as `externalGitSnapshots`); empty
+  // in the single-pane layout where the focused composer reads the globals.
+  const [gitSnapshotByWorkspace, setGitSnapshotByWorkspace] = useState<
+    Record<string, GitRepositorySnapshot | null>
+  >({})
   const currentWorkspacePath = currentWorkspace?.path
   // Set of (workspace|provider) keys whose Tier-1 "raise to Default Approval"
   // elevation notice has already been acknowledged, derived from the persisted
@@ -15645,6 +15653,53 @@ function App(): React.JSX.Element {
       window.removeEventListener('focus', onFocus)
     }
   }, [externalWorkspacePathsKey, runCompleteNotice?.timestamp])
+  // Multiview — fetch a live git snapshot for every VISIBLE pane's workspace path
+  // so each pane's composer above-row reports its OWN diff stats. Mirrors the
+  // primary/external snapshot effects (refetch on the pane-paths set, run-finish,
+  // window focus). Keyed by raw path; non-repos resolve to null (zero stats). Two
+  // panes on the same workspace share one fetch; global/no-workspace panes add
+  // nothing (so they show no diff rather than the focused workspace's).
+  const multiviewPaneWorkspacePathsKey = useMemo(() => {
+    if (!isMultiviewSplit) return ''
+    const seen = new Set<string>()
+    for (const paneChatId of multiview.paneChatIds) {
+      if (!paneChatId) continue
+      const path = getWorkspaceForChat(chatByIdRef.current.get(paneChatId))?.path
+      if (path) seen.add(path)
+    }
+    return Array.from(seen).sort().join('\n')
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chatByIdRef/getWorkspaceForChat are stable; paneChatIds + split flag drive recompute
+  }, [isMultiviewSplit, multiview.paneChatIds])
+  useEffect(() => {
+    const paths = multiviewPaneWorkspacePathsKey ? multiviewPaneWorkspacePathsKey.split('\n') : []
+    if (paths.length === 0) {
+      setGitSnapshotByWorkspace({})
+      return
+    }
+    let cancelled = false
+    const fetchAll = async (): Promise<void> => {
+      const entries = await Promise.all(
+        paths.map(async (path) => {
+          try {
+            const res = await window.api.gitSnapshot({ workspacePath: path })
+            return [path, res?.ok ? res.data : null] as const
+          } catch {
+            return [path, null] as const
+          }
+        })
+      )
+      if (!cancelled) setGitSnapshotByWorkspace(Object.fromEntries(entries))
+    }
+    void fetchAll()
+    const onFocus = (): void => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') void fetchAll()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [multiviewPaneWorkspacePathsKey, runCompleteNotice?.timestamp])
   const currentProviderModelOptions = getProviderModelOptions(currentProvider)
   const currentGuestParticipant =
     currentChat && currentChat.chatKind !== 'ensemble' ? currentChat.guestParticipant : undefined
@@ -18709,6 +18764,20 @@ function App(): React.JSX.Element {
       currentProviderModelOptions: getProviderModelOptions(viewerProvider),
       currentWorkspace: viewerWorkspace,
       currentWorkspacePath: viewerWorkspace?.path,
+      // Per-pane git diff stats: read THIS pane's own workspace snapshot so the
+      // above-row "N files changed +A −B" reflects the pane's workspace, not the
+      // focused one (workspaceDiffStats otherwise comes from composerStableBase =
+      // the FOCUSED value, the cross-pane leak). Zeros until the snapshot lands.
+      workspaceDiffStats: ((): { filesChanged: number; additions: number; deletions: number } => {
+        const snap = gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null
+        return snap
+          ? {
+              filesChanged: snap.counts?.changed ?? 0,
+              additions: snap.lineStats?.additions ?? 0,
+              deletions: snap.lineStats?.deletions ?? 0
+            }
+          : { filesChanged: 0, additions: 0, deletions: 0 }
+      })(),
       isCurrentGlobalChat: viewerIsGlobalChat,
       isCurrentChatRunning: viewerIsRunning,
       isCurrentEnsembleChat: paneIsEnsembleChat,
@@ -18816,9 +18885,11 @@ function App(): React.JSX.Element {
       permissionRequestSource: undefined,
       permissionRequestMessage: '',
       queuedMessagesAboveRowEntries: [],
-      // primaryGitSnapshot/Pr null → the git above-bar falls back to the pane's
-      // own currentWorkspace.branch (already overridden), so it stays pane-correct.
-      primaryGitSnapshot: null,
+      // Per-pane git snapshot: the branch/sync/merge chips + Review/Push action now
+      // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
+      // for panes). Branch label still falls back to currentWorkspace.branch if absent.
+      primaryGitSnapshot: gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null,
+      // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
       primaryPr: null,
       pendingPlanImport: null,
       externalPathGrantPrompt: null,
@@ -19655,6 +19726,20 @@ function App(): React.JSX.Element {
         currentProviderModelOptions: paneCtxHelpers.getProviderModelOptions(viewerProvider),
         currentWorkspace: viewerWorkspace,
         currentWorkspacePath: viewerWorkspace?.path,
+        // Per-pane git diff stats: read THIS pane's own workspace snapshot so the
+        // above-row "N files changed +A −B" reflects the pane's workspace, not the
+        // focused one (workspaceDiffStats otherwise comes from composerStableBase =
+        // the FOCUSED value, the cross-pane leak). Zeros until the snapshot lands.
+        workspaceDiffStats: ((): { filesChanged: number; additions: number; deletions: number } => {
+          const snap = gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null
+          return snap
+            ? {
+                filesChanged: snap.counts?.changed ?? 0,
+                additions: snap.lineStats?.additions ?? 0,
+                deletions: snap.lineStats?.deletions ?? 0
+              }
+            : { filesChanged: 0, additions: 0, deletions: 0 }
+        })(),
         isCurrentGlobalChat: viewerIsGlobalChat,
         isCurrentChatRunning: viewerIsRunning,
         isCurrentEnsembleChat: paneIsEnsembleChat,
@@ -19762,9 +19847,11 @@ function App(): React.JSX.Element {
         permissionRequestSource: undefined,
         permissionRequestMessage: '',
         queuedMessagesAboveRowEntries: [],
-        // primaryGitSnapshot/Pr null → the git above-bar falls back to the pane's
-        // own currentWorkspace.branch (already overridden), so it stays pane-correct.
-        primaryGitSnapshot: null,
+        // Per-pane git snapshot: the branch/sync/merge chips + Review/Push action now
+        // read THIS pane's snapshot (was hard-null, which dropped ahead/behind + merge
+        // for panes). Branch label still falls back to currentWorkspace.branch if absent.
+        primaryGitSnapshot: gitSnapshotByWorkspace[viewerWorkspace?.path ?? ''] ?? null,
+        // Pane PR/CI rollup stays focused-only for now (no per-pane gh fetch).
         primaryPr: null,
         pendingPlanImport: null,
         externalPathGrantPrompt: null,
@@ -19820,6 +19907,7 @@ function App(): React.JSX.Element {
       welcomeWorkspaceHeatmapEnabled,
       workflowDefinitions,
       workflowDraft,
+      gitSnapshotByWorkspace,
     ]
   )
   const paneComposerCtxByKey = useMemo(() => {
