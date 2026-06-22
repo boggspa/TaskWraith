@@ -664,7 +664,7 @@ function vsCodeLaunchCommand(
   workspacePath: string
 ): LaunchTargetCommand | undefined {
   if (config.request === 'attach') return undefined
-  const cwd = substituteWorkspaceFolder(
+  const cwd = substituteWorkspacePath(
     typeof config.cwd === 'string' ? config.cwd : workspacePath,
     workspacePath
   )
@@ -675,7 +675,7 @@ function vsCodeLaunchCommand(
   )
   const program =
     typeof config.program === 'string'
-      ? substituteWorkspaceFolder(config.program, workspacePath)
+      ? substituteWorkspacePath(config.program, workspacePath)
       : undefined
 
   if (runtimeExecutable) {
@@ -778,6 +778,14 @@ function substituteWorkspaceFolder(value: string, workspacePath: string): string
   return value.replace(/\$\{workspaceFolder\}/g, workspacePath)
 }
 
+// Path-valued variant: after substitution, normalise separators to the host
+// platform so a forward-slash `${workspaceFolder}/server/index.js` from a JSON
+// config resolves to a real path on Windows too. Without this the mixed
+// `C:\ws/server/index.js` never matches a path.join()-built target path.
+function substituteWorkspacePath(value: string, workspacePath: string): string {
+  return path.normalize(substituteWorkspaceFolder(value, workspacePath))
+}
+
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
@@ -796,7 +804,7 @@ function taskOptionsEnv(value: unknown): Record<string, string> | undefined {
 
 function vsCodeTaskCwd(value: unknown, workspacePath: string): string {
   if (!isObject(value) || typeof value.cwd !== 'string') return workspacePath
-  return substituteWorkspaceFolder(value.cwd, workspacePath)
+  return substituteWorkspacePath(value.cwd, workspacePath)
 }
 
 async function readText(filePath: string): Promise<string | null> {
