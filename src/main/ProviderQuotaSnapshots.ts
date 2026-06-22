@@ -584,12 +584,28 @@ function pickClaudeModelWindow(payload: any, family: 'sonnet' | 'opus'): any {
  *
  * Windows without `limitWindowSeconds` (we don't know the rollover
  * cadence) are left untouched — better to show stale-but-real than
- * project against an unknown clock.
+ * project against an unknown clock. And once the whole snapshot is older
+ * than STALE_PROJECTION_TRUST_MAX_AGE_MS, the reset clock is still rolled
+ * forward but usage% is PRESERVED (not zeroed) — see that constant.
  */
+/**
+ * Beyond this staleness the "stale window rolled over, so usage is back to
+ * 0%" assumption is no longer safe: if we've had no fresh data for over a
+ * day, a heavy user could have burned quota we never saw — which is exactly
+ * how a broken Codex usage token rendered a false 0% on every meter. Past
+ * this age we still roll the reset clock forward (for a sane display) but
+ * PRESERVE the last-known usage% instead of asserting 0.
+ */
+export const STALE_PROJECTION_TRUST_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
 export function projectStaleSnapshotForward(snapshot: any): any {
   if (!snapshot || typeof snapshot !== 'object') return snapshot
   if (!Array.isArray(snapshot.windows) || snapshot.windows.length === 0) return snapshot
   const now = Date.now()
+  const fetchedAt = typeof snapshot.fetchedAt === 'string' ? Date.parse(snapshot.fetchedAt) : NaN
+  // Only trust the rollover-to-0 guess when the snapshot is recent enough.
+  const trustRollover =
+    !Number.isFinite(fetchedAt) || now - fetchedAt <= STALE_PROJECTION_TRUST_MAX_AGE_MS
   let anyProjected = false
   const projectedWindows = snapshot.windows.map((window: any) => {
     if (!window || typeof window !== 'object') return window
@@ -611,9 +627,12 @@ export function projectStaleSnapshotForward(snapshot: any): any {
     }
     if (nextReset <= now) return window
     anyProjected = true
+    const rolled = { ...window, resetAt: new Date(nextReset).toISOString() }
+    // Recent → assume a clean rollover (window is fresh at 0%). Too stale →
+    // we don't know what's been used; keep last-known %, just fix the clock.
+    if (!trustRollover) return rolled
     return {
-      ...window,
-      resetAt: new Date(nextReset).toISOString(),
+      ...rolled,
       usedPercent: 0,
       remainingPercent: 100,
       limitLabel: '100% remaining'

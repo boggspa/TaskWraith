@@ -243,6 +243,36 @@ describe('ProviderQuotaSnapshots', () => {
       expect(nextReset - Date.now()).toBeLessThanOrEqual(5 * 60 * 60 * 1000)
     })
 
+    it('preserves last-known usage instead of asserting 0% when the snapshot is too stale to trust', () => {
+      const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString()
+      const input = {
+        provider: 'codex',
+        fetchedAt: eightDaysAgo,
+        windows: [
+          {
+            id: 'codex-weekly',
+            label: 'Weekly',
+            usedPercent: 99,
+            remainingPercent: 1,
+            limitWindowSeconds: 7 * 24 * 60 * 60,
+            resetAt: eightDaysAgo,
+            runs: 0,
+            totalTokens: 0,
+            trackingOnly: false,
+            limitLabel: '1% remaining'
+          }
+        ]
+      }
+      const projected = projectStaleSnapshotForward(input)
+      expect(projected.projected).toBe(true)
+      const window = projected.windows[0]
+      // Clock advanced for a sane display...
+      expect(Date.parse(window.resetAt)).toBeGreaterThan(Date.now())
+      // ...but usage is NOT falsely zeroed — last-known 99% is preserved.
+      expect(window.usedPercent).toBe(99)
+      expect(window.remainingPercent).toBe(1)
+    })
+
     it('leaves windows untouched if resetAt is still in the future', () => {
       const twoHoursFromNow = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
       const input = {
