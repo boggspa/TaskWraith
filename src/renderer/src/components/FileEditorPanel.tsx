@@ -22,11 +22,32 @@ interface FileEditorPanelProps {
   width?: number
 }
 
+interface WorkspaceFileListOptions {
+  path?: string
+  query?: string
+  limit?: number
+}
+
+interface WorkspaceFileListResult {
+  entries: WorkspaceFileEntry[]
+  truncated: boolean
+}
+
+const ROOT_DIR_KEY = ''
+const FILE_EDITOR_DIRECTORY_LIMIT = 500
+const FILE_EDITOR_SEARCH_LIMIT = 500
+
 const formatBytes = (value?: number): string => {
   if (!value) return ''
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const parentDirectoryForPath = (filePath: string): string => {
+  const parts = filePath.split('/').filter(Boolean)
+  parts.pop()
+  return parts.join('/')
 }
 
 const codeEditorTheme = EditorView.theme(
@@ -127,8 +148,11 @@ const extensionForPath = (filePath: string): Extension[] => {
 }
 
 const editorApi = {
-  listFiles: (workspacePath: string): Promise<WorkspaceFileEntry[]> => {
-    return window.api.listWorkspaceFiles(workspacePath)
+  listFiles: (
+    workspacePath: string,
+    options: WorkspaceFileListOptions = {}
+  ): Promise<WorkspaceFileListResult> => {
+    return window.api.listWorkspaceFilesForEditor(workspacePath, options)
   },
   readFile: (workspacePath: string, filePath: string): Promise<WorkspaceFileReadResult> => {
     return window.api.readWorkspaceFile(workspacePath, filePath)
@@ -144,23 +168,71 @@ const editorApi = {
 }
 
 export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) {
-  const [files, setFiles] = useState<WorkspaceFileEntry[]>([])
+  const [childrenByDirectory, setChildrenByDirectory] = useState<
+    Record<string, WorkspaceFileEntry[]>
+  >({})
+  const [truncatedDirectories, setTruncatedDirectories] = useState<Record<string, boolean>>({})
+  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(() => new Set())
+  const [searchFiles, setSearchFiles] = useState<WorkspaceFileEntry[]>([])
+  const [searchTruncated, setSearchTruncated] = useState(false)
   const [filter, setFilter] = useState('')
   const [selectedPath, setSelectedPath] = useState('')
   const [content, setContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
   const [savedEtag, setSavedEtag] = useState<string | null>(null)
   const [status, setStatus] = useState('')
+  const [listMessage, setListMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isListLoading, setIsListLoading] = useState(false)
   const [pendingOpenEntry, setPendingOpenEntry] = useState<WorkspaceFileEntry | null>(null)
   const isDirty = content !== savedContent
   const selectedName = selectedPath.split('/').filter(Boolean).pop() || selectedPath
+  const trimmedFilter = filter.trim()
+  const isFiltering = trimmedFilter.length > 0
 
-  const filteredFiles = useMemo(() => {
-    const needle = filter.trim().toLowerCase()
-    if (!needle) return files
-    return files.filter((item) => item.path.toLowerCase().includes(needle))
-  }, [files, filter])
+  const browseFiles = useMemo(() => {
+    const rows: WorkspaceFileEntry[] = []
+    const appendChildren = (dirPath: string): void => {
+      for (const entry of childrenByDirectory[dirPath] ?? []) {
+        rows.push(entry)
+        if (entry.isDirectory && expandedDirectories.has(entry.path)) {
+          appendChildren(entry.path)
+        }
+      }
+    }
+    appendChildren(ROOT_DIR_KEY)
+    return rows
+  }, [childrenByDirectory, expandedDirectories])
+
+  const displayedFiles = isFiltering ? searchFiles : browseFiles
+
+  const fileListStatus = useMemo(() => {
+    if (!workspacePath) return 'No workspace selected'
+    if (isFiltering) {
+      if (listMessage) return listMessage
+      if (isListLoading) return `Searching "${trimmedFilter}"...`
+      if (searchFiles.length === 0) return `No matches for "${trimmedFilter}"`
+      return `${searchFiles.length} ${searchFiles.length === 1 ? 'match' : 'matches'}${
+        searchTruncated ? ' · keep typing to narrow' : ''
+      }`
+    }
+    if (listMessage) return listMessage
+    const rootEntries = childrenByDirectory[ROOT_DIR_KEY] ?? []
+    if (isListLoading && rootEntries.length === 0) return 'Loading files...'
+    return `${rootEntries.length} ${rootEntries.length === 1 ? 'item' : 'items'} in root${
+      truncatedDirectories[ROOT_DIR_KEY] ? ' · folder truncated; filter searches workspace' : ''
+    }`
+  }, [
+    childrenByDirectory,
+    isFiltering,
+    isListLoading,
+    listMessage,
+    searchFiles.length,
+    searchTruncated,
+    trimmedFilter,
+    truncatedDirectories,
+    workspacePath
+  ])
 
   const editorExtensions = useMemo<Extension[]>(
     () => [
@@ -173,24 +245,104 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
     [selectedPath]
   )
 
+  const loadDirectory = useCallback(
+    async (dirPath = ROOT_DIR_KEY): Promise<WorkspaceFileListResult> => {
+      if (!workspacePath) return { entries: [], truncated: false }
+
+      const result = await editorApi.listFiles(workspacePath, {
+        path: dirPath,
+        limit: FILE_EDITOR_DIRECTORY_LIMIT
+      })
+      setChildrenByDirectory((current) => ({
+        ...current,
+        [dirPath]: result.entries
+      }))
+      setTruncatedDirectories((current) => ({
+        ...current,
+        [dirPath]: result.truncated
+      }))
+      return result
+    },
+    [workspacePath]
+  )
+
   const refreshFiles = useCallback(async () => {
     if (!workspacePath) {
-      setFiles([])
+      setChildrenByDirectory({})
+      setTruncatedDirectories({})
+      setExpandedDirectories(new Set())
+      setSearchFiles([])
+      setSearchTruncated(false)
+      setFilter('')
+      setListMessage('')
       return
     }
 
-    setIsLoading(true)
-    setStatus('Loading files...')
+    setIsListLoading(true)
+    setListMessage('')
     try {
-      const nextFiles = await editorApi.listFiles(workspacePath)
-      setFiles(nextFiles)
-      setStatus(`${nextFiles.length} ${nextFiles.length === 1 ? 'item' : 'items'}`)
+      setChildrenByDirectory({})
+      setTruncatedDirectories({})
+      setExpandedDirectories(new Set())
+      setSearchFiles([])
+      setSearchTruncated(false)
+      setFilter('')
+      await loadDirectory(ROOT_DIR_KEY)
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not load files')
+      setListMessage(error instanceof Error ? error.message : 'Could not load files')
     } finally {
-      setIsLoading(false)
+      setIsListLoading(false)
     }
-  }, [workspacePath])
+  }, [loadDirectory, workspacePath])
+
+  useEffect(() => {
+    if (!workspacePath) {
+      setSearchFiles([])
+      setSearchTruncated(false)
+      setListMessage('')
+      setIsListLoading(false)
+      return
+    }
+
+    if (!trimmedFilter) {
+      setSearchFiles([])
+      setSearchTruncated(false)
+      setListMessage('')
+      setIsListLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setIsListLoading(true)
+    setListMessage('')
+
+    const timer = window.setTimeout(() => {
+      editorApi
+        .listFiles(workspacePath, {
+          query: trimmedFilter,
+          limit: FILE_EDITOR_SEARCH_LIMIT
+        })
+        .then((result) => {
+          if (cancelled) return
+          setSearchFiles(result.entries)
+          setSearchTruncated(result.truncated)
+        })
+        .catch((error) => {
+          if (cancelled) return
+          setSearchFiles([])
+          setSearchTruncated(false)
+          setListMessage(error instanceof Error ? error.message : 'Could not search files')
+        })
+        .finally(() => {
+          if (!cancelled) setIsListLoading(false)
+        })
+    }, 180)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [trimmedFilter, workspacePath])
 
   useEffect(() => {
     let cancelled = false
@@ -201,6 +353,7 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
       setSavedContent('')
       setSavedEtag(null)
       setPendingOpenEntry(null)
+      setStatus('')
       void refreshFiles()
     })
     return () => {
@@ -208,8 +361,87 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
     }
   }, [refreshFiles])
 
+  const expandDirectoryPath = async (dirPath: string) => {
+    if (!workspacePath) return
+
+    const parts = dirPath.split('/').filter(Boolean)
+    const chain = parts.map((_, index) => parts.slice(0, index + 1).join('/'))
+    setIsListLoading(true)
+    setListMessage('')
+    try {
+      await loadDirectory(ROOT_DIR_KEY)
+      for (const path of chain) {
+        await loadDirectory(path)
+      }
+      setExpandedDirectories((current) => {
+        const next = new Set(current)
+        chain.forEach((path) => next.add(path))
+        return next
+      })
+    } catch (error) {
+      setListMessage(error instanceof Error ? error.message : `Could not open ${dirPath}`)
+    } finally {
+      setIsListLoading(false)
+    }
+  }
+
+  const toggleDirectory = async (entry: WorkspaceFileEntry) => {
+    if (!workspacePath || !entry.isDirectory) return
+
+    if (isFiltering) {
+      setFilter('')
+      await expandDirectoryPath(entry.path)
+      return
+    }
+
+    if (expandedDirectories.has(entry.path)) {
+      setExpandedDirectories((current) => {
+        const next = new Set(current)
+        next.delete(entry.path)
+        return next
+      })
+      setListMessage('')
+      return
+    }
+
+    setExpandedDirectories((current) => {
+      const next = new Set(current)
+      next.add(entry.path)
+      return next
+    })
+
+    if (childrenByDirectory[entry.path]) {
+      setListMessage('')
+      return
+    }
+
+    setIsListLoading(true)
+    setListMessage('')
+    try {
+      const result = await loadDirectory(entry.path)
+      if (result.truncated) {
+        setListMessage(
+          `Showing first ${result.entries.length} items in ${entry.path}; filter to search workspace`
+        )
+      }
+    } catch (error) {
+      setExpandedDirectories((current) => {
+        const next = new Set(current)
+        next.delete(entry.path)
+        return next
+      })
+      setListMessage(error instanceof Error ? error.message : `Could not open ${entry.path}`)
+    } finally {
+      setIsListLoading(false)
+    }
+  }
+
   const openFile = async (entry: WorkspaceFileEntry) => {
-    if (!workspacePath || entry.isDirectory) return
+    if (!workspacePath) return
+    if (entry.isDirectory) {
+      await toggleDirectory(entry)
+      return
+    }
     if (isDirty) {
       setPendingOpenEntry(entry)
       setStatus(`Unsaved changes in ${selectedPath}`)
@@ -255,7 +487,7 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
       } else {
         setStatus(`Saved ${result.path} · ${formatBytes(result.sizeBytes)}`)
       }
-      void refreshFiles()
+      void loadDirectory(parentDirectoryForPath(result.path))
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not save or open file')
     } finally {
@@ -301,7 +533,7 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
             className="btn btn-sm btn-ghost"
             type="button"
             onClick={refreshFiles}
-            disabled={!workspacePath || isLoading}
+            disabled={!workspacePath || isListLoading}
           >
             Refresh
           </button>
@@ -314,33 +546,42 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
           placeholder="Filter files"
           disabled={!workspacePath}
         />
+        <div className="file-editor-list-status" role="status" aria-live="polite">
+          {fileListStatus}
+        </div>
         <div className="file-editor-list">
-          {filteredFiles.length > 0 ? (
-            filteredFiles.map((entry) => (
-              <button
-                key={`${entry.isDirectory ? 'dir' : 'file'}-${entry.path}`}
-                className={`file-editor-row ${entry.isDirectory ? 'directory' : 'file'} ${selectedPath === entry.path ? 'active' : ''}`}
-                style={{ paddingLeft: `calc(var(--space-sm) + ${entry.depth * 12}px)` }}
-                type="button"
-                onClick={() => openFile(entry)}
-                disabled={entry.isDirectory || isLoading}
-                title={entry.path}
-              >
-                <FileTypeIcon
-                  path={entry.path}
-                  size={14}
-                  className="file-editor-file-icon"
-                  workspacePath={workspacePath}
-                />
-                <span className="file-editor-file-name">{entry.name}</span>
-                {!entry.isDirectory && (
-                  <span className="file-editor-file-size">{formatBytes(entry.sizeBytes)}</span>
-                )}
-              </button>
-            ))
+          {displayedFiles.length > 0 ? (
+            displayedFiles.map((entry) => {
+              const isExpanded = entry.isDirectory && expandedDirectories.has(entry.path)
+              return (
+                <button
+                  key={`${entry.isDirectory ? 'dir' : 'file'}-${entry.path}`}
+                  className={`file-editor-row ${entry.isDirectory ? 'directory' : 'file'} ${selectedPath === entry.path ? 'active' : ''} ${isExpanded ? 'expanded' : ''}`}
+                  style={{ paddingLeft: `calc(var(--space-sm) + ${entry.depth * 12}px)` }}
+                  type="button"
+                  onClick={() => void openFile(entry)}
+                  disabled={isLoading}
+                  title={entry.path}
+                >
+                  <span className="file-editor-disclosure" aria-hidden="true">
+                    {entry.isDirectory && entry.hasChildren ? (isExpanded ? '▾' : '▸') : ''}
+                  </span>
+                  <FileTypeIcon
+                    path={entry.path}
+                    size={14}
+                    className="file-editor-file-icon"
+                    workspacePath={workspacePath}
+                  />
+                  <span className="file-editor-file-name">{isFiltering ? entry.path : entry.name}</span>
+                  {!entry.isDirectory && (
+                    <span className="file-editor-file-size">{formatBytes(entry.sizeBytes)}</span>
+                  )}
+                </button>
+              )
+            })
           ) : (
             <div className="file-editor-empty">
-              {isLoading ? 'Loading files...' : status || 'No workspace files found'}
+              {fileListStatus || 'No workspace files found'}
             </div>
           )}
         </div>

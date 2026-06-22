@@ -229,6 +229,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'external-path:pick-and-persist': ['object'],
   'probe-external-path': ['nonEmptyString'],
   'list-workspace-files': ['workspacePath'],
+  'list-workspace-files-for-editor': ['workspacePath', 'optionalObject'],
   'read-workspace-file': ['workspacePath', 'filePath'],
   'discover-gemini-commands': ['workspacePath'],
   'discover-gemini-memory': ['workspacePath'],

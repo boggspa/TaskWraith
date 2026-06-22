@@ -263,6 +263,10 @@ const api = {
   }) => ipcRenderer.invoke('dock-side-chat-popout', input) as Promise<{ ok: true }>,
   quitApp: () => ipcRenderer.invoke('app:quit') as Promise<boolean>,
   listWorkspaceFiles: (workspace: string) => ipcRenderer.invoke('list-workspace-files', workspace),
+  listWorkspaceFilesForEditor: (
+    workspace: string,
+    options?: { path?: string; query?: string; limit?: number }
+  ) => ipcRenderer.invoke('list-workspace-files-for-editor', workspace, options),
   readWorkspaceFile: (workspace: string, path: string) =>
     ipcRenderer.invoke('read-workspace-file', workspace, path),
   writeWorkspaceFile: (workspace: string, path: string, content: string, baseEtag?: string | null) =>

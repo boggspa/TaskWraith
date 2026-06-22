@@ -309,6 +309,17 @@ interface SpellcheckContextResult {
   createdAt: number
 }
 
+interface WorkspaceFileListOptions {
+  path?: string
+  query?: string
+  limit?: number
+}
+
+interface WorkspaceFileListResult {
+  entries: WorkspaceFileEntry[]
+  truncated: boolean
+}
+
 declare global {
   interface Window {
     api: {
@@ -530,6 +541,10 @@ declare global {
       }) => Promise<{ ok: true }>
       quitApp: () => Promise<boolean>
       listWorkspaceFiles: (workspace: string) => Promise<WorkspaceFileEntry[]>
+      listWorkspaceFilesForEditor: (
+        workspace: string,
+        options?: WorkspaceFileListOptions
+      ) => Promise<WorkspaceFileListResult>
       readWorkspaceFile: (workspace: string, path: string) => Promise<WorkspaceFileReadResult>
       writeWorkspaceFile: (
         workspace: string,

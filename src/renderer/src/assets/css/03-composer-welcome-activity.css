@@ -7064,6 +7064,16 @@
   color: var(--text-muted);
 }
 
+.file-editor-list-status {
+  min-height: 16px;
+  margin: 0 var(--space-md) var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .file-editor-list {
   flex: 1;
   min-height: 0;
@@ -7086,7 +7096,7 @@
   background: transparent;
   color: var(--text-secondary);
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) max-content;
+  grid-template-columns: 12px 18px minmax(0, 1fr) max-content;
   align-items: center;
   gap: 6px;
   padding-top: 3px;
@@ -7099,10 +7109,19 @@
 }
 
 .file-editor-row.directory {
-  cursor: default;
+  cursor: pointer;
   color: var(--text-muted);
 }
 
+.file-editor-disclosure {
+  width: 12px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+}
+
+.file-editor-row.directory:hover:not(:disabled),
 .file-editor-row.file:hover:not(:disabled),
 .file-editor-row.active {
   background: rgba(255,255,255,0.07);

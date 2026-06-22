@@ -21,6 +21,7 @@ import type {
 import { detectExternalPath } from './services/ExternalPathDetector'
 import { FaviconService } from './services/FaviconService'
 import {
+  type WorkspaceFileListResult,
   listWorkspaceFiles as listWorkspaceFilesForEditor,
   readWorkspaceFile as readWorkspaceFileForEditor,
   writeWorkspaceFile as writeWorkspaceFileForEditor
@@ -21982,6 +21983,19 @@ if (isGeminiMcpBridgeProcess) {
       'list-workspace-files',
       async (_, workspace: string): Promise<WorkspaceFileEntry[]> => {
         return (await listWorkspaceFilesForEditor(requireRegisteredWorkspace(workspace))).entries
+      }
+    )
+
+    ipcMain.handle(
+      'list-workspace-files-for-editor',
+      async (_, workspace: string, options?: unknown): Promise<WorkspaceFileListResult> => {
+        const request = isRecord(options) ? options : {}
+        const limit = optionalNumber(request.limit)
+        return listWorkspaceFilesForEditor(requireRegisteredWorkspace(workspace), {
+          path: optionalString(request.path),
+          query: optionalString(request.query),
+          ...(limit !== undefined ? { limit } : {})
+        })
       }
     )
 

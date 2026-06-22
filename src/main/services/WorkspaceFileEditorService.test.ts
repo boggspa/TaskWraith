@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { MAX_EDITOR_FILES } from '../index.constants'
 import {
   listWorkspaceFiles,
   readWorkspaceFile,
@@ -62,6 +63,30 @@ describe('WorkspaceFileEditorService', () => {
     const search = await listWorkspaceFiles(workspace, { query: 'button', limit: 20 })
     expect(search.entries.map((entry) => entry.path)).toEqual(['src/components/Button.tsx'])
     expect(search.entries[0]).not.toHaveProperty('content')
+  })
+
+  it('finds source files through directory listing and search when the flat list truncates early', async () => {
+    const workspace = await makeWorkspace()
+    await mkdir(join(workspace, 'design-assets'), { recursive: true })
+    await mkdir(join(workspace, 'src'), { recursive: true })
+    await Promise.all(
+      Array.from({ length: MAX_EDITOR_FILES + 5 }, (_, index) =>
+        writeFile(
+          join(workspace, 'design-assets', `asset-${String(index).padStart(4, '0')}.svg`),
+          '<svg />\n'
+        )
+      )
+    )
+    await writeFile(join(workspace, 'src/App.tsx'), '<App />\n')
+
+    const flat = await listWorkspaceFiles(workspace)
+    expect(flat.truncated).toBe(true)
+
+    const src = await listWorkspaceFiles(workspace, { path: 'src', limit: 20 })
+    expect(src.entries.map((entry) => entry.path)).toContain('src/App.tsx')
+
+    const search = await listWorkspaceFiles(workspace, { query: 'App.tsx', limit: 20 })
+    expect(search.entries.map((entry) => entry.path)).toEqual(['src/App.tsx'])
   })
 
   it('reads UTF-8 text with etag metadata and rejects traversal/binary files', async () => {
