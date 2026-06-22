@@ -165,6 +165,13 @@ import {
 } from './lib/threadTokenTally'
 import { buildCodexUsageWindows } from './lib/codexUsageWindows'
 import type { QueuedRunRequest, RunRouteEventPayload, ActiveRunContext } from './lib/runRequestTypes'
+import {
+  appendLocalQueuedRunEntries,
+  collectRunQueueJobIds,
+  ensembleQueuedPromptsFromRound,
+  preserveOptimisticEnsembleQueue,
+  queuedRunRequestChatId
+} from './lib/queuedMessageRows'
 import { RunRailPanel } from './components/RunRailPanel'
 import { estimateLineChanges } from './lib/ToolParser'
 import { reduceSoloToolEventMessages } from './lib/soloToolEventReducer'
@@ -3350,6 +3357,91 @@ function App(): React.JSX.Element {
     []
   )
 
+  const updateChatByIdLocalOnly = useCallback(
+    (
+      chatId: string | null | undefined,
+      updater: (chat: ChatRecord) => ChatRecord
+    ): ChatRecord | null => {
+      if (!chatId) return null
+      const base =
+        chatByIdRef.current.get(chatId) ||
+        (activeRunChatSnapshotRef.current?.appChatId === chatId
+          ? activeRunChatSnapshotRef.current
+          : null)
+      if (!base || isChatSummaryRecord(base)) return null
+      const updated = updater(base)
+      chatByIdRef.current.set(chatId, updated)
+      if (activeRunChatIdRef.current === chatId) {
+        activeRunChatSnapshotRef.current = updated
+      }
+      setChats((prev) => {
+        const index = prev.findIndex((chat) => chat.appChatId === chatId)
+        if (index < 0) return [updated, ...prev]
+        return prev.map((chat) => (chat.appChatId === chatId ? updated : chat))
+      })
+      setCurrentChat((prev) => (prev?.appChatId === chatId ? updated : prev))
+      return updated
+    },
+    []
+  )
+
+  const appendOptimisticEnsembleQueuedPrompt = useCallback(
+    (chatId: string | null | undefined, prompt: string): boolean => {
+      if (!chatId || !prompt.trim()) return false
+      let didAppend = false
+      const updated = updateChatByIdLocalOnly(chatId, (source) => {
+        const round = source.ensemble?.activeRound
+        if (source.chatKind !== 'ensemble' || round?.status !== 'running') return source
+        const currentQueue = ensembleQueuedPromptsFromRound(round)
+        const nextQueue = [...currentQueue, prompt]
+        didAppend = true
+        return {
+          ...source,
+          ensemble: {
+            ...source.ensemble!,
+            activeRound: {
+              ...round,
+              queuedPrompt: nextQueue[0],
+              queuedPrompts: nextQueue
+            },
+            updatedAt: new Date().toISOString()
+          },
+          updatedAt: Date.now()
+        }
+      })
+      return Boolean(updated && didAppend)
+    },
+    [updateChatByIdLocalOnly]
+  )
+
+  const removeOptimisticEnsembleQueuedPrompt = useCallback(
+    (chatId: string | null | undefined, prompt: string): void => {
+      if (!chatId) return
+      updateChatByIdLocalOnly(chatId, (source) => {
+        const round = source.ensemble?.activeRound
+        if (source.chatKind !== 'ensemble' || round?.status !== 'running') return source
+        const currentQueue = ensembleQueuedPromptsFromRound(round)
+        const index = currentQueue.lastIndexOf(prompt)
+        if (index < 0) return source
+        const nextQueue = [...currentQueue.slice(0, index), ...currentQueue.slice(index + 1)]
+        return {
+          ...source,
+          ensemble: {
+            ...source.ensemble!,
+            activeRound: {
+              ...round,
+              queuedPrompt: nextQueue[0],
+              queuedPrompts: nextQueue
+            },
+            updatedAt: new Date().toISOString()
+          },
+          updatedAt: Date.now()
+        }
+      })
+    },
+    [updateChatByIdLocalOnly]
+  )
+
   const loadChatList = useCallback(async (workspaceId?: string): Promise<ChatRecord[]> => {
     if (typeof window.api.getChatList === 'function') {
       return window.api.getChatList(workspaceId)
@@ -3364,10 +3456,12 @@ function App(): React.JSX.Element {
   }, [loadChatList])
 
   const applyHydratedChat = useCallback((chat: ChatRecord): ChatRecord => {
-    chatByIdRef.current.set(chat.appChatId, chat)
-    setChats((prev) => mergeChatRecord(prev, chat))
-    setCurrentChat((prev) => (prev?.appChatId === chat.appChatId ? chat : prev))
-    return chat
+    const local = chatByIdRef.current.get(chat.appChatId)
+    const merged = preserveOptimisticEnsembleQueue(chat, local)
+    chatByIdRef.current.set(merged.appChatId, merged)
+    setChats((prev) => mergeChatRecord(prev, merged))
+    setCurrentChat((prev) => (prev?.appChatId === merged.appChatId ? merged : prev))
+    return merged
   }, [])
 
   const refreshSingleChat = useCallback(
@@ -6597,6 +6691,10 @@ function App(): React.JSX.Element {
 
     const resizeObserver = new ResizeObserver(updateComposerReservation)
     resizeObserver.observe(composerArea)
+    const aboveRowStack = composerArea.querySelector('.composer-above-bar-stack')
+    if (aboveRowStack) {
+      resizeObserver.observe(aboveRowStack)
+    }
     window.addEventListener('resize', updateComposerReservation)
 
     return () => {
@@ -6613,7 +6711,15 @@ function App(): React.JSX.Element {
     // These deps re-run ONLY on switch/focus/layout — NOT per keystroke
     // (`prompt` is deliberately excluded; including it caused the old flicker
     // feedback loop) — and the ResizeObserver still handles all in-thread resizes.
-  }, [currentChat?.appChatId, multiview.focusedPaneIndex, multiview.layout])
+  }, [
+    currentChat?.appChatId,
+    currentChat?.ensemble?.activeRound?.queuedPrompt,
+    currentChat?.ensemble?.activeRound?.queuedPrompts?.length,
+    multiview.focusedPaneIndex,
+    multiview.layout,
+    queuedRuns.length,
+    runQueueJobs.length
+  ])
 
   // ----- Transcript auto-follow scrolling -------------------------------
   // Pins the transcript to the bottom while messages stream in, *unless*
@@ -8432,6 +8538,7 @@ function App(): React.JSX.Element {
             }
           }
         }
+        merged = preserveOptimisticEnsembleQueue(merged, liveChat)
         setChats((prev) => mergeChatRecord(prev, merged))
         chatByIdRef.current.set(merged.appChatId, merged)
         if (currentChatIdRef.current === merged.appChatId) {
@@ -9034,7 +9141,17 @@ function App(): React.JSX.Element {
         discordContextSelectionQueueKey(job.request?.discordContextSelection) ===
           discordContextSelectionQueueKey(queuedRequest.discordContextSelection)
     )
-    if (duplicateQueuedRun) {
+    const duplicateLocalQueuedRun = queuedRunsRef.current.some(
+      (request) =>
+        request.appRunId !== queuedRequest.appRunId &&
+        request.provider === targetProvider &&
+        queuedRunRequestChatId(request) === targetChatId &&
+        request.prompt === queuedRequest.prompt &&
+        request.selectedModelType === queuedRequest.selectedModelType &&
+        discordContextSelectionQueueKey(request.discordContextSelection) ===
+          discordContextSelectionQueueKey(queuedRequest.discordContextSelection)
+    )
+    if (duplicateQueuedRun || duplicateLocalQueuedRun) {
       updateRunQueueJobStatus(queuedRequest.appRunId, 'cancelled', 'Duplicate queued run ignored.')
       appendThreadRawLog(targetChatId, {
         type: 'info',
@@ -9042,8 +9159,16 @@ function App(): React.JSX.Element {
       })
       return
     }
+    const knownRunQueueJobIds = collectRunQueueJobIds(runQueueJobsRef.current)
+    const localQueuedRunsForChat = queuedRunsRef.current.filter(
+      (request) =>
+        queuedRunRequestChatId(request) === targetChatId &&
+        !(request.appRunId && knownRunQueueJobIds.has(request.appRunId))
+    )
     const queuePosition =
-      getQueuedDesktopRunJobs().filter((job) => job.chatId === targetChatId).length + 1
+      getQueuedDesktopRunJobs().filter((job) => job.chatId === targetChatId).length +
+      localQueuedRunsForChat.length +
+      1
     persistRunQueueJobForRequest(queuedRequest, 'queued', reason)
     setQueuedRuns((prev) => [...prev, queuedRequest])
     appendThreadRawLog(targetChatId, {
@@ -9271,42 +9396,55 @@ function App(): React.JSX.Element {
         const concurrentMode = Boolean(
           runChat.ensemble?.concurrentModeEnabled && !request.dmTargetParticipantId
         )
-        await window.api.runEnsembleRound({
-          chatId: runChat.appChatId,
-          prompt: request.prompt,
-          mode,
-          concurrentMode,
-          imageAttachments: request.imageAttachments.map((attachment) => ({
-            id: attachment.id,
-            path: attachment.path,
-            name: attachment.name
-          })),
-          ...(request.discordContextSnapshots?.length
-            ? { discordContextSnapshots: request.discordContextSnapshots }
-            : {}),
-          // A2 (1.0.3) — DM the selected chip only when the user
-          // sent with Cmd/Ctrl held. The orchestrator filters
-          // participants to just this one for the round.
-          ...(request.dmTargetParticipantId
-            ? { dmTargetParticipantId: request.dmTargetParticipantId }
-            : {}),
-          // 1.0.4-AT4 — composer-level external path grants. Pre-AT4
-          // these were dropped at the IPC boundary, so file-mention
-          // grants the user added in the composer never reached
-          // ensemble participants. The orchestrator runs them
-          // through `resolveEffectiveRunPermissions`'s
-          // `explicitExternalPathGrants` input which provider-
-          // filters per participant.
-          ...(request.externalPathGrants && request.externalPathGrants.length > 0
-            ? { externalPathGrants: request.externalPathGrants }
-            : {})
-        })
+        const didOptimisticallyQueue =
+          mode === 'queue'
+            ? appendOptimisticEnsembleQueuedPrompt(runChat.appChatId, request.prompt)
+            : false
+        try {
+          await window.api.runEnsembleRound({
+            chatId: runChat.appChatId,
+            prompt: request.prompt,
+            mode,
+            concurrentMode,
+            imageAttachments: request.imageAttachments.map((attachment) => ({
+              id: attachment.id,
+              path: attachment.path,
+              name: attachment.name
+            })),
+            ...(request.discordContextSnapshots?.length
+              ? { discordContextSnapshots: request.discordContextSnapshots }
+              : {}),
+            // A2 (1.0.3) — DM the selected chip only when the user
+            // sent with Cmd/Ctrl held. The orchestrator filters
+            // participants to just this one for the round.
+            ...(request.dmTargetParticipantId
+              ? { dmTargetParticipantId: request.dmTargetParticipantId }
+              : {}),
+            // 1.0.4-AT4 — composer-level external path grants. Pre-AT4
+            // these were dropped at the IPC boundary, so file-mention
+            // grants the user added in the composer never reached
+            // ensemble participants. The orchestrator runs them
+            // through `resolveEffectiveRunPermissions`'s
+            // `explicitExternalPathGrants` input which provider-
+            // filters per participant.
+            ...(request.externalPathGrants && request.externalPathGrants.length > 0
+              ? { externalPathGrants: request.externalPathGrants }
+              : {})
+          })
+        } catch (error) {
+          if (didOptimisticallyQueue) {
+            removeOptimisticEnsembleQueuedPrompt(runChat.appChatId, request.prompt)
+          }
+          throw error
+        }
         if (!request.existingPrompt && !request.preserveComposer) {
           setChatPromptDraft(runChat.appChatId, '')
           clearComposerAttachmentsForSubmittedRequest(request)
         }
         setIsThinking(true)
-        void refreshSingleChat(runChat.appChatId)
+        if (mode !== 'queue') {
+          void refreshSingleChat(runChat.appChatId)
+        }
         return
       }
       // Per-chat busy check: only queue when THIS chat has an active
@@ -15993,9 +16131,10 @@ function App(): React.JSX.Element {
   // shape. Two sources merge here:
   //
   //   1. Durable `RunQueueJob` rows — main-owned solo-chat queue
-  //      storage. `queuedRuns` is now only a transient rich-request
-  //      cache/order overlay for jobs queued during this renderer
-  //      session; visibility follows the persisted job status.
+  //      storage — plus local `queuedRuns` entries that were just
+  //      enqueued and have not yet appeared in the main-process queue
+  //      echo. This makes the stack paint synchronously on Send while
+  //      still letting the durable job replace the local row by runId.
   //
   //   2. `chat.ensemble.activeRound.queuedPrompt` — the orchestrator's
   //      single-string queue for ensemble rounds (set when the user
@@ -16011,7 +16150,8 @@ function App(): React.JSX.Element {
     (chat: ChatRecord | null | undefined): QueuedMessageRowEntry[] => {
       if (!chat) return []
       const chatId = chat.appChatId
-      const entries: QueuedMessageRowEntry[] = getQueuedDesktopRunJobs(runQueueJobs)
+      const sourceChat = chatByIdRef.current.get(chatId) || chat
+      const durableEntries: QueuedMessageRowEntry[] = getQueuedDesktopRunJobs(runQueueJobs)
         .filter((job) => job.chatId === chatId)
         .map((job) => {
           const request = resolveQueuedDesktopRunRequest(job)
@@ -16028,12 +16168,19 @@ function App(): React.JSX.Element {
             dmTargetParticipantId: request?.dmTargetParticipantId
           }
         })
+      const entries = appendLocalQueuedRunEntries({
+        entries: durableEntries,
+        queuedRuns,
+        runQueueJobs,
+        chatId,
+        queuedRunFallbackId
+      })
       // Append every ensemble-round queued prompt. The orchestrator
       // now supports a FIFO queue (`activeRound.queuedPrompts`); the
       // legacy `queuedPrompt` field stays in sync with the head for
       // back-compat readers. Iterate the array so the stack shows
       // every pending entry with its own Edit / Delete / Steer.
-      const ensembleRound = chat.ensemble?.activeRound
+      const ensembleRound = sourceChat.ensemble?.activeRound
       if (ensembleRound?.status === 'running') {
         const prompts =
           Array.isArray(ensembleRound.queuedPrompts) && ensembleRound.queuedPrompts.length > 0
@@ -16042,7 +16189,9 @@ function App(): React.JSX.Element {
               ? [ensembleRound.queuedPrompt]
               : []
         const ensembleProvider: ProviderId =
-          chat.provider || chat.ensemble?.participants.find((p) => p.enabled)?.provider || 'codex'
+          sourceChat.provider ||
+          sourceChat.ensemble?.participants.find((p) => p.enabled)?.provider ||
+          'codex'
         for (let idx = 0; idx < prompts.length; idx += 1) {
           entries.push({
             id: `ensemble-queued-${ensembleRound.roundId}-${idx}`,
