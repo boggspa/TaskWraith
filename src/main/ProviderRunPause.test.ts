@@ -140,6 +140,44 @@ describe('ProviderRunPause', () => {
     ).toBeUndefined()
   })
 
+  it('re-resolves active goals for the reroute target provider', () => {
+    const resolution = {
+      provider: 'grok' as ProviderId,
+      reroute: {
+        from: 'claude' as ProviderId,
+        to: 'grok' as ProviderId,
+        reason: 'provider-paused' as const
+      },
+      reroutePlan: {
+        provider: 'grok' as ProviderId
+      }
+    }
+
+    const routedPayload = applyReroutePlanToPayload(
+      {
+        provider: 'claude' as ProviderId,
+        prompt: '<taskwraith_active_goal>old</taskwraith_active_goal>',
+        approvalMode: 'default',
+        activeGoal: {
+          id: 'goal-1',
+          objective: 'Keep goal state portable',
+          status: 'active' as const,
+          mode: 'taskwraith_steered' as const,
+          provider: 'claude' as ProviderId,
+          createdAt: '2026-06-22T12:00:00Z',
+          updatedAt: '2026-06-22T12:00:00Z'
+        }
+      },
+      resolution
+    )
+
+    expect(routedPayload.activeGoal).toMatchObject({
+      id: 'goal-1',
+      provider: 'grok',
+      mode: 'grok_native'
+    })
+  })
+
   it('does not reroute into another active pause', () => {
     const state = settings({
       codex: {

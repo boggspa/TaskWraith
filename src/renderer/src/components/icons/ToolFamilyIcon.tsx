@@ -120,6 +120,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'codex_plan':
     case 'goal_read':
     case 'goal_update':
+    case 'update_goal':
     case 'goal_complete':
     case 'goal_blocked':
     case 'todo_write':

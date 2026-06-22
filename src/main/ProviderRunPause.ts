@@ -1,4 +1,5 @@
 import type {
+  ActiveGoal,
   AppSettings,
   ProviderId,
   ProviderReroutePlan,
@@ -6,6 +7,7 @@ import type {
   ProviderRunReroute
 } from './store/types'
 import { approvalModeRank, coerceApprovalMode } from './RunPermissionPosture'
+import { resolveActiveGoalForProvider } from './GoalState'
 
 const PROVIDER_IDS: readonly ProviderId[] = [
   'gemini',
@@ -109,6 +111,10 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
     ...payload,
     provider: resolution.provider,
     providerReroute: resolution.reroute,
+    activeGoal: resolveReroutedActiveGoal(
+      (payload as { activeGoal?: ActiveGoal | null }).activeGoal,
+      resolution.provider
+    ),
     ...(plan.customModel
       ? { model: plan.customModel }
       : plan.selectedModelType
@@ -143,6 +149,19 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
       ? { kimiThinking: plan.kimiThinkingEnabled ?? null }
       : {})
   }
+}
+
+function resolveReroutedActiveGoal(
+  goal: ActiveGoal | null | undefined,
+  provider: ProviderId
+): ActiveGoal | null | undefined {
+  if (goal === undefined) return undefined
+  if (goal === null) return null
+  return resolveActiveGoalForProvider(goal, provider, {
+    codexNativeAvailable: provider === 'codex' && goal.mode === 'codex_native',
+    claudeNativeAvailable: provider === 'claude' && goal.mode === 'claude_native',
+    grokNativeAvailable: provider === 'grok'
+  })
 }
 
 function cappedRerouteApprovalMode(

@@ -1332,6 +1332,7 @@ function captureFailoverSnapshot(payload: AgentRunPayload): FailoverRunSnapshot 
     scope: payload.scope,
     workspace: payload.workspace,
     prompt: payload.prompt,
+    activeGoal: payload.activeGoal,
     appChatId: payload.appChatId,
     approvalMode: payload.approvalMode,
     effectivePermissions: payload.effectivePermissions,
