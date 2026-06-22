@@ -34,6 +34,15 @@ export interface RemoteDeviceAuditLedgerOptions {
 
 export const REMOTE_DEVICE_AUDIT_LEDGER_FILENAME = 'remote-device-audit-ledger.json'
 
+/**
+ * Cap on retained audit records. The ledger is rewritten in full on every
+ * append (see `persist`), so leaving it unbounded turns each remote device
+ * action into an ever-slower synchronous main-thread write — a connected phone
+ * polling thread snapshots appends ~1/sec, which froze the UI once the file
+ * grew into the megabytes. Newest records are kept.
+ */
+export const MAX_REMOTE_DEVICE_AUDIT_RECORDS = 2000
+
 export function defaultRemoteDeviceAuditLedgerPath(): string | null {
   if (!app || typeof app.getPath !== 'function') return null
   try {
@@ -76,6 +85,9 @@ export class RemoteDeviceAuditLedger implements RemoteDeviceAuditLedgerWriter {
     const existing = this.records.find((row) => row.id === record.id)
     if (existing) return existing
     this.records = [...this.records, record]
+    if (this.records.length > MAX_REMOTE_DEVICE_AUDIT_RECORDS) {
+      this.records = this.records.slice(-MAX_REMOTE_DEVICE_AUDIT_RECORDS)
+    }
     this.persist()
     return record
   }
@@ -104,7 +116,10 @@ export class RemoteDeviceAuditLedger implements RemoteDeviceAuditLedgerWriter {
     try {
       mkdirSync(dirname(this.storagePath), { recursive: true })
       const tmpPath = `${this.storagePath}.tmp`
-      writeFileSync(tmpPath, JSON.stringify(this.records, null, 2), 'utf-8')
+      // Compact (not pretty-printed): this is a machine-read audit log that is
+      // rewritten on every append; the 2-space indent ~doubled the bytes and
+      // the serialize cost on the main thread for no human benefit.
+      writeFileSync(tmpPath, JSON.stringify(this.records), 'utf-8')
       renameSync(tmpPath, this.storagePath)
     } catch (err) {
       this.log(

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { RemoteDeviceAuditLedger } from './RemoteDeviceAuditLedger'
+import { MAX_REMOTE_DEVICE_AUDIT_RECORDS, RemoteDeviceAuditLedger } from './RemoteDeviceAuditLedger'
 
 describe('RemoteDeviceAuditLedger', () => {
   let tmpDir: string
@@ -109,5 +109,42 @@ describe('RemoteDeviceAuditLedger', () => {
         timestamp: '2026-05-31T21:00:00.000Z'
       }
     ])
+  })
+
+  it('caps the ledger to the newest MAX records so the full-rewrite stays bounded', () => {
+    // Pre-seed a full ledger on disk, then append one more: the oldest row is
+    // dropped, the file never grows past the cap, and the newest row is kept.
+    const seeded = Array.from({ length: MAX_REMOTE_DEVICE_AUDIT_RECORDS }, (_, i) => ({
+      id: `seed-${i}`,
+      deviceId: 'pair-1',
+      capability: 'startTurn',
+      action: 'composerPrompt',
+      decision: 'allowed' as const,
+      reason: 'accepted',
+      timestamp: '2026-05-31T21:00:00.000Z'
+    }))
+    writeFileSync(storagePath, JSON.stringify(seeded), 'utf-8')
+
+    const ledger = new RemoteDeviceAuditLedger({
+      storagePath,
+      now: () => '2026-05-31T21:00:01.000Z',
+      idFactory: () => 'newest'
+    })
+
+    ledger.append({
+      deviceId: 'pair-1',
+      capability: 'startTurn',
+      action: 'composerPrompt',
+      decision: 'allowed',
+      reason: 'accepted'
+    })
+
+    const rows = ledger.list()
+    expect(rows).toHaveLength(MAX_REMOTE_DEVICE_AUDIT_RECORDS)
+    expect(rows[rows.length - 1].id).toBe('newest')
+    expect(rows[0].id).toBe('seed-1') // 'seed-0' (oldest) was dropped
+    expect(JSON.parse(readFileSync(storagePath, 'utf-8'))).toHaveLength(
+      MAX_REMOTE_DEVICE_AUDIT_RECORDS
+    )
   })
 })
