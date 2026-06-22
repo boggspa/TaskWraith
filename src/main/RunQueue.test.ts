@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  capRunQueueJobs,
   createRunQueueJob,
   filterRunQueueJobs,
+  MAX_TERMINAL_RUN_QUEUE_JOBS,
   recoverInterruptedRunQueueJobs,
   sortRunQueueJobs,
   findNextRunnableQueueIndex,
@@ -35,6 +37,65 @@ describe('RunQueue', () => {
     expect(job.enqueuedAt).toBe('2026-05-06T00:00:00.000Z')
     expect(job.promptPreview).toBe('Inspect this workspace and summarize the next step.')
     expect(job.attempt).toBe(1)
+  })
+
+  it('caps terminal jobs to the newest MAX while always keeping in-flight jobs', () => {
+    const request = {
+      prompt: 'do work',
+      selectedModelType: 'flash-lite',
+      customModel: '',
+      approvalMode: 'default' as const,
+      sessionTrust: false,
+      imageAttachments: []
+    }
+    const make = (id: string, status: 'queued' | 'active' | 'paused' | 'completed', ts: string) =>
+      createRunQueueJob(
+        {
+          id,
+          runId: id,
+          provider: 'claude',
+          workspaceId: 'w',
+          workspacePath: '/w',
+          chatId: 'c',
+          source: 'manual',
+          status,
+          request
+        },
+        ts
+      )
+
+    // In-flight jobs must NEVER be dropped, no matter how old.
+    const inflight = [
+      make('queued-1', 'queued', '2020-01-01T00:00:00.000Z'),
+      make('active-1', 'active', '2020-01-01T00:00:00.000Z'),
+      make('paused-1', 'paused', '2020-01-01T00:00:00.000Z')
+    ]
+    const base = Date.parse('2026-06-01T00:00:00.000Z')
+    const terminal = Array.from({ length: MAX_TERMINAL_RUN_QUEUE_JOBS + 5 }, (_, i) =>
+      make(`done-${i}`, 'completed', new Date(base + i * 1000).toISOString())
+    )
+
+    const capped = capRunQueueJobs([...terminal, ...inflight])
+    const ids = new Set(capped.map((job) => job.id))
+
+    // All in-flight kept; total = MAX terminal + 3 in-flight.
+    expect(ids.has('queued-1')).toBe(true)
+    expect(ids.has('active-1')).toBe(true)
+    expect(ids.has('paused-1')).toBe(true)
+    expect(capped.filter((job) => job.status === 'completed')).toHaveLength(
+      MAX_TERMINAL_RUN_QUEUE_JOBS
+    )
+    expect(capped).toHaveLength(MAX_TERMINAL_RUN_QUEUE_JOBS + 3)
+
+    // The 5 oldest terminal jobs are dropped; the newest are kept.
+    expect(ids.has('done-0')).toBe(false)
+    expect(ids.has('done-4')).toBe(false)
+    expect(ids.has('done-5')).toBe(true)
+    expect(ids.has(`done-${MAX_TERMINAL_RUN_QUEUE_JOBS + 4}`)).toBe(true)
+
+    // Under the cap, the same array is returned untouched.
+    const small = [...terminal.slice(0, 3), ...inflight]
+    expect(capRunQueueJobs(small)).toBe(small)
   })
 
   it('creates global queued jobs without workspace fields', () => {

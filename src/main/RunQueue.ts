@@ -186,6 +186,44 @@ export function sortRunQueueJobs(jobs: RunQueueJob[]): RunQueueJob[] {
 }
 
 /**
+ * Cap on retained terminal (completed/failed/cancelled) jobs. The run queue is
+ * rewritten in full — synchronously, fsync'd, pretty-printed — on every job
+ * save, so an unbounded history turns each run state change into an
+ * ever-slower main-thread write (the file had grown to ~1.7MB / 1360 jobs).
+ * Newest terminal jobs are kept.
+ */
+export const MAX_TERMINAL_RUN_QUEUE_JOBS = 500
+
+function runQueueJobRecencyMs(job: RunQueueJob): number {
+  const stamp = job.endedAt || job.failedAt || job.updatedAt || job.createdAt
+  const ms = stamp ? Date.parse(stamp) : NaN
+  return Number.isFinite(ms) ? ms : 0
+}
+
+/**
+ * Drop the oldest terminal jobs beyond `maxTerminal`. In-flight jobs — anything
+ * NOT terminal (queued/starting/active/paused/cancelling) — are ALWAYS kept, so
+ * startup recovery and live dispatch are never affected. Original array order is
+ * preserved for kept jobs (callers sort separately).
+ */
+export function capRunQueueJobs(
+  jobs: RunQueueJob[],
+  maxTerminal = MAX_TERMINAL_RUN_QUEUE_JOBS
+): RunQueueJob[] {
+  const terminal = jobs.filter((job) => isTerminalRunQueueStatus(job.status))
+  if (terminal.length <= maxTerminal) return jobs
+  const keepTerminalIds = new Set(
+    [...terminal]
+      .sort((a, b) => runQueueJobRecencyMs(b) - runQueueJobRecencyMs(a))
+      .slice(0, maxTerminal)
+      .map((job) => job.id)
+  )
+  return jobs.filter(
+    (job) => !isTerminalRunQueueStatus(job.status) || keepTerminalIds.has(job.id)
+  )
+}
+
+/**
  * Scheduling decision: find the first runnable job that the caller says can
  * dispatch now. Pure function — the caller supplies a per-job predicate so this
  * stays decoupled from React refs / RunManager singletons.

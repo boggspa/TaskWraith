@@ -52,6 +52,7 @@ import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
 import { createHash, randomUUID } from 'crypto'
 import {
+  capRunQueueJobs,
   createRunQueueJob,
   filterRunQueueJobs,
   recoverInterruptedRunQueueJobs as recoverInterruptedQueueJobs,
@@ -132,6 +133,11 @@ const providerUsageSnapshotsPath = path.join(userDataPath, 'provider-usage-snaps
 const scheduledTasksPath = path.join(userDataPath, 'scheduled-tasks.json')
 const workflowsPath = path.join(userDataPath, 'workflows.json')
 const runQueuePath = path.join(userDataPath, 'run-queue.json')
+// Single choke point for run-queue writes: bounds retained terminal history
+// (capRunQueueJobs) so the full synchronous rewrite stays small. In-flight jobs
+// are always kept — see capRunQueueJobs.
+const writeRunQueueJobs = (jobs: RunQueueJob[]): void =>
+  writeJson(runQueuePath, sortRunQueueJobs(capRunQueueJobs(jobs)))
 const runRecoveryPath = path.join(userDataPath, 'run-recovery.json')
 const workspaceChangesPath = path.join(userDataPath, 'workspace-changes.json')
 const approvalLedgerPath = path.join(userDataPath, 'approval-ledger.json')
@@ -2753,7 +2759,7 @@ export class AppStore {
     } else {
       jobs.push(record)
     }
-    writeJson(runQueuePath, sortRunQueueJobs(jobs))
+    writeRunQueueJobs(jobs)
     return record
   }
 
@@ -2763,29 +2769,26 @@ export class AppStore {
     if (index < 0) return null
     const updated = updateRunQueueJobRecord(jobs[index], partial)
     jobs[index] = updated
-    writeJson(runQueuePath, sortRunQueueJobs(jobs))
+    writeRunQueueJobs(jobs)
     return updated
   }
 
   static deleteRunQueueJob(runIdOrId: string) {
     const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
-    writeJson(
-      runQueuePath,
-      jobs.filter((job) => job.id !== runIdOrId && job.runId !== runIdOrId)
-    )
+    writeRunQueueJobs(jobs.filter((job) => job.id !== runIdOrId && job.runId !== runIdOrId))
   }
 
   static recoverInterruptedRunQueueJobs(): RunQueueJob[] {
     const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
     const recovered = recoverInterruptedQueueJobs(jobs)
-    writeJson(runQueuePath, sortRunQueueJobs(recovered))
+    writeRunQueueJobs(recovered)
     return recovered
   }
 
   static recoverRunQueueAfterStartup(): RunRecoveryRecord[] {
     const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
     const recovered = recoverRunQueueJobsAfterStartup(jobs)
-    writeJson(runQueuePath, sortRunQueueJobs(recovered.jobs))
+    writeRunQueueJobs(recovered.jobs)
     if (recovered.records.length > 0) {
       const records = readJson<RunRecoveryRecord[]>(runRecoveryPath, [])
       writeJson(runRecoveryPath, [...records, ...recovered.records])
