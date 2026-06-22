@@ -95,6 +95,11 @@ export interface GitStageInput {
   patch?: string
 }
 
+export interface GitUnstageInput {
+  repoPath: string
+  paths?: string[]
+}
+
 export interface GitCommitInput {
   repoPath: string
   message: string
@@ -133,7 +138,11 @@ export class GitService {
   async stage(input: GitStageInput): Promise<GitResult<GitRepositorySnapshot>> {
     try {
       const repo = await this.resolveRepository(input.repoPath)
-      const paths = sanitizeRepoPaths(input.paths, repo.repoRoot)
+      const paths = sanitizeRepoPaths(
+        input.paths,
+        repo.repoRoot,
+        await pathBaseForRepoPaths(repo.requestedPath)
+      )
       if (input.patch && input.patch.trim()) {
         return {
           ok: false,
@@ -149,6 +158,24 @@ export class GitService {
       } else {
         return { ok: false, error: 'Choose files to stage or pass all=true.' }
       }
+      return { ok: true, data: await this.buildSnapshot(repo.repoRoot) }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async unstage(input: GitUnstageInput): Promise<GitResult<GitRepositorySnapshot>> {
+    try {
+      const repo = await this.resolveRepository(input.repoPath)
+      const paths = sanitizeRepoPaths(
+        input.paths,
+        repo.repoRoot,
+        await pathBaseForRepoPaths(repo.requestedPath)
+      )
+      if (paths.length === 0) {
+        return { ok: false, error: 'Choose files to unstage.' }
+      }
+      await this.mustRun('git', ['reset', '--', ...paths], repo.repoRoot)
       return { ok: true, data: await this.buildSnapshot(repo.repoRoot) }
     } catch (error) {
       return failure(error)
@@ -604,7 +631,20 @@ function classifyStatus(
   return 'modified'
 }
 
-function sanitizeRepoPaths(paths: string[] | undefined, repoRoot: string): string[] {
+async function pathBaseForRepoPaths(requestedPath: string): Promise<string> {
+  try {
+    const stat = await fs.stat(requestedPath)
+    return stat.isDirectory() ? requestedPath : dirname(requestedPath)
+  } catch {
+    return dirname(requestedPath)
+  }
+}
+
+function sanitizeRepoPaths(
+  paths: string[] | undefined,
+  repoRoot: string,
+  basePath: string = repoRoot
+): string[] {
   if (!Array.isArray(paths)) return []
   const sanitized: string[] = []
   for (const candidate of paths) {
@@ -617,7 +657,7 @@ function sanitizeRepoPaths(paths: string[] | undefined, repoRoot: string): strin
     if (normalized === '.' || normalized === '..' || normalized.startsWith(`..${sep}`)) {
       throw new Error('Stage paths must stay inside the repository.')
     }
-    const resolvedPath = resolve(repoRoot, normalized)
+    const resolvedPath = resolve(basePath, normalized)
     const relativePath = relative(repoRoot, resolvedPath)
     if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
       throw new Error('Stage paths must stay inside the repository.')

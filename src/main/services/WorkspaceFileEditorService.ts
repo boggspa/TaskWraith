@@ -47,6 +47,19 @@ export interface WorkspaceFileWriteOptions {
   requireBaseEtag?: boolean
 }
 
+export interface WorkspaceFileDeleteOptions {
+  workspacePath: string
+  workspaceId?: string
+  filePath: string
+  origin?: string
+  recordChange?: RecordWorkspaceEditorChangeFn
+}
+
+export interface WorkspaceFileDeleteResult {
+  path: string
+  changeSet?: WorkspaceChangeSet
+}
+
 export type WorkspaceFileEditorErrorCode =
   | 'path_outside_workspace'
   | 'directory_selected'
@@ -468,6 +481,53 @@ export async function writeWorkspaceFile(
     sizeBytes: fileStat.size,
     mtimeMs: fileStat.mtimeMs,
     etag: nextEtag,
+    changeSet
+  }
+}
+
+export async function deleteWorkspaceFile(
+  options: WorkspaceFileDeleteOptions
+): Promise<WorkspaceFileDeleteResult> {
+  const workspaceRoot = resolve(options.workspacePath)
+  const targetPath = await resolveReadableFile(workspaceRoot, options.filePath)
+  const lstat = await fs.lstat(targetPath)
+  if (lstat.isSymbolicLink()) {
+    throw new WorkspaceFileEditorError(
+      'symlink_unsupported',
+      'Symbolic links cannot be deleted from the file editor.'
+    )
+  }
+  if (lstat.isDirectory()) {
+    throw new WorkspaceFileEditorError('directory_selected', 'Selected item is not a file.')
+  }
+  if (!lstat.isFile()) {
+    throw new WorkspaceFileEditorError('directory_selected', 'Selected item is not a file.')
+  }
+  if (lstat.size > MAX_EDITOR_FILE_BYTES) {
+    throw new WorkspaceFileEditorError('file_too_large', 'File is too large for the basic editor.')
+  }
+
+  const previousBuffer = await fs.readFile(targetPath)
+  assertTextBuffer(previousBuffer)
+  const relativePath = toWorkspaceRelativePath(workspaceRoot, targetPath)
+  await fs.unlink(targetPath)
+
+  const changeSet = options.recordChange?.({
+    workspaceId: options.workspaceId,
+    workspacePath: workspaceRoot,
+    filePath: relativePath,
+    existedBefore: true,
+    deleted: true,
+    previousContent: previousBuffer.toString('utf8'),
+    nextContent: '',
+    sizeBytes: 0,
+    metadata: {
+      origin: options.origin ?? 'file-editor'
+    }
+  })
+
+  return {
+    path: relativePath,
     changeSet
   }
 }

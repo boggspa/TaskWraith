@@ -2850,6 +2850,18 @@ public final class RemoteSessionModel: ObservableObject {
         return file
     }
 
+    public func deleteWorkspaceFile(workspaceId: String, path: String) async throws -> String {
+        if isDemo {
+            demoFileEdits.removeValue(forKey: path)
+            lastActionMessage = "Deleted (demo)."
+            return path
+        }
+        let ack = try await requestFileAction(
+            BridgeAction.workspaceFileDelete(workspaceId: workspaceId, path: path),
+            timeoutMs: 16_000)
+        return ack.data?.path ?? path
+    }
+
     /// Bounded workspace diff for the Diff Studio — the Mac runs the same
     /// git surface the desktop Diff Studio uses and returns it in the ack.
     public func fetchWorkspaceDiff(workspaceId: String) async throws -> WorkspaceDiffResult {
@@ -2884,6 +2896,22 @@ public final class RemoteSessionModel: ObservableObject {
     public func stageAllChanges(workspaceId: String) async throws -> GitWorkspaceSnapshot {
         let ack = try await requestFileAction(
             BridgeAction.gitStageAll(workspaceId: workspaceId), timeoutMs: 20_000)
+        guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
+        gitSnapshots[workspaceId] = git
+        return git
+    }
+
+    public func stagePaths(workspaceId: String, paths: [String]) async throws -> GitWorkspaceSnapshot {
+        let ack = try await requestFileAction(
+            BridgeAction.gitStagePaths(workspaceId: workspaceId, paths: paths), timeoutMs: 20_000)
+        guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
+        gitSnapshots[workspaceId] = git
+        return git
+    }
+
+    public func unstagePaths(workspaceId: String, paths: [String]) async throws -> GitWorkspaceSnapshot {
+        let ack = try await requestFileAction(
+            BridgeAction.gitUnstagePaths(workspaceId: workspaceId, paths: paths), timeoutMs: 20_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
         gitSnapshots[workspaceId] = git
         return git

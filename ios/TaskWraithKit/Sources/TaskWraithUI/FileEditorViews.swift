@@ -88,6 +88,9 @@ final class MobileFileEditorState: ObservableObject {
     @Published var truncated = false
     @Published var pendingAction: PendingAction?
     @Published var showDirtyDialog = false
+    @Published var showDeleteConfirm = false
+    @Published var showCommitDialog = false
+    @Published var commitMessage = ""
 
     private var searchTask: Task<Void, Never>?
     private var searchGeneration = 0
@@ -311,6 +314,68 @@ final class MobileFileEditorState: ObservableObject {
         showDirtyDialog = false
     }
 
+    func deleteSelected(model: RemoteSessionModel) async {
+        guard let workspaceId = selectedWorkspaceId, let selectedPath, !isDirty else { return }
+        isLoading = true
+        status = "Deleting \(selectedPath)"
+        do {
+            let deletedPath = try await model.deleteWorkspaceFile(
+                workspaceId: workspaceId, path: selectedPath)
+            clearEditor()
+            status = "Deleted \(deletedPath)"
+            await refreshParentDirectory(for: deletedPath, model: model)
+            if searchIsActive {
+                await runSearch(filter.trimmingCharacters(in: .whitespacesAndNewlines), model: model)
+            }
+            await model.refreshGitSnapshotCache(workspaceId: workspaceId)
+        } catch {
+            status = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    func stageSelected(model: RemoteSessionModel) async {
+        guard let workspaceId = selectedWorkspaceId, let selectedPath, !isDirty else { return }
+        isLoading = true
+        status = "Staging \(selectedPath)"
+        do {
+            _ = try await model.stagePaths(workspaceId: workspaceId, paths: [selectedPath])
+            status = "Staged \(selectedPath)"
+        } catch {
+            status = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    func unstageSelected(model: RemoteSessionModel) async {
+        guard let workspaceId = selectedWorkspaceId, let selectedPath else { return }
+        isLoading = true
+        status = "Unstaging \(selectedPath)"
+        do {
+            _ = try await model.unstagePaths(workspaceId: workspaceId, paths: [selectedPath])
+            status = "Unstaged \(selectedPath)"
+        } catch {
+            status = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    func commitStaged(model: RemoteSessionModel) async {
+        guard let workspaceId = selectedWorkspaceId else { return }
+        let message = commitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return }
+        isLoading = true
+        status = "Committing staged changes"
+        do {
+            _ = try await model.commitChanges(workspaceId: workspaceId, message: message, stageAll: false)
+            commitMessage = ""
+            status = "Committed staged changes"
+        } catch {
+            status = error.localizedDescription
+        }
+        isLoading = false
+    }
+
     private func performPending(
         model: RemoteSessionModel, onClose: () -> Void, discard _: Bool
     ) {
@@ -341,6 +406,7 @@ final class MobileFileEditorState: ObservableObject {
         baseEtag = nil
         pendingAction = nil
         showDirtyDialog = false
+        showDeleteConfirm = false
     }
 
     private func clearNavigator() {
@@ -715,6 +781,25 @@ private struct FileEditorPane: View {
         .background(TWTheme.appBg)
         .navigationTitle(state.selectedName)
         .fileEditorInlineTitle()
+        .alert("Delete file?", isPresented: $state.showDeleteConfirm) {
+            Button("Delete", role: .destructive) {
+                Task { await state.deleteSelected(model: model) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(state.selectedPath ?? "This file") will be removed from this workspace.")
+        }
+        .alert("Commit staged changes", isPresented: $state.showCommitDialog) {
+            TextField("Commit message", text: $state.commitMessage)
+            Button("Commit") {
+                Task { await state.commitStaged(model: model) }
+            }
+            Button("Cancel", role: .cancel) {
+                state.commitMessage = ""
+            }
+        } message: {
+            Text("\(stagedCount) staged file\(stagedCount == 1 ? "" : "s") will be committed.")
+        }
     }
 
     private var header: some View {
@@ -747,17 +832,110 @@ private struct FileEditorPane: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button {
-                Task { await state.save(model: model) }
-            } label: {
-                Label("Save", systemImage: "square.and.arrow.down")
+            HStack(spacing: 8) {
+                Button {
+                    state.showDeleteConfirm = true
+                } label: {
+                    actionLabel("Delete", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+                .disabled(state.selectedPath == nil || state.isDirty || state.isLoading)
+
+                Button {
+                    Task { await state.stageSelected(model: model) }
+                } label: {
+                    actionLabel("Stage", systemImage: "plus.circle")
+                }
+                .buttonStyle(.bordered)
+                .disabled(
+                    state.selectedPath == nil || state.isDirty || state.isLoading
+                        || !selectedHasUnstagedChanges)
+
+                Button {
+                    Task { await state.unstageSelected(model: model) }
+                } label: {
+                    actionLabel("Unstage", systemImage: "minus.circle")
+                }
+                .buttonStyle(.bordered)
+                .disabled(state.selectedPath == nil || state.isLoading || !selectedHasStagedChanges)
+
+                Button {
+                    state.showCommitDialog = true
+                } label: {
+                    actionLabel("Commit", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.bordered)
+                .disabled(stagedCount == 0 || state.isLoading)
+
+                Button {
+                    Task { await state.save(model: model) }
+                } label: {
+                    actionLabel("Save", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!state.isDirty || state.selectedPath == nil || state.isLoading)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!state.isDirty || state.selectedPath == nil || state.isLoading)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(TWTheme.surface1)
+    }
+
+    @ViewBuilder
+    private func actionLabel(_ title: String, systemImage: String) -> some View {
+        if compact {
+            Image(systemName: systemImage)
+                .accessibilityLabel(title)
+        } else {
+            Label(title, systemImage: systemImage)
+        }
+    }
+
+    private var gitSnapshot: GitWorkspaceSnapshot? {
+        guard let workspaceId = state.selectedWorkspaceId else { return nil }
+        return model.gitSnapshots[workspaceId]
+    }
+
+    private var selectedGitFile: GitFileChange? {
+        guard let selectedGitPath else { return nil }
+        return gitSnapshot?.files?.first { $0.path == selectedGitPath }
+    }
+
+    private var selectedHasUnstagedChanges: Bool {
+        selectedGitFile?.unstaged == true
+    }
+
+    private var selectedHasStagedChanges: Bool {
+        selectedGitFile?.staged == true
+    }
+
+    private var stagedCount: Int {
+        gitSnapshot?.counts?.staged ?? 0
+    }
+
+    private var selectedGitPath: String? {
+        guard let selectedPath = state.selectedPath else { return nil }
+        guard let workspaceId = state.selectedWorkspaceId,
+            let workspace = model.workspaces.first(where: { $0.id == workspaceId }),
+            let repoRoot = gitSnapshot?.repoRoot
+        else { return selectedPath }
+        let workspacePath = Self.normalizedAbsolutePath(workspace.path)
+        let repoPath = Self.normalizedAbsolutePath(repoRoot)
+        if workspacePath == repoPath { return selectedPath }
+        if workspacePath.hasPrefix(repoPath + "/") {
+            let prefix = String(workspacePath.dropFirst(repoPath.count + 1))
+            return prefix.isEmpty ? selectedPath : "\(prefix)/\(selectedPath)"
+        }
+        return selectedPath
+    }
+
+    private static func normalizedAbsolutePath(_ path: String) -> String {
+        var normalized = path.replacingOccurrences(of: "\\", with: "/")
+        while normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        return normalized
     }
 }
 

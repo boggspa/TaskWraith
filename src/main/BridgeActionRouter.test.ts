@@ -74,6 +74,10 @@ function makeStubExecutor(
       executed: true,
       message: 'workspaceFileWrite done'
     }),
+    executeWorkspaceFileDelete: make('executeWorkspaceFileDelete', {
+      executed: true,
+      message: 'workspaceFileDelete done'
+    }),
     executeWorkspaceDiff: make('executeWorkspaceDiff', {
       executed: true,
       message: 'workspaceDiff done'
@@ -85,6 +89,14 @@ function makeStubExecutor(
     executeGitStageAll: make('executeGitStageAll', {
       executed: true,
       message: 'gitStageAll done'
+    }),
+    executeGitStagePaths: make('executeGitStagePaths', {
+      executed: true,
+      message: 'gitStagePaths done'
+    }),
+    executeGitUnstagePaths: make('executeGitUnstagePaths', {
+      executed: true,
+      message: 'gitUnstagePaths done'
     }),
     executeGitCommit: make('executeGitCommit', { executed: true, message: 'gitCommit done' }),
     executeGitPush: make('executeGitPush', { executed: true, message: 'gitPush done' }),
@@ -1830,6 +1842,7 @@ describe('BridgeActionRouter', () => {
           baseEtag: 'sha256:abc',
           method: 'executeWorkspaceFileWrite'
         },
+        { kind: 'workspaceFileDelete', path: 'README.md', method: 'executeWorkspaceFileDelete' },
         { kind: 'workspaceDiff', method: 'executeWorkspaceDiff' }
       ]
 
@@ -1861,10 +1874,8 @@ describe('BridgeActionRouter', () => {
       const result = (await router.route('bridge.requestActionAck', {
         pairID: 'pair-files-deny',
         payloadBase64: encodeFileAction({
-          kind: 'workspaceFileWrite',
+          kind: 'workspaceFileDelete',
           path: 'README.md',
-          content: 'hello',
-          baseEtag: 'sha256:abc'
         })
       })) as { accepted: boolean; reasonCode?: string; message?: string }
 
@@ -1934,6 +1945,8 @@ describe('BridgeActionRouter', () => {
       const actions = [
         { kind: 'gitSnapshot', method: 'executeGitSnapshot' },
         { kind: 'gitStageAll', method: 'executeGitStageAll' },
+        { kind: 'gitStagePaths', paths: ['README.md'], method: 'executeGitStagePaths' },
+        { kind: 'gitUnstagePaths', paths: ['README.md'], method: 'executeGitUnstagePaths' },
         { kind: 'gitCommit', message: 'phone commit', method: 'executeGitCommit' },
         { kind: 'gitPush', setUpstream: true, method: 'executeGitPush' },
         { kind: 'githubPrStatus', method: 'executeGithubPrStatus' },
@@ -1961,6 +1974,8 @@ describe('BridgeActionRouter', () => {
 
       const mutations = [
         { kind: 'gitStageAll' },
+        { kind: 'gitStagePaths', paths: ['README.md'] },
+        { kind: 'gitUnstagePaths', paths: ['README.md'] },
         { kind: 'gitCommit', message: 'phone commit' },
         { kind: 'gitPush' },
         { kind: 'githubCreatePr' }

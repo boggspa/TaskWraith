@@ -437,6 +437,11 @@ declare global {
         update?: boolean
         patch?: string
       }) => Promise<GitResult<GitRepositorySnapshot>>
+      gitUnstage: (payload: {
+        workspacePath?: string
+        repoPath?: string
+        paths?: string[]
+      }) => Promise<GitResult<GitRepositorySnapshot>>
       gitCommit: (payload: {
         workspacePath?: string
         repoPath?: string
@@ -552,6 +557,10 @@ declare global {
         content: string,
         baseEtag?: string | null
       ) => Promise<WorkspaceFileReadResult>
+      deleteWorkspaceFile: (
+        workspace: string,
+        path: string
+      ) => Promise<{ path: string; changeSet?: WorkspaceChangeSet }>
       captureSnapshot: (workspace: string) => Promise<any>
       computeRunDiff: (
         runId: string,

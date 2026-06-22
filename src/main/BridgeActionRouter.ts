@@ -522,12 +522,18 @@ export class BridgeActionRouter {
         return this.executor.executeWorkspaceFileRead(payload)
       case 'workspaceFileWrite':
         return this.executor.executeWorkspaceFileWrite(payload)
+      case 'workspaceFileDelete':
+        return this.executor.executeWorkspaceFileDelete(payload)
       case 'workspaceDiff':
         return this.executor.executeWorkspaceDiff(payload)
       case 'gitSnapshot':
         return this.executor.executeGitSnapshot(payload)
       case 'gitStageAll':
         return this.executor.executeGitStageAll(payload)
+      case 'gitStagePaths':
+        return this.executor.executeGitStagePaths(payload)
+      case 'gitUnstagePaths':
+        return this.executor.executeGitUnstagePaths(payload)
       case 'gitCommit':
         return this.executor.executeGitCommit(payload)
       case 'gitPush':
@@ -982,6 +988,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'workspaceFileRead':
       return 'fileRead'
     case 'workspaceFileWrite':
+    case 'workspaceFileDelete':
       return 'fileWrite'
     case 'workspaceDiff':
       return 'diffReview'
@@ -995,6 +1002,8 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     // strongest existing write capability covers them without a schema
     // migration. A workspace must grant fileWrite to commit from the phone.
     case 'gitStageAll':
+    case 'gitStagePaths':
+    case 'gitUnstagePaths':
     case 'gitCommit':
     case 'gitPush':
     case 'githubCreatePr':

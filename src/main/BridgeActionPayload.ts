@@ -215,6 +215,12 @@ export interface BridgeWorkspaceFileWriteAction extends BridgeActionMetadata {
   baseEtag: string
 }
 
+export interface BridgeWorkspaceFileDeleteAction extends BridgeActionMetadata {
+  kind: 'workspaceFileDelete'
+  workspaceId: string
+  path: string
+}
+
 /** On-demand bounded workspace diff (the iOS Diff Studio). Read-only —
  * the executor returns the bounded diff (files + hunks, hard-capped) in
  * the ack's data; nothing is broadcast. Gated by `diffReview`. */
@@ -235,6 +241,22 @@ export interface BridgeGitSnapshotAction extends BridgeActionMetadata {
 export interface BridgeGitStageAllAction extends BridgeActionMetadata {
   kind: 'gitStageAll'
   workspaceId: string
+}
+
+/** `git add -- <paths>` for selected workspace-relative file paths.
+ * Mutating — gated by `fileWrite`. */
+export interface BridgeGitStagePathsAction extends BridgeActionMetadata {
+  kind: 'gitStagePaths'
+  workspaceId: string
+  paths: string[]
+}
+
+/** `git reset -- <paths>` for selected workspace-relative file paths.
+ * Mutating — gated by `fileWrite`. */
+export interface BridgeGitUnstagePathsAction extends BridgeActionMetadata {
+  kind: 'gitUnstagePaths'
+  workspaceId: string
+  paths: string[]
 }
 
 /** Commit staged changes with a user-entered message. The message must come
@@ -591,9 +613,12 @@ export type BridgeActionPayload =
   | BridgeWorkspaceFileListAction
   | BridgeWorkspaceFileReadAction
   | BridgeWorkspaceFileWriteAction
+  | BridgeWorkspaceFileDeleteAction
   | BridgeWorkspaceDiffAction
   | BridgeGitSnapshotAction
   | BridgeGitStageAllAction
+  | BridgeGitStagePathsAction
+  | BridgeGitUnstagePathsAction
   | BridgeGitCommitAction
   | BridgeGitPushAction
   | BridgeGithubPrStatusAction
@@ -716,9 +741,12 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'workspaceFileList':
     case 'workspaceFileRead':
     case 'workspaceFileWrite':
+    case 'workspaceFileDelete':
     case 'workspaceDiff':
     case 'gitSnapshot':
     case 'gitStageAll':
+    case 'gitStagePaths':
+    case 'gitUnstagePaths':
     case 'gitCommit':
     case 'gitPush':
     case 'githubPrStatus':
@@ -782,9 +810,12 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'workspaceFileList':
     case 'workspaceFileRead':
     case 'workspaceFileWrite':
+    case 'workspaceFileDelete':
     case 'workspaceDiff':
     case 'gitSnapshot':
     case 'gitStageAll':
+    case 'gitStagePaths':
+    case 'gitUnstagePaths':
     case 'gitCommit':
     case 'gitPush':
     case 'githubPrStatus':
@@ -883,7 +914,10 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'togglePinChat':
     case 'togglePinWorkspace':
     case 'workspaceFileWrite':
+    case 'workspaceFileDelete':
     case 'gitStageAll':
+    case 'gitStagePaths':
+    case 'gitUnstagePaths':
     case 'gitCommit':
     case 'gitPush':
     case 'githubCreatePr':
@@ -967,6 +1001,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isWorkspaceFileWrite(parsed)
         ? (parsed as unknown as BridgeWorkspaceFileWriteAction)
         : { kind: 'unknown', rawKind: 'workspaceFileWrite', raw: parsed }
+    case 'workspaceFileDelete':
+      return isWorkspaceFileRead(parsed)
+        ? (parsed as unknown as BridgeWorkspaceFileDeleteAction)
+        : { kind: 'unknown', rawKind: 'workspaceFileDelete', raw: parsed }
     case 'workspaceDiff':
       return isWorkspaceDiff(parsed)
         ? (parsed as unknown as BridgeWorkspaceDiffAction)
@@ -979,6 +1017,14 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isWorkspaceScopedGitRead(parsed)
         ? (parsed as unknown as BridgeGitStageAllAction)
         : { kind: 'unknown', rawKind: 'gitStageAll', raw: parsed }
+    case 'gitStagePaths':
+      return isGitPaths(parsed)
+        ? (parsed as unknown as BridgeGitStagePathsAction)
+        : { kind: 'unknown', rawKind: 'gitStagePaths', raw: parsed }
+    case 'gitUnstagePaths':
+      return isGitPaths(parsed)
+        ? (parsed as unknown as BridgeGitUnstagePathsAction)
+        : { kind: 'unknown', rawKind: 'gitUnstagePaths', raw: parsed }
     case 'gitCommit':
       return isGitCommit(parsed)
         ? (parsed as unknown as BridgeGitCommitAction)
@@ -1306,8 +1352,20 @@ function isWorkspaceScopedGitRead(v: Record<string, unknown>): boolean {
 }
 
 const MAX_GIT_COMMIT_MESSAGE_LENGTH = 5_000
+const MAX_GIT_PATHS_PER_ACTION = 50
 const MAX_GITHUB_PR_TITLE_LENGTH = 300
 const MAX_GITHUB_PR_BODY_LENGTH = 20_000
+
+function isGitPaths(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    Array.isArray(v.paths) &&
+    v.paths.length > 0 &&
+    v.paths.length <= MAX_GIT_PATHS_PER_ACTION &&
+    v.paths.every((path) => isWorkspaceRelativeFilePath(path))
+  )
+}
 
 function isGitCommit(v: Record<string, unknown>): boolean {
   return (

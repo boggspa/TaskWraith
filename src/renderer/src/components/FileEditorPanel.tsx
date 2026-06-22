@@ -15,6 +15,7 @@ import { cpp } from '@codemirror/lang-cpp'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { tags } from '@lezer/highlight'
 import type { WorkspaceFileEntry, WorkspaceFileReadResult } from '../../../main/store/types'
+import type { GitFileStatus, GitRepositorySnapshot } from '../../../main/services/GitService'
 import { FileTypeIcon } from './FileTypeIcon'
 
 interface FileEditorPanelProps {
@@ -48,6 +49,10 @@ const parentDirectoryForPath = (filePath: string): string => {
   const parts = filePath.split('/').filter(Boolean)
   parts.pop()
   return parts.join('/')
+}
+
+const normalizeAbsolutePath = (path: string): string => {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
 const codeEditorTheme = EditorView.theme(
@@ -164,6 +169,24 @@ const editorApi = {
     baseEtag?: string | null
   ): Promise<WorkspaceFileReadResult> => {
     return window.api.writeWorkspaceFile(workspacePath, filePath, content, baseEtag)
+  },
+  deleteFile: (
+    workspacePath: string,
+    filePath: string
+  ): Promise<{ path: string }> => {
+    return window.api.deleteWorkspaceFile(workspacePath, filePath)
+  },
+  gitSnapshot: (workspacePath: string) => {
+    return window.api.gitSnapshot({ workspacePath })
+  },
+  gitStageFile: (workspacePath: string, filePath: string) => {
+    return window.api.gitStage({ workspacePath, paths: [filePath] })
+  },
+  gitUnstageFile: (workspacePath: string, filePath: string) => {
+    return window.api.gitUnstage({ workspacePath, paths: [filePath] })
+  },
+  gitCommit: (workspacePath: string, message: string) => {
+    return window.api.gitCommit({ workspacePath, message })
   }
 }
 
@@ -182,6 +205,11 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
   const [savedEtag, setSavedEtag] = useState<string | null>(null)
   const [status, setStatus] = useState('')
   const [listMessage, setListMessage] = useState('')
+  const [gitSnapshot, setGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
+  const [gitMessage, setGitMessage] = useState('')
+  const [commitMessage, setCommitMessage] = useState('')
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showCommitDialog, setShowCommitDialog] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isListLoading, setIsListLoading] = useState(false)
   const [pendingOpenEntry, setPendingOpenEntry] = useState<WorkspaceFileEntry | null>(null)
@@ -205,6 +233,28 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
   }, [childrenByDirectory, expandedDirectories])
 
   const displayedFiles = isFiltering ? searchFiles : browseFiles
+
+  const selectedRepoPath = useMemo(() => {
+    if (!selectedPath) return ''
+    const repoRoot = gitSnapshot?.repoRoot
+    if (!repoRoot || !workspacePath) return selectedPath
+    const normalizedRepo = normalizeAbsolutePath(repoRoot)
+    const normalizedWorkspace = normalizeAbsolutePath(workspacePath)
+    if (normalizedWorkspace === normalizedRepo) return selectedPath
+    if (normalizedWorkspace.startsWith(`${normalizedRepo}/`)) {
+      return `${normalizedWorkspace.slice(normalizedRepo.length + 1)}/${selectedPath}`
+    }
+    return selectedPath
+  }, [gitSnapshot?.repoRoot, selectedPath, workspacePath])
+
+  const selectedGitFile = useMemo<GitFileStatus | undefined>(() => {
+    if (!selectedRepoPath) return undefined
+    return gitSnapshot?.files.find((file) => file.path === selectedRepoPath)
+  }, [gitSnapshot?.files, selectedRepoPath])
+
+  const stagedCount = gitSnapshot?.counts.staged ?? 0
+  const selectedHasUnstagedChanges = Boolean(selectedGitFile?.unstaged)
+  const selectedHasStagedChanges = Boolean(selectedGitFile?.staged)
 
   const fileListStatus = useMemo(() => {
     if (!workspacePath) return 'No workspace selected'
@@ -266,6 +316,27 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
     [workspacePath]
   )
 
+  const refreshGitSnapshot = useCallback(async () => {
+    if (!workspacePath) {
+      setGitSnapshot(null)
+      setGitMessage('')
+      return
+    }
+    try {
+      const result = await editorApi.gitSnapshot(workspacePath)
+      if (result.ok) {
+        setGitSnapshot(result.data)
+        setGitMessage('')
+      } else {
+        setGitSnapshot(null)
+        setGitMessage(result.error)
+      }
+    } catch (error) {
+      setGitSnapshot(null)
+      setGitMessage(error instanceof Error ? error.message : 'Could not read git status')
+    }
+  }, [workspacePath])
+
   const refreshFiles = useCallback(async () => {
     if (!workspacePath) {
       setChildrenByDirectory({})
@@ -275,6 +346,8 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
       setSearchTruncated(false)
       setFilter('')
       setListMessage('')
+      setGitSnapshot(null)
+      setGitMessage('')
       return
     }
 
@@ -288,12 +361,13 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
       setSearchTruncated(false)
       setFilter('')
       await loadDirectory(ROOT_DIR_KEY)
+      void refreshGitSnapshot()
     } catch (error) {
       setListMessage(error instanceof Error ? error.message : 'Could not load files')
     } finally {
       setIsListLoading(false)
     }
-  }, [loadDirectory, workspacePath])
+  }, [loadDirectory, refreshGitSnapshot, workspacePath])
 
   useEffect(() => {
     if (!workspacePath) {
@@ -354,6 +428,8 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
       setSavedEtag(null)
       setPendingOpenEntry(null)
       setStatus('')
+      setGitSnapshot(null)
+      setGitMessage('')
       void refreshFiles()
     })
     return () => {
@@ -457,6 +533,7 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
       setSavedContent(result.content)
       setSavedEtag(result.etag ?? null)
       setStatus(`${result.path} · ${formatBytes(result.sizeBytes)}`)
+      void refreshGitSnapshot()
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not open file')
     } finally {
@@ -488,6 +565,7 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
         setStatus(`Saved ${result.path} · ${formatBytes(result.sizeBytes)}`)
       }
       void loadDirectory(parentDirectoryForPath(result.path))
+      void refreshGitSnapshot()
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not save or open file')
     } finally {
@@ -512,6 +590,7 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
       setSavedContent(result.content)
       setSavedEtag(result.etag ?? null)
       setStatus(`${result.path} · ${formatBytes(result.sizeBytes)}`)
+      void refreshGitSnapshot()
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Could not open file')
     } finally {
@@ -522,6 +601,113 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
   const cancelPendingOpen = () => {
     setPendingOpenEntry(null)
     setStatus(selectedPath ? `${selectedPath} · unsaved changes` : status)
+  }
+
+  const deleteSelectedFile = async () => {
+    if (!workspacePath || !selectedPath || isDirty) return
+
+    setIsLoading(true)
+    setShowDeleteConfirm(false)
+    setStatus(`Deleting ${selectedPath}`)
+    try {
+      const deletedPath = selectedPath
+      const result = await editorApi.deleteFile(workspacePath, selectedPath)
+      setSelectedPath('')
+      setContent('')
+      setSavedContent('')
+      setSavedEtag(null)
+      setPendingOpenEntry(null)
+      setStatus(`Deleted ${result.path}`)
+      await loadDirectory(parentDirectoryForPath(deletedPath))
+      if (isFiltering) {
+        const search = await editorApi.listFiles(workspacePath, {
+          query: trimmedFilter,
+          limit: FILE_EDITOR_SEARCH_LIMIT
+        })
+        setSearchFiles(search.entries)
+        setSearchTruncated(search.truncated)
+      }
+      void refreshGitSnapshot()
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not delete file')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const stageSelectedFile = async () => {
+    if (!workspacePath || !selectedPath || isDirty || !selectedHasUnstagedChanges) return
+
+    setIsLoading(true)
+    setStatus(`Staging ${selectedPath}`)
+    try {
+      const result = await editorApi.gitStageFile(workspacePath, selectedPath)
+      if (result.ok) {
+        setGitSnapshot(result.data)
+        setGitMessage('')
+        setStatus(`Staged ${selectedPath}`)
+      } else {
+        setGitMessage(result.error)
+        setStatus(result.error)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not stage file'
+      setGitMessage(message)
+      setStatus(message)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const unstageSelectedFile = async () => {
+    if (!workspacePath || !selectedPath || !selectedHasStagedChanges) return
+
+    setIsLoading(true)
+    setStatus(`Unstaging ${selectedPath}`)
+    try {
+      const result = await editorApi.gitUnstageFile(workspacePath, selectedPath)
+      if (result.ok) {
+        setGitSnapshot(result.data)
+        setGitMessage('')
+        setStatus(`Unstaged ${selectedPath}`)
+      } else {
+        setGitMessage(result.error)
+        setStatus(result.error)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not unstage file'
+      setGitMessage(message)
+      setStatus(message)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const commitStagedChanges = async () => {
+    const message = commitMessage.trim()
+    if (!workspacePath || !message || stagedCount === 0) return
+
+    setIsLoading(true)
+    setStatus('Committing staged changes')
+    try {
+      const result = await editorApi.gitCommit(workspacePath, message)
+      if (result.ok) {
+        setGitSnapshot(result.data)
+        setGitMessage('')
+        setCommitMessage('')
+        setShowCommitDialog(false)
+        setStatus('Committed staged changes')
+      } else {
+        setGitMessage(result.error)
+        setStatus(result.error)
+      }
+    } catch (error) {
+      const nextMessage = error instanceof Error ? error.message : 'Could not commit staged changes'
+      setGitMessage(nextMessage)
+      setStatus(nextMessage)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -613,17 +799,122 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
               'Editor'
             )}
           </strong>
-          <button
-            className="btn btn-sm"
-            type="button"
-            onClick={saveFile}
-            disabled={!workspacePath || !selectedPath || !isDirty || isLoading}
-            aria-label="Save editor file"
-            title="Save editor file"
-          >
-            Save
-          </button>
+          <div className="file-editor-actions">
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={!workspacePath || !selectedPath || isDirty || isLoading}
+              aria-label="Delete editor file"
+              title={isDirty ? 'Save or discard changes before deleting' : 'Delete editor file'}
+            >
+              Delete
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              onClick={() => void stageSelectedFile()}
+              disabled={
+                !workspacePath ||
+                !selectedPath ||
+                isDirty ||
+                isLoading ||
+                !selectedHasUnstagedChanges
+              }
+              aria-label="Stage editor file"
+              title={isDirty ? 'Save before staging this file' : 'Stage editor file'}
+            >
+              Stage
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              onClick={() => void unstageSelectedFile()}
+              disabled={!workspacePath || !selectedPath || isLoading || !selectedHasStagedChanges}
+              aria-label="Unstage editor file"
+              title="Unstage editor file"
+            >
+              Unstage
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              onClick={() => setShowCommitDialog(true)}
+              disabled={!workspacePath || stagedCount === 0 || isLoading}
+              aria-label="Commit staged changes"
+              title={stagedCount > 0 ? `Commit ${stagedCount} staged file${stagedCount === 1 ? '' : 's'}` : 'No staged files'}
+            >
+              Commit
+            </button>
+            <button
+              className="btn btn-sm"
+              type="button"
+              onClick={saveFile}
+              disabled={!workspacePath || !selectedPath || !isDirty || isLoading}
+              aria-label="Save editor file"
+              title="Save editor file"
+            >
+              Save
+            </button>
+          </div>
         </div>
+        {showDeleteConfirm && selectedPath && (
+          <div className="file-editor-modal-backdrop">
+            <div className="file-editor-confirm-card" role="alertdialog" aria-modal="true">
+              <strong>Delete file?</strong>
+              <span>{selectedPath} will be removed from this workspace.</span>
+              <div className="file-editor-unsaved-actions">
+                <button
+                  className="btn btn-sm btn-danger"
+                  type="button"
+                  onClick={() => void deleteSelectedFile()}
+                >
+                  Delete
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {showCommitDialog && (
+          <div className="file-editor-modal-backdrop">
+            <div className="file-editor-confirm-card" role="dialog" aria-modal="true">
+              <strong>Commit staged changes</strong>
+              <span>{stagedCount} staged file{stagedCount === 1 ? '' : 's'} will be committed.</span>
+              <input
+                className="file-editor-commit-input"
+                aria-label="Commit message"
+                value={commitMessage}
+                onChange={(event) => setCommitMessage(event.target.value)}
+                placeholder="Commit message"
+                autoFocus
+              />
+              <div className="file-editor-unsaved-actions">
+                <button
+                  className="btn btn-sm"
+                  type="button"
+                  onClick={() => void commitStagedChanges()}
+                  disabled={!commitMessage.trim() || isLoading || stagedCount === 0}
+                >
+                  Commit
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost"
+                  type="button"
+                  onClick={() => setShowCommitDialog(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {pendingOpenEntry && (
           <div
             className="file-editor-unsaved-card"
@@ -677,6 +968,7 @@ export function FileEditorPanel({ workspacePath, width }: FileEditorPanelProps) 
         <div className="file-editor-status">
           <span role="status" aria-live="polite">
             {isDirty ? 'Unsaved changes' : status}
+            {!isDirty && gitMessage ? ` · ${gitMessage}` : ''}
           </span>
         </div>
       </section>

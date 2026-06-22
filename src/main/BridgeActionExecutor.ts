@@ -11,9 +11,12 @@ import type {
   BridgeWorkspaceFileListAction,
   BridgeWorkspaceFileReadAction,
   BridgeWorkspaceFileWriteAction,
+  BridgeWorkspaceFileDeleteAction,
   BridgeWorkspaceDiffAction,
   BridgeGitSnapshotAction,
   BridgeGitStageAllAction,
+  BridgeGitStagePathsAction,
+  BridgeGitUnstagePathsAction,
   BridgeGitCommitAction,
   BridgeGitPushAction,
   BridgeGithubPrStatusAction,
@@ -120,9 +123,16 @@ export interface BridgeActionExecutor {
   executeWorkspaceFileWrite(
     action: BridgeWorkspaceFileWriteAction
   ): Promise<BridgeActionExecutionResult>
+  executeWorkspaceFileDelete(
+    action: BridgeWorkspaceFileDeleteAction
+  ): Promise<BridgeActionExecutionResult>
   executeWorkspaceDiff(action: BridgeWorkspaceDiffAction): Promise<BridgeActionExecutionResult>
   executeGitSnapshot(action: BridgeGitSnapshotAction): Promise<BridgeActionExecutionResult>
   executeGitStageAll(action: BridgeGitStageAllAction): Promise<BridgeActionExecutionResult>
+  executeGitStagePaths(action: BridgeGitStagePathsAction): Promise<BridgeActionExecutionResult>
+  executeGitUnstagePaths(
+    action: BridgeGitUnstagePathsAction
+  ): Promise<BridgeActionExecutionResult>
   executeGitCommit(action: BridgeGitCommitAction): Promise<BridgeActionExecutionResult>
   executeGitPush(action: BridgeGitPushAction): Promise<BridgeActionExecutionResult>
   executeGithubPrStatus(action: BridgeGithubPrStatusAction): Promise<BridgeActionExecutionResult>
@@ -258,6 +268,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult> {
     return notWired('workspaceFileWrite', action.path)
   }
+  async executeWorkspaceFileDelete(
+    action: BridgeWorkspaceFileDeleteAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('workspaceFileDelete', action.path)
+  }
   async executeWorkspaceDiff(
     action: BridgeWorkspaceDiffAction
   ): Promise<BridgeActionExecutionResult> {
@@ -268,6 +283,16 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   }
   async executeGitStageAll(action: BridgeGitStageAllAction): Promise<BridgeActionExecutionResult> {
     return notWired('gitStageAll', action.workspaceId)
+  }
+  async executeGitStagePaths(
+    action: BridgeGitStagePathsAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('gitStagePaths', action.workspaceId)
+  }
+  async executeGitUnstagePaths(
+    action: BridgeGitUnstagePathsAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('gitUnstagePaths', action.workspaceId)
   }
   async executeGitCommit(action: BridgeGitCommitAction): Promise<BridgeActionExecutionResult> {
     return notWired('gitCommit', action.workspaceId)
@@ -515,6 +540,12 @@ export interface MainProcessActionExecutorDependencies {
     changeSet?: Record<string, unknown>
     reason?: string
   }>
+  workspaceFileDeleteFn?: (action: BridgeWorkspaceFileDeleteAction) => Promise<{
+    ok: boolean
+    path?: string
+    changeSet?: Record<string, unknown>
+    reason?: string
+  }>
   /** Callback the executor uses to compute the bounded workspace diff
    * for the iOS Diff Studio. The caller in main/index.ts resolves the
    * workspace path by id, runs the SAME git diff the desktop Diff Studio
@@ -537,6 +568,16 @@ export interface MainProcessActionExecutorDependencies {
     reason?: string
   }>
   gitStageAllFn?: (action: BridgeGitStageAllAction) => Promise<{
+    ok: boolean
+    git?: Record<string, unknown>
+    reason?: string
+  }>
+  gitStagePathsFn?: (action: BridgeGitStagePathsAction) => Promise<{
+    ok: boolean
+    git?: Record<string, unknown>
+    reason?: string
+  }>
+  gitUnstagePathsFn?: (action: BridgeGitUnstagePathsAction) => Promise<{
     ok: boolean
     git?: Record<string, unknown>
     reason?: string
@@ -901,6 +942,35 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
     }
   }
 
+  async executeWorkspaceFileDelete(
+    action: BridgeWorkspaceFileDeleteAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.workspaceFileDeleteFn) {
+      return notWired('workspaceFileDelete', action.path)
+    }
+    try {
+      const result = await this.deps.workspaceFileDeleteFn(action)
+      if (result.ok) {
+        return {
+          executed: true,
+          message: `Deleted ${result.path ?? action.path}.`,
+          data: {
+            path: result.path ?? action.path,
+            ...(result.changeSet ? { changeSet: result.changeSet } : {})
+          }
+        }
+      }
+      return {
+        executed: false,
+        message: result.reason ?? 'Could not delete workspace file.'
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] workspaceFileDelete failed: ${message}`)
+      return { executed: false, message: `Workspace file delete failed: ${message}` }
+    }
+  }
+
   async executeWorkspaceDiff(
     action: BridgeWorkspaceDiffAction
   ): Promise<BridgeActionExecutionResult> {
@@ -959,6 +1029,46 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const message = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] gitStageAll failed: ${message}`)
       return { executed: false, message: `Stage failed: ${message}` }
+    }
+  }
+
+  async executeGitStagePaths(
+    action: BridgeGitStagePathsAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.gitStagePathsFn) {
+      return notWired('gitStagePaths', action.workspaceId)
+    }
+    this.log(`[BridgeActionExecutor] gitStagePaths ws=${action.workspaceId} count=${action.paths.length}`)
+    try {
+      const result = await this.deps.gitStagePathsFn(action)
+      if (result.ok && result.git) {
+        return { executed: true, message: 'Selected files staged.', data: { git: result.git } }
+      }
+      return { executed: false, message: result.reason ?? 'Could not stage selected files.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] gitStagePaths failed: ${message}`)
+      return { executed: false, message: `Stage selected files failed: ${message}` }
+    }
+  }
+
+  async executeGitUnstagePaths(
+    action: BridgeGitUnstagePathsAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.gitUnstagePathsFn) {
+      return notWired('gitUnstagePaths', action.workspaceId)
+    }
+    this.log(`[BridgeActionExecutor] gitUnstagePaths ws=${action.workspaceId} count=${action.paths.length}`)
+    try {
+      const result = await this.deps.gitUnstagePathsFn(action)
+      if (result.ok && result.git) {
+        return { executed: true, message: 'Selected files unstaged.', data: { git: result.git } }
+      }
+      return { executed: false, message: result.reason ?? 'Could not unstage selected files.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] gitUnstagePaths failed: ${message}`)
+      return { executed: false, message: `Unstage selected files failed: ${message}` }
     }
   }
 

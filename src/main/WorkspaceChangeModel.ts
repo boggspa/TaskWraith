@@ -230,9 +230,10 @@ export function createWorkspaceChangeSetFromEditorWrite(
   now: string = new Date().toISOString()
 ): WorkspaceChangeSet {
   const delta = estimateTextEditLineDelta(input.previousContent, input.nextContent)
+  const status = input.deleted ? 'deleted' : input.existedBefore ? 'modified' : 'created'
   const file: WorkspaceChangeFile = {
     path: input.filePath,
-    status: input.existedBefore ? 'modified' : 'created',
+    status,
     origin: 'manual_edit',
     additions: delta.additions,
     deletions: delta.deletions,
@@ -243,10 +244,16 @@ export function createWorkspaceChangeSetFromEditorWrite(
   return createWorkspaceChangeSet(
     {
       source: 'editor',
-      title: input.existedBefore ? `Edited ${input.filePath}` : `Created ${input.filePath}`,
-      summary: input.existedBefore
-        ? `Manual editor save modified ${input.filePath}.`
-        : `Manual editor save created ${input.filePath}.`,
+      title: input.deleted
+        ? `Deleted ${input.filePath}`
+        : input.existedBefore
+          ? `Edited ${input.filePath}`
+          : `Created ${input.filePath}`,
+      summary: input.deleted
+        ? `Manual editor delete removed ${input.filePath}.`
+        : input.existedBefore
+          ? `Manual editor save modified ${input.filePath}.`
+          : `Manual editor save created ${input.filePath}.`,
       workspaceId: input.workspaceId,
       workspacePath: input.workspacePath,
       effectiveWorkspacePath: input.effectiveWorkspacePath,

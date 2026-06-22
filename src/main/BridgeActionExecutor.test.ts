@@ -20,9 +20,12 @@ import type {
   BridgeWorkspaceFileListAction,
   BridgeWorkspaceFileReadAction,
   BridgeWorkspaceFileWriteAction,
+  BridgeWorkspaceFileDeleteAction,
   BridgeWorkspaceDiffAction,
   BridgeGitSnapshotAction,
   BridgeGitStageAllAction,
+  BridgeGitStagePathsAction,
+  BridgeGitUnstagePathsAction,
   BridgeGitCommitAction,
   BridgeGitPushAction,
   BridgeGithubPrStatusAction,
@@ -184,6 +187,11 @@ const sample = {
     content: 'hello',
     baseEtag: 'sha256:abc'
   } satisfies BridgeWorkspaceFileWriteAction,
+  workspaceFileDelete: {
+    kind: 'workspaceFileDelete',
+    workspaceId: 'ws-1',
+    path: 'README.md'
+  } satisfies BridgeWorkspaceFileDeleteAction,
   workspaceDiff: {
     kind: 'workspaceDiff',
     workspaceId: 'ws-1'
@@ -196,6 +204,16 @@ const sample = {
     kind: 'gitStageAll',
     workspaceId: 'ws-1'
   } satisfies BridgeGitStageAllAction,
+  gitStagePaths: {
+    kind: 'gitStagePaths',
+    workspaceId: 'ws-1',
+    paths: ['README.md']
+  } satisfies BridgeGitStagePathsAction,
+  gitUnstagePaths: {
+    kind: 'gitUnstagePaths',
+    workspaceId: 'ws-1',
+    paths: ['README.md']
+  } satisfies BridgeGitUnstagePathsAction,
   gitCommit: {
     kind: 'gitCommit',
     workspaceId: 'ws-1',
@@ -248,6 +266,7 @@ describe('NoopActionExecutor', () => {
       executor.executeWorkspaceFileList(sample.workspaceFileList),
       executor.executeWorkspaceFileRead(sample.workspaceFileRead),
       executor.executeWorkspaceFileWrite(sample.workspaceFileWrite),
+      executor.executeWorkspaceFileDelete(sample.workspaceFileDelete),
       executor.executeWorkspaceDiff(sample.workspaceDiff),
       executor.executeThreadMediaFetch(sample.threadMediaFetch),
       executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts)
@@ -276,9 +295,10 @@ describe('NoopActionExecutor', () => {
     expect(results[16].message).toContain('ws-1')
     expect(results[17].message).toContain('README.md')
     expect(results[18].message).toContain('README.md')
-    expect(results[19].message).toContain('ws-1')
-    expect(results[20].message).toContain('media-1')
-    expect(results[21].message).toContain('oracle')
+    expect(results[19].message).toContain('README.md')
+    expect(results[20].message).toContain('ws-1')
+    expect(results[21].message).toContain('media-1')
+    expect(results[22].message).toContain('oracle')
   })
 })
 
@@ -375,6 +395,11 @@ describe('MainProcessActionExecutor workspace file actions', () => {
         ok: true,
         file: { path: 'README.md', content: 'hi', sizeBytes: 2, etag: 'sha256:def' },
         changeSet: { id: 'change-1' }
+      }),
+      workspaceFileDeleteFn: vi.fn().mockResolvedValue({
+        ok: true,
+        path: 'README.md',
+        changeSet: { id: 'delete-1' }
       })
     })
 
@@ -395,6 +420,12 @@ describe('MainProcessActionExecutor workspace file actions', () => {
     ).resolves.toMatchObject({
       executed: true,
       data: { file: { path: 'README.md', etag: 'sha256:def' }, changeSet: { id: 'change-1' } }
+    })
+    await expect(
+      executor.executeWorkspaceFileDelete(sample.workspaceFileDelete)
+    ).resolves.toMatchObject({
+      executed: true,
+      data: { path: 'README.md', changeSet: { id: 'delete-1' } }
     })
   })
 
@@ -433,12 +464,16 @@ describe('MainProcessActionExecutor git workflow actions', () => {
   it('returns the compact snapshot from each wired git mutation callback', async () => {
     const gitSnapshotFn = vi.fn().mockResolvedValue({ ok: true, git: gitData })
     const gitStageAllFn = vi.fn().mockResolvedValue({ ok: true, git: gitData })
+    const gitStagePathsFn = vi.fn().mockResolvedValue({ ok: true, git: gitData })
+    const gitUnstagePathsFn = vi.fn().mockResolvedValue({ ok: true, git: gitData })
     const gitCommitFn = vi.fn().mockResolvedValue({ ok: true, git: gitData })
     const gitPushFn = vi.fn().mockResolvedValue({ ok: true, git: gitData })
     const executor = new MainProcessActionExecutor({
       cancelRunFn: vi.fn(),
       gitSnapshotFn,
       gitStageAllFn,
+      gitStagePathsFn,
+      gitUnstagePathsFn,
       gitCommitFn,
       gitPushFn
     })
@@ -453,6 +488,16 @@ describe('MainProcessActionExecutor git workflow actions', () => {
       executed: true,
       data: { git: { branch: 'main' } }
     })
+    await expect(executor.executeGitStagePaths(sample.gitStagePaths)).resolves.toMatchObject({
+      executed: true,
+      data: { git: { branch: 'main' } }
+    })
+    expect(gitStagePathsFn).toHaveBeenCalledWith(sample.gitStagePaths)
+    await expect(executor.executeGitUnstagePaths(sample.gitUnstagePaths)).resolves.toMatchObject({
+      executed: true,
+      data: { git: { branch: 'main' } }
+    })
+    expect(gitUnstagePathsFn).toHaveBeenCalledWith(sample.gitUnstagePaths)
     await expect(executor.executeGitCommit(sample.gitCommit)).resolves.toMatchObject({
       executed: true,
       data: { git: { branch: 'main' } }
@@ -542,6 +587,8 @@ describe('MainProcessActionExecutor git workflow actions', () => {
     for (const probe of [
       executor.executeGitSnapshot(sample.gitSnapshot),
       executor.executeGitStageAll(sample.gitStageAll),
+      executor.executeGitStagePaths(sample.gitStagePaths),
+      executor.executeGitUnstagePaths(sample.gitUnstagePaths),
       executor.executeGitCommit(sample.gitCommit),
       executor.executeGitPush(sample.gitPush),
       executor.executeGithubPrStatus(sample.githubPrStatus),

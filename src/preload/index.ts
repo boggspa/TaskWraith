@@ -177,6 +177,8 @@ const api = {
     update?: boolean
     patch?: string
   }) => ipcRenderer.invoke('git:stage', payload) as Promise<GitResult<GitRepositorySnapshot>>,
+  gitUnstage: (payload: { workspacePath?: string; repoPath?: string; paths?: string[] }) =>
+    ipcRenderer.invoke('git:unstage', payload) as Promise<GitResult<GitRepositorySnapshot>>,
   gitCommit: (payload: { workspacePath?: string; repoPath?: string; message: string }) =>
     ipcRenderer.invoke('git:commit', payload) as Promise<GitResult<GitRepositorySnapshot>>,
   gitPush: (payload: {
@@ -271,6 +273,8 @@ const api = {
     ipcRenderer.invoke('read-workspace-file', workspace, path),
   writeWorkspaceFile: (workspace: string, path: string, content: string, baseEtag?: string | null) =>
     ipcRenderer.invoke('write-workspace-file', workspace, path, content, baseEtag),
+  deleteWorkspaceFile: (workspace: string, path: string) =>
+    ipcRenderer.invoke('delete-workspace-file', workspace, path),
   captureSnapshot: (workspace: string) => ipcRenderer.invoke('capture-snapshot', workspace),
   computeRunDiff: (runId: string, preSnapshot: any, postSnapshot: any, changeContext: any = null) =>
     ipcRenderer.invoke('compute-run-diff', runId, preSnapshot, postSnapshot, changeContext),

@@ -23,6 +23,7 @@ import { FaviconService } from './services/FaviconService'
 import {
   type WorkspaceFileListResult,
   listWorkspaceFiles as listWorkspaceFilesForEditor,
+  deleteWorkspaceFile as deleteWorkspaceFileForEditor,
   readWorkspaceFile as readWorkspaceFileForEditor,
   writeWorkspaceFile as writeWorkspaceFileForEditor
 } from './services/WorkspaceFileEditorService'
@@ -18062,6 +18063,30 @@ if (isGeminiMcpBridgeProcess) {
               : {})
           }
         },
+        workspaceFileDeleteFn: async (action) => {
+          const workspace = AppStore.getWorkspaces().find((entry) => entry.id === action.workspaceId)
+          if (!workspace) {
+            return {
+              ok: false,
+              reason: `Workspace id "${action.workspaceId}" is not registered`
+            }
+          }
+          const result = await deleteWorkspaceFileForEditor({
+            workspaceId: workspace.id,
+            workspacePath: workspace.path,
+            filePath: action.path,
+            origin: 'ios-file-editor',
+            recordChange: (input) => AppStore.recordWorkspaceEditorChange(input)
+          })
+          scheduleRemoteGitSnapshotRefresh(workspace.id, { delayMs: 50, force: true })
+          return {
+            ok: true,
+            path: result.path,
+            ...(result.changeSet
+              ? { changeSet: result.changeSet as unknown as Record<string, unknown> }
+              : {})
+          }
+        },
         workspaceDiffFn: async (action) => {
           const workspace = AppStore.getWorkspaces().find((entry) => entry.id === action.workspaceId)
           if (!workspace) {
@@ -18100,6 +18125,28 @@ if (isGeminiMcpBridgeProcess) {
             return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
           }
           const result = await bridgeGitService.stage({ repoPath: path, all: true })
+          if (!result.ok) return { ok: false, reason: result.error }
+          const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
+          publishRemoteGitSnapshotCache(action.workspaceId)
+          return { ok: true, git }
+        },
+        gitStagePathsFn: async (action) => {
+          const path = bridgeGitWorkspacePath(action.workspaceId)
+          if (!path) {
+            return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
+          }
+          const result = await bridgeGitService.stage({ repoPath: path, paths: action.paths })
+          if (!result.ok) return { ok: false, reason: result.error }
+          const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
+          publishRemoteGitSnapshotCache(action.workspaceId)
+          return { ok: true, git }
+        },
+        gitUnstagePathsFn: async (action) => {
+          const path = bridgeGitWorkspacePath(action.workspaceId)
+          if (!path) {
+            return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
+          }
+          const result = await bridgeGitService.unstage({ repoPath: path, paths: action.paths })
           if (!result.ok) return { ok: false, reason: result.error }
           const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
           publishRemoteGitSnapshotCache(action.workspaceId)
@@ -22057,6 +22104,22 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
+    ipcMain.handle(
+      'delete-workspace-file',
+      async (_, workspace: string, filePath: string) => {
+        const registeredWorkspace = requireRegisteredWorkspace(workspace)
+        const result = await deleteWorkspaceFileForEditor({
+          workspacePath: registeredWorkspace,
+          filePath,
+          origin: 'file-editor',
+          recordChange: (input) => AppStore.recordWorkspaceEditorChange(input)
+        })
+        const workspaceRecord = findRegisteredWorkspace(registeredWorkspace)
+        scheduleRemoteGitSnapshotRefresh(workspaceRecord?.id, { delayMs: 50, force: true })
+        return result
+      }
+    )
+
     ipcMain.handle('get-agent-status', async (_, provider: ProviderId) => {
       return getAgentStatusSnapshot(assertProviderId(provider))
     })
@@ -22207,6 +22270,22 @@ if (isGeminiMcpBridgeProcess) {
           all: payload?.all,
           update: payload?.update,
           patch: payload?.patch
+        })
+    )
+
+    ipcMain.handle(
+      'git:unstage',
+      async (
+        _event,
+        payload?: {
+          workspacePath?: string
+          repoPath?: string
+          paths?: string[]
+        }
+      ) =>
+        gitService.unstage({
+          repoPath: gitPayloadPath(payload),
+          paths: payload?.paths
         })
     )
 

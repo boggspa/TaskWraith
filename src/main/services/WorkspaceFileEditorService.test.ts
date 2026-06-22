@@ -4,6 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { MAX_EDITOR_FILES } from '../index.constants'
 import {
+  deleteWorkspaceFile,
   listWorkspaceFiles,
   readWorkspaceFile,
   writeWorkspaceFile,
@@ -177,6 +178,56 @@ describe('WorkspaceFileEditorService', () => {
         existedBefore: true,
         previousContent: 'other\n',
         nextContent: 'new\n',
+        metadata: { origin: 'ios-file-editor' }
+      })
+    )
+  })
+
+  it('deletes text files and records a deleted editor change', async () => {
+    const workspace = await makeWorkspace()
+    await writeFile(join(workspace, 'remove-me.txt'), 'delete me\n')
+    const recordChange = vi.fn((input): any => ({
+      schemaVersion: 1,
+      id: 'delete-1',
+      source: 'editor',
+      status: 'captured',
+      title: 'Deleted remove-me.txt',
+      workspacePath: input.workspacePath,
+      createdAt: '2026-06-11T00:00:00.000Z',
+      updatedAt: '2026-06-11T00:00:00.000Z',
+      files: [],
+      artifacts: [],
+      stats: {
+        filesChanged: 1,
+        filesCreated: 0,
+        filesModified: 0,
+        filesDeleted: 1,
+        filesPreExisting: 1,
+        artifactsGenerated: 0,
+        additions: 0,
+        deletions: 1
+      },
+      metadata: input.metadata
+    }))
+
+    const deleted = await deleteWorkspaceFile({
+      workspacePath: workspace,
+      workspaceId: 'ws-1',
+      filePath: 'remove-me.txt',
+      origin: 'ios-file-editor',
+      recordChange
+    })
+
+    expect(deleted).toMatchObject({ path: 'remove-me.txt', changeSet: { id: 'delete-1' } })
+    await expect(readFile(join(workspace, 'remove-me.txt'), 'utf8')).rejects.toThrow()
+    expect(recordChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        filePath: 'remove-me.txt',
+        existedBefore: true,
+        deleted: true,
+        previousContent: 'delete me\n',
+        nextContent: '',
         metadata: { origin: 'ios-file-editor' }
       })
     )

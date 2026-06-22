@@ -113,6 +113,41 @@ describe('GitService', () => {
     )
   })
 
+  it('stages selected paths relative to the requested workspace subdirectory', async () => {
+    const workspace = join(repo, 'packages', 'app')
+    mkdirSync(workspace, { recursive: true })
+    writeFileSync(join(workspace, 'App.tsx'), '<App />\n')
+
+    const result = await new GitService().stage({ repoPath: workspace, paths: ['App.tsx'] })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.data.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'packages/app/App.tsx', staged: true })
+      ])
+    )
+  })
+
+  it('unstages selected paths without unstaging every file', async () => {
+    writeFileSync(join(repo, 'one.txt'), 'one\n')
+    writeFileSync(join(repo, 'two.txt'), 'two\n')
+    const service = new GitService()
+    const stageResult = await service.stage({ repoPath: repo, all: true })
+    expect(stageResult.ok).toBe(true)
+
+    const result = await service.unstage({ repoPath: repo, paths: ['one.txt'] })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.data.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: 'one.txt', staged: false, unstaged: true }),
+        expect.objectContaining({ path: 'two.txt', staged: true })
+      ])
+    )
+  })
+
   it('rejects staging paths that escape the repository', async () => {
     writeFileSync(join(repo, 'safe.txt'), 'safe\n')
     const service = new GitService()

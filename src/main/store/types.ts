@@ -3616,6 +3616,7 @@ export interface WorkspaceEditorChangeInput {
   chatId?: string
   filePath: string
   existedBefore: boolean
+  deleted?: boolean
   previousContent?: string
   nextContent: string
   sizeBytes?: number

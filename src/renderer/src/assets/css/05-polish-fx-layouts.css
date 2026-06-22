@@ -706,6 +706,21 @@
   gap: 6px;
 }
 
+.app-file-editor .file-editor-code {
+  position: relative;
+}
+
+.app-file-editor .file-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.app-file-editor .file-editor-actions .btn {
+  white-space: nowrap;
+}
+
 .app-file-editor .file-editor-filter {
   margin: 8px 12px;
   padding: 6px 10px;
@@ -855,6 +870,73 @@
   display: flex;
   gap: 6px;
   margin-top: 4px;
+}
+
+.app-file-editor .file-editor-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: color-mix(in srgb, var(--app-bg) 62%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.app-file-editor .file-editor-confirm-card {
+  width: min(360px, 100%);
+  padding: 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 85%, transparent);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 94%, var(--app-bg));
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.app-file-editor .file-editor-confirm-card strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+}
+
+.app-file-editor .file-editor-confirm-card span {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.app-file-editor .file-editor-commit-input {
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  padding: 0 9px;
+  outline: none;
+}
+
+.app-file-editor .file-editor-commit-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--panel-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.app-file-editor .btn-danger {
+  color: color-mix(in srgb, var(--danger) 90%, white);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+
+.app-file-editor .btn-danger:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--danger) 28%, transparent);
 }
 
 /* ====================================================================== */

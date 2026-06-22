@@ -409,6 +409,17 @@ describe('decodeBridgeActionPayload', () => {
       ).payload
       expect(write.kind).toBe('workspaceFileWrite')
       expect(payloadIsMutating(write)).toBe(true)
+
+      const del = decodeBridgeActionPayload(
+        encode({
+          kind: 'workspaceFileDelete',
+          actionId: 'files-delete',
+          workspaceId: 'ws-1',
+          path: 'Sources/App.swift'
+        })
+      ).payload
+      expect(del.kind).toBe('workspaceFileDelete')
+      expect(payloadIsMutating(del)).toBe(true)
     })
 
     it('decodes workspaceDiff as a read-only workspace-gated action', () => {
@@ -451,6 +462,24 @@ describe('decodeBridgeActionPayload', () => {
       expect(workspaceIdFromPayload(stage)).toBe('ws-1')
       expect(payloadRequiresWorkspaceGating(stage)).toBe(true)
       expect(payloadIsMutating(stage)).toBe(true)
+    })
+
+    it('decodes selected git stage/unstage paths as mutating workspace-gated actions', () => {
+      for (const kind of ['gitStagePaths', 'gitUnstagePaths'] as const) {
+        const payload = decodeBridgeActionPayload(
+          encode({ kind, actionId: `${kind}-1`, workspaceId: 'ws-1', paths: ['Sources/App.swift'] })
+        ).payload
+        expect(payload.kind).toBe(kind)
+        expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+        expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+        expect(payloadIsMutating(payload)).toBe(true)
+
+        expect(
+          decodeBridgeActionPayload(
+            encode({ kind, actionId: `${kind}-bad`, workspaceId: 'ws-1', paths: [] })
+          ).payload
+        ).toMatchObject({ kind: 'unknown', rawKind: kind })
+      }
     })
 
     it('decodes gitCommit with an explicit message (+ optional stageAll)', () => {

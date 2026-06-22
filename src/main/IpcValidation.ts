@@ -175,6 +175,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // GitHub PR creation (optional payload with target path / options).
   'git:snapshot': ['optionalObject'],
   'git:stage': ['optionalObject'],
+  'git:unstage': ['optionalObject'],
   'git:commit': ['optionalObject'],
   'git:push': ['optionalObject'],
   'github:pr-status': ['optionalObject'],
@@ -234,6 +235,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'discover-gemini-commands': ['workspacePath'],
   'discover-gemini-memory': ['workspacePath'],
   'write-workspace-file': ['workspacePath', 'filePath', 'string', 'optionalString'],
+  'delete-workspace-file': ['workspacePath', 'filePath'],
   'get-agent-status': ['provider'],
   'get-agent-rate-limits': ['provider'],
   'import-codex-usage-credential': ['optionalString'],

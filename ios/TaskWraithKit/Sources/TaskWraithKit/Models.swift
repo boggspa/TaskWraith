@@ -701,6 +701,7 @@ public struct BridgeActionAckData: Codable, Sendable {
     public let entries: [WorkspaceFileEntry]?
     public let truncated: Bool?
     public let file: WorkspaceFileReadResult?
+    public let path: String?
     public let changeSet: RawJSON?
     /// Bounded workspace diff (the `workspaceDiff` action's ack payload).
     public let diff: WorkspaceDiffResult?
@@ -1770,6 +1771,16 @@ public enum BridgeAction {
         ])
     }
 
+    public static func workspaceFileDelete(
+        workspaceId: String, path: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "workspaceFileDelete", "actionId": actionId,
+            "workspaceId": workspaceId, "path": path,
+        ])
+    }
+
     public static func workspaceDiff(
         workspaceId: String,
         actionId: String = UUID().uuidString
@@ -1797,6 +1808,26 @@ public enum BridgeAction {
         encode([
             "kind": "gitStageAll", "actionId": actionId,
             "workspaceId": workspaceId,
+        ])
+    }
+
+    public static func gitStagePaths(
+        workspaceId: String, paths: [String],
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "gitStagePaths", "actionId": actionId,
+            "workspaceId": workspaceId, "paths": paths,
+        ])
+    }
+
+    public static func gitUnstagePaths(
+        workspaceId: String, paths: [String],
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "gitUnstagePaths", "actionId": actionId,
+            "workspaceId": workspaceId, "paths": paths,
         ])
     }
 
