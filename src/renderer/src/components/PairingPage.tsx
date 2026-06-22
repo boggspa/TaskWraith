@@ -48,7 +48,9 @@ const DISPLAY_NAME_STORAGE_KEY = 'taskwraith-pairing-display-name'
 // APNs off-LAN wake is hidden: it needs a developer-issued .p8 that virtually
 // nobody configures, and Tailscale is the supported beyond-LAN path. Flip to
 // true to bring the credentials panel back.
-const APNS_PANEL_ENABLED = false
+// TEMP (2026-06-21): re-enabled for local Tier-1 .p8 testing. REVERT TO false
+// before shipping — this panel is intentionally hidden for end users.
+const APNS_PANEL_ENABLED = true
 
 export function PairingPage(): JSX.Element {
   const [displayName, setDisplayName] = useState<string>(() => {
