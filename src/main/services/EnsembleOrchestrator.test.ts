@@ -887,6 +887,9 @@ describe('EnsembleOrchestrator', () => {
       imageAttachments: [
         { id: 'img-1', path: '/tmp/ensemble-screenshot.png', name: 'ensemble-screenshot.png' }
       ],
+      imageThumbnails: [
+        { dataBase64: 'AAAA', mimeType: 'image/jpeg', width: 200, height: 120 }
+      ],
       event: { sender: {} as Electron.WebContents }
     })
 
@@ -897,6 +900,10 @@ describe('EnsembleOrchestrator', () => {
         kind: 'ensembleRoundPrompt',
         imageAttachments: [
           { id: 'img-1', path: '/tmp/ensemble-screenshot.png', name: 'ensemble-screenshot.png' }
+        ],
+        imagePaths: ['/tmp/ensemble-screenshot.png'],
+        imageThumbnails: [
+          { dataBase64: 'AAAA', mimeType: 'image/jpeg', width: 200, height: 120 }
         ]
       }
     })

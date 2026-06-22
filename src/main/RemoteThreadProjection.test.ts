@@ -1125,6 +1125,23 @@ describe('RemoteThreadProjection', () => {
       expect(snapshot.rows[0].imageAttachmentCount).toBe(2)
       expect(snapshot.rows[1].imageAttachmentCount).toBeUndefined()
     })
+
+    it('falls back to metadata.imageAttachments as a count', () => {
+      const messages = [
+        msg(0, {
+          metadata: {
+            imageAttachments: [
+              { id: 'img-1', path: '/tmp/a.jpg', name: 'a.jpg' },
+              { id: 'img-2', path: '/tmp/b.png', name: 'b.png' }
+            ]
+          }
+        }),
+        msg(1)
+      ]
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[0].imageAttachmentCount).toBe(2)
+      expect(snapshot.rows[1].imageAttachmentCount).toBeUndefined()
+    })
   })
 
   describe('imageThumbnails', () => {

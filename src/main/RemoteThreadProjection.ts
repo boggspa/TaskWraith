@@ -1184,6 +1184,14 @@ function buildRow(
   if (Array.isArray(imagePaths) && imagePaths.length > 0) {
     row.imageAttachmentCount = imagePaths.length
   }
+  const imageAttachments = metadata?.imageAttachments
+  if (
+    row.imageAttachmentCount === undefined &&
+    Array.isArray(imageAttachments) &&
+    imageAttachments.length > 0
+  ) {
+    row.imageAttachmentCount = imageAttachments.length
+  }
   const imageThumbnails = metadata?.imageThumbnails
   if (Array.isArray(imageThumbnails) && imageThumbnails.length > 0) {
     const validThumbs = imageThumbnails

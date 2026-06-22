@@ -17590,22 +17590,33 @@ if (isGeminiMcpBridgeProcess) {
           // Phone-attached images ride the same lane the desktop ensemble
           // composer uses (startRound imageAttachments {path, name}).
           let steerImagePaths: string[] = []
+          let steerImageThumbnails: Array<{
+            dataBase64: string
+            mimeType: string
+            width: number
+            height: number
+          }> = []
           if (action.imageAttachments?.length) {
             try {
               const dir = join(os.tmpdir(), 'taskwraith-remote-attachments')
               fsSync.mkdirSync(dir, { recursive: true })
+              const buffers: Buffer[] = []
               steerImagePaths = action.imageAttachments.map((attachment, index) => {
                 const ext = attachment.mimeType === 'image/png' ? 'png' : 'jpg'
                 const file = join(
                   dir,
                   `${action.threadId.replace(/[^a-zA-Z0-9-]/g, '')}-steer-${Date.now()}-${index}.${ext}`
                 )
-                fsSync.writeFileSync(file, Buffer.from(attachment.dataBase64, 'base64'))
+                const buf = Buffer.from(attachment.dataBase64, 'base64')
+                buffers.push(buf)
+                fsSync.writeFileSync(file, buf)
                 return file
               })
+              steerImageThumbnails = buildBridgeImageThumbnails(buffers)
             } catch (err) {
               console.warn('[remote-bridge] failed to materialize steer attachments:', err)
               steerImagePaths = []
+              steerImageThumbnails = []
             }
           }
           // Electron parity (extractFirstEnsembleDmTarget): when the steer
@@ -17628,6 +17639,9 @@ if (isGeminiMcpBridgeProcess) {
                     name: basename(imagePath)
                   }))
                 }
+              : {}),
+            ...(steerImageThumbnails.length
+              ? { imageThumbnails: steerImageThumbnails }
               : {})
           })
           const ok = result?.status === 'started' || result?.status === 'steered'

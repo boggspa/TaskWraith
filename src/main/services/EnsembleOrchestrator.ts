@@ -95,6 +95,13 @@ export interface EnsembleImageAttachment {
   name?: string
 }
 
+export interface EnsembleImageThumbnail {
+  dataBase64: string
+  mimeType: string
+  width?: number
+  height?: number
+}
+
 /**
  * 1.0.4-AD — pre-flight participant health check result. Returned by
  * the optional `probeParticipant` dep so the orchestrator can mark a
@@ -855,6 +862,7 @@ function createDiscordContextToolMessage(
 interface QueuedRoundEntry {
   prompt: string
   imageAttachments: EnsembleImageAttachment[]
+  imageThumbnails?: EnsembleImageThumbnail[]
   discordContextSnapshots?: DiscordContextSnapshot[]
 }
 
@@ -864,6 +872,7 @@ interface ActiveRoundRuntime {
   sender: Electron.WebContents
   prompt: string
   imageAttachments: EnsembleImageAttachment[]
+  imageThumbnails: EnsembleImageThumbnail[]
   discordContextSnapshots?: DiscordContextSnapshot[]
   cancelled: boolean
   /**
@@ -1002,6 +1011,7 @@ export class EnsembleOrchestrator {
     event: EnsembleDispatchEvent
     mode?: EnsembleRunMode
     imageAttachments?: EnsembleImageAttachment[]
+    imageThumbnails?: EnsembleImageThumbnail[]
     /**
      * A2 (1.0.3) — when set, scope the round to just this participant
      * (the "DM" routing the chip strip + composer pickers feed when
@@ -1041,6 +1051,7 @@ export class EnsembleOrchestrator {
     const prompt = parsed.prompt.trim()
     if (!prompt) return { status: 'ignored' }
     const imageAttachments = normalizeEnsembleImageAttachments(input.imageAttachments)
+    const imageThumbnails = normalizeEnsembleImageThumbnails(input.imageThumbnails)
     const existing = this.roundsByChatId.get(input.chatId)
     if (existing && !existing.cancelled) {
       this.cancelWakeupsOnUserInput(existing)
@@ -1052,6 +1063,7 @@ export class EnsembleOrchestrator {
           input.event.sender,
           input.dmTargetParticipantId,
           imageAttachments,
+          imageThumbnails,
           [],
           parsed.selfReflective,
           input.externalPathGrants,
@@ -1080,6 +1092,7 @@ export class EnsembleOrchestrator {
       existing.queuedPrompts.push({
         prompt: promptWithAttachmentReferences(prompt, imageAttachments),
         imageAttachments,
+        ...(imageThumbnails.length ? { imageThumbnails } : {}),
         discordContextSnapshots: normalizeDiscordContextSnapshots(input.discordContextSnapshots)
       })
       const nextQueuedPrompts = existing.queuedPrompts.map((entry) => entry.prompt)
@@ -1104,6 +1117,7 @@ export class EnsembleOrchestrator {
       input.event.sender,
       input.dmTargetParticipantId,
       imageAttachments,
+      imageThumbnails,
       [],
       parsed.selfReflective,
       input.externalPathGrants,
@@ -1781,6 +1795,7 @@ export class EnsembleOrchestrator {
       sender,
       prompt: round.prompt,
       imageAttachments: [],
+      imageThumbnails: [],
       cancelled: false,
       // 1.0.5-EW43a — persisted shape is `string[]`; runtime
       // wants `QueuedRoundEntry[]`. Wakeup recovery has no
@@ -2201,6 +2216,7 @@ export class EnsembleOrchestrator {
     sender: Electron.WebContents,
     dmTargetParticipantId?: string,
     imageAttachments: EnsembleImageAttachment[] = [],
+    imageThumbnails: EnsembleImageThumbnail[] = [],
     /**
      * Carry-over queue from a previous round's `queuedPrompts` (FIFO
      * after we shifted off `prompt`). Lets the chain continue
@@ -2250,6 +2266,7 @@ export class EnsembleOrchestrator {
       : orderedFull
     const startedAt = this.deps.nowIso()
     const normalizedImageAttachments = normalizeEnsembleImageAttachments(imageAttachments)
+    const normalizedImageThumbnails = normalizeEnsembleImageThumbnails(imageThumbnails)
     const discordContextSnapshots = normalizeDiscordContextSnapshots(discordContextSnapshotsInput)
     const discordContextReads = discordContextSnapshots.map((snapshot) =>
       redactDiscordContextReadMetadataForHistory(snapshot.metadata)
@@ -2316,7 +2333,13 @@ export class EnsembleOrchestrator {
       metadata: {
         kind: 'ensembleRoundPrompt',
         ensembleRoundId: roundId,
-        ...(normalizedImageAttachments.length ? { imageAttachments: normalizedImageAttachments } : {}),
+        ...(normalizedImageAttachments.length
+          ? {
+              imageAttachments: normalizedImageAttachments,
+              imagePaths: normalizedImageAttachments.map((attachment) => attachment.path)
+            }
+          : {}),
+        ...(normalizedImageThumbnails.length ? { imageThumbnails: normalizedImageThumbnails } : {}),
         ...(discordContextReads.length > 0 ? { discordContextReads } : {})
       }
     }
@@ -2347,6 +2370,7 @@ export class EnsembleOrchestrator {
       sender,
       prompt: promptForParticipants,
       imageAttachments: normalizedImageAttachments,
+      imageThumbnails: normalizedImageThumbnails,
       ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
       cancelled: false,
       queuedPrompts: [...carryOverQueue],
@@ -2961,6 +2985,7 @@ export class EnsembleOrchestrator {
         runtime.sender,
         undefined,
         nextEntry.imageAttachments,
+        nextEntry.imageThumbnails ?? [],
         remainingQueue,
         false,
         [],
@@ -4396,6 +4421,32 @@ function normalizeEnsembleImageAttachments(
       path,
       ...(typeof attachment.name === 'string' && attachment.name.trim()
         ? { name: attachment.name.trim() }
+        : {})
+    })
+  }
+  return normalized
+}
+
+function normalizeEnsembleImageThumbnails(
+  thumbnails: EnsembleImageThumbnail[] | undefined
+): EnsembleImageThumbnail[] {
+  if (!Array.isArray(thumbnails)) return []
+  const normalized: EnsembleImageThumbnail[] = []
+  for (const thumbnail of thumbnails) {
+    if (!thumbnail || typeof thumbnail !== 'object') continue
+    const dataBase64 = typeof thumbnail.dataBase64 === 'string' ? thumbnail.dataBase64.trim() : ''
+    if (!dataBase64) continue
+    normalized.push({
+      dataBase64,
+      mimeType:
+        typeof thumbnail.mimeType === 'string' && thumbnail.mimeType.trim()
+          ? thumbnail.mimeType.trim()
+          : 'image/jpeg',
+      ...(typeof thumbnail.width === 'number' && Number.isFinite(thumbnail.width)
+        ? { width: thumbnail.width }
+        : {}),
+      ...(typeof thumbnail.height === 'number' && Number.isFinite(thumbnail.height)
+        ? { height: thumbnail.height }
         : {})
     })
   }
