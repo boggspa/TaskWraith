@@ -71,6 +71,7 @@ import {
   serializeRunEventRecord
 } from '../RunEventStore'
 import {
+  capApprovalLedgerRecords,
   createApprovalLedgerRecord,
   expireScopedApprovalLedgerRecords,
   filterApprovalLedgerRecords,
@@ -141,6 +142,12 @@ const writeRunQueueJobs = (jobs: RunQueueJob[]): void =>
 const runRecoveryPath = path.join(userDataPath, 'run-recovery.json')
 const workspaceChangesPath = path.join(userDataPath, 'workspace-changes.json')
 const approvalLedgerPath = path.join(userDataPath, 'approval-ledger.json')
+// Single choke point for approval-ledger writes: cap retained non-live history
+// (capApprovalLedgerRecords) so the full synchronous rewrite on every approval
+// event stays bounded. Live records (pending + active session/workspace grants)
+// are always kept.
+const writeApprovalLedger = (records: ApprovalLedgerRecord[]): void =>
+  writeJson(approvalLedgerPath, capApprovalLedgerRecords(records))
 const productCrashesPath = path.join(userDataPath, 'product-crashes.json')
 const runtimeProfilesPath = path.join(userDataPath, 'runtime-profiles.json')
 const handoffCardsPath = path.join(userDataPath, 'handoff-cards.json')
@@ -2957,7 +2964,7 @@ export class AppStore {
     } else {
       records.push(record)
     }
-    writeJson(approvalLedgerPath, records)
+    writeApprovalLedger(records)
     return index >= 0 ? records[index] : record
   }
 
@@ -2978,7 +2985,7 @@ export class AppStore {
       extraMetadata
     )
     records[index] = updated
-    writeJson(approvalLedgerPath, records)
+    writeApprovalLedger(records)
     return updated
   }
 
@@ -2991,7 +2998,7 @@ export class AppStore {
   }): ApprovalLedgerRecord[] {
     const records = this.recoverExpiredApprovalLedger()
     const updated = expireScopedApprovalLedgerRecords(records, filter)
-    writeJson(approvalLedgerPath, updated)
+    writeApprovalLedger(updated)
     return updated
   }
 
@@ -2999,12 +3006,17 @@ export class AppStore {
     const stored = readJson<ApprovalLedgerRecord[] | unknown>(approvalLedgerPath, [])
     const records = Array.isArray(stored) ? stored : []
     const recovered = recoverExpiredApprovalLedgerRecords(records)
+    // Compact on read too, so an already-bloated ledger self-heals at the first
+    // access after launch (not only on the next approval write).
+    const capped = capApprovalLedgerRecords(recovered)
     const changed =
-      !Array.isArray(stored) || recovered.some((record, index) => record !== records[index])
+      !Array.isArray(stored) ||
+      capped.length !== records.length ||
+      capped.some((record, index) => record !== records[index])
     if (changed) {
-      writeJson(approvalLedgerPath, recovered)
+      writeApprovalLedger(capped)
     }
-    return recovered
+    return capped
   }
 
   // Product operations

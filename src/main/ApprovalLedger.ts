@@ -403,3 +403,53 @@ export function filterApprovalLedgerRecords(
   )
   return filter.limit && filter.limit > 0 ? sorted.slice(0, Math.floor(filter.limit)) : sorted
 }
+
+/**
+ * Cap on retained NON-live approval history. The ledger is rewritten in full
+ * (synchronously) on every approval event — including an `autoAllow` audit row
+ * per auto-allowed tool call — so an unbounded ledger turns each tool call into
+ * an ever-slower main-thread write (it had reached ~7.2MB / ~3200 rows). Live
+ * records are NEVER dropped (see isLiveApprovalLedgerRecord); only the oldest
+ * terminal/audit rows beyond the cap are shed. Capping fails safe: dropping a
+ * stale grant at worst re-prompts the user, never auto-allows.
+ */
+export const MAX_APPROVAL_LEDGER_HISTORY = 1000
+
+/**
+ * A record that must survive capping: a pending request still awaiting a
+ * decision, or an active remembered grant (session/workspace scope). Workspace
+ * grants persist until revoked and session grants until the runtime session
+ * ends — both are flipped to a terminal `expired` status (cappable) by the
+ * expiry/recovery sweeps when they die, so an `approved` session/workspace row
+ * here is by definition still live.
+ */
+export function isLiveApprovalLedgerRecord(record: ApprovalLedgerRecord): boolean {
+  if (record.status === 'pending') return true
+  return (
+    record.status === 'approved' &&
+    (record.grantedScope === 'session' || record.grantedScope === 'workspace')
+  )
+}
+
+function approvalLedgerRecencyMs(record: ApprovalLedgerRecord): number {
+  const stamp = record.respondedAt || record.requestedAt
+  const ms = stamp ? Date.parse(stamp) : NaN
+  return Number.isFinite(ms) ? ms : 0
+}
+
+export function capApprovalLedgerRecords(
+  records: ApprovalLedgerRecord[],
+  maxHistory = MAX_APPROVAL_LEDGER_HISTORY
+): ApprovalLedgerRecord[] {
+  const history = records.filter((record) => !isLiveApprovalLedgerRecord(record))
+  if (history.length <= maxHistory) return records
+  const keepHistoryIds = new Set(
+    [...history]
+      .sort((a, b) => approvalLedgerRecencyMs(b) - approvalLedgerRecencyMs(a))
+      .slice(0, maxHistory)
+      .map((record) => record.id)
+  )
+  return records.filter(
+    (record) => isLiveApprovalLedgerRecord(record) || keepHistoryIds.has(record.id)
+  )
+}

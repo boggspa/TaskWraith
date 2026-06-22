@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MAX_APPROVAL_LEDGER_HISTORY,
   PENDING_APPROVAL_TTL_MS,
   backfillApprovalLedgerTitles,
+  capApprovalLedgerRecords,
   createApprovalLedgerRecord,
   expireScopedApprovalLedgerRecords,
   filterApprovalLedgerRecords,
@@ -41,6 +43,58 @@ describe('ApprovalLedger', () => {
     expect(new Date(record.expiration.expiresAt || '').getTime()).toBe(
       new Date(requestedAt).getTime() + PENDING_APPROVAL_TTL_MS
     )
+  })
+
+  it('caps history to the newest MAX while always keeping live records', () => {
+    const make = (approvalId: string, requestedAt: string) =>
+      createApprovalLedgerRecord({ ...baseRequest, approvalId }, requestedAt)
+
+    // Live records — must survive even though they are the OLDEST here.
+    const pending = make('pending-1', '2020-01-01T00:00:00.000Z')
+    const workspaceGrant = resolveApprovalLedgerRecord(
+      make('ws-1', '2020-01-01T00:00:00.000Z'),
+      'acceptForWorkspace',
+      '2020-01-01T00:00:00.000Z'
+    )
+    const sessionGrant = resolveApprovalLedgerRecord(
+      make('sess-1', '2020-01-01T00:00:00.000Z'),
+      'acceptForSession',
+      '2020-01-01T00:00:00.000Z'
+    )
+    const live = [pending, workspaceGrant, sessionGrant]
+
+    // History: per-call autoAllow audit rows, newest = highest index.
+    const base = Date.parse('2026-06-01T00:00:00.000Z')
+    const history = Array.from({ length: MAX_APPROVAL_LEDGER_HISTORY + 5 }, (_, i) => {
+      const ts = new Date(base + i * 1000).toISOString()
+      return {
+        ...make(`auto-${i}`, ts),
+        status: 'approved' as const,
+        decision: 'autoAllow' as const,
+        grantedScope: 'request' as const,
+        respondedAt: ts
+      }
+    })
+
+    const capped = capApprovalLedgerRecords([...history, ...live])
+    const ids = new Set(capped.map((record) => record.approvalId))
+
+    // All live records kept.
+    expect(ids.has('pending-1')).toBe(true)
+    expect(ids.has('ws-1')).toBe(true)
+    expect(ids.has('sess-1')).toBe(true)
+    // History capped to MAX; the 5 oldest dropped, newest kept.
+    expect(capped.filter((record) => record.decision === 'autoAllow')).toHaveLength(
+      MAX_APPROVAL_LEDGER_HISTORY
+    )
+    expect(ids.has('auto-0')).toBe(false)
+    expect(ids.has('auto-4')).toBe(false)
+    expect(ids.has('auto-5')).toBe(true)
+    expect(ids.has(`auto-${MAX_APPROVAL_LEDGER_HISTORY + 4}`)).toBe(true)
+
+    // Under the cap, the same array is returned untouched.
+    const small = [...history.slice(0, 3), ...live]
+    expect(capApprovalLedgerRecords(small)).toBe(small)
   })
 
   it('maps user approval decisions to durable scopes and expirations', () => {
