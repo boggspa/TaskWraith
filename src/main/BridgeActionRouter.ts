@@ -77,6 +77,8 @@ export type BridgeActionAckReasonCode =
   | 'ownershipDenied'
   | 'actionExpired'
   | 'actionReplayed'
+  | 'approvalAlreadyResolved'
+  | 'approvalDispatchFailed'
 
 export type BridgeActionAckActionKind = BridgeActionPayload['kind'] | 'prepareStartTurn'
 
@@ -482,7 +484,7 @@ export class BridgeActionRouter {
     return this.buildActionAck({
       pairID,
       accepted: true,
-      reasonCode: 'accepted',
+      reasonCode: dispatch.reasonCode ?? 'accepted',
       payload,
       message: dispatch.message,
       executed: dispatch.executed,

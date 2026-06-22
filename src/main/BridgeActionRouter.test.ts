@@ -999,6 +999,34 @@ describe('BridgeActionRouter', () => {
       expect(calls[0].method).toBe('executeApprovalReply')
     })
 
+    it('forwards approval execution reason codes from the executor', async () => {
+      const { executor } = makeStubExecutor({
+        executeApprovalReply: async () => ({
+          executed: false,
+          reasonCode: 'approvalAlreadyResolved',
+          message: 'No pending approval found'
+        })
+      })
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
+      const wire = Buffer.from(
+        JSON.stringify(withReplayMeta({
+          kind: 'approvalReply',
+          workspaceId: 'ws-allowed',
+          threadId: 't-1',
+          toolCallId: 'tc-1',
+          decision: 'accept'
+        })),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean; executed?: boolean; reasonCode?: string; message?: string }
+      expect(result.accepted).toBe(true)
+      expect(result.executed).toBe(false)
+      expect(result.reasonCode).toBe('approvalAlreadyResolved')
+      expect(result.message).toBe('No pending approval found')
+    })
+
     it('surfaces executor message when execution declines (not-yet-wired path)', async () => {
       const { executor } = makeStubExecutor({
         executeComposerPrompt: async () => ({

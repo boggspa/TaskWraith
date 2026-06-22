@@ -78,10 +78,17 @@ export interface BridgeActionExecutionResult {
   executed: boolean
   /** Human-readable message that surfaces in the iOS ack. */
   message: string
+  /** Optional machine-readable execution detail for clients that need to
+   * distinguish accepted-but-not-executed outcomes. */
+  reasonCode?: BridgeActionExecutionReasonCode
   /** Optional structured data the iOS UI can use to navigate (e.g. the
    * new runId after a composerPrompt is dispatched). */
   data?: Record<string, unknown>
 }
+
+export type BridgeActionExecutionReasonCode =
+  | 'approvalAlreadyResolved'
+  | 'approvalDispatchFailed'
 
 export interface BridgeActionExecutor {
   executeApprovalReply(action: BridgeApprovalReplyAction): Promise<BridgeActionExecutionResult>
@@ -644,6 +651,7 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       }
       return {
         executed: false,
+        reasonCode: 'approvalAlreadyResolved',
         message: `No pending approval found for toolCallId="${action.toolCallId}" (already resolved, expired, or never registered)`
       }
     } catch (err) {
@@ -651,6 +659,7 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       this.log(`[BridgeActionExecutor] approvalReply failed: ${errMessage}`)
       return {
         executed: false,
+        reasonCode: 'approvalDispatchFailed',
         message: `Approval dispatch failed: ${errMessage}`
       }
     }

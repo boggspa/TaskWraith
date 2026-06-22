@@ -3498,6 +3498,14 @@ public final class RemoteSessionModel: ObservableObject {
                     // trap the user in a tap loop; lastActionMessage explains why,
                     // and the desktop / auto-deny timer finalizes the run.
                     self.approvals.removeAll { $0.toolCallId == toolCallId }
+                case .dispatchFailed:
+                    // The reply reached the Mac, but the host could not dispatch
+                    // the approval decision. The approval may still be pending, so
+                    // keep it retryable instead of silently dropping the card.
+                    self.repliedApprovalToolCallIds.remove(toolCallId)
+                    if !self.approvals.contains(where: { $0.toolCallId == toolCallId }) {
+                        self.approvals.insert(card, at: 0)
+                    }
                 case .transportError:
                     // Couldn't reach the Mac — genuinely retryable. Stop
                     // suppressing + restore the card so the user can try again.
@@ -4028,6 +4036,7 @@ public final class RemoteSessionModel: ObservableObject {
         case succeeded
         case alreadyResolved
         case rejected
+        case dispatchFailed
         case transportError
     }
 
@@ -4037,7 +4046,15 @@ public final class RemoteSessionModel: ObservableObject {
             let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
         else { return .succeeded }
         if actionAck.accepted == false { return .rejected }
-        if actionAck.executed == false { return .alreadyResolved }
+        if actionAck.executed == false {
+            if actionAck.reasonCode == "approvalDispatchFailed"
+                || actionAck.message?.localizedCaseInsensitiveContains("Approval dispatch failed")
+                    == true
+            {
+                return .dispatchFailed
+            }
+            return .alreadyResolved
+        }
         return .succeeded
     }
 
