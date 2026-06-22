@@ -43,6 +43,13 @@ export type MediaAttachmentLike = {
   caption?: string
 }
 
+type LegacyImageThumbnail = {
+  dataBase64: string
+  mimeType: string
+  width?: number
+  height?: number
+}
+
 export function isChatMediaImagePath(path: string): boolean {
   return /\.(png|jpe?g|gif|webp|bmp|tiff?|heic|heif|svg)$/i.test(path)
 }
@@ -205,6 +212,61 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
   const seen = new Set<string>()
   const metadata = message.metadata || {}
 
+  const normalizeLegacyThumbnail = (
+    value: unknown
+  ): LegacyImageThumbnail | undefined => {
+    if (!value || typeof value !== 'object') return undefined
+    const record = value as Record<string, unknown>
+    if (typeof record.dataBase64 !== 'string' || record.dataBase64.length === 0) {
+      return undefined
+    }
+    const mimeType = typeof record.mimeType === 'string' ? record.mimeType : 'image/jpeg'
+    return {
+      dataBase64: record.dataBase64,
+      mimeType,
+      ...(typeof record.width === 'number' ? { width: record.width } : {}),
+      ...(typeof record.height === 'number' ? { height: record.height } : {})
+    }
+  }
+
+  const addLegacyImagePath = (
+    value: unknown,
+    index: number,
+    thumbnail?: LegacyImageThumbnail
+  ) => {
+    const path = typeof value === 'string' ? value.trim() : ''
+    if (!path) return
+    const source = 'upload'
+    const key = `${source}:${path}:`
+    if (seen.has(key)) return
+    seen.add(key)
+    refs.push({
+      id: `image-path:${path}`,
+      kind: 'image',
+      source,
+      name: chatMediaNameFromPath(path) || `Image ${index + 1}`,
+      path,
+      ...(thumbnail ? { mimeType: thumbnail.mimeType, thumbnail } : {})
+    })
+  }
+
+  const addLegacyThumbnailOnly = (thumbnail: LegacyImageThumbnail, index: number) => {
+    const source = 'upload'
+    const id = `image-thumbnail:${message.id}:${index}`
+    const key = `${source}:${id}:`
+    if (seen.has(key)) return
+    seen.add(key)
+    refs.push({
+      id,
+      kind: 'image',
+      source,
+      name: `Image ${index + 1}`,
+      path: '',
+      mimeType: thumbnail.mimeType,
+      thumbnail
+    })
+  }
+
   const addAttachment = (attachment: MediaAttachmentLike | null | undefined) => {
     const path = typeof attachment?.path === 'string' ? attachment.path.trim() : ''
     if (!path) return
@@ -236,8 +298,10 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
     const id = mediaRef.id || mediaRef.assetId || `${source}:${mediaRef.sha256 || mediaRef.name}`
     if (!id || (!path && !mediaRef.thumbnail && mediaRef.status === 'available')) return
     const key = `${source}:${id}:${path}:${mediaRef.status || ''}`
-    if (seen.has(key)) return
+    const pathKey = path ? `${source}:${path}:` : ''
+    if (seen.has(key) || (pathKey && seen.has(pathKey))) return
     seen.add(key)
+    if (pathKey) seen.add(pathKey)
     refs.push({
       id,
       kind: 'image',
@@ -249,6 +313,17 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
       status: mediaRef.status,
       alt: mediaRef.alt,
       caption: mediaRef.caption
+    })
+  }
+
+  const imageThumbnails = Array.isArray(metadata.imageThumbnails)
+    ? metadata.imageThumbnails.map((thumbnail) => normalizeLegacyThumbnail(thumbnail))
+    : []
+  const imagePaths = Array.isArray(metadata.imagePaths) ? metadata.imagePaths : []
+  imagePaths.forEach((path, index) => addLegacyImagePath(path, index, imageThumbnails[index]))
+  if (imagePaths.length === 0) {
+    imageThumbnails.forEach((thumbnail, index) => {
+      if (thumbnail) addLegacyThumbnailOnly(thumbnail, index)
     })
   }
 

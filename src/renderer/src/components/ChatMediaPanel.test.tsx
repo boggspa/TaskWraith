@@ -97,6 +97,158 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(html).not.toContain('file://')
   })
 
+  it('renders legacy phone-upload image thumbnails from message metadata', () => {
+    const refs = collectMessageMediaRefs(
+      userMessage({
+        imagePaths: ['/var/folders/taskwraith-remote-attachments/photo.jpg'],
+        imageThumbnails: [
+          {
+            dataBase64: 'phone-thumb',
+            mimeType: 'image/jpeg',
+            width: 256,
+            height: 192
+          }
+        ]
+      })
+    )
+    const html = renderToStaticMarkup(
+      <ChatMessageMediaStrip refs={refs} workspacePath="/repo" onPreviewImage={() => {}} />
+    )
+
+    expect(refs).toHaveLength(1)
+    expect(refs[0]).toMatchObject({
+      kind: 'image',
+      source: 'upload',
+      name: 'photo.jpg',
+      path: '/var/folders/taskwraith-remote-attachments/photo.jpg',
+      thumbnail: {
+        dataBase64: 'phone-thumb',
+        mimeType: 'image/jpeg',
+        width: 256,
+        height: 192
+      }
+    })
+    expect(html).toContain('message-attachment-thumb is-image')
+    expect(html).toContain('src="data:image/jpeg;base64,phone-thumb"')
+    expect(html).toContain('aria-label="Preview image photo.jpg"')
+  })
+
+  it('keeps extra phone-upload paths when only the first thumbnails are available', () => {
+    const refs = collectMessageMediaRefs(
+      userMessage({
+        imagePaths: [
+          '/var/folders/taskwraith-remote-attachments/one.jpg',
+          '/var/folders/taskwraith-remote-attachments/two.jpg',
+          '/var/folders/taskwraith-remote-attachments/three.jpg'
+        ],
+        imageThumbnails: [
+          { dataBase64: 'thumb-one', mimeType: 'image/jpeg', width: 2, height: 1 },
+          { dataBase64: 'thumb-two', mimeType: 'image/jpeg', width: 2, height: 1 }
+        ]
+      })
+    )
+    const html = renderToStaticMarkup(
+      <ChatMessageMediaStrip refs={refs} workspacePath="/repo" onPreviewImage={() => {}} />
+    )
+
+    expect(refs).toHaveLength(3)
+    expect(refs[0].thumbnail?.dataBase64).toBe('thumb-one')
+    expect(refs[1].thumbnail?.dataBase64).toBe('thumb-two')
+    expect(refs[2].thumbnail).toBeUndefined()
+    expect(html).toContain('src="data:image/jpeg;base64,thumb-one"')
+    expect(html).toContain('src="data:image/jpeg;base64,thumb-two"')
+    expect(html).toContain('src="file:///var/folders/taskwraith-remote-attachments/three.jpg"')
+  })
+
+  it('ignores malformed legacy thumbnail records without dropping image paths', () => {
+    const refs = collectMessageMediaRefs(
+      userMessage({
+        imagePaths: ['/var/folders/taskwraith-remote-attachments/photo.jpg'],
+        imageThumbnails: [{ dataBase64: '', mimeType: 'image/jpeg' }]
+      })
+    )
+    const html = renderToStaticMarkup(
+      <ChatMessageMediaStrip refs={refs} workspacePath="/repo" onPreviewImage={() => {}} />
+    )
+
+    expect(refs).toHaveLength(1)
+    expect(refs[0].thumbnail).toBeUndefined()
+    expect(html).not.toContain('data:image/jpeg;base64')
+    expect(html).toContain('src="file:///var/folders/taskwraith-remote-attachments/photo.jpg"')
+  })
+
+  it('dedupes dual-written legacy image paths and canonical upload media refs', () => {
+    const refs = collectMessageMediaRefs(
+      userMessage({
+        imagePaths: ['/var/folders/taskwraith-remote-attachments/photo.jpg'],
+        imageThumbnails: [
+          {
+            dataBase64: 'legacy-thumb',
+            mimeType: 'image/jpeg',
+            width: 2,
+            height: 1
+          }
+        ],
+        mediaRefs: [
+          {
+            id: 'canonical-upload',
+            kind: 'image',
+            format: 'raster',
+            source: 'upload',
+            name: 'Canonical upload',
+            path: '/var/folders/taskwraith-remote-attachments/photo.jpg',
+            mimeType: 'image/jpeg',
+            thumbnail: {
+              dataBase64: 'canonical-thumb',
+              mimeType: 'image/jpeg',
+              width: 2,
+              height: 1
+            },
+            status: 'available'
+          }
+        ]
+      })
+    )
+
+    expect(refs).toHaveLength(1)
+    expect(refs[0]).toMatchObject({
+      source: 'upload',
+      path: '/var/folders/taskwraith-remote-attachments/photo.jpg',
+      thumbnail: { dataBase64: 'legacy-thumb' }
+    })
+  })
+
+  it('renders legacy thumbnail-only metadata when no local path is present', () => {
+    const refs = collectMessageMediaRefs(
+      userMessage({
+        imageThumbnails: [
+          {
+            dataBase64: 'orphan-thumb',
+            mimeType: 'image/jpeg',
+            width: 2,
+            height: 1
+          }
+        ]
+      })
+    )
+    const html = renderToStaticMarkup(
+      <ChatMessageMediaStrip refs={refs} workspacePath="/repo" onPreviewImage={() => {}} />
+    )
+
+    expect(refs).toHaveLength(1)
+    expect(refs[0]).toMatchObject({
+      id: 'image-thumbnail:message-1:0',
+      kind: 'image',
+      source: 'upload',
+      name: 'Image 1',
+      path: '',
+      thumbnail: { dataBase64: 'orphan-thumb' }
+    })
+    expect(html).toContain('message-attachment-thumb is-image')
+    expect(html).toContain('src="data:image/jpeg;base64,orphan-thumb"')
+    expect(html).toContain('Preview image Image 1')
+  })
+
   it('renders unsafe canonical image refs as inert fallback cards', () => {
     const refs = collectMessageMediaRefs(
       userMessage({

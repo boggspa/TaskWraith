@@ -390,6 +390,49 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Generated preview')
   })
 
+  it('renders user message phone-upload thumbnails from legacy image metadata', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          currentProviderLabel: 'Codex',
+          currentProvider: 'codex',
+          currentChat: {
+            appChatId: 'chat-ios-image',
+            provider: 'codex',
+            chatKind: 'single',
+            workspacePath: '/repo'
+          },
+          onPreviewImage: () => {},
+          messages: [
+            {
+              id: 'ios-user-image',
+              role: 'user',
+              content: 'Here is the screenshot',
+              timestamp: '2026-01-01T00:00:00.000Z',
+              metadata: {
+                imagePaths: ['/var/folders/taskwraith-remote-attachments/photo.jpg'],
+                imageThumbnails: [
+                  {
+                    dataBase64: 'phone-thumb',
+                    mimeType: 'image/jpeg',
+                    width: 256,
+                    height: 192
+                  }
+                ]
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('Here is the screenshot')
+    expect(html).toContain('message-attachment-thumb is-image')
+    expect(html).toContain('src="data:image/jpeg;base64,phone-thumb"')
+    expect(html).toContain('Preview image photo.jpg')
+  })
+
   it('keeps assistant markdown around grouped tool traces', () => {
     const firstTool: ToolActivity = {
       id: 'activity-read-one',
