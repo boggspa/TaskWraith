@@ -51,6 +51,8 @@ export interface CanvasServiceDeps {
   /** Broadcast an audit event to the renderer (already persisted by the service). */
   broadcast?: (event: CanvasEventRecord) => void
   logger?: Pick<Console, 'warn' | 'error'>
+  maxInteractionsPerSession?: number
+  maxEvalsPerSession?: number
 }
 
 interface LiveSession {
@@ -304,17 +306,17 @@ export class CanvasService implements CanvasController {
   }
 
   private chargeInteraction(session: LiveSession): void {
-    if (session.interactions >= MAX_INTERACTIONS_PER_SESSION) {
-      throw new Error(
-        `Canvas interaction budget exhausted (${MAX_INTERACTIONS_PER_SESSION} per session).`
-      )
+    const maxInteractions = this.deps.maxInteractionsPerSession ?? MAX_INTERACTIONS_PER_SESSION
+    if (session.interactions >= maxInteractions) {
+      throw new Error(`Canvas interaction budget exhausted (${maxInteractions} per session).`)
     }
     session.interactions += 1
   }
 
   private chargeEval(session: LiveSession): void {
-    if (session.evals >= MAX_EVALS_PER_SESSION) {
-      throw new Error(`Canvas eval budget exhausted (${MAX_EVALS_PER_SESSION} per session).`)
+    const maxEvals = this.deps.maxEvalsPerSession ?? MAX_EVALS_PER_SESSION
+    if (session.evals >= maxEvals) {
+      throw new Error(`Canvas eval budget exhausted (${maxEvals} per session).`)
     }
     session.evals += 1
   }

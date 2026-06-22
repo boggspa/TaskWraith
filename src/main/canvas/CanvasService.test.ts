@@ -114,7 +114,9 @@ describe('CanvasService', () => {
       store,
       uuid: () => `id-${++seq}`,
       now: () => '2026-06-21T00:00:00.000Z',
-      broadcast: (event) => events.push(event)
+      broadcast: (event) => events.push(event),
+      maxInteractionsPerSession: 3,
+      maxEvalsPerSession: 3
     })
   })
 
@@ -197,7 +199,7 @@ describe('CanvasService', () => {
 
   it('caps interactions per session (click/fill/annotate share the budget)', async () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < 3; i++) {
       await service.click(c.canvasId, { kind: 'click', ref: 'e1' }, {})
     }
     await expect(service.click(c.canvasId, { kind: 'click', ref: 'e1' }, {})).rejects.toThrow(
@@ -229,7 +231,7 @@ describe('CanvasService', () => {
 
   it('caps eval per session with its own (separate) budget', async () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 3; i++) {
       await service.evaluate(c.canvasId, { script: '1' }, {})
     }
     await expect(service.evaluate(c.canvasId, { script: '1' }, {})).rejects.toThrow(/budget/)
