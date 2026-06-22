@@ -58,6 +58,7 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // prevent agents from replacing or clearing the user-owned objective.
   'goal_read',
   'goal_update',
+  'update_goal',
   'goal_complete',
   'goal_blocked',
   // 1.4.2 — goal-step checklist updates are non-mutating run coordination.

@@ -14371,6 +14371,7 @@ async function executeGeminiMcpTool(
       })
     } else if (
       toolName === 'goal_update' ||
+      toolName === 'update_goal' ||
       toolName === 'goal_complete' ||
       toolName === 'goal_blocked'
     ) {

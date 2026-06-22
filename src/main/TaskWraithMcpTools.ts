@@ -95,6 +95,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   // /goal and composer controls; agents may read and update lifecycle only.
   'goal_read',
   'goal_update',
+  'update_goal',
   'goal_complete',
   'goal_blocked',
   // 1.4.2 — universal goal-step / todo checklist surface. Agents call this

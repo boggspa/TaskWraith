@@ -1459,6 +1459,33 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'update_goal',
+      description:
+        'Compatibility alias for goal_update. Grok Build official /goal requires an update_goal tool in the session toolset; this updates only the lifecycle status of the existing active TaskWraith goal.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['active', 'paused', 'blocked', 'completed'],
+            description: 'New lifecycle status for the existing active goal.'
+          },
+          reason: {
+            type: 'string',
+            maxLength: 800,
+            description: 'Optional concise reason, blocker detail, or completion summary.'
+          }
+        },
+        required: ['status']
+      }
+    },
+    {
       name: 'goal_complete',
       description:
         'Mark the existing active TaskWraith goal completed. Only call this when the objective has genuinely been achieved and verified; todo_write completion alone is not enough.',

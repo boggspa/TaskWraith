@@ -80,6 +80,7 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'ask_user_question',
   'goal_read',
   'goal_update',
+  'update_goal',
   'goal_complete',
   'goal_blocked',
   // 1.4.2 — read-only runs may publish goal-step checklists.
@@ -153,6 +154,7 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   // Persistent thread goal lifecycle (no workspace mutation).
   'goal_read',
   'goal_update',
+  'update_goal',
   'goal_complete',
   'goal_blocked',
   // 1.4.2 — structured goal-step checklist (no workspace mutation).
