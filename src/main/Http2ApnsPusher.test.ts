@@ -503,6 +503,8 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
           title: 'TaskWraith needs attention',
           body: 'Open TaskWraith to respond.'
         })
+        expect(body.aps['thread-id']).toBe('t')
+        expect(body.aps['relevance-score']).toBe(0.95)
         expect(body).toMatchObject({
           pairID: 'p',
           workspaceId: 'w',
@@ -613,6 +615,8 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
           title: 'TaskWraith needs attention',
           body: 'Open TaskWraith to review the latest task state.'
         })
+        expect(body.aps['thread-id']).toBe('t')
+        expect(body.aps['relevance-score']).toBe(0.5)
         expect(body).toMatchObject({
           pairID: 'p',
           reason: 'ensemble',
@@ -721,9 +725,15 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
       })
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(JSON.parse(bodyWrites[0]).aps.category).toBe('TW_APPROVAL')
+      expect(JSON.parse(bodyWrites[0]).aps['thread-id']).toBe('t')
+      expect(JSON.parse(bodyWrites[0]).aps['relevance-score']).toBe(1)
       expect(JSON.parse(bodyWrites[1]).aps.category).toBe('TW_QUESTION')
+      expect(JSON.parse(bodyWrites[1]).aps['thread-id']).toBe('t')
+      expect(JSON.parse(bodyWrites[1]).aps['relevance-score']).toBe(1)
       // Non-blocking reason → no category → no lock-screen buttons.
       expect(JSON.parse(bodyWrites[2]).aps.category).toBeUndefined()
+      expect(JSON.parse(bodyWrites[2]).aps['thread-id']).toBe('t')
+      expect(JSON.parse(bodyWrites[2]).aps['relevance-score']).toBe(0.35)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

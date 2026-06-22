@@ -36,8 +36,10 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UN
     /// Category id carried on blocking pushes (mirrors Http2ApnsPusher's
     /// APNS_CATEGORY_APPROVAL); selects the Approve/Deny action buttons.
     private static let approvalCategoryId = "TW_APPROVAL"
+    private static let questionCategoryId = "TW_QUESTION"
     private static let approveActionId = "TW_APPROVE"
     private static let denyActionId = "TW_DENY"
+    private static let openActionId = "TW_OPEN"
 
     override init() {
         self.model = RemoteSessionModel(
@@ -73,10 +75,17 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UN
         let deny = UNNotificationAction(
             identifier: Self.denyActionId, title: "Deny",
             options: [.destructive, .authenticationRequired])
+        let open = UNNotificationAction(
+            identifier: Self.openActionId, title: "Open", options: [.foreground])
         let approvalCategory = UNNotificationCategory(
             identifier: Self.approvalCategoryId, actions: [approve, deny],
             intentIdentifiers: [], options: [])
-        UNUserNotificationCenter.current().setNotificationCategories([approvalCategory])
+        let questionCategory = UNNotificationCategory(
+            identifier: Self.questionCategoryId, actions: [open],
+            intentIdentifiers: [], options: [])
+        UNUserNotificationCenter.current().setNotificationCategories([
+            approvalCategory, questionCategory
+        ])
     }
 
     func application(
@@ -185,7 +194,9 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UN
 
         // Plain tap (or the fallback local notification's tap) → deep-link to
         // the thread's approval card.
-        if actionId == UNNotificationDefaultActionIdentifier, let threadId {
+        if (actionId == UNNotificationDefaultActionIdentifier || actionId == Self.openActionId),
+            let threadId
+        {
             model.handleNotificationTap(threadId: threadId)
         }
         completionHandler()

@@ -124,7 +124,13 @@ function coalesceKey(
   pairID: string,
   input: Omit<BridgeRemoteAttentionPushPayload, 'pairID'>
 ): string {
-  return [pairID, input.threadId ?? '', input.reason].join('\u0000')
+  const blockingId =
+    input.reason === 'approval'
+      ? input.approvalId
+      : input.reason === 'question'
+        ? input.questionId
+        : undefined
+  return [pairID, input.threadId ?? '', input.reason, blockingId ?? ''].join('\u0000')
 }
 
 function sanitizePayload(

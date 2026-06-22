@@ -232,6 +232,8 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
           },
           category: APNS_CATEGORY_APPROVAL,
           sound: 'default',
+          'thread-id': payload.threadId,
+          'relevance-score': 0.95,
           'mutable-content': 1
         },
         // Routing identifiers only. Do not put command text, paths, diffs,
@@ -275,6 +277,8 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
           // run-complete push stays button-less.
           category: remoteAttentionCategory(payload.reason),
           sound: 'default',
+          'thread-id': remoteAttentionThreadId(payload),
+          'relevance-score': remoteAttentionRelevanceScore(payload.reason),
           'mutable-content': 1
         },
         pairID: payload.pairID,
@@ -305,6 +309,26 @@ function remoteAttentionCategory(reason: BridgeRemoteAttentionReason): string | 
   if (reason === 'approval') return APNS_CATEGORY_APPROVAL
   if (reason === 'question') return APNS_CATEGORY_QUESTION
   return undefined
+}
+
+function remoteAttentionThreadId(payload: BridgeRemoteAttentionPushPayload): string | undefined {
+  return payload.threadId || payload.runId || payload.taskId || payload.wakeupId
+}
+
+function remoteAttentionRelevanceScore(reason: BridgeRemoteAttentionReason): number {
+  switch (reason) {
+    case 'approval':
+    case 'question':
+      return 1
+    case 'taskNeedsAttention':
+      return 0.85
+    case 'runFailed':
+      return 0.75
+    case 'runComplete':
+      return 0.35
+    default:
+      return 0.5
+  }
 }
 
 /** Lock-screen title/body per reason. Privacy-safe: `reason` is already a

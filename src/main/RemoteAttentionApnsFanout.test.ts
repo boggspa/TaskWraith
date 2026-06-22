@@ -124,7 +124,7 @@ describe('RemoteAttentionApnsFanout', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('user is at desktop'))
   })
 
-  it('coalesces within the window per pair, thread, and reason', async () => {
+  it('does not coalesce distinct blocking approvals/questions in the same thread', async () => {
     let now = 1_000
     const tokenStore = makeTokenStore()
     const pushRemoteAttentionToToken = vi.fn(async () => ({
@@ -142,13 +142,41 @@ describe('RemoteAttentionApnsFanout', () => {
     fanout.notify({ reason: 'approval', threadId: 'thread-id', approvalId: 'approval-1' })
     fanout.notify({ reason: 'approval', threadId: 'thread-id', approvalId: 'approval-2' })
     fanout.notify({ reason: 'question', threadId: 'thread-id', questionId: 'question-1' })
+    fanout.notify({ reason: 'question', threadId: 'thread-id', questionId: 'question-2' })
     await flushFanout()
-    expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(2)
+    expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(4)
+
+    fanout.notify({ reason: 'approval', threadId: 'thread-id', approvalId: 'approval-2' })
+    fanout.notify({ reason: 'question', threadId: 'thread-id', questionId: 'question-2' })
+    await flushFanout()
+    expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(4)
 
     now += 30_001
-    fanout.notify({ reason: 'approval', threadId: 'thread-id', approvalId: 'approval-3' })
+    fanout.notify({ reason: 'approval', threadId: 'thread-id', approvalId: 'approval-2' })
     await flushFanout()
-    expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(3)
+    expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(5)
+  })
+
+  it('coalesces fungible non-blocking events per pair, thread, and reason', async () => {
+    const tokenStore = makeTokenStore()
+    const pushRemoteAttentionToToken = vi.fn(async () => ({
+      delivered: true,
+      apnsId: 'apns-1'
+    }))
+    const fanout = new RemoteAttentionApnsFanout({
+      getTokenStore: () => tokenStore as never,
+      getPusher: () => ({ pushRemoteAttentionToToken }),
+      isUserAtDesktop: () => false,
+      now: () => 1_000,
+      coalesceMs: 30_000
+    })
+
+    fanout.notify({ reason: 'runComplete', threadId: 'thread-id', runId: 'run-1' })
+    fanout.notify({ reason: 'runComplete', threadId: 'thread-id', runId: 'run-2' })
+    fanout.notify({ reason: 'runComplete', threadId: 'other-thread', runId: 'run-3' })
+    await flushFanout()
+
+    expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(2)
   })
 
   it('prunes APNs tokens Apple reports as dead', async () => {
