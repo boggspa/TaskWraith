@@ -142,57 +142,55 @@ struct HomeView: View {
                 .disabled(model.workspaces.isEmpty)
                 .buttonStyle(.plain)
             }
+            // Each control is its own ToolbarItem so the system lays them out
+            // individually. A single wide custom pill GROUP at .cancellationAction
+            // didn't fit the iPad sidebar's nav slot and dropped the Settings +
+            // More segments (regression from "Polish iOS toolbar icon chrome").
             ToolbarItem(placement: .cancellationAction) {
-                ToolbarIconPillGroup {
-                    Button {
-                        model.refreshConnection()
-                    } label: {
-                        ToolbarIconSegmentLabel("Refresh", systemImage: "arrow.clockwise")
+                Button {
+                    model.refreshConnection()
+                } label: {
+                    ToolbarIconPillLabel("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+            }
+            ToolbarItem(placement: .cancellationAction) {
+                Button {
+                    model.settingsPresented = true
+                } label: {
+                    ToolbarIconPillLabel("Settings", systemImage: "gearshape")
+                }
+                .buttonStyle(.plain)
+            }
+            ToolbarItem(placement: .cancellationAction) {
+                Menu {
+                    Button("First-launch guide", systemImage: "questionmark.circle") {
+                        model.firstLaunchSheetPresented = true
                     }
-                    .buttonStyle(.plain)
-                    Button {
-                        model.settingsPresented = true
-                    } label: {
-                        ToolbarIconSegmentLabel(
-                            "Settings",
-                            systemImage: "gearshape",
-                            leadingDivider: true
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    Menu {
-                        Button("First-launch guide", systemImage: "questionmark.circle") {
-                            model.firstLaunchSheetPresented = true
+                    Divider()
+                    if model.isDemo {
+                        Button("Exit demo", systemImage: "xmark.circle") {
+                            model.exitDemoMode()
+                        }
+                    } else {
+                        Button(
+                            "Find hosts on your tailnet",
+                            systemImage: "antenna.radiowaves.left.and.right"
+                        ) {
+                            showDiscoverySheet = true
                         }
                         Divider()
-                        if model.isDemo {
-                            Button("Exit demo", systemImage: "xmark.circle") {
-                                model.exitDemoMode()
-                            }
-                        } else {
-                            Button(
-                                "Find hosts on your tailnet",
-                                systemImage: "antenna.radiowaves.left.and.right"
-                            ) {
-                                showDiscoverySheet = true
-                            }
-                            Divider()
-                            Button("Disconnect", role: .destructive) { model.disconnect() }
-                            Button("Forget this host", role: .destructive) { model.forgetPairing() }
-                            Divider()
-                            Button("Enter demo mode", systemImage: "play.circle") {
-                                showDemoConfirm = true
-                            }
+                        Button("Disconnect", role: .destructive) { model.disconnect() }
+                        Button("Forget this host", role: .destructive) { model.forgetPairing() }
+                        Divider()
+                        Button("Enter demo mode", systemImage: "play.circle") {
+                            showDemoConfirm = true
                         }
-                    } label: {
-                        ToolbarIconSegmentLabel(
-                            "More",
-                            systemImage: "ellipsis.circle",
-                            leadingDivider: true
-                        )
                     }
-                    .buttonStyle(.plain)
+                } label: {
+                    ToolbarIconPillLabel("More", systemImage: "ellipsis.circle")
                 }
+                .buttonStyle(.plain)
             }
         }
         .navigationDestination(item: $canvasMode) { mode in

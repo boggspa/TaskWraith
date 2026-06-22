@@ -464,7 +464,9 @@ private struct ToolbarIconSegmentChromeModifier: ViewModifier {
         content
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(symbol)
-            .frame(width: 34, height: 34)
+            // Wider cell than the icon so adjacent segments in a group aren't
+            // visually cramped (the icons read as "too close together" at 34pt).
+            .frame(width: 40, height: 34)
             .background {
                 if isActive {
                     Circle()
@@ -4919,11 +4921,6 @@ public struct AppSettingsSheet: View {
         VStack(spacing: 12) {
             SettingsCard(title: "Desktop parity", systemImage: "rectangle.3.group") {
                 SettingsInfoRow(
-                    icon: "sidebar.left",
-                    title: "Settings are full-screen on iOS",
-                    detail: "This surface mirrors the Mac's grouped settings IA while keeping iPhone navigation native."
-                )
-                SettingsInfoRow(
                     icon: "macbook.and.iphone",
                     title: "Mac owns provider setup",
                     detail: "Provider logins, API keys, MCP servers, and local runtimes still live on the desktop."
@@ -5564,12 +5561,12 @@ public struct AppSettingsSheet: View {
                     .foregroundStyle(TWTheme.chroma1)
             }
         }
-        .padding(12)
-        .background(TWTheme.composerBg, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(TWTheme.chroma1.opacity(0.28), lineWidth: 1)
-        )
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Reuse the real composer-shell chrome (the same render the First Launch
+        // preview uses) rather than a bespoke card, so the preview matches the
+        // actual composer the user sees.
+        .composerShellUnlessInputOwns(twResolvedComposerShell(model: model, presentation: .welcome))
     }
 
     #if os(iOS)
@@ -6856,22 +6853,33 @@ public struct ComposerDiffPill: View {
         t.height < -Self.resetThreshold && abs(t.height) > abs(t.width)
     }
 
-    private var liveOffset: CGSize {
-        // Sit centred until the column + pill are measured: applying a persisted
-        // offset against the unbounded pre-measure clamp could flash the pill
-        // off-screen on a narrower column (e.g. an iPad offset restored on iPhone,
-        // and it re-mounts on every keyboard dismiss). 0 is the safe default.
-        guard containerWidth > 0, pillWidth > 0 else { return .zero }
-        let resting = clampOffset(persistedOffsetX)
-        guard case .dragging(let t) = dragState else {
-            return CGSize(width: resting, height: 0)
-        }
+    /// Resting horizontal position expressed as a LAYOUT leading inset (centre +
+    /// committed nudge, clamped within the column) so the pill's hit-frame sits
+    /// where the pill is drawn — a visual-only `.offset` left the tap/long-press
+    /// target stranded at centre. Centred until the column + pill are measured
+    /// (applying a persisted offset against the unbounded pre-measure clamp could
+    /// flash the pill off-screen on a narrower column).
+    private var restingLeadingInset: CGFloat {
+        guard containerWidth > 0, pillWidth > 0 else { return 0 }
+        let centred = (containerWidth - pillWidth) / 2
+        return max(0, centred + CGFloat(clampOffset(persistedOffsetX)))
+    }
+
+    /// Visual-only offset applied DURING a live drag (the finger is on the pill,
+    /// so the hit-frame is irrelevant); zero at rest. An upward flick telegraphs
+    /// the recentre by easing back toward the middle and lifting up.
+    private var dragVisualOffset: CGSize {
+        guard containerWidth > 0, pillWidth > 0,
+            case .dragging(let t) = dragState
+        else { return .zero }
         if isRecenterDrag(t) {
-            // Telegraph the recentre: ease back toward centre and lift up.
-            return CGSize(width: resting * 0.25, height: max(t.height, -56))
+            return CGSize(
+                width: -CGFloat(clampOffset(persistedOffsetX)) * 0.75,
+                height: max(t.height, -56))
         }
-        return CGSize(
-            width: clampOffset(persistedOffsetX + Double(t.width)), height: t.height * 0.1)
+        let committed = clampOffset(persistedOffsetX)
+        let dragged = clampOffset(persistedOffsetX + Double(t.width))
+        return CGSize(width: CGFloat(dragged - committed), height: t.height * 0.1)
     }
 
     private var repositionGesture: some Gesture {
@@ -6948,53 +6956,66 @@ public struct ComposerDiffPill: View {
     }
 
     public var body: some View {
-        pillBody
-            .background(GeometryReader { proxy in
-                Color.clear
-                    .onAppear { pillWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { _, w in pillWidth = w }
-            })
-            .scaleEffect(dragState.isActive ? 1.06 : 1)
-            .offset(x: liveOffset.width, y: liveOffset.height)
-            // Lift shadow while repositioning so the pill reads as picked-up.
-            .shadow(
-                color: .black.opacity(dragState.isActive ? 0.3 : 0),
-                radius: dragState.isActive ? 12 : 0, y: dragState.isActive ? 6 : 0)
-            .contentShape(pillShape)
-            // Exclusive so a hold that arms reposition can't ALSO fire the tap:
-            // the long-press takes precedence; a quick tap (long-press fails to
-            // reach 0.35s) opens the diff. A stationary hold-release no longer
-            // opens it — the tap is excluded once the long-press wins.
-            .gesture(ExclusiveGesture(repositionGesture, TapGesture().onEnded { onTap?() }))
-            // Restore the hardware-keyboard / Full-Keyboard-Access activation the
-            // old Button gave (VoiceOver uses the accessibilityAction below).
-            .focusable()
-            .onKeyPress(.return) {
-                onTap?()
-                return .handled
-            }
-            .animation(
-                dragState.isDragging ? nil : .spring(response: 0.32, dampingFraction: 0.72),
-                value: dragState)
-            // Full-width slot keeps the pill centred at rest; the offset shifts it
-            // visually without disturbing layout, and the slot measures the column.
-            .frame(maxWidth: .infinity)
-            .background(GeometryReader { proxy in
-                Color.clear
-                    .onAppear { containerWidth = proxy.size.width }
-                    .onChange(of: proxy.size.width) { _, w in containerWidth = w }
-            })
-            .sensoryFeedback(trigger: dragState.isActive) { wasActive, isActive in
-                isActive && !wasActive ? .impact(weight: .medium) : nil
-            }
-            .sensoryFeedback(.selection, trigger: commitTick)
-            .sensoryFeedback(.success, trigger: resetTick)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(accessibilityText)
-            .accessibilityHint("Touch and hold to move the pill; drag up to recentre.")
-            .accessibilityAction { onTap?() }
-            .accessibilityAction(named: Text("Recentre")) { persistedOffsetX = 0 }
+        HStack(spacing: 0) {
+            // Resting position is a LAYOUT inset so the gesture's hit-frame moves
+            // WITH the pill — previously a visual-only .offset left the tap /
+            // long-press target stranded at centre, so after nudging the pill to
+            // an edge you had to press the empty middle to move it again.
+            Color.clear.frame(width: restingLeadingInset)
+            pillBody
+                .background(GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { pillWidth = proxy.size.width }
+                        .onChange(of: proxy.size.width) { _, w in pillWidth = w }
+                })
+                .scaleEffect(dragState.isActive ? 1.06 : 1)
+                // Visual delta DURING a live drag only (the finger is on the pill,
+                // so the hit-frame doesn't matter); the committed nudge is layout.
+                .offset(x: dragVisualOffset.width, y: dragVisualOffset.height)
+                // Lift shadow while repositioning so the pill reads as picked-up.
+                .shadow(
+                    color: .black.opacity(dragState.isActive ? 0.3 : 0),
+                    radius: dragState.isActive ? 12 : 0, y: dragState.isActive ? 6 : 0)
+                .contentShape(pillShape)
+                // Exclusive so a hold that arms reposition can't ALSO fire the tap:
+                // the long-press takes precedence; a quick tap (long-press fails to
+                // reach 0.35s) opens the diff. A stationary hold-release no longer
+                // opens it — the tap is excluded once the long-press wins.
+                .gesture(ExclusiveGesture(repositionGesture, TapGesture().onEnded { onTap?() }))
+                // Restore the hardware-keyboard / Full-Keyboard-Access activation the
+                // old Button gave (VoiceOver uses the accessibilityAction below).
+                .focusable()
+                .onKeyPress(.return) {
+                    onTap?()
+                    return .handled
+                }
+            Spacer(minLength: 0)
+        }
+        .animation(
+            dragState.isDragging ? nil : .spring(response: 0.32, dampingFraction: 0.72),
+            value: dragState)
+        // Ease to the new resting inset when a drag commits (the visual delta
+        // resets to zero in the same step, so the pill stays put then settles).
+        .animation(.spring(response: 0.32, dampingFraction: 0.72), value: persistedOffsetX)
+        // Full-width slot keeps the pill centred at rest; the leading inset shifts
+        // it via layout (hit-frame follows), and the slot measures the column.
+        .frame(maxWidth: .infinity)
+        .background(GeometryReader { proxy in
+            Color.clear
+                .onAppear { containerWidth = proxy.size.width }
+                .onChange(of: proxy.size.width) { _, w in containerWidth = w }
+        })
+        .sensoryFeedback(trigger: dragState.isActive) { wasActive, isActive in
+            isActive && !wasActive ? .impact(weight: .medium) : nil
+        }
+        .sensoryFeedback(.selection, trigger: commitTick)
+        .sensoryFeedback(.success, trigger: resetTick)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint("Touch and hold to move the pill; drag up to recentre.")
+        .accessibilityAction { onTap?() }
+        .accessibilityAction(named: Text("Recentre")) { persistedOffsetX = 0 }
     }
 
     private var accessibilityText: String {
