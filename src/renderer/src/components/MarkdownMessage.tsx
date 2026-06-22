@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { StableMarkdownBlock } from './StableMarkdownBlock'
 import { splitMarkdownIntoBlocks } from '../lib/MarkdownBlockSplit'
@@ -56,8 +57,10 @@ interface MarkdownMessageProps {
  * so `<AgentMention>` chips in any block can look up the chat's
  * identity registry without prop drilling.
  */
-export function MarkdownMessage({ content, chat }: MarkdownMessageProps) {
-  const { stable, tail } = splitMarkdownIntoBlocks(content)
+function MarkdownMessageImpl({ content, chat }: MarkdownMessageProps) {
+  // useMemo the block split so a re-render NOT caused by a content change
+  // (e.g. an identity-registry update) doesn't re-run the O(n) string scan.
+  const { stable, tail } = useMemo(() => splitMarkdownIntoBlocks(content), [content])
   return (
     <AgentIdentityContext.Provider value={chat}>
       <div className="message-markdown message-markdown-pro">
@@ -69,3 +72,20 @@ export function MarkdownMessage({ content, chat }: MarkdownMessageProps) {
     </AgentIdentityContext.Provider>
   )
 }
+
+// Re-render only when the rendered output can actually change: the markdown
+// `content`, the chat scope (appChatId), or the identity registry that
+// <AgentMention> reads (chat.providerMetadata.agentIdentities). The `chat` prop
+// is the whole currentChat — a NEW object on every coalesced flush (#1) — so
+// comparing it by reference would defeat the memo; we compare only the
+// identity-relevant slice. This skips re-rendering every other visible message
+// while one message streams, which is the win that compounds with #1.
+function propsAreEqual(prev: MarkdownMessageProps, next: MarkdownMessageProps): boolean {
+  return (
+    prev.content === next.content &&
+    prev.chat?.appChatId === next.chat?.appChatId &&
+    prev.chat?.providerMetadata?.agentIdentities === next.chat?.providerMetadata?.agentIdentities
+  )
+}
+
+export const MarkdownMessage = memo(MarkdownMessageImpl, propsAreEqual)
