@@ -1799,6 +1799,7 @@ type BridgeRunTranscriptState = {
 
 const bridgeRunTranscripts = new Map<string, BridgeRunTranscriptState>()
 let pushBridgeRunSnapshot: ((chat: ChatRecord) => void) | null = null
+let pushBridgeRunTaskCardDelta: ((chatId: string) => void) | null = null
 
 /**
  * Phase B3 — thin proxy. Delegates to `approvalService.scheduleTimeout`
@@ -3941,6 +3942,7 @@ function registerBridgeRunTranscript(args: {
   console.log(
     `[bridge-run] registered run=${args.runId} chat=${args.chatId} provider=${args.provider}`
   )
+  pushBridgeRunTaskCardDelta?.(args.chatId)
 }
 
 function flushBridgeRunTranscript(runId: string, final = false): void {
@@ -4084,6 +4086,7 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
     // stuck on 'running' / 'thinking' after completion. Terminal flushes
     // bypass the throttle.
     bridgeBroadcasterRef?.resetThrottle()
+    pushBridgeRunTaskCardDelta?.(saved.appChatId)
   }
   pushBridgeRunSnapshot?.(saved)
   state.flushedOnce = true
@@ -18939,6 +18942,7 @@ if (isGeminiMcpBridgeProcess) {
         pushRemoteDiffSummaryDeltaForChat(canonicalChat.appChatId)
       }
     }
+    pushBridgeRunTaskCardDelta = pushRemoteTaskCardDelta
 
     const pushRemoteApprovalCardDelta = (approvalEvent: ApprovalRunEvent): void => {
       const status = approvalEvent.type === 'approval_pending' ? 'pending' : 'resolved'
