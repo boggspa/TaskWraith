@@ -6760,7 +6760,16 @@ function App(): React.JSX.Element {
     const scroller = transcriptScrollRef.current
     if (!scroller) return
 
+    // rAF-coalesce the scroll evaluation. A programmatic autoscroll write
+    // dispatches a scroll event, and `evaluate` READS scrollHeight/scrollTop/
+    // clientHeight — so firing it on every raw scroll event interleaves a
+    // forced layout read with each streamed delta's write (layout thrash).
+    // Collapsing to at most one evaluation per frame mirrors the rAF-throttled
+    // Raw-Events twin below; the synchronous wheel/touch/key intent listeners
+    // still capture scroll-away, so a one-frame re-engage delay is safe.
+    let rafId: number | null = null
     const evaluate = () => {
+      rafId = null
       const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
       // Only the actual bottom opts back into auto-follow. This keeps
       // transcript scrolling fully user-owned until they deliberately
@@ -6784,10 +6793,14 @@ function App(): React.JSX.Element {
         autoFollowRef.current = false
       }
     }
-    const onScroll = evaluate
+    const onScroll = () => {
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(evaluate)
+    }
     scroller.addEventListener('scroll', onScroll, { passive: true })
     return () => {
       scroller.removeEventListener('scroll', onScroll)
+      if (rafId !== null) cancelAnimationFrame(rafId)
     }
     // Re-bind on scroller remount. TranscriptPanel is keyed by appChatId
     // (see its render site) and replaces the scroll node on chat-open; with an
