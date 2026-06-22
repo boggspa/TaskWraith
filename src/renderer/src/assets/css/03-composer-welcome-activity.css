@@ -603,6 +603,10 @@
  * and scrolls while the actions row (Add new / No workspace) stays pinned at
  * the bottom. Scoped to `--portaled` so the in-composer switcher is untouched. */
 .welcome-workspace-popover--portaled {
+  /* Wider than the shared 320px base (and the in-composer switcher) so longer
+   * workspace paths fit. Keep in sync with `popoverWidth` in
+   * WelcomeWorkspacePicker, which centers the popover on this width. */
+  max-width: 420px;
   overflow: hidden;
 }
 .welcome-workspace-popover--portaled

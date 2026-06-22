@@ -50,12 +50,12 @@ export interface WelcomeWorkspacePickerProps {
 export const WELCOME_WORKSPACE_INLINE_LIMIT = 3
 
 /**
- * Compact max height (px) for the "More workspaces" popover. At open time it is
- * clamped further to the trigger's space-to-viewport-bottom, so the list
- * scrolls internally and the popover never trails off-screen. Kept below the
- * in-composer switcher's 360px since welcome-surface workspace lists run long.
+ * Max height (px) for the "More workspaces" popover. At open time it is clamped
+ * down to the trigger's space-to-viewport-bottom, so the list scrolls
+ * internally and the popover never trails off-screen. A little taller than the
+ * in-composer switcher (360px) since welcome-surface workspace lists run long.
  */
-export const WELCOME_WORKSPACE_POPOVER_MAX_HEIGHT = 320
+export const WELCOME_WORKSPACE_POPOVER_MAX_HEIGHT = 420
 
 export function WelcomeWorkspacePicker({
   workspaces,
@@ -123,7 +123,7 @@ export function WelcomeWorkspacePicker({
       const trigger = triggerRef.current
       if (!trigger) return
       const rect = trigger.getBoundingClientRect()
-      const popoverWidth = 320 // approx; matches the popover's max-width hint
+      const popoverWidth = 420 // approx; matches the popover's max-width hint
       const margin = 8
       const idealLeft = rect.left + rect.width / 2 - popoverWidth / 2
       const clampedLeft = Math.max(
