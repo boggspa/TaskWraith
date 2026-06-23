@@ -15,7 +15,9 @@ describe('resolveContextWindow', () => {
 
   it('resolves representative model ids across providers', () => {
     expect(resolveContextWindow('gemini', 'pro')).toBe(1_048_576)
-    expect(resolveContextWindow('codex', 'gpt-5.5')).toBe(400_000)
+    expect(resolveContextWindow('codex', 'gpt-5.5')).toBe(1_050_000)
+    expect(resolveContextWindow('codex', 'gpt-5.4')).toBe(1_050_000)
+    expect(resolveContextWindow('codex', 'gpt-5.4-mini')).toBe(400_000)
     expect(resolveContextWindow('claude', 'claude-opus-4-8-1m')).toBe(1_000_000)
     expect(resolveContextWindow('claude', 'claude-fable-5')).toBe(200_000)
     expect(resolveContextWindow('claude', 'claude-fable-5-1m')).toBe(1_000_000)
@@ -45,7 +47,7 @@ describe('resolveContextWindow', () => {
   it('uses provider fallbacks for all seven providers when the model is unknown', () => {
     const expected: Record<ProviderId, number> = {
       gemini: 1_048_576,
-      codex: 400_000,
+      codex: 1_050_000,
       claude: 200_000,
       kimi: 256_000,
       grok: 256_000,

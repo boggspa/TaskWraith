@@ -13,8 +13,8 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   auto: 1_048_576,
   'cli-default': 1_048_576,
   // Codex
-  'gpt-5.5': 400_000,
-  'gpt-5.4': 400_000,
+  'gpt-5.5': 1_050_000,
+  'gpt-5.4': 1_050_000,
   'gpt-5.4-mini': 400_000,
   'gpt-5.3-codex': 400_000,
   'gpt-5.3-codex-spark': 200_000,
@@ -64,7 +64,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
 
 const PROVIDER_FALLBACK_WINDOW: Record<ProviderId, number> = {
   gemini: 1_048_576,
-  codex: 400_000,
+  codex: 1_050_000,
   claude: 200_000,
   kimi: 256_000,
   // Grok (gated) — placeholder until G10 wires real model metadata.

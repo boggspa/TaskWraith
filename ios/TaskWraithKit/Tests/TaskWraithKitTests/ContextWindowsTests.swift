@@ -12,6 +12,9 @@ struct ContextWindowsTests {
     func modelIdWins() {
         // gpt-oss:20b is 131_072 even though Ollama's provider fallback is 262_144.
         #expect(ContextWindows.resolve(provider: "ollama", model: "gpt-oss:20b") == 131_072)
+        #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.5") == 1_050_000)
+        #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4") == 1_050_000)
+        #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4-mini") == 400_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8-1m") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8") == 200_000)
     }
@@ -20,7 +23,7 @@ struct ContextWindowsTests {
     func providerFallback() {
         #expect(ContextWindows.resolve(provider: "ollama", model: "totally-unknown:1b") == 262_144)
         #expect(ContextWindows.resolve(provider: "gemini", model: nil) == 1_048_576)
-        #expect(ContextWindows.resolve(provider: "codex", model: nil) == 400_000)
+        #expect(ContextWindows.resolve(provider: "codex", model: nil) == 1_050_000)
     }
 
     @Test("provider match is case-insensitive")
