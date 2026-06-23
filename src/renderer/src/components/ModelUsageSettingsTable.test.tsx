@@ -4,10 +4,12 @@ import {
   ModelUsageOllamaTableBlock,
   ModelUsageProviderTableBlock,
   ModelUsageSettingsTable,
-  ModelUsageTableTotalsFooter
+  ModelUsageTableTotalsFooter,
+  ProviderApiRatesTableBlock
 } from './ModelUsageSettingsTable'
 import { buildModelUsageTable, sumModelUsageProviderTotals } from '../lib/modelUsageTable'
 import { buildOllamaMemoryModelTable } from '../lib/ollamaMemoryAggregation'
+import { buildProviderApiRateGroups } from '../lib/providerApiRatesTable'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import type { UsageRecord } from '../../../main/store/types'
 
@@ -222,5 +224,93 @@ describe('ModelUsageTableTotalsFooter (populated render)', () => {
     expect(html).toContain('~$7.00')
     expect(html).toContain('12GB')
     expect(html).toContain('8 avg')
+  })
+})
+
+describe('ProviderApiRatesTableBlock (populated render)', () => {
+  it('renders provider/model API rates with cached input and source status', () => {
+    const [group] = buildProviderApiRateGroups({
+      rateTableVersion: '2026-06-23',
+      baseline: {
+        codex: {
+          provider: 'codex',
+          pricingUrl: 'https://openai.com/api/pricing',
+          models: [
+            {
+              modelId: 'gpt-5.5',
+              inputUsdPerMillion: 5,
+              cachedInputUsdPerMillion: 0.5,
+              outputUsdPerMillion: 30,
+              sourceUrl: 'https://openai.com/api/pricing',
+              lastVerified: '2026-06-23',
+              notes: 'Codex CLI projected API-equivalent.'
+            }
+          ]
+        }
+      },
+      probe: {
+        runAt: '2026-06-23T10:00:00.000Z',
+        results: {
+          codex: {
+            provider: 'codex',
+            pricingUrl: 'https://openai.com/api/pricing',
+            models: [
+              {
+                modelId: 'gpt-5.5',
+                status: 'verified',
+                baseline: {
+                  inputUsdPerMillion: 5,
+                  outputUsdPerMillion: 30,
+                  confidence: 'baked-in'
+                }
+              }
+            ]
+          }
+        }
+      }
+    })
+    const html = renderToStaticMarkup(
+      <table>
+        <ProviderApiRatesTableBlock group={group} />
+      </table>
+    )
+
+    expect(html).toContain('Codex')
+    expect(html).toContain('rate table 2026-06-23')
+    expect(html).toContain('$5')
+    expect(html).toContain('$0.50')
+    expect(html).toContain('$30')
+    expect(html).toContain('verified')
+    expect(html).toContain('https://openai.com/api/pricing')
+  })
+
+  it('badges Gemini as a historic provider in the rates group row', () => {
+    const [group] = buildProviderApiRateGroups({
+      rateTableVersion: '2026-06-23',
+      baseline: {
+        gemini: {
+          provider: 'gemini',
+          pricingUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+          models: [
+            {
+              modelId: 'gemini-3.1-pro',
+              inputUsdPerMillion: 1.25,
+              outputUsdPerMillion: 10,
+              sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+              lastVerified: '2026-06-23'
+            }
+          ]
+        }
+      }
+    })
+    const html = renderToStaticMarkup(
+      <table>
+        <ProviderApiRatesTableBlock group={group} />
+      </table>
+    )
+
+    expect(html).toContain('Gemini')
+    expect(html).toContain('historic provider')
+    expect(html).toContain('baseline')
   })
 })

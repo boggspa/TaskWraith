@@ -101,7 +101,7 @@ import { RosterSettingsPanel } from './RosterSettingsPanel'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { UpdateStatusPane } from './UpdateStatusPane'
 import { ModelUsageCard } from './ModelUsageCard'
-import { ModelUsageSettingsTable } from './ModelUsageSettingsTable'
+import { ModelUsageSettingsTable, ProviderApiRatesSettingsTable } from './ModelUsageSettingsTable'
 import { TokenUsageChart } from './TokenUsageChart'
 import { UsageHeatmap } from './UsageHeatmap'
 import { WorkspaceActivityHeatmap } from './WorkspaceActivityHeatmap'
@@ -1228,7 +1228,18 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     label: 'Model usage',
     group: 'data',
     description: 'Cross-provider quota, token, usage, cost, and context snapshots.',
-    aliases: ['usage', 'quota', 'tokens', 'cost', 'credits', 'billing', 'context'],
+    aliases: [
+      'usage',
+      'quota',
+      'tokens',
+      'cost',
+      'credits',
+      'billing',
+      'context',
+      'rates',
+      'pricing',
+      'api cost'
+    ],
     scope: 'provider'
   }
 ]
@@ -6355,6 +6366,8 @@ export function SettingsPanel({
                     />
                   </div>
                 </section>
+
+                <ProviderApiRatesSettingsTable />
               </div>
             )
           })()}

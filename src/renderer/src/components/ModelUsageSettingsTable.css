@@ -127,6 +127,14 @@
   width: auto;
 }
 
+.model-usage-table col.model-usage-table-rate-col {
+  width: 1%;
+}
+
+.model-usage-table col.model-usage-table-source-col {
+  width: 1%;
+}
+
 .model-usage-table thead th {
   position: sticky;
   top: 0;
@@ -229,7 +237,8 @@
 .model-usage-table-tokens,
 .model-usage-table-cost,
 .model-usage-table-memory,
-.model-usage-table-samples {
+.model-usage-table-samples,
+.model-usage-table-rate {
   font-variant-numeric: tabular-nums;
   font-size: 10.5px;
   white-space: nowrap;
@@ -244,6 +253,85 @@
 .model-usage-table-cost {
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
+}
+
+.model-usage-table--rates .model-usage-table-model-cell {
+  max-width: 170px;
+}
+
+.model-usage-table--rates .model-usage-table-rate,
+.model-usage-table--rates .model-usage-table-rate-source-cell {
+  padding-left: 8px;
+  padding-right: 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.model-usage-table--rates .model-usage-table-rate {
+  color: var(--text-primary);
+}
+
+.model-usage-table--rates .model-usage-table-rate-source-cell {
+  width: 1%;
+}
+
+.model-usage-table-provider-row--rates .model-usage-table-rate-meta {
+  text-align: right;
+  white-space: normal;
+}
+
+.model-usage-table-rate-meta {
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: 10px;
+}
+
+.model-usage-table-rate-meta span {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
+}
+
+.model-usage-table-rate-source {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-border, var(--surface-border)) 75%, transparent);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--surface-2, #8884) 45%, transparent);
+  font-size: 10px;
+  line-height: 1.2;
+  text-decoration: none;
+}
+
+.model-usage-table-rate-source:hover {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent, #6b7cff) 35%, var(--panel-border, var(--surface-border)));
+}
+
+.model-usage-table-rate-source.is-verified,
+.model-usage-table-rate-source.is-manual-override {
+  color: var(--success, #58c285);
+  border-color: color-mix(in srgb, var(--success, #58c285) 35%, var(--panel-border, var(--surface-border)));
+  background: color-mix(in srgb, var(--success, #58c285) 11%, transparent);
+}
+
+.model-usage-table-rate-source.is-not-verified,
+.model-usage-table-rate-source.is-stale-probe {
+  color: var(--warning, #e0a84d);
+  border-color: color-mix(in srgb, var(--warning, #e0a84d) 38%, var(--panel-border, var(--surface-border)));
+  background: color-mix(in srgb, var(--warning, #e0a84d) 11%, transparent);
+}
+
+.model-usage-table-rate-source.is-fetch-failed {
+  color: var(--danger, #f87171);
+  border-color: color-mix(in srgb, var(--danger, #f87171) 38%, var(--panel-border, var(--surface-border)));
+  background: color-mix(in srgb, var(--danger, #f87171) 10%, transparent);
 }
 
 /* Provider accent stripe on the summary row's left edge. */

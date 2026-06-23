@@ -66,6 +66,9 @@ describe('Settings tabs', () => {
     expect(settingsTabMatchesQuery(tabsById['safety-privacy'], 'screen watch')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById.pairing, 'iphone')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['model-usage'], 'quota')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['model-usage'], 'rates')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['model-usage'], 'pricing')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['model-usage'], 'api cost')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById.appearance, 'billing')).toBe(false)
   })
 

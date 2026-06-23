@@ -49,6 +49,7 @@ import {
 } from '../lib/modelUsageTable'
 import { fetchProviderRates, type RendererProviderRates } from '../lib/providerRateEstimate'
 import type { DisplayCurrency } from '../lib/formatCost'
+import { buildProviderApiRateGroups, type ProviderApiRateGroup, type ProviderApiRateRow } from '../lib/providerApiRatesTable'
 import { humaniseModelIdCompact, humaniseModelIdTableCell } from '../lib/modelDisplayName'
 import { formatTokenCount } from '../lib/UsageHeatmap'
 import {
@@ -132,6 +133,34 @@ function costCell(totals: ModelUsageWindowTotals): string {
 /** Format a single window's token cell. */
 function tokenCell(totals: ModelUsageWindowTotals): string {
   return totals.totalTokens > 0 ? `${formatTokenCount(totals.totalTokens)} tok` : '—'
+}
+
+function rateCell(value: number | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—'
+  return `$${value.toLocaleString(undefined, {
+    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 4
+  })}`
+}
+
+function statusLabel(row: ProviderApiRateRow): string {
+  if (row.status === 'manual-override') return 'override'
+  if (row.status === 'verified') return 'verified'
+  if (row.status === 'not-verified') return 'check'
+  if (row.status === 'fetch-failed') return 'fetch failed'
+  if (row.status === 'stale-probe') return 'stale probe'
+  return 'baseline'
+}
+
+function rateSourceTitle(row: ProviderApiRateRow, group: ProviderApiRateGroup): string {
+  const parts = [
+    `Rate table ${group.rateTableVersion || 'unknown version'}`,
+    `Last verified ${row.lastVerified || 'unknown'}`,
+    `Source ${row.sourceUrl || group.pricingUrl || 'not recorded'}`
+  ]
+  if (row.notes) parts.push(row.notes)
+  if (row.statusMessage) parts.push(row.statusMessage)
+  return parts.join(' · ')
 }
 
 /** One token+cost pair of cells for a given window. */
@@ -341,6 +370,173 @@ export function ModelUsageTableTotalsFooter({
         </tr>
       ) : null}
     </tfoot>
+  )
+}
+
+export function ProviderApiRatesTableBlock({ group }: { group: ProviderApiRateGroup }) {
+  return (
+    <tbody className={`model-usage-table-provider provider-${group.provider}`}>
+      <tr className="model-usage-table-provider-row model-usage-table-provider-row--rates">
+        <th scope="rowgroup" className="model-usage-table-provider-cell">
+          <span className={`model-usage-table-provider-label provider-${group.provider}`}>
+            <ProviderLogoTile provider={group.provider} />
+            <span className="model-usage-table-provider-name">
+              {getProviderName(group.provider)}
+            </span>
+            <span
+              className="model-usage-table-model-count"
+              title={`${group.rows.length} rate row${group.rows.length === 1 ? '' : 's'}`}
+            >
+              {group.rows.length}
+            </span>
+          </span>
+        </th>
+        <td className="model-usage-table-rate-meta" colSpan={4}>
+          <span>rate table {group.rateTableVersion || 'unknown'}</span>
+          {group.provider === 'gemini' ? <span>historic provider</span> : null}
+          {group.provider === 'codex' || group.provider === 'grok' || group.provider === 'cursor' ? (
+            <span>API-equivalent projection</span>
+          ) : null}
+        </td>
+      </tr>
+      {group.rows.map((row) => {
+        const sourceTitle = rateSourceTitle(row, group)
+        const source =
+          row.sourceUrl && /^https?:\/\//.test(row.sourceUrl) ? (
+            <a
+              href={row.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className={`model-usage-table-rate-source is-${row.status}`}
+              title={sourceTitle}
+            >
+              {statusLabel(row)}
+            </a>
+          ) : (
+            <span className={`model-usage-table-rate-source is-${row.status}`} title={sourceTitle}>
+              {statusLabel(row)}
+            </span>
+          )
+        return (
+          <tr key={`${group.provider}-${row.modelId}`} className="model-usage-table-model-row">
+            <td className="model-usage-table-model-cell" title={humaniseModelIdCompact(group.provider, row.modelId)}>
+              {humaniseModelIdTableCell(group.provider, row.modelId)}
+            </td>
+            <td className="model-usage-table-rate" title={`${row.inputUsdPerMillion} USD per 1M input tokens`}>
+              {rateCell(row.inputUsdPerMillion)}
+            </td>
+            <td
+              className="model-usage-table-rate"
+              title={
+                row.cachedInputUsdPerMillion !== undefined
+                  ? `${row.cachedInputUsdPerMillion} USD per 1M cached input tokens`
+                  : undefined
+              }
+            >
+              {rateCell(row.cachedInputUsdPerMillion)}
+            </td>
+            <td className="model-usage-table-rate" title={`${row.outputUsdPerMillion} USD per 1M output tokens`}>
+              {rateCell(row.outputUsdPerMillion)}
+            </td>
+            <td className="model-usage-table-rate-source-cell">{source}</td>
+          </tr>
+        )
+      })}
+    </tbody>
+  )
+}
+
+export function ProviderApiRatesSettingsTable() {
+  const [groups, setGroups] = useState<ProviderApiRateGroup[]>([])
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.api?.getProviderRates !== 'function') {
+      setLoaded(true)
+      return
+    }
+    let cancelled = false
+    void window.api
+      .getProviderRates()
+      .then((snapshot) => {
+        if (cancelled) return
+        setGroups(buildProviderApiRateGroups(snapshot))
+      })
+      .catch(() => {
+        if (!cancelled) setGroups([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoaded(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return (
+    <section className="model-usage-table-section" aria-label="Provider and model API rates">
+      <div className="model-usage-table-header">
+        <div className="model-usage-table-heading">
+          <span className="model-usage-table-title">Provider/Model API Rates</span>
+          <span className="model-usage-table-subtitle">
+            USD per 1M tokens used for estimated API-equivalent cost · not billed
+          </span>
+        </div>
+      </div>
+
+      {!loaded ? (
+        <div className="model-usage-table-empty" role="note">
+          <strong>Loading provider/model API rates…</strong>
+          <span>Cost estimates stay hidden until the rate table loads.</span>
+        </div>
+      ) : groups.length > 0 ? (
+        <>
+          <div className="model-usage-table-scroll">
+            <table className="model-usage-table model-usage-table--rates">
+              <colgroup>
+                <col className="model-usage-table-name-col" />
+                <col className="model-usage-table-rate-col" />
+                <col className="model-usage-table-rate-col" />
+                <col className="model-usage-table-rate-col" />
+                <col className="model-usage-table-source-col" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col" className="model-usage-table-corner">
+                    Model
+                  </th>
+                  <th scope="col" className="model-usage-table-rate">
+                    In / 1M
+                  </th>
+                  <th scope="col" className="model-usage-table-rate">
+                    Cached in / 1M
+                  </th>
+                  <th scope="col" className="model-usage-table-rate">
+                    Out / 1M
+                  </th>
+                  <th scope="col" className="model-usage-table-rate-source-cell">
+                    Source
+                  </th>
+                </tr>
+              </thead>
+              {groups.map((group) => (
+                <ProviderApiRatesTableBlock key={group.provider} group={group} />
+              ))}
+            </table>
+          </div>
+          <p className="model-usage-table-footnote">
+            These rows are the same rate metadata used by TaskWraith&apos;s projected cost
+            estimates. Gemini remains visible for historic usage; local Ollama models are tracked as
+            RAM usage instead of API rates.
+          </p>
+        </>
+      ) : (
+        <div className="model-usage-table-empty" role="note">
+          <strong>No API rates available.</strong>
+          <span>Cost estimates will stay hidden until the rate table loads.</span>
+        </div>
+      )}
+    </section>
   )
 }
 
