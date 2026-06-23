@@ -28,7 +28,9 @@ fi
 mkdir -p build/archives build/export
 archive_path="$app_dir/build/archives/TaskWraith-${version}-${build}.xcarchive"
 export_path="$app_dir/build/export/TaskWraith-${version}-${build}"
-export_options="$(mktemp "${TMPDIR:-/tmp}/TaskWraithExportOptions.XXXXXX.plist")"
+export_options="$(mktemp "${TMPDIR:-/tmp}/TaskWraithExportOptions.XXXXXX")"
+mv "$export_options" "$export_options.plist"
+export_options="$export_options.plist"
 trap 'rm -f "$export_options"' EXIT
 
 sed "s/__TEAM_ID__/$team_id/g" ExportOptions-AppStore.plist > "$export_options"

@@ -4,6 +4,47 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.6.1 - 2026-06-23
+
+### Added
+- **Composer drafts persist.** Typed-but-unsent prompt text now survives switching
+  threads, backgrounding, and even an app restart — on both desktop and iOS. Send
+  clears the draft, and a prompt you already sent never resurrects.
+- **Per-participant context meter.** The composer's context donut is now clickable,
+  opening a context-meter popover re-based on the honest current context. In
+  ensembles the donut follows the focused participant and live-ticks whichever one
+  is actively running (desktop + iOS).
+- **iOS — rich completion notifications.** When a task finishes, the phone shows a
+  banner with the first line of the final message and a coloured "N files · +A −B"
+  diff summary, composed on-device over the encrypted link (the push itself stays
+  content-free).
+- **iOS — inline @mention tinting in the composer.** @mentions now tint by provider
+  hue as you type, matching the transcript, via a new text-view-backed composer
+  input — in single-provider and guest chats too.
+- **Provider API rate limits in Model Usage.** A reference table of each provider's
+  current API rate metadata.
+
+### Changed
+- **Smoother streaming.** A matched type-out reveal (closer to the Codex / Claude
+  cadence) plus render-coalescing and scroll / markdown perf retunes make streamed
+  replies read more evenly on desktop and iOS.
+- **Kimi defaults to K2.7 Code.**
+- **Grok native goals.** Grok can drive the Goal panel through its own slash
+  commands.
+- **Codex long-context.** Honest long-context estimates, with the long-context
+  configuration passed through to the agent.
+
+### Fixed
+- **Ensemble completion alerts fire once.** A finished ensemble round now sends a
+  single "task complete" notification instead of one per participant.
+- **Multiview diff stats are per-pane.** Each pane's "files changed / diff" in the
+  Create-PR row now reflects that pane's own workspace, not the focused one.
+- **Live usage meters.** Codex usage now reads live from disk (no more meters
+  frozen at 0%), and a stale usage window no longer shows a false 0%.
+- **iOS transcript stability.** Fixed a crash when scrolling during an ensemble
+  send, reduced flicker during streaming, and kept the @mention hue while typing
+  after a mention.
+
 ## 1.6.0 - 2026-06-22
 
 ### Added
