@@ -76,14 +76,8 @@ const CLAUDE_TEMPORARILY_HIDDEN_MODEL_IDS = new Set([
   'claude-fable-5',
   'claude-fable-5-1m'
 ])
+const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-4-6'
 const CLAUDE_DEFAULT_MODELS = [
-  {
-    id: 'default',
-    label: 'Default',
-    description: 'Claude Code configured default',
-    isDefault: true,
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
-  },
   {
     id: 'claude-opus-4-8',
     label: 'Claude Opus 4.8',
@@ -99,9 +93,10 @@ const CLAUDE_DEFAULT_MODELS = [
     // 1M variants are intentionally excluded from the paid Fast tier.
   },
   {
-    id: 'claude-sonnet-4-6',
+    id: CLAUDE_DEFAULT_MODEL,
     label: 'Claude Sonnet 4.6',
     description: 'Balanced — extended thinking',
+    isDefault: true,
     supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
   },
   { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', description: 'Fast & efficient' },
@@ -140,18 +135,19 @@ const KIMI_DEFAULT_MODEL = KIMI_DEFAULT_MODELS[0].id
 // same `CodexModelOption[]` shape for every provider and the composer's
 // `<option>` rendering no longer needs a Gemini-only inline branch.
 const GEMINI_DEFAULT_MODELS = [
-  { id: 'cli-default', label: 'CLI Default', isDefault: true },
   { id: 'auto', label: 'Auto' },
   { id: 'pro', label: 'Pro' },
   { id: 'flash', label: 'Flash' },
-  { id: 'flash-lite', label: 'Flash Lite' }
+  { id: 'flash-lite', label: 'Flash Lite', isDefault: true }
 ] satisfies CodexModelOption[]
-// Grok — keep Grok Build CLI ids provider-native. `grok models` on 0.2.59
-// exposes Composer 2.5 Fast as `grok-composer-2.5-fast` and reports it as the
-// CLI default; Cursor's `composer-2.5-fast` remains a separate provider route.
+const GEMINI_DEFAULT_MODEL = 'flash-lite'
+// Grok — keep Grok Build CLI ids provider-native. Build 0.1 is TaskWraith's
+// concrete default; Composer 2.5 Fast remains selectable for users who want it.
+// Cursor's `composer-2.5-fast` remains a separate provider route.
+const GROK_DEFAULT_MODEL = 'grok-build'
 const GROK_DEFAULT_MODELS = [
-  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast', isDefault: true },
-  { id: 'grok-build', label: 'Grok Build 0.1' }
+  { id: GROK_DEFAULT_MODEL, label: 'Grok Build 0.1', isDefault: true },
+  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ] satisfies CodexModelOption[]
 // Cursor (Composer 2.5). Two selectable variants = the model + its Fast mode
 // (the Fast toggle modelled as a second model id, like Cursor's own picker).
@@ -210,9 +206,8 @@ const OLLAMA_DEFAULT_MODELS = [
   { id: 'custom', label: 'Custom model ID' }
 ] satisfies CodexModelOption[]
 const OLLAMA_DEFAULT_MODEL = OLLAMA_DEFAULT_MODELS[0].id
-const GEMINI_MODEL_IDS = new Set(['cli-default', 'auto', 'pro', 'flash', 'flash-lite', 'custom'])
+const GEMINI_MODEL_IDS = new Set(['auto', 'pro', 'flash', 'flash-lite', 'custom'])
 const CLAUDE_MODEL_IDS = new Set([
-  'default',
   'sonnet',
   'opus',
   'haiku',
@@ -246,10 +241,13 @@ export {
   CODEX_DEFAULT_MODELS,
   CODEX_DEFAULT_MODEL,
   CLAUDE_THINKING_EFFORTS,
+  CLAUDE_DEFAULT_MODEL,
   CLAUDE_DEFAULT_MODELS,
   KIMI_DEFAULT_MODELS,
   KIMI_DEFAULT_MODEL,
   GEMINI_DEFAULT_MODELS,
+  GEMINI_DEFAULT_MODEL,
+  GROK_DEFAULT_MODEL,
   GROK_DEFAULT_MODELS,
   CURSOR_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODELS,

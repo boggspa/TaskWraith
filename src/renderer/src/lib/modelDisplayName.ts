@@ -38,7 +38,6 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'gemini-2.5-flash': 'Gemini 2.5 Flash',
   'gemini-2.0-flash': 'Gemini 2.0 Flash',
   // Composer-side short ids (from `GEMINI_DEFAULT_MODELS`)
-  'cli-default': 'CLI Default',
   auto: 'Gemini Auto',
   pro: 'Gemini Pro',
   flash: 'Gemini Flash',
@@ -143,10 +142,19 @@ export function canonicalModelIdForProvider(
   const trimmed = String(modelId || '').trim()
   if (!trimmed) return ''
   const key = trimmed.toLowerCase()
+  if (key === 'default' || key === 'cli-default') {
+    if (provider === 'codex') return 'gpt-5.5'
+    if (provider === 'claude') return 'claude-sonnet-4-6'
+    if (provider === 'gemini') return 'flash-lite'
+    if (provider === 'kimi') return 'kimi-k2.7-code'
+    if (provider === 'grok') return 'grok-build'
+    if (provider === 'cursor') return 'composer-2.5-fast'
+    if (provider === 'ollama') return 'qwen3:4b-instruct'
+  }
   if (provider === 'grok') {
-    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'grok-composer-2.5-fast'
-    if (!key || key === 'default' || key === 'cli-default' || key === 'grok') {
-      return 'grok-composer-2.5-fast'
+    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'grok-build'
+    if (!key || key === 'grok') {
+      return 'grok-build'
     }
     if (
       key === 'grok composer 2.5 fast' ||

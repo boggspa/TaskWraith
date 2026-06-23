@@ -28,7 +28,7 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('gemini', 'pro')).toBe('Gemini Pro')
       expect(humaniseModelId('gemini', 'flash')).toBe('Gemini Flash')
       expect(humaniseModelId('gemini', 'flash-lite')).toBe('Gemini Flash Lite')
-      expect(humaniseModelId('gemini', 'cli-default')).toBe('CLI Default')
+      expect(humaniseModelId('gemini', 'cli-default')).toBe('Gemini Flash Lite')
     })
   })
 
@@ -158,17 +158,27 @@ describe('humaniseModelId', () => {
     })
 
     it('uses provider context to repair stale Gemini placeholder ids for Grok and Cursor', () => {
-      expect(canonicalModelIdForProvider('grok', 'flash-lite')).toBe('grok-composer-2.5-fast')
+      expect(canonicalModelIdForProvider('grok', 'flash-lite')).toBe('grok-build')
       expect(canonicalModelIdForProvider('grok', 'composer-2.5-fast')).toBe(
         'grok-composer-2.5-fast'
       )
       expect(canonicalModelIdForProvider('cursor', 'flash-lite')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('cursor', 'Composer 2.5 Fast')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('cursor', 'Composer 2.5')).toBe('composer-2.5')
-      expect(humaniseModelId('grok', 'flash-lite')).toBe('Grok Composer 2.5 Fast')
+      expect(humaniseModelId('grok', 'flash-lite')).toBe('Grok Build 0.1')
       expect(humaniseModelId('grok', 'composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
       expect(humaniseModelId('cursor', 'gemini-3.1-flash-lite')).toBe('Composer 2.5 Fast')
       expect(humaniseModelId('gemini', 'flash-lite')).toBe('Gemini Flash Lite')
+    })
+
+    it('maps legacy default sentinels to provider-specific concrete defaults', () => {
+      expect(canonicalModelIdForProvider('codex', 'cli-default')).toBe('gpt-5.5')
+      expect(canonicalModelIdForProvider('claude', 'default')).toBe('claude-sonnet-4-6')
+      expect(canonicalModelIdForProvider('gemini', 'cli-default')).toBe('flash-lite')
+      expect(canonicalModelIdForProvider('kimi', 'cli-default')).toBe('kimi-k2.7-code')
+      expect(canonicalModelIdForProvider('grok', 'cli-default')).toBe('grok-build')
+      expect(canonicalModelIdForProvider('cursor', 'cli-default')).toBe('composer-2.5-fast')
+      expect(canonicalModelIdForProvider('ollama', 'cli-default')).toBe('qwen3:4b-instruct')
     })
 
     it('canonicalizes Ollama aliases that render as the same model', () => {
@@ -208,10 +218,6 @@ describe('humaniseModelId', () => {
       expect(labels['minicpm-v4.5:8b']).toBeDefined()
       expect(labels['granite4.1:30b']).toBeDefined()
       expect(labels['nemotron3:33b']).toBeDefined()
-      // CLI Default is a non-canonical Gemini composer id but is
-      // surfaced in the comparison list when a user has run with
-      // it — must humanise to something readable.
-      expect(labels['cli-default']).toBeDefined()
     })
   })
 })
@@ -229,7 +235,7 @@ describe('humaniseModelIdCompact', () => {
 
   it('leaves labels that do not repeat the provider unchanged', () => {
     expect(humaniseModelIdCompact('codex', 'gpt-5.5')).toBe('GPT-5.5')
-    expect(humaniseModelIdCompact('gemini', 'cli-default')).toBe('CLI Default')
+    expect(humaniseModelIdCompact('gemini', 'cli-default')).toBe('Flash Lite')
     expect(humaniseModelIdCompact('cursor', 'composer-2.5-fast')).toBe('Composer 2.5 Fast')
     expect(humaniseModelIdCompact('ollama', 'qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
     expect(humaniseModelIdCompact('ollama', 'qwen3.6:35b-a3b')).toBe('Qwen 3.6 (35B-A3B)')

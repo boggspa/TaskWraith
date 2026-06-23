@@ -666,9 +666,9 @@ function getProviderLabel(provider: ProviderId): string {
 
 function getDefaultModelForProvider(provider: ProviderId): string {
   if (provider === 'codex') return 'gpt-5.5'
-  if (provider === 'claude') return 'default'
+  if (provider === 'claude') return 'claude-sonnet-4-6'
   if (provider === 'kimi') return 'kimi-k2.7-code'
-  if (provider === 'grok') return 'grok-composer-2.5-fast'
+  if (provider === 'grok') return 'grok-build'
   if (provider === 'cursor') return 'composer-2.5-fast'
   if (provider === 'ollama') return 'qwen3:4b-instruct'
   return 'flash-lite'

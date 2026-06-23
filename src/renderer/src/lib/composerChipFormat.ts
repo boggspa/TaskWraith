@@ -46,24 +46,17 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   const id = (modelId || '').toLowerCase()
   const label = modelLabel || modelId
 
-  // 1.0.4 — `cli-default` is the sentinel model id stored on a freshly
-  // created ensemble participant (see `ensembleProviderDefaults.ts`)
-  // when the user hasn't actively picked a model yet. Without this
-  // branch the per-message badge displayed the raw token literally —
-  // e.g. "Codex / Brodex · cli-default" — which read as a model name
-  // and made users wonder whether their picker change actually took.
-  // The picker's own label for this id is `'CLI Default'` (App.tsx:3540).
-  //
-  // 1.0.6-CRUX37 — resolve the sentinel to each provider's actual CLI default
-  // model so the badge reads the real model name. Kimi and Grok dispatch with
-  // bare `cli-default` in older persisted chats; their defaults are K2.7 Code
-  // and Grok Composer 2.5 Fast. Codex / Claude / Gemini / Cursor resolve a
-  // concrete id before dispatch, so they seldom reach here — keep the neutral
-  // 'CLI Default' for them.
+  // Legacy persisted chats can still contain the old generic sentinel. Display
+  // the concrete TaskWraith default so badges do not reintroduce a fake model.
   if (id === 'cli-default') {
+    if (provider === 'codex') return '5.5'
+    if (provider === 'claude') return 'Sonnet 4.6'
     if (provider === 'kimi') return 'K2.7 Code'
-    if (provider === 'grok') return 'Grok Composer 2.5 Fast'
-    return 'CLI Default'
+    if (provider === 'grok') return 'Grok Build 0.1'
+    if (provider === 'cursor') return 'Composer 2.5 Fast'
+    if (provider === 'ollama') return 'Qwen 3 (4B Param)'
+    if (provider === 'gemini') return 'Flash Lite'
+    return label
   }
 
   if (provider === 'codex') {

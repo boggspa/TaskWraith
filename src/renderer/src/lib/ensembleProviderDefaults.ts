@@ -83,7 +83,6 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
 ]
 
 const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'default', label: 'Default' },
   { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
   { id: 'claude-opus-4-8-1m', label: 'Claude Opus 4.8 1M' },
   { id: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
@@ -94,7 +93,6 @@ const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
 ]
 
 const GEMINI_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'cli-default', label: 'CLI Default' },
   { id: 'auto', label: 'Auto' },
   { id: 'pro', label: 'Pro' },
   { id: 'flash', label: 'Flash' },
@@ -108,8 +106,8 @@ const KIMI_MODELS: CombinedModelPickerModelOption[] = [
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Keep Grok Composer separate from
 // Cursor's `composer-2.5-fast` because it dispatches through Grok Build CLI auth.
 const GROK_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' },
-  { id: 'grok-build', label: 'Grok Build 0.1' }
+  { id: 'grok-build', label: 'Grok Build 0.1' },
+  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ]
 
 // Cursor — the only ids TaskWraith exposes (mirrors CursorCliProbe). "Fast" is a
@@ -157,13 +155,9 @@ const CLAUDE_FAST_CAPABLE = new Set<string>([
  * concrete defaults so call-sites don't need to repeat the fallback
  * logic.
  *
- * Note: `model` defaults to `'cli-default'` rather than the per-provider
- * preferred id (e.g. `'gpt-5.5'`) to match the existing seeding behaviour
- * in `EnsembleDefaults.ts`. The orchestrator + provider adapters resolve
- * `'cli-default'` to the provider's CLI-default model at dispatch time.
- * `getEnsembleModelDefaults(provider).defaultModelId` exposes the
- * preferred display id for the model picker; the participant record
- * keeps the agnostic `'cli-default'` until the user picks something.
+ * New participants persist concrete provider defaults rather than a generic
+ * `cli-default` sentinel, so the picker never needs to expose a fake Default
+ * row and dispatch does not depend on provider-native defaults drifting.
  */
 export interface DefaultEnsembleParticipantConfig {
   model: string
@@ -180,7 +174,7 @@ export function getDefaultEnsembleParticipantConfig(
   switch (provider) {
     case 'codex':
       return {
-        model: 'cli-default',
+        model: 'gpt-5.5',
         permissionPresetId: 'workspace_write',
         reasoningEffort: 'medium',
         fastModeEnabled: false,
@@ -188,29 +182,27 @@ export function getDefaultEnsembleParticipantConfig(
       }
     case 'claude':
       return {
-        model: 'cli-default',
+        model: 'claude-sonnet-4-6',
         permissionPresetId: 'read_only',
         reasoningEffort: 'medium',
         fastModeEnabled: false
       }
     case 'gemini':
       return {
-        model: 'cli-default',
+        model: 'flash-lite',
         permissionPresetId: 'read_only'
       }
     case 'kimi':
       return {
-        model: 'cli-default',
+        model: 'kimi-k2.7-code',
         permissionPresetId: 'read_only',
         thinkingEnabled: false
       }
     case 'grok':
       // Grok stays read-only as an ensemble member until G5 (tool mediation
-      // via TaskWraith MCP + approval ledger) lands write-capable runs. 'cli-default'
-      // resolves to Grok's CLI default at dispatch (buildGrokCliArgs only
-      // forwards a genuine grok* id, so cli-default stays provider-native).
+      // via TaskWraith MCP + approval ledger) lands write-capable runs.
       return {
-        model: 'cli-default',
+        model: 'grok-build',
         permissionPresetId: 'read_only',
         reasoningEffort: 'medium'
       }
@@ -220,17 +212,17 @@ export function getDefaultEnsembleParticipantConfig(
       // grant write per-participant — cursor's write mode is deny-list
       // contained + diff-reviewed. MUST mirror EnsembleDefaults.ts.
       return {
-        model: 'cli-default',
+        model: 'composer-2.5-fast',
         permissionPresetId: 'read_only'
       }
     case 'ollama':
       return {
-        model: 'cli-default',
+        model: 'qwen3:4b-instruct',
         permissionPresetId: 'read_only'
       }
     default:
       return {
-        model: 'cli-default',
+        model: 'gpt-5.5',
         permissionPresetId: 'default'
       }
   }
@@ -341,7 +333,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         reasoningOptions: CLAUDE_REASONING,
         defaultReasoning: 'medium',
         fastModeCapableModelIds: CLAUDE_FAST_CAPABLE,
-        defaultModelId: 'default'
+        defaultModelId: 'claude-sonnet-4-6'
       }
     case 'gemini':
       return {
@@ -349,7 +341,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         reasoningOptions: [],
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'cli-default'
+        defaultModelId: 'flash-lite'
       }
     case 'kimi':
       return {
@@ -365,7 +357,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         reasoningOptions: GROK_REASONING,
         defaultReasoning: 'medium',
         fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'grok-composer-2.5-fast'
+        defaultModelId: 'grok-build'
       }
     case 'cursor':
       return {
@@ -373,7 +365,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         reasoningOptions: [],
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'composer-2.5'
+        defaultModelId: 'composer-2.5-fast'
       }
     case 'ollama':
       return {
@@ -389,7 +381,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         reasoningOptions: [],
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),
-        defaultModelId: 'cli-default'
+        defaultModelId: 'gpt-5.5'
       }
   }
 }

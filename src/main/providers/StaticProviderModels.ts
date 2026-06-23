@@ -112,6 +112,7 @@ const CLAUDE_TEMPORARILY_UNAVAILABLE_MODEL_IDS = new Set([
   'claude-fable-5',
   'claude-fable-5-1m'
 ])
+const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-4-6'
 // NOTE: keep in sync with the renderer's CLAUDE_DEFAULT_MODELS (App.tsx).
 // This list is served to the renderer via `getAgentModels('claude')` and
 // becomes `agentModelsByProvider.claude`, which OVERRIDES the renderer's own
@@ -119,13 +120,6 @@ const CLAUDE_TEMPORARILY_UNAVAILABLE_MODEL_IDS = new Set([
 // actually shows. `additionalSpeedTiers` must be carried through so the
 // renderer knows which models offer the paid Fast tier.
 const CLAUDE_STATIC_MODELS = [
-  {
-    id: 'default',
-    label: 'Default',
-    description: 'Claude Code configured default',
-    isDefault: true,
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
-  },
   {
     id: 'claude-opus-4-8',
     label: 'Claude Opus 4.8',
@@ -140,9 +134,10 @@ const CLAUDE_STATIC_MODELS = [
     supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
   },
   {
-    id: 'claude-sonnet-4-6',
+    id: CLAUDE_DEFAULT_MODEL,
     label: 'Claude Sonnet 4.6',
     description: 'Balanced — extended thinking',
+    isDefault: true,
     supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
   },
   { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', description: 'Fast & efficient' },
@@ -226,16 +221,16 @@ const OLLAMA_STATIC_MODELS = [
   { id: 'custom', label: 'Custom model ID' }
 ]
 const GEMINI_STATIC_MODELS = [
-  { id: 'cli-default', label: 'CLI Default', isDefault: true },
   { id: 'auto', label: 'Auto' },
   { id: 'pro', label: 'Pro' },
   { id: 'flash', label: 'Flash' },
-  { id: 'flash-lite', label: 'Flash Lite' }
+  { id: 'flash-lite', label: 'Flash Lite', isDefault: true }
 ]
-const GROK_DEFAULT_MODEL = 'grok-composer-2.5-fast'
+const GEMINI_DEFAULT_MODEL = 'flash-lite'
+const GROK_DEFAULT_MODEL = 'grok-build'
 const GROK_STATIC_MODELS = [
-  { id: GROK_DEFAULT_MODEL, label: 'Grok Composer 2.5 Fast', isDefault: true },
-  { id: 'grok-build', label: 'Grok Build 0.1' }
+  { id: GROK_DEFAULT_MODEL, label: 'Grok Build 0.1', isDefault: true },
+  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ]
 const CURSOR_STATIC_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
@@ -307,14 +302,21 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
     return 'composer-2.5-fast'
   }
   if (provider === 'gemini') {
-    if (!trimmed || lowered === 'cli-default' || lowered === 'default') return 'cli-default'
+    if (!trimmed || lowered === 'cli-default' || lowered === 'default') return GEMINI_DEFAULT_MODEL
     return trimmed
   }
-  if (!trimmed || trimmed === 'cli-default' || trimmed === 'custom' || trimmed === 'best')
-    return 'default'
   if (provider === 'claude') {
-    if (CLAUDE_TEMPORARILY_UNAVAILABLE_MODEL_IDS.has(lowered)) return 'default'
-    if (['default', 'sonnet', 'opus', 'haiku'].includes(trimmed)) return trimmed
+    if (
+      !trimmed ||
+      lowered === 'cli-default' ||
+      lowered === 'default' ||
+      lowered === 'custom' ||
+      lowered === 'best'
+    ) {
+      return CLAUDE_DEFAULT_MODEL
+    }
+    if (CLAUDE_TEMPORARILY_UNAVAILABLE_MODEL_IDS.has(lowered)) return CLAUDE_DEFAULT_MODEL
+    if (['sonnet', 'opus', 'haiku'].includes(lowered)) return lowered
     if (trimmed.startsWith('claude-')) {
       // The `-1m` suffix is an TaskWraith-internal marker for the 1M-context
       // variant — it drives the context-window meter (contextWindows.ts) and
@@ -326,6 +328,8 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
       return trimmed.endsWith('-1m') ? trimmed.slice(0, -'-1m'.length) : trimmed
     }
   }
+  if (!trimmed || trimmed === 'cli-default' || trimmed === 'custom' || trimmed === 'best')
+    return 'default'
   return trimmed || 'default'
 }
 

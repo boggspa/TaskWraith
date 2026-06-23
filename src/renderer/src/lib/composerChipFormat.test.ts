@@ -83,14 +83,13 @@ describe('shortModelName', () => {
   })
 
   it("resolves the cli-default sentinel to each provider's real default", () => {
-    // Kimi + Grok dispatch with the bare sentinel → show their actual default.
+    expect(shortModelName('codex', '', 'cli-default')).toBe('5.5')
+    expect(shortModelName('claude', '', 'cli-default')).toBe('Sonnet 4.6')
     expect(shortModelName('kimi', '', 'cli-default')).toBe('K2.7 Code')
-    expect(shortModelName('grok', '', 'cli-default')).toBe('Grok Composer 2.5 Fast')
-    // Providers that resolve a concrete id before dispatch keep the neutral label.
-    expect(shortModelName('codex', '', 'cli-default')).toBe('CLI Default')
-    expect(shortModelName('claude', '', 'cli-default')).toBe('CLI Default')
-    expect(shortModelName('gemini', '', 'cli-default')).toBe('CLI Default')
-    expect(shortModelName('cursor', '', 'cli-default')).toBe('CLI Default')
+    expect(shortModelName('grok', '', 'cli-default')).toBe('Grok Build 0.1')
+    expect(shortModelName('gemini', '', 'cli-default')).toBe('Flash Lite')
+    expect(shortModelName('cursor', '', 'cli-default')).toBe('Composer 2.5 Fast')
+    expect(shortModelName('ollama', '', 'cli-default')).toBe('Qwen 3 (4B Param)')
   })
 })
 

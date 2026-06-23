@@ -37,21 +37,24 @@ describe('normalizeCliProviderModel (claude)', () => {
 
   it('passes through base claude ids and bare family aliases unchanged', () => {
     expect(normalizeCliProviderModel('claude', 'claude-opus-4-8')).toBe('claude-opus-4-8')
-    for (const alias of ['default', 'sonnet', 'opus', 'haiku']) {
+    for (const alias of ['sonnet', 'opus', 'haiku']) {
       expect(normalizeCliProviderModel('claude', alias)).toBe(alias)
     }
   })
 
-  it('maps temporarily unavailable Fable ids back to the Claude default', () => {
-    expect(normalizeCliProviderModel('claude', 'fable')).toBe('default')
-    expect(normalizeCliProviderModel('claude', 'claude-fable-5')).toBe('default')
-    expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe('default')
+  it('maps temporarily unavailable Fable ids back to the concrete Claude default', () => {
+    expect(normalizeCliProviderModel('claude', 'fable')).toBe('claude-sonnet-4-6')
+    expect(normalizeCliProviderModel('claude', 'claude-fable-5')).toBe('claude-sonnet-4-6')
+    expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe(
+      'claude-sonnet-4-6'
+    )
   })
 
-  it('maps empty / sentinel ids to default', () => {
-    expect(normalizeCliProviderModel('claude', '')).toBe('default')
-    expect(normalizeCliProviderModel('claude', 'cli-default')).toBe('default')
-    expect(normalizeCliProviderModel('claude', 'custom')).toBe('default')
+  it('maps empty / sentinel ids to Sonnet 4.6', () => {
+    expect(normalizeCliProviderModel('claude', '')).toBe('claude-sonnet-4-6')
+    expect(normalizeCliProviderModel('claude', 'default')).toBe('claude-sonnet-4-6')
+    expect(normalizeCliProviderModel('claude', 'cli-default')).toBe('claude-sonnet-4-6')
+    expect(normalizeCliProviderModel('claude', 'custom')).toBe('claude-sonnet-4-6')
   })
 })
 
@@ -62,30 +65,41 @@ interface StaticModelShape {
 }
 
 describe('getStaticProviderModels (provider-specific catalogs)', () => {
+  it('does not expose generic Default or CLI Default model rows', () => {
+    for (const provider of ['codex', 'claude', 'gemini', 'kimi', 'grok', 'cursor', 'ollama'] as const) {
+      const models = getStaticProviderModels(provider)
+      expect(models.map((model) => model.id)).not.toEqual(
+        expect.arrayContaining(['default', 'cli-default'])
+      )
+      expect(models.map((model) => model.label)).not.toEqual(
+        expect.arrayContaining(['Default', 'CLI Default'])
+      )
+    }
+  })
+
   it('returns distinct model lists for gemini, grok, and cursor', () => {
     const gemini = getStaticProviderModels('gemini').map((m) => m.id)
     const grok = getStaticProviderModels('grok').map((m) => m.id)
     const cursor = getStaticProviderModels('cursor').map((m) => m.id)
     expect(gemini).toContain('flash')
-    expect(grok).toEqual(['grok-composer-2.5-fast', 'grok-build'])
+    expect(grok).toEqual(['grok-build', 'grok-composer-2.5-fast'])
     expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5'])
   })
 
   it('normalizes invalid cross-provider model ids back to provider defaults', () => {
-    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-composer-2.5-fast')
+    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-build')
     expect(normalizeCliProviderModel('cursor', 'pro')).toBe('composer-2.5-fast')
     expect(normalizeCliProviderModel('gemini', 'flash')).toBe('flash')
+    expect(normalizeCliProviderModel('gemini', 'cli-default')).toBe('flash-lite')
   })
 
-  it('keeps Grok Composer distinct from Cursor Composer ids', () => {
-    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-composer-2.5-fast')
-    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-composer-2.5-fast')
+  it('uses Grok Build as the default while keeping Grok Composer selectable', () => {
+    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-build')
+    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-build')
     expect(normalizeCliProviderModel('grok', 'grok-composer-2.5-fast')).toBe(
       'grok-composer-2.5-fast'
     )
-    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe(
-      'grok-composer-2.5-fast'
-    )
+    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-build')
   })
 
   it('exposes the curated optional Ollama model tags', () => {
@@ -120,9 +134,14 @@ describe('getStaticProviderModels (claude)', () => {
 
   it('hides temporarily unavailable Fable variants from the picker catalog', () => {
     const ids = models.map((m) => m.id)
+    expect(ids).not.toContain('default')
     expect(ids).not.toContain('claude-fable-5')
     expect(ids).not.toContain('claude-fable-5-1m')
     expect(ids.indexOf('claude-opus-4-8')).toBeGreaterThan(-1)
+  })
+
+  it('marks Claude Sonnet 4.6 as the concrete default', () => {
+    expect(byId.get('claude-sonnet-4-6')).toMatchObject({ isDefault: true })
   })
 
   it('keeps the paid Fast tier Opus-only', () => {

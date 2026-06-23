@@ -132,10 +132,13 @@ import {
   CODEX_DEFAULT_MODELS,
   CODEX_DEFAULT_MODEL,
   CLAUDE_THINKING_EFFORTS,
+  CLAUDE_DEFAULT_MODEL,
   CLAUDE_DEFAULT_MODELS,
   KIMI_DEFAULT_MODELS,
   KIMI_DEFAULT_MODEL,
   GEMINI_DEFAULT_MODELS,
+  GEMINI_DEFAULT_MODEL,
+  GROK_DEFAULT_MODEL,
   GROK_DEFAULT_MODELS,
   CURSOR_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODELS,
@@ -3581,16 +3584,16 @@ function App(): React.JSX.Element {
 
   const getDefaultModelForProvider = (provider: ProviderId): string => {
     if (provider === 'codex') return codexModels[0]?.id || CODEX_DEFAULT_MODEL
-    if (provider === 'claude') return 'default'
+    if (provider === 'claude') return CLAUDE_DEFAULT_MODEL
     if (provider === 'kimi') return KIMI_DEFAULT_MODEL
-    if (provider === 'grok') return 'grok-composer-2.5-fast'
+    if (provider === 'grok') return GROK_DEFAULT_MODEL
     if (provider === 'cursor') return 'composer-2.5-fast'
     if (provider === 'ollama') {
       return agentModelsByProvider.ollama?.find((model) => model.isDefault)?.id ||
         agentModelsByProvider.ollama?.[0]?.id ||
         OLLAMA_DEFAULT_MODEL
     }
-    return 'flash-lite'
+    return GEMINI_DEFAULT_MODEL
   }
 
   const isValidModelForProvider = (

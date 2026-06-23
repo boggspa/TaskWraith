@@ -102,7 +102,7 @@ export function createDefaultEnsembleConfig(activeProvider?: ProviderId, configu
     role: entry.role,
     instructions: entry.instructions,
     order: orderByProvider.get(entry.provider) || 99,
-    model: 'cli-default',
+    model: getDefaultEnsembleModel(entry.provider),
     permissionPresetId: entry.permissionPresetId
   })).sort((a, b) => a.order - b.order)
 
@@ -123,6 +123,16 @@ export function createDefaultEnsembleConfig(activeProvider?: ProviderId, configu
     participants,
     updatedAt: new Date().toISOString()
   }
+}
+
+function getDefaultEnsembleModel(provider: ProviderId): string {
+  if (provider === 'codex') return 'gpt-5.5'
+  if (provider === 'claude') return 'claude-sonnet-4-6'
+  if (provider === 'kimi') return 'kimi-k2.7-code'
+  if (provider === 'grok') return 'grok-build'
+  if (provider === 'cursor') return 'composer-2.5-fast'
+  if (provider === 'ollama') return 'qwen3:4b-instruct'
+  return 'flash-lite'
 }
 
 function rotateProviderFirst(providers: ProviderId[], activeProvider?: ProviderId): ProviderId[] {

@@ -26,9 +26,9 @@ function participant(overrides: Partial<EnsembleParticipant> = {}): EnsemblePart
 }
 
 describe('getDefaultEnsembleParticipantConfig', () => {
-  it('returns codex defaults: cli-default model, workspace_write, medium reasoning, fast off', () => {
+  it('returns codex defaults: GPT-5.5 model, workspace_write, medium reasoning, fast off', () => {
     expect(getDefaultEnsembleParticipantConfig('codex')).toEqual({
-      model: 'cli-default',
+      model: 'gpt-5.5',
       permissionPresetId: 'workspace_write',
       reasoningEffort: 'medium',
       fastModeEnabled: false,
@@ -36,48 +36,48 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns claude defaults: cli-default model, read_only, medium reasoning, fast off', () => {
+  it('returns claude defaults: Sonnet 4.6 model, read_only, medium reasoning, fast off', () => {
     expect(getDefaultEnsembleParticipantConfig('claude')).toEqual({
-      model: 'cli-default',
+      model: 'claude-sonnet-4-6',
       permissionPresetId: 'read_only',
       reasoningEffort: 'medium',
       fastModeEnabled: false
     })
   })
 
-  it('returns gemini defaults: cli-default model, read_only, no reasoning axis', () => {
+  it('returns gemini defaults: Flash Lite model, read_only, no reasoning axis', () => {
     expect(getDefaultEnsembleParticipantConfig('gemini')).toEqual({
-      model: 'cli-default',
+      model: 'flash-lite',
       permissionPresetId: 'read_only'
     })
   })
 
-  it('returns kimi defaults: cli-default model, read_only, thinking off', () => {
+  it('returns kimi defaults: K2.7 Code model, read_only, thinking off', () => {
     expect(getDefaultEnsembleParticipantConfig('kimi')).toEqual({
-      model: 'cli-default',
+      model: 'kimi-k2.7-code',
       permissionPresetId: 'read_only',
       thinkingEnabled: false
     })
   })
 
-  it('returns grok defaults: cli-default model, read_only (until G5), medium reasoning', () => {
+  it('returns grok defaults: Build 0.1 model, read_only (until G5), medium reasoning', () => {
     expect(getDefaultEnsembleParticipantConfig('grok')).toEqual({
-      model: 'cli-default',
+      model: 'grok-build',
       permissionPresetId: 'read_only',
       reasoningEffort: 'medium'
     })
   })
 
-  it('returns cursor defaults: cli-default model, read_only, no reasoning axis', () => {
+  it('returns cursor defaults: Composer 2.5 Fast model, read_only, no reasoning axis', () => {
     expect(getDefaultEnsembleParticipantConfig('cursor')).toEqual({
-      model: 'cli-default',
+      model: 'composer-2.5-fast',
       permissionPresetId: 'read_only'
     })
   })
 
-  it('returns ollama defaults: cli-default model, read_only, no reasoning axis', () => {
+  it('returns ollama defaults: Qwen 3 model, read_only, no reasoning axis', () => {
     expect(getDefaultEnsembleParticipantConfig('ollama')).toEqual({
-      model: 'cli-default',
+      model: 'qwen3:4b-instruct',
       permissionPresetId: 'read_only'
     })
   })
@@ -88,7 +88,7 @@ describe('resolveEnsembleParticipantSettings', () => {
     const resolved = resolveEnsembleParticipantSettings(participant({ provider: 'codex' }))
     expect(resolved).toEqual({
       provider: 'codex',
-      model: 'cli-default',
+      model: 'gpt-5.5',
       permissionPresetId: 'workspace_write',
       reasoningEffort: 'medium',
       fastModeEnabled: false,
@@ -176,12 +176,23 @@ describe('resolveEnsembleParticipantSettings', () => {
 describe('getEnsembleModelDefaults (existing helper)', () => {
   // Sanity check that the previously-existing model-options helper is
   // untouched by the F2 consolidation. The chip picker reads
-  // `defaultModelId` here for the displayed default, while the
-  // participant record persists `'cli-default'` until the user picks
-  // something — the two intentionally differ (see the docstring on
-  // `getDefaultEnsembleParticipantConfig`).
+  // `defaultModelId` here should match the concrete model persisted by
+  // `getDefaultEnsembleParticipantConfig`; generic Default/CLI Default rows
+  // must not reappear in the picker.
   it('exposes codex preferred model id as gpt-5.5', () => {
     expect(getEnsembleModelDefaults('codex').defaultModelId).toBe('gpt-5.5')
+  })
+
+  it('does not expose Default or CLI Default as ensemble picker model rows', () => {
+    for (const provider of ['codex', 'claude', 'gemini', 'kimi', 'grok', 'cursor', 'ollama'] as const) {
+      const options = getEnsembleModelDefaults(provider).modelOptions
+      expect(options.map((option) => option.id)).not.toEqual(
+        expect.arrayContaining(['default', 'cli-default'])
+      )
+      expect(options.map((option) => option.label)).not.toEqual(
+        expect.arrayContaining(['Default', 'CLI Default'])
+      )
+    }
   })
 
   it('exposes kimi preferred model id as kimi-k2.7-code', () => {
@@ -191,14 +202,15 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
   it('hides temporarily unavailable Claude Fable variants from ensemble model options', () => {
     const claude = getEnsembleModelDefaults('claude')
     expect(claude.modelOptions.map((option) => option.id)).not.toEqual(
-      expect.arrayContaining(['claude-fable-5', 'claude-fable-5-1m'])
+      expect.arrayContaining(['default', 'cli-default', 'claude-fable-5', 'claude-fable-5-1m'])
     )
+    expect(claude.defaultModelId).toBe('claude-sonnet-4-6')
   })
 
-  it('exposes grok preferred model id as Grok Composer with the effort reasoning axis', () => {
+  it('exposes grok preferred model id as Grok Build with the effort reasoning axis', () => {
     const grok = getEnsembleModelDefaults('grok')
-    expect(grok.defaultModelId).toBe('grok-composer-2.5-fast')
-    expect(grok.modelOptions.map((o) => o.id)).toEqual(['grok-composer-2.5-fast', 'grok-build'])
+    expect(grok.defaultModelId).toBe('grok-build')
+    expect(grok.modelOptions.map((o) => o.id)).toEqual(['grok-build', 'grok-composer-2.5-fast'])
     expect(grok.defaultReasoning).toBe('medium')
     expect(grok.reasoningOptions.map((o) => o.value)).toEqual([
       'low',
@@ -211,7 +223,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
 
   it('exposes cursor models (composer-2.5 + fast) with no reasoning axis', () => {
     const cursor = getEnsembleModelDefaults('cursor')
-    expect(cursor.defaultModelId).toBe('composer-2.5')
+    expect(cursor.defaultModelId).toBe('composer-2.5-fast')
     expect(cursor.modelOptions.map((o) => o.id)).toEqual(['composer-2.5', 'composer-2.5-fast'])
     expect(cursor.reasoningOptions).toEqual([])
   })
