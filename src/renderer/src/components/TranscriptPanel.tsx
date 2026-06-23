@@ -50,6 +50,7 @@ import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturn
 import { ParticipantHealthCard } from './ParticipantHealthCard'
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { MarkdownMessage } from './MarkdownMessage'
+import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
 import { ProposedPlanCard } from './ProposedPlanCard'
 import type { ProposedPlanState } from '../lib/proposedPlan'
 import { MessageActionsChip } from './MessageActionsChip'
@@ -935,6 +936,22 @@ export const TranscriptPanel = memo(
     // one-shot anchor correction. So ensembles keep windowing and converge.
     const virtualizeEnabled = virtualize ?? TRANSCRIPT_VIRTUALIZATION_ENABLED
     const displayMessages = useMemo(() => groupAdjacentToolMessages(visibleMessages), [visibleMessages])
+
+    // Phase 3 — type-out reveal (Variant B), behind a flag (default OFF). The
+    // live last-assistant bubble of a running chat reveals progressively via
+    // RevealingMarkdownMessage; everything else stays the plain MarkdownMessage.
+    const revealEnabled = useMemo(() => {
+      try {
+        return localStorage.getItem('taskwraith.experimentalReveal') === 'true'
+      } catch {
+        return false
+      }
+    }, [])
+    const revealChatId = currentChat?.appChatId ?? null
+    const revealChatIsRunning =
+      revealChatId != null && Array.isArray(runningChatIds) && runningChatIds.includes(revealChatId)
+    const lastDisplayedMessageId =
+      displayMessages.length > 0 ? displayMessages[displayMessages.length - 1].id : null
     const displayRunBoundaryByMessageId = useMemo(() => {
       const map = new Map(runBoundaryByMessageId)
       for (const message of displayMessages) {
@@ -1435,7 +1452,20 @@ export const TranscriptPanel = memo(
                             }
                           >
                             {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
-                              <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
+                              revealEnabled &&
+                              revealChatIsRunning &&
+                              msg.id === lastDisplayedMessageId ? (
+                                <RevealingMarkdownMessage
+                                  content={msg.content}
+                                  chat={currentChat || undefined}
+                                  isLive
+                                />
+                              ) : (
+                                <MarkdownMessage
+                                  content={msg.content}
+                                  chat={currentChat || undefined}
+                                />
+                              )
                             ) : (
                               msg.content
                             )}
