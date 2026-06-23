@@ -9,14 +9,25 @@
  * phone gets NSURLError -1004 "Could not connect to the server."
  *
  * This module dials the advertised origin the way the phone would (TLS for
- * wss://, plain HTTP for ws://) and reports whether ANYTHING answered. Any
- * HTTP response — 404 included — counts as reachable: we are proving a
+ * wss://, plain HTTP for ws://) and reports whether the RELAY answered. Most
+ * HTTP statuses — 404 included — count as reachable: we are proving a relay
  * listener exists at the origin, not probing application health (the relay
  * only speaks WebSocket upgrades on its session paths anyway).
  *
+ * The ONE exception is a GATEWAY error (502 Bad Gateway / 504 Gateway Timeout):
+ * `tailscale serve` terminates TLS itself, so when its loopback relay target is
+ * dead (never bound, crashed, or pointed at the wrong port) the front door
+ * still answers — with a 502 — and the phone's WS UPGRADE through it returns
+ * 502 instead of 101, surfacing as NSURLErrorBadServerResponse ("bad response
+ * from the server"). The relay process never authors 502/504 (it speaks
+ * 200/404/405/503 + WS upgrades), so those two statuses mean "serve is up but
+ * the relay behind it is down" — a dead door that must NOT be advertised. 503
+ * (the relay's own at-capacity reply) means the relay IS up, so it stays
+ * reachable.
+ *
  * The Mac can meaningfully dial its own Tailscale front door because it is a
- * tailnet member too; a successful TLS round-trip through tailscaled proves
- * serve termination + proxy wiring end-to-end.
+ * tailnet member too; a TLS round-trip that returns a NON-gateway status proves
+ * serve termination AND that the relay behind the proxy actually answered.
  *
  * `request` is injectable so tests never open sockets.
  */
@@ -123,6 +134,17 @@ export async function probeRelayFrontDoor(
   const request = options.request ?? defaultRequest
   try {
     const { statusCode } = await request(probeUrl, timeoutMs)
+    // 502/504 = a `tailscale serve` (or other reverse-proxy) front door that
+    // answered TLS but whose backend relay is dead. The relay never authors
+    // these — so the door is alive, the relay is NOT, and advertising it would
+    // hand the phone a 502 on its WS upgrade (NSURLErrorBadServerResponse). Drop
+    // it. 503 stays reachable: that's the relay's OWN at-capacity reply (alive).
+    if (statusCode === 502 || statusCode === 504) {
+      return {
+        reachable: false,
+        detail: `HTTP ${statusCode} from ${probeUrl.host} — its relay is down (serve front door is up, but nothing is answering behind it)`
+      }
+    }
     return { reachable: true, detail: `HTTP ${statusCode ?? '?'} from ${probeUrl.host}` }
   } catch (err) {
     const anyErr = err as Error & { code?: string }

@@ -33,7 +33,7 @@ describe('probeUrlForRelay', () => {
 })
 
 describe('probeRelayFrontDoor', () => {
-  it('treats ANY HTTP response as reachable — 404 included', async () => {
+  it('treats a non-gateway HTTP response as reachable — 404 included', async () => {
     const request = vi.fn(async () => ({ statusCode: 404 }))
     const result = await probeRelayFrontDoor('wss://mac.tailnet.ts.net', { request })
     expect(result.reachable).toBe(true)
@@ -42,6 +42,26 @@ describe('probeRelayFrontDoor', () => {
     const [url, timeoutMs] = request.mock.calls[0] as unknown as [URL, number]
     expect(url.protocol).toBe('https:')
     expect(timeoutMs).toBe(3_000)
+  })
+
+  it('rejects a gateway 502/504 — tailscale serve up but the relay behind it is dead', async () => {
+    for (const statusCode of [502, 504]) {
+      const result = await probeRelayFrontDoor('wss://mac.tailnet.ts.net', {
+        request: vi.fn(async () => ({ statusCode }))
+      })
+      expect(result.reachable).toBe(false)
+      expect(result.detail).toMatch(new RegExp(`HTTP ${statusCode}.*relay is down`))
+    }
+  })
+
+  it('keeps 503 (relay at capacity) and other non-gateway statuses reachable', async () => {
+    for (const statusCode of [200, 426, 503]) {
+      const result = await probeRelayFrontDoor('wss://mac.tailnet.ts.net', {
+        request: vi.fn(async () => ({ statusCode }))
+      })
+      expect(result.reachable).toBe(true)
+      expect(result.detail).toBe(`HTTP ${statusCode} from mac.tailnet.ts.net`)
+    }
   })
 
   it('surfaces the dial failure verbatim (the -1004 family)', async () => {
