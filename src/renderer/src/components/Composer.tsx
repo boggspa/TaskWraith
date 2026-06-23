@@ -9,7 +9,8 @@ import {
   OLLAMA_TOOL_CONTROL_TIERS
 } from '../../../shared/ollamaTierTables'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, ContextWheel, ExclamationShieldIcon, FileMenuSelectionIcon, GoalSymbolIcon, LinkCircleSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, QueueSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, ExclamationShieldIcon, FileMenuSelectionIcon, GoalSymbolIcon, LinkCircleSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, QueueSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, SteerSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type { CombinedModelPickerModelOption, CombinedModelPickerReasoningOption } from '../components/CombinedModelPicker'
 import { CombinedPermissionsPicker } from '../components/CombinedPermissionsPicker'
@@ -136,6 +137,7 @@ export interface ComposerProps {
   composerSlashCommands: ComposerSlashCommand[]
   composerTokenTally: any
   contextLabel: any
+  contextMeter: any
   contextModelId: any
   contextUsedPercent: any
   cumulativeRunBaseMs: any
@@ -426,6 +428,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     composerSlashCommands,
     composerTokenTally,
     contextLabel,
+    contextMeter,
     contextModelId,
     contextUsedPercent,
     cumulativeRunBaseMs,
@@ -4013,7 +4016,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         )}
                       </div>
                       <div className="composer-inline-actions">
-                        <ContextWheel percent={contextUsedPercent} label={contextLabel} />
+                        <ContextMeterPopover
+                          meter={contextMeter}
+                          percent={contextUsedPercent}
+                          label={contextLabel}
+                          provider={currentProvider}
+                          composerStyle={appearance.composerStyle}
+                        />
                         {steerIndicatorMessage && (
                           <span
                             className="composer-steer-indicator"

@@ -337,7 +337,12 @@ import {
 } from './lib/RunLanes'
 import { formatOpaqueMarkdownPromptSection } from './lib/HandoffPrompt'
 import { resolveContextWindow, formatContextTokens } from './lib/contextWindows'
-import { currentContextTokens, contextPercent } from './lib/contextMeter'
+import {
+  currentContextTokens,
+  contextPercent,
+  buildParticipantContextRows,
+  type ContextMeterModel
+} from './lib/contextMeter'
 import { buildProviderRunFailureSnippet } from './lib/providerRunFailureSnippet'
 import { rawLogFromRunEvent, type RawLogEntry } from './lib/rawLogEntry'
 import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQueueScheduling'
@@ -15533,6 +15538,25 @@ function App(): React.JSX.Element {
   })
   const contextUsedPercent = contextPercent(currentContextUsedTokens, contextWindowSize)
   const contextLabel = `${formatContextTokens(currentContextUsedTokens)} / ${formatContextTokens(contextWindowSize)} context`
+  // Structured model for the donut popover: the active model (solo) + one row per
+  // ensemble participant (each its own model window). Mirrors how contextLabel /
+  // contextUsedPercent flow to the composer.
+  const contextMeter: ContextMeterModel = {
+    solo: {
+      id: 'solo',
+      provider: currentProvider,
+      modelId: contextModelId,
+      usedTokens: currentContextUsedTokens,
+      windowTokens: contextWindowSize,
+      percent: contextUsedPercent
+    },
+    participants: isCurrentEnsembleChat
+      ? buildParticipantContextRows(
+          currentChat?.runs || [],
+          currentChat?.ensemble?.participants || []
+        )
+      : undefined
+  }
   // 1.0.5-EW25 — pass the user's display currency through so cost
   // numbers respect their Settings → General choice. Defaults to
   // USD if settings haven't hydrated yet, matching the helper's
@@ -19165,6 +19189,7 @@ function App(): React.JSX.Element {
       composerContextMenu,
       composerSlashCommands,
       contextLabel,
+      contextMeter,
       contextUsedPercent,
       currentChatIdRef,
       currentComposerMentionParticipants,
@@ -19308,6 +19333,7 @@ function App(): React.JSX.Element {
       composerContextMenu,
       composerSlashCommands,
       contextLabel,
+      contextMeter,
       contextUsedPercent,
       currentChatIdRef,
       currentComposerMentionParticipants,
@@ -19697,6 +19723,33 @@ function App(): React.JSX.Element {
       // display fields below (selectedModelType/codexReasoningEffort/etc.), so the
       // UI still reflects the persisted selection on the next render.
       const paneNoopSetter = (): void => {}
+      // Per-pane context meter — the donut + its popover must reflect THIS pane's
+      // chat, not the focused chat's (which composerStableBase carries). Mirrors
+      // the focused computation; panes use the static window table (no live limits).
+      const paneContextUsedTokens = currentContextTokens(viewerChat.runs || [], {
+        liveOutputTokens: viewerLiveOutputTokens,
+        isRunning: viewerIsRunning
+      })
+      const paneContextWindow = resolveContextWindow(viewerProvider, viewerContextModelId)
+      const paneContextPercent = contextPercent(paneContextUsedTokens, paneContextWindow)
+      const paneContextLabel = `${formatContextTokens(paneContextUsedTokens)} / ${formatContextTokens(paneContextWindow)} context`
+      const paneContextMeter: ContextMeterModel = {
+        solo: {
+          id: 'solo',
+          provider: viewerProvider,
+          modelId: viewerContextModelId,
+          usedTokens: paneContextUsedTokens,
+          windowTokens: paneContextWindow,
+          percent: paneContextPercent
+        },
+        participants:
+          viewerChat.chatKind === 'ensemble'
+            ? buildParticipantContextRows(
+                viewerChat.runs || [],
+                viewerChat.ensemble?.participants || []
+              )
+            : undefined
+      }
       const paneComposerCtx: ComposerProps = {
         // Slice H: spread the MEMOISED stable base (chat-independent props + bagged
         // handlers) instead of the focused `composerCtx`. The base is referentially
@@ -19792,6 +19845,9 @@ function App(): React.JSX.Element {
         composerTokenTally: viewerTokenTally,
         threadTokenTallyHasValue: paneThreadTokenTallyHasValue,
         contextModelId: viewerContextModelId,
+        contextUsedPercent: paneContextPercent,
+        contextLabel: paneContextLabel,
+        contextMeter: paneContextMeter,
         liveRunOutputTokens: viewerLiveOutputTokens,
         composerRunTimecodeStartedAt: viewerRunStartedAt,
         cumulativeRunBaseMs: viewerCumulativeRunBaseMs,
