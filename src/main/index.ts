@@ -492,6 +492,7 @@ import {
   CODEX_RETIRED_MODEL_IDS,
   CODEX_STATIC_MODELS,
   claudePermissionModeForApproval,
+  codexModelContextConfig,
   getStaticProviderModels,
   normalizeCliProviderModel,
   normalizeCodexModel
@@ -11209,6 +11210,7 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
 
   const settings = runtimeSettings(AppStore.getSettings(), payload.runtimeProfile)
   const model = normalizeCodexModel(payload.model)
+  const contextConfig = codexModelContextConfig(model)
   const approvalPolicy =
     payload.scope === 'global'
       ? 'on-request'
@@ -11217,6 +11219,7 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
   const startOrResumeParams = {
     cwd: payload.workspace!,
     model,
+    ...(contextConfig ? { config: contextConfig } : {}),
     ...(payload.serviceTier ? { serviceTier: payload.serviceTier } : {}),
     approvalPolicy,
     sandbox,
@@ -11243,6 +11246,7 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
       'thread/resume',
       {
         threadId: resumableThreadId,
+        ...(contextConfig ? { config: contextConfig } : {}),
         persistExtendedHistory: true
       },
       30_000

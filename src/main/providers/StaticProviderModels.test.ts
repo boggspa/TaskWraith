@@ -1,5 +1,32 @@
 import { describe, it, expect } from 'vitest'
-import { getStaticProviderModels, normalizeCliProviderModel } from './StaticProviderModels'
+import {
+  codexModelContextConfig,
+  getStaticProviderModels,
+  normalizeCliProviderModel
+} from './StaticProviderModels'
+
+describe('codexModelContextConfig', () => {
+  const longContextConfig = {
+    model_context_window: 1_050_000,
+    model_auto_compact_token_limit: 850_000
+  }
+
+  it('returns the explicit 1M config for long-context Codex models', () => {
+    expect(codexModelContextConfig('gpt-5.5')).toEqual(longContextConfig)
+    expect(codexModelContextConfig('gpt-5.4')).toEqual(longContextConfig)
+  })
+
+  it('maps TaskWraith default aliases to GPT-5.5 context config', () => {
+    expect(codexModelContextConfig(undefined)).toEqual(longContextConfig)
+    expect(codexModelContextConfig('cli-default')).toEqual(longContextConfig)
+    expect(codexModelContextConfig('auto')).toEqual(longContextConfig)
+  })
+
+  it('does not override short-context Codex models', () => {
+    expect(codexModelContextConfig('gpt-5.4-mini')).toBeNull()
+    expect(codexModelContextConfig('gpt-5.3-codex-spark')).toBeNull()
+  })
+})
 
 describe('normalizeCliProviderModel (claude)', () => {
   it('strips the TaskWraith-internal -1m marker so the CLI gets the base model id', () => {

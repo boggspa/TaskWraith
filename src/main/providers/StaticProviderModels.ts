@@ -32,6 +32,25 @@ export const CODEX_RETIRED_MODEL_IDS: ReadonlySet<string> = new Set([
   'gpt-5.3-codex'
 ])
 
+export interface CodexModelContextConfig {
+  model_context_window: number
+  model_auto_compact_token_limit: number
+}
+
+export const CODEX_LONG_CONTEXT_WINDOW = 1_050_000
+export const CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT = 850_000
+
+const CODEX_MODEL_CONTEXT_CONFIGS: Readonly<Record<string, CodexModelContextConfig>> = {
+  'gpt-5.5': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
+  'gpt-5.4': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  }
+}
+
 // Fallback model list — used ONLY when the live Codex CLI `model/list` query
 // fails or returns nothing (see `get-agent-models`). On the normal path the
 // renderer's `codexModels` comes from the CLI-derived `normalized` list, not
@@ -339,4 +358,9 @@ export function normalizeCodexModel(model?: string | null): string {
     return CODEX_STATIC_MODELS[0].id
   }
   return trimmed
+}
+
+export function codexModelContextConfig(model?: string | null): CodexModelContextConfig | null {
+  const config = CODEX_MODEL_CONTEXT_CONFIGS[normalizeCodexModel(model)]
+  return config ? { ...config } : null
 }
