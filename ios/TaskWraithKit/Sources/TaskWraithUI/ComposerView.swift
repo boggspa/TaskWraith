@@ -72,9 +72,18 @@ struct Composer: View {
         @State private var attachments: [(name: String, image: UIImage)] = []
     #endif
 
+    /// Participants available to @-mention: a true ensemble's round participants,
+    /// OR the synthesized host+guest pair the Mac projects for a single+guest chat.
+    /// Gating the suggestion chips on this (not `card.isEnsemble`) lights them up for
+    /// guest chats too; idle ensembles already have empty round participants, so this
+    /// is a no-op for them (no regression).
+    private var mentionParticipants: [RemoteEnsembleState.Participant] {
+        model.ensembleStates[card.id]?.participants ?? []
+    }
+
     /// Trailing "@token" under the cursor → mention suggestions.
     private var mentionQuery: String? {
-        guard card.isEnsemble else { return nil }
+        guard !mentionParticipants.isEmpty else { return nil }
         guard let at = text.lastIndex(of: "@") else { return nil }
         let tail = text[text.index(after: at)...]
         guard !tail.contains(" "), !tail.contains("\n") else { return nil }
@@ -82,10 +91,8 @@ struct Composer: View {
     }
 
     private var mentionCandidates: [MentionCandidate] {
-        guard let query = mentionQuery,
-            let participants = model.ensembleStates[card.id]?.participants
-        else { return [] }
-        let all = twMentionCandidates(participants: participants)
+        guard let query = mentionQuery else { return [] }
+        let all = twMentionCandidates(participants: mentionParticipants)
         guard !query.isEmpty else { return all }
         return all.filter {
             $0.display.lowercased().hasPrefix(query.lowercased())
@@ -765,6 +772,10 @@ struct Composer: View {
     private var placeholder: String {
         if card.isEnsemble {
             return "Ask the ensemble. @ to direct a participant…"
+        }
+        // Single-provider + guest: @ directs the host or the guest.
+        if !mentionParticipants.isEmpty {
+            return "Ask \(providerName). @ to direct the guest…"
         }
         return "Ask \(providerName) anything…"
     }
