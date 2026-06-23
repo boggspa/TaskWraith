@@ -393,6 +393,10 @@ export interface RemoteEnsembleRosterEntry {
   enabled: boolean
   order: number
   model?: string
+  /** Honest current-context proxy for this participant: the LATEST run's
+   * input+output tokens (NOT a cumulative sum). The phone divides by its own
+   * per-model window to draw the participant's context meter. Omitted when 0. */
+  contextTokens?: number
   /** Goal/brief (instructions), clipped for the wire. */
   brief?: string
   /** Per-participant approval preset + reasoning, so the remote chip editor can
@@ -1096,6 +1100,37 @@ function buildGuestParticipantState(chat: ChatRecord): RemoteEnsembleState | und
   }
 }
 
+/**
+ * Honest current-context proxy for a chat, optionally scoped to one ensemble
+ * participant: the LATEST run's input+output tokens (each turn re-sends the whole
+ * conversation, so the most recent run ≈ what's actually in the window). NOT the
+ * cumulative sum across runs (which over-counts). Mirrors the renderer's
+ * lib/contextMeter.ts so desktop + phone agree. Reads the NORMALIZED stats fields
+ * (ProviderRunStats already folds cache reads into input_tokens).
+ */
+function latestRunContextTokens(
+  runs: ReadonlyArray<ChatRun>,
+  participantId?: string
+): number {
+  let bestTime = Number.NEGATIVE_INFINITY
+  let best = 0
+  for (const run of runs) {
+    if (participantId && run.ensembleParticipantId !== participantId) continue
+    const stats = (run?.stats ?? {}) as Record<string, unknown>
+    const input = Number(stats.input_tokens ?? stats.inputTokens ?? 0) || 0
+    const output = Number(stats.output_tokens ?? stats.outputTokens ?? 0) || 0
+    const total = Number(stats.total_tokens ?? stats.totalTokens ?? 0) || input + output
+    if (total <= 0 && input <= 0) continue
+    const parsed = Date.parse(run.startedAt || '')
+    const time = Number.isFinite(parsed) ? parsed : 0
+    if (time >= bestTime) {
+      bestTime = time
+      best = input + output
+    }
+  }
+  return best
+}
+
 export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState | undefined {
   const ensemble = chat.ensemble
   if (!ensemble) return buildGuestParticipantState(chat)
@@ -1122,23 +1157,27 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
     participants: participants.map(projectEnsembleParticipant),
     roster: [...ensemble.participants]
       .sort((a, b) => a.order - b.order)
-      .map((participant) => ({
-        id: participant.id,
-        provider: participant.provider,
-        role: participant.role,
-        enabled: participant.enabled,
-        order: participant.order,
-        ...(participant.model ? { model: participant.model } : {}),
-        ...(participant.instructions
-          ? { brief: sanitizeText(participant.instructions, 500).preview }
-          : {}),
-        ...(participant.permissionPresetId
-          ? { permissionPresetId: participant.permissionPresetId }
-          : {}),
-        ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
-        ...(participant.fastModeEnabled ? { fastModeEnabled: true } : {}),
-        ...(participant.thinkingEnabled ? { thinkingEnabled: true } : {})
-      })),
+      .map((participant) => {
+        const contextTokens = latestRunContextTokens(chat.runs ?? [], participant.id)
+        return {
+          id: participant.id,
+          provider: participant.provider,
+          role: participant.role,
+          enabled: participant.enabled,
+          order: participant.order,
+          ...(participant.model ? { model: participant.model } : {}),
+          ...(contextTokens > 0 ? { contextTokens } : {}),
+          ...(participant.instructions
+            ? { brief: sanitizeText(participant.instructions, 500).preview }
+            : {}),
+          ...(participant.permissionPresetId
+            ? { permissionPresetId: participant.permissionPresetId }
+            : {}),
+          ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
+          ...(participant.fastModeEnabled ? { fastModeEnabled: true } : {}),
+          ...(participant.thinkingEnabled ? { thinkingEnabled: true } : {})
+        }
+      }),
     workSessionStatus: ensemble.workSession?.status
   }
 }

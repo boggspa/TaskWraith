@@ -741,3 +741,42 @@ describe('buildRemoteEnsembleState — single-provider + guest', () => {
     expect(buildRemoteEnsembleState(chat({ provider: 'claude' }))).toBeUndefined()
   })
 })
+
+describe('buildRemoteEnsembleState — per-participant context (roster.contextTokens)', () => {
+  const ensembleChat = (): ChatRecord =>
+    chat({
+      chatKind: 'ensemble',
+      ensemble: {
+        participants: [
+          { id: 'p1', provider: 'claude', role: 'Architect', enabled: true, order: 0, model: 'claude-opus-4-8' },
+          { id: 'p2', provider: 'codex', role: 'Builder', enabled: true, order: 1, model: 'gpt-5.5' }
+        ]
+      },
+      runs: [
+        run({ runId: 'p1a', ensembleParticipantId: 'p1', startedAt: '2026-05-30T12:00:00.000Z', stats: { input_tokens: 40_000, output_tokens: 1_000, total_tokens: 41_000 } }),
+        run({ runId: 'p1b', ensembleParticipantId: 'p1', startedAt: '2026-05-30T12:06:00.000Z', stats: { input_tokens: 120_000, output_tokens: 3_000, total_tokens: 123_000 } }),
+        run({ runId: 'p2a', ensembleParticipantId: 'p2', startedAt: '2026-05-30T12:03:00.000Z', stats: { input_tokens: 30_000, output_tokens: 1_000, total_tokens: 31_000 } })
+      ]
+    } as unknown as Partial<ChatRecord>)
+
+  it('projects each roster entry latest-run input+output (honest, NOT a sum)', () => {
+    const state = buildRemoteEnsembleState(ensembleChat())
+    expect(state?.roster?.map((r) => [r.id, r.contextTokens])).toEqual([
+      ['p1', 123_000], // latest p1 run (120k+3k), not 40k+1k+120k+3k
+      ['p2', 31_000]
+    ])
+  })
+
+  it('omits contextTokens for a participant with no runs', () => {
+    const state = buildRemoteEnsembleState(
+      chat({
+        chatKind: 'ensemble',
+        ensemble: {
+          participants: [{ id: 'p1', provider: 'claude', role: 'Architect', enabled: true, order: 0 }]
+        },
+        runs: []
+      } as unknown as Partial<ChatRecord>)
+    )
+    expect(state?.roster?.[0].contextTokens).toBeUndefined()
+  })
+})

@@ -59,6 +59,8 @@ struct Composer: View {
     /// through a Bool binding. `@FocusState`/`.focused()` only bind to SwiftUI
     /// views, so a representable can't use them.
     @State private var inputFocused: Bool = false
+    /// Drives the context-donut → context-meter popover.
+    @State private var showContextMeter = false
     /// Scope-global chat — every phone-origin turn is clamped to plan mode
     /// (no file mutation) by the Mac; the composer pins the picker to match.
     private var isGlobalChat: Bool {
@@ -514,7 +516,22 @@ struct Composer: View {
                     queueButton
                 }
                 if let pct = contextUsedPercent {
-                    ContextDonut(percent: pct, color: shell.palette.textPrimary)
+                    Button {
+                        showContextMeter = true
+                    } label: {
+                        ContextDonut(percent: pct, color: shell.palette.textPrimary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Context usage")
+                    .popover(isPresented: $showContextMeter) {
+                        ContextMeterPopoverBody(
+                            rows: contextMeterRows, ensemble: contextMeterIsEnsemble
+                        )
+                        .frame(width: 280)
+                        .padding(12)
+                        .background(TWTheme.surface2)
+                        .presentationCompactAdaptation(.popover)
+                    }
                 }
                 primaryActionButton
             }
@@ -554,23 +571,71 @@ struct Composer: View {
     /// fresh composer stays clean. Window size comes from the model-id →
     /// provider-fallback table; usage is the latest run summary's total tokens.
     private var contextUsedPercent: Double? {
-        guard let snapshot = model.threadSnapshots[card.id] else { return nil }
-        // Cumulative thread tokens — desktop parity: the renderer's
-        // buildChatTokenTally sums EVERY run's total, not just the latest, so a
-        // long thread reads its true fill rather than only the last turn.
-        // runSummaries is bounded (~12 runs), so very long threads under-count
-        // slightly vs desktop, but the ring is clamped to 100% there anyway.
-        let summaries = snapshot.runSummaries ?? [snapshot.runSummary].compactMap { $0 }
-        let used = summaries.reduce(0) { acc, run in
-            acc + (run.totalTokens ?? ((run.tokensIn ?? 0) + (run.tokensOut ?? 0)))
+        // Ensemble: the donut reflects the per-participant rows — the participant
+        // CLOSEST to its own window (max %), so the ring agrees with the popover.
+        // NOT the round-summed runSummary ÷ one window (which sums multiple models
+        // against a single window and over-reports).
+        if card.isEnsemble {
+            return contextMeterRows.map(\.percent).filter { $0 > 0 }.max()
         }
+        // Solo: the LATEST run's input+output (each turn re-sends the whole
+        // conversation, so the most recent run ≈ what's actually in the window),
+        // NOT the cumulative sum across runs. Mirrors the desktop contextMeter.
+        guard let snapshot = model.threadSnapshots[card.id] else { return nil }
+        let summaries = snapshot.runSummaries ?? [snapshot.runSummary].compactMap { $0 }
+        guard let active = snapshot.runSummary ?? summaries.last else { return nil }
+        let used = active.totalTokens ?? ((active.tokensIn ?? 0) + (active.tokensOut ?? 0))
         guard used > 0 else { return nil }
-        // Window is set by the active (latest) model.
-        let active = snapshot.runSummary ?? summaries.last
         let window = ContextWindows.resolve(
-            provider: active?.provider ?? card.provider, model: active?.model)
+            provider: active.provider ?? card.provider, model: active.model)
         guard window > 0 else { return nil }
         return min(100, Double(used) / Double(window) * 100)
+    }
+
+    /// Ensemble chats with a projected roster show per-participant context rows.
+    private var contextMeterIsEnsemble: Bool {
+        card.isEnsemble && !(model.ensembleStates[card.id]?.roster?.isEmpty ?? true)
+    }
+
+    /// Rows for the context-donut popover: one per ensemble participant (from the
+    /// Mac-projected roster.contextTokens), or a single solo row from the latest
+    /// run summary. Honest current-context (latest turn), matching the donut.
+    private var contextMeterRows: [ContextMeterRowVM] {
+        if contextMeterIsEnsemble, let roster = model.ensembleStates[card.id]?.roster {
+            return roster
+                .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+                .map { entry in
+                    let providerName = TWTheme.providerLabel(entry.provider)
+                    let role = entry.role?.trimmingCharacters(in: .whitespaces) ?? ""
+                    var detailParts = [providerName]
+                    if let modelId = entry.model, !modelId.isEmpty { detailParts.append(modelId) }
+                    return ContextMeterRowVM(
+                        id: entry.id,
+                        primary: role.isEmpty ? providerName : role,
+                        detail: detailParts.joined(separator: " · "),
+                        provider: entry.provider,
+                        usedTokens: entry.contextTokens ?? 0,
+                        windowTokens: ContextWindows.resolve(
+                            provider: entry.provider, model: entry.model))
+                }
+        }
+        // Solo only — an ensemble without a projected roster shows nothing rather
+        // than the misleading round-summed runSummary.
+        guard !card.isEnsemble,
+            let snapshot = model.threadSnapshots[card.id],
+            let active = snapshot.runSummary ?? (snapshot.runSummaries ?? []).last
+        else { return [] }
+        let used = active.totalTokens ?? ((active.tokensIn ?? 0) + (active.tokensOut ?? 0))
+        let providerStr = active.provider ?? card.provider ?? ""
+        return [
+            ContextMeterRowVM(
+                id: "solo",
+                primary: TWTheme.providerLabel(providerStr),
+                detail: active.model ?? "",
+                provider: providerStr,
+                usedTokens: used,
+                windowTokens: ContextWindows.resolve(provider: providerStr, model: active.model))
+        ]
     }
 
     private var primaryActionButton: some View {
