@@ -311,6 +311,6 @@ describe('ProviderApiRatesTableBlock (populated render)', () => {
 
     expect(html).toContain('Gemini')
     expect(html).toContain('historic provider')
-    expect(html).toContain('baseline')
+    expect(html).toContain('source')
   })
 })

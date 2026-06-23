@@ -54,12 +54,42 @@ function probeMatchesCurrentRate(probe: Record<string, unknown>, row: ProviderAp
   )
 }
 
+function dateOnlyMs(value: string | undefined): number | null {
+  if (!value) return null
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(value)
+  if (!match) return null
+  const ms = Date.parse(`${match[1]}T00:00:00.000Z`)
+  return Number.isFinite(ms) ? ms : null
+}
+
+function probeIsFreshForRow(
+  probeRunAt: string | undefined,
+  row: ProviderApiRateRow,
+  rateTableVersion: string
+): boolean {
+  const probeMs = dateOnlyMs(probeRunAt)
+  if (probeMs === null) return false
+  const rateTableMs = dateOnlyMs(rateTableVersion)
+  if (rateTableMs !== null && probeMs < rateTableMs) return false
+  const rowVerifiedMs = dateOnlyMs(row.lastVerified)
+  if (rowVerifiedMs !== null && probeMs < rowVerifiedMs) return false
+  return true
+}
+
 function rowStatus(
   probe: Record<string, unknown> | undefined,
-  row: ProviderApiRateRow
+  row: ProviderApiRateRow,
+  probeRunAt: string | undefined,
+  rateTableVersion: string
 ): { status: ProviderApiRateStatus; statusMessage?: string } {
   if (row.confidence === 'manual-override') return { status: 'manual-override' }
   if (!probe) return { status: 'baseline' }
+  if (!probeIsFreshForRow(probeRunAt, row, rateTableVersion)) {
+    return {
+      status: 'baseline',
+      statusMessage: 'Best-effort source probe predates this rate table; baseline source link is shown.'
+    }
+  }
   if (!probeMatchesCurrentRate(probe, row)) {
     return {
       status: 'stale-probe',
@@ -93,6 +123,12 @@ export function buildProviderApiRateGroups(raw: unknown): ProviderApiRateGroup[]
     typeof (snapshot.probe as Record<string, unknown>).results === 'object'
       ? ((snapshot.probe as Record<string, unknown>).results as Record<string, unknown>)
       : {}
+  const probeRunAt =
+    snapshot.probe &&
+    typeof snapshot.probe === 'object' &&
+    typeof (snapshot.probe as Record<string, unknown>).runAt === 'string'
+      ? ((snapshot.probe as Record<string, unknown>).runAt as string)
+      : undefined
 
   const groups: ProviderApiRateGroup[] = []
   const providerEntries = Object.entries(baseline as Record<string, unknown>).sort(
@@ -150,7 +186,7 @@ export function buildProviderApiRateGroups(raw: unknown): ProviderApiRateGroup[]
         confidence: confidenceOf(model.confidence),
         status: 'baseline'
       }
-      const status = rowStatus(probeByModel.get(row.modelId), row)
+      const status = rowStatus(probeByModel.get(row.modelId), row, probeRunAt, rateTableVersion)
       row.status = status.status
       if (status.statusMessage) row.statusMessage = status.statusMessage
       rows.push(row)

@@ -146,10 +146,8 @@ function rateCell(value: number | undefined): string {
 function statusLabel(row: ProviderApiRateRow): string {
   if (row.status === 'manual-override') return 'override'
   if (row.status === 'verified') return 'verified'
-  if (row.status === 'not-verified') return 'check'
-  if (row.status === 'fetch-failed') return 'fetch failed'
-  if (row.status === 'stale-probe') return 'stale probe'
-  return 'baseline'
+  if (row.status === 'not-verified') return 'review'
+  return 'source'
 }
 
 function rateSourceTitle(row: ProviderApiRateRow, group: ProviderApiRateGroup): string {

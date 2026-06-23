@@ -88,7 +88,7 @@ describe('buildProviderApiRateGroups', () => {
         }
       },
       probe: {
-        runAt: '2026-06-22T10:00:00.000Z',
+        runAt: '2026-06-23T10:00:00.000Z',
         results: {
           kimi: {
             provider: 'kimi',
@@ -112,6 +112,52 @@ describe('buildProviderApiRateGroups', () => {
     const [group] = groups
     expect(group.rows[0].status).toBe('manual-override')
     expect(group.rows[1].status).toBe('stale-probe')
+  })
+
+  it('ignores probe results that predate the current rate table', () => {
+    const groups = buildProviderApiRateGroups({
+      rateTableVersion: '2026-06-23',
+      baseline: {
+        codex: {
+          provider: 'codex',
+          pricingUrl: 'https://openai.com/api/pricing',
+          models: [
+            {
+              modelId: 'gpt-5.5',
+              inputUsdPerMillion: 5,
+              cachedInputUsdPerMillion: 0.5,
+              outputUsdPerMillion: 30,
+              sourceUrl: 'https://openai.com/api/pricing',
+              lastVerified: '2026-06-23'
+            }
+          ]
+        }
+      },
+      probe: {
+        runAt: '2026-06-22T10:00:00.000Z',
+        results: {
+          codex: {
+            provider: 'codex',
+            pricingUrl: 'https://openai.com/api/pricing',
+            models: [
+              {
+                modelId: 'gpt-5.5',
+                status: 'fetch-failed',
+                baseline: {
+                  inputUsdPerMillion: 5,
+                  outputUsdPerMillion: 30,
+                  confidence: 'baked-in'
+                },
+                errorMessage: 'Pricing page did not respond.'
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    expect(groups[0].rows[0].status).toBe('baseline')
+    expect(groups[0].rows[0].statusMessage).toContain('predates this rate table')
   })
 
   it('omits local Ollama rows from the API rates list', () => {

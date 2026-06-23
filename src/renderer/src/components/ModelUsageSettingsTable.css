@@ -295,43 +295,31 @@
 }
 
 .model-usage-table-rate-source {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 56px;
-  padding: 2px 7px;
-  border: 1px solid color-mix(in srgb, var(--panel-border, var(--surface-border)) 75%, transparent);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--surface-2, #8884) 45%, transparent);
+  color: var(--accent, #6b7cff);
   font-size: 10px;
+  font-weight: 600;
   line-height: 1.2;
   text-decoration: none;
 }
 
 .model-usage-table-rate-source:hover {
-  color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--accent, #6b7cff) 35%, var(--panel-border, var(--surface-border)));
+  color: var(--accent-strong, var(--accent, #6b7cff));
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .model-usage-table-rate-source.is-verified,
 .model-usage-table-rate-source.is-manual-override {
   color: var(--success, #58c285);
-  border-color: color-mix(in srgb, var(--success, #58c285) 35%, var(--panel-border, var(--surface-border)));
-  background: color-mix(in srgb, var(--success, #58c285) 11%, transparent);
 }
 
 .model-usage-table-rate-source.is-not-verified,
 .model-usage-table-rate-source.is-stale-probe {
   color: var(--warning, #e0a84d);
-  border-color: color-mix(in srgb, var(--warning, #e0a84d) 38%, var(--panel-border, var(--surface-border)));
-  background: color-mix(in srgb, var(--warning, #e0a84d) 11%, transparent);
 }
 
 .model-usage-table-rate-source.is-fetch-failed {
-  color: var(--danger, #f87171);
-  border-color: color-mix(in srgb, var(--danger, #f87171) 38%, var(--panel-border, var(--surface-border)));
-  background: color-mix(in srgb, var(--danger, #f87171) 10%, transparent);
+  color: var(--text-tertiary, var(--text-secondary));
 }
 
 /* Provider accent stripe on the summary row's left edge. */
