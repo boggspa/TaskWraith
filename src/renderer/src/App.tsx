@@ -5,6 +5,7 @@ import { applyAssistantDelta } from './lib/applyAssistantDelta'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'
+import { readComposerDrafts, writeComposerDrafts } from './lib/composerDraftStore'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
 import {
@@ -1438,7 +1439,10 @@ function App(): React.JSX.Element {
     }
   }, [])
 
-  const [composerDraftsByChatId, setComposerDraftForChat] = usePerChatState('')
+  // Seed drafts synchronously from localStorage on first render (not an async
+  // effect) so a restored draft is present before the composer reads it and can't
+  // be clobbered by — or clobber — text the user starts typing on launch.
+  const [composerDraftsByChatId, setComposerDraftForChat] = usePerChatState('', readComposerDrafts)
   const [isRunning, setIsRunning] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedRunRequest[]>([])
   // Mirror of `queuedRuns` for handlers that need synchronous
@@ -2552,6 +2556,33 @@ function App(): React.JSX.Element {
   useEffect(() => {
     composerDraftsByChatIdRef.current = composerDraftsByChatId
   }, [composerDraftsByChatId])
+  // Persist composer drafts so typed-but-unsent text survives an app restart.
+  // In-memory updates stay immediate (thread-switch is instant); only the disk
+  // write is debounced (~800ms) so localStorage isn't hit on every keystroke.
+  // The map is sparse (usePerChatState deletes empty drafts), so a sent/cleared
+  // prompt persists as "gone" and can't resurrect next launch. Only the main
+  // window persists — the popout shares this origin and would clobber the blob;
+  // its draft already flows back via the handoff channel.
+  useEffect(() => {
+    if (isChatPopoutWindow) return undefined
+    const handle = window.setTimeout(() => {
+      writeComposerDrafts(composerDraftsByChatId)
+    }, 800)
+    return () => window.clearTimeout(handle)
+  }, [composerDraftsByChatId, isChatPopoutWindow])
+  useEffect(() => {
+    if (isChatPopoutWindow) return undefined
+    const flush = (): void => writeComposerDrafts(composerDraftsByChatIdRef.current)
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('beforeunload', flush)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('beforeunload', flush)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [isChatPopoutWindow])
   const imageAttachmentsByChatIdRef = useRef(imageAttachmentsByChatId)
   useEffect(() => {
     imageAttachmentsByChatIdRef.current = imageAttachmentsByChatId

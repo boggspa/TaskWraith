@@ -38,13 +38,23 @@ export const nextPerChatValues = <T>(
 }
 
 export const usePerChatState = <T>(
-  initial: T
+  initial: T,
+  /**
+   * Optional lazy seed for the initial map — runs ONCE (useState initializer), so
+   * persisted state (e.g. composer drafts read synchronously from localStorage)
+   * is present on the very first render, before any consumer reads it. Restoring
+   * synchronously this way avoids the async-effect clobber race where a late
+   * hydrate overwrites text the user already started typing.
+   */
+  lazyInitialMap?: () => Record<string, T>
 ): readonly [
   Record<string, T>,
   (chatId: string | null | undefined, value: PerChatStateAction<T>) => void,
   Dispatch<SetStateAction<Record<string, T>>>
 ] => {
-  const [valuesByChatId, setValuesByChatId] = useState<Record<string, T>>({})
+  const [valuesByChatId, setValuesByChatId] = useState<Record<string, T>>(
+    () => lazyInitialMap?.() ?? {}
+  )
 
   const setForChat = useCallback(
     (chatId: string | null | undefined, value: PerChatStateAction<T>) => {
