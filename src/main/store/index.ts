@@ -798,6 +798,12 @@ function readAllRunEventFiles(): RunEventRecord[] {
   }
 }
 
+/** Upper bound on per-chat run-event files scanned for a `{chatId}` query, so a
+ * pathologically long thread can't re-introduce a (smaller) sweep. Newest runs
+ * are read first, so the cap only ever drops the oldest runs — well beyond any
+ * realistic `limit`. */
+const RUN_EVENT_CHAT_FILE_CAP = 120
+
 function extractRunStreamText(
   input: RunEventInput
 ): { stream: 'stdout' | 'stderr' | 'stdin'; text: string } | null {
@@ -2848,10 +2854,44 @@ export class AppStore {
   }
 
   static getRunEvents(filter: RunEventFilter = {}): RunEventRecord[] {
-    const events = filter.runId
-      ? readRunEventFile(runEventFilePath(filter.runId))
-      : readAllRunEventFiles()
-    return filterRunEvents(events, filter)
+    if (filter.runId) {
+      return filterRunEvents(readRunEventFile(runEventFilePath(filter.runId)), filter)
+    }
+    if (filter.chatId) {
+      // Scope a {chatId} query to THIS chat's own run-event files — NEVER sweep
+      // the whole run-events directory here. That dir grows to GIGABYTES across all
+      // chats on a heavy machine, and a synchronous readdir + readFile + parse of
+      // it on the MAIN process blocks the event loop for SECONDS (the macOS
+      // beachball the renderer hit on first chat open via get-run-events). The chat
+      // record (cached) lists its runs; each event file is `<runId>.jsonl`, and
+      // filterRunEvents still applies chatId + limit — so the result is the same
+      // set the old sweep yielded for this chat (minus orphan events whose run is
+      // no longer in the chat). Read the chat's runs (newest first, capped) and let
+      // filterRunEvents' timestamp-sort + limit pick the result. We deliberately do
+      // NOT early-stop on `limit`: ensemble rounds run participants CONCURRENTLY
+      // under one chatId with INTERLEAVED timestamps, so a sibling run read later
+      // can hold newer events than the first run that happened to fill `limit`. Per
+      // chat this is a few small files regardless. (Unpersisted chats —
+      // storeLocalChatHistory off — have no chat record, so getChat is null and
+      // this returns []; raw-log hydration falls back to the renderer's live ref,
+      // which is acceptable vs. re-introducing the GB sweep.)
+      const chat = this.getChat(filter.chatId)
+      const runIds = (chat?.runs ?? [])
+        .map((run) => run.runId)
+        .filter((id): id is string => Boolean(id))
+        .reverse()
+      const events: RunEventRecord[] = []
+      let filesRead = 0
+      for (const runId of runIds) {
+        if (filesRead >= RUN_EVENT_CHAT_FILE_CAP) break
+        filesRead += 1
+        for (const event of readRunEventFile(runEventFilePath(runId))) {
+          events.push(event)
+        }
+      }
+      return filterRunEvents(events, filter)
+    }
+    return filterRunEvents(readAllRunEventFiles(), filter)
   }
 
   static getRunEventReplay(runId: string) {
