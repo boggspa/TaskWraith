@@ -2021,9 +2021,20 @@ public final class RemoteSessionModel: ObservableObject {
                     }
                 }
             }
-            // Snapshot re-pull stays as the consistency backstop.
-            let fast = wire.channel == "agent-output" || wire.channel == "agent-exit"
-            scheduleThreadRefresh(threadId, debounceMs: fast ? 200_000_000 : 450_000_000)
+            // Snapshot re-pull is the consistency backstop. During text
+            // streaming the live buffer (appendStreamingDeltas above) already
+            // drives the transcript, so a fast full re-pull per token only
+            // rebuilds the whole snapshot object ~5x/sec and flickers the
+            // settled List rows (every Row becomes a fresh, non-Equatable
+            // instance). Keep the agent-exit handoff prompt, but slow
+            // agent-output so the re-pull mainly catches tool rows / dedup
+            // instead of fighting the stream.
+            let isExit = wire.channel == "agent-exit" || wire.channel == "gemini-exit"
+            let debounceNanos: UInt64 =
+                isExit
+                ? 200_000_000
+                : (wire.channel == "agent-output" ? 700_000_000 : 450_000_000)
+            scheduleThreadRefresh(threadId, debounceMs: debounceNanos)
         default:
             break
         }

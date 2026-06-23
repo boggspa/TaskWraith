@@ -1042,7 +1042,7 @@ public struct MobileDiffSummary: Codable, Sendable {
 }
 
 public struct RemoteThreadSnapshot: Codable, Sendable {
-    public struct Row: Codable, Sendable, Identifiable {
+    public struct Row: Codable, Sendable, Equatable, Identifiable {
         public let id: String
         /// Run that produced this row — lets the live streaming bubble
         /// supersede the in-flight snapshot row without duplication.
@@ -1095,13 +1095,13 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         /// ISO delivery moment of the underlying message (Mac transcript
         /// timestamp) — surfaced in the long-press context menu.
         public let timestamp: String?
-        public struct ToolSummary: Codable, Sendable {
+        public struct ToolSummary: Codable, Sendable, Equatable {
             public let activityCount: Int?
             public let status: String?
             /// Per-tool detail (desktop activity-card parity).
             public let tools: [ToolEntry]?
         }
-        public struct ToolEntry: Codable, Sendable, Identifiable {
+        public struct ToolEntry: Codable, Sendable, Equatable, Identifiable {
             public let name: String
             public let toolName: String?
             public let category: String?
@@ -1130,12 +1130,12 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         /// Structured ensemble participant reachability summary. Older Mac
         /// builds only send `preview`, so renderers must treat this as
         /// optional.
-        public struct ParticipantHealth: Codable, Sendable {
+        public struct ParticipantHealth: Codable, Sendable, Equatable {
             public let okCount: Int?
             public let totalCount: Int?
             public let entries: [Entry]?
 
-            public struct Entry: Codable, Sendable, Identifiable {
+            public struct Entry: Codable, Sendable, Equatable, Identifiable {
                 public let participantId: String?
                 public let provider: String?
                 public let role: String?
@@ -1150,7 +1150,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         public let participantHealth: ParticipantHealth?
         /// Structured metadata for returned TaskWraith sub-thread output. The
         /// row `preview` carries the extracted child-agent body.
-        public struct SubThreadReturn: Codable, Sendable {
+        public struct SubThreadReturn: Codable, Sendable, Equatable {
             public let subThreadId: String?
             public let provider: String?
             public let title: String?
@@ -1163,7 +1163,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         /// bodyPreview / status / bodyTruncated); `status` is an optional
         /// String (never a non-optional enum) so an unexpected value from a
         /// newer Mac degrades to read-only rather than failing decode.
-        public struct ProposedPlan: Codable, Sendable {
+        public struct ProposedPlan: Codable, Sendable, Equatable {
             public let title: String?
             public let bodyPreview: String?
             public let status: String?
@@ -1174,7 +1174,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
         /// inline question card. `promptId` === the registry questionId, so the
         /// inline card resolves the same parked tool the top banner does.
         /// Additive optional + synthesized Codable ⇒ forward/back-compatible.
-        public struct AgentQuestion: Codable, Sendable {
+        public struct AgentQuestion: Codable, Sendable, Equatable {
             public let promptId: String?
             public let question: String?
             public let options: [String]?
