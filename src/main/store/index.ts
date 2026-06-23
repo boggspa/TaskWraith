@@ -804,6 +804,49 @@ function readAllRunEventFiles(): RunEventRecord[] {
  * realistic `limit`. */
 const RUN_EVENT_CHAT_FILE_CAP = 120
 
+async function readRunEventFileAsync(filePath: string): Promise<RunEventRecord[]> {
+  try {
+    return (await fs.promises.readFile(filePath, 'utf-8'))
+      .split(/\r?\n/)
+      .map(parseRunEventLine)
+      .filter((event): event is RunEventRecord => Boolean(event))
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') console.error(`Failed to read ${filePath}`, e)
+    return []
+  }
+}
+
+/** Async twin of `readRunEventFile` over many paths — sequential `await` per file
+ * yields the event loop between files. */
+async function readRunEventFilesAsync(paths: string[]): Promise<RunEventRecord[]> {
+  const all: RunEventRecord[] = []
+  for (const filePath of paths) {
+    for (const event of await readRunEventFileAsync(filePath)) all.push(event)
+  }
+  return all
+}
+
+/** Async twin of `readAllRunEventFiles`. The per-file `await` yields the event
+ * loop, so even a (rare, no-filter) multi-GB forensics sweep can't beachball the
+ * MAIN thread the way the sync version did. */
+async function readAllRunEventFilesAsync(): Promise<RunEventRecord[]> {
+  try {
+    const files = (await fs.promises.readdir(runEventsDir)).filter((file) =>
+      file.endsWith('.jsonl')
+    )
+    const all: RunEventRecord[] = []
+    for (const file of files) {
+      for (const event of await readRunEventFileAsync(path.join(runEventsDir, file))) {
+        all.push(event)
+      }
+    }
+    return all
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') console.error(`Failed to read ${runEventsDir}`, e)
+    return []
+  }
+}
+
 function extractRunStreamText(
   input: RunEventInput
 ): { stream: 'stdout' | 'stderr' | 'stdin'; text: string } | null {
@@ -2853,45 +2896,53 @@ export class AppStore {
     return inputs.map((input) => this.appendRunEvent(input))
   }
 
-  static getRunEvents(filter: RunEventFilter = {}): RunEventRecord[] {
-    if (filter.runId) {
-      return filterRunEvents(readRunEventFile(runEventFilePath(filter.runId)), filter)
-    }
+  /**
+   * Resolve the run-event FILE PATHS a filter needs (cheap + sync: a getChat cache
+   * hit + array math). Returns `null` to mean "no scoping → whole-dir sweep", which
+   * happens ONLY when neither runId nor chatId is given (rare forensics).
+   *
+   * Scoping a {chatId} query to THIS chat's own `<runId>.jsonl` files is what kills
+   * the first-open beachball: the run-events dir grows to GIGABYTES across all
+   * chats, and reading + parsing all of it on the MAIN process blocks for SECONDS.
+   * filterRunEvents still applies chatId + limit downstream, so the result is the
+   * same set the old sweep yielded for this chat (minus orphan events whose run is
+   * no longer in `chat.runs`). Newest runs first, capped — but NOT limit-truncated:
+   * ensemble rounds run participants CONCURRENTLY under one chatId with INTERLEAVED
+   * timestamps, so a sibling run must still be read even past `limit` (the
+   * timestamp sort in filterRunEvents picks the true newest). Unpersisted chats
+   * (storeLocalChatHistory off) have no chat record → getChat null → [] (raw-log
+   * hydration falls back to the renderer's live ref; acceptable vs. the GB sweep).
+   */
+  private static runEventFilePathsForFilter(filter: RunEventFilter): string[] | null {
+    if (filter.runId) return [runEventFilePath(filter.runId)]
     if (filter.chatId) {
-      // Scope a {chatId} query to THIS chat's own run-event files — NEVER sweep
-      // the whole run-events directory here. That dir grows to GIGABYTES across all
-      // chats on a heavy machine, and a synchronous readdir + readFile + parse of
-      // it on the MAIN process blocks the event loop for SECONDS (the macOS
-      // beachball the renderer hit on first chat open via get-run-events). The chat
-      // record (cached) lists its runs; each event file is `<runId>.jsonl`, and
-      // filterRunEvents still applies chatId + limit — so the result is the same
-      // set the old sweep yielded for this chat (minus orphan events whose run is
-      // no longer in the chat). Read the chat's runs (newest first, capped) and let
-      // filterRunEvents' timestamp-sort + limit pick the result. We deliberately do
-      // NOT early-stop on `limit`: ensemble rounds run participants CONCURRENTLY
-      // under one chatId with INTERLEAVED timestamps, so a sibling run read later
-      // can hold newer events than the first run that happened to fill `limit`. Per
-      // chat this is a few small files regardless. (Unpersisted chats —
-      // storeLocalChatHistory off — have no chat record, so getChat is null and
-      // this returns []; raw-log hydration falls back to the renderer's live ref,
-      // which is acceptable vs. re-introducing the GB sweep.)
       const chat = this.getChat(filter.chatId)
       const runIds = (chat?.runs ?? [])
         .map((run) => run.runId)
         .filter((id): id is string => Boolean(id))
         .reverse()
-      const events: RunEventRecord[] = []
-      let filesRead = 0
-      for (const runId of runIds) {
-        if (filesRead >= RUN_EVENT_CHAT_FILE_CAP) break
-        filesRead += 1
-        for (const event of readRunEventFile(runEventFilePath(runId))) {
-          events.push(event)
-        }
-      }
-      return filterRunEvents(events, filter)
+        .slice(0, RUN_EVENT_CHAT_FILE_CAP)
+      return runIds.map((runId) => runEventFilePath(runId))
     }
-    return filterRunEvents(readAllRunEventFiles(), filter)
+    return null
+  }
+
+  static getRunEvents(filter: RunEventFilter = {}): RunEventRecord[] {
+    const paths = this.runEventFilePathsForFilter(filter)
+    const events =
+      paths === null ? readAllRunEventFiles() : paths.flatMap((p) => readRunEventFile(p))
+    return filterRunEvents(events, filter)
+  }
+
+  /** Async twin of {@link getRunEvents}. The renderer's `get-run-events` IPC uses
+   * THIS so that even a future filter with no runId/chatId (→ whole-dir read) yields
+   * the event loop instead of beachballing the MAIN thread. Same result as the sync
+   * version for the same filter. */
+  static async getRunEventsAsync(filter: RunEventFilter = {}): Promise<RunEventRecord[]> {
+    const paths = this.runEventFilePathsForFilter(filter)
+    const events =
+      paths === null ? await readAllRunEventFilesAsync() : await readRunEventFilesAsync(paths)
+    return filterRunEvents(events, filter)
   }
 
   static getRunEventReplay(runId: string) {

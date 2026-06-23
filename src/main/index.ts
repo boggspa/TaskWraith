@@ -21503,9 +21503,11 @@ if (isGeminiMcpBridgeProcess) {
         runQueueService.transitionJob(runIdOrId, status, partial)
     )
 
-    // Durable transcript/event store. Writes are main-owned; renderer may only read/replay.
+    // Durable transcript/event store. Writes are main-owned; renderer may only
+    // read/replay. Use the ASYNC read so a filter without runId/chatId (whole-dir
+    // sweep) yields the event loop instead of beachballing the main thread.
     ipcMain.handle('get-run-events', (_, filter: any = {}) =>
-      getRunRepository().getRunEvents(filter || {})
+      getRunRepository().getRunEventsAsync(filter || {})
     )
     ipcMain.handle('get-run-event-replay', (_, runId: string) =>
       getRunRepository().getRunEventReplay(runId)

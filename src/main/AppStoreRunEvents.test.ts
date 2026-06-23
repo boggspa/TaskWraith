@@ -58,7 +58,7 @@ describe('AppStore run events', () => {
     ).toBe('provider stream persisted\n')
   })
 
-  it('scopes a {chatId} query to the chat own run files — never the full-dir sweep', () => {
+  it('scopes a {chatId} query to the chat own run files — never the full-dir sweep', async () => {
     // chatA owns run r1. An ORPHAN event file carries chatId 'chatA' but its run
     // is NOT in chatA.runs (the old full-dir sweep would have included it; the
     // scoped read must not). r2 belongs to a different chat and must never be read
@@ -98,6 +98,10 @@ describe('AppStore run events', () => {
     expect(runIds).toContain('r1')
     expect(runIds).not.toContain('r2') // another chat's file is never swept
     expect(runIds).not.toContain('orphan') // scoped to chatA.runs, not every chatId-matching file
+
+    // The async twin (used by the get-run-events IPC handler) returns the same set.
+    const asyncRunIds = (await AppStore.getRunEventsAsync({ chatId: 'chatA' })).map((e) => e.runId)
+    expect(asyncRunIds).toEqual(runIds)
   })
 
   it('reads ALL of an ensemble chat runs (no early-stop) so interleaved-timestamp siblings keep newest ordering', () => {

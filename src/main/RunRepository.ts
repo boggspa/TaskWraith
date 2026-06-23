@@ -117,6 +117,12 @@ export class RunRepository {
     return AppStore.getRunEvents(filter)
   }
 
+  /** Async read used by the renderer's get-run-events IPC so a whole-dir read
+   * can't block the main event loop. */
+  getRunEventsAsync(filter: RunEventFilter = {}): Promise<RunEventRecord[]> {
+    return AppStore.getRunEventsAsync(filter)
+  }
+
   eventsForRunSinceSequence(runId: string, sequence: number): RunEventRecord[] {
     const fromSequence = Number.isFinite(sequence) ? Math.max(1, Math.floor(sequence) + 1) : 1
     return this.getRunEvents({ runId, fromSequence })
