@@ -626,8 +626,8 @@ struct ThreadDetailView: View {
     }
 
     private func listCore(proxy: ScrollViewProxy) -> some View {
-        List {
-            Section {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 4) {
                 if earlierCount > 0 {
                     Button {
                         model.requestPreviousThreadRows(taskId)
@@ -709,7 +709,7 @@ struct ThreadDetailView: View {
                             accent: threadAgentIdentity?.accent
                                 ?? TWTheme.providerAccent(liveProvider)
                         )
-                        // Stable identity so the recycling List keeps ONE instance
+                        // Stable identity so the lazy stack keeps ONE instance
                         // (preserving @State + the repeatForever pulse) as the live
                         // ForEach above it rebuilds each token — otherwise .onAppear
                         // re-fires and the pulse hitches.
@@ -774,9 +774,9 @@ struct ThreadDetailView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .background(TWTheme.appBg)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 4) {
@@ -818,7 +818,7 @@ struct ThreadDetailView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // AnyView stage-break: the shell stack (banner + changes rows +
             // roster row + composer + rail) exceeds xcodebuild's stricter
-            // type-check budget when inlined into the List chain.
+            // type-check budget when inlined into the transcript chain.
             if !showsEmptyWelcomeCanvas {
                 AnyView(composerShellStack)
             }
@@ -1273,17 +1273,13 @@ struct ThreadDetailView: View {
     /// The single follow-pin path. Every streaming trigger — the pump's reveal
     /// frame (~24fps), each wire token batch, a new row, an ensemble participant
     /// switch — routes here, and they COALESCE to one scroll per runloop turn.
-    /// The old code fired up to three concurrent scrolls (an animated 0.2s leap
-    /// racing instant snaps), which is what jittered and skated the view past
-    /// whole messages during fast ensemble passes / big Kimi chunks. Instant +
-    /// coalesced + the pump's small reveal steps reads as a smooth glide.
+    /// The transcript uses ScrollView/LazyVStack rather than List so follow-pin
+    /// scrolls never resolve through UICollectionView index paths while rows are
+    /// being committed.
     ///
-    /// The scroll is deferred a main-actor turn so the List's backing
-    /// UICollectionView has COMMITTED the new item set first — scrolling to an
-    /// index path that isn't valid yet raised NSInternalInconsistencyException
-    /// from `_validateScrollingTargetIndexPath:` (the cellular-only crash at the
-    /// "Task complete" transition). `force` re-pins through a transient sentinel
-    /// flip during a big (cellular-batched) update so following can't get stuck.
+    /// The scroll is still deferred a main-runloop turn so the bottom sentinel
+    /// has been materialized before we target it. `force` re-pins through a
+    /// transient sentinel flip during a big update so following can't get stuck.
     private func requestFollowPin(_ proxy: ScrollViewProxy, force: Bool = false) {
         guard force || autoFollow else { return }
         guard !followPin.scheduled else { return }
@@ -1293,16 +1289,8 @@ struct ThreadDetailView: View {
             // exits, so the flag can never stick and wedge follow off.
             defer { followPin.scheduled = false }
             // Defer to the NEXT main-runloop iteration — NOT `Task.yield()`,
-            // which is a cooperative suspension that can resume WITHIN the
-            // current iteration, before the List's backing UICollectionView
-            // commits its new item set (that commit runs on a CFRunLoop
-            // observer — `NSRunLoop.flushObservers`). Scrolling before the
-            // commit resolved a stale/out-of-range index path for
-            // "transcript-bottom" and UIKit raised in
-            // `_validateScrollingTargetIndexPath:` → SIGABRT. Ensemble sends
-            // made it reliable: many rapid live↔committed transitions per turn
-            // overwhelmed the single yield. `DispatchQueue.main.async` resumes
-            // after the commit, so the sentinel's index path is valid.
+            // which is a cooperative suspension that can resume before SwiftUI
+            // has materialized the new sentinel row for this update.
             await awaitNextMainRunloop()
             guard force || autoFollow else { return }
             scrollSentinelToBottomNow(proxy)
@@ -1314,10 +1302,9 @@ struct ThreadDetailView: View {
         }
     }
 
-    /// Suspend until the next main-runloop iteration, AFTER the current update
-    /// (including the List's UICollectionView item commit) has flushed. Used
-    /// instead of `Task.yield()` so a follow-pin scroll never targets an
-    /// index path the collection view hasn't committed yet.
+    /// Suspend until the next main-runloop iteration, after the current SwiftUI
+    /// update has flushed. Used instead of `Task.yield()` so a follow-pin scroll
+    /// targets the current bottom sentinel.
     @MainActor
     private func awaitNextMainRunloop() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
