@@ -4,6 +4,7 @@ import {
   buildMobileDiffSummary,
   buildMobileQuestionCard,
   buildRemoteCanvasPreviews,
+  buildRemoteEnsembleState,
   buildRemoteProjectionEnvelope,
   buildRemoteShellAppearance,
   buildRemoteTaskCard,
@@ -591,5 +592,43 @@ describe('canvasPreviews (P3 read-only Canvas projection)', () => {
     ])
     // No open canvases → field omitted entirely (keeps the wire lean).
     expect(buildRemoteTaskCard(chat()).canvasPreviews).toBeUndefined()
+  })
+})
+
+describe('buildRemoteEnsembleState — single-provider + guest', () => {
+  const guestChat = (): ChatRecord =>
+    chat({
+      appChatId: 'parent-1',
+      provider: 'claude',
+      guestParticipant: {
+        childChatId: 'guest-child-1',
+        provider: 'gemini',
+        selectedModelType: 'default',
+        customModel: '',
+        createdAt: NOW,
+        updatedAt: NOW,
+        persistent: true
+      }
+    })
+
+  it('synthesizes a minimal host + guest participant list for a guest chat', () => {
+    const state = buildRemoteEnsembleState(guestChat())
+    expect(state?.participants.map((p) => [p.provider, p.role])).toEqual([
+      ['claude', 'Parent'],
+      ['gemini', 'Guest']
+    ])
+    expect(state?.participantCount).toBe(2)
+  })
+
+  it('omits the ensemble-only fields so iOS ensemble chrome stays dormant', () => {
+    const state = buildRemoteEnsembleState(guestChat())
+    expect(state?.status).toBe('idle')
+    expect(state?.roundId).toBeUndefined()
+    expect(state?.activeParticipantId).toBeUndefined()
+    expect(state?.roster).toBeUndefined()
+  })
+
+  it('returns undefined for a plain single chat (no ensemble, no guest)', () => {
+    expect(buildRemoteEnsembleState(chat({ provider: 'claude' }))).toBeUndefined()
   })
 })

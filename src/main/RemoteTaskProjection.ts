@@ -1050,9 +1050,53 @@ export function buildMobileDiffSummary(
   return summary
 }
 
+/**
+ * Single-provider + GUEST chats are not ensembles, but the iOS composer and
+ * transcript tint @mentions of the host + guest using
+ * `ensembleStates[id].participants` (the same source true ensembles use). Project a
+ * MINIMAL participants-only state for such chats so those tints resolve.
+ *
+ * Deliberately omits roundId / activeParticipantId / roster: the ensemble-only iOS
+ * surfaces (round status, the "thinking" participant pill, the roster editor, the
+ * onboarding demo roster) all key off THOSE fields, not participant presence, so
+ * they stay dormant. `card.isEnsemble` is driven by chatKind (not by this state),
+ * so no ensemble chrome appears on a guest chat — only the @mention tint, which
+ * reads `participants`, lights up. Host role "Parent" + guest role "Guest" plus
+ * each provider give the alias set (`@parent`/`@guest`/`@<provider>`) that
+ * `twMentionRanges` resolves, matching the desktop guest mention vocabulary.
+ */
+function buildGuestParticipantState(chat: ChatRecord): RemoteEnsembleState | undefined {
+  const guest = chat.guestParticipant
+  const hostProvider = chat.provider
+  if (!guest || !hostProvider) return undefined
+  const participants: RemoteEnsembleParticipantState[] = [
+    {
+      participantId: `${chat.appChatId}:host`,
+      provider: hostProvider,
+      role: 'Parent',
+      order: 0,
+      status: 'idle'
+    },
+    {
+      participantId: guest.childChatId,
+      provider: guest.provider,
+      role: 'Guest',
+      order: 1,
+      status: 'idle'
+    }
+  ]
+  return {
+    threadId: chat.appChatId,
+    status: 'idle',
+    queuedPromptCount: 0,
+    participantCount: participants.length,
+    participants
+  }
+}
+
 export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState | undefined {
   const ensemble = chat.ensemble
-  if (!ensemble) return undefined
+  if (!ensemble) return buildGuestParticipantState(chat)
   const activeRound = ensemble.activeRound
   const participants = activeRound?.participants ?? []
   return {
