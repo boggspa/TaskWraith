@@ -836,7 +836,9 @@ export function buildRemoteTaskCard(
     workspaceId: chat.workspaceId && chat.workspaceId.length > 0 ? chat.workspaceId : null,
     provider: chat.provider ?? 'gemini',
     title: chat.title || 'Untitled chat',
-    status: deriveTaskStatus(latestRun, pendingApprovalCount, pendingQuestionCount),
+    status: deriveTaskStatus(latestRun, pendingApprovalCount, pendingQuestionCount, {
+      ensembleRound: chat.ensemble?.activeRound
+    }),
     preview: preview.preview,
     previewTruncated: preview.truncated,
     pendingApprovalCount,
@@ -1144,10 +1146,22 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
 function deriveTaskStatus(
   run: ChatRun | undefined,
   pendingApprovalCount: number,
-  pendingQuestionCount: number
+  pendingQuestionCount: number,
+  options: { ensembleRound?: EnsembleConfig['activeRound'] } = {}
 ): RemoteTaskStatus {
   if (pendingQuestionCount > 0) return 'awaitingQuestion'
   if (pendingApprovalCount > 0) return 'awaitingApproval'
+  // Ensemble rounds run participants serially, each as its own `ChatRun`
+  // appended to `chat.runs`. `latestChatRun` therefore reports the most
+  // recent participant — which flips running→success as EACH participant
+  // finishes, so a naive derive would oscillate the card to 'success'
+  // mid-round (and emit a premature runComplete push per participant; see
+  // maybeNotifyRemoteTaskNeedsAttention). The round itself is the unit of
+  // completion: it stays 'running' from beginRound until finishRound flips
+  // it exactly once at end-of-round. While the round is still running, the
+  // card never reports a terminal status off a single participant's run.
+  const round = options.ensembleRound
+  if (round && round.status === 'running') return 'running'
   if (!run) return 'idle'
   if (run.status === 'running') return 'running'
   if (run.status === 'cancelled' || run.cancelled) return 'cancelled'

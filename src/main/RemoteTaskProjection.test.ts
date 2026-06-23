@@ -453,6 +453,115 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('keeps an ensemble card "running" while the round is running even if the latest participant run succeeded', () => {
+    // Mid-round: participant p1 has finished (its ChatRun is 'success' and is
+    // the latest in chat.runs) but the round itself is still 'running' because
+    // p2 has not spoken yet. The card must NOT report 'success' off p1 alone —
+    // otherwise maybeNotifyRemoteTaskNeedsAttention emits a premature
+    // runComplete push per participant instead of one at round end.
+    const card = buildRemoteTaskCard(
+      chat({
+        chatKind: 'ensemble',
+        runs: [
+          run({ runId: 'p1-run', status: 'success', startedAt: '2026-05-30T12:00:00.000Z' })
+        ],
+        ensemble: {
+          enabled: true,
+          maxParticipants: 2,
+          participants: [],
+          activeRound: {
+            roundId: 'round-1',
+            status: 'running',
+            prompt: 'Coordinate',
+            startedAt: ISO,
+            activeParticipantId: 'p2',
+            participants: [
+              {
+                participantId: 'p1',
+                provider: 'codex',
+                role: 'Implementer',
+                order: 1,
+                status: 'answered',
+                runId: 'p1-run'
+              },
+              {
+                participantId: 'p2',
+                provider: 'claude',
+                role: 'Reviewer',
+                order: 2,
+                status: 'idle'
+              }
+            ]
+          }
+        }
+      })
+    )
+    expect(card.status).toBe('running')
+  })
+
+  it('reports "success" for an ensemble card once the round completes', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        chatKind: 'ensemble',
+        runs: [
+          run({ runId: 'p2-run', status: 'success', startedAt: '2026-05-30T12:01:00.000Z' })
+        ],
+        ensemble: {
+          enabled: true,
+          maxParticipants: 2,
+          participants: [],
+          activeRound: {
+            roundId: 'round-1',
+            status: 'completed',
+            prompt: 'Coordinate',
+            startedAt: ISO,
+            endedAt: ISO,
+            participants: [
+              {
+                participantId: 'p2',
+                provider: 'claude',
+                role: 'Reviewer',
+                order: 2,
+                status: 'answered',
+                runId: 'p2-run'
+              }
+            ]
+          }
+        }
+      })
+    )
+    expect(card.status).toBe('success')
+  })
+
+  it('does not gate a single-provider card (no ensemble) — terminal run reports success', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        provider: 'claude',
+        runs: [run({ runId: 'solo-run', status: 'success' })]
+      })
+    )
+    expect(card.status).toBe('success')
+  })
+
+  it('does not gate a guest chat — it has no ensemble round, so its own run drives status', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        provider: 'claude',
+        guestParticipant: {
+          childChatId: 'guest-child-1',
+          provider: 'gemini',
+          selectedModelType: 'default',
+          customModel: '',
+          createdAt: NOW,
+          updatedAt: NOW,
+          persistent: true
+        },
+        runs: [run({ runId: 'guest-host-run', status: 'success' })]
+      })
+    )
+    expect(card.status).toBe('success')
+  })
+
   it('derives per-lane todo plans from the activity stream (ensemble PlanRail)', () => {
     const card = buildRemoteTaskCard(
       chat({
