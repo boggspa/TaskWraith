@@ -87,14 +87,62 @@ export function currentContextTokens(
   return base + live
 }
 
-/** Per-participant context rows for an ensemble chat (honest current-context). */
+/**
+ * Live output-token estimate for ONE participant's in-flight (unsealed) run — the
+ * per-participant analogue of the chat-wide live estimate. Counts ONLY assistant
+ * message chars whose runId belongs to that participant's own unsealed run(s), so
+ * it does NOT blend in other participants' output the way a chat-wide
+ * "messages after the round started" sum does (which would dump every earlier
+ * participant's output onto the one active row). Returns 0 when the participant
+ * isn't actively streaming. `estimateFromChars` is injected to keep this module
+ * dependency-light (App passes the same char→token estimator the solo donut uses).
+ */
+export function liveOutputTokensForParticipant(
+  runs: ReadonlyArray<ChatRun>,
+  messages: ReadonlyArray<{ role: string; runId?: string; content?: string }>,
+  participantId: string | undefined,
+  estimateFromChars: (chars: number) => number
+): number {
+  if (!participantId) return 0
+  const activeRunIds = new Set(
+    runs
+      .filter(
+        (run) =>
+          run.ensembleParticipantId === participantId &&
+          (!run.endedAt || run.status === 'running' || run.status === 'queued')
+      )
+      .map((run) => run.runId)
+      .filter((id): id is string => Boolean(id))
+  )
+  if (activeRunIds.size === 0) return 0
+  let liveChars = 0
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue
+    if (message.runId && activeRunIds.has(message.runId)) {
+      liveChars += message.content?.length || 0
+    }
+  }
+  return estimateFromChars(liveChars)
+}
+
+/**
+ * Per-participant context rows for an ensemble chat (honest current-context).
+ * `live` lets the ACTIVELY-RUNNING participant's row tick up with the in-flight
+ * output estimate mid-stream (the in-flight run has no sealed stats yet, so its
+ * row would otherwise freeze at the last turn) — the per-participant analogue of
+ * the solo donut's live add. Only the `live.participantId` row gets it.
+ */
 export function buildParticipantContextRows(
   runs: ReadonlyArray<ChatRun>,
-  participants: ReadonlyArray<EnsembleParticipant>
+  participants: ReadonlyArray<EnsembleParticipant>,
+  live?: { participantId?: string; outputTokens?: number }
 ): ContextMeterRow[] {
   return participants.map((participant) => {
     const latest = latestRunContext(runs, participant.id)
-    const usedTokens = latest.input + latest.output
+    let usedTokens = latest.input + latest.output
+    if (live?.participantId && participant.id === live.participantId) {
+      usedTokens += Math.max(0, live.outputTokens ?? 0)
+    }
     const windowTokens = resolveContextWindow(participant.provider, participant.model)
     return {
       id: participant.id,

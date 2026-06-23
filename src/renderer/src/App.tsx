@@ -344,6 +344,7 @@ import {
   currentContextTokens,
   contextPercent,
   buildParticipantContextRows,
+  liveOutputTokensForParticipant,
   type ContextMeterModel
 } from './lib/contextMeter'
 import { buildProviderRunFailureSnippet } from './lib/providerRunFailureSnippet'
@@ -15545,10 +15546,34 @@ function App(): React.JSX.Element {
   // reasoning / approval) to that participant, so the donut + its label follow it
   // too (effectiveSelectedParticipantId is always set for ensembles → the focused
   // ◎ participant). Non-ensemble / no focus falls back to the active model.
+  // While a round is running, the active participant's row ticks with the live
+  // output estimate (the in-flight run has no sealed stats yet) — so the donut,
+  // when focused on the running participant, ticks like the solo donut does. The
+  // estimate is SCOPED to that participant's OWN in-flight run (not the chat-wide
+  // liveRunOutputTokens, which folds in earlier participants' sealed output and
+  // would over-count the active row).
+  const liveContextParticipantId =
+    isCurrentChatRunning && currentChat?.ensemble?.activeRound?.status === 'running'
+      ? currentChat?.ensemble?.activeRound?.activeParticipantId
+      : undefined
+  const liveActiveParticipantOutputTokens = useMemo(
+    () =>
+      liveOutputTokensForParticipant(
+        currentChat?.runs || [],
+        currentChat?.messages || [],
+        liveContextParticipantId,
+        estimateLiveOutputTokensFromChars
+      ),
+    [liveContextParticipantId, currentChat]
+  )
   const contextParticipantRows = isCurrentEnsembleChat
     ? buildParticipantContextRows(
         currentChat?.runs || [],
-        currentChat?.ensemble?.participants || []
+        currentChat?.ensemble?.participants || [],
+        {
+          participantId: liveContextParticipantId,
+          outputTokens: liveActiveParticipantOutputTokens
+        }
       )
     : undefined
   const focusedContextRow = effectiveSelectedParticipantId
@@ -19746,6 +19771,12 @@ function App(): React.JSX.Element {
       const paneContextWindow = resolveContextWindow(viewerProvider, viewerContextModelId)
       const paneContextPercent = contextPercent(paneContextUsedTokens, paneContextWindow)
       const paneContextLabel = `${formatContextTokens(paneContextUsedTokens)} / ${formatContextTokens(paneContextWindow)} context`
+      // Live tick for THIS pane's actively-running participant (same scoping as the
+      // focused composer), so a split-layout pane's per-participant rows tick too.
+      const paneLiveParticipantId =
+        viewerIsRunning && viewerChat.ensemble?.activeRound?.status === 'running'
+          ? viewerChat.ensemble?.activeRound?.activeParticipantId
+          : undefined
       const paneContextMeter: ContextMeterModel = {
         solo: {
           id: 'solo',
@@ -19759,7 +19790,16 @@ function App(): React.JSX.Element {
           viewerChat.chatKind === 'ensemble'
             ? buildParticipantContextRows(
                 viewerChat.runs || [],
-                viewerChat.ensemble?.participants || []
+                viewerChat.ensemble?.participants || [],
+                {
+                  participantId: paneLiveParticipantId,
+                  outputTokens: liveOutputTokensForParticipant(
+                    viewerChat.runs || [],
+                    viewerChat.messages || [],
+                    paneLiveParticipantId,
+                    estimateLiveOutputTokensFromChars
+                  )
+                }
               )
             : undefined
       }

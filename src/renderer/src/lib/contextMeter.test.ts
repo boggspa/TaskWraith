@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   contextPercent,
   currentContextTokens,
-  buildParticipantContextRows
+  buildParticipantContextRows,
+  liveOutputTokensForParticipant
 } from './contextMeter'
 import type { ChatRun, EnsembleParticipant } from '../../../main/store/types'
 
@@ -86,5 +87,57 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
   it('reads 0% for a participant that has not run yet', () => {
     const rows = buildParticipantContextRows([], participants)
     expect(rows.every((r) => r.usedTokens === 0 && r.percent === 0)).toBe(true)
+  })
+
+  it('adds the live output estimate ONLY to the actively-running participant', () => {
+    const runs = [
+      run({ runId: 'p1a', ensembleParticipantId: 'p1', stats: usage(80_000, 2_000) }),
+      run({ runId: 'p2a', ensembleParticipantId: 'p2', stats: usage(30_000, 1_000) })
+    ]
+    const rows = buildParticipantContextRows(runs, participants, {
+      participantId: 'p1',
+      outputTokens: 600
+    })
+    expect(rows.find((r) => r.id === 'p1')?.usedTokens).toBe(82_600) // 80k+2k + 600 live
+    expect(rows.find((r) => r.id === 'p2')?.usedTokens).toBe(31_000) // untouched
+  })
+
+  it('no live add when participantId is unset', () => {
+    const runs = [run({ runId: 'p1a', ensembleParticipantId: 'p1', stats: usage(80_000, 2_000) })]
+    const rows = buildParticipantContextRows(runs, participants, { outputTokens: 600 })
+    expect(rows.find((r) => r.id === 'p1')?.usedTokens).toBe(82_000)
+  })
+})
+
+describe('liveOutputTokensForParticipant — scoped to the active participant only', () => {
+  const id = (chars: number) => chars // identity so we assert the char count directly
+
+  it('counts ONLY the active participant unsealed-run output, not earlier sealed peers', () => {
+    const runs = [
+      // p1 already answered + sealed this round (endedAt set, success)
+      run({
+        runId: 'p1run',
+        ensembleParticipantId: 'p1',
+        status: 'success',
+        endedAt: '2026-05-30T12:05:00.000Z'
+      }),
+      // p2 is streaming now (no endedAt, running)
+      run({ runId: 'p2run', ensembleParticipantId: 'p2', status: 'running' })
+    ]
+    const messages = [
+      { role: 'assistant', runId: 'p1run', content: 'AAAA' }, // p1 sealed — MUST be ignored
+      { role: 'assistant', runId: 'p2run', content: 'BB' }, // p2 live — counted
+      { role: 'user', runId: 'p2run', content: 'ignored-non-assistant' }
+    ]
+    // The bug was: a chat-wide sum gave p2 'AAAA'+'BB'=6; scoped gives only 'BB'=2.
+    expect(liveOutputTokensForParticipant(runs, messages, 'p2', id)).toBe(2)
+    // p1 has no UNSEALED run → 0 (it's done).
+    expect(liveOutputTokensForParticipant(runs, messages, 'p1', id)).toBe(0)
+  })
+
+  it('returns 0 when participantId is undefined or has no unsealed run', () => {
+    const runs = [run({ runId: 'p2run', ensembleParticipantId: 'p2', status: 'running' })]
+    expect(liveOutputTokensForParticipant(runs, [], undefined, id)).toBe(0)
+    expect(liveOutputTokensForParticipant([], [], 'p2', id)).toBe(0)
   })
 })
