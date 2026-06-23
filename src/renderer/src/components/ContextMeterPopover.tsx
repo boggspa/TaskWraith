@@ -53,14 +53,14 @@ function toRowView(row: ContextMeterRow, isParticipant: boolean): RowView {
   }
 }
 
-function MeterRow({ row }: { row: RowView }): React.JSX.Element {
+function MeterRow({ row, focused }: { row: RowView; focused?: boolean }): React.JSX.Element {
   const accent = `var(--provider-${row.provider}-color, var(--accent))`
   const pctText = `${Math.round(row.percent)}%`
   const amount = row.windowTokens > 0
     ? `${formatContextTokens(row.usedTokens)} / ${formatContextTokens(row.windowTokens)}`
     : formatContextTokens(row.usedTokens)
   return (
-    <div className="context-meter-row">
+    <div className={`context-meter-row${focused ? ' context-meter-row--focused' : ''}`}>
       <div className="context-meter-row-head">
         <span className="context-meter-row-dot" style={{ background: accent }} aria-hidden />
         <span className="context-meter-row-primary">{row.primary}</span>
@@ -173,7 +173,7 @@ export function ContextMeterPopover({
       </div>
       <div className="context-meter-rows">
         {rows.map((row) => (
-          <MeterRow key={row.id} row={row} />
+          <MeterRow key={row.id} row={row} focused={!!meter?.focusedId && row.id === meter.focusedId} />
         ))}
       </div>
       <div className="context-meter-foot">Estimated from the latest turn</div>

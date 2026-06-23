@@ -3906,6 +3906,14 @@
   flex-direction: column;
   gap: 4px;
 }
+/* The participant the composer footer is currently editing (focused roster chip)
+   — matches the donut, which shows this participant's context. */
+.context-meter-row--focused {
+  margin-inline: -8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
 .context-meter-row-head {
   display: flex;
   align-items: center;

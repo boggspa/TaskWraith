@@ -15536,11 +15536,25 @@ function App(): React.JSX.Element {
     liveOutputTokens: liveRunOutputTokens,
     isRunning: isCurrentChatRunning
   })
-  const contextUsedPercent = contextPercent(currentContextUsedTokens, contextWindowSize)
-  const contextLabel = `${formatContextTokens(currentContextUsedTokens)} / ${formatContextTokens(contextWindowSize)} context`
-  // Structured model for the donut popover: the active model (solo) + one row per
-  // ensemble participant (each its own model window). Mirrors how contextLabel /
-  // contextUsedPercent flow to the composer.
+  const activeContextPercent = contextPercent(currentContextUsedTokens, contextWindowSize)
+  // Per-participant rows (ensemble) — also drive the DONUT when a roster chip is
+  // focused: clicking a participant re-targets the whole composer footer (model /
+  // reasoning / approval) to that participant, so the donut + its label follow it
+  // too (effectiveSelectedParticipantId is always set for ensembles → the focused
+  // ◎ participant). Non-ensemble / no focus falls back to the active model.
+  const contextParticipantRows = isCurrentEnsembleChat
+    ? buildParticipantContextRows(
+        currentChat?.runs || [],
+        currentChat?.ensemble?.participants || []
+      )
+    : undefined
+  const focusedContextRow = effectiveSelectedParticipantId
+    ? contextParticipantRows?.find((row) => row.id === effectiveSelectedParticipantId)
+    : undefined
+  const contextUsedPercent = focusedContextRow ? focusedContextRow.percent : activeContextPercent
+  const contextLabel = focusedContextRow
+    ? `${formatContextTokens(focusedContextRow.usedTokens)} / ${formatContextTokens(focusedContextRow.windowTokens)} context`
+    : `${formatContextTokens(currentContextUsedTokens)} / ${formatContextTokens(contextWindowSize)} context`
   const contextMeter: ContextMeterModel = {
     solo: {
       id: 'solo',
@@ -15548,14 +15562,10 @@ function App(): React.JSX.Element {
       modelId: contextModelId,
       usedTokens: currentContextUsedTokens,
       windowTokens: contextWindowSize,
-      percent: contextUsedPercent
+      percent: activeContextPercent
     },
-    participants: isCurrentEnsembleChat
-      ? buildParticipantContextRows(
-          currentChat?.runs || [],
-          currentChat?.ensemble?.participants || []
-        )
-      : undefined
+    participants: contextParticipantRows,
+    focusedId: focusedContextRow?.id
   }
   // 1.0.5-EW25 — pass the user's display currency through so cost
   // numbers respect their Settings → General choice. Defaults to

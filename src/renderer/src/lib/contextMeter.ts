@@ -39,6 +39,9 @@ export interface ContextMeterModel {
   solo: ContextMeterRow
   /** Ensemble only: one row per participant (un-run participants read 0%). */
   participants?: ContextMeterRow[]
+  /** The focused participant id (the roster chip the composer footer is editing).
+   * The donut follows this row; the popover highlights it. */
+  focusedId?: string
 }
 
 export function contextPercent(used: number, window: number): number {
