@@ -1,3 +1,6 @@
+// MUST stay first — gives the unpackaged dev build its own name + userData so it
+// doesn't collide with a release build on the same Mac (see devAppName.ts).
+import './devAppName'
 import {
   app,
   Menu,
@@ -19648,7 +19651,12 @@ if (isGeminiMcpBridgeProcess) {
       const settingsRelayUrl = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
       const configuredRelayUrl = envRelayUrl || settingsRelayUrl
       const embeddedPort = (relayUrl: string | null): number => {
-        const fallbackPort = Number(process.env.TASKWRAITH_RELAY_PORT || '8787')
+        // Dev defaults to 8788 so a dev build + a release build can run at the
+        // same time without colliding on the embedded relay port (8787) — the
+        // second app to bind 8787 otherwise loses its relay and can't be paired.
+        const fallbackPort = Number(
+          process.env.TASKWRAITH_RELAY_PORT || (app.isPackaged ? '8787' : '8788')
+        )
         if (!relayUrl) return fallbackPort
         try {
           const parsed = new URL(relayUrl)
@@ -20385,7 +20393,7 @@ if (isGeminiMcpBridgeProcess) {
     // pairing QR then advertises wss://<dnsName>, which iOS ATS accepts
     // off-LAN — the only way a cellular phone can reach the bridge.
     const iosRemoteRelayPort = (): number =>
-      Number(process.env.TASKWRAITH_RELAY_PORT || '8787')
+      Number(process.env.TASKWRAITH_RELAY_PORT || (app.isPackaged ? '8787' : '8788'))
     const iosRemoteTailscaleStatus = async (): Promise<Record<string, unknown>> => {
       const tailscale = await detectTailscale()
       const relayPort = iosRemoteRelayPort()
