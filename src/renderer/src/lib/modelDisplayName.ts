@@ -152,7 +152,11 @@ export function canonicalModelIdForProvider(
     if (provider === 'ollama') return 'qwen3:4b-instruct'
   }
   if (provider === 'grok') {
-    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'grok-build'
+    // A stale Gemini fast-lite fallback persisted under Grok repairs to Grok's
+    // fast model (Composer 2.5 Fast) — NOT the Build model — mirroring the Cursor
+    // rule below (stale fast-lite -> composer-2.5-fast). The generic `default`
+    // case above still maps to grok-build.
+    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'grok-composer-2.5-fast'
     if (!key || key === 'grok') {
       return 'grok-build'
     }

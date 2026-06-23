@@ -158,14 +158,14 @@ describe('humaniseModelId', () => {
     })
 
     it('uses provider context to repair stale Gemini placeholder ids for Grok and Cursor', () => {
-      expect(canonicalModelIdForProvider('grok', 'flash-lite')).toBe('grok-build')
+      expect(canonicalModelIdForProvider('grok', 'flash-lite')).toBe('grok-composer-2.5-fast')
       expect(canonicalModelIdForProvider('grok', 'composer-2.5-fast')).toBe(
         'grok-composer-2.5-fast'
       )
       expect(canonicalModelIdForProvider('cursor', 'flash-lite')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('cursor', 'Composer 2.5 Fast')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('cursor', 'Composer 2.5')).toBe('composer-2.5')
-      expect(humaniseModelId('grok', 'flash-lite')).toBe('Grok Build 0.1')
+      expect(humaniseModelId('grok', 'flash-lite')).toBe('Grok Composer 2.5 Fast')
       expect(humaniseModelId('grok', 'composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
       expect(humaniseModelId('cursor', 'gemini-3.1-flash-lite')).toBe('Composer 2.5 Fast')
       expect(humaniseModelId('gemini', 'flash-lite')).toBe('Gemini Flash Lite')

@@ -766,6 +766,14 @@ export const buildWelcomeUsageDashboardData = (
     bucket.providerTotals[provider] += cellWeight
     hourBuckets.set(hourStart, bucket)
 
+    // Drop the wildcard `default` / `cli-default` bucket by its RAW id: the
+    // canonical id above has already rewritten it to a real provider default
+    // (e.g. claude `default` -> `claude-sonnet-4-6`), so the canonical filter
+    // alone would no longer recognise it as the noisy default bucket. The run
+    // still counts toward the headline/aggregate stats — only this per-model
+    // breakdown row is suppressed.
+    const rawModelKey = (record.model || '').trim().toLowerCase()
+    if (rawModelKey === 'default' || rawModelKey === 'cli-default') continue
     if (!shouldSurfaceModelInBreakdown(provider, model)) continue
     const modelId = `${provider}:${model}`
     const label = labelForBreakdownModel(provider, model)
