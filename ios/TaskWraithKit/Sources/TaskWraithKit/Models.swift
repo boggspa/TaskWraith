@@ -526,6 +526,10 @@ public struct RemoteTaskCard: Codable, Sendable {
     /// so the iOS thread count matches the desktop sidebar.
     public let archived: Bool?
     public let runId: String?
+    /// One-screen text preview of the latest message (Mac-sanitized — the same
+    /// field the desktop card shows). Used to enrich the foreground completion
+    /// banner body. Older Mac builds omit it ⇒ nil.
+    public let preview: String?
     public let pendingApprovalCount: Int?
     public let pendingQuestionCount: Int?
     public let activeGoal: RemoteActiveGoal?
@@ -978,6 +982,10 @@ public struct RemoteEnsembleState: Codable, Sendable {
         public let enabled: Bool?
         public let order: Int?
         public let model: String?
+        /// Honest current-context proxy for this participant (latest run's
+        /// input+output). Divided by the per-model window on-device to draw the
+        /// participant's context meter. Optional — absent ⇒ 0 / no run yet.
+        public let contextTokens: Int?
         public let brief: String?
         /// Per-participant approval preset + reasoning (desktop parity). Optional
         /// so older Mac builds (which didn't project them) still decode.
@@ -989,7 +997,8 @@ public struct RemoteEnsembleState: Codable, Sendable {
             id: String, provider: String, role: String?, enabled: Bool?,
             order: Int?, model: String?, brief: String?,
             permissionPresetId: String? = nil, reasoningEffort: String? = nil,
-            fastModeEnabled: Bool? = nil, thinkingEnabled: Bool? = nil
+            fastModeEnabled: Bool? = nil, thinkingEnabled: Bool? = nil,
+            contextTokens: Int? = nil
         ) {
             self.id = id
             self.provider = provider
@@ -1002,6 +1011,7 @@ public struct RemoteEnsembleState: Codable, Sendable {
             self.reasoningEffort = reasoningEffort
             self.fastModeEnabled = fastModeEnabled
             self.thinkingEnabled = thinkingEnabled
+            self.contextTokens = contextTokens
         }
     }
 }

@@ -134,12 +134,27 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UN
         }
     }
 
-    // Show blocking pushes (with their action buttons) even when foregrounded.
+    // Foreground presentation policy. Blocking pushes (approval/question) keep
+    // showing with their action buttons. Completions are special-cased so the
+    // phone shows ONE rich banner, never two: our own local rich banner (posted
+    // by the model from the E2EE projection) always shows; the Mac's generic
+    // routing-only runComplete/runFailed twin is dropped while foregrounded
+    // because the model already surfaces the rich version (or intentionally
+    // stays quiet when the thread is on-screen).
     func userNotificationCenter(
         _: UNUserNotificationCenter,
-        willPresent _: UNNotification,
+        willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        let userInfo = notification.request.content.userInfo
+        if userInfo["tw_rich_local"] != nil {
+            completionHandler([.banner, .sound, .list])
+            return
+        }
+        if let reason = userInfo["reason"] as? String, reason == "runComplete" || reason == "runFailed" {
+            completionHandler([])
+            return
+        }
         completionHandler([.banner, .sound])
     }
 

@@ -119,7 +119,9 @@ public final class RemoteSessionModel: ObservableObject {
     /// no network client, canned data, inert actions. Drives the demo banner.
     @Published public private(set) var isDemo = false
     @Published public private(set) var macDisplayName: String = ""
-    @Published public private(set) var taskCards: [RemoteTaskCard] = []
+    @Published public private(set) var taskCards: [RemoteTaskCard] = [] {
+        didSet { handleTaskCardCompletionTransitions(previous: oldValue) }
+    }
     @Published public private(set) var approvals: [MobileApprovalCard] = []
     @Published public private(set) var questions: [MobileQuestionCard] = []
     /// Ids the user just acted on locally — suppressed from re-display until the
@@ -407,6 +409,97 @@ public final class RemoteSessionModel: ObservableObject {
             }
         #endif
     }
+
+    // MARK: - Foreground completion banners
+
+    /// When a task card flips running → success/failed LIVE while the app is in the
+    /// foreground, post a rich LOCAL notification built from data the phone already
+    /// holds over the E2EE projection (`card.preview` + `diffSummaries`). The content
+    /// is NEVER inlined into the Mac's routing-only remote push — the phone composes
+    /// it locally. willPresent (PushAppDelegate) drops the Mac's generic
+    /// runComplete/runFailed twin while foregrounded, so a completion never
+    /// double-banners. Skipped when the thread is already on-screen (`visibleThreadId`
+    /// — you can see the result), in the offline demo, and on the first snapshot
+    /// (no prior status ⇒ no live transition, so historical completions stay quiet).
+    private func handleTaskCardCompletionTransitions(previous: [RemoteTaskCard]) {
+        #if canImport(UIKit)
+            guard !isDemo, !previous.isEmpty else { return }
+            guard UIApplication.shared.applicationState == .active else { return }
+            var previousStatus: [String: String] = [:]
+            previousStatus.reserveCapacity(previous.count)
+            for card in previous { previousStatus[card.id] = card.status }
+            for card in taskCards {
+                guard previousStatus[card.id] == "running" else { continue }
+                guard card.status == "success" || card.status == "failed" else { continue }
+                guard visibleThreadId != card.id else { continue }
+                postCompletionBanner(for: card)
+            }
+        #endif
+    }
+
+    #if canImport(UIKit)
+        private func postCompletionBanner(for card: RemoteTaskCard) {
+            let failed = card.status == "failed"
+            let name = (card.title?.isEmpty == false) ? card.title! : "TaskWraith"
+            let content = UNMutableNotificationContent()
+            content.title = failed ? "\u{26A0}\u{FE0F} \(name)" : name
+            var lines: [String] = []
+            if let summary = Self.bannerSentences(card.preview) { lines.append(summary) }
+            if !failed, let diff = diffBannerLine(forThread: card.id) { lines.append(diff) }
+            if lines.isEmpty { lines.append(failed ? "Run needs your attention." : "Run finished.") }
+            content.body = lines.joined(separator: "\n")
+            content.sound = .default
+            content.userInfo = ["tw_rich_local": true, "threadId": card.id]
+            let request = UNNotificationRequest(
+                identifier: "tw-complete-\(card.id)-\(card.runId ?? "")",
+                content: content, trigger: nil)
+            UNUserNotificationCenter.current().add(request)
+        }
+
+        /// "\u{1F4DD} 3 files \u{00B7} \u{1F7E2} +128 \u{00B7} \u{1F534} \u{2212}44" —
+        /// emoji is the only way to colour a plain-text banner. nil when nothing changed.
+        private func diffBannerLine(forThread threadId: String) -> String? {
+            guard let diff = diffSummaries[threadId] else { return nil }
+            let files = diff.filesChanged ?? diff.files?.count ?? 0
+            let adds = diff.additions ?? 0
+            let dels = diff.deletions ?? 0
+            guard files > 0 || adds > 0 || dels > 0 else { return nil }
+            var parts: [String] = []
+            if files > 0 { parts.append("\u{1F4DD} \(files) file\(files == 1 ? "" : "s")") }
+            if adds > 0 { parts.append("\u{1F7E2} +\(adds)") }
+            if dels > 0 { parts.append("\u{1F534} \u{2212}\(dels)") }
+            return parts.joined(separator: " \u{00B7} ")
+        }
+    #endif
+
+    /// First 1–2 sentences of a card preview, flattened to one line + capped, for a
+    /// banner body. Pure + platform-agnostic (testable). nil for empty input.
+    static func bannerSentences(_ text: String?, maxSentences: Int = 2, cap: Int = 180) -> String? {
+        guard let raw = text?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        let flattened = raw.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).joined(separator: " ")
+        var assembled = ""
+        var sentences = 0
+        var pending = ""
+        for ch in flattened {
+            pending.append(ch)
+            if ch == "." || ch == "!" || ch == "?" {
+                assembled += pending
+                pending = ""
+                sentences += 1
+                if sentences >= maxSentences { break }
+            }
+        }
+        if assembled.isEmpty { assembled = pending }
+        var trimmed = assembled.trimmingCharacters(in: .whitespaces)
+        if trimmed.count > cap {
+            let end = trimmed.index(trimmed.startIndex, offsetBy: cap)
+            trimmed = String(trimmed[..<end]).trimmingCharacters(in: .whitespaces) + "\u{2026}"
+        }
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     /// Side-chat child that should open inside the inspector instead of
     /// replacing the split-view detail pane.
     @Published public var inspectorSideChatTarget: String?
