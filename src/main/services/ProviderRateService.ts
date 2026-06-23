@@ -3,7 +3,7 @@
  * foundation + best-effort scrape probe.
  *
  * **What this service is**: a curated baseline of per-model input
- * + output token costs across the four providers, plus a probe
+ * + output token costs across the provider roster, plus a probe
  * that fetches each provider's public pricing page and tries to
  * verify the baked-in values haven't drifted. The data is
  * foundational — no UI surfaces it in 1.0.5; the rates are
@@ -13,8 +13,7 @@
  * of truth.
  *
  * **What this service is NOT**: a real-time scraper. Pricing
- * pages are JavaScript-rendered single-page apps for all four
- * providers (OpenAI, Anthropic, Google, Moonshot); plain `fetch`
+ * pages are often JavaScript-rendered single-page apps; plain `fetch`
  * gets only the unrendered shell. Building a headless-browser
  * scraper for each is fragile + heavyweight + breaks the moment
  * any provider changes their HTML structure. The probe here is
@@ -45,7 +44,7 @@ import type { ProviderId } from '../store/types'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
-export const RATE_TABLE_VERSION = '2026-06-09'
+export const RATE_TABLE_VERSION = '2026-06-23'
 
 /**
  * Per-model rate entry. Rates are USD per 1,000,000 tokens (so
@@ -87,7 +86,8 @@ export interface ProviderRateTable {
 }
 
 /**
- * 1.0.5-EW38 — Baked-in provider rate snapshot. Captured 2026-05-27.
+ * 1.0.5-EW38 — Baked-in provider rate snapshot. Last manually
+ * reviewed 2026-06-23.
  *
  * Values are USD per 1M tokens (input / output). When provider
  * pricing pages drift the probe surfaces a `not-verified` status
@@ -118,16 +118,17 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
   // subscription (a credit pool — see GrokUsage's "Subscription credits"
   // meter), NOT the xAI per-token API. These rates are therefore a PROJECTED
   // API-equivalent ("what this run would have cost on the xAI API"), not actual
-  // billing. Captured from console.x.ai 2026-05-29.
+  // billing. Captured from xAI pricing docs 2026-06-23.
   grok: {
     provider: 'grok',
-    pricingUrl: 'https://docs.x.ai/docs/models',
+    pricingUrl: 'https://docs.x.ai/developers/pricing',
     models: [
       {
         modelId: 'grok-build',
         inputUsdPerMillion: 1.0,
         outputUsdPerMillion: 2.0,
-        sourceUrl: 'https://docs.x.ai/docs/models',
+        cachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://docs.x.ai/developers/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'xAI API pricing for grok-build-0.1 (256K ctx). PROJECTED API-equivalent; CLI auth bills via subscription credits.'
@@ -145,7 +146,8 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         modelId: 'grok-4.3',
         inputUsdPerMillion: 1.25,
         outputUsdPerMillion: 2.5,
-        sourceUrl: 'https://docs.x.ai/docs/models',
+        cachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://docs.x.ai/developers/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'xAI API pricing for grok-4.3 (1M ctx). Projected API-equivalent, not actual billing.'
@@ -169,7 +171,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://cursor.com/docs/models/cursor-composer-2-5',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Composer 2.5 Fast tier (IDE default). PROJECTED API-equivalent — individual plans draw from the Composer pool, not per-token billing. Used as the fallback rate for every Cursor usage row.'
+          'Composer 2.5 Fast tier (IDE default). PROJECTED API-equivalent — individual plans draw from the Composer pool, not per-token billing. Used as the fallback rate for unknown Cursor usage rows.'
+      },
+      {
+        modelId: 'composer-2.5',
+        inputUsdPerMillion: 0.5,
+        outputUsdPerMillion: 2.5,
+        sourceUrl: 'https://cursor.com/changelog/composer-2-5',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Composer 2.5 Standard tier. PROJECTED API-equivalent — exact rows should use this lower standard-tier rate instead of the Fast proxy.'
       }
     ]
   },
@@ -179,26 +190,26 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     models: [
       {
         modelId: 'gpt-5.5',
-        inputUsdPerMillion: 1.25,
-        outputUsdPerMillion: 10.0,
-        cachedInputUsdPerMillion: 0.125,
+        inputUsdPerMillion: 5.0,
+        outputUsdPerMillion: 30.0,
+        cachedInputUsdPerMillion: 0.5,
         sourceUrl: 'https://openai.com/api/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes: 'Codex CLI typically billed via ChatGPT subscription, not per-token.'
       },
       {
         modelId: 'gpt-5.4',
-        inputUsdPerMillion: 1.25,
-        outputUsdPerMillion: 10.0,
-        cachedInputUsdPerMillion: 0.125,
+        inputUsdPerMillion: 2.5,
+        outputUsdPerMillion: 15.0,
+        cachedInputUsdPerMillion: 0.25,
         sourceUrl: 'https://openai.com/api/pricing',
         lastVerified: RATE_TABLE_VERSION
       },
       {
         modelId: 'gpt-5.4-mini',
-        inputUsdPerMillion: 0.25,
-        outputUsdPerMillion: 2.0,
-        cachedInputUsdPerMillion: 0.025,
+        inputUsdPerMillion: 0.75,
+        outputUsdPerMillion: 4.5,
+        cachedInputUsdPerMillion: 0.075,
         sourceUrl: 'https://openai.com/api/pricing',
         lastVerified: RATE_TABLE_VERSION
       },
@@ -323,42 +334,85 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     pricingUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
     models: [
       {
-        modelId: 'gemini-3.1-pro',
-        inputUsdPerMillion: 1.25,
-        outputUsdPerMillion: 10.0,
-        cachedInputUsdPerMillion: 0.3125,
+        modelId: 'gemini-3.1-pro-preview',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 12.0,
+        cachedInputUsdPerMillion: 0.2,
         sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
         lastVerified: RATE_TABLE_VERSION,
-        notes: 'Paid tier; free dev-quota covers small workloads.'
+        notes:
+          'Historic Gemini CLI/provider tracking row. Gemini is retired for new TaskWraith runs; retained so historical activity estimates remain visible.'
       },
       {
-        modelId: 'gemini-3.1-flash',
-        inputUsdPerMillion: 0.3,
-        outputUsdPerMillion: 2.5,
-        cachedInputUsdPerMillion: 0.075,
+        modelId: 'gemini-3.1-pro',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 12.0,
+        cachedInputUsdPerMillion: 0.2,
         sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
-        lastVerified: RATE_TABLE_VERSION
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Historic plain-id alias priced at Gemini 3.1 Pro Preview standard rates; Gemini is retired for new TaskWraith runs.'
+      },
+      {
+        modelId: 'gemini-3-flash-preview',
+        inputUsdPerMillion: 0.5,
+        outputUsdPerMillion: 3.0,
+        cachedInputUsdPerMillion: 0.05,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Historic Gemini CLI/provider tracking row retained for external activity.'
       },
       {
         modelId: 'gemini-3.1-flash-lite',
+        inputUsdPerMillion: 0.25,
+        outputUsdPerMillion: 1.5,
+        cachedInputUsdPerMillion: 0.025,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Historic Gemini CLI/provider tracking row retained for external activity.'
+      },
+      {
+        modelId: 'gemini-3.1-flash-lite-preview',
+        inputUsdPerMillion: 0.25,
+        outputUsdPerMillion: 1.5,
+        cachedInputUsdPerMillion: 0.025,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Historic preview alias priced at Gemini 3.1 Flash-Lite standard rates; Gemini is retired for new TaskWraith runs.'
+      },
+      {
+        modelId: 'gemini-2.5-flash-lite',
         inputUsdPerMillion: 0.1,
         outputUsdPerMillion: 0.4,
+        cachedInputUsdPerMillion: 0.01,
         sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
-        lastVerified: RATE_TABLE_VERSION
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Historic Gemini CLI/provider tracking row retained for external activity.'
       }
     ]
   },
   kimi: {
     provider: 'kimi',
-    pricingUrl: 'https://platform.moonshot.ai/docs/pricing',
+    pricingUrl: 'https://platform.kimi.ai/docs/pricing/chat',
     models: [
       {
+        modelId: 'kimi-k2.7-code',
+        inputUsdPerMillion: 0.95,
+        outputUsdPerMillion: 4.0,
+        cachedInputUsdPerMillion: 0.19,
+        sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k27-code',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Current Kimi Code CLI default; automatic context cache hit pricing recorded as cached input.'
+      },
+      {
         modelId: 'kimi-k2.6',
-        inputUsdPerMillion: 0.6,
-        outputUsdPerMillion: 2.5,
-        cachedInputUsdPerMillion: 0.15,
-        sourceUrl: 'https://platform.moonshot.ai/docs/pricing',
-        lastVerified: RATE_TABLE_VERSION
+        inputUsdPerMillion: 0.95,
+        outputUsdPerMillion: 4.0,
+        cachedInputUsdPerMillion: 0.16,
+        sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k26',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Automatic context cache hit pricing recorded as cached input.'
       }
     ]
   },

@@ -13,7 +13,10 @@ const RATES: RendererProviderRates = {
     { modelId: 'gpt-5.5', inputUsdPerMillion: 1.25, outputUsdPerMillion: 10.0 },
     { modelId: 'gpt-5.4-mini', inputUsdPerMillion: 0.25, outputUsdPerMillion: 2.0 }
   ],
-  cursor: [{ modelId: 'composer-2.5-fast', inputUsdPerMillion: 3.0, outputUsdPerMillion: 15.0 }]
+  cursor: [
+    { modelId: 'composer-2.5-fast', inputUsdPerMillion: 3.0, outputUsdPerMillion: 15.0 },
+    { modelId: 'composer-2.5', inputUsdPerMillion: 0.5, outputUsdPerMillion: 2.5 }
+  ]
 }
 
 describe('normalizeProviderRates', () => {
@@ -45,6 +48,13 @@ describe('normalizeProviderRates', () => {
               outputUsdPerMillion: 15,
               sourceUrl: 'https://cursor.com/docs/models/cursor-composer-2-5',
               lastVerified: '2026-05-29'
+            },
+            {
+              modelId: 'composer-2.5',
+              inputUsdPerMillion: 0.5,
+              outputUsdPerMillion: 2.5,
+              sourceUrl: 'https://cursor.com/changelog/composer-2-5',
+              lastVerified: '2026-05-29'
             }
           ]
         }
@@ -61,7 +71,8 @@ describe('normalizeProviderRates', () => {
     ])
     // Empty model lists are dropped entirely.
     expect(out.cursor).toEqual([
-      { modelId: 'composer-2.5-fast', inputUsdPerMillion: 3, outputUsdPerMillion: 15 }
+      { modelId: 'composer-2.5-fast', inputUsdPerMillion: 3, outputUsdPerMillion: 15 },
+      { modelId: 'composer-2.5', inputUsdPerMillion: 0.5, outputUsdPerMillion: 2.5 }
     ])
   })
 
@@ -105,7 +116,7 @@ describe('resolveModelRate', () => {
     expect(resolveModelRate(RATES, 'cursor', 'composer-2.5-fast')?.modelId).toBe(
       'composer-2.5-fast'
     )
-    expect(resolveModelRate(RATES, 'cursor', 'composer-2.5')?.modelId).toBe('composer-2.5-fast')
+    expect(resolveModelRate(RATES, 'cursor', 'composer-2.5')?.modelId).toBe('composer-2.5')
   })
 })
 
@@ -122,11 +133,11 @@ describe('estimateRunCostUsd', () => {
     expect(usd).toBeCloseTo(0.125, 6)
   })
 
-  it('projects Cursor tokens via the Composer 2.5 Fast proxy rate', () => {
-    // 10k in * $3/M + 5k out * $15/M = 0.03 + 0.075 = 0.105
+  it('projects exact Cursor Composer 2.5 rows via the standard rate', () => {
+    // 10k in * $0.50/M + 5k out * $2.50/M = 0.005 + 0.0125 = 0.0175
     expect(
       estimateRunCostUsd(RATES, 'cursor', 'composer-2.5', 10_000, 5_000)
-    ).toBeCloseTo(0.105, 6)
+    ).toBeCloseTo(0.0175, 6)
   })
 
   it('returns 0 when provider/model cannot be resolved', () => {
