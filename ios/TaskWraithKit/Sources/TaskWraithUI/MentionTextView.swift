@@ -147,10 +147,13 @@ import TaskWraithKit
                 ]
             }
 
-            // Visual parity each pass — the shell (font design / colours) can swap
-            // under us when the user changes composer style.
-            if textView.font != font { textView.font = font }
-            textView.textColor = UIColor(textColor)
+            // Caret/selection tint ONLY. Do NOT set textView.font / textView.textColor
+            // here: those are VIEW-WIDE and stomp the per-character @mention colours
+            // (typing a word after "@Codex" was wiping its hue while the bold — a
+            // run attribute the getter-gated font line happened to skip — survived).
+            // The shell font + base text colour are owned by applyHighlight via
+            // attributedText/typingAttributes, and re-applied when the shell changes
+            // because the highlight signature includes the font + colour.
             textView.tintColor = UIColor(textColor)
 
             let placeholderLabel = context.coordinator.placeholderLabel

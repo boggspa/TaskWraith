@@ -771,11 +771,11 @@ struct Composer: View {
 
     private var placeholder: String {
         if card.isEnsemble {
-            return "Ask the ensemble. @ to direct a participant…"
+            return "Ask the Ensemble"
         }
-        // Single-provider + guest: @ directs the host or the guest.
+        // Single-provider + guest: keep it short; the chip bar surfaces on "@".
         if !mentionParticipants.isEmpty {
-            return "Ask \(providerName). @ to direct the guest…"
+            return "Ask \(providerName) or the guest"
         }
         return "Ask \(providerName) anything…"
     }
