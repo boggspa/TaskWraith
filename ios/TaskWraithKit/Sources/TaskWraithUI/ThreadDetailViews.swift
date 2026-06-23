@@ -518,6 +518,18 @@ struct ThreadDetailView: View {
         ScrollViewReader { proxy in
             transcriptList(proxy: proxy)
         }
+        // Persist typed-but-unsent text. Restore on appear (keyed by taskId, so a
+        // thread-switch or themes.revision teardown that recreates this view
+        // re-hydrates the composer) and record every edit. `if followUp.isEmpty`
+        // avoids clobbering text on a re-appear where @State survived. Covers BOTH
+        // the main composer and the empty-thread welcome composer (they share
+        // `followUp`). Send clears `followUp` → onChange prunes the stored draft.
+        .onAppear {
+            if followUp.isEmpty { followUp = TWDraftPersistence.draft(for: taskId) }
+        }
+        .onChange(of: followUp) { _, newValue in
+            TWDraftPersistence.setDraft(newValue, for: taskId)
+        }
     }
 
     private func transcriptList(proxy: ScrollViewProxy) -> some View {

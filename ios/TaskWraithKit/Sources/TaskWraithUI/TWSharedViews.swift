@@ -7704,6 +7704,12 @@ struct MiniThreadView: View {
                 // rail show unconditionally); idle-collapse here is a follow-up.
                 forcesExpanded: true,
                 text: $draft)
+            .onAppear {
+                if draft.isEmpty { draft = TWDraftPersistence.draft(for: card.id) }
+            }
+            .onChange(of: draft) { _, newValue in
+                TWDraftPersistence.setDraft(newValue, for: card.id)
+            }
             Rectangle().fill(TWTheme.border).frame(height: 1)
             TelemetryFooterRail(
                 run: snapshot?.runSummary,

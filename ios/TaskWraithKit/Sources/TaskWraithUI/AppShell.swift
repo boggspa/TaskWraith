@@ -183,7 +183,13 @@ public struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             // iOS kills sockets in the background — coming back to the
             // foreground silently re-resolves the stored pairing.
-            if phase == .active { model.reconnectIfStale() }
+            if phase == .active {
+                model.reconnectIfStale()
+            } else {
+                // Leaving the foreground: flush any debounced composer draft now, so
+                // text typed in the last moment is durable before iOS suspends us.
+                TWDraftPersistence.flush()
+            }
         }
     }
 }
