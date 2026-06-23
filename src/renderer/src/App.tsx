@@ -337,6 +337,7 @@ import {
 } from './lib/RunLanes'
 import { formatOpaqueMarkdownPromptSection } from './lib/HandoffPrompt'
 import { resolveContextWindow, formatContextTokens } from './lib/contextWindows'
+import { currentContextTokens, contextPercent } from './lib/contextMeter'
 import { buildProviderRunFailureSnippet } from './lib/providerRunFailureSnippet'
 import { rawLogFromRunEvent, type RawLogEntry } from './lib/rawLogEntry'
 import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQueueScheduling'
@@ -15522,9 +15523,16 @@ function App(): React.JSX.Element {
     latestRunLimits.totalTokenLimit,
     ollamaLiveContextLength
   )
-  const contextUsedPercent =
-    contextWindowSize > 0 ? Math.min(100, (cumulativeChatTokens / contextWindowSize) * 100) : 0
-  const contextLabel = `${formatContextTokens(cumulativeChatTokens)} / ${formatContextTokens(contextWindowSize)} context`
+  // Honest current-context proxy for the donut (NOT cumulativeChatTokens, which
+  // sums every run and over-counts — see contextMeter.ts). cumulativeChatTokens
+  // stays for the cost tally + plan-import estimate, which legitimately want
+  // lifetime totals.
+  const currentContextUsedTokens = currentContextTokens(currentChat?.runs || [], {
+    liveOutputTokens: liveRunOutputTokens,
+    isRunning: isCurrentChatRunning
+  })
+  const contextUsedPercent = contextPercent(currentContextUsedTokens, contextWindowSize)
+  const contextLabel = `${formatContextTokens(currentContextUsedTokens)} / ${formatContextTokens(contextWindowSize)} context`
   // 1.0.5-EW25 — pass the user's display currency through so cost
   // numbers respect their Settings → General choice. Defaults to
   // USD if settings haven't hydrated yet, matching the helper's
