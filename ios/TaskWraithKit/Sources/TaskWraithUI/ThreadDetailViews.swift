@@ -1280,13 +1280,36 @@ struct ThreadDetailView: View {
             // `defer` guarantees the coalescer re-arms no matter how the closure
             // exits, so the flag can never stick and wedge follow off.
             defer { followPin.scheduled = false }
-            await Task.yield()
+            // Defer to the NEXT main-runloop iteration — NOT `Task.yield()`,
+            // which is a cooperative suspension that can resume WITHIN the
+            // current iteration, before the List's backing UICollectionView
+            // commits its new item set (that commit runs on a CFRunLoop
+            // observer — `NSRunLoop.flushObservers`). Scrolling before the
+            // commit resolved a stale/out-of-range index path for
+            // "transcript-bottom" and UIKit raised in
+            // `_validateScrollingTargetIndexPath:` → SIGABRT. Ensemble sends
+            // made it reliable: many rapid live↔committed transitions per turn
+            // overwhelmed the single yield. `DispatchQueue.main.async` resumes
+            // after the commit, so the sentinel's index path is valid.
+            await awaitNextMainRunloop()
             guard force || autoFollow else { return }
             scrollSentinelToBottomNow(proxy)
             // Settle pass: a big layout (long message / a new participant's
-            // block) can land the first scroll a hair short.
-            await Task.yield()
+            // block) can land the first scroll a hair short — re-pin a runloop
+            // later, again after the layout has committed.
+            await awaitNextMainRunloop()
             if force || autoFollow { scrollSentinelToBottomNow(proxy) }
+        }
+    }
+
+    /// Suspend until the next main-runloop iteration, AFTER the current update
+    /// (including the List's UICollectionView item commit) has flushed. Used
+    /// instead of `Task.yield()` so a follow-pin scroll never targets an
+    /// index path the collection view hasn't committed yet.
+    @MainActor
+    private func awaitNextMainRunloop() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
         }
     }
 
