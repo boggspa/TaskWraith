@@ -4547,6 +4547,10 @@ function App(): React.JSX.Element {
       settingsPatch.userBubbleColor = next.userBubbleColor
       appearance.update({ userBubbleColor: next.userBubbleColor })
     }
+    if (next.appIconVariant !== undefined) {
+      settingsPatch.appIconVariant = next.appIconVariant
+      appearance.update({ appIconVariant: next.appIconVariant })
+    }
     if (next.promptSurfaceStyle !== undefined) {
       settingsPatch.promptSurfaceStyle = next.promptSurfaceStyle
       appearance.update({ promptSurfaceStyle: next.promptSurfaceStyle })
