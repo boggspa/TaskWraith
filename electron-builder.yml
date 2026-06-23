@@ -111,6 +111,26 @@ mac:
       to: bridge/TaskWraithBridgeDaemon
 dmg:
   artifactName: TaskWraith-${version}-universal-mac.${ext}
+  # Branded installer window. Background art is generated from the brand kit
+  # by `scripts/export-dmg-background.cjs` (build/background.png +
+  # build/background@2x.png; dmg-builder auto-combines them into a retina
+  # TIFF). The icon coordinates below MUST match the pedestals/arrow baked
+  # into that artwork — regenerate the PNGs if you change either.
+  background: background.png
+  title: ${productName} ${version}
+  window:
+    width: 660
+    height: 420
+  iconSize: 100
+  iconTextSize: 13
+  contents:
+    - x: 172
+      y: 250
+      type: file
+    - x: 488
+      y: 250
+      type: link
+      path: /Applications
 linux:
   target:
     - AppImage

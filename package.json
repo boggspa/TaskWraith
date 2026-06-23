@@ -37,6 +37,7 @@
     "smoke:bridge-daemon": "npm run prebuild:bridge-daemon && node scripts/smoke-bridge-daemon-roundtrip.cjs",
     "prebuild:bridge-daemon": "node scripts/build-bridge-daemon.cjs",
     "prepare:mac-universal-deps": "node scripts/install-mac-universal-optional-deps.cjs",
+    "assets:dmg-background": "node scripts/export-dmg-background.cjs",
     "test:swift:bridge": "cd swift/TaskWraithBridge && swift test",
     "clean:dist": "node scripts/clean-dist.cjs dist",
     "validate:release": "node scripts/validate-release.cjs",
