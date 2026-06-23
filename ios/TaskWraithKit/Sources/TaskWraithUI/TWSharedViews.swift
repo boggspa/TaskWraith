@@ -1381,14 +1381,15 @@ public struct TokenRevealText: View {
         self.onRevealFrame = onRevealFrame
     }
 
-    /// Roughly a line-and-a-half on phone transcript widths. Keep every band
-    /// readable: this is a materialization tail, not placeholder shimmer.
-    private static let tailBands: [(length: Int, opacity: Double)] = [
-        (22, 0.62), (24, 0.74), (26, 0.88)
-    ]
     private static let frameDelayNanos: UInt64 = 42_000_000
-    private static let settleStep = 7
-    private static let coldRevealSnapThreshold = 220
+    /// The reveal tick in seconds — drives the SHARED time-based cursor math
+    /// (advanceReveal / RevealParams) so iOS reveals the same chars per wall-
+    /// second as the Electron rAF path.
+    private static let frameDt: Double = Double(frameDelayNanos) / 1_000_000_000
+    /// Sub-bands the fade tail is split into when sampling the shared smoothstep
+    /// opacity curve — more than the old 3 hardcoded bands so the gradient reads
+    /// continuous, without a per-grapheme Text explosion.
+    private static let fadeBandCount = 6
 
     public var body: some View {
         renderedText
@@ -1400,7 +1401,7 @@ public struct TokenRevealText: View {
             .accessibilityLabel(Text(target))
             .onAppear {
                 goal = target
-                if reduceMotion || target.count > Self.coldRevealSnapThreshold {
+                if reduceMotion || target.count > RevealParams.shared.coldSnapChars {
                     revealed = target.count
                     solidified = revealed
                     onRevealFrame?()
@@ -1457,21 +1458,30 @@ public struct TokenRevealText: View {
     private var composedText: Text {
         let shown = String(goal.prefix(revealed))
         guard !shown.isEmpty else { return Text("") }
-        // Fade bands cover ONLY the not-yet-solidified tail (text that just
-        // arrived); once the pump's settle phase catches `solidified` up to
-        // `revealed`, everything renders solid.
-        var tailBudget = max(0, revealed - solidified)
-        var bands: [(text: String, opacity: Double)] = []
-        var remaining = Substring(shown)
-        for band in Self.tailBands.reversed() where !remaining.isEmpty && tailBudget > 0 {
-            let take = min(band.length, remaining.count, tailBudget)
-            bands.append((String(remaining.suffix(take)), band.opacity))
-            remaining = remaining.dropLast(take)
-            tailBudget -= take
-        }
-        var result = Text(String(remaining)).foregroundColor(color)
-        for band in bands.reversed() {
-            result = result + Text(band.text).foregroundColor(color.opacity(band.opacity))
+        let chars = Array(shown)
+        // The fade band is the not-yet-solidified tail [solidified, revealed];
+        // everything before it is solid. Split the band into sub-bands and
+        // sample the SHARED smoothstep curve by distance from the frontier, so
+        // the easing matches Electron (newest ≈ transparent → oldest solid).
+        let fadeLen = min(chars.count, max(0, revealed - solidified))
+        guard fadeLen > 0 else { return Text(shown).foregroundColor(color) }
+        let solidCount = chars.count - fadeLen
+        var result = Text(String(chars.prefix(solidCount))).foregroundColor(color)
+        let fadeChars = Array(chars.suffix(fadeLen))
+        let bandCount = min(fadeLen, Self.fadeBandCount)
+        let per = Double(fadeLen) / Double(bandCount)
+        let tail = RevealParams.shared.fadeTailChars
+        for b in 0..<bandCount {
+            let start = Int((Double(b) * per).rounded(.down))
+            let end = b == bandCount - 1 ? fadeLen : Int((Double(b + 1) * per).rounded(.down))
+            guard end > start else { continue }
+            // Distance from the frontier for this band's midpoint: older chars
+            // (band 0) are farther back → more solid.
+            let midFromFrontier = Double(fadeLen - (start + end) / 2)
+            let opacity = revealFadeOpacity(midFromFrontier, fadeTailChars: tail)
+            result =
+                result
+                + Text(String(fadeChars[start..<end])).foregroundColor(color.opacity(opacity))
         }
         return result
     }
@@ -1479,21 +1489,24 @@ public struct TokenRevealText: View {
     private func startPumpIfNeeded() {
         guard pump == nil, revealed < goal.count || solidified < revealed else { return }
         pump = Task { @MainActor in
+            let dt = Self.frameDt
+            let maxTail = RevealParams.shared.fadeTailChars
+            let settleStep = max(1, Int(RevealParams.shared.settleCharsPerSec * dt))
             while !Task.isCancelled {
                 let backlog = goal.count - revealed
                 if backlog > 0 {
-                    // Reveal phase: transport-paced near the frontier, capped
-                    // catch-up for bursts so the materialization band spans the
-                    // live flow without replaying huge chunks in one tick.
-                    revealed += Self.revealStep(for: backlog)
+                    // Reveal phase: the SHARED time-based cursor (advanceReveal)
+                    // so cadence + catch-up match Electron. prev==next here;
+                    // divergence rewind is handled in onChange(of: target).
+                    revealed = advanceReveal(
+                        prev: goal, next: goal, revealed: revealed, isComplete: false, dt: dt)
                     if revealed > goal.count { revealed = goal.count }
-                    // Keep the fade tail bounded while tokens flow.
-                    let maxTail = Self.tailBands.reduce(0) { $0 + $1.length }
+                    // Keep the fade band bounded to the shared tail length.
                     if solidified < revealed - maxTail { solidified = revealed - maxTail }
                 } else if solidified < revealed {
-                    // Settle phase: no new tokens — melt the tail to solid
-                    // instead of freezing half-faded.
-                    solidified = min(revealed, solidified + Self.settleStep)
+                    // Settle phase: no new tokens — melt the tail to solid at the
+                    // shared settle rate instead of freezing half-faded.
+                    solidified = min(revealed, solidified + settleStep)
                 } else {
                     break
                 }
@@ -1504,10 +1517,6 @@ public struct TokenRevealText: View {
             // Goal may have grown while we were finishing — re-arm.
             if revealed < goal.count || solidified < revealed { startPumpIfNeeded() }
         }
-    }
-
-    private static func revealStep(for backlog: Int) -> Int {
-        min(24, max(2, backlog / 10))
     }
 
     private static func commonPrefixCount(_ lhs: String, _ rhs: String) -> Int {
