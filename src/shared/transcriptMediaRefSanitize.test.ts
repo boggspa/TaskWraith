@@ -55,6 +55,20 @@ describe('sanitizeRawProviderMediaRef', () => {
     expect(sanitizeRawProviderMediaRef(legitRef({ mimeType: 'image/svg+xml' }))).toBeNull()
   })
 
+  it('drops audio/video kinds — the RAW provider lane stays raster-only (S0a gate-lock)', () => {
+    // After widening TranscriptMediaKind to image|audio|video, AV refs must still
+    // arrive ONLY via the sanitized tool-result lane, NEVER untrusted provider
+    // stdout. This regression-locks the gate so the widening can't reopen the hole.
+    expect(sanitizeRawProviderMediaRef(legitRef({ kind: 'video', mimeType: 'video/mp4' }))).toBeNull()
+    expect(sanitizeRawProviderMediaRef(legitRef({ kind: 'audio', mimeType: 'audio/wav' }))).toBeNull()
+    // …even carrying a hostile path that would be dangerous if it leaked through.
+    expect(
+      sanitizeRawProviderMediaRef(
+        legitRef({ kind: 'video', mimeType: 'video/mp4', path: 'file:///etc/passwd' })
+      )
+    ).toBeNull()
+  })
+
   it('drops a ref with an explicit svg format', () => {
     expect(
       sanitizeRawProviderMediaRef(legitRef({ format: 'svg', mimeType: 'image/png' }))

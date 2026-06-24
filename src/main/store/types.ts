@@ -2001,8 +2001,14 @@ export interface WorkspaceRecord {
 }
 
 export type TranscriptMediaSource = 'generated' | 'workspace_path' | 'upload' | 'tool_result'
-export type TranscriptMediaKind = 'image'
-export type TranscriptMediaFormat = 'raster' | 'svg'
+// Widened for the native AV pipeline (S0a). Additive + backward-compatible: every
+// stored ref is 'image', no migration. Consumers that branch on kind fail closed
+// (drop unknown kinds) until the later AV slices teach them audio/video — so this
+// widening is invisible to existing image behavior. The RAW-provider sanitizer
+// (src/shared/transcriptMediaRefSanitize.ts) deliberately STAYS raster-only — AV
+// arrives only via the sanitized tool-result lane, never untrusted provider stdout.
+export type TranscriptMediaKind = 'image' | 'audio' | 'video'
+export type TranscriptMediaFormat = 'raster' | 'svg' | 'container'
 export type TranscriptMediaStatus =
   | 'available'
   | 'missing'
@@ -2029,6 +2035,10 @@ export interface TranscriptMediaRef {
   mimeType: string
   width?: number
   height?: number
+  /** Duration in ms — audio/video refs (from ffprobe / VideoToolbox / Core Audio). */
+  durationMs?: number
+  /** Codec descriptor for AV refs, e.g. "h264,aac" (informational, for the UI/agent). */
+  codecs?: string
   byteLength?: number
   sha256?: string
   assetId?: string
