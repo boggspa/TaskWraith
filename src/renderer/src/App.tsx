@@ -10651,7 +10651,20 @@ function App(): React.JSX.Element {
             appChatId: runChatId
           })
         } else {
-          await window.api.runAgent(composedPayload)
+          // Thread scheduledTaskId onto the DISPATCHED payload for a scheduled
+          // run. composeRun consumes it (to force the unattended posture) but does
+          // NOT echo it onto the payload, and the ensemble path threads it via
+          // runEnsembleRound — but the solo path dropped it here. The main-side
+          // dispatch chokepoint keys the per-occurrence budget kill, the
+          // failover-completion bridge AND the solo main-side completion mark off
+          // routedPayload.scheduledTaskId (read PRE-normalize), so without this
+          // all three were inert for solo scheduled runs. scheduledTaskId is not
+          // part of the signed posture context, so this cannot affect the clamp.
+          await window.api.runAgent(
+            request.scheduledTaskId
+              ? ({ ...composedPayload, scheduledTaskId: request.scheduledTaskId } as typeof composedPayload)
+              : composedPayload
+          )
         }
       } catch (error) {
         clearActiveRunContext(runContext)
