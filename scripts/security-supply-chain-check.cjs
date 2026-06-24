@@ -43,7 +43,7 @@ const ALLOWED_INSTALL_SCRIPTS = new Map([
       postinstall: 'node scripts/post-install.js'
     }
   ],
-  ['protobufjs@7.6.0', { postinstall: 'node scripts/postinstall' }]
+  ['protobufjs@7.6.4', { postinstall: 'node scripts/postinstall' }]
 ])
 
 const INSTALL_HOOKS = new Set(['preinstall', 'install', 'postinstall'])
