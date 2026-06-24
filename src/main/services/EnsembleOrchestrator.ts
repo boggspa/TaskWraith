@@ -28,6 +28,7 @@ import type {
   ProviderId,
   ToolActivity,
   ToolActivityStatus,
+  TranscriptMediaRef,
   UsageRecord
 } from '../store/types'
 import {
@@ -46,6 +47,7 @@ import {
 import type { ScoutBriefRecord } from '../ScoutBrief'
 import { updateActiveGoalLifecycle } from '../GoalState'
 import { findTerminalSynthesizerRoundSummary } from '../EnsembleRoundSummary'
+import { mergeTranscriptMediaRefs } from './TranscriptMediaService'
 // M4 (1.0.7) — auto-derive blackboard entries from the synthesizer's
 // round summary at round end, so the panel's agreed decisions / risks /
 // corrections propagate to next round's prompts as a compact digest.
@@ -245,6 +247,14 @@ interface ActiveParticipantRun {
    * actual turn chronology.
    */
   timeline?: ParticipantTimelineEntry[]
+  /**
+   * Agent-produced media (image tool results) for this run, accumulated from
+   * `media_refs` provider compat lines. Stamped onto the run's last content
+   * message in `flushRun` so it survives re-flushes (the renderer's
+   * `assistant_media_refs` path is correctly suppressed for ensemble — it can't
+   * route by runId — so the orchestrator owns ensemble media just like text).
+   */
+  mediaRefs?: TranscriptMediaRef[]
   startedAt: string
   /**
    * Aggregate text for back-compat consumers (per-run token stats,
@@ -2893,6 +2903,21 @@ export class EnsembleOrchestrator {
       this.flushRun(run)
       return true
     }
+    // Agent-produced image (image_edit/svg_rasterize/image_generate tool result).
+    // The run is already resolved by appRunId above, so there's no cross-
+    // attribution ambiguity here (unlike the renderer's trailing-message path,
+    // which is why that one is suppressed for ensemble). Accumulate + flush; the
+    // refs land on this participant's last content message in flushRun.
+    if (payload?.type === 'media_refs' && Array.isArray(payload.mediaRefs)) {
+      const incoming = (payload.mediaRefs as unknown[]).filter(
+        (ref): ref is TranscriptMediaRef => !!ref && typeof ref === 'object'
+      )
+      if (incoming.length > 0) {
+        run.mediaRefs = mergeTranscriptMediaRefs(run.mediaRefs, incoming)
+        this.flushRun(run)
+      }
+      return true
+    }
     // 1.0.5-EW16 — Accept `payload.content` as a fallback when
     // `payload.text` is missing. Gemini CLI emits both shapes
     // depending on internal state; the renderer's GeminiAdapter
@@ -4524,6 +4549,26 @@ export class EnsembleOrchestrator {
             ...ensembleReasoningMetadata(run.participant)
           }
         })
+      }
+    }
+
+    // Stamp accumulated agent-produced media (image tool results) onto this
+    // run's LAST content message so the transcript media strip renders it.
+    // Sourced from run.mediaRefs (not bolted onto a message object) so it
+    // survives the wholesale message rebuild above on every re-flush.
+    if (run.mediaRefs && run.mediaRefs.length > 0) {
+      for (let i = desiredMessages.length - 1; i >= 0; i -= 1) {
+        const candidate = desiredMessages[i]
+        if (candidate.role === 'assistant' && candidate.metadata?.kind === 'ensembleParticipant') {
+          candidate.metadata = {
+            ...candidate.metadata,
+            mediaRefs: mergeTranscriptMediaRefs(
+              candidate.metadata.mediaRefs as TranscriptMediaRef[] | undefined,
+              run.mediaRefs
+            )
+          }
+          break
+        }
       }
     }
 

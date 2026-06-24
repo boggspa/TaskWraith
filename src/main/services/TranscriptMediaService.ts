@@ -114,6 +114,27 @@ export function sha256Base64Url(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('base64url')
 }
 
+/**
+ * Merge two media-ref lists, de-duplicating by content/identity key
+ * (sha256 → assetId → id). Used to accumulate refs onto a message both in the
+ * single-chat path (index.ts) and the ensemble path (EnsembleOrchestrator), so
+ * a re-emitted/re-flushed ref never doubles up.
+ */
+export function mergeTranscriptMediaRefs(
+  existing: readonly TranscriptMediaRef[] | undefined,
+  incoming: readonly TranscriptMediaRef[]
+): TranscriptMediaRef[] {
+  const refs: TranscriptMediaRef[] = []
+  const seen = new Set<string>()
+  for (const ref of [...(existing || []), ...incoming]) {
+    const key = ref.sha256 || ref.assetId || ref.id
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    refs.push(ref)
+  }
+  return refs
+}
+
 export function sniffImageMime(buffer: Buffer): string | null {
   if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
     return 'image/png'

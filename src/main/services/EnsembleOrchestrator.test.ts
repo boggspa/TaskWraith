@@ -310,6 +310,109 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[1].provider).toBe('codex')
   })
 
+  // PR6 — ensemble media parity: agent-produced image (media_refs) is routed by
+  // appRunId to the right participant's content message (the renderer path is
+  // suppressed for ensemble because it can't route by runId).
+  function imageRef(runId: string, sha = 'abc123') {
+    return {
+      id: `${runId}:tool-image:${sha}`,
+      kind: 'image',
+      format: 'raster',
+      source: 'tool_result',
+      name: 'tool image 1',
+      mimeType: 'image/png',
+      sha256: sha,
+      assetId: `run:${runId}:tool-image:${sha}`,
+      thumbnail: { dataBase64: 'iVBORw0KGgo=', mimeType: 'image/png' },
+      status: 'available'
+    }
+  }
+  function participantContentMessage(harness: ReturnType<typeof makeHarness>) {
+    return harness.chat.messages.find(
+      (m) => m.role === 'assistant' && m.metadata?.kind === 'ensembleParticipant'
+    )
+  }
+
+  it('attaches agent-produced media_refs to the participant content message', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Blur the screenshot.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Here is the blurred screenshot.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'media_refs', mediaRefs: [imageRef(runId)] }
+    )
+
+    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    const refs = participantContentMessage(harness)?.metadata?.mediaRefs as Array<{ id: string }>
+    expect(refs).toHaveLength(1)
+    expect(refs[0].id).toBe(`${runId}:tool-image:abc123`)
+  })
+
+  it('de-dupes repeated media_refs (re-emit / re-flush safe)', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Blur it.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Done.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'media_refs', mediaRefs: [imageRef(runId)] }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'media_refs', mediaRefs: [imageRef(runId)] }
+    )
+    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    expect(participantContentMessage(harness)?.metadata?.mediaRefs).toHaveLength(1)
+  })
+
+  it('survives media_refs arriving before any content (attaches once content exists)', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Generate then describe.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+    // media before any text — must not crash and must not be lost.
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'media_refs', mediaRefs: [imageRef(runId)] }
+    )
+    expect(participantContentMessage(harness)).toBeUndefined()
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Here is the generated image.' }
+    )
+    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    expect(participantContentMessage(harness)?.metadata?.mediaRefs).toHaveLength(1)
+  })
+
   it('persists an active-round checkpoint and retires it when the round completes', async () => {
     const persisted: Array<{ chat: ChatRecord; reason: string }> = []
     const completed: Array<{ chatId: string; roundId: string; status: string }> = []
