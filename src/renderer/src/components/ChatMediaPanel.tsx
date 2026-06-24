@@ -11,9 +11,10 @@ import { collectExternalPathGrantsFromMetadata } from '../../../main/store/Exter
 import { XSymbolIcon } from './AppChromeSymbols'
 import { FileTypeIcon } from './FileTypeIcon'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
+import { twMediaUrl } from '../../../shared/twMedia'
 
 export type ChatMediaSource = TranscriptMediaRef['source'] | 'external_path'
-export type ChatMediaKind = 'image' | 'file' | 'folder'
+export type ChatMediaKind = 'image' | 'audio' | 'video' | 'file' | 'folder'
 
 export interface ChatMediaRef {
   id: string
@@ -25,6 +26,8 @@ export interface ChatMediaRef {
    *  markdown-image resolver match `![](relative/path.png)` exactly. */
   workspaceRelativePath?: string
   mimeType?: string
+  /** Content hash — builds the twmedia:// streaming URL for audio/video playback. */
+  sha256?: string
   thumbnail?: TranscriptMediaThumbnail
   status?: TranscriptMediaStatus
   alt?: string
@@ -76,6 +79,17 @@ export function chatMediaPreviewSrc(mediaRef: ChatMediaRef): string {
   return `file://${encodeURI(path)}`
 }
 
+/** True for playable audio/video refs (rendered as <audio>/<video>, not chips). */
+export function isAvMediaKind(kind: ChatMediaKind): boolean {
+  return kind === 'audio' || kind === 'video'
+}
+
+/** twmedia:// playback URL for an audio/video ref, or '' when it can't be built
+ * (missing content hash / unmappable mime → caller falls back to a file card). */
+export function chatMediaTwUrl(ref: ChatMediaRef): string {
+  return twMediaUrl(ref.sha256, ref.mimeType) || ''
+}
+
 export function formatChatMediaLocation(path: string, workspacePath?: string): string {
   if (!path) return 'Transcript media'
   if (workspacePath && path.startsWith(`${workspacePath}/`)) {
@@ -116,21 +130,28 @@ export function collectChatMediaRefs(
   }
 
   const addMediaRef = (mediaRef: TranscriptMediaRef | null | undefined) => {
-    if (!mediaRef || mediaRef.kind !== 'image') return
+    if (!mediaRef) return
+    const kind = mediaRef.kind
+    if (kind !== 'image' && kind !== 'audio' && kind !== 'video') return
     const source = mediaRef.source || 'generated'
     const path = typeof mediaRef.path === 'string' ? mediaRef.path.trim() : ''
     const id = mediaRef.id || mediaRef.assetId || `${source}:${mediaRef.sha256 || mediaRef.name}`
-    if (!id || (!path && !mediaRef.thumbnail && mediaRef.status === 'available')) return
+    // Renderable if it has a path, a thumbnail, a content hash (twmedia://), or a non-available status.
+    if (!id || (!path && !mediaRef.thumbnail && !mediaRef.sha256 && mediaRef.status === 'available')) return
     addRef({
       id,
-      kind: 'image',
+      kind,
       source,
-      name: mediaRef.name || chatMediaNameFromPath(path) || 'Image',
+      name:
+        mediaRef.name ||
+        chatMediaNameFromPath(path) ||
+        (kind === 'audio' ? 'Audio' : kind === 'video' ? 'Video' : 'Image'),
       path,
       ...(mediaRef.workspaceRelativePath
         ? { workspaceRelativePath: mediaRef.workspaceRelativePath }
         : {}),
       mimeType: mediaRef.mimeType,
+      ...(mediaRef.sha256 ? { sha256: mediaRef.sha256 } : {}),
       thumbnail: mediaRef.thumbnail,
       status: mediaRef.status,
       alt: mediaRef.alt,
@@ -298,11 +319,13 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
   }
 
   const addMediaRef = (mediaRef: TranscriptMediaRef | null | undefined) => {
-    if (!mediaRef || mediaRef.kind !== 'image') return
+    if (!mediaRef) return
+    const kind = mediaRef.kind
+    if (kind !== 'image' && kind !== 'audio' && kind !== 'video') return
     const path = typeof mediaRef.path === 'string' ? mediaRef.path.trim() : ''
     const source = mediaRef.source || 'generated'
     const id = mediaRef.id || mediaRef.assetId || `${source}:${mediaRef.sha256 || mediaRef.name}`
-    if (!id || (!path && !mediaRef.thumbnail && mediaRef.status === 'available')) return
+    if (!id || (!path && !mediaRef.thumbnail && !mediaRef.sha256 && mediaRef.status === 'available')) return
     const key = `${source}:${id}:${path}:${mediaRef.status || ''}`
     const pathKey = path ? `${source}:${path}:` : ''
     if (seen.has(key) || (pathKey && seen.has(pathKey))) return
@@ -310,14 +333,18 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
     if (pathKey) seen.add(pathKey)
     refs.push({
       id,
-      kind: 'image',
+      kind,
       source,
-      name: mediaRef.name || chatMediaNameFromPath(path) || 'Image',
+      name:
+        mediaRef.name ||
+        chatMediaNameFromPath(path) ||
+        (kind === 'audio' ? 'Audio' : kind === 'video' ? 'Video' : 'Image'),
       path,
       ...(mediaRef.workspaceRelativePath
         ? { workspaceRelativePath: mediaRef.workspaceRelativePath }
         : {}),
       mimeType: mediaRef.mimeType,
+      ...(mediaRef.sha256 ? { sha256: mediaRef.sha256 } : {}),
       thumbnail: mediaRef.thumbnail,
       status: mediaRef.status,
       alt: mediaRef.alt,
@@ -485,6 +512,23 @@ function ChatMessageImageAttachment({
   )
 }
 
+function ChatMessageAvAttachment({ mediaRef, src }: { mediaRef: ChatMediaRef; src: string }) {
+  if (mediaRef.kind === 'audio') {
+    return (
+      <div className="message-attachment-card message-attachment-av is-audio" title={mediaRef.name}>
+        <span className="message-attachment-name">{mediaRef.name}</span>
+        <audio controls preload="metadata" src={src} />
+      </div>
+    )
+  }
+  const poster = chatMediaPreviewSrc(mediaRef)
+  return (
+    <div className="message-attachment-card message-attachment-av is-video" title={mediaRef.name}>
+      <video controls preload="metadata" {...(poster ? { poster } : {})} src={src} />
+    </div>
+  )
+}
+
 export function ChatMessageMediaStrip({
   refs,
   workspacePath,
@@ -513,6 +557,12 @@ export function ChatMessageMediaStrip({
               onCopy={() => copy(ref.id, ref.path)}
             />
           )
+        }
+        if (isAvMediaKind(ref.kind)) {
+          const avSrc = chatMediaTwUrl(ref)
+          if (avSrc) {
+            return <ChatMessageAvAttachment key={ref.id} mediaRef={ref} src={avSrc} />
+          }
         }
         return (
           <ChatMessageAttachmentCard
@@ -643,7 +693,8 @@ export function ChatMediaFloatingPanel({
   if (!open) return null
 
   const imageRefs = refs.filter((ref) => ref.kind === 'image')
-  const fileRefs = refs.filter((ref) => ref.kind !== 'image')
+  const avRefs = refs.filter((ref) => isAvMediaKind(ref.kind))
+  const fileRefs = refs.filter((ref) => ref.kind === 'file' || ref.kind === 'folder')
 
   return (
     <section className="chat-media-panel" aria-label="Chat media and files">
@@ -692,6 +743,34 @@ export function ChatMediaFloatingPanel({
                       )}
                       <span>{isCopied ? 'Copied' : ref.name}</span>
                     </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {avRefs.length > 0 && (
+            <div className="chat-media-section">
+              <div className="chat-media-section-title">Audio and video</div>
+              <div className="chat-media-av-list">
+                {avRefs.map((ref) => {
+                  const src = chatMediaTwUrl(ref)
+                  const poster = ref.kind === 'video' ? chatMediaPreviewSrc(ref) : ''
+                  return (
+                    <div key={ref.id} className={`chat-media-av-item is-${ref.kind}`}>
+                      <div className="chat-media-av-name">{ref.name}</div>
+                      {src ? (
+                        ref.kind === 'audio' ? (
+                          <audio controls preload="metadata" src={src} />
+                        ) : (
+                          <video controls preload="metadata" {...(poster ? { poster } : {})} src={src} />
+                        )
+                      ) : (
+                        <span className="chat-media-file-fallback">
+                          <FileTypeIcon path={ref.path} size={22} workspacePath={workspacePath} />
+                        </span>
+                      )}
+                    </div>
                   )
                 })}
               </div>

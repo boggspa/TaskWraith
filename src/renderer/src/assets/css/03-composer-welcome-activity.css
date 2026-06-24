@@ -5148,6 +5148,46 @@
   border-radius: inherit;
 }
 
+/* S0c — inline audio/video players streamed over twmedia://. Break the card's
+   row layout into a column so the native <video>/<audio> controls get full width
+   without overflowing the strip or panel. */
+.message-attachment-card.message-attachment-av {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  max-width: 360px;
+  cursor: default;
+}
+.message-attachment-av video,
+.message-attachment-av audio,
+.chat-media-av-item video,
+.chat-media-av-item audio {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  border-radius: 8px;
+}
+.message-attachment-av video,
+.chat-media-av-item video {
+  max-height: 280px;
+  background: #000;
+}
+.message-attachment-av .message-attachment-name,
+.chat-media-av-name {
+  font-size: 12px;
+  opacity: 0.85;
+}
+.chat-media-av-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chat-media-av-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .message-attachment-icon {
   display: inline-flex;
   align-items: center;

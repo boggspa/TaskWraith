@@ -63,6 +63,70 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(html.indexOf('Preview image screen.png')).toBeLessThan(html.indexOf('README.md'))
   })
 
+  it('renders audio/video refs as inline players over twmedia:// instead of file cards (S0c)', () => {
+    const refs: ChatMediaRef[] = [
+      {
+        id: 'vid-1',
+        kind: 'video',
+        source: 'tool_result',
+        name: 'clip.mp4',
+        path: '',
+        mimeType: 'video/mp4',
+        sha256: 'abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ'
+      },
+      {
+        id: 'aud-1',
+        kind: 'audio',
+        source: 'tool_result',
+        name: 'render.wav',
+        path: '',
+        mimeType: 'audio/wav',
+        sha256: 'wavHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000'
+      }
+    ]
+    const html = renderToStaticMarkup(<ChatMessageMediaStrip refs={refs} workspacePath="/repo" />)
+    expect(html).toContain('<video')
+    expect(html).toContain(
+      'src="twmedia://asset/abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ.mp4"'
+    )
+    expect(html).toContain('<audio')
+    expect(html).toContain('src="twmedia://asset/wavHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000.wav"')
+    expect(html).toContain('controls')
+    // Did NOT degrade to a generic file chip (the regression S0c fixes).
+    expect(html).not.toContain('message-attachment-icon')
+  })
+
+  it('falls back to a file card for an AV ref with no content hash (no twmedia URL)', () => {
+    const refs: ChatMediaRef[] = [
+      { id: 'vid-x', kind: 'video', source: 'tool_result', name: 'clip.mp4', path: '', mimeType: 'video/mp4' }
+    ]
+    const html = renderToStaticMarkup(<ChatMessageMediaStrip refs={refs} workspacePath="/repo" />)
+    expect(html).not.toContain('<video')
+    expect(html).toContain('message-attachment-icon') // the card fallback
+  })
+
+  it('carries audio/video kind + sha256 through collectMessageMediaRefs (S0c)', () => {
+    const refs = collectMessageMediaRefs(
+      userMessage({
+        mediaRefs: [
+          {
+            id: 'vid-1',
+            kind: 'video',
+            format: 'container',
+            source: 'tool_result',
+            name: 'clip.mp4',
+            mimeType: 'video/mp4',
+            sha256: 'abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ',
+            status: 'available'
+          }
+        ]
+      } as ChatMessage['metadata'])
+    )
+    expect(refs).toHaveLength(1)
+    expect(refs[0].kind).toBe('video')
+    expect(refs[0].sha256).toBe('abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ')
+  })
+
   it('renders canonical pathless media refs from safe thumbnails', () => {
     const refs = collectMessageMediaRefs(
       userMessage({

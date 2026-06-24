@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { transcriptMediaAssetPath } from '../services/TranscriptMediaAssetStore'
+import { TW_MEDIA_SCHEME, twMediaMimeForExt } from '../../shared/twMedia'
 
 /**
  * Pure (electron-free, Node-testable) core of the `twmedia://` streaming
@@ -10,31 +11,10 @@ import { transcriptMediaAssetPath } from '../services/TranscriptMediaAssetStore'
  * arithmetic is the #2 risk of the whole AV pipeline, so it must be a pure fn).
  */
 
-export const TW_MEDIA_SCHEME = 'twmedia'
-
-// ext -> canonical MIME. MUST stay consistent with
-// TranscriptMediaAssetStore.mediaExtension (the mime -> ext direction). A
-// round-trip test in twMediaRange.test.ts locks the two maps together.
-const EXT_TO_MIME: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  webp: 'image/webp',
-  gif: 'image/gif',
-  bmp: 'image/bmp',
-  wav: 'audio/wav',
-  mp3: 'audio/mpeg',
-  m4a: 'audio/mp4',
-  aac: 'audio/aac',
-  ogg: 'audio/ogg',
-  flac: 'audio/flac',
-  mp4: 'video/mp4',
-  mov: 'video/quicktime',
-  webm: 'video/webm'
-}
-
-export function twMediaMimeForExt(ext: string): string | null {
-  return EXT_TO_MIME[ext.toLowerCase()] ?? null
-}
+// Scheme + ext→mime live in src/shared/twMedia.ts (single source of truth, also
+// used by the renderer URL builder). Re-exported so existing importers
+// (TwMediaProtocol, tests) keep resolving them from here.
+export { TW_MEDIA_SCHEME, twMediaMimeForExt }
 
 // Mirror TranscriptMediaAssetStore's SHA256_BASE64URL_PATTERN.
 const SHA_RE = /^[A-Za-z0-9_-]{32,96}$/
