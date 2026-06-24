@@ -42,8 +42,18 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UN
     private static let openActionId = "TW_OPEN"
 
     override init() {
+        // Back the host store + identity seed with the App Group + shared
+        // keychain group the Notification Service Extension reads, so it can
+        // decrypt rich pushes while the app is backgrounded/closed. Migrate any
+        // pre-existing `.standard` host document into the shared suite first
+        // (no-op once moved; never clobbers newer shared data).
+        let sharedDefaults = UserDefaults(suiteName: TWPushKeyAccess.appGroup) ?? .standard
+        UserDefaultsPairedHostStore.migrate(from: .standard, to: sharedDefaults)
         self.model = RemoteSessionModel(
-            identityStore: KeychainIdentitySeedStore(account: "remote-identity-seed"))
+            identityStore: KeychainIdentitySeedStore(
+                account: "remote-identity-seed",
+                accessGroup: TWPushKeyAccess.keychainAccessGroup),
+            pairingStore: UserDefaultsPairedHostStore(defaults: sharedDefaults))
         super.init()
     }
 
@@ -239,51 +249,134 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UN
 struct KeychainIdentitySeedStore: IdentitySeedStore {
     let service = "com.taskwraith.companion"
     let account: String
+    /// Fully-qualified shared keychain access group (e.g.
+    /// `8CZML8FK2D.com.taskwraith.companion.shared`, == `TWPushKeyAccess
+    /// .keychainAccessGroup`). When set, the seed is kept in this shared group so
+    /// the Notification Service Extension can read it to decrypt rich pushes
+    /// while the app is closed; a pre-existing seed in the app's default group is
+    /// COPIED in (never deleted — the Mac pinned this identity, it must survive).
+    /// nil preserves the original single-group behaviour (used by unit tests).
+    let accessGroup: String?
     private let keychain: any KeychainSeedAccessing
 
-    init(account: String, keychain: any KeychainSeedAccessing = SystemKeychainSeedAccess()) {
+    init(
+        account: String,
+        accessGroup: String? = nil,
+        keychain: any KeychainSeedAccessing = SystemKeychainSeedAccess()
+    ) {
         self.account = account
+        self.accessGroup = accessGroup
         self.keychain = keychain
     }
 
     func loadOrCreateSeed() throws -> Data {
-        let query: [String: Any] = [
+        guard let accessGroup else { return try loadOrCreateLegacy() }
+        return try loadOrCreateShared(accessGroup: accessGroup)
+    }
+
+    /// Original single-group behaviour (no shared access group) — kept
+    /// byte-for-byte so the app's pre-rich-push reads + unit tests retain their
+    /// exact semantics (incl. the "corrupt Keychain record" error message).
+    private func loadOrCreateLegacy() throws -> Data {
+        switch readSeed(group: nil) {
+        case .ok(let seed):
+            return seed
+        case .corrupt(let size):
+            throw IdentitySeedStoreError.readFailed("corrupt Keychain record (\(size) bytes)")
+        case .missing:
+            let seed = Curve25519.Signing.PrivateKey().rawRepresentation
+            let addStatus = add(seed, group: nil)
+            guard addStatus == errSecSuccess else {
+                throw IdentitySeedStoreError.persistFailed("Keychain add failed (\(addStatus))")
+            }
+            return seed
+        case .error(let status):
+            throw IdentitySeedStoreError.readFailed("Keychain read failed (\(status))")
+        }
+    }
+
+    /// Shared-group behaviour (rich pushes): (1) prefer the shared-group copy
+    /// (fresh installs + after migration); (2) else COPY a legacy seed from the
+    /// app's default group into the shared group, never deleting the original;
+    /// (3) else mint a fresh seed directly into the shared group.
+    private func loadOrCreateShared(accessGroup: String) throws -> Data {
+        switch readSeed(group: accessGroup) {
+        case .ok(let seed):
+            return seed
+        case .corrupt(let size):
+            throw IdentitySeedStoreError.readFailed(
+                "corrupt shared Keychain record (\(size) bytes)")
+        case .error(let status):
+            throw IdentitySeedStoreError.readFailed("Keychain read failed (\(status))")
+        case .missing:
+            break
+        }
+        // A nil group makes SecItem search ALL the app's access groups, so this
+        // finds a legacy seed in the app's default group.
+        switch readSeed(group: nil) {
+        case .ok(let legacy):
+            let status = add(legacy, group: accessGroup)
+            // errSecDuplicateItem: a shared copy already raced in — equally fine.
+            guard status == errSecSuccess || status == errSecDuplicateItem else {
+                throw IdentitySeedStoreError.persistFailed("Keychain migrate failed (\(status))")
+            }
+            return legacy
+        case .corrupt(let size):
+            throw IdentitySeedStoreError.readFailed("corrupt Keychain record (\(size) bytes)")
+        case .error(let status):
+            throw IdentitySeedStoreError.readFailed("Keychain read failed (\(status))")
+        case .missing:
+            break
+        }
+        let seed = Curve25519.Signing.PrivateKey().rawRepresentation
+        let addStatus = add(seed, group: accessGroup)
+        guard addStatus == errSecSuccess else {
+            throw IdentitySeedStoreError.persistFailed("Keychain add failed (\(addStatus))")
+        }
+        return seed
+    }
+
+    private enum SeedRead {
+        case ok(Data)
+        case missing
+        case corrupt(Int)
+        case error(OSStatus)
+    }
+
+    private func readSeed(group: String?) -> SeedRead {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
+        if let group { query[kSecAttrAccessGroup as String] = group }
         var item: CFTypeRef?
         let status = keychain.copyMatching(query as CFDictionary, &item)
         switch status {
         case errSecSuccess:
             guard let data = item as? Data, data.count == 32 else {
-                let size = (item as? Data)?.count ?? -1
-                throw IdentitySeedStoreError.readFailed("corrupt Keychain record (\(size) bytes)")
+                return .corrupt((item as? Data)?.count ?? -1)
             }
-            return data
+            return .ok(data)
         case errSecItemNotFound:
-            let seed = Curve25519.Signing.PrivateKey().rawRepresentation
-            let addStatus = add(seed)
-            guard addStatus == errSecSuccess else {
-                throw IdentitySeedStoreError.persistFailed("Keychain add failed (\(addStatus))")
-            }
-            return seed
+            return .missing
         default:
-            throw IdentitySeedStoreError.readFailed("Keychain read failed (\(status))")
+            return .error(status)
         }
     }
 
-    private func add(_ data: Data) -> OSStatus {
-        let add: [String: Any] = [
+    private func add(_ data: Data, group: String?) -> OSStatus {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
-        return keychain.add(add as CFDictionary, nil)
+        if let group { query[kSecAttrAccessGroup as String] = group }
+        return keychain.add(query as CFDictionary, nil)
     }
 }
 

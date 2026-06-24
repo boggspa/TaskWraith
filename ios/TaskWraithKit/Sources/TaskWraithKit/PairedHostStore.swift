@@ -332,9 +332,19 @@ extension UserDefaultsPairedHostStore {
     /// shared App Group suite the Notification Service Extension reads. No-op if
     /// the destination already holds a document, so it never clobbers newer data.
     public static func migrate(from source: UserDefaults, to destination: UserDefaults) {
-        guard destination.data(forKey: documentKey) == nil,
-            let blob = source.data(forKey: documentKey)
-        else { return }
-        destination.set(blob, forKey: documentKey)
+        // Never clobber data the destination (App Group suite) already holds.
+        guard destination.data(forKey: documentKey) == nil else { return }
+        if let blob = source.data(forKey: documentKey) {
+            destination.set(blob, forKey: documentKey)
+            return
+        }
+        // No v2 document in the source — fold a legacy v1 single-host record into
+        // a v2 document so an upgrade straight from a pre-multi-host build still
+        // carries the user's host across. No-op on a fresh install (no legacy).
+        let doc = PairedHostsCodec.decode(
+            v2Data: nil, legacyData: source.data(forKey: legacyKey))
+        if !doc.isEmpty, let encoded = PairedHostsCodec.encode(doc) {
+            destination.set(encoded, forKey: documentKey)
+        }
     }
 }

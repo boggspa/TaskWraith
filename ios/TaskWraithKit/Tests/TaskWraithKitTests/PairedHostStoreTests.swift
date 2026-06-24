@@ -283,4 +283,31 @@ struct PairedHostStoreTests {
         UserDefaultsPairedHostStore.migrate(from: appPrivate, to: group)
         #expect(UserDefaultsPairedHostStore(defaults: group).find(macIdentityPubKey: key(2)) == nil)
     }
+
+    @Test("migrate folds a legacy v1 record when the source has no v2 document")
+    func migrateFoldsLegacyV1() {
+        let appPrivate = freshDefaults()
+        let group = freshDefaults()
+        // A phone upgrading straight from a pre-multi-host build: only the legacy
+        // single-host key exists in the private domain (no v2 document yet).
+        let legacyJSON = """
+            {"relayUrl":"ws://10.0.0.9:8787",\
+            "macIdentityPubKey":"\(key(9))","macDisplayName":"My Mac"}
+            """
+        appPrivate.set(Data(legacyJSON.utf8), forKey: UserDefaultsPairedHostStore.legacyKey)
+
+        UserDefaultsPairedHostStore.migrate(from: appPrivate, to: group)
+
+        let migrated = UserDefaultsPairedHostStore(defaults: group)
+        #expect(migrated.list().map(\.macIdentityPubKey) == [key(9)])
+        #expect(migrated.selectedHostId() == key(9))
+    }
+
+    @Test("migrate is a no-op on a fresh install (no legacy, no v2)")
+    func migrateNoOpWhenEmpty() {
+        let appPrivate = freshDefaults()
+        let group = freshDefaults()
+        UserDefaultsPairedHostStore.migrate(from: appPrivate, to: group)
+        #expect(group.data(forKey: UserDefaultsPairedHostStore.documentKey) == nil)
+    }
 }
