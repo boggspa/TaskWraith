@@ -1085,7 +1085,11 @@ export const TranscriptPanel = memo(
       : displayMessages.map((msg, index) => ({ msg, rowKey: `${msg.id}#${index}` }))
 
     return (
-      <div className="transcript-scroll" ref={scrollRef}>
+      <div
+        className={`transcript-scroll${isGlobal ? ' is-global' : ''}`}
+        data-scope={isGlobal ? 'global' : 'workspace'}
+        ref={scrollRef}
+      >
         <div
           className={`transcript-inner${virtualizeEnabled ? ' transcript-virtualized' : ''}`}
           ref={contentRef}

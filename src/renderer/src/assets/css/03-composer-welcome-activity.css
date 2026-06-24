@@ -9516,3 +9516,23 @@ button.diff-file-row {
   background: var(--accent);
   transform: scale(1.25);
 }
+
+/* ── General (global) chats — quiet ensemble chrome ──────────────────────
+   Scope-gated dampeners only (hook = data-scope="global" on .transcript-scroll).
+   Nothing load-bearing is hidden: the "who yielded to whom" tag, the round
+   banners, and the reasoning rows all stay readable — just softer, so a casual
+   General chat with a panel feels conversational rather than like an ops console.
+   These selectors only match ensemble chrome, so solo General chats are
+   unaffected. */
+[data-scope='global'] .activity-yield-target {
+  font-weight: 500;
+  opacity: 0.8;
+}
+[data-scope='global'] .activity-row[data-category='task'] .activity-detail-section-title {
+  opacity: 0.7;
+}
+[data-scope='global'] .message-bubble.system.system-round-status {
+  background: transparent;
+  box-shadow: none;
+  opacity: 0.62;
+}
