@@ -4,7 +4,8 @@ import { CompactToolTrace } from './CompactToolTrace'
 import {
   buildFoldoutSections,
   buildResultPreview,
-  extractToolUrlTargets
+  extractToolUrlTargets,
+  friendlyGlobalToolLabel
 } from './CompactToolTrace.lib'
 import type { ToolActivity } from '../../../main/store/types'
 
@@ -222,5 +223,23 @@ describe('CompactToolTrace', () => {
       <CompactToolTrace activity={makeActivity({ durationMs: 1500 })} />
     )
     expect(longHtml).toContain('1.5s')
+  })
+})
+
+describe('friendlyGlobalToolLabel (General-chat tool-trace softening)', () => {
+  it('softens the web family — including no-underscore aliases — to a friendly one-liner', () => {
+    expect(friendlyGlobalToolLabel(makeActivity({ toolName: 'web_search' }))).toBe('Searched the web')
+    expect(friendlyGlobalToolLabel(makeActivity({ toolName: 'websearch' }))).toBe('Searched the web')
+    expect(friendlyGlobalToolLabel(makeActivity({ toolName: 'google_web_search' }))).toBe(
+      'Searched the web'
+    )
+    expect(friendlyGlobalToolLabel(makeActivity({ toolName: 'web_fetch' }))).toBe('Read a web page')
+    expect(friendlyGlobalToolLabel(makeActivity({ toolName: 'webfetch' }))).toBe('Read a web page')
+  })
+
+  it('returns null for non-web tools so they keep their normal compact name', () => {
+    expect(friendlyGlobalToolLabel(makeActivity({ toolName: 'write_file' }))).toBeNull()
+    expect(friendlyGlobalToolLabel(makeActivity({ toolName: 'run_command' }))).toBeNull()
+    expect(friendlyGlobalToolLabel(makeActivity({ toolName: '' }))).toBeNull()
   })
 })

@@ -19,9 +19,12 @@ export const REDACTION_HINT = '(truncated — expand to see full output)'
  * carries the full raw provider / status / output. Returns null for non-web
  * tools, which keep their normal compact name. */
 export function friendlyGlobalToolLabel(activity: ToolActivity): string | null {
-  const name = (activity.toolName || '').toLowerCase()
-  if (name === 'web_search' || name.endsWith('web_search')) return 'Searched the web'
-  if (name === 'web_fetch' || name.endsWith('web_fetch')) return 'Read a web page'
+  // Normalise away underscores so the no-underscore aliases (websearch /
+  // googlewebsearch / webfetch) that ToolDisplayNames treats as the same web
+  // family soften consistently with web_search / web_fetch.
+  const name = (activity.toolName || '').toLowerCase().replace(/_/g, '')
+  if (name.endsWith('websearch')) return 'Searched the web'
+  if (name.endsWith('webfetch')) return 'Read a web page'
   return null
 }
 
