@@ -1398,7 +1398,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   </strong>
                   <span>{welcomeCopy.heading.afterWorkspace}</span>
                 </h1>
-                {welcomeCopy.subheading && <p>{welcomeCopy.subheading}</p>}
+                {welcomeCopy.subheading ? <p>{welcomeCopy.subheading}</p> : null}
                 {/*
                   Welcome workspace picker (1.0.3). The sidebar already has a
                   workspace list, but landing on the welcome screen of a new
