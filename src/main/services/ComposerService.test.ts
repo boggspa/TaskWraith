@@ -17,6 +17,7 @@ import {
   signRunPermissionPosture,
   verifyRunPermissionPosture
 } from '../RunPermissionPosture'
+import { TASKWRAITH_RUNTIME_PREAMBLE_VERSION } from '../PromptComposition'
 
 function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -172,7 +173,7 @@ describe('ComposerService', () => {
     const payload = compose({ provider: 'gemini' }, {})
     expect(payload.provider).toBe('gemini')
     expect(payload.prompt).toContain(
-      'TaskWraith runtime note (taskwraith-runtime-v2): this Gemini workspace run has access to the TaskWraith MCP server.'
+      `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this Gemini workspace run has access to the TaskWraith MCP server.`
     )
     expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
     expect(payload.prompt).not.toContain('workspace/file tools:')
@@ -182,7 +183,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('User: Previous question')
     expect(payload.prompt).toContain('Current user request:\nDo the thing')
     expect(payload.composer.providerMetadataPatch).toMatchObject({
-      taskWraithRuntimePreambleVersion: 'taskwraith-runtime-v2',
+      taskWraithRuntimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
       taskWraithRuntimePreambleProvider: 'gemini'
     })
     expect(payload.composer.contextTurnsApplied).toBe(6)
@@ -676,7 +677,7 @@ describe('ComposerService', () => {
         provider: 'claude',
         linkedProviderSessionId: 'claude-thread-1',
         providerMetadata: {
-          taskWraithRuntimePreambleVersion: 'taskwraith-runtime-v2',
+          taskWraithRuntimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
           taskWraithRuntimePreambleProvider: 'claude'
         }
       },
