@@ -27,13 +27,11 @@ const makeInput = (over: Partial<BuildChatViewPropsInput> = {}): BuildChatViewPr
 describe('buildChatViewProps (viewer policy)', () => {
   it('hard-disables interactive run/plan/agent affordances', () => {
     const p = buildChatViewProps(makeInput())
-    expect(p.showFallbackUX).toBe(false)
     expect(p.pendingPlanChoice).toBeNull()
     expect(p.runCompleteDurationText).toBeNull()
     expect(p.onPlanChoiceSubmit('m', 'o')).toBeUndefined()
     expect(p.onAgentQuestionSubmit('q', 'a', false)).toBeUndefined()
     expect(p.onAgentQuestionDismiss('q')).toBeUndefined()
-    expect(p.onRunFallback('model')).toBeUndefined()
     expect(p.onDeleteMessage('m')).toBeUndefined()
   })
 

@@ -4514,19 +4514,6 @@ input:disabled, select:disabled, textarea:disabled {
   text-align: right;
 }
 
-/* Fallback UX */
-.fallback-card {
-  padding: var(--space-md);
-  background: rgba(245,166,35,0.06);
-  border: 1px solid rgba(245,166,35,0.18);
-  border-radius: var(--radius-md);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.fallback-card p { margin: 0; color: var(--warning); font-size: var(--font-size-sm); }
-
 /* Old version warning */
 .version-warning {
   padding: var(--space-sm) var(--space-md);

@@ -41,9 +41,6 @@ export interface WelcomeStateInput {
    * welcome surface must hide for running chats because the transcript
    * is about to fill in. */
   isCurrentChatRunning: boolean
-  /** True when the Gemini fallback retry card is showing. Stack the
-   * fallback above an empty transcript, never on top of welcome copy. */
-  showFallbackUX: boolean
 }
 
 /**
@@ -87,7 +84,6 @@ export function hasConversationContent(messages: ReadonlyArray<WelcomeMessageLik
 export function shouldRenderWelcome(input: WelcomeStateInput): boolean {
   if (!input.currentChat) return false
   if (input.isCurrentChatRunning) return false
-  if (input.showFallbackUX) return false
   if (input.currentChat.parentChatId) return false
   if (input.currentChat.summaryOnly) {
     if ((input.currentChat.messageCount ?? 0) > 0) return false

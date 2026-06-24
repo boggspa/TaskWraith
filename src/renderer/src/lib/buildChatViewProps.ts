@@ -8,8 +8,8 @@ import { isGlobalChat } from './chatScope'
  * deliberately do NOT route it through a resolver; this builder exists only for
  * the extra panes.
  *
- * The pane policy still keeps workspace-global diff/fallback rows out of extra
- * panes, but it no longer forces the transcript into read-only mode. Per-chat
+ * The pane policy still keeps workspace-global diff rows out of extra panes,
+ * but it no longer forces the transcript into read-only mode. Per-chat
  * values (messages, provider, running state, run-complete notice) and handlers
  * are passed in by the caller, which has the App-scope helpers to derive them;
  * the constant fallback props are stable module-level singletons so they never
@@ -39,7 +39,6 @@ export interface BuildChatViewPropsInput {
   copy: TranscriptPanelProps['copy']
   onOpenSubThread: TranscriptPanelProps['onOpenSubThread']
   onOpenSubThreadInSidePanel?: TranscriptPanelProps['onOpenSubThreadInSidePanel']
-  onRunFallback?: TranscriptPanelProps['onRunFallback']
   onPlanChoiceSubmit?: TranscriptPanelProps['onPlanChoiceSubmit']
   onProposedPlanApprove?: TranscriptPanelProps['onProposedPlanApprove']
   onProposedPlanDismiss?: TranscriptPanelProps['onProposedPlanDismiss']
@@ -67,7 +66,6 @@ export interface BuildChatViewPropsInput {
 
 /** Stable singletons so the viewer policy never changes prop identity. */
 const NOOP = (): void => {}
-const NOOP_RUN_FALLBACK = (_model: string): void => {}
 const NOOP_PLAN_CHOICE = (_messageId: string, _option: string): void => {}
 const NOOP_AGENT_QUESTION = (_questionId: string, _answer: string, _isCustom: boolean): void => {}
 const EMPTY_FILE_SUMMARIES: TranscriptPanelProps['displayFileChangeSummaries'] = []
@@ -80,9 +78,8 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     messages: input.messages,
     isWelcomeChat: input.isWelcomeChat,
     isThinking: input.isThinking,
-    // Pane policy: no workspace-global fallback UX, but agent questions and
-    // plan cards are writable when the host passes the target-chat handlers.
-    showFallbackUX: false,
+    // Pane policy: agent questions and plan cards are writable when the host
+    // passes the target-chat handlers.
     pendingPlanChoice: input.pendingPlanChoice ?? null,
     pendingProposedPlan: input.pendingProposedPlan ?? null,
     pendingAgentQuestions: input.pendingAgentQuestions,
@@ -118,7 +115,6 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     onProposedPlanApprove: input.onProposedPlanApprove ?? (() => {}),
     onProposedPlanDismiss: input.onProposedPlanDismiss ?? (() => {}),
     onProposedPlanCustom: input.onProposedPlanCustom ?? (() => {}),
-    onRunFallback: input.onRunFallback ?? NOOP_RUN_FALLBACK,
     onOpenSubThread: input.onOpenSubThread,
     onOpenSubThreadInSidePanel: input.onOpenSubThreadInSidePanel,
     onInspectRun: input.onInspectRun,

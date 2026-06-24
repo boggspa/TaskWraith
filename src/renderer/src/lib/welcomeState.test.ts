@@ -51,8 +51,7 @@ describe('shouldRenderWelcome', () => {
       shouldRenderWelcome({
         currentChat: null,
         messages: [],
-        isCurrentChatRunning: false,
-        showFallbackUX: false
+        isCurrentChatRunning: false
       })
     ).toBe(false)
   })
@@ -62,8 +61,7 @@ describe('shouldRenderWelcome', () => {
       shouldRenderWelcome({
         currentChat: chat,
         messages: [],
-        isCurrentChatRunning: false,
-        showFallbackUX: false
+        isCurrentChatRunning: false
       })
     ).toBe(true)
   })
@@ -73,8 +71,7 @@ describe('shouldRenderWelcome', () => {
       shouldRenderWelcome({
         currentChat: chat,
         messages: [{ role: 'system' }],
-        isCurrentChatRunning: false,
-        showFallbackUX: false
+        isCurrentChatRunning: false
       })
     ).toBe(true)
   })
@@ -84,8 +81,7 @@ describe('shouldRenderWelcome', () => {
       shouldRenderWelcome({
         currentChat: { appChatId: 'chat-2', summaryOnly: true, messageCount: 3, runCount: 1 },
         messages: [],
-        isCurrentChatRunning: false,
-        showFallbackUX: false
+        isCurrentChatRunning: false
       })
     ).toBe(false)
   })
@@ -101,8 +97,7 @@ describe('shouldRenderWelcome', () => {
           runCount: 0
         },
         messages: [],
-        isCurrentChatRunning: false,
-        showFallbackUX: false
+        isCurrentChatRunning: false
       })
     ).toBe(false)
   })
@@ -112,8 +107,7 @@ describe('shouldRenderWelcome', () => {
       shouldRenderWelcome({
         currentChat: { appChatId: 'subthread-2', parentChatId: 'parent-1' },
         messages: [],
-        isCurrentChatRunning: false,
-        showFallbackUX: false
+        isCurrentChatRunning: false
       })
     ).toBe(false)
   })
@@ -123,8 +117,7 @@ describe('shouldRenderWelcome', () => {
       shouldRenderWelcome({
         currentChat: chat,
         messages: [{ role: 'assistant' }],
-        isCurrentChatRunning: false,
-        showFallbackUX: false
+        isCurrentChatRunning: false
       })
     ).toBe(false)
   })
@@ -137,8 +130,7 @@ describe('shouldRenderWelcome', () => {
       shouldRenderWelcome({
         currentChat: chat,
         messages: [{ role: 'tool' }],
-        isCurrentChatRunning: false,
-        showFallbackUX: false
+        isCurrentChatRunning: false
       })
     ).toBe(false)
   })
@@ -148,19 +140,7 @@ describe('shouldRenderWelcome', () => {
       shouldRenderWelcome({
         currentChat: chat,
         messages: [],
-        isCurrentChatRunning: true,
-        showFallbackUX: false
-      })
-    ).toBe(false)
-  })
-
-  it('hides the welcome surface when the fallback retry card is showing', () => {
-    expect(
-      shouldRenderWelcome({
-        currentChat: chat,
-        messages: [],
-        isCurrentChatRunning: false,
-        showFallbackUX: true
+        isCurrentChatRunning: true
       })
     ).toBe(false)
   })
@@ -170,8 +150,7 @@ describe('shouldRenderWelcome', () => {
       shouldRenderWelcome({
         currentChat: chat,
         messages: [{ role: 'user' }],
-        isCurrentChatRunning: true,
-        showFallbackUX: false
+        isCurrentChatRunning: true
       })
     ).toBe(false)
   })

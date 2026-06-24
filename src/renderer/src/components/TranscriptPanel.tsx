@@ -83,7 +83,6 @@ export type TranscriptPanelProps = {
   messages: ChatMessage[]
   isWelcomeChat: boolean
   isThinking: boolean
-  showFallbackUX: boolean
   pendingPlanChoice: PlanChoiceState | null
   pendingProposedPlan: ProposedPlanState | null
   pendingAgentQuestions: readonly AgentQuestionState[]
@@ -163,7 +162,6 @@ export type TranscriptPanelProps = {
   onProposedPlanApprove: (messageId: string, planBody: string) => void
   onProposedPlanDismiss: (messageId: string) => void
   onProposedPlanCustom: (messageId: string, feedback: string) => void
-  onRunFallback: (model: string) => void
   onOpenSubThread: (chatId: string) => void
   onOpenSubThreadInSidePanel?: (chatId: string, presentation?: 'split' | 'drawer') => void
   /** Phase K1B: when set, RunCard's "Inspect →" affordance enters Run
@@ -689,7 +687,6 @@ export const TranscriptPanel = memo(
     messages,
     isWelcomeChat,
     isThinking,
-    showFallbackUX,
     pendingPlanChoice,
     pendingAgentQuestions,
     onAgentQuestionSubmit,
@@ -720,7 +717,6 @@ export const TranscriptPanel = memo(
     onProposedPlanApprove,
     onProposedPlanDismiss,
     onProposedPlanCustom,
-    onRunFallback,
     onOpenSubThread,
     onOpenSubThreadInSidePanel,
     onInspectRun,
@@ -1661,21 +1657,6 @@ export const TranscriptPanel = memo(
               <ThinkingIndicator />
             </div>
           )}
-          {showFallbackUX && (
-            <div className="fallback-card">
-              <p>
-                Gemini model capacity exhausted. The CLI was retrying. Try an alternative or wait.
-              </p>
-              <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-                <button className="btn btn-sm" onClick={() => onRunFallback('flash-lite')}>
-                  Retry with Flash Lite
-                </button>
-                <button className="btn btn-sm" onClick={() => onRunFallback('flash')}>
-                  Retry with Flash
-                </button>
-              </div>
-            </div>
-          )}
           {showRunCompleteSummary !== false && shouldShowRunCompleteNotice && runCompleteNotice && (
             <div className={`run-complete-card${isGlobal ? ' is-global-stripped' : ''}`}>
               <div className="run-complete-main">
@@ -1879,7 +1860,6 @@ export const TranscriptPanel = memo(
     previous.messages === next.messages &&
     previous.isWelcomeChat === next.isWelcomeChat &&
     previous.isThinking === next.isThinking &&
-    previous.showFallbackUX === next.showFallbackUX &&
     previous.pendingPlanChoice === next.pendingPlanChoice &&
     previous.pendingProposedPlan === next.pendingProposedPlan &&
     previous.pendingAgentQuestions === next.pendingAgentQuestions &&

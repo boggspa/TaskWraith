@@ -2241,8 +2241,7 @@ function App(): React.JSX.Element {
   // can't fit them and they overlap/clip the composer.
   const isMultiviewSplit = multiview.paneChatIds.length > 1
 
-  // Error handling & Fallback
-  const [showFallbackUX, setShowFallbackUX] = useState(false)
+  // Error handling
   const [isThinking, setIsThinking] = useState(false)
   const errorCountRef = useRef(0)
   const toolCallsCountRef = useRef(0)
@@ -4480,7 +4479,6 @@ function App(): React.JSX.Element {
         void refreshProviderMetadata(provider, popoutChat.workspacePath)
         setRawLogs(rawLogsByChatIdRef.current.get(popoutChat.appChatId) || [])
         hydrateThreadRawLogsFromEvents(popoutChat.appChatId)
-        setShowFallbackUX(false)
         syncThinkingForChat(popoutChat)
         if (popoutHandoff?.scrollState) {
           autoFollowRef.current = popoutHandoff.scrollState.atBottom
@@ -5284,7 +5282,6 @@ function App(): React.JSX.Element {
         setRunCompleteNotice(null)
         setRawLogs(rawLogsByChatIdRef.current.get(chatWithLedger.appChatId) || [])
         hydrateThreadRawLogsFromEvents(chatWithLedger.appChatId)
-        setShowFallbackUX(false)
         setSessionTrust(false)
         syncThinkingForChat(chatWithLedger)
         if (provider === 'codex' && typeof window.api.listAgentThreads === 'function') {
@@ -5354,7 +5351,6 @@ function App(): React.JSX.Element {
     scheduleAfterPaint(() => {
       hydrateThreadRawLogsFromEvents(selectedChat.appChatId)
     })
-    setShowFallbackUX(false)
     setSessionTrust(false)
     syncThinkingForChat(selectedChat)
     if (selectedProvider === 'codex' && typeof window.api.listAgentThreads === 'function') {
@@ -5411,7 +5407,6 @@ function App(): React.JSX.Element {
     setRunCompleteNotice(null)
     setRawLogs(rawLogsByChatIdRef.current.get(chatWithLedger.appChatId) || [])
     hydrateThreadRawLogsFromEvents(chatWithLedger.appChatId)
-    setShowFallbackUX(false)
     setSessionTrust(false)
     syncThinkingForChat(rebound)
     void refreshProviderMetadata(getChatProvider(chatWithLedger), ws.path)
@@ -6130,7 +6125,6 @@ function App(): React.JSX.Element {
     setDiff(null)
     setRunDiff(null)
     setRunCompleteNotice(null)
-    setShowFallbackUX(false)
     clearImagePermissions()
   }
 
@@ -6185,7 +6179,6 @@ function App(): React.JSX.Element {
       setRunDiff(null)
       setRunCompleteNotice(null)
       setRawLogs(rawLogsByChatIdRef.current.get(newChat.appChatId) || [])
-      setShowFallbackUX(false)
       clearImagePermissions()
       syncThinkingForChat(newChat)
     })
@@ -6237,7 +6230,6 @@ function App(): React.JSX.Element {
       applyChatComposerSelection(normalizedChat, provider)
       setChats((prev) => mergeChatRecord(prev, normalizedChat))
       setRawLogs(rawLogsByChatIdRef.current.get(normalizedChat.appChatId) || [])
-      setShowFallbackUX(false)
       clearImagePermissions()
       setCodexThreads([])
       syncThinkingForChat(normalizedChat)
@@ -6320,7 +6312,6 @@ function App(): React.JSX.Element {
     setRunDiff(null)
     setRunCompleteNotice(null)
     setRawLogs([])
-    setShowFallbackUX(false)
     // 1.0.3 — no setup modal. EnsembleParticipantsAboveRow renders
     // inline once `setCurrentChat(newChat)` above lands the chat in
     // view; the user edits per-participant settings via chip flyouts.
@@ -6867,7 +6858,6 @@ function App(): React.JSX.Element {
         deriveRunCompleteNotice(selectedChat, runningChatIds.has(selectedChat.appChatId))
       )
       setRawLogs(rawLogsByChatIdRef.current.get(selectedChat.appChatId) || [])
-      setShowFallbackUX(false)
       syncThinkingForChat(selectedChat)
     })
     scheduleAfterPaint(() => {
@@ -7408,7 +7398,7 @@ function App(): React.JSX.Element {
         repinRafIdRef.current = null
       }
     }
-  }, [currentChat?.appChatId, currentChat?.messages, runCompleteNotice, showFallbackUX])
+  }, [currentChat?.appChatId, currentChat?.messages, runCompleteNotice])
 
   useEffect(() => {
     // When the active chat changes, snap to the bottom and re-arm auto-follow
@@ -7965,7 +7955,6 @@ function App(): React.JSX.Element {
         .catch(() => window.api.cancelGemini(context.runId))
       clearActiveRunContext(context)
       if (isVisibleRun) setIsThinking(false)
-      if (isVisibleRun) setShowFallbackUX(true)
       if (runChatId) {
         updateChatById(runChatId, (source) => {
           const msgs = [
@@ -9740,7 +9729,6 @@ function App(): React.JSX.Element {
       toolCallsCountRef.current = 0
       activeRunUsageResetHintsRef.current = new Map()
       currentRunWarningsRef.current = []
-      setShowFallbackUX(false)
       clearImagePermissions()
       latestRunRequestRef.current = request
 
@@ -13864,42 +13852,6 @@ function App(): React.JSX.Element {
     [pendingAgentQuestionsByChatId, setPendingAgentQuestionsForChat]
   )
 
-  const handleRunFallback = async (fallbackModel: string) => {
-    const capacityContext = getActiveRunContextForProvider('gemini')
-    if (capacityContext?.capacityFallbackShown) {
-      markCapacityStoppedRun(capacityContext, 'Gemini Pro capacity fallback selected.')
-      clearQueuedRunsForProvider(
-        'gemini',
-        'Cancelled because Gemini capacity fallback was selected.'
-      )
-      await window.api
-        .cancelAgentRun('gemini', capacityContext.runId)
-        .catch(() => window.api.cancelGemini(capacityContext.runId))
-      clearActiveRunContext(capacityContext)
-      if (currentChatIdRef.current === capacityContext.chatId) {
-        setIsThinking(false)
-      }
-    }
-
-    setSelectedModelType(fallbackModel)
-    setLastNonCustomModelType(fallbackModel)
-    rememberCurrentChatComposerSelection({ selectedModelType: fallbackModel })
-
-    // Find the last user message
-    const msgs = currentChat?.messages || []
-    let lastUserPrompt = ''
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role === 'user') {
-        lastUserPrompt = msgs[i].content
-        break
-      }
-    }
-
-    if (lastUserPrompt) {
-      handleRun(fallbackModel, lastUserPrompt)
-    }
-  }
-
   const handleAgentApprovalAction = async (requestId: string, action: AgentApprovalAction) => {
     // Order-4 — capture the optional intent note (trimmed) at decision
     // time and pass it down to the IPC, which stamps it onto the ledger
@@ -17073,19 +17025,17 @@ function App(): React.JSX.Element {
   // Welcome-surface gate. Extracted into `lib/welcomeState` so the
   // predicate is independently unit-tested (see `welcomeState.test.ts`).
   // The helper centralises the rule that a chat is in welcome state iff
-  // a chat is selected, has no real conversation content, is not running,
-  // and the Gemini fallback retry card is not showing — preventing the
-  // welcome hero from rendering on top of a transcript that should be
-  // visible.
+  // a chat is selected, has no real conversation content, and is not
+  // running — preventing the welcome hero from rendering on top of a
+  // transcript that should be visible.
   const isWelcomeChat = useMemo(
     () =>
       shouldRenderWelcome({
         currentChat,
         messages: transcriptMessages,
-        isCurrentChatRunning,
-        showFallbackUX
+        isCurrentChatRunning
       }),
-    [currentChat, transcriptMessages, isCurrentChatRunning, showFallbackUX]
+    [currentChat, transcriptMessages, isCurrentChatRunning]
   )
   // Welcome L7 — fixed 30D rolling window. The toggle is gone; the
   // dashboard always reports against the same 30-day cutoff the
@@ -21368,7 +21318,6 @@ function App(): React.JSX.Element {
                 messages={transcriptMessages}
                 isWelcomeChat={isWelcomeChat}
                 isThinking={effectiveIsThinking}
-                showFallbackUX={showFallbackUX}
                 pendingPlanChoice={pendingPlanChoice}
                 pendingAgentQuestions={pendingAgentQuestions}
                 onAgentQuestionSubmit={handleAgentQuestionSubmit}
@@ -21417,7 +21366,6 @@ function App(): React.JSX.Element {
                 onProposedPlanApprove={handleProposedPlanApprove}
                 onProposedPlanDismiss={handleProposedPlanDismiss}
                 onProposedPlanCustom={handleProposedPlanCustom}
-                onRunFallback={handleRunFallback}
                 onOpenSubThread={handleOpenCockpitThread}
                 onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
                 onInspectRun={(runId) => {
@@ -21739,7 +21687,6 @@ function App(): React.JSX.Element {
               messages={sideChat.messages || EMPTY_CHAT_MESSAGES}
               isWelcomeChat={sideChatIsWelcome}
               isThinking={isSideChatRunning}
-              showFallbackUX={false}
               pendingPlanChoice={null}
               pendingAgentQuestions={
                 pendingAgentQuestionsByChatId[sideChat.appChatId] || EMPTY_AGENT_QUESTION_QUEUE
@@ -21770,7 +21717,6 @@ function App(): React.JSX.Element {
               onProposedPlanApprove={() => {}}
               onProposedPlanDismiss={() => {}}
               onProposedPlanCustom={() => {}}
-              onRunFallback={() => {}}
               onOpenSubThread={handleOpenCockpitThread}
               onOpenSubThreadInSidePanel={handleOpenLinkedChatInSidePanelById}
               onInspectRun={(runId) => {
