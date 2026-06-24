@@ -1287,10 +1287,13 @@ export const TranscriptPanel = memo(
                           })
                         // Solo General (global, non-ensemble) chats read as one
                         // friendly "Assistant" voice: drop the provider tint +
-                        // model badge. Ensemble keeps per-speaker tint/badge so
-                        // the reader can tell who actually spoke.
+                        // model badge. Ensemble — AND a solo guest reply — keep
+                        // their per-speaker tint/badge so the reader can still
+                        // tell host from guest in a legitimate multi-voice chat.
                         const soloGlobal =
-                          isGlobal === true && currentChat?.chatKind !== 'ensemble'
+                          isGlobal === true &&
+                          currentChat?.chatKind !== 'ensemble' &&
+                          !isGuestReply
                         // 1.0.7 — participant-rename continuity. The
                         // header keeps the FROZEN role label; this quiet
                         // badge tells the reader the seat has since been
