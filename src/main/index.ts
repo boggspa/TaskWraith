@@ -26355,6 +26355,34 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
+    ipcMain.handle(
+      'steer-queued-ensemble-prompt',
+      async (
+        event,
+        payload: {
+          chatId?: string
+          index?: number
+          textPrefix?: string
+          concurrentMode?: boolean
+        }
+      ) => {
+        if (AppStore.getSettings().ensembleModeEnabled === false) {
+          throw new Error('Ensemble Mode is disabled.')
+        }
+        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload.index)) : -1
+        return ensembleOrchestratorRef?.steerQueuedPrompt({
+          chatId,
+          index,
+          event,
+          ...(typeof payload?.textPrefix === 'string' ? { textPrefix: payload.textPrefix } : {}),
+          ...(payload?.concurrentMode !== undefined
+            ? { concurrentMode: Boolean(payload.concurrentMode) }
+            : {})
+        }) ?? { status: 'ignored', error: 'Ensemble orchestrator is not initialized.' }
+      }
+    )
+
     ipcMain.handle('cancel-ensemble-round', async (_, chatId?: string) => {
       return ensembleOrchestratorRef?.cancelRound(requireNonEmptyString(chatId, 'Ensemble chat id'))
     })

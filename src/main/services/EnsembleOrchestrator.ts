@@ -82,6 +82,11 @@ import {
 import { contextPercent, resolveContextWindow } from '../../shared/contextWindows'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
+export type EnsembleQueuedSteerResult = {
+  status: 'steered' | 'ignored'
+  roundId?: string
+  error?: string
+}
 
 /**
  * 1.0.7 — sentinel workspace id for global-chat ensemble usage records. MUST
@@ -1276,6 +1281,53 @@ export class EnsembleOrchestrator {
       input.unattendedElevationLevel
     )
     return { status: 'started', roundId }
+  }
+
+  steerQueuedPrompt(input: {
+    chatId: string
+    index: number
+    event: EnsembleDispatchEvent
+    textPrefix?: string
+    concurrentMode?: boolean
+  }): EnsembleQueuedSteerResult {
+    const runtime = this.roundsByChatId.get(input.chatId)
+    if (!runtime || runtime.cancelled) {
+      return { status: 'ignored', error: 'No active Ensemble round' }
+    }
+    const index = Number.isFinite(input.index) ? Math.floor(input.index) : -1
+    if (index < 0 || index >= runtime.queuedPrompts.length) {
+      return { status: 'ignored', error: 'Queued item no longer exists' }
+    }
+
+    const selected = runtime.queuedPrompts[index]
+    if (!selected) {
+      return { status: 'ignored', error: 'Queued item no longer exists' }
+    }
+    if (input.textPrefix && !selected.prompt.startsWith(input.textPrefix)) {
+      return { status: 'ignored', error: 'Queue changed underneath — refresh and retry' }
+    }
+
+    const remainingQueue = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== index)
+    void this.cancelRound(input.chatId, 'steered')
+    const roundId = this.beginRound(
+      input.chatId,
+      selected.prompt,
+      input.event.sender,
+      undefined,
+      selected.imageAttachments,
+      selected.imageThumbnails ?? [],
+      remainingQueue,
+      false,
+      [],
+      input.concurrentMode,
+      selected.discordContextSnapshots
+    )
+    this.appendRoundStatus(
+      input.chatId,
+      roundId,
+      'Ensemble steered: interrupted the active speaker and started a queued prompt.'
+    )
+    return { status: 'steered', roundId }
   }
 
   async cancelRound(chatId: string, reason = 'cancelled'): Promise<boolean> {

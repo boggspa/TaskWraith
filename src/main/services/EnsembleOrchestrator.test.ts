@@ -1446,6 +1446,50 @@ Next action:
     )
   })
 
+  it('steers a queued prompt by index while preserving the remaining FIFO queue', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const oldRun = harness.dispatched[0]
+
+    for (const prompt of ['Queued A', 'Queued B', 'Queued C']) {
+      const queued = harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt,
+        event: { sender: {} as Electron.WebContents },
+        mode: 'queue'
+      })
+      expect(queued.status).toBe('queued')
+    }
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual([
+      'Queued A',
+      'Queued B',
+      'Queued C'
+    ])
+
+    const steered = harness.orchestrator.steerQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 1,
+      textPrefix: 'Queued B',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    expect(steered.status).toBe('steered')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.cancelRun).toHaveBeenCalledWith('claude', oldRun.appRunId)
+    expect(harness.chat.ensemble?.activeRound?.roundId).toBe(steered.roundId)
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Queued B')
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued A', 'Queued C'])
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBe('Queued A')
+    expect(harness.chat.messages.map((message) => message.content)).toContain(
+      'Ensemble steered: interrupted the active speaker and started a queued prompt.'
+    )
+  })
+
   it('continues to the next participant when the current participant yields', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({

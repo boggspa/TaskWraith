@@ -17116,10 +17116,10 @@ function App(): React.JSX.Element {
       }
 
       // Ensemble-queued: cancel the current round and dispatch the
-      // targeted queued prompt as a fresh round (mode='steer'). The
-      // orchestrator's cancelRound clears `runtime.queuedPrompts`,
-      // so we need to re-stage the remaining queue entries on the
-      // NEW round after dispatch.
+      // targeted queued prompt as a fresh round (mode='steer').
+      // The main orchestrator selects the entry from its structured
+      // runtime FIFO queue and carries every remaining prompt into
+      // the replacement round, so multi-item queues are preserved.
       const ensembleMatch = entryId.match(/^ensemble-queued-(.+)-(\d+)$/)
       if (ensembleMatch) {
         const idx = Number(ensembleMatch[2])
@@ -17132,35 +17132,20 @@ function App(): React.JSX.Element {
           : round.queuedPrompt
             ? [round.queuedPrompt]
             : []
-        if (currentQueue.length > 1) {
-          appendFailure('Steer is temporarily disabled for queued ensemble prompts with FIFO length >1')
-          return
-        }
         const prompt = currentQueue[idx]
         if (!prompt) return
-        // Optimistically remove the targeted entry from the local
-        // chat record so the row updates immediately; the
-        // orchestrator's steer flow rebuilds round state on
-        // dispatch.
-        const nextQueue = [...currentQueue.slice(0, idx), ...currentQueue.slice(idx + 1)]
-        const nextChat: ChatRecord = {
-          ...chat,
-          ensemble: {
-            ...chat.ensemble!,
-            activeRound: {
-              ...round,
-              queuedPrompt: nextQueue[0],
-              queuedPrompts: nextQueue
-            }
-          }
-        }
-        setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
-        void window.api.runEnsembleRound({
+        const result = await window.api.steerQueuedEnsemblePrompt({
           chatId: chat.appChatId,
-          prompt,
-          mode: 'steer',
+          index: idx,
+          textPrefix: prompt,
           concurrentMode: Boolean(chat.ensemble?.concurrentModeEnabled)
         })
+        if (result?.status !== 'steered') {
+          appendFailure(
+            'Queued ensemble steer failed',
+            result?.error || 'the queued item could not be promoted safely'
+          )
+        }
         return
       }
       const job = runQueueJobsRef.current.find(

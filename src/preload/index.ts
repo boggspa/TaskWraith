@@ -813,6 +813,12 @@ const api = {
       grantedAt?: string
     }>
   }) => ipcRenderer.invoke('run-ensemble-round', payload),
+  steerQueuedEnsemblePrompt: (payload: {
+    chatId: string
+    index: number
+    textPrefix?: string
+    concurrentMode?: boolean
+  }) => ipcRenderer.invoke('steer-queued-ensemble-prompt', payload),
   cancelEnsembleRound: (chatId: string) => ipcRenderer.invoke('cancel-ensemble-round', chatId),
   skipEnsembleParticipant: (chatId: string) =>
     ipcRenderer.invoke('skip-ensemble-participant', chatId),

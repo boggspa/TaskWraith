@@ -1097,6 +1097,12 @@ declare global {
         /** A2 (1.0.3) — DM routing: scope the round to a single chip. */
         dmTargetParticipantId?: string
       }) => Promise<{ status: string; roundId?: string }>
+      steerQueuedEnsemblePrompt: (payload: {
+        chatId: string
+        index: number
+        textPrefix?: string
+        concurrentMode?: boolean
+      }) => Promise<{ status: string; roundId?: string; error?: string }>
       cancelEnsembleRound: (chatId: string) => Promise<boolean>
       skipEnsembleParticipant: (chatId: string) => Promise<boolean>
       getLatestSessionCheckpoint: (chatId: string) => Promise<SessionCheckpointRecord | null>
