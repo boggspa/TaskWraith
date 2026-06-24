@@ -25,6 +25,8 @@ targets:
     dependencies:
       - package: TaskWraithKit
         product: TaskWraithUI
+      # The app DEPENDS on the NSE so XcodeGen embeds it into the app's PlugIns/.
+      - target: TaskWraithNotificationService
     info:
       path: Generated/Info.plist
       properties:
@@ -73,6 +75,17 @@ targets:
         # Debug/device builds use sandbox APNs. Release archives embed
         # production so TestFlight/App Store builds can receive pushes.
         aps-environment: "$(APS_ENVIRONMENT)"
+        # Shared with the Notification Service Extension so it can read the
+        # paired-host store (each host's push-agreement key) + the identity seed
+        # to decrypt rich pushes. MUST match TWPushKeyAccess in TaskWraithKit.
+        com.apple.security.application-groups:
+          - group.com.taskwraith.companion
+        # List the app's own group too: once keychain-access-groups is set iOS
+        # stops auto-including it, and the existing identity-seed reads use it
+        # until the seed is migrated into the shared group.
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.taskwraith.companion
+          - $(AppIdentifierPrefix)com.taskwraith.companion.shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion
@@ -96,6 +109,43 @@ targets:
           APS_ENVIRONMENT: development
         Release:
           APS_ENVIRONMENT: production
+  TaskWraithNotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: NotificationService
+    dependencies:
+      # The lean crypto target (NOT TaskWraithUI — no UIKit/Runestone weight in
+      # the extension). TWPushSeal / CompletionBannerRenderer / CompletionPushContent
+      # / TWPushKeyAccess all live in TaskWraithKit.
+      - package: TaskWraithKit
+        product: TaskWraithKit
+    info:
+      path: NotificationService/Info.plist
+      properties:
+        CFBundleDisplayName: TaskWraith Notifications
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    entitlements:
+      path: NotificationService/NotificationService.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.taskwraith.companion
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.taskwraith.companion.shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.NotificationService
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 8CZML8FK2D
+        # MUST track the app's version/build — App Store rejects a mismatch.
+        CURRENT_PROJECT_VERSION: "45"
+        MARKETING_VERSION: "0.1.0"
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
   TaskWraithUITests:
     type: bundle.ui-testing
     platform: iOS

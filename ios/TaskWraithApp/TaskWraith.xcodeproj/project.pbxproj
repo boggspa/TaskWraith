@@ -8,7 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		12299021B552490B2C1C4F17 /* TaskWraithApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C10FF27BC422B0B9C03EBE /* TaskWraithApp.swift */; };
+		4A61C43FA6F6EFB08305AF86 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E7841161EEA2E7F087A1915 /* NotificationService.swift */; };
 		54644332E7359BDF2EBA0662 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */; };
+		600CA3765FCBC9EF601930C5 /* TaskWraithNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 2740C3085DB5AC121E98C173 /* TaskWraithNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		86FFF3D3461B52C64C62367A /* TaskWraithKit in Frameworks */ = {isa = PBXBuildFile; productRef = 82D6D74C2FEF1679DD51831D /* TaskWraithKit */; };
 		9F4932E7183327339A41AF84 /* TaskWraithAppLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8738F17EF74CF59C08107065 /* TaskWraithAppLifecycleTests.swift */; };
 		A4DCD2CE78DEEEB16D3B82C8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2F7552D09A7EE4DFE7C62B6F /* Assets.xcassets */; };
 		BB498271F052F45C5816493E /* TaskWraithLaunchUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AC061527DD5E03FB2CB5FB6 /* TaskWraithLaunchUITests.swift */; };
@@ -16,6 +19,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		5A39442E643AD1C839C8FA80 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7EDAC42A25DE2C23EFE5B551 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 128D0C747C6AABF5D8B7C430;
+			remoteInfo = TaskWraithNotificationService;
+		};
 		7425C7A0E21A2F2D57E48521 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7EDAC42A25DE2C23EFE5B551 /* Project object */;
@@ -32,16 +42,34 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		A186C94AC4166BF979334724 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				600CA3765FCBC9EF601930C5 /* TaskWraithNotificationService.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		1E7841161EEA2E7F087A1915 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		2740C3085DB5AC121E98C173 /* TaskWraithNotificationService.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = TaskWraithNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		2F7552D09A7EE4DFE7C62B6F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3370BF58F95DC204BE950651 /* TaskWraith.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TaskWraith.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		37C10FF27BC422B0B9C03EBE /* TaskWraithApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithApp.swift; sourceTree = "<group>"; };
 		3AC061527DD5E03FB2CB5FB6 /* TaskWraithLaunchUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithLaunchUITests.swift; sourceTree = "<group>"; };
 		5829A7D0E9EA0BDA0DEB9BE3 /* TaskWraithKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TaskWraithKit; path = ../TaskWraithKit; sourceTree = SOURCE_ROOT; };
+		70D53F402BCC1456A7E9D116 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		8738F17EF74CF59C08107065 /* TaskWraithAppLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithAppLifecycleTests.swift; sourceTree = "<group>"; };
 		A12FB9A2BBEAC31DB7D439FE /* TaskWraithUnitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TaskWraithUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F52EAA275EC223F7FEF2C488 /* TaskWraithUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TaskWraithUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FAD184B8DAC8733EE42CBCA3 /* NotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotificationService.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -53,9 +81,27 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9CFD82D0ACF22D3310C5040D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				86FFF3D3461B52C64C62367A /* TaskWraithKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		41DE9D4170EB82221270AD35 /* NotificationService */ = {
+			isa = PBXGroup;
+			children = (
+				70D53F402BCC1456A7E9D116 /* Info.plist */,
+				FAD184B8DAC8733EE42CBCA3 /* NotificationService.entitlements */,
+				1E7841161EEA2E7F087A1915 /* NotificationService.swift */,
+			);
+			path = NotificationService;
+			sourceTree = "<group>";
+		};
 		9CCA702279B1520D4D4FA69B /* Packages */ = {
 			isa = PBXGroup;
 			children = (
@@ -85,6 +131,7 @@
 			children = (
 				2F7552D09A7EE4DFE7C62B6F /* Assets.xcassets */,
 				793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */,
+				41DE9D4170EB82221270AD35 /* NotificationService */,
 				9CCA702279B1520D4D4FA69B /* Packages */,
 				E5A6165A2A67DB975B626F53 /* Sources */,
 				C279D506DC9E5BEE0A688F02 /* UITests */,
@@ -105,6 +152,7 @@
 			isa = PBXGroup;
 			children = (
 				3370BF58F95DC204BE950651 /* TaskWraith.app */,
+				2740C3085DB5AC121E98C173 /* TaskWraithNotificationService.appex */,
 				F52EAA275EC223F7FEF2C488 /* TaskWraithUITests.xctest */,
 				A12FB9A2BBEAC31DB7D439FE /* TaskWraithUnitTests.xctest */,
 			);
@@ -114,6 +162,25 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		128D0C747C6AABF5D8B7C430 /* TaskWraithNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 60B867136956475E7A7ED7E9 /* Build configuration list for PBXNativeTarget "TaskWraithNotificationService" */;
+			buildPhases = (
+				A5817696FEE14E886E908C5A /* Sources */,
+				9CFD82D0ACF22D3310C5040D /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TaskWraithNotificationService;
+			packageProductDependencies = (
+				82D6D74C2FEF1679DD51831D /* TaskWraithKit */,
+			);
+			productName = TaskWraithNotificationService;
+			productReference = 2740C3085DB5AC121E98C173 /* TaskWraithNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		69F7039FFA76556A86EA4F61 /* TaskWraithUnitTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = CECB631C2B76D5B789B6213E /* Build configuration list for PBXNativeTarget "TaskWraithUnitTests" */;
@@ -157,10 +224,12 @@
 				988AFDB68A5E29AE2CBF2DF7 /* Sources */,
 				EB2DC7118F9AA76C6B6BD2F7 /* Resources */,
 				4E3427B7FD006079DDE9829E /* Frameworks */,
+				A186C94AC4166BF979334724 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				2D2BA933603749C303FC4C39 /* PBXTargetDependency */,
 			);
 			name = TaskWraith;
 			packageProductDependencies = (
@@ -179,6 +248,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					128D0C747C6AABF5D8B7C430 = {
+						DevelopmentTeam = 8CZML8FK2D;
+						ProvisioningStyle = Automatic;
+					};
 					69F7039FFA76556A86EA4F61 = {
 						ProvisioningStyle = Automatic;
 					};
@@ -210,6 +283,7 @@
 			projectRoot = "";
 			targets = (
 				903E69D509196DD2813843C7 /* TaskWraith */,
+				128D0C747C6AABF5D8B7C430 /* TaskWraithNotificationService */,
 				7C137810DC96E5EBA0FC4C3A /* TaskWraithUITests */,
 				69F7039FFA76556A86EA4F61 /* TaskWraithUnitTests */,
 			);
@@ -245,6 +319,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A5817696FEE14E886E908C5A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4A61C43FA6F6EFB08305AF86 /* NotificationService.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		ECFD5BBB8B5A2FC1346B6DBB /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -256,6 +338,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		2D2BA933603749C303FC4C39 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 128D0C747C6AABF5D8B7C430 /* TaskWraithNotificationService */;
+			targetProxy = 5A39442E643AD1C839C8FA80 /* PBXContainerItemProxy */;
+		};
 		665408EC263C14BB05E3EA01 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 903E69D509196DD2813843C7 /* TaskWraith */;
@@ -305,6 +392,27 @@
 			};
 			name = Release;
 		};
+		691005431A6A29EC6B7A791F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 45;
+				DEVELOPMENT_TEAM = 8CZML8FK2D;
+				INFOPLIST_FILE = NotificationService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.taskwraith.companion.NotificationService;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		8D43BBF181F48514217AD077 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -329,6 +437,27 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
+		};
+		A0727C900ADDEC1961810589 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotificationService/NotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 45;
+				DEVELOPMENT_TEAM = 8CZML8FK2D;
+				INFOPLIST_FILE = NotificationService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.taskwraith.companion.NotificationService;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
 		};
 		A200D7ECE58157153BF18085 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -522,6 +651,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		60B867136956475E7A7ED7E9 /* Build configuration list for PBXNativeTarget "TaskWraithNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				691005431A6A29EC6B7A791F /* Debug */,
+				A0727C900ADDEC1961810589 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		C60AB6663BCAA998B2E59136 /* Build configuration list for PBXNativeTarget "TaskWraith" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -559,6 +697,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		82D6D74C2FEF1679DD51831D /* TaskWraithKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TaskWraithKit;
+		};
 		AF7441603810B23EE879F5FE /* TaskWraithUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TaskWraithUI;
