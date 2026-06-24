@@ -3,6 +3,7 @@ import type { ChatRecord } from './store/types'
 import {
   deriveParentChatIds,
   isReapableAbandonedChat,
+  reapAbandonedChats,
   reapableAbandonedChatIds
 } from './AbandonedChatReaper'
 
@@ -154,5 +155,46 @@ describe('reapableAbandonedChatIds + deriveParentChatIds', () => {
     const a = chat({ appChatId: 'a' })
     const b = chat({ appChatId: 'b' })
     expect(reapableAbandonedChatIds([a, b], { keepChatId: 'a' })).toEqual(['b'])
+  })
+})
+
+describe('reapAbandonedChats (orchestration)', () => {
+  it('deletes exactly the reapable ids and protects everything else', () => {
+    const kept = chat({ appChatId: 'kept' }) // the just-created chat
+    const started = chat({ appChatId: 'started', messages: [{} as never] })
+    const wf = chat({ appChatId: 'wf' }) // backs a workflow
+    const sched = chat({ appChatId: 'sched' }) // scheduled task target
+    const drafting = chat({ appChatId: 'drafting' }) // unsent composer text
+    const active = chat({ appChatId: 'active' }) // open in a pane
+    const ensemble = chat({ appChatId: 'ens', chatKind: 'ensemble', title: 'New Ensemble' })
+    const tombstone1 = chat({ appChatId: 't1' })
+    const tombstone2 = chat({ appChatId: 't2' })
+
+    const deleted: string[] = []
+    const reaped = reapAbandonedChats(
+      {
+        getChats: () => [kept, started, wf, sched, drafting, active, ensemble, tombstone1, tombstone2],
+        getWorkflowChatIds: () => new Set(['wf']),
+        getScheduledChatIds: () => new Set(['sched']),
+        deleteChat: (id) => deleted.push(id)
+      },
+      { keepChatId: 'kept', draftChatIds: ['drafting'], protectedChatIds: ['active'] }
+    )
+
+    // Only the two genuine tombstones are reaped; ensemble is never reaped here.
+    expect(reaped.sort()).toEqual(['t1', 't2'])
+    expect(deleted.sort()).toEqual(['t1', 't2'])
+  })
+
+  it('returns [] and deletes nothing when there is nothing abandoned', () => {
+    const deleted: string[] = []
+    const reaped = reapAbandonedChats({
+      getChats: () => [chat({ appChatId: 'a', messages: [{} as never] })],
+      getWorkflowChatIds: () => new Set(),
+      getScheduledChatIds: () => new Set(),
+      deleteChat: (id) => deleted.push(id)
+    })
+    expect(reaped).toEqual([])
+    expect(deleted).toEqual([])
   })
 })

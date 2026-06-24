@@ -113,6 +113,50 @@ export function isReapableAbandonedChat(
   return true
 }
 
+/**
+ * Renderer-supplied half of the reap context — the signals the main process is
+ * structurally blind to. All optional; missing ⇒ protect nothing extra.
+ */
+export interface RendererReapContext {
+  /** Active/focused chat, every multiview pane chat, the open side-chat, popouts. */
+  protectedChatIds?: string[]
+  /** Chats with non-empty unsent composer text. */
+  draftChatIds?: string[]
+  /** The just-created chat in a create-time replace. */
+  keepChatId?: string
+}
+
+/** Store-side dependencies, injected so the orchestration is unit-testable. */
+export interface ReapAbandonedChatsDeps {
+  getChats: () => ChatRecord[]
+  /** Chat ids backing a saved WorkflowDefinition (template.chatId). */
+  getWorkflowChatIds: () => Set<string>
+  /** Chat ids targeted by a non-terminal scheduled task. */
+  getScheduledChatIds: () => Set<string>
+  deleteChat: (chatId: string) => void
+}
+
+/**
+ * Compute the reapable abandoned chats, DELETE each, and return the ids.
+ * Ensembles are deliberately NOT reaped here (no `isDefaultEnsemble` supplied),
+ * so a curated-but-unsent roster is never lost. The caller broadcasts the
+ * updated thread list after a non-empty result.
+ */
+export function reapAbandonedChats(
+  deps: ReapAbandonedChatsDeps,
+  renderer: RendererReapContext = {}
+): string[] {
+  const ids = reapableAbandonedChatIds(deps.getChats(), {
+    protectedChatIds: new Set(renderer.protectedChatIds ?? []),
+    draftChatIds: new Set(renderer.draftChatIds ?? []),
+    workflowChatIds: deps.getWorkflowChatIds(),
+    scheduledChatIds: deps.getScheduledChatIds(),
+    keepChatId: renderer.keepChatId
+  })
+  for (const id of ids) deps.deleteChat(id)
+  return ids
+}
+
 /** Chat ids that are a parent of at least one other chat in `chats`. */
 export function deriveParentChatIds(chats: ReadonlyArray<ChatRecord>): Set<string> {
   const parents = new Set<string>()
