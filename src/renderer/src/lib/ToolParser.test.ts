@@ -291,6 +291,12 @@ describe('ToolParser', () => {
     it('shows delegated task title', () => {
       expect(getToolDisplayName('invoke_agent', { title: 'Metal harness' })).toBe('Metal harness')
     })
+    it('labels the image tools (SVG cased, past-tense), across MCP namespaces', () => {
+      expect(getToolDisplayName('image_edit', {})).toBe('Edited image')
+      expect(getToolDisplayName('svg_rasterize', {})).toBe('Rasterized SVG')
+      expect(getToolDisplayName('image_generate', {})).toBe('Generated image')
+      expect(getToolDisplayName('mcp__TaskWraith__svg_rasterize', {})).toBe('Rasterized SVG')
+    })
     it('shows Read file with path', () => {
       expect(getToolDisplayName('read_file', { file_path: 'README.md' })).toBe('Read README.md')
     })

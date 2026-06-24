@@ -97,6 +97,7 @@ import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
 import { PairingPage } from './PairingPage'
 import { CommittedDraftField } from './CommittedDraftField'
 import { MessagesBridgePanel } from './MessagesBridgePanel'
+import { ImageGenerationSettingsCard } from './ImageGenerationSettingsCard'
 import { LocalServersSettingsPanel } from './LocalServersSettingsPanel'
 import { RosterSettingsPanel } from './RosterSettingsPanel'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
@@ -5323,6 +5324,8 @@ export function SettingsPanel({
                   </button>
                 </div>
               </div>
+
+              <ImageGenerationSettingsCard />
             </div>
 
             <div className="settings-group span-all">

@@ -155,6 +155,14 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   progress: 'Progress',
   tool_progress: 'Tool progress',
 
+  // ── Image tools (edit/rasterize/generate) ───────────────────
+  // Without these the title-case fallback yields "Svg Rasterize" /
+  // "Image Edit" — past-tense action labels read better and fix the
+  // SVG casing.
+  image_edit: 'Edited image',
+  svg_rasterize: 'Rasterized SVG',
+  image_generate: 'Generated image',
+
   // ── Web search (also matched by category='search' branch) ────
   google_web_search: 'Searched the web',
   web_search: 'Searched the web',
