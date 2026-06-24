@@ -48,6 +48,46 @@ describe('getTailscaleServeStatus', () => {
     expect(status.configured).toBe(false)
   })
 
+  it('scopes to OUR front-door port — dev (:8443) and release (:443) coexist without cross-matching', async () => {
+    // One config holds BOTH builds' handlers: release :443→8787, dev :8443→8788.
+    const config = JSON.stringify({
+      Web: {
+        'mac.tailnet.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:8787' } } },
+        'mac.tailnet.ts.net:8443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:8788' } } }
+      }
+    })
+    // Release sees only its :443 door.
+    expect(
+      await getTailscaleServeStatus({
+        cliPath: CLI,
+        relayPort: 8787,
+        httpsPort: 443,
+        exec: execReturning(config)
+      })
+    ).toEqual({ configured: true, httpsPort: 443, proxyTarget: 'http://127.0.0.1:8787' })
+    // Dev sees only its :8443 door.
+    expect(
+      await getTailscaleServeStatus({
+        cliPath: CLI,
+        relayPort: 8788,
+        httpsPort: 8443,
+        exec: execReturning(config)
+      })
+    ).toEqual({ configured: true, httpsPort: 8443, proxyTarget: 'http://127.0.0.1:8788' })
+    // Release's relay port behind the dev front door is NOT ours → no clobbering
+    // re-assert (the bug we're fixing: the loser kept healing onto the shared :443).
+    expect(
+      (
+        await getTailscaleServeStatus({
+          cliPath: CLI,
+          relayPort: 8787,
+          httpsPort: 8443,
+          exec: execReturning(config)
+        })
+      ).configured
+    ).toBe(false)
+  })
+
   it('treats prose / empty output as unconfigured (no serve config)', async () => {
     expect(
       (
@@ -83,7 +123,7 @@ describe('getTailscaleServeStatus', () => {
 })
 
 describe('enableTailscaleServe', () => {
-  it('runs `serve --bg <port>` and reports ok', async () => {
+  it('runs `serve --bg --https=443 <port>` (explicit release front door) and reports ok', async () => {
     let seen: string[] = []
     const result = await enableTailscaleServe({
       cliPath: CLI,
@@ -93,7 +133,22 @@ describe('enableTailscaleServe', () => {
         return { stdout: 'Available within your tailnet:\nhttps://host.ts.net/\n', stderr: '' }
       }
     })
-    expect(seen).toEqual(['serve', '--bg', '8787'])
+    expect(seen).toEqual(['serve', '--bg', '--https=443', '8787'])
+    expect(result.ok).toBe(true)
+  })
+
+  it('fronts a dev build on its OWN https port (:8443) so it never clobbers release :443', async () => {
+    let seen: string[] = []
+    const result = await enableTailscaleServe({
+      cliPath: CLI,
+      relayPort: 8788,
+      httpsPort: 8443,
+      exec: async (_cmd, args) => {
+        seen = args
+        return { stdout: '', stderr: '' }
+      }
+    })
+    expect(seen).toEqual(['serve', '--bg', '--https=8443', '8788'])
     expect(result.ok).toBe(true)
   })
 

@@ -51,6 +51,10 @@ interface ServeConfigRaw {
 export async function getTailscaleServeStatus(input: {
   cliPath: string
   relayPort: number
+  /** When set, only consider a handler on THIS front-door port — so a dev build
+   * (:8443) and a release build (:443) each see/heal/tear-down only their own
+   * mapping instead of fighting over one shared :443 handler. */
+  httpsPort?: number
   exec?: ServeExec
 }): Promise<TailscaleServeStatus> {
   const exec = input.exec ?? defaultExec
@@ -70,6 +74,11 @@ export async function getTailscaleServeStatus(input: {
     return { configured: false, error: 'unparseable `tailscale serve status --json` output' }
   }
   for (const [hostPort, site] of Object.entries(raw.Web ?? {})) {
+    const frontDoorPort = Number(hostPort.split(':').pop())
+    // Scope to OUR front-door port (when given) so dev/release don't match each
+    // other's handler — without this the loser keeps re-asserting serve to its
+    // own relay port, clobbering the winner's :443 mapping in a ping-pong.
+    if (input.httpsPort !== undefined && frontDoorPort !== input.httpsPort) continue
     for (const handler of Object.values(site?.Handlers ?? {})) {
       const proxy = handler?.Proxy ?? ''
       if (
@@ -77,10 +86,9 @@ export async function getTailscaleServeStatus(input: {
         proxy === `http://localhost:${input.relayPort}` ||
         proxy === `127.0.0.1:${input.relayPort}`
       ) {
-        const port = Number(hostPort.split(':').pop())
         return {
           configured: true,
-          httpsPort: Number.isInteger(port) && port > 0 ? port : 443,
+          httpsPort: Number.isInteger(frontDoorPort) && frontDoorPort > 0 ? frontDoorPort : 443,
           proxyTarget: proxy
         }
       }
@@ -95,11 +103,16 @@ export interface TailscaleServeResult {
   message?: string
 }
 
-/** Put the HTTPS front door up: https://<dnsName>:443 → 127.0.0.1:<port>.
- * `--bg` persists the mapping across tailscaled restarts. */
+/** Put the HTTPS front door up: https://<dnsName>:<httpsPort> → 127.0.0.1:<port>.
+ * `--bg` persists the mapping across tailscaled restarts. `httpsPort` defaults to
+ * 443 (the release front door); a dev build passes a DISTINCT port (e.g. 8443) so
+ * the two builds get SEPARATE :443 / :8443 handlers on one machine instead of
+ * clobbering the single shared mapping last-writer-wins (the tailnet cert covers
+ * the MagicDNS name on any port, so :8443 needs no extra setup). */
 export async function enableTailscaleServe(input: {
   cliPath: string
   relayPort: number
+  httpsPort?: number
   exec?: ServeExec
 }): Promise<TailscaleServeResult> {
   const exec = input.exec ?? defaultExec
@@ -107,6 +120,7 @@ export async function enableTailscaleServe(input: {
     const { stdout, stderr } = await exec(input.cliPath, [
       'serve',
       '--bg',
+      `--https=${input.httpsPort ?? 443}`,
       String(input.relayPort)
     ])
     return { ok: true, message: (stderr || stdout).trim() || undefined }

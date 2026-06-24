@@ -19783,14 +19783,26 @@ if (isGeminiMcpBridgeProcess) {
               `[remote-bridge] embedded relay on :${handle.port} behind tailscale serve — Mac via loopback, phones via ${candidates.join(' → ')} (${dnsName})`
             )
             if (cliPath) {
-              const serve = await getTailscaleServeStatus({ cliPath, relayPort: handle.port })
+              // Release fronts :443, a dev build :8443 — distinct serve handlers so
+              // the two coexist on one Mac instead of fighting over one :443 mapping
+              // (the loser's re-assert kept silently killing the winner's door).
+              const httpsPort = app.isPackaged ? 443 : 8443
+              const serve = await getTailscaleServeStatus({
+                cliPath,
+                relayPort: handle.port,
+                httpsPort
+              })
               if (!serve.configured) {
                 console.warn(
-                  `[remote-bridge] tailscale serve is NOT fronting :${handle.port}${
+                  `[remote-bridge] tailscale serve is NOT fronting :${handle.port} on :${httpsPort}${
                     serve.error ? ` (status error: ${serve.error})` : ''
                   } — re-asserting the front door`
                 )
-                const enabled = await enableTailscaleServe({ cliPath, relayPort: handle.port })
+                const enabled = await enableTailscaleServe({
+                  cliPath,
+                  relayPort: handle.port,
+                  httpsPort
+                })
                 console[enabled.ok ? 'log' : 'error'](
                   enabled.ok
                     ? `[remote-bridge] tailscale serve re-enabled for :${handle.port}`
@@ -20394,13 +20406,23 @@ if (isGeminiMcpBridgeProcess) {
     // off-LAN — the only way a cellular phone can reach the bridge.
     const iosRemoteRelayPort = (): number =>
       Number(process.env.TASKWRAITH_RELAY_PORT || (app.isPackaged ? '8787' : '8788'))
+    // Front-door HTTPS port for `tailscale serve`. Release owns :443; a dev build
+    // uses :8443 so the two coexist as SEPARATE serve handlers on one Mac instead
+    // of clobbering one shared :443 mapping (which silently broke release pairing).
+    const iosRemoteServeHttpsPort = (): number =>
+      Number(process.env.TASKWRAITH_SERVE_HTTPS_PORT || (app.isPackaged ? '443' : '8443'))
+    // Advertised wss:// URL: :443 stays implicit (wss://<dns>) so existing release
+    // QRs are unchanged; a non-443 dev door must carry its port (wss://<dns>:8443).
+    const serveWssUrl = (dnsName: string, httpsPort: number): string =>
+      httpsPort === 443 ? `wss://${dnsName}` : `wss://${dnsName}:${httpsPort}`
     const iosRemoteTailscaleStatus = async (): Promise<Record<string, unknown>> => {
       const tailscale = await detectTailscale()
       const relayPort = iosRemoteRelayPort()
-      const suggestedUrl = tailscale.dnsName ? `wss://${tailscale.dnsName}` : null
+      const httpsPort = iosRemoteServeHttpsPort()
+      const suggestedUrl = tailscale.dnsName ? serveWssUrl(tailscale.dnsName, httpsPort) : null
       const serve =
         tailscale.available && tailscale.cliPath
-          ? await getTailscaleServeStatus({ cliPath: tailscale.cliPath, relayPort })
+          ? await getTailscaleServeStatus({ cliPath: tailscale.cliPath, relayPort, httpsPort })
           : { configured: false as const }
       const currentRelayUrl = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
       const relayUrlMatches = Boolean(suggestedUrl && currentRelayUrl === suggestedUrl)
@@ -20431,12 +20453,15 @@ if (isGeminiMcpBridgeProcess) {
       }
       const result = await enableTailscaleServe({
         cliPath: tailscale.cliPath,
-        relayPort: iosRemoteRelayPort()
+        relayPort: iosRemoteRelayPort(),
+        httpsPort: iosRemoteServeHttpsPort()
       })
       if (!result.ok) {
         return { ok: false, message: result.message || '`tailscale serve` failed.' }
       }
-      AppStore.updateSettings({ iosRemoteRelayUrl: `wss://${tailscale.dnsName}` })
+      AppStore.updateSettings({
+        iosRemoteRelayUrl: serveWssUrl(tailscale.dnsName, iosRemoteServeHttpsPort())
+      })
       return { ok: true, message: result.message ?? null, status: await iosRemoteTailscaleStatus() }
     })
     ipcMain.handle('ios-remote-tailscale-disable', async () => {
@@ -20444,12 +20469,13 @@ if (isGeminiMcpBridgeProcess) {
       if (tailscale.cliPath) {
         const serve = await getTailscaleServeStatus({
           cliPath: tailscale.cliPath,
-          relayPort: iosRemoteRelayPort()
+          relayPort: iosRemoteRelayPort(),
+          httpsPort: iosRemoteServeHttpsPort()
         })
         if (serve.configured) {
           const result = await disableTailscaleServe({
             cliPath: tailscale.cliPath,
-            httpsPort: serve.httpsPort
+            httpsPort: serve.httpsPort ?? iosRemoteServeHttpsPort()
           })
           if (!result.ok) {
             return { ok: false, message: result.message || '`tailscale serve off` failed.' }
@@ -20457,7 +20483,10 @@ if (isGeminiMcpBridgeProcess) {
         }
       }
       const current = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
-      if (tailscale.dnsName && current === `wss://${tailscale.dnsName}`) {
+      if (
+        tailscale.dnsName &&
+        current === serveWssUrl(tailscale.dnsName, iosRemoteServeHttpsPort())
+      ) {
         AppStore.updateSettings({ iosRemoteRelayUrl: '' })
       }
       return { ok: true, status: await iosRemoteTailscaleStatus() }
@@ -20583,14 +20612,17 @@ if (isGeminiMcpBridgeProcess) {
           const lane = selfHostedWssLane
           let selection = await selectAdvertisableRelayUrls(lane.candidates)
           if (!selection.advertisable.includes(lane.wssUrl) && lane.cliPath) {
+            const httpsPort = app.isPackaged ? 443 : 8443
             const serve = await getTailscaleServeStatus({
               cliPath: lane.cliPath,
-              relayPort: lane.relayPort
+              relayPort: lane.relayPort,
+              httpsPort
             })
             if (!serve.configured) {
               const enabled = await enableTailscaleServe({
                 cliPath: lane.cliPath,
-                relayPort: lane.relayPort
+                relayPort: lane.relayPort,
+                httpsPort
               })
               console[enabled.ok ? 'warn' : 'error'](
                 `[remote-bridge] pairing self-heal: tailscale serve was off — re-enable ${
