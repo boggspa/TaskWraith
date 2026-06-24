@@ -315,8 +315,14 @@ public final class RemoteSessionModel: ObservableObject {
         apnsTokenRetryTask?.cancel()
         apnsTokenRetryTask = nil
         apnsTokenRegistrationInFlight = true
+        // Publish this device's push-agreement public key so the Mac can seal
+        // per-device rich-push blobs. Derived from the same identity seed; nil
+        // only if the seed is unloadable (the Mac then sends generic pushes).
+        let agreePub = (try? TWPushSeal.agreementPublicRaw(fromSeed: identitySeed))?
+            .base64EncodedString()
         send(
-            BridgeAction.registerApnsToken(deviceToken: token.hex, env: token.env),
+            BridgeAction.registerApnsToken(
+                deviceToken: token.hex, env: token.env, agreePub: agreePub),
             successLabel: "Notifications ready.",
             navigateOnAck: false,
             onAck: { [weak self] accepted in
@@ -333,7 +339,30 @@ public final class RemoteSessionModel: ObservableObject {
                 } else {
                     self.scheduleApnsTokenRetry()
                 }
+            },
+            onAckResult: { [weak self] accepted, ack in
+                guard let self, accepted, let ack else { return }
+                self.storeMacAgreePubFromAck(ack)
             })
+    }
+
+    /// Persist the Mac's push-agreement public key (from the `registerApnsToken`
+    /// ack) onto the connected host's paired record so the Notification Service
+    /// Extension can derive the static shared secret to decrypt that host's rich
+    /// pushes while the app is backgrounded/closed.
+    private func storeMacAgreePubFromAck(_ ack: AckResult) {
+        guard let data = ack.result,
+            let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data),
+            let macAgreePub = actionAck.data?.macAgreePub, !macAgreePub.isEmpty
+        else { return }
+        // The host that just answered is the live session's pinned identity (fall
+        // back to the selected host if the pin isn't recorded yet).
+        guard let hostId = pinnedMacIdentityB64 ?? selectedHostId,
+            let host = pairingStore.find(macIdentityPubKey: hostId),
+            host.macAgreePub != macAgreePub
+        else { return }
+        pairingStore.upsert(host.withMacAgreePub(macAgreePub))
+        pairedHosts = pairingStore.list()
     }
 
     private func scheduleApnsTokenRetry() {
@@ -2769,21 +2798,16 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     /// The workspace scope an action presents for this thread: the chat's
-    /// workspace id, or the reserved read-only "global" scope for
-    /// scope-global chats (no workspace — the Mac's allowlist grants the
-    /// sentinel `monitor` only, so these stay view-only).
+    /// workspace id, or the reserved "global" sentinel for scope-global
+    /// chats (no bound workspace). Global chats keep the full composer on
+    /// the phone (T72) — they are NOT view-only; the Mac clamps phone-origin
+    /// turns to plan mode (no file mutation) since there's no workspace bound.
     public func remoteScopeForThread(_ threadId: String) -> String? {
         if let card = taskCards.first(where: { $0.id == threadId }) {
             if let workspaceId = card.workspaceId, !workspaceId.isEmpty { return workspaceId }
             return "global"
         }
         return threadWorkspaceHints[threadId]
-    }
-
-    /// True for scope-global chats — passed through read-only (transcript
-    /// viewing only; no composer, no actions).
-    public func isGlobalThread(_ threadId: String) -> Bool {
-        remoteScopeForThread(threadId) == "global"
     }
 
     /// Pull the full body for a clipped row from the Mac.

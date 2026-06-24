@@ -720,6 +720,11 @@ public struct BridgeActionAckData: Codable, Sendable {
     /// hosts on the tailnet, with this host (self) already dropped Mac-side. The
     /// phone still dedupes its already-paired hosts on its side. Wire key `hosts`.
     public let hosts: [DiscoveredHostInfo]?
+    /// The connected host's base64 raw X25519 push-agreement public key
+    /// (`registerApnsToken` ack). Stored onto the connected host's paired record
+    /// so the Notification Service Extension can derive the static shared secret
+    /// to decrypt that host's rich pushes. Wire key `macAgreePub`.
+    public let macAgreePub: String?
 }
 
 public struct TranscriptMediaFetchResult: Codable, Sendable, Hashable {
@@ -1343,15 +1348,23 @@ public enum BridgeAction {
     }
 
     /// Ship the APNs device token to the Mac (pairID is overwritten
-    /// Mac-side with the authenticated transport identity).
+    /// Mac-side with the authenticated transport identity). `agreePub` is this
+    /// device's base64 raw X25519 push-agreement public key — the Mac stores it
+    /// to seal per-device rich-push blobs; the ack returns the Mac's own
+    /// `macAgreePub` for the reverse direction.
     public static func registerApnsToken(
         deviceToken: String, env: String,
+        agreePub: String? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
-        encode([
+        var payload: [String: Any] = [
             "kind": "registerApnsToken", "actionId": actionId,
             "pairID": "transport", "deviceToken": deviceToken, "env": env,
-        ])
+        ]
+        if let agreePub, !agreePub.isEmpty {
+            payload["agreePub"] = agreePub
+        }
+        return encode(payload)
     }
 
     /// Ask the connected host (the "oracle") to enumerate the tailnet and report
