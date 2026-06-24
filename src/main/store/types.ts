@@ -1402,6 +1402,15 @@ export interface AppSettings {
    * that sets a budget expects it enforced). Registration requires
    * `workflowBudgetKillEnabled !== false && hasAnyBudget(limits)`. */
   workflowBudgetKillEnabled?: boolean
+  /**
+   * Stage 0b-dispatch — when TRUE (default) a SOLO scheduled task that comes due
+   * while the app is WINDOWLESS (window closed but process alive) is composed +
+   * dispatched by MAIN instead of waiting for a renderer to receive the
+   * 'scheduled-task-due' broadcast. Set false to revert to renderer-only dispatch
+   * (a windowless app then defers its solo runs until a window opens; the task
+   * stays 'due' and is retried each scheduler tick). Ensemble occurrences are
+   * never headless-dispatched regardless (they run through runEnsembleRound). */
+  headlessScheduledDispatchEnabled?: boolean
   windowBounds?: {
     x?: number
     y?: number

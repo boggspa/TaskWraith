@@ -319,6 +319,7 @@ import {
 import { hasAnyBudget } from './WorkflowBudgetGuard'
 import { WorkflowBudgetRegistry } from './WorkflowBudgetRegistry'
 import { decideCancelInterrupt, shouldFlushPendingInterrupt } from './CodexPendingInterrupt'
+import { routeDueScheduledTask } from './HeadlessScheduledDispatch'
 import { ComposerService, type ComposerInput } from './services/ComposerService'
 import {
   DiscordContextService,
@@ -1364,6 +1365,26 @@ const scheduledTaskIdByFailoverRun = new Map<string, string>()
 // appRunId -> scheduledTaskId at dispatch, mark terminal in sendAgentCompatExit.
 // Idempotent vs the renderer mark (updateScheduledTask's transition guard).
 const scheduledTaskIdBySoloRun = new Map<string, string>()
+
+// Stage 0b-dispatch — composerServiceRef lets the scheduler compose a run from
+// MAIN (the ComposerService is constructed later, in whenReady); headlessRunSender
+// stands in for event.sender when there is NO window to stream to. The run-loop
+// streams deltas through `.send` (guarded by `.isDestroyed()`) and reads `.id`;
+// with no window nothing listens, but disk persistence (appendRunEvent, the
+// terminal scheduled-task mark) is sender-INDEPENDENT, so the run still completes
+// and is recorded. Every other access resolves to a no-op fn (defensive — the
+// dispatch path touches only id/isDestroyed/send).
+let composerServiceRef: ComposerService | null = null
+const headlessRunSender = new Proxy(
+  {},
+  {
+    get: (_target, prop) => {
+      if (prop === 'isDestroyed') return () => false
+      if (prop === 'id') return -1
+      return () => undefined
+    }
+  }
+) as unknown as Electron.WebContents
 
 // Per-occurrence mid-run BUDGET KILL (WorkflowLimits enforcement). SOLO scheduled
 // runs only — ensemble is OUT (no per-participant scheduledTaskId; shared round
@@ -6599,6 +6620,68 @@ function clearScheduledTaskTimer() {
   }
 }
 
+// Stage 0b-dispatch: compose + dispatch a due SOLO scheduled task from MAIN when
+// no renderer can (windowless). Mirrors the renderer executeRun dispatch essence
+// (composeRun -> runAgent) without the renderer-only UI bookkeeping. The
+// 'running' mark is SYNCHRONOUS (before the first await) so a racing scheduler
+// tick can't double-dispatch — getDueScheduledTasks stops returning a non-'due'
+// task once claimed. Completion + the per-occurrence budget kill are handled by
+// the shared dispatch chokepoint, which keys off the threaded scheduledTaskId.
+// Ensemble occurrences never reach here (routeDueScheduledTask defers them — they
+// dispatch via runEnsembleRound, not composeRun).
+async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<void> {
+  const composer = composerServiceRef
+  const dispatch = dispatchRunWithProviderPauseRef
+  if (!composer || !dispatch) return
+  const scheduledRunId = task.runId || `${task.provider}-scheduled-${randomUUID()}`
+  try {
+    const running = AppStore.updateScheduledTask(task.id, {
+      status: 'running',
+      firedAt: task.firedAt || new Date().toISOString(),
+      runId: scheduledRunId
+    })
+    // Transition guard rejected the due->running move (already running/terminal):
+    // a racing path claimed it; don't double-dispatch.
+    if (!running || running.status !== 'running') return
+    const composed = composer.composeRun({
+      chatId: task.chatId,
+      appRunId: scheduledRunId,
+      provider: task.provider,
+      workspace: task.workspacePath,
+      prompt: task.prompt,
+      selectedModelType: task.selectedModelType,
+      customModel: task.customModel,
+      approvalMode: task.approvalMode,
+      sessionTrust: task.sessionTrust,
+      imageAttachments: task.imageAttachments,
+      externalPathGrants: task.externalPathGrants,
+      codexReasoningEffort: task.codexReasoningEffort,
+      codexServiceTier: task.codexServiceTier,
+      claudeReasoningEffort: task.claudeReasoningEffort,
+      claudeFastMode: task.claudeFastMode,
+      kimiThinkingEnabled: task.kimiThinkingEnabled,
+      runtimeProfileId: task.runtimeProfileId,
+      geminiAuthProfileId: task.geminiAuthProfileId,
+      handoffSourceRunId: task.handoffSourceRunId,
+      scheduledTaskId: task.id
+    })
+    // composeRun consumes scheduledTaskId (forces the unattended posture) but does
+    // NOT echo it; re-add it so the chokepoint registers budget + the solo
+    // completion mark (scheduledTaskIdBySoloRun), exactly as the renderer path does.
+    await dispatch({ ...composed, scheduledTaskId: task.id } as AgentRunPayload, {
+      sender: headlessRunSender
+    })
+  } catch (error) {
+    AppStore.updateScheduledTask(task.id, {
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+      lastError: `Headless scheduled dispatch failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    })
+  }
+}
+
 function emitDueScheduledTasks() {
   const materialized = AppStore.materializeDueWorkflows()
   mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
@@ -6606,12 +6689,29 @@ function emitDueScheduledTasks() {
     mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
   }
   const dueTasks = AppStore.getDueScheduledTasks()
+  const rendererAvailable = Boolean(mainWindow && !mainWindow.webContents.isDestroyed())
+  const headlessEnabled = AppStore.getSettings().headlessScheduledDispatchEnabled !== false
+  const composerReady = Boolean(composerServiceRef && dispatchRunWithProviderPauseRef)
   for (const task of dueTasks) {
-    const updated = AppStore.updateScheduledTask(task.id, {
-      status: 'due',
-      firedAt: new Date().toISOString()
+    const dueTask =
+      AppStore.updateScheduledTask(task.id, {
+        status: 'due',
+        firedAt: new Date().toISOString()
+      }) || task
+    const route = routeDueScheduledTask(dueTask, {
+      rendererAvailable,
+      headlessEnabled,
+      composerReady
     })
-    mainWindow?.webContents.send('scheduled-task-due', updated || task)
+    if (route === 'broadcast') {
+      mainWindow?.webContents.send('scheduled-task-due', dueTask)
+    } else if (route === 'headless') {
+      // Stage 0b-dispatch: no renderer to receive the broadcast — fire this SOLO
+      // task from main. dispatchDueScheduledTaskHeadless marks it 'running'
+      // synchronously, so the next tick won't re-dispatch it. A 'defer' route
+      // leaves it 'due' to retry next tick (getDueScheduledTasks re-returns 'due').
+      void dispatchDueScheduledTaskHeadless(dueTask)
+    }
   }
   if (dueTasks.length > 0) {
     mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
@@ -24398,6 +24498,9 @@ if (isGeminiMcpBridgeProcess) {
       return dispatchResult
     }
     dispatchRunWithProviderPauseRef = dispatchRunWithProviderPause
+    // Stage 0b-dispatch: expose the composer + dispatcher to the module-scope
+    // scheduler so a windowless app can compose + fire a due SOLO run itself.
+    composerServiceRef = composerService
     if (messageBridgeRuntime) {
       const {
         messageChannelBindingStore,
