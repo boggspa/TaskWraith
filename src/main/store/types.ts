@@ -2973,6 +2973,12 @@ export interface WorkflowDefinition {
   lastCompletedAt?: string
   lastStatus?: WorkflowExecutionStatus
   lastError?: string
+  /** Stage 2 slice 7b — cached summary of the latest LOOP execution, for the SYNC
+   * remote projection to iOS (the durable ledger query is async). Written by the loop
+   * engine on completion, mirroring lastStatus/lastRunAt; absent for non-loop runs. */
+  lastRunIterationCount?: number
+  lastRunStopReason?: string
+  lastRunTokens?: number
   failureStreak: number
   activeExecutionId?: string
   history: WorkflowExecutionRecord[]

@@ -57,6 +57,11 @@ export interface RemoteWorkflow {
   status: RemoteTaskStatus | 'completed' | 'skipped'
   nextRunAt?: string
   lastRunAt?: string
+  /** Stage 2 slice 7b — latest LOOP execution summary for the phone's progress badge
+   * (absent for a non-loop or never-run workflow). Cached on the WorkflowDefinition. */
+  loopIterationCount?: number
+  loopStopReason?: string
+  loopTokens?: number
 }
 
 export type RemoteTaskStatus =

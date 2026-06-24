@@ -91,6 +91,39 @@ describe('AppStore workflows', () => {
     expect(workflow?.nextRunAt).toBe(new Date(Date.parse(plannedFor) + intervalMs).toISOString())
   })
 
+  it('slice 7b — persists the cached loop summary through normalize (for the iOS projection)', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const updated = AppStore.updateWorkflowDefinition(saved.id, {
+      lastRunIterationCount: 3,
+      lastRunStopReason: 'accepted',
+      lastRunTokens: 1234
+    })
+    expect(updated).toMatchObject({
+      lastRunIterationCount: 3,
+      lastRunStopReason: 'accepted',
+      lastRunTokens: 1234
+    })
+    // Must survive a fresh read — the normalizer whitelists fields, so these have to
+    // be explicitly preserved or the projection would never see them after a reload.
+    expect(AppStore.getWorkflowDefinition(saved.id)).toMatchObject({
+      lastRunIterationCount: 3,
+      lastRunStopReason: 'accepted',
+      lastRunTokens: 1234
+    })
+  })
+
+  it('slice 7b — drops a malformed cached loop summary at normalize', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const updated = AppStore.updateWorkflowDefinition(saved.id, {
+      lastRunIterationCount: Number.NaN as unknown as number,
+      lastRunStopReason: 42 as unknown as string,
+      lastRunTokens: -5
+    })
+    expect(updated?.lastRunIterationCount).toBeUndefined() // NaN → undefined
+    expect(updated?.lastRunStopReason).toBeUndefined() // non-string → undefined
+    expect(updated?.lastRunTokens).toBe(0) // negative clamped to ≥0
+  })
+
   it('advances a skipped due occurrence when an execution is already active', () => {
     const saved = AppStore.saveWorkflowDefinition(
       workflowInput({

@@ -328,6 +328,18 @@ function normalizeWorkflowDefinitionRecord(
     lastCompletedAt: typeof input.lastCompletedAt === 'string' ? input.lastCompletedAt : undefined,
     lastStatus: input.lastStatus,
     lastError: typeof input.lastError === 'string' ? input.lastError : undefined,
+    // Slice 7b — preserve the cached loop summary (the normalizer whitelists fields,
+    // and updateWorkflowDefinition re-normalizes, so without this they'd never persist).
+    lastRunIterationCount:
+      typeof input.lastRunIterationCount === 'number' && Number.isFinite(input.lastRunIterationCount)
+        ? Math.max(0, Math.floor(input.lastRunIterationCount))
+        : undefined,
+    lastRunStopReason:
+      typeof input.lastRunStopReason === 'string' ? input.lastRunStopReason : undefined,
+    lastRunTokens:
+      typeof input.lastRunTokens === 'number' && Number.isFinite(input.lastRunTokens)
+        ? Math.max(0, Math.floor(input.lastRunTokens))
+        : undefined,
     failureStreak:
       typeof input.failureStreak === 'number' && Number.isFinite(input.failureStreak)
         ? Math.max(0, Math.floor(input.failureStreak))

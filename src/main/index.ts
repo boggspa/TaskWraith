@@ -7215,6 +7215,21 @@ async function dispatchDueScheduledLoopHeadless(
     completedAt: new Date().toISOString(),
     ...(outcome.lastError ? { lastError: outcome.lastError } : {})
   })
+
+  // Slice 7b — cache THIS loop's summary on the workflow definition (mirrors how
+  // lastStatus/lastRunAt are cached) so the SYNC remote-projection builder can carry
+  // the iteration count / spend / stop reason to iOS, then push it immediately. The
+  // projection otherwise only re-fires on the NEXT definition change, which would
+  // leave the phone's loop badge stale. updateWorkflowDefinition MERGES, so it
+  // preserves the lastStatus the scheduled-task sync just wrote.
+  if (task.workflowId) {
+    AppStore.updateWorkflowDefinition(task.workflowId, {
+      lastRunIterationCount: snap.iterationsCompleted,
+      ...(snap.stopReason ? { lastRunStopReason: snap.stopReason } : {}),
+      ...(typeof snap.budget.spentTokens === 'number' ? { lastRunTokens: snap.budget.spentTokens } : {})
+    })
+    bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+  }
 }
 
 async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<void> {
@@ -20908,7 +20923,14 @@ if (isGeminiMcpBridgeProcess) {
           schedule,
           status: wf.lastStatus ?? 'idle',
           nextRunAt: wf.nextRunAt,
-          lastRunAt: wf.lastRunAt
+          lastRunAt: wf.lastRunAt,
+          // Slice 7b — the cached loop summary (omit when absent so a non-loop / never-
+          // run workflow projects nothing extra; iOS renders the badge only when present).
+          ...(typeof wf.lastRunIterationCount === 'number'
+            ? { loopIterationCount: wf.lastRunIterationCount }
+            : {}),
+          ...(wf.lastRunStopReason ? { loopStopReason: wf.lastRunStopReason } : {}),
+          ...(typeof wf.lastRunTokens === 'number' ? { loopTokens: wf.lastRunTokens } : {})
         }
         envelopes.push(
           buildRemoteProjectionEnvelope({
