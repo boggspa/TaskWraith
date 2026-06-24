@@ -23707,6 +23707,26 @@ if (isGeminiMcpBridgeProcess) {
       completeSessionCheckpoint: (chatId, roundId, status) =>
         sessionCheckpointStoreRef?.completeRound(chatId, roundId, status),
       releaseWriteIntentsForLane: (laneId) => workspaceWriteIntentRegistry.releaseAllForLane(laneId),
+      // A non-Bossman participant that tries to drive `ensemble_bossman_control`
+      // is an attempted control escalation — record it to the durable approval
+      // ledger (as a policy auto-deny), not just the transcript. Classified under
+      // `mcpTools` since the rejected call IS an MCP tool invocation.
+      recordBossmanControlRejection: (rejection) =>
+        auditService.recordAutomaticApprovalDecision(
+          rejection.provider,
+          { appRunId: rejection.runId, appChatId: rejection.chatId },
+          'mcpTools',
+          rejection.workspacePath,
+          {
+            method: 'ensemble_bossman_control',
+            title: 'Ensemble Bossman control rejected',
+            body: 'A non-Bossman participant attempted to use ensemble_bossman_control.'
+          },
+          'autoDeny',
+          'policy',
+          'request',
+          rejection.metadata
+        ),
       // 1.0.7 — persist ensemble participant usage so ensemble runs reach
       // usage.json (welcome wall-clock + activity heatmaps + Providers-tab
       // token totals). Solo runs record via the renderer's handleProviderExit;

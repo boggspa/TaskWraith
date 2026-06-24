@@ -14876,9 +14876,17 @@ function App(): React.JSX.Element {
         currentChat.ensemble.participants.some((participant) => participant.id === bossmanParticipantId) &&
         (config.allowedParticipantIds === null ||
           config.allowedParticipantIds.includes(bossmanParticipantId as string))
+      // Link the goal that is active at session start (if any). When the
+      // Bossman later completes the session and this is still the chat's active
+      // goal, that goal is completed too. Unrelated goals are untouched.
+      const linkedActiveGoalId =
+        currentChat.activeGoal && currentChat.activeGoal.status !== 'completed'
+          ? currentChat.activeGoal.id
+          : undefined
       const managedConfig: WorkSessionConfig = {
         ...config,
-        managerParticipantId: bossmanIsSessionParticipant ? bossmanParticipantId : undefined
+        managerParticipantId: bossmanIsSessionParticipant ? bossmanParticipantId : undefined,
+        ...(linkedActiveGoalId ? { linkedActiveGoalId } : {})
       }
       updateChatById(currentChat.appChatId, (source) => {
         return applyWorkSessionConfirmation(source, {

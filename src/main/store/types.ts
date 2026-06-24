@@ -978,6 +978,11 @@ export interface WorkSessionConfig {
   /** Captured from the Ensemble Bossman when a Work Session starts. When set,
    * only this participant may advance or complete the autonomous loop. */
   managerParticipantId?: string
+  /** Id of the chat's active Goal at the moment this Work Session was started,
+   * if any. When the Bossman marks the session complete and this still matches
+   * the chat's current `activeGoal`, that goal is completed too. Unrelated
+   * goals (id mismatch, or none) are left untouched. */
+  linkedActiveGoalId?: string
   /** Permission preset clamped over each participant for the
    * duration of the session. Fed into the existing
    * `resolveEffectiveRunPermissions` pipeline so workspace grants +

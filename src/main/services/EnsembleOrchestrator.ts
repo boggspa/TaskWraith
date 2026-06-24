@@ -40,6 +40,7 @@ import {
   type DispatchFailureReason
 } from '../EnsembleErrors'
 import type { ScoutBriefRecord } from '../ScoutBrief'
+import { updateActiveGoalLifecycle } from '../GoalState'
 import { findTerminalSynthesizerRoundSummary } from '../EnsembleRoundSummary'
 // M4 (1.0.7) — auto-derive blackboard entries from the synthesizer's
 // round summary at round end, so the panel's agreed decisions / risks /
@@ -175,6 +176,19 @@ export interface EnsembleOrchestratorDeps {
     status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>
   ) => void
   releaseWriteIntentsForLane?: (laneId: string) => unknown
+  /**
+   * Record a non-Bossman attempt to drive `ensemble_bossman_control` into the
+   * durable approval/audit ledger (the orchestrator has no direct AuditService
+   * handle). Optional so the unit-test harness can omit it (auditing is then a
+   * no-op). The transcript status line is appended regardless.
+   */
+  recordBossmanControlRejection?: (rejection: {
+    provider: ProviderId
+    workspacePath: string | undefined
+    chatId: string
+    runId: string | undefined
+    metadata: Record<string, unknown>
+  }) => void
 }
 
 /**
@@ -325,6 +339,7 @@ export interface EnsembleBossmanControlResult {
     | 'reorder_cooldown'
     | 'queue_failed'
     | 'no_active_work_session'
+    | 'baseline_exceeded'
 }
 
 export interface EnsembleSideMessageInput {
@@ -1440,6 +1455,24 @@ export class EnsembleOrchestrator {
         runtime.roundId,
         `Bossman control rejected from ${caller.participant.role || caller.participant.provider}: only the assigned Bossman may use ensemble_bossman_control.`
       )
+      // An impostor control attempt is a security-relevant event — record it to
+      // the durable audit ledger, not just the transcript.
+      this.deps.recordBossmanControlRejection?.({
+        provider: caller.participant.provider,
+        workspacePath: chat.workspacePath,
+        chatId: caller.chatId,
+        runId: caller.runId,
+        metadata: {
+          kind: 'bossman_control_rejected',
+          rejectionReason: 'not_bossman',
+          action,
+          roundId: runtime.roundId,
+          attemptingParticipantId: caller.participant.id,
+          attemptingParticipantRole: caller.participant.role,
+          attemptingProvider: caller.participant.provider,
+          assignedBossmanParticipantId: bossmanParticipantId
+        }
+      })
       return {
         ok: false,
         tool: 'ensemble_bossman_control',
@@ -1761,8 +1794,22 @@ export class EnsembleOrchestrator {
         : 'Bossman paused the Work Session.')
     const nowIso = this.deps.nowIso()
     const status = action === 'complete_work_session' ? 'completed' : 'paused'
+    // If this session was started from a linked active Goal and that goal is
+    // STILL the chat's current active goal, completing the session completes
+    // the goal too. A different/absent active goal (the user moved on) is left
+    // untouched — "unrelated goals are not affected".
+    const linkedGoalId = session.linkedActiveGoalId
+    const completesLinkedGoal =
+      status === 'completed' &&
+      Boolean(linkedGoalId) &&
+      chat.activeGoal?.id === linkedGoalId &&
+      chat.activeGoal?.status !== 'completed'
+    const nextActiveGoal = completesLinkedGoal
+      ? updateActiveGoalLifecycle(chat.activeGoal!, 'completed', reason, new Date(nowIso))
+      : chat.activeGoal
     this.deps.saveChat({
       ...chat,
+      ...(nextActiveGoal !== chat.activeGoal ? { activeGoal: nextActiveGoal } : {}),
       ensemble: {
         ...chat.ensemble,
         workSession: {
@@ -1776,6 +1823,13 @@ export class EnsembleOrchestrator {
       updatedAt: this.deps.now()
     })
     this.appendRoundStatus(runtime.chatId, runtime.roundId, `Bossman ${status === 'completed' ? 'completed' : 'paused'} the Work Session. ${reason}`)
+    if (completesLinkedGoal) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Bossman completed the linked goal "${chat.activeGoal?.objective || linkedGoalId}".`
+      )
+    }
     return {
       ok: true,
       tool: 'ensemble_bossman_control',
@@ -1873,6 +1927,37 @@ export class EnsembleOrchestrator {
         participantId: targetParticipantId,
         message: `Bossman replacement rejected: ${health.reason || `${provider} is not reachable`}.`,
         error: 'replacement_unreachable'
+      }
+    }
+
+    // Re-read after the async health probe: a concurrent roster edit may have
+    // landed while we awaited. A replacement is strictly 1:1 — if the roster
+    // grew past the round's baseline participant count in the meantime,
+    // swapping in the replacement would PERSIST a round larger than its
+    // baseline. Adding a participant beyond the baseline is gated behind
+    // explicit user approval, not something the Bossman tool may grant, so we
+    // refuse rather than grow the round.
+    const postProbeParticipants =
+      this.deps.getChat(runtime.chatId)?.ensemble?.participants || []
+    const baselineCount =
+      runtime.bossmanBaselineParticipantCount ??
+      runtime.bossmanBaselineParticipantIds?.length ??
+      postProbeParticipants.length
+    const targetStillPresent = postProbeParticipants.some(
+      (participant) => participant.id === targetParticipantId
+    )
+    const prospectiveParticipantCount =
+      postProbeParticipants.length - (targetStillPresent ? 1 : 0) + 1
+    if (prospectiveParticipantCount > baselineCount) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'replace_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message:
+          'Bossman replacement rejected: the roster changed during the health check and the replacement would add a participant beyond the round baseline. Adding beyond the baseline requires explicit user approval.',
+        error: 'baseline_exceeded'
       }
     }
 
