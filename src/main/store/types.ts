@@ -2176,6 +2176,7 @@ export interface ChatRun {
   warnings?: RunWarning[]
   exitCode?: number
   cancelled?: boolean
+  suppressRunSummary?: boolean
   stats?: any
   geminiWorktree?: GeminiWorktreeConfig
   effectiveWorkspacePath?: string
@@ -3198,6 +3199,7 @@ export interface AuditOrchestrationSettings {
 
 export type RunQueueJobStatus =
   | 'queued'
+  | 'steer_promoting'
   | 'starting'
   | 'active'
   | 'paused'
@@ -3292,6 +3294,12 @@ export interface RunQueueJob {
   chatId?: string
   source: RunQueueJobSource
   status: RunQueueJobStatus
+  promotionOwnerToken?: string
+  promotionToken?: string
+  transitionVersion?: number
+  promotionAttempt?: number
+  promotedAt?: string
+  queueMessageId?: string
   priority: number
   attempt: number
   promptPreview?: string
@@ -3334,6 +3342,8 @@ export interface RunQueueJobFilter {
 export type RunRecoveryAction =
   | 'marked_failed'
   | 'marked_failed_orphan_detected'
+  | 'requeued_stale_steer_promoting'
+  | 'cleared_stale_paused_process'
   | 'cleared_stale_process'
   | 'cleared_stale_orphan_process'
 

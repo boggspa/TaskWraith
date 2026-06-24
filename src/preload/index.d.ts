@@ -104,6 +104,14 @@ import type {
   GitRepositorySnapshot,
   GitResult
 } from '../main/services/GitService'
+import type {
+  FallbackPromotedSteerInput,
+  FallbackPromotedSteerJobResult,
+  LeasePromotedSteerInput,
+  LeasePromotedSteerJobResult,
+  PromoteQueuedJobForSteerInput,
+  PromoteQueuedJobForSteerResult
+} from '../main/services/RunLifecycleCoordinator'
 
 type GeminiCapabilityKind = 'mcp' | 'extensions' | 'skills' | 'agents'
 type GeminiCapabilityFormat = 'json' | 'raw' | 'error'
@@ -1268,6 +1276,15 @@ declare global {
         provider?: ProviderId
         statusReason?: string
       }) => Promise<RunQueueJob | null>
+      promoteQueuedJobForSteer: (
+        input: PromoteQueuedJobForSteerInput
+      ) => Promise<PromoteQueuedJobForSteerResult>
+      leasePromotedSteerJob: (
+        input: LeasePromotedSteerInput
+      ) => Promise<LeasePromotedSteerJobResult>
+      fallbackPromotedSteerJob: (
+        input: FallbackPromotedSteerInput
+      ) => Promise<FallbackPromotedSteerJobResult>
       transitionRunQueueJob: (
         runIdOrId: string,
         status: RunQueueJob['status'],

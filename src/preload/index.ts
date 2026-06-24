@@ -28,6 +28,14 @@ import type {
   GitRepositorySnapshot,
   GitResult
 } from '../main/services/GitService'
+import type {
+  FallbackPromotedSteerInput,
+  FallbackPromotedSteerJobResult,
+  LeasePromotedSteerInput,
+  LeasePromotedSteerJobResult,
+  PromoteQueuedJobForSteerInput,
+  PromoteQueuedJobForSteerResult
+} from '../main/services/RunLifecycleCoordinator'
 
 type ComposerImageAttachment = {
   id?: string
@@ -967,6 +975,16 @@ const api = {
   getRunQueueJobs: (filter: any = {}) => ipcRenderer.invoke('get-run-queue-jobs', filter),
   requestRunQueueJob: (job: any) => ipcRenderer.invoke('request-run-queue-job', job),
   leaseRunQueueJob: (request: any = {}) => ipcRenderer.invoke('lease-run-queue-job', request),
+  promoteQueuedJobForSteer: (
+    input: PromoteQueuedJobForSteerInput
+  ): Promise<PromoteQueuedJobForSteerResult> =>
+    ipcRenderer.invoke('promote-queued-job-for-steer', input),
+  leasePromotedSteerJob: (input: LeasePromotedSteerInput): Promise<LeasePromotedSteerJobResult> =>
+    ipcRenderer.invoke('lease-promoted-steer-job', input),
+  fallbackPromotedSteerJob: (
+    input: FallbackPromotedSteerInput
+  ): Promise<FallbackPromotedSteerJobResult> =>
+    ipcRenderer.invoke('fallback-promoted-steer-job', input),
   transitionRunQueueJob: (runIdOrId: string, status: string, partial: any = {}) =>
     ipcRenderer.invoke('transition-run-queue-job', runIdOrId, status, partial),
   getRunRecoveryRecords: (filter: any = {}) =>

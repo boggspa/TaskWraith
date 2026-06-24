@@ -123,6 +123,99 @@ describe('RunRecovery', () => {
     expect(recovered.records[0].action).toBe('cleared_stale_orphan_process')
   })
 
+  it('requeues stale steer_promoting runs that have timed out since startup', () => {
+    const steerPromoting = job({
+      id: 'run-steer-stale',
+      runId: 'run-steer-stale',
+      status: 'steer_promoting',
+      promotedAt: '2026-05-07T11:57:00.000Z',
+      promotionToken: 'token-1',
+      promotionAttempt: 2,
+      transitionVersion: 3,
+      queueMessageId: 'message-1'
+    })
+
+    const recovered = recoverRunQueueJobsAfterStartup([steerPromoting], recoveredAt, () => undefined)
+    const recoveredJob = recovered.jobs[0]
+    const record = recovered.records[0]
+
+    expect(recoveredJob.status).toBe('queued')
+    expect(recoveredJob.recoveryReason).toBe('stale_steer_promoting_recovered')
+    expect(recoveredJob.processPid).toBeUndefined()
+    expect(recoveredJob.promotionToken).toBeUndefined()
+    expect(recoveredJob.promotionAttempt).toBeUndefined()
+    expect(recoveredJob.transitionVersion).toBeUndefined()
+    expect(recoveredJob.queueMessageId).toBeUndefined()
+    expect(recoveredJob.promotedAt).toBeUndefined()
+    expect(record.action).toBe('requeued_stale_steer_promoting')
+    expect(record.reason).toBe('Steer promotion could not resume after app restart.')
+  })
+
+  it('requeues recent steer_promoting runs because promotion ownership cannot resume after restart', () => {
+    const recent = job({
+      id: 'run-steer-recent',
+      runId: 'run-steer-recent',
+      status: 'steer_promoting',
+      promotedAt: '2026-05-07T11:59:59.000Z',
+      promotionOwnerToken: 'owner-1',
+      promotionToken: 'token-1'
+    })
+
+    const recovered = recoverRunQueueJobsAfterStartup([recent], recoveredAt, () => undefined)
+    const recoveredJob = recovered.jobs[0]
+
+    expect(recoveredJob.status).toBe('queued')
+    expect(recoveredJob.recoveryReason).toBe('stale_steer_promoting_recovered')
+    expect(recoveredJob.promotionOwnerToken).toBeUndefined()
+    expect(recoveredJob.promotionToken).toBeUndefined()
+  })
+
+  it('requeues steer_promoting jobs when promotion metadata is malformed', () => {
+    const malformed = job({
+      id: 'run-steer-malformed',
+      runId: 'run-steer-malformed',
+      status: 'steer_promoting'
+    })
+
+    const recovered = recoverRunQueueJobsAfterStartup([malformed], '2026-05-07T11:05:00.000Z', () => undefined)
+    const recoveredJob = recovered.jobs[0]
+
+    expect(recoveredJob.status).toBe('queued')
+    expect(recoveredJob.recoveryReason).toBe('stale_steer_promoting_recovered')
+  })
+
+  it('clears stale process metadata from paused jobs and keeps them paused', () => {
+    const paused = job({
+      id: 'run-paused-stale',
+      runId: 'run-paused-stale',
+      status: 'paused',
+      processPid: 4242
+    })
+    const inspectProcess: ProcessInspector = (pid, checkedAt) => ({
+      pid,
+      checkedAt,
+      alive: false,
+      command: '/usr/bin/codex',
+      detection: 'pid_signal',
+      action: 'not_found',
+      errorCode: 'ESRCH'
+    })
+
+    const recovered = recoverRunQueueJobsAfterStartup([paused], recoveredAt, inspectProcess)
+    const recoveredJob = recovered.jobs[0]
+
+    expect(recoveredJob.status).toBe('paused')
+    expect(recoveredJob.processPid).toBeUndefined()
+    expect(recoveredJob.recoveryReason).toBe('stale_process_for_paused_run_on_startup')
+    expect(recoveredJob.statusReason).toContain('stale process metadata')
+    expect(recovered.records[0]).toMatchObject({
+      action: 'cleared_stale_paused_process',
+      previousStatus: 'paused',
+      recoveredStatus: 'paused',
+      process: { pid: 4242, alive: false }
+    })
+  })
+
   it('leaves queued and completed jobs unchanged', () => {
     const queued = job({ id: 'queued', runId: 'queued', status: 'queued' })
     const completed = job({ id: 'completed', runId: 'completed', status: 'completed' })

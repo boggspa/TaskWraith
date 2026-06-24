@@ -86,18 +86,21 @@ function recoveryRecordForJob(
   recovered: RunQueueJob,
   processSnapshot: RunRecoveryProcessSnapshot | undefined,
   recoveredAt: string,
-  reason: string
+  reason: string,
+  action?: RunRecoveryRecord['action']
 ): RunRecoveryRecord {
   const interrupted = ACTIVE_RUN_QUEUE_STATUSES.includes(original.status)
   const orphan = Boolean(processSnapshot?.alive)
   const { resumeAvailable, resumeHint } = resumeHintForJob(original)
-  const action = interrupted
-    ? orphan
-      ? 'marked_failed_orphan_detected'
-      : 'marked_failed'
-    : orphan
-      ? 'cleared_stale_orphan_process'
-      : 'cleared_stale_process'
+  const resolvedAction: RunRecoveryRecord['action'] = action
+    ? action
+    : interrupted
+      ? orphan
+        ? 'marked_failed_orphan_detected'
+        : 'marked_failed'
+      : orphan
+        ? 'cleared_stale_orphan_process'
+        : 'cleared_stale_process'
 
   return {
     schemaVersion: RUN_RECOVERY_SCHEMA_VERSION,
@@ -110,7 +113,7 @@ function recoveryRecordForJob(
     workspacePath: original.workspacePath,
     previousStatus: original.status,
     recoveredStatus: recovered.status,
-    action,
+    action: resolvedAction,
     reason,
     recoveredAt,
     process: processSnapshot,
@@ -127,6 +130,61 @@ function recoveryRecordForJob(
       processCommand: original.processCommand
     }
   }
+}
+
+function isExpiredSteerPromotingRun(
+  job: RunQueueJob,
+  recoveredAt: string
+): boolean {
+  void recoveredAt
+  return job.status === 'steer_promoting'
+}
+
+function recoverStaleSteerPromotingJob(
+  job: RunQueueJob,
+  recoveredAt: string,
+  processSnapshot: RunRecoveryProcessSnapshot | undefined
+): RunQueueJob {
+  const { resumeAvailable, resumeHint } = resumeHintForJob(job)
+  return updateRunQueueJobRecord(
+    job,
+    {
+      status: 'queued',
+      statusReason:
+        'Steer promotion state could not resume after app restart; rerunning from queued.',
+      recoveryReason: 'stale_steer_promoting_recovered',
+      processPid: undefined,
+      orphanProcess: processSnapshot,
+      recoveredAt,
+      resumeAvailable,
+      resumeHint,
+      promotionOwnerToken: undefined,
+      promotionToken: undefined,
+      promotionAttempt: undefined,
+      transitionVersion: undefined,
+      promotedAt: undefined,
+      queueMessageId: undefined
+    },
+    recoveredAt
+  )
+}
+
+function recoverPausedRunWithStaleProcess(
+  job: RunQueueJob,
+  recoveredAt: string,
+  processSnapshot: RunRecoveryProcessSnapshot
+): RunQueueJob {
+  return updateRunQueueJobRecord(
+    job,
+    {
+      processPid: undefined,
+      orphanProcess: processSnapshot,
+      recoveredAt,
+      recoveryReason: 'stale_process_for_paused_run_on_startup',
+      statusReason: 'Paused run had stale process metadata; cleared process PID.'
+    },
+    recoveredAt
+  )
 }
 
 function recoverInterruptedJob(
@@ -188,11 +246,51 @@ export function recoverRunQueueJobsAfterStartup(
   const recoveredJobs = jobs.map((job) => {
     const isInterrupted = ACTIVE_RUN_QUEUE_STATUSES.includes(job.status)
     const hasStaleFailedProcess = job.status === 'failed' && isValidPid(job.processPid)
-    if (!isInterrupted && !hasStaleFailedProcess) return job
+    const hasStalePausedProcess = job.status === 'paused' && isValidPid(job.processPid)
+    const hasExpiredSteerState = isExpiredSteerPromotingRun(job, recoveredAt)
+    if (
+      !isInterrupted &&
+      !hasStaleFailedProcess &&
+      !(hasStalePausedProcess) &&
+      !hasExpiredSteerState
+    ) {
+      return job
+    }
 
     const processSnapshot = isValidPid(job.processPid)
       ? inspectProcess(job.processPid, recoveredAt)
       : undefined
+
+    if (hasExpiredSteerState) {
+      const recovered = recoverStaleSteerPromotingJob(job, recoveredAt, processSnapshot)
+      records.push(
+        recoveryRecordForJob(
+          job,
+          recovered,
+          processSnapshot,
+          recoveredAt,
+          'Steer promotion could not resume after app restart.',
+          'requeued_stale_steer_promoting'
+        )
+      )
+      return recovered
+    }
+
+    if (hasStalePausedProcess && processSnapshot && !processSnapshot.alive) {
+      const recovered = recoverPausedRunWithStaleProcess(job, recoveredAt, processSnapshot)
+      records.push(
+        recoveryRecordForJob(
+          job,
+          recovered,
+          processSnapshot,
+          recoveredAt,
+          'Paused run had a stale process id at startup; process was not alive.',
+          'cleared_stale_paused_process'
+        )
+      )
+      return recovered
+    }
+
     const reason = isInterrupted
       ? 'Run was active when TaskWraith last exited.'
       : 'Failed run still had a recorded process id at startup.'

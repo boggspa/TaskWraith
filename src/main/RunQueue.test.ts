@@ -155,6 +155,70 @@ describe('RunQueue', () => {
     expect(failed.lastError).toBe('Process exited 1')
   })
 
+  it('preserves steering metadata and normalizes it out of terminal status paths', () => {
+    const steering = createRunQueueJob(
+      {
+        id: 'steer-run',
+        runId: 'steer-run',
+        provider: 'codex',
+        workspacePath: '/workspace',
+        source: 'system',
+        status: 'steer_promoting',
+        promotionToken: 'token-123',
+        promotionAttempt: 4,
+        transitionVersion: 2,
+        promotedAt: '2026-05-06T00:00:30.000Z',
+        queueMessageId: 'message-1'
+      },
+      '2026-05-06T00:00:00.000Z'
+    )
+
+    expect(steering.status).toBe('steer_promoting')
+    expect(steering.promotionToken).toBe('token-123')
+    expect(steering.promotionAttempt).toBe(4)
+    expect(steering.transitionVersion).toBe(2)
+    expect(steering.promotedAt).toBe('2026-05-06T00:00:30.000Z')
+    expect(steering.queueMessageId).toBe('message-1')
+
+    const failed = updateRunQueueJobRecord(
+      steering,
+      { status: 'failed', lastError: 'provider cancelled before queueing' },
+      '2026-05-06T00:01:00.000Z'
+    )
+    expect(failed.status).toBe('failed')
+    expect(failed.promotionToken).toBeUndefined()
+    expect(failed.transitionVersion).toBeUndefined()
+    expect(failed.promotionAttempt).toBeUndefined()
+    expect(failed.queueMessageId).toBeUndefined()
+    expect(failed.promotedAt).toBeUndefined()
+  })
+
+  it('allows queued -> steer_promoting -> starting and steer_promoting -> queued transitions', () => {
+    const queued = createRunQueueJob({
+      id: 'queued-steer',
+      runId: 'queued-steer',
+      provider: 'gemini',
+      workspacePath: '/workspace',
+      source: 'manual'
+    })
+    const promoting = updateRunQueueJobRecord(
+      queued,
+      { status: 'steer_promoting', promotionToken: 'token-456' },
+      '2026-05-06T00:01:00.000Z'
+    )
+    const requeued = updateRunQueueJobRecord(promoting, { status: 'queued' }, '2026-05-06T00:02:00.000Z')
+    const starting = updateRunQueueJobRecord(
+      promoting,
+      { status: 'starting' },
+      '2026-05-06T00:02:30.000Z'
+    )
+
+    expect(promoting.status).toBe('steer_promoting')
+    expect(promoting.promotionToken).toBe('token-456')
+    expect(requeued.status).toBe('queued')
+    expect(starting.status).toBe('starting')
+  })
+
   it('preserves the first terminal job status when late updates arrive', () => {
     const cancelled = createRunQueueJob(
       {
@@ -178,6 +242,24 @@ describe('RunQueue', () => {
     expect(lateFailure.cancelledAt).toBe('2026-05-06T00:02:00.000Z')
     expect(lateFailure.failedAt).toBeUndefined()
     expect(lateFailure.lastError).toBe('Late process close')
+  })
+
+  it('prevents terminal jobs from moving back to active lifecycle states', () => {
+    const terminalStatuses = ['cancelled', 'failed', 'completed'] as const
+    for (const terminalStatus of terminalStatuses) {
+      const terminal = createRunQueueJob({
+        id: `blocked-${terminalStatus}`,
+        runId: `blocked-${terminalStatus}`,
+        provider: 'gemini',
+        workspacePath: '/workspace',
+        source: 'manual',
+        status: terminalStatus
+      })
+      expect(updateRunQueueJobRecord(terminal, { status: 'queued' }).status).toBe(terminalStatus)
+      expect(updateRunQueueJobRecord(terminal, { status: 'starting' }).status).toBe(terminalStatus)
+      expect(updateRunQueueJobRecord(terminal, { status: 'active' }).status).toBe(terminalStatus)
+      expect(updateRunQueueJobRecord(terminal, { status: 'steer_promoting' }).status).toBe(terminalStatus)
+    }
   })
 
   it('recovers active jobs as failed on startup while leaving queued jobs alone', () => {
@@ -263,5 +345,28 @@ describe('RunQueue', () => {
 
     expect(findNextRunnableQueueIndex(jobs, (job) => job.chatId !== 'busy-chat')).toBe(1)
     expect(findNextRunnableQueueIndex(jobs, () => false)).toBe(-1)
+  })
+
+  it('skips steer_promoting jobs in normal runnable queue selection', () => {
+    const jobs = [
+      createRunQueueJob({
+        id: 'steering',
+        runId: 'steering',
+        provider: 'codex',
+        workspacePath: '/workspace',
+        source: 'manual',
+        status: 'steer_promoting'
+      }),
+      createRunQueueJob({
+        id: 'ready',
+        runId: 'ready',
+        provider: 'codex',
+        workspacePath: '/workspace',
+        source: 'manual',
+        status: 'queued'
+      })
+    ]
+
+    expect(findNextRunnableQueueIndex(jobs, () => true)).toBe(1)
   })
 })

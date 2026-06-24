@@ -15,20 +15,80 @@ export type RunQueueJobInput = Omit<
 export const ACTIVE_RUN_QUEUE_STATUSES: RunQueueJobStatus[] = ['starting', 'active', 'cancelling']
 export const TERMINAL_RUN_QUEUE_STATUSES: RunQueueJobStatus[] = ['cancelled', 'failed', 'completed']
 
+const RUN_QUEUE_NONTERMINAL_STATUS_SET: Record<RunQueueJobStatus, boolean> = {
+  queued: true,
+  steer_promoting: true,
+  starting: true,
+  active: true,
+  paused: true,
+  cancelling: true,
+  cancelled: false,
+  failed: false,
+  completed: false
+}
+
+const RUN_QUEUE_STATUS_TRANSITIONS: Record<RunQueueJobStatus, ReadonlySet<RunQueueJobStatus>> = {
+  queued: new Set([
+    'queued',
+    'starting',
+    'active',
+    'paused',
+    'steer_promoting',
+    'cancelling',
+    'cancelled',
+    'failed',
+    'completed'
+  ]),
+  starting: new Set([
+    'queued',
+    'starting',
+    'active',
+    'paused',
+    'cancelling',
+    'cancelled',
+    'failed',
+    'completed'
+  ]),
+  active: new Set(['active', 'paused', 'cancelling', 'cancelled', 'failed', 'completed']),
+  paused: new Set([
+    'queued',
+    'starting',
+    'active',
+    'paused',
+    'cancelled',
+    'failed',
+    'completed'
+  ]),
+  steer_promoting: new Set([
+    'queued',
+    'steer_promoting',
+    'starting',
+    'cancelled',
+    'failed',
+    'completed'
+  ]),
+  cancelling: new Set(['cancelling', 'cancelled', 'failed']),
+  cancelled: new Set(['cancelled']),
+  failed: new Set(['failed']),
+  completed: new Set(['completed'])
+}
+
 const RUN_QUEUE_STATUS_ORDER: Record<RunQueueJobStatus, number> = {
   active: 0,
   starting: 1,
   queued: 2,
-  paused: 3,
-  cancelling: 4,
-  failed: 5,
-  cancelled: 6,
-  completed: 7
+  steer_promoting: 3,
+  paused: 4,
+  cancelling: 5,
+  failed: 6,
+  cancelled: 7,
+  completed: 8
 }
 
 function isRunQueueJobStatus(value: unknown): value is RunQueueJobStatus {
   return (
     value === 'queued' ||
+    value === 'steer_promoting' ||
     value === 'starting' ||
     value === 'active' ||
     value === 'paused' ||
@@ -43,8 +103,21 @@ function normalizeStatus(value: unknown): RunQueueJobStatus {
   return isRunQueueJobStatus(value) ? value : 'queued'
 }
 
+function canTransitionRunQueueStatus(
+  currentStatus: RunQueueJobStatus,
+  nextStatus: RunQueueJobStatus
+): boolean {
+  if (currentStatus === nextStatus) return true
+  if (isTerminalRunQueueStatus(currentStatus)) return false
+  return RUN_QUEUE_STATUS_TRANSITIONS[currentStatus]?.has(nextStatus) ?? false
+}
+
 export function isTerminalRunQueueStatus(status: RunQueueJobStatus): boolean {
   return TERMINAL_RUN_QUEUE_STATUSES.includes(status)
+}
+
+export function isNonterminalRunQueueStatus(status: RunQueueJobStatus): boolean {
+  return RUN_QUEUE_NONTERMINAL_STATUS_SET[status]
 }
 
 function compactPreview(value: string | undefined, maxLength = 240): string | undefined {
@@ -93,10 +166,9 @@ export function updateRunQueueJobRecord(
   now: string = new Date().toISOString()
 ): RunQueueJob {
   const requestedStatus = normalizeStatus(partial.status || existing.status)
-  const status =
-    isTerminalRunQueueStatus(existing.status) && isTerminalRunQueueStatus(requestedStatus)
-      ? existing.status
-      : requestedStatus
+  const status = canTransitionRunQueueStatus(existing.status, requestedStatus)
+    ? requestedStatus
+    : existing.status
   const next: RunQueueJob = {
     ...existing,
     ...partial,
@@ -128,13 +200,22 @@ export function updateRunQueueJobRecord(
     next.completedAt = next.completedAt || now
     next.endedAt = next.endedAt || now
   }
+  if (status === 'failed') {
+    next.failedAt = next.failedAt || now
+    next.endedAt = next.endedAt || now
+  }
   if (status === 'cancelled') {
     next.cancelledAt = next.cancelledAt || now
     next.endedAt = next.endedAt || now
   }
-  if (status === 'failed') {
-    next.failedAt = next.failedAt || now
-    next.endedAt = next.endedAt || now
+  if (status !== 'steer_promoting') {
+    next.promotedAt = undefined
+  }
+  if (!RUN_QUEUE_NONTERMINAL_STATUS_SET[status]) {
+    next.promotionAttempt = undefined
+    next.transitionVersion = undefined
+    next.promotionToken = undefined
+    next.queueMessageId = undefined
   }
 
   return next
@@ -202,7 +283,7 @@ function runQueueJobRecencyMs(job: RunQueueJob): number {
 
 /**
  * Drop the oldest terminal jobs beyond `maxTerminal`. In-flight jobs — anything
- * NOT terminal (queued/starting/active/paused/cancelling) — are ALWAYS kept, so
+ * NOT terminal (queued/starting/steer_promoting/active/paused/cancelling) — are ALWAYS kept, so
  * startup recovery and live dispatch are never affected. Original array order is
  * preserved for kept jobs (callers sort separately).
  */
@@ -238,5 +319,9 @@ export function capRunQueueJobs(
  */
 export function findNextRunnableQueueIndex<T>(jobs: T[], canDispatch: (job: T) => boolean): number {
   if (!jobs || jobs.length === 0) return -1
-  return jobs.findIndex((job) => canDispatch(job))
+  return jobs.findIndex((job) => {
+    const status = (job as { status?: unknown }).status
+    if (status === 'steer_promoting') return false
+    return canDispatch(job)
+  })
 }

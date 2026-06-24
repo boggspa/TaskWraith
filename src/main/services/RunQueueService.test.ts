@@ -74,6 +74,29 @@ function makeRepository(overrides: Partial<RunQueueRepository> = {}): RunQueueRe
         statusReason: input?.statusReason
       })
     ),
+    promoteQueuedJobForSteer: vi.fn((input) =>
+      makeJob({
+        runId: input?.runId || 'run-1',
+        status: 'queued',
+        statusReason: 'Steer promotion status updated.'
+      })
+    ),
+    leasePromotedSteerJob: vi.fn((input) =>
+      makeJob({
+        runId: input?.runId,
+        provider: 'gemini',
+        status: 'starting',
+        statusReason: input?.statusReason
+      })
+    ),
+    fallbackPromotedSteerJob: vi.fn((input) =>
+      makeJob({
+        runId: input?.runId,
+        provider: 'gemini',
+        status: 'queued',
+        statusReason: input?.reason
+      })
+    ),
     transitionRunQueueJob: vi.fn((runIdOrId, status, partial) =>
       makeJob({ id: runIdOrId, runId: runIdOrId, status, ...partial })
     ),
@@ -162,6 +185,20 @@ describe('RunQueueService', () => {
           limit: 50
         },
         externalPathGrants: [grant],
+        remoteComposer: {
+          workspaceId: 'workspace-1',
+          threadId: 'thread-1',
+          provider: 'codex',
+          text: 'Ship it from remote',
+          approvalMode: 'default',
+          model: 'opus',
+          reasoningEffort: 'low',
+          contextTurns: 3
+        },
+        guestParentChatId: 'guest-thread-1',
+        guestRole: 'assistant',
+        geminiAuthProfileId: 'gauth-1',
+        codexReasoningEffort: 'minimal',
         geminiWorktree: { enabled: true, name: 'feature' }
       }
     })
@@ -192,7 +229,21 @@ describe('RunQueueService', () => {
             channelName: 'build-help',
             limit: 50
           },
+          remoteComposer: {
+            workspaceId: 'workspace-1',
+            threadId: 'thread-1',
+            provider: 'codex',
+            text: 'Ship it from remote',
+            approvalMode: 'default',
+            model: 'opus',
+            reasoningEffort: 'low',
+            contextTurns: 3
+          },
           externalPathGrants: [grant],
+          guestParentChatId: 'guest-thread-1',
+          guestRole: 'assistant',
+          geminiAuthProfileId: 'gauth-1',
+          codexReasoningEffort: 'minimal',
           geminiWorktree: { enabled: true, name: 'feature' }
         })
       })
@@ -218,6 +269,45 @@ describe('RunQueueService', () => {
         scope: 'global',
         workspacePath: undefined,
         workspaceId: undefined
+      })
+    )
+  })
+
+  it('preserves remote source and remoteComposer snapshot fields', () => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    service.requestJob({
+      runId: 'remote-run',
+      provider: 'codex',
+      workspacePath: '/input',
+      chatId: 'chat-1',
+      source: 'remote',
+      request: {
+        prompt: 'From device',
+        remoteComposer: {
+          workspaceId: 'workspace-1',
+          threadId: 'thread-2',
+          provider: 'codex',
+          text: 'From paired device',
+          approvalMode: 'default',
+          model: 'opus'
+        }
+      }
+    })
+    expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'remote-run',
+        source: 'remote',
+        request: expect.objectContaining({
+          remoteComposer: {
+            workspaceId: 'workspace-1',
+            threadId: 'thread-2',
+            provider: 'codex',
+            text: 'From paired device',
+            approvalMode: 'default',
+            model: 'opus'
+          }
+        })
       })
     )
   })
@@ -325,9 +415,63 @@ describe('RunQueueService', () => {
     expect(activeDeps.repository.leaseQueuedRun).not.toHaveBeenCalled()
   })
 
+  it('delegates steer promotion lease/fallback calls through repository API boundaries', () => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    expect(service.promoteQueuedJobForSteer({ runId: 'run-1', ownerToken: 'owner-1' })).toEqual(
+      makeJob({
+        status: 'queued',
+        statusReason: 'Steer promotion status updated.'
+      })
+    )
+    expect(repository.promoteQueuedJobForSteer).toHaveBeenCalledWith({
+      runId: 'run-1',
+      ownerToken: 'owner-1'
+    })
+
+    expect(service.leasePromotedSteerJob({ runId: 'run-1', ownerToken: 'owner-1' })).toEqual(
+      makeJob({ status: 'starting', runId: 'run-1' })
+    )
+    expect(repository.leasePromotedSteerJob).toHaveBeenCalledWith({
+      runId: 'run-1',
+      ownerToken: 'owner-1',
+      statusReason: undefined
+    })
+
+    expect(
+      service.fallbackPromotedSteerJob({ runId: 'run-1', ownerToken: 'owner-1', reason: 'retry-queued' })
+    ).toEqual(makeJob({ status: 'queued', runId: 'run-1', statusReason: 'retry-queued' }))
+    expect(repository.fallbackPromotedSteerJob).toHaveBeenCalledWith({
+      runId: 'run-1',
+      ownerToken: 'owner-1',
+      reason: 'retry-queued'
+    })
+
+    service.fallbackPromotedSteerJob({
+      runId: 'run-1',
+      ownerToken: 'owner-1',
+      reason: 'lease failed',
+      fallbackStatus: 'queued'
+    })
+    expect(repository.fallbackPromotedSteerJob).toHaveBeenLastCalledWith({
+      runId: 'run-1',
+      ownerToken: 'owner-1',
+      reason: 'lease failed',
+      fallbackStatus: 'queued'
+    })
+  })
+
   it('sanitizes transition status and partial fields before delegating', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
+    service.transitionJob('run-1', 'steer_promoting', {
+      statusReason: ' steer '
+    })
+    expect(repository.transitionRunQueueJob).toHaveBeenCalledWith('run-1', 'steer_promoting', {
+      statusReason: ' steer ',
+      lastError: undefined
+    })
+
     service.transitionJob('run-1', 'not-a-status' as RunQueueJob['status'], {
       statusReason: ' reason ',
       lastError: 'boom',

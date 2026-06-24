@@ -17,6 +17,7 @@ import type {
 
 const RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
   'queued',
+  'steer_promoting',
   'starting',
   'active',
   'paused',
@@ -27,6 +28,7 @@ const RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
 ])
 const RUN_QUEUE_SOURCES = new Set<RunQueueJobSource>([
   'manual',
+  'remote',
   'scheduled',
   'retry',
   'permission_retry',
@@ -50,6 +52,27 @@ export interface RunQueueRepository {
     runId?: string
     provider?: ProviderId
     statusReason?: string
+  }) => RunQueueJob | null
+  promoteQueuedJobForSteer: (input: {
+    runId?: string
+    jobId?: string
+    ownerToken: string
+    provider?: ProviderId
+    chatId?: string
+    statusReason?: string
+    queueMessageId?: string
+    transitionVersion?: number
+  }) => RunQueueJob | null
+  leasePromotedSteerJob: (input: {
+    runId: string
+    ownerToken: string
+    statusReason?: string
+  }) => RunQueueJob | null
+  fallbackPromotedSteerJob: (input: {
+    runId: string
+    ownerToken: string
+    reason: string
+    fallbackStatus?: RunQueueJobStatus
   }) => RunQueueJob | null
   transitionRunQueueJob: (
     runIdOrId: string,
@@ -115,6 +138,68 @@ export class RunQueueService {
       runId: candidate.runId,
       provider: candidate.provider,
       statusReason: optionalString(request?.statusReason) || 'Leased by TaskWraith main scheduler.'
+    })
+  }
+
+  promoteQueuedJobForSteer(input: {
+    runId?: string
+    jobId?: string
+    ownerToken?: string
+    provider?: ProviderId
+    chatId?: string
+    statusReason?: string
+    queueMessageId?: string
+    transitionVersion?: number
+  }): RunQueueJob | null {
+    const ownerToken = optionalString(input?.ownerToken)
+    if (!ownerToken) return null
+    const provider = input?.provider ? assertProviderId(input.provider) : undefined
+    const runId = optionalString(input?.runId) || optionalString(input?.jobId)
+    if (!runId) return null
+    return this.deps.getRunRepository().promoteQueuedJobForSteer({
+      runId,
+      ownerToken,
+      provider,
+      chatId: optionalString(input?.chatId),
+      statusReason: optionalString(input?.statusReason),
+      queueMessageId: optionalString(input?.queueMessageId),
+      transitionVersion: input?.transitionVersion
+    })
+  }
+
+  leasePromotedSteerJob(input: {
+    runId?: string
+    ownerToken?: string
+    statusReason?: string
+  }): RunQueueJob | null {
+    const runId = optionalString(input?.runId)
+    const ownerToken = optionalString(input?.ownerToken)
+    if (!runId || !ownerToken) return null
+    return this.deps.getRunRepository().leasePromotedSteerJob({
+      runId,
+      ownerToken,
+      statusReason: optionalString(input?.statusReason)
+    })
+  }
+
+  fallbackPromotedSteerJob(input: {
+    runId?: string
+    ownerToken?: string
+    reason?: string
+    fallbackStatus?: RunQueueJobStatus
+  }): RunQueueJob | null {
+    const runId = optionalString(input?.runId)
+    const ownerToken = optionalString(input?.ownerToken)
+    const reason = optionalString(input?.reason)
+    const fallbackStatus = input?.fallbackStatus
+      ? sanitizeRunQueueStatus(input.fallbackStatus, 'queued')
+      : undefined
+    if (!runId || !ownerToken || !reason) return null
+    return this.deps.getRunRepository().fallbackPromotedSteerJob({
+      runId,
+      ownerToken,
+      reason,
+      ...(fallbackStatus ? { fallbackStatus } : {})
     })
   }
 
@@ -218,7 +303,14 @@ export class RunQueueService {
       geminiWorktree: sanitizeWorkspaceGeminiWorktree(value.geminiWorktree),
       codexNativeReview: Boolean(value.codexNativeReview) || undefined,
       codexReasoningEffort: optionalStringOrNull(value.codexReasoningEffort),
+      claudeReasoningEffort: optionalStringOrNull(value.claudeReasoningEffort),
       codexServiceTier: optionalStringOrNull(value.codexServiceTier),
+      geminiAuthProfileId: optionalStringOrNull(value.geminiAuthProfileId),
+      guestParentChatId: optionalString(value.guestParentChatId),
+      guestRole: optionalString(value.guestRole),
+      remoteComposer: isRecord(value.remoteComposer)
+        ? sanitizeRemoteComposer(value.remoteComposer)
+        : undefined,
       claudeFastMode: typeof value.claudeFastMode === 'boolean' ? value.claudeFastMode : undefined,
       kimiThinkingEnabled:
         typeof value.kimiThinkingEnabled === 'boolean' ? value.kimiThinkingEnabled : undefined,
@@ -266,6 +358,28 @@ function sanitizeWorkspaceGeminiWorktree(
     sanitized.name = record.name.trim()
   }
   return sanitized
+}
+
+function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remoteComposer'] | undefined {
+  if (!isRecord(value)) return undefined
+  const approvalMode = optionalString(value.approvalMode)
+  const model = optionalString(value.model)
+  const reasoningEffort = optionalStringOrNull(value.reasoningEffort)
+  const claudeReasoningEffort = optionalStringOrNull(value.claudeReasoningEffort)
+  return {
+    workspaceId: optionalString(value.workspaceId) || '',
+    threadId: optionalString(value.threadId) || '',
+    provider: optionalString(value.provider) || 'gemini',
+    text: optionalString(value.text) || '',
+    ...(approvalMode ? { approvalMode } : {}),
+    ...(model ? { model } : {}),
+    ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+    ...(claudeReasoningEffort !== undefined ? { claudeReasoningEffort } : {}),
+    ...(typeof value.contextTurns === 'number' ? { contextTurns: value.contextTurns } : {}),
+    ...(Array.isArray(value.extraWorkspaceIds)
+      ? { extraWorkspaceIds: value.extraWorkspaceIds.filter((id) => typeof id === 'string') }
+      : {})
+  }
 }
 
 function chatScope(chat: Pick<ChatRecord, 'scope'> | null | undefined): ChatScope {

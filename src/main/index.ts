@@ -352,6 +352,15 @@ import {
   type BugReportSubmission as BugReportSubmissionInput
 } from './services/BugReportService'
 import { RunCoordinator } from './services/RunCoordinator'
+import {
+  RunLifecycleCoordinator,
+  type FallbackPromotedSteerInput,
+  type FallbackPromotedSteerJobResult,
+  type LeasePromotedSteerInput,
+  type LeasePromotedSteerJobResult,
+  type PromoteQueuedJobForSteerInput,
+  type PromoteQueuedJobForSteerResult
+} from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
 import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
@@ -3149,6 +3158,7 @@ const permissionService = new PermissionService({ runManager, sessionGrants: age
 const providerPreflightService = new ProviderPreflightService()
 let runRepository: RunRepository | null = null
 let runQueueServiceRef: RunQueueService | null = null
+let runLifecycleCoordinatorRef: RunLifecycleCoordinator | null = null
 
 
 function getActiveTaskWraithThreadCount(): number {
@@ -17703,6 +17713,17 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
     runQueueServiceRef = runQueueService
+    runLifecycleCoordinatorRef = new RunLifecycleCoordinator({
+      queue: {
+        getRunQueueJob: (runIdOrId) => AppStore.getRunQueueJob(runIdOrId),
+        promoteQueuedJobForSteer: (input) => runQueueService.promoteQueuedJobForSteer(input),
+        leasePromotedSteerJob: (input) => runQueueService.leasePromotedSteerJob(input),
+        fallbackPromotedSteerJob: (input) => runQueueService.fallbackPromotedSteerJob(input),
+        transitionJob: (runIdOrId, status, partial) =>
+          runQueueService.transitionJob(runIdOrId, status, partial)
+      },
+      cancelProviderRun
+    })
 
     // Phase C5 scaffold: APNs wake-on-approval. Today both the pusher and
     // token store are wired as no-ops / persistent stubs; the real APNs
@@ -23240,6 +23261,54 @@ if (isGeminiMcpBridgeProcess) {
       'transition-run-queue-job',
       (_, runIdOrId: string, status: RunQueueJobStatus, partial: Partial<RunQueueJob> = {}) =>
         runQueueService.transitionJob(runIdOrId, status, partial)
+    )
+    ipcMain.handle(
+      'promote-queued-job-for-steer',
+      async (_, input: PromoteQueuedJobForSteerInput): Promise<PromoteQueuedJobForSteerResult> => {
+        if (!runLifecycleCoordinatorRef) {
+          return {
+            ok: false,
+            kind: 'fallback',
+            runId: typeof input?.runId === 'string' ? input.runId : 'unknown-run',
+            provider: input?.provider || 'gemini',
+            ownerToken: input?.ownerToken || randomUUID(),
+            jobStatus: 'queued',
+            reason: 'RunLifecycleCoordinator is not initialized yet — the app may still be starting up.',
+            cancelRequested: false
+          }
+        }
+        return runLifecycleCoordinatorRef.promoteQueuedJobForSteer(input)
+      }
+    )
+    ipcMain.handle(
+      'lease-promoted-steer-job',
+      async (_, input: LeasePromotedSteerInput): Promise<LeasePromotedSteerJobResult> => {
+        if (!runLifecycleCoordinatorRef) {
+          return {
+            ok: false,
+            kind: 'not-available',
+            runId: typeof input?.runId === 'string' ? input.runId : 'unknown-run',
+            reason: 'RunLifecycleCoordinator is not initialized yet — the app may still be starting up.',
+            ownerToken: input?.ownerToken || randomUUID()
+          }
+        }
+        return runLifecycleCoordinatorRef.leasePromotedSteerJob(input)
+      }
+    )
+    ipcMain.handle(
+      'fallback-promoted-steer-job',
+      async (_, input: FallbackPromotedSteerInput): Promise<FallbackPromotedSteerJobResult> => {
+        if (!runLifecycleCoordinatorRef) {
+          return {
+            ok: false,
+            kind: 'not-found',
+            runId: typeof input?.runId === 'string' ? input.runId : 'unknown-run',
+            ownerToken: input?.ownerToken || randomUUID(),
+            reason: 'RunLifecycleCoordinator is not initialized yet — the app may still be starting up.'
+          }
+        }
+        return runLifecycleCoordinatorRef.fallbackPromotedSteerJob(input)
+      }
     )
 
     // Durable transcript/event store. Writes are main-owned; renderer may only
