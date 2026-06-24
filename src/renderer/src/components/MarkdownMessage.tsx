@@ -1,7 +1,8 @@
-import { memo, useMemo } from 'react'
+import { memo, useMemo, useRef } from 'react'
 import { AgentIdentityContext } from './AgentIdentityContext'
 import { StableMarkdownBlock } from './StableMarkdownBlock'
 import { splitMarkdownIntoBlocks } from '../lib/MarkdownBlockSplit'
+import { deepEqual } from '../lib/messagesRenderEqual'
 import type { ChatRecord } from '../../../main/store/types'
 
 interface MarkdownMessageProps {
@@ -57,12 +58,64 @@ interface MarkdownMessageProps {
  * so `<AgentMention>` chips in any block can look up the chat's
  * identity registry without prop drilling.
  */
+/**
+ * The chat slices the markdown subtree's context consumers actually render
+ * from. There are exactly two: `AgentMention` reads
+ * `providerMetadata.agentIdentities`, and `ParticipantMention` reads
+ * `ensemble.participants` (only `id`/`role`/`provider` — which drive the chip's
+ * name + `--provider-*` tint — NOT the per-participant `tokenTotals`/status,
+ * which churn on every IPC broadcast). Compared BY VALUE so a no-op broadcast is
+ * skipped but a chip refreshes the instant its identity, role, or provider
+ * changes (e.g. a Bossman replace/reorder or a roster edit mid-stream).
+ *
+ * This single predicate gates BOTH `propsAreEqual` and the `ctxRef` swap below,
+ * so they can never diverge — a divergence would either skip a render while the
+ * cached context differs (stale chip) or swap the context without re-rendering
+ * the consumers (no visible effect).
+ */
+export function participantsChipEqual(
+  a: ReadonlyArray<{ id: string; role: string; provider: string }> | undefined,
+  b: ReadonlyArray<{ id: string; role: string; provider: string }> | undefined
+): boolean {
+  if (a === b) return true
+  const aLen = a?.length ?? 0
+  const bLen = b?.length ?? 0
+  if (aLen !== bLen) return false
+  for (let i = 0; i < aLen; i += 1) {
+    const pa = a![i]
+    const pb = b![i]
+    if (pa.id !== pb.id || pa.role !== pb.role || pa.provider !== pb.provider) return false
+  }
+  return true
+}
+
+export function identityContextEqual(a: ChatRecord | undefined, b: ChatRecord | undefined): boolean {
+  if (a?.appChatId !== b?.appChatId) return false
+  if (!deepEqual(a?.providerMetadata?.agentIdentities, b?.providerMetadata?.agentIdentities)) {
+    return false
+  }
+  return participantsChipEqual(a?.ensemble?.participants, b?.ensemble?.participants)
+}
+
 function MarkdownMessageImpl({ content, chat }: MarkdownMessageProps) {
   // useMemo the block split so a re-render NOT caused by a content change
   // (e.g. an identity-registry update) doesn't re-run the O(n) string scan.
   const { stable, tail } = useMemo(() => splitMarkdownIntoBlocks(content), [content])
+  // Stabilise the context value across the churning `chat` reference. `chat`
+  // is a NEW object on every coalesced flush / ensemble broadcast, but the
+  // markdown subtree's context consumers (<AgentMention>, <ParticipantMention>)
+  // only read the identity/participant slices captured by `identityContextEqual`.
+  // Handing the Provider a new value every render forces every chip to re-render
+  // even when nothing they read changed. Cache the chat reference and swap it
+  // only when one of those slices actually changes (a render-phase memo via ref
+  // — deterministic + idempotent under StrictMode), so the chips stay put while
+  // a message streams.
+  const ctxRef = useRef(chat)
+  if (!identityContextEqual(ctxRef.current, chat)) {
+    ctxRef.current = chat
+  }
   return (
-    <AgentIdentityContext.Provider value={chat}>
+    <AgentIdentityContext.Provider value={ctxRef.current}>
       <div className="message-markdown message-markdown-pro">
         {stable.map((block, index) => (
           <StableMarkdownBlock key={`${index}-${block.id}`} raw={block.raw} />
@@ -81,11 +134,13 @@ function MarkdownMessageImpl({ content, chat }: MarkdownMessageProps) {
 // identity-relevant slice. This skips re-rendering every other visible message
 // while one message streams, which is the win that compounds with #1.
 function propsAreEqual(prev: MarkdownMessageProps, next: MarkdownMessageProps): boolean {
-  return (
-    prev.content === next.content &&
-    prev.chat?.appChatId === next.chat?.appChatId &&
-    prev.chat?.providerMetadata?.agentIdentities === next.chat?.providerMetadata?.agentIdentities
-  )
+  // Compare the identity/participant slices BY VALUE, not by `chat` reference:
+  // `providerMetadata` + `ensemble` are re-deserialised on every IPC broadcast,
+  // so a reference check is always false during ensemble streaming and
+  // re-renders every markdown row (re-creating its mention Provider) ~100×/sec
+  // even when nothing the chips read has changed. The compared slices are
+  // small, so the value compare is far cheaper than the re-render it prevents.
+  return prev.content === next.content && identityContextEqual(prev.chat, next.chat)
 }
 
 export const MarkdownMessage = memo(MarkdownMessageImpl, propsAreEqual)
