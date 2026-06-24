@@ -661,7 +661,11 @@ struct ThreadDetailView: View {
                                 model: model, threadId: taskId,
                                 row: model.resolvedRow(row, threadId: taskId),
                                 threadProvider: card?.provider,
-                                agentIdentity: threadAgentIdentity)
+                                agentIdentity: threadAgentIdentity,
+                                isExpanding: model.expandingRows.contains(row.id),
+                                participants: model.ensembleStates[taskId]?.participants ?? []
+                            )
+                            .equatable()
                         case .toolBurst(_, let rows, _):
                             ToolBurstRowView(
                                 rows: rows.map { model.resolvedRow($0, threadId: taskId) },
@@ -841,7 +845,11 @@ struct ThreadDetailView: View {
                 model: model, threadId: taskId,
                 row: model.resolvedRow(row, threadId: taskId),
                 threadProvider: card?.provider,
-                agentIdentity: threadAgentIdentity)
+                agentIdentity: threadAgentIdentity,
+                isExpanding: model.expandingRows.contains(row.id),
+                participants: model.ensembleStates[taskId]?.participants ?? []
+            )
+            .equatable()
         case .text(_, let content, let isTail):
             StreamingSegmentRow(
                 text: content,
@@ -1915,12 +1923,40 @@ struct SubThreadReturnSummaryCard: View {
     }
 }
 
-struct ThreadRowView: View {
-    @ObservedObject var model: RemoteSessionModel
+// A VALUE-INPUT row, rendered `.equatable()` at every call site. It holds a
+// PLAIN `model` reference (NOT @ObservedObject) so a per-token model change
+// does NOT invalidate every settled row's body. The parent transcript view
+// (which DOES observe the model) re-evaluates on each token, reconstructs
+// these structs cheaply, and EquatableView skips body re-eval — and thus the
+// MarkdownLite re-parse — for any row whose inputs are unchanged. The two
+// formerly model-derived inputs (`isExpanding`, `participants`) are resolved
+// at the call site and passed in, so they participate in equality.
+struct ThreadRowView: View, Equatable {
+    let model: RemoteSessionModel
     let threadId: String
     let row: RemoteThreadSnapshot.Row
-    var threadProvider: String? = nil
-    var agentIdentity: ThreadAgentIdentity? = nil
+    let threadProvider: String?
+    let agentIdentity: ThreadAgentIdentity?
+    let isExpanding: Bool
+    let participants: [RemoteEnsembleState.Participant]
+
+    // Compare ONLY the inputs that change rendering. The `model` reference is
+    // constant (same object) so it's excluded; participant `status`/`order`
+    // are excluded via the signature (they churn every token mid-stream).
+    // `row == row` covers preview↔full on "Show more": resolvedRow swaps in a
+    // different Row value (Row is Equatable), so the gate re-renders then.
+    // `nonisolated` because Equatable.== is a nonisolated requirement while a
+    // SwiftUI View is implicitly @MainActor; every compared field is a `let`
+    // of a Sendable type, so the cross-actor read is safe.
+    nonisolated static func == (lhs: ThreadRowView, rhs: ThreadRowView) -> Bool {
+        lhs.threadId == rhs.threadId
+            && lhs.row == rhs.row
+            && lhs.threadProvider == rhs.threadProvider
+            && lhs.agentIdentity == rhs.agentIdentity
+            && lhs.isExpanding == rhs.isExpanding
+            && twParticipantsSignature(lhs.participants)
+                == twParticipantsSignature(rhs.participants)
+    }
 
     private var isUser: Bool { row.role == "user" }
     private var isTool: Bool { row.role == "tool" || row.kind == "tool" }
@@ -1928,16 +1964,12 @@ struct ThreadRowView: View {
         row.truncated == true && !hasParticipantHealthCard && !hasProposedPlanCard
             && !hasAgentQuestionCard
     }
-    private var isExpanding: Bool { model.expandingRows.contains(row.id) }
     private var hasParticipantHealthCard: Bool {
         !(row.participantHealth?.entries?.isEmpty ?? true)
     }
     private var hasSubThreadReturnCard: Bool { row.subThreadReturn != nil }
     private var hasProposedPlanCard: Bool { row.proposedPlan != nil }
     private var hasAgentQuestionCard: Bool { row.agentQuestion?.promptId != nil }
-    private var ensembleParticipants: [RemoteEnsembleState.Participant] {
-        model.ensembleStates[threadId]?.participants ?? []
-    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -1966,7 +1998,7 @@ struct ThreadRowView: View {
                     SubThreadReturnSummaryCard(
                         summary: subThreadReturn,
                         resultText: row.preview ?? "",
-                        participants: ensembleParticipants
+                        participants: participants
                     )
                     .contextMenu {
                         Section(deliveredCaption ?? "") {
@@ -2035,7 +2067,7 @@ struct ThreadRowView: View {
                 {
                     MarkdownLite(
                         preview,
-                        participants: ensembleParticipants,
+                        participants: participants,
                         baseColor: bodyColor
                     )
                     .textSelection(.enabled)

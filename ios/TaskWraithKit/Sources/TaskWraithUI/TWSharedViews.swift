@@ -2098,6 +2098,20 @@ public func twMentionCandidates(
         }
 }
 
+/// A stable identity for a roster's @mention TINT — the only participant-
+/// derived thing a SETTLED transcript row renders. Used by ThreadRowView's
+/// `==` so the EquatableView gate re-renders a row when the roster changes
+/// the tint (participant added / renamed / provider-swapped) but NOT when a
+/// participant merely flips `status`/`order` mid-stream (those churn every
+/// token and would defeat the gate). Sorted so a pure reorder is a no-op.
+func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) -> String {
+    guard !participants.isEmpty else { return "" }
+    return participants
+        .map { "\($0.participantId)|\($0.provider ?? "")|\($0.role ?? "")" }
+        .sorted()
+        .joined(separator: ";")
+}
+
 /// Color known @mentions in a transcript preview with their participant's
 /// provider accent. Conservative: only EXACT alias tokens are tinted.
 @MainActor public func twColorizeMentions(
@@ -7689,7 +7703,11 @@ struct MiniThreadView: View {
                         model: model, threadId: threadId,
                         row: model.resolvedRow(row, threadId: threadId),
                         threadProvider: card.provider,
-                        agentIdentity: ThreadAgentIdentity(card: card))
+                        agentIdentity: ThreadAgentIdentity(card: card),
+                        isExpanding: model.expandingRows.contains(row.id),
+                        participants: model.ensembleStates[threadId]?.participants ?? []
+                    )
+                    .equatable()
                 }
             }
         }
