@@ -285,6 +285,8 @@ import {
   probeRelayFrontDoor,
   selectAdvertisableRelayUrls
 } from './remote/relayReachability'
+import { deriveAgreementPublicRaw } from '../shared/e2ee/pushSeal'
+import { exportRawEd25519Seed } from '../shared/e2ee/keys'
 import {
   resolveAutoUpdateServiceEnabled,
   UpdateService,
@@ -998,7 +1000,16 @@ function maybeNotifyRemoteTaskNeedsAttention(taskCard: RemoteTaskCard): void {
         runId: taskCard.runId || taskCard.latestRunId,
         taskId: taskCard.id,
         projectionKind: 'RemoteTaskCard',
-        generatedAt: new Date().toISOString()
+        generatedAt: new Date().toISOString(),
+        // Per-device sealed by the fanout (when the device registered an
+        // agreement key) so the NSE renders a rich banner; otherwise unused.
+        rich: {
+          title: taskCard.title,
+          preview: taskCard.preview,
+          filesChanged: taskCard.diffSummary?.filesChanged ?? 0,
+          additions: taskCard.diffSummary?.additions ?? 0,
+          deletions: taskCard.diffSummary?.deletions ?? 0
+        }
       })
     }
     return
@@ -1300,6 +1311,10 @@ function taskwraithMcpBridgeArgs(
 let bridgeApnsTokenStoreRef: BridgeApnsTokenStore | null = null
 let bridgeApnsPusherRef: BridgeApnsPusher | null = null
 let remoteAttentionApnsFanoutRef: RemoteAttentionApnsFanout | null = null
+/** The Mac's 32-byte identity seed (set when the bridge identity loads). Used to
+ * seal per-device ENCRYPTED rich push content + to publish the Mac's agreement
+ * public key at device registration. Null until the bridge identity loads. */
+let macIdentitySeedRef: Buffer | null = null
 
 // Phase B3: late-bound ApprovalService. Owns the five pending-approval
 // registries + the scheduled-timeout integration + the APNs wake-push
@@ -14441,7 +14456,11 @@ async function executeGeminiMcpTool(
           body: approvalPreview.body,
           preview: approvalPreview.preview,
           runId: context.appRunId,
-          forcePrompt: context.scope === 'global' || ollamaMustPrompt,
+          // image_generate ALWAYS prompts (even under full_access / session-YOLO):
+          // it ships agent-chosen text off-box to a 3rd-party API — a prompt-
+          // injection exfil channel that must never be auto-allowed silently.
+          forcePrompt:
+            context.scope === 'global' || ollamaMustPrompt || toolName === 'image_generate',
           externalPathDetection
         }
       )
@@ -17046,6 +17065,7 @@ if (isGeminiMcpBridgeProcess) {
       getTokenStore: () => bridgeApnsTokenStoreRef,
       getPusher: () => bridgeApnsPusherRef,
       isUserAtDesktop: userIsAtDesktop,
+      getMacIdentitySeed: () => macIdentitySeedRef,
       log: (line) => console.log(line)
     })
 
@@ -17722,8 +17742,21 @@ if (isGeminiMcpBridgeProcess) {
           // store's upsert enforces. Thrown errors become the executor's
           // "registration failed" message.
           try {
-            bridgeApnsTokenStore.upsert(action.pairID, action.deviceToken, action.env)
-            return { registered: true }
+            bridgeApnsTokenStore.upsert(
+              action.pairID,
+              action.deviceToken,
+              action.env,
+              action.agreePub
+            )
+            return {
+              registered: true,
+              // Publish the Mac's agreement pubkey so the device can derive the
+              // static shared secret to decrypt rich pushes (absent until the
+              // bridge identity loads — the device then just gets generic pushes).
+              macAgreePub: macIdentitySeedRef
+                ? deriveAgreementPublicRaw(macIdentitySeedRef).toString('base64')
+                : undefined
+            }
           } catch (err) {
             return {
               registered: false,
@@ -20204,6 +20237,11 @@ if (isGeminiMcpBridgeProcess) {
             safeStorage,
             (line) => console.log(line)
           ).load()
+          try {
+            macIdentitySeedRef = exportRawEd25519Seed(identity.privateKey)
+          } catch {
+            macIdentitySeedRef = null
+          }
           iosRemoteRuntimeError = null
         } catch (err) {
           // Security review residual (fixed): the store now REFUSES to

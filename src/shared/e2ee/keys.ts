@@ -102,6 +102,22 @@ export function importEd25519PrivateKeyDer(der: Buffer): KeyObject {
   return createPrivateKey({ key: der, format: 'der', type: 'pkcs8' })
 }
 
+/** The raw 32-byte Ed25519 seed (the JWK `d` value) from a private KeyObject.
+ * This is the same 32-byte secret iOS persists as `Curve25519.Signing.PrivateKey
+ * .rawRepresentation`, and the input the push-agreement key is HKDF-derived from
+ * (see pushSeal.ts). Throws if the key isn't an Ed25519 private key. */
+export function exportRawEd25519Seed(privateKey: KeyObject): Buffer {
+  const jwk = privateKey.export({ format: 'jwk' }) as { crv?: string; d?: string }
+  if (jwk.crv !== 'Ed25519' || !jwk.d) {
+    throw new Error('exportRawEd25519Seed: not an Ed25519 private key')
+  }
+  const seed = Buffer.from(jwk.d, 'base64url')
+  if (seed.length !== 32) {
+    throw new Error(`exportRawEd25519Seed: expected a 32-byte seed, got ${seed.length}`)
+  }
+  return seed
+}
+
 export const b64 = {
   encode: (buf: Buffer): string => buf.toString('base64'),
   decode: (text: string): Buffer => Buffer.from(text, 'base64')

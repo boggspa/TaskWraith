@@ -610,6 +610,9 @@ export interface MainProcessActionExecutorDependencies {
   registerApnsTokenFn?: (action: BridgeRegisterApnsTokenAction) => Promise<{
     registered: boolean
     reason?: string
+    /** base64 raw X25519 push-agreement public key of the Mac, returned so the
+     * device can derive the static shared secret to decrypt rich pushes. */
+    macAgreePub?: string
   }>
   ensemblePresetMutateFn?: (action: BridgeEnsemblePresetMutateAction) => Promise<{
     ok: boolean

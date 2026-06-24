@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { deriveAgreementPublicRaw, openPush, sealPush, type PushEnvelope } from './pushSeal'
+import { exportRawEd25519Seed, generateIdentityKeyPair } from './keys'
 
 const macSeed = Buffer.alloc(32, 0x11)
 const deviceSeed = Buffer.alloc(32, 0x22)
@@ -30,6 +31,25 @@ describe('pushSeal', () => {
     expect(deriveAgreementPublicRaw(macSeed).equals(deriveAgreementPublicRaw(macSeed))).toBe(true)
     expect(deriveAgreementPublicRaw(macSeed).equals(deriveAgreementPublicRaw(deviceSeed))).toBe(false)
     expect(deriveAgreementPublicRaw(macSeed)).toHaveLength(32)
+  })
+
+  it('seals end-to-end off a real Mac identity seed (exportRawEd25519Seed)', () => {
+    const macIdentity = generateIdentityKeyPair()
+    const macSeed = exportRawEd25519Seed(macIdentity.privateKey)
+    expect(macSeed).toHaveLength(32)
+    const env = sealPush({
+      senderIdentitySeed: macSeed,
+      recipientAgreePubRaw: deriveAgreementPublicRaw(deviceSeed),
+      pairId: PAIR_ID,
+      plaintext: Buffer.from('done', 'utf8')
+    })
+    const opened = openPush({
+      recipientIdentitySeed: deviceSeed,
+      senderAgreePubRaw: deriveAgreementPublicRaw(macSeed),
+      pairId: PAIR_ID,
+      envelope: env
+    })
+    expect(opened.toString('utf8')).toBe('done')
   })
 
   it('rejects a tampered ciphertext (GCM tag)', () => {

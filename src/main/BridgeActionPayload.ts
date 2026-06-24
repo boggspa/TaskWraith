@@ -345,6 +345,10 @@ export interface BridgeRegisterApnsTokenAction extends BridgeActionMetadata {
    * `production` for TestFlight/App Store builds. The desktop uses this
    * to pick the right gateway when sending pushes. */
   env: 'production' | 'sandbox'
+  /** base64 raw X25519 push-agreement public key, derived on-device from the
+   * identity seed. Optional (older app builds omit it); when present the Mac can
+   * seal ENCRYPTED rich content for this device's pushes (see pushSeal.ts). */
+  agreePub?: string
 }
 
 /** Save or delete an ensemble roster preset from a paired device (iOS Roster
@@ -1698,7 +1702,8 @@ function isRegisterApnsToken(v: Record<string, unknown>): boolean {
     // APNs device tokens are 32 bytes = 64 hex chars. Reject anything else so a
     // malformed/foreign token can't be stored verbatim and routed to Apple.
     /^[0-9a-fA-F]{64}$/.test(v.deviceToken) &&
-    (v.env === 'production' || v.env === 'sandbox')
+    (v.env === 'production' || v.env === 'sandbox') &&
+    (v.agreePub === undefined || typeof v.agreePub === 'string')
   )
 }
 
