@@ -760,6 +760,17 @@ struct WorkflowRowContent: View {
                                 .foregroundStyle(TWTheme.statusColor("running"))
                         }
                     }
+                    // Slice 7b — loop-progress badge: iteration count + why it stopped
+                    // (from the latest loop execution the Mac projected). Mirrors the
+                    // "Paused" capsule style. Absent for non-loop / never-run workflows.
+                    if let count = workflow.loopIterationCount, count > 0 {
+                        Text(workflow.loopStopReason.map { "\(count)× · \($0)" } ?? "\(count)×")
+                            .font(.caption2.weight(.medium))
+                            .lineLimit(1)
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .background(TWTheme.surface3, in: Capsule())
+                            .foregroundStyle(TWTheme.textSecondary)
+                    }
                 }
             }
             Spacer(minLength: 0)

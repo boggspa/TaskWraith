@@ -445,16 +445,24 @@ public struct RemoteWorkflow: Codable, Sendable, Identifiable, Hashable {
     public let status: String?
     public let nextRunAt: String?
     public let lastRunAt: String?
+    /// Slice 7b — latest LOOP execution summary, for the loop-progress badge.
+    /// Absent for a non-loop or never-run workflow (decodes to nil).
+    public let loopIterationCount: Int?
+    public let loopStopReason: String?
+    public let loopTokens: Int?
 
     public var isRunning: Bool { status == "running" }
     /// A paused workflow is one the Mac has explicitly disabled.
     public var isPaused: Bool { enabled == false }
+    /// True when the Mac projected a loop summary (i.e. this is a loop workflow that ran).
+    public var hasLoopSummary: Bool { (loopIterationCount ?? 0) > 0 }
 
     public init(
         id: String, name: String? = nil, workspaceId: String? = nil,
         threadId: String? = nil, provider: String? = nil, enabled: Bool? = nil,
         schedule: String? = nil, status: String? = nil,
-        nextRunAt: String? = nil, lastRunAt: String? = nil
+        nextRunAt: String? = nil, lastRunAt: String? = nil,
+        loopIterationCount: Int? = nil, loopStopReason: String? = nil, loopTokens: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -466,6 +474,9 @@ public struct RemoteWorkflow: Codable, Sendable, Identifiable, Hashable {
         self.status = status
         self.nextRunAt = nextRunAt
         self.lastRunAt = lastRunAt
+        self.loopIterationCount = loopIterationCount
+        self.loopStopReason = loopStopReason
+        self.loopTokens = loopTokens
     }
 }
 
