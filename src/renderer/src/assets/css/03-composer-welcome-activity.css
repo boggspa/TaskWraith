@@ -2615,6 +2615,63 @@
   }
 }
 
+/* ── Refractive "liquid glass" — welcome usage dashboard ──────────────────
+ * Same material as the composer lens. The dashboard's `::before` is already a
+ * baked inner gradient (z-index -1), so the refractive sheen rides the FREE
+ * `::after`. The dashboard sets `isolation: isolate`, so we keep the sheen
+ * BEHIND content at z-index -1 (sitting just above the ::before in paint order,
+ * still clamped inside the card — never punching through it) rather than
+ * re-stacking every child. Card-sized surface ⇒ it can take the displacement
+ * warp at cinematic/epic. Existing `backdrop-filter: blur(18px)` stays. */
+:root[data-advanced-fx-refraction="true"] .welcome-usage-dashboard::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1; /* above ::before (also -1), still behind the content/border */
+  background:
+    radial-gradient(
+      140% 92% at 50% -10%,
+      var(--tw-glass-sheen, rgba(168, 194, 255, 0.26)),
+      transparent 56%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 78%, transparent) 0%,
+      transparent 34%,
+      transparent 68%,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 40%, transparent) 100%
+    );
+  /* glass thickness: bright top specular + hairline inner rim */
+  box-shadow:
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.58)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 11%, transparent);
+  /* own cached compositor layer, decoupled from the backdrop repaint path */
+  contain: layout paint;
+  will-change: transform;
+  transform: translateZ(0);
+}
+/* (Displacement warp intentionally omitted — sheen + rim only on broad panes;
+ * a pane-wide warp read garish + artifact-prone. Warp stays on composer + pickers.) */
+:root[data-advanced-fx-refraction="true"]
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .welcome-usage-dashboard::after {
+  mix-blend-mode: screen;
+}
+/* Degrade: Reduce Transparency or no backdrop-filter support → sheen off. The
+ * solid fills above (lines ~2597 / ~2613) stay as the fallback bed. */
+:root[data-reduce-transparency="true"] .welcome-usage-dashboard::after {
+  display: none;
+  filter: none;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .welcome-usage-dashboard::after {
+    display: none;
+    filter: none;
+  }
+}
+
 .trust-assistant-panel {
   display: flex;
   flex-direction: column;
@@ -2894,6 +2951,76 @@
   border-color: var(--composer-border);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+/* ── Refractive "liquid glass" — composer lens ───────────────────────────
+ * `.composer-refraction-lens` is an aria-hidden first child of
+ * `.composer-surface`. It carries a BAKED specular sheen + a glass rim, and
+ * (at cinematic/epic) a displacement warp. It refracts its OWN static content,
+ * never the live transcript backdrop, so it re-filters only when ITS input
+ * changes (i.e. never) — the streaming transcript behind the composer does NOT
+ * invalidate it. Inert (display:none) unless refraction is enabled. */
+.composer-refraction-lens {
+  display: none;
+}
+/* Native TaskWraith shell ONLY ([data-composer-style="default"]). The branded
+ * shells (claude/codex/gemini/cursor/grok/kimi/obsidian/alabaster) have their own
+ * distinct surface treatment that the lens + warp interfered with, so refraction
+ * is restricted to the native composer. */
+:root[data-advanced-fx-refraction="true"][data-composer-style="default"]
+  .composer-refraction-lens {
+  display: block;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0; /* above the surface fill, below .composer-inner-module (z-index 2) */
+  background:
+    radial-gradient(
+      140% 100% at 50% -12%,
+      var(--tw-glass-sheen, rgba(168, 194, 255, 0.26)),
+      transparent 58%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 85%, transparent) 0%,
+      transparent 32%,
+      transparent 68%,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 45%, transparent) 100%
+    );
+  /* glass thickness: bright top specular + hairline inner rim */
+  box-shadow:
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.58)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 12%, transparent);
+  /* own cached compositor layer, decoupled from the backdrop repaint path */
+  contain: layout paint;
+  isolation: isolate;
+  will-change: transform;
+  transform: translateZ(0);
+}
+/* Displacement warp on the sheen — gated to the stronger tiers (subtle = flat
+ * sheen + rim only). Never animated → rasterized once, then cached. */
+:root[data-advanced-fx-refraction="true"][data-composer-style="default"][data-advanced-fx-intensity="cinematic"]
+  .composer-refraction-lens,
+:root[data-advanced-fx-refraction="true"][data-composer-style="default"][data-advanced-fx-intensity="epic"]
+  .composer-refraction-lens {
+  filter: url(#tw-glass-refract);
+}
+/* Light themes: screen-blend the sheen so the bright surface never blows out. */
+:root[data-advanced-fx-refraction="true"][data-composer-style="default"]
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-refraction-lens {
+  mix-blend-mode: screen;
+}
+/* Degrade: Reduce Transparency or no backdrop-filter support → lens off.
+ * (The attr is already false under Reduce Transparency; explicit for safety.) */
+:root[data-reduce-transparency="true"] .composer-refraction-lens {
+  display: none;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .composer-refraction-lens {
+    display: none;
+  }
 }
 
 .composer-surface.is-drag-over {
@@ -7340,6 +7467,75 @@
   box-shadow: -1px 0 0 rgba(255, 255, 255, 0.05);
 }
 
+/* ── Refractive "liquid glass" — inspector sidebar ───────────────────────
+ * Same material as the composer lens, but here the inspector's `::before` is
+ * already owned by the epic agent-aura aurora (05-polish-fx-layouts.css ~1126),
+ * so the sheen rides the FREE `::after`. The inspector keeps its own opaque-ish
+ * bed (painted on the element), so the sheen never reduces panel-content
+ * contrast — it sits behind the tabs/body via z-index 0. The existing
+ * `backdrop-filter: blur(12px)` STAYS; we only add a sheen + rim on top.
+ * Large pane → the displacement warp is held SUBTLE (reduced opacity) and only
+ * at cinematic/epic; subtle tier = flat sheen + rim. */
+:root[data-advanced-fx-refraction="true"] .app-inspector::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0; /* above the surface fill, below .inspector-tabs / body content */
+  background:
+    radial-gradient(
+      150% 90% at 50% -10%,
+      var(--tw-glass-sheen, rgba(168, 194, 255, 0.26)),
+      transparent 56%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 70%, transparent) 0%,
+      transparent 36%,
+      transparent 70%,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 34%, transparent) 100%
+    );
+  /* glass thickness: bright top specular + hairline inner rim */
+  box-shadow:
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.58)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 10%, transparent);
+  /* own cached compositor layer, decoupled from the backdrop repaint path */
+  contain: layout paint;
+  will-change: transform;
+  transform: translateZ(0);
+}
+/* (Displacement warp intentionally omitted on the inspector — sheen + rim only;
+ * a pane-wide warp read garish + artifact-prone. Warp stays on composer + pickers.) */
+/* Light themes: screen-blend the sheen so the bright surface never blows out. */
+:root[data-advanced-fx-refraction="true"]
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .app-inspector::after {
+  mix-blend-mode: screen;
+  opacity: 0.7;
+}
+/* Degrade: Reduce Transparency or no backdrop-filter support → sheen/rim off.
+ * The reduce-transparency solid fill above (line ~7402) is untouched. */
+:root[data-reduce-transparency="true"] .app-inspector::after {
+  display: none;
+  filter: none;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .app-inspector::after {
+    display: none;
+    filter: none;
+  }
+}
+/* Keep the inspector's flow content explicitly ABOVE the refractive sheen
+ * (::after, z-index 0). Mirrors the composer (`.composer-inner-module` z 2) and
+ * the popover (raised columns). Only applied when refraction is on, so the
+ * default stacking/layout is untouched otherwise. */
+:root[data-advanced-fx-refraction="true"] .app-inspector > .inspector-tabs,
+:root[data-advanced-fx-refraction="true"] .app-inspector > .inspector-body {
+  position: relative;
+  z-index: 1;
+}
+
 .inspector-tabs {
   display: flex;
   gap: 2px;
@@ -9501,6 +9697,40 @@ button.diff-file-row {
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, var(--panel-border)),
     inset 0 0 12px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+/* Refractive glass on notification cards — INTEGRATES with each card's tone
+ * (rather than slotting a cool pane over it). The sheen is a NEUTRAL white
+ * specular added via background-IMAGE, so the card keeps its own background-COLOR
+ * — including the danger variant's red fill. The glass rim rides ::after, so the
+ * card's OWN border + accent/danger-glow box-shadow are left fully intact. Net:
+ * the banner ITSELF reads as glass (red glass on the red banner). Attr-gated →
+ * plain card when refraction is off / Reduce Transparency is on. */
+:root[data-advanced-fx-refraction="true"] .notification-card {
+  position: relative;
+  /* IMAGE layers only — painted over the card's existing tone colour, never
+   * replacing it. Neutral white so it reads as a highlight on any tone. */
+  background-image:
+    radial-gradient(130% 95% at 50% -14%, rgba(255, 255, 255, 0.16), transparent 60%),
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.11) 0%,
+      transparent 30%,
+      transparent 70%,
+      rgba(255, 255, 255, 0.045) 100%
+    );
+}
+:root[data-advanced-fx-refraction="true"] .notification-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  /* Neutral glass specular — bright top edge + a soft inner top glow. Edge-only
+   * (transparent fill) so it never washes the text, and it does NOT touch the
+   * card's own border / accent / danger-glow box-shadow. */
+  box-shadow:
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.55)),
+    inset 0 10px 22px -16px var(--tw-glass-rim-light, rgba(255, 255, 255, 0.42));
 }
 /* Red variant — deprecation/sunset only. */
 .notification-card--danger {

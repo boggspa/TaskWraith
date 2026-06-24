@@ -74,6 +74,70 @@
     inset -1px 0 0 rgba(255, 255, 255, 0.012);
 }
 
+/* ── Refractive "liquid glass" — workspace sidebar ───────────────────────
+ * Extends the same material as `.composer-refraction-lens`. The sidebar is a
+ * LARGE pane, and BOTH pseudo-elements are already spoken for (::before = epic
+ * agent-aura aurora in 05-polish-fx-layouts.css; ::after = native-glass edge in
+ * 06-component-panels-modals.css). So instead of a sheen layer we promote the
+ * specular RIM directly onto the element via an added box-shadow — an inset top
+ * highlight + hairline inner rim + a soft right-edge bevel. No SVG warp on a
+ * full pane (research: keep displaced regions small; a pane-wide warp is heavy +
+ * garish). This still reads clearly as light-bending glass.
+ *
+ * Scoped to soft_glass — the only variant that paints a CSS frost here (native
+ * vibrancy + solid keep their own look). Layered ON TOP of the existing blur,
+ * never replacing it. */
+:root[data-advanced-fx-refraction="true"][data-appearance="soft_glass"] .app-sidebar {
+  /* GLASSY, not frosty: a baked specular sheen (top glow + diagonal streak) over
+   * the frost tint, a LIGHTER blur (18 → 10) so it reads as clear glass rather
+   * than heavy frost, plus the specular rim. The sheen rides the BACKGROUND
+   * (painted below all child content → never dims/warps text), so no lens node or
+   * z-index juggling is needed. No SVG warp — it was garish on big panes (and is
+   * the effect that caused the branded-composer-shell artifacts). */
+  background:
+    radial-gradient(
+      125% 65% at 50% -10%,
+      var(--tw-glass-sheen, rgba(168, 194, 255, 0.26)),
+      transparent 55%
+    ),
+    linear-gradient(
+      122deg,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 72%, transparent) 0%,
+      transparent 28%,
+      transparent 72%,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 38%, transparent) 100%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, var(--sidebar-alpha-006)),
+      rgba(255, 255, 255, var(--sidebar-alpha-002))
+    ),
+    color-mix(in srgb, var(--sidebar-bg) var(--sidebar-opacity-28), transparent);
+  backdrop-filter: blur(10px) saturate(155%);
+  -webkit-backdrop-filter: blur(10px) saturate(155%);
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.06),
+    inset -1px 0 0 rgba(255, 255, 255, 0.012),
+    /* glass rim: bright top specular + hairline interior + cool inner edge */
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.58)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 9%, transparent),
+    inset -1px 0 18px -10px color-mix(in srgb, var(--tw-glass-sheen, #fff) 60%, transparent);
+}
+/* Degrade: Reduce Transparency or no backdrop-filter support → rim off, fall
+ * back to the plain soft-glass bevel (its solid fill is set elsewhere). */
+:root[data-reduce-transparency="true"][data-appearance="soft_glass"] .app-sidebar {
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.06),
+    inset -1px 0 0 rgba(255, 255, 255, 0.012);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-advanced-fx-refraction="true"][data-appearance="soft_glass"] .app-sidebar {
+    box-shadow:
+      inset 1px 0 0 rgba(255, 255, 255, 0.06),
+      inset -1px 0 0 rgba(255, 255, 255, 0.012);
+  }
+}
+
 [data-appearance="native_glass"] .app-sidebar {
   /* Native vibrancy handles the blur itself — no CSS backdrop-filter needed */
   background: transparent;

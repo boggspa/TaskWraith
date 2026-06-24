@@ -1703,6 +1703,82 @@
   gap: 22px;
   padding: 26px 28px 22px;
 }
+
+/* ── Refractive "liquid glass" — first-launch sheet ──────────────────────
+ * Same material as the composer lens / popover. This sheet is intentionally
+ * OPAQUE (`--surface-1`, see comment above) — the blur lives on
+ * `.first-launch-sheet-backdrop`, not here — so there is no backdrop-filter to
+ * preserve and the degrade chain simply turns the glass layers off, leaving the
+ * solid sheet. Both pseudos were free.
+ *   ::before — baked specular SHEEN (kept BEHIND content at z-index -1; we add
+ *              `isolation: isolate` so -1 is clamped inside the sheet and never
+ *              punches through it — no need to re-stack the sheet's children).
+ *   ::after  — the always-on glass RIM (layered box-shadow only; transparent
+ *              fill, so it reads as edge specular over the content harmlessly).
+ * Card-sized sheet ⇒ it can take the displacement warp at cinematic/epic. */
+:root[data-advanced-fx-refraction="true"] .first-launch-sheet {
+  position: relative;
+  isolation: isolate;
+}
+:root[data-advanced-fx-refraction="true"] .first-launch-sheet::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1; /* behind the sheet content, clamped by isolation */
+  background:
+    radial-gradient(
+      130% 80% at 50% -8%,
+      var(--tw-glass-sheen, rgba(168, 194, 255, 0.26)),
+      transparent 58%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 64%, transparent) 0%,
+      transparent 38%,
+      transparent 66%,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 34%, transparent) 100%
+    );
+  /* own cached compositor layer, decoupled from any backdrop repaint */
+  contain: layout paint;
+  will-change: transform;
+  transform: translateZ(0);
+}
+/* Always-on glass rim — pure layered box-shadow (no SVG), survives fallbacks. */
+:root[data-advanced-fx-refraction="true"] .first-launch-sheet::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1; /* edge specular over content; transparent fill ⇒ no obstruction */
+  box-shadow:
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.58)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 12%, transparent);
+}
+/* (Displacement warp intentionally omitted on the sheet — sheen + rim only;
+ * a pane-wide warp read garish + artifact-prone. Warp stays on composer + pickers.) */
+:root[data-advanced-fx-refraction="true"]
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .first-launch-sheet::before {
+  mix-blend-mode: screen;
+}
+/* Degrade: Reduce Transparency or no backdrop-filter support → glass off,
+ * leaving the opaque sheet untouched. */
+:root[data-reduce-transparency="true"] .first-launch-sheet::before,
+:root[data-reduce-transparency="true"] .first-launch-sheet::after {
+  display: none;
+  filter: none;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .first-launch-sheet::before,
+  .first-launch-sheet::after {
+    display: none;
+    filter: none;
+  }
+}
+
 .first-launch-sheet-header {
   display: flex;
   justify-content: space-between;
@@ -1868,6 +1944,49 @@
   transition: border-color 140ms ease, background 140ms ease, box-shadow 160ms ease,
     transform 160ms ease;
 }
+
+/* ── Refractive "liquid glass" — first-launch prominent cards ─────────────
+ * The two prominent sheet cards get a specular RIM only (no SVG warp): they are
+ * small, REPEATED children, and per the liquid-glass research a displacement
+ * warp on each would be heavy + garish. The rim is a pure layered box-shadow on
+ * the FREE `::after` (transparent fill ⇒ never obscures content), so it reads as
+ * glass-edge specular while leaving the card's own gradient/tint bed intact.
+ * `position: relative` is added refraction-gated so the default layout is
+ * untouched otherwise. (These cards carry no backdrop-filter, so the degrade
+ * chain just removes the rim.) */
+:root[data-advanced-fx-refraction="true"] .first-launch-sheet-provider-card,
+:root[data-advanced-fx-refraction="true"] .first-launch-sheet-preference-card {
+  position: relative;
+}
+:root[data-advanced-fx-refraction="true"] .first-launch-sheet-provider-card::after,
+:root[data-advanced-fx-refraction="true"] .first-launch-sheet-preference-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /* match each card's OWN radius (not inherit — these cards set their own,
+   * 12px provider / 14px preference, rather than inheriting a parent's). */
+  border-radius: 12px;
+  pointer-events: none;
+  z-index: 1; /* edge specular over the card content; transparent fill */
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--tw-glass-rim-light, #fff) 80%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 10%, transparent);
+}
+:root[data-advanced-fx-refraction="true"] .first-launch-sheet-preference-card::after {
+  border-radius: 14px;
+}
+/* Degrade: Reduce Transparency or no backdrop-filter support → rim off. */
+:root[data-reduce-transparency="true"] .first-launch-sheet-provider-card::after,
+:root[data-reduce-transparency="true"] .first-launch-sheet-preference-card::after {
+  display: none;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .first-launch-sheet-provider-card::after,
+  .first-launch-sheet-preference-card::after {
+    display: none;
+  }
+}
+
 .first-launch-sheet-provider-card-signed-in {
   border-color: color-mix(in srgb, #3fb950 38%, transparent);
   background: color-mix(in srgb, #3fb950 6%, rgba(255, 255, 255, 0.02));
@@ -8201,11 +8320,151 @@
   border-left-color: var(--surface-border);
 }
 
+/* ── Refractive "liquid glass" upgrade ───────────────────────────────
+ * Promote the frosted popover to subtly REFRACTIVE glass. Three
+ * stacked, mutually-independent layers, ordered cheap→degradable:
+ *
+ *   1. ::after  — the always-on CSS-fake RIM. Pure layered box-shadow
+ *                 (top specular highlight + hairline rim + outer drop).
+ *                 No SVG, no blur, no filter — this is the base "glass"
+ *                 read that survives EVERY fallback below.
+ *   2. ::before — the synthetic SHEEN. A BAKED specular gradient
+ *                 (radial top-glow + 135° diagonal sheen) sitting
+ *                 BEHIND the content. The content keeps its own bed
+ *                 (the popover background painted above), so the sheen
+ *                 never reduces text contrast.
+ *   3. filter   — the displacement warp (#tw-glass-refract) applied to
+ *                 the ::before SHEEN LAYER ONLY (never the content, never
+ *                 as backdrop-filter — that would re-filter the live
+ *                 backdrop per frame). Gated to cinematic/epic.
+ *
+ * The existing `backdrop-filter: blur(18px)` on the base rule STAYS as
+ * the cheap static frost; we only add layers, never re-filter the
+ * backdrop. Both pseudo-elements were free on the base popover rule. */
+
+/* (1) Always-on CSS-fake rim — no SVG, survives every fallback. The
+ * popover already sets isolation:isolate + border-radius, so the
+ * pseudo-element inherits the rounded clip via inset:0 + inherit. */
+.composer-combined-picker-popover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1; /* above sheen, below content */
+  box-shadow:
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.5)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 14%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+/* (2) Synthetic sheen layer — baked specular gradient behind content.
+ * Emitted ONLY when refraction is enabled; absent attr ⇒ untouched
+ * plain frosted popover. Perf: own cached layer, decoupled from the
+ * backdrop repaint, NO animation of the filter or its inputs. */
+:root[data-advanced-fx-refraction="true"] .composer-combined-picker-popover::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0; /* behind the popover content / rim */
+  background:
+    radial-gradient(
+      120% 80% at 50% -8%,
+      var(--tw-glass-sheen, rgba(150, 178, 255, 0.16)),
+      transparent 62%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 60%, transparent) 0%,
+      transparent 38%,
+      transparent 64%,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 32%, transparent) 100%
+    );
+  /* Decouple as a cached own-layer texture so it doesn't ride the
+   * backdrop repaints; transform: translateZ(0) forces the layer. */
+  contain: layout paint;
+  isolation: isolate;
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+/* (3) Displacement warp on the SHEEN layer only — gated to the two
+ * stronger intensity tiers. At `subtle` the sheen renders flat (CSS
+ * rim + gradient only, no SVG). Reserve the strongest warp for epic. */
+:root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="cinematic"]
+  .composer-combined-picker-popover::before {
+  filter: url(#tw-glass-refract);
+  opacity: 0.85;
+}
+:root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="epic"]
+  .composer-combined-picker-popover::before {
+  filter: url(#tw-glass-refract);
+  opacity: 1;
+}
+
+/* Light-theme specular INVERSION for the sheen. The dark base sheen is
+ * a cool tint; on light themes the tokens already flip to near-white
+ * low-alpha (see theme.css light block), but we slightly soften the
+ * diagonal so the bright frosted surface never blows out. */
+:root[data-advanced-fx-refraction="true"]
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-popover::before {
+  mix-blend-mode: screen;
+  opacity: 0.7;
+}
+
+/* ── Degrade chain ───────────────────────────────────────────────────
+ * (a) reduce-transparency → fully SOLID + kill the blur AND the sheen.
+ *     The base popover blurs UNCONDITIONALLY today — this closes that
+ *     real a11y gap regardless of the refraction attr. High specificity
+ *     (:root + class) beats the base rule's `backdrop-filter`. */
+:root[data-reduce-transparency="true"] .composer-combined-picker-popover {
+  background: var(--tw-glass-solid, var(--panel-bg-solid, #0f1830));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root[data-reduce-transparency="true"] .composer-combined-picker-popover::before {
+  display: none;
+  filter: none;
+}
+:root[data-reduce-transparency="true"]
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-popover {
+  background: var(--tw-glass-solid, var(--surface-1, #f4f6fb));
+  color: var(--surface-text);
+}
+
+/* (b) No backdrop-filter support at all → solid fallback. Mirrors the
+ *     pattern at 03-composer-welcome-activity.css:3215. Also neutralise
+ *     the sheen filter so a non-supporting engine never tries url(). */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .composer-combined-picker-popover {
+    background: var(--tw-glass-solid, var(--panel-bg-solid, #0f1830));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .composer-combined-picker-popover::before {
+    filter: none;
+  }
+  :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-combined-picker-popover {
+    background: var(--tw-glass-solid, var(--surface-1, #f4f6fb));
+    color: var(--surface-text);
+  }
+}
+
 .composer-combined-picker-column {
   display: flex;
   flex-direction: column;
   min-width: 140px;
   padding: 4px 0;
+  /* Keep picker content explicitly ABOVE the refractive sheen (::before,
+   * z-index 0) and the CSS-fake rim (::after, z-index 1) so neither
+   * glass layer can ever sit over the text/rows. Legibility is the
+   * hard constraint of the liquid-glass upgrade. */
+  position: relative;
+  z-index: 2;
 }
 
 .composer-combined-picker-column + .composer-combined-picker-column {
