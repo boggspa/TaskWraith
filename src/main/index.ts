@@ -635,6 +635,8 @@ import {
   DEFAULT_MAX_IMAGE_TOOL_CALLS_PER_RUN
 } from './mcp/ImageToolCallBudget'
 import { createNativeImageEngine } from './mcp/OffscreenImageRenderer'
+import { createAudioToolExecutors, isAudioMcpToolName } from './mcp/AudioToolExecutors'
+import { createNativeAudioEngine } from './mcp/AudioRenderEngine'
 import {
   createImageGenExecutor,
   isImageGenMcpToolName,
@@ -1725,6 +1727,11 @@ const imageToolExecutors = createImageToolExecutors({
 // content-addressed assets). Shared across all three tools so they count toward
 // one per-run budget. See ImageToolCallBudget (mirrors ApprovalBudgetTracker).
 const imageToolCallBudget = new ImageToolCallBudget()
+// In-house audio surface (proving slice). Headless Web Audio render -> pure-JS
+// WAV -> inline waveform PNG. Its own per-run flood budget (same class as the
+// image budget) since each call writes a content-addressed PNG asset.
+const audioToolExecutors = createAudioToolExecutors({ engine: createNativeAudioEngine() })
+const audioToolCallBudget = new ImageToolCallBudget()
 
 // image_generate egress. Endpoints are a FIXED allowlist (never agent-controlled),
 // the API key comes from safeStorage and rides only in the Authorization header
@@ -6206,6 +6213,22 @@ function previewForGeminiMcpTool(
       // Gated as fileChanges: a mutating/compute tool that produces an image —
       // denied under the read-only preset, like write_file.
       body: `${intentBody}${summary}`,
+      service: 'fileChanges' as AgenticServiceId,
+      preview: {
+        kind: 'tool',
+        toolName,
+        params: args,
+        ...intentPreview
+      }
+    }
+  }
+
+  if (isAudioMcpToolName(toolName)) {
+    return {
+      title: `Approve ${providerName} audio render`,
+      // Gated as fileChanges: a compute tool that writes a waveform PNG asset —
+      // denied under the read-only preset, like image_edit / write_file.
+      body: `${intentBody}${String(args.waveform || 'sine')} ${String(args.frequencyHz || 440)}Hz ${String(args.durationMs || 1000)}ms`,
       service: 'fileChanges' as AgenticServiceId,
       preview: {
         kind: 'tool',
@@ -14688,8 +14711,8 @@ async function executeGeminiMcpTool(
     // — which gives the agent no idea the fix is a write-capable preset (and, for
     // image_generate, an enabled key). Tell it the actual requirement.
     const deniedError =
-      isImageMcpToolName(toolName) || isImageGenMcpToolName(toolName)
-        ? `Image tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${
+      isImageMcpToolName(toolName) || isImageGenMcpToolName(toolName) || isAudioMcpToolName(toolName)
+        ? `Media tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${
             toolName === 'image_generate'
               ? ', and image generation must be enabled with an API key in TaskWraith Settings'
               : ''
@@ -14870,6 +14893,25 @@ async function executeGeminiMcpTool(
         )
       } else {
         applyRichResult(await imageGenExecutor.executeImageGen(args))
+      }
+    } else if (isAudioMcpToolName(toolName)) {
+      const audioRunKey = context.appRunId || context.appChatId || 'global'
+      if (!audioToolCallBudget.tryConsume(audioRunKey)) {
+        applyRichResult(
+          mcpStructuredJsonResult({
+            ok: false,
+            tool: toolName,
+            error: `audio tool call limit reached (${DEFAULT_MAX_IMAGE_TOOL_CALLS_PER_RUN}) for this run.`
+          })
+        )
+      } else {
+        applyRichResult(
+          await audioToolExecutors.executeAudioTool(toolName, args, {
+            appChatId: context.appChatId,
+            appRunId: context.appRunId,
+            workspacePath: context.workspacePath
+          })
+        )
       }
     } else if (isDesktopMcpToolName(toolName)) {
       applyRichResult(

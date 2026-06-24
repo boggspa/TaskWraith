@@ -2247,6 +2247,39 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         },
         required: ['prompt']
       }
+    },
+    {
+      name: 'audio_render_wav',
+      description:
+        'Synthesize a short tone with the Web Audio API and return its WAVEFORM as a PNG attachment shown ' +
+        'inline in the chat, plus measured peak / RMS / peak-dBFS. Use this to PREVIEW or sanity-check audio ' +
+        'parameters (pitch, level, shape) — it builds a 16-bit PCM WAV in-process (no ffmpeg, no network) and ' +
+        'reports its byte length, but returns the waveform image, not the audio bytes. Params: `frequencyHz` ' +
+        '(20–Nyquist, default 440), `durationMs` (1–30000, default 1000), `waveform` (sine|square|sawtooth|' +
+        'triangle), `gain` (0–1), `sampleRate` (8000–48000, snapped to the nearest supported), `width`/`height` ' +
+        'for the waveform canvas. Rendered in a sandboxed, network-cut surface. Gated as a file change.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          frequencyHz: { type: 'number', description: 'Tone frequency in Hz (default 440; clamped to Nyquist).' },
+          durationMs: { type: 'number', description: 'Tone length in ms (default 1000; max 30000).' },
+          waveform: {
+            type: 'string',
+            enum: ['sine', 'square', 'sawtooth', 'triangle'],
+            description: 'Oscillator shape (default sine).'
+          },
+          gain: { type: 'number', description: 'Output gain 0–1 (default 0.8).' },
+          sampleRate: { type: 'number', description: 'Sample rate; snapped to 8000/16000/22050/32000/44100/48000.' },
+          width: { type: 'number', description: 'Waveform image width in px (default 1024).' },
+          height: { type: 'number', description: 'Waveform image height in px (default 256).' }
+        }
+      }
     }
   ]
   return orderTaskWraithMcpToolDefinitions(definitions)

@@ -70,6 +70,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
     expect([...writeTools].sort()).toEqual(
       [
         'apply_patch',
+        'audio_render_wav',
         'browser_click',
         'browser_open',
         'browser_screenshot',

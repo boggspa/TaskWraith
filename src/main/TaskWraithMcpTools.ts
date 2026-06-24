@@ -162,7 +162,13 @@ export const TASKWRAITH_MCP_TOOLS = [
   'svg_rasterize',
   // Text->image generation via a paid API. Default OFF (requires an enabled
   // flag + a safeStorage-encrypted key in Settings); gated as a file change.
-  'image_generate'
+  'image_generate',
+  // In-house media surface (proving slice) — synthesize a tone with the Web
+  // Audio API, hand-build a pure-JS WAV (no native dep), and render its waveform
+  // as an inline PNG attachment with peak/RMS/dBFS introspection. Headless,
+  // network-cut, parameterized render (numbers + fixed-enum only — NOT eval).
+  // Gated as a file change, like the image tools. See src/main/mcp/AudioToolExecutors.ts.
+  'audio_render_wav'
 ] as const
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]
