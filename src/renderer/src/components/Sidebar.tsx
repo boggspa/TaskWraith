@@ -1913,15 +1913,13 @@ export function Sidebar({
   const currentScopeTitle =
     currentWorkspace?.displayName || (currentChat?.scope === 'global' ? 'General chats' : 'TaskWraith')
   const runningCount = runningChatIdSet.size
-  const primaryNewTitle = currentWorkspace
-    ? `New chat in ${currentWorkspace.displayName}`
-    : 'New general chat'
+  // The masthead "+ New → New Chat" item exclusively creates a General
+  // (scope:'global') chat, regardless of the active workspace. Workspace
+  // chats are created from the per-workspace row affordances (or by entering
+  // a workspace); "New Workspace" below is the separate folder flow.
+  const primaryNewTitle = 'New general chat'
   const handlePrimaryNewChat = () => {
     setNewMenuOpen(false)
-    if (currentWorkspace) {
-      onNewChat(currentWorkspace.id, currentWorkspace.path)
-      return
-    }
     onNewGlobalChat()
   }
   const handleNewEnsemble = () => {

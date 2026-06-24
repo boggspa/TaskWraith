@@ -133,13 +133,22 @@ struct HomeView: View {
                 Menu {
                     // ALL chat types create an empty Mac thread first, then
                     // render through the normal transcript welcome surface.
-                    Button("New chat") { openCanvas(.workspace) }
+                    // "New chat" is a General (scope:'global') chat — the
+                    // friendly default; the Mac clamps phone-origin global
+                    // turns to plan mode. "New workspace chat" is the
+                    // write-capable, workspace-scoped variant (the phone's
+                    // only chat-creation surface, so it's kept here).
+                    Button("New chat") { openCanvas(.global) }
+                    // Workspace-scoped + ensemble creation need a workspace;
+                    // a General chat ("New chat") does not, so it stays
+                    // enabled even on a fresh phone with no workspaces synced.
+                    Button("New workspace chat") { openCanvas(.workspace) }
+                        .disabled(model.workspaces.isEmpty)
                     Button("New ensemble") { openCanvas(.ensemble) }
-                    Button("New general chat") { openCanvas(.global) }
+                        .disabled(model.workspaces.isEmpty)
                 } label: {
                     ToolbarIconPillLabel("New", systemImage: "square.and.pencil")
                 }
-                .disabled(model.workspaces.isEmpty)
                 .buttonStyle(.plain)
                 // A Menu label inherits the accent tint (blue) over the pill
                 // chrome's black/white foreground; force the monochrome tint so the
@@ -464,8 +473,9 @@ struct HomeView: View {
             }
         }
 
-        // ── Global Chats — scope-global chats passed through READ-ONLY
-        //    (no workspace ⇒ no write capabilities; view-only on iOS). ─────
+        // ── General Chats — scope-global chats. They keep the full composer
+        //    on the phone (T72); the Mac clamps phone-origin turns to plan
+        //    mode (no file mutation) since there's no workspace bound. ─────
         let globalCards = listedCards.filter {
             $0.parentChatId == nil && $0.isGlobalScope
         }
