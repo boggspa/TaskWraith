@@ -106,8 +106,15 @@ export function EnsembleRosterPresetPicker({
     }
   }, [popoverOpen])
 
+  // Focus + select the suggested name when the dialog OPENS — keyed on the
+  // open/closed transition ONLY. Depending on `presetNameDialog` itself re-ran
+  // this on every keystroke (onChange rebuilds the object), so the rAF kept
+  // re-selecting all text and the next character overwrote the previous one —
+  // the field could only ever hold ONE typed character (paste worked because
+  // it's a single event that lands before the re-select).
+  const presetDialogOpen = presetNameDialog !== null
   useEffect(() => {
-    if (!presetNameDialog) return
+    if (!presetDialogOpen) return
     const frame = window.requestAnimationFrame(() => {
       presetNameInputRef.current?.focus()
       presetNameInputRef.current?.select()
@@ -120,7 +127,7 @@ export function EnsembleRosterPresetPicker({
       window.cancelAnimationFrame(frame)
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [presetNameDialog])
+  }, [presetDialogOpen])
 
   const handleSaveCurrent = (): void => {
     if (!ensemble || disabled) return
