@@ -1395,6 +1395,12 @@ export interface AppSettings {
   /** When true, a run that dies on a provider quota wall (429) is auto-paused
    * and re-dispatched to a healthy provider. Default off. */
   autoFailoverEnabled?: boolean
+  /** Escape hatch for the per-occurrence mid-run budget kill. The per-workflow
+   * WorkflowLimits ARE the opt-in (hasAnyBudget guards registration); this global
+   * flag only lets a user disable the enforcement entirely. Default TRUE (a run
+   * that sets a budget expects it enforced). Registration requires
+   * `workflowBudgetKillEnabled !== false && hasAnyBudget(limits)`. */
+  workflowBudgetKillEnabled?: boolean
   windowBounds?: {
     x?: number
     y?: number

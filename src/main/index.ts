@@ -314,6 +314,8 @@ import {
   type AutoFailoverNotice,
   type FailoverRunSnapshot
 } from './services/ProviderAutoFailover'
+import { hasAnyBudget } from './WorkflowBudgetGuard'
+import { WorkflowBudgetRegistry } from './WorkflowBudgetRegistry'
 import { ComposerService, type ComposerInput } from './services/ComposerService'
 import {
   DiscordContextService,
@@ -1305,6 +1307,40 @@ const failoverSnapshotByRun = new Map<string, FailoverRunSnapshot>()
 // it main-side: remember newRunId -> scheduledTaskId on reroute, mark terminal in
 // sendAgentCompatExit. Mirrors the ensemble fix (bb6b3aa8).
 const scheduledTaskIdByFailoverRun = new Map<string, string>()
+
+// Per-occurrence mid-run BUDGET KILL (WorkflowLimits enforcement). SOLO scheduled
+// runs only — ensemble is OUT (no per-participant scheduledTaskId; shared round
+// accounting; never failed over). abort = cancelProviderRun (RC1: NOT
+// runManager.cancel, which skips Codex's turn/interrupt RPC). The task is marked
+// failed at the kill DECISION (triggerKill), not on exit — the default Claude SDK
+// abort never reaches sendAgentCompatExit, and the mark must beat the renderer's
+// run-end mark. Timers .unref() so an armed kill never holds the loop open at quit.
+const workflowBudgetRegistry = new WorkflowBudgetRegistry({
+  abort: (provider, runId) => {
+    void cancelProviderRun(provider, runId)
+  },
+  markTaskFailed: (scheduledTaskId, lastError) => {
+    AppStore.updateScheduledTask(scheduledTaskId, {
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+      lastError
+    })
+  },
+  now: () => Date.now(),
+  setTimer: (fn, ms) => {
+    const handle = setTimeout(fn, ms)
+    handle.unref?.()
+    return handle
+  },
+  clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  onEvent: (event) => {
+    if (event.kind === 'killed') {
+      console.warn(
+        `[workflow-budget] killing run ${event.runId} (${event.provider}, task ${event.scheduledTaskId}): ${event.breach.kind} budget exceeded`
+      )
+    }
+  }
+})
 
 /**
  * Re-derive + re-sign a CAPPED, non-escalating permission posture for an
@@ -7104,6 +7140,11 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
   updateCliProviderSession(state, sessionId)
   const usage = extractProviderUsage(state.provider, event)
   if (usage) state.tokenUsage = mergeProviderUsage(state.provider, state.tokenUsage, usage)
+  // Per-occurrence budget kill: feed the LIVE token snapshot. No-op unless this
+  // run was registered (solo scheduled run with a budget). Covers Claude (SDK +
+  // CLI — both stream through this handler) and Kimi. grok/cursor early-return
+  // above (terminal-only tokenUsage → wall-clock enforcement ONLY, no token kill).
+  if (state.appRunId) workflowBudgetRegistry.onUsage(state.appRunId, state.tokenUsage)
   emitCliProviderToolEvent(state, event)
   if (state.provider === 'kimi' || state.provider === 'claude') {
     // Claude (SDK + CLI) carries reasoning as `thinking` content blocks on the
@@ -8015,6 +8056,17 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       )
     } finally {
       cliProviderAbortControllers.delete('claude')
+    }
+    // RC2 — per-occurrence budget kill: if the SDK run was aborted BY the budget
+    // kill (cancelProviderRun aborts the SDK controller), tryRunClaudeSdk throws /
+    // returns false and execution would otherwise FALL THROUGH to a CLI re-run =
+    // DOUBLE SPEND on a run we deliberately killed. The terminal mark already
+    // happened in triggerKill; here we settle the run, clean up the registry (the
+    // SDK abort never reaches sendAgentCompatExit), and SKIP the CLI fallback.
+    if (route.appRunId && workflowBudgetRegistry.isKilled(route.appRunId)) {
+      runManager.finish(route.appRunId, 'cancelled')
+      workflowBudgetRegistry.onExit(route.appRunId)
+      return
     }
   }
 
@@ -9963,6 +10015,11 @@ function sendAgentCompatExit(
     // A failover-rerouted run exits MAIN-side; mark its scheduled task terminal
     // (the renderer never registered a context for it). Idempotent: updateScheduledTask
     // guards invalid terminal->terminal transitions, so a stale renderer mark is a no-op.
+    // Per-occurrence budget kill: cleanup on EVERY exit (clear the armed timer +
+    // drop per-run state so a late timer can't fire on a finished/reused run). The
+    // terminal mark already happened at the kill decision (triggerKill); this is
+    // cleanup-only and a no-op for unregistered runs.
+    workflowBudgetRegistry.onExit(routed.appRunId)
     const failoverScheduledTaskId = scheduledTaskIdByFailoverRun.get(routed.appRunId)
     if (failoverScheduledTaskId) {
       scheduledTaskIdByFailoverRun.delete(routed.appRunId)
@@ -10412,6 +10469,8 @@ function handleCodexNotification(message: any) {
 
   if (message.method === 'thread/tokenUsage/updated') {
     state.tokenUsage = params.tokenUsage || params.usage || params
+    // Per-occurrence budget kill: Codex's live token signal.
+    if (state.appRunId) workflowBudgetRegistry.onUsage(state.appRunId, state.tokenUsage)
     return
   }
 
@@ -20329,6 +20388,9 @@ if (isGeminiMcpBridgeProcess) {
         clearInterval(stallReconcilerInterval)
         stallReconcilerInterval = null
       }
+      // Clear every armed wall-clock budget timer so a pending kill never fires
+      // mid-quit. (Timers are also .unref()'d, so this is belt-and-braces.)
+      workflowBudgetRegistry.disposeAll()
       iosRemoteRuntime?.dispose()
       void embeddedRelayHandle?.close()
       localServersServiceRef?.stop()
@@ -23637,6 +23699,33 @@ if (isGeminiMcpBridgeProcess) {
       // Snapshot the dispatched request so a later quota wall can re-run it.
       if (AppStore.getSettings().autoFailoverEnabled && dispatchResult.appRunId) {
         failoverSnapshotByRun.set(dispatchResult.appRunId, captureFailoverSnapshot(routedPayload))
+      }
+      // Per-occurrence mid-run budget kill (SOLO scheduled runs only). routedPayload
+      // is the PRE-normalize raw payload, so scheduledTaskId is still present (same
+      // read as captureFailoverSnapshot). Resolve the workflow's limits via
+      // scheduledTaskId -> task.workflowId -> WorkflowDefinition.limits. The per-workflow
+      // limits ARE the opt-in (hasAnyBudget); workflowBudgetKillEnabled is the escape
+      // hatch. NOT wired for ensemble — this solo chokepoint never sees a round runId.
+      const budgetScheduledTaskId = (routedPayload as { scheduledTaskId?: string }).scheduledTaskId
+      if (budgetScheduledTaskId && dispatchResult.appRunId) {
+        const budgetSettings = AppStore.getSettings()
+        if (budgetSettings.workflowBudgetKillEnabled !== false) {
+          const task = AppStore.getScheduledTasks().find((t) => t.id === budgetScheduledTaskId)
+          const limits = task?.workflowId
+            ? AppStore.getWorkflowDefinitions().find((w) => w.id === task.workflowId)?.limits
+            : undefined
+          if (hasAnyBudget(limits)) {
+            workflowBudgetRegistry.register({
+              runId: dispatchResult.appRunId,
+              scheduledTaskId: budgetScheduledTaskId,
+              provider: routedPayload.provider,
+              startedAtMs: Date.now(),
+              timeoutSeconds: limits!.timeoutSeconds,
+              maxTokens: limits!.maxTokens,
+              maxCostUsd: limits!.maxCostUsd
+            })
+          }
+        }
       }
       return dispatchResult
     }

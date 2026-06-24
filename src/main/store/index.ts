@@ -393,6 +393,7 @@ const defaultSettings: AppSettings = {
   activeProvider: DEFAULT_PROVIDER,
   providerRunPauses: {},
   autoFailoverEnabled: false,
+  workflowBudgetKillEnabled: true,
   claudeBinaryPath: '',
   kimiBinaryPath: '',
   ollamaBaseUrl: 'http://127.0.0.1:11434',
@@ -1042,6 +1043,10 @@ export class AppStore {
         typeof stored.autoFailoverEnabled === 'boolean'
           ? stored.autoFailoverEnabled
           : defaultSettings.autoFailoverEnabled,
+      workflowBudgetKillEnabled:
+        typeof stored.workflowBudgetKillEnabled === 'boolean'
+          ? stored.workflowBudgetKillEnabled
+          : defaultSettings.workflowBudgetKillEnabled,
       approvalTimeouts: {
         ...defaultSettings.approvalTimeouts,
         ...(storedApprovalTimeouts || {}),
