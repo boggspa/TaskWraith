@@ -2744,8 +2744,20 @@ export type WorkflowExecutionStatus =
 export interface WorkflowLimits {
   maxRunsPerDay?: number
   maxConsecutiveFailures?: number
+  /** Wall-clock cap (seconds). Enforced mid-run for ALL providers. */
   timeoutSeconds?: number
+  /**
+   * Cumulative cost cap (USD). Mid-run kill for live-signal providers
+   * (claude/kimi/codex); POST-HOC for grok/cursor (checked at run end → the
+   * finished run is marked failed if it exceeded). Best-effort: most providers
+   * report cost only at the terminal result.
+   */
   maxCostUsd?: number
+  /**
+   * Cumulative token cap. Mid-run kill for claude/kimi/codex; grok/cursor have no
+   * live token signal, so their token budget is enforced POST-HOC (the finished
+   * run is marked failed if it exceeded the cap).
+   */
   maxTokens?: number
 }
 

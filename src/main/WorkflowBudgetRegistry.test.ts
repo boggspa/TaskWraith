@@ -325,3 +325,50 @@ describe('WorkflowBudgetRegistry — re-register safety', () => {
     expect(live[0].ms).toBe(120_000)
   })
 })
+
+describe('WorkflowBudgetRegistry.onTerminalUsage — post-hoc (grok/cursor)', () => {
+  it('marks the task FAILED when final usage exceeds the token budget, WITHOUT aborting', () => {
+    const h = makeHarness()
+    h.registry.register(budget({ maxTokens: 1000, provider: 'grok' }))
+    h.registry.onTerminalUsage('run-1', { total_tokens: 1500 })
+    // No abort — the run already exited; this is a post-hoc budget signal only.
+    expect(h.aborts).toHaveLength(0)
+    expect(h.marks).toHaveLength(1)
+    expect(h.marks[0].lastError).toContain('finished over its token budget')
+    expect(h.marks[0].lastError).toContain('1500 / 1000 tokens')
+    expect(h.registry.isKilled('run-1')).toBe(true)
+  })
+
+  it('does NOT mark when final usage is within budget', () => {
+    const h = makeHarness()
+    h.registry.register(budget({ maxTokens: 1000, provider: 'cursor' }))
+    h.registry.onTerminalUsage('run-1', { total_tokens: 999 })
+    expect(h.marks).toHaveLength(0)
+    expect(h.aborts).toHaveLength(0)
+  })
+
+  it('is idempotent with a prior mid-run kill (no double mark, no second abort)', () => {
+    const h = makeHarness()
+    h.registry.register(budget({ maxTokens: 1000 }))
+    h.registry.onUsage('run-1', { total_tokens: 1000 }) // live kill: 1 abort + 1 mark
+    expect(h.aborts).toHaveLength(1)
+    expect(h.marks).toHaveLength(1)
+    h.registry.onTerminalUsage('run-1', { total_tokens: 2000 }) // already killed → no-op
+    expect(h.aborts).toHaveLength(1)
+    expect(h.marks).toHaveLength(1)
+  })
+
+  it('is a no-op for an unregistered run', () => {
+    const h = makeHarness()
+    h.registry.onTerminalUsage('ghost', { total_tokens: 9_999_999 })
+    expect(h.marks).toHaveLength(0)
+  })
+
+  it('honors a cost-only budget post-hoc (grok projected cost lands at close)', () => {
+    const h = makeHarness()
+    h.registry.register(budget({ maxCostUsd: 0.5, provider: 'grok' }))
+    h.registry.onTerminalUsage('run-1', { total_cost_usd: 0.75 })
+    expect(h.marks[0].lastError).toContain('finished over its cost budget')
+    expect(h.aborts).toHaveLength(0)
+  })
+})

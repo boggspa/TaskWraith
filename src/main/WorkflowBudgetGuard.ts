@@ -94,16 +94,35 @@ export function evaluateWallclockBudget(budget: OccurrenceBudget, nowMs: number)
   return null
 }
 
-/** Human-readable terminal reason, persisted onto the task's lastError + the durable event. */
-export function budgetLastErrorMessage(breach: BudgetBreach): string {
-  switch (breach.kind) {
-    case 'wallclock':
-      return `Scheduled run aborted: wall-clock budget exceeded (${Math.round(breach.observed / 1000)}s / ${Math.round(breach.limit / 1000)}s cap).`
-    case 'tokens':
-      return `Scheduled run aborted: token budget exceeded (${breach.observed} / ${breach.limit} tokens).`
-    case 'cost':
-      return `Scheduled run aborted: cost budget exceeded ($${breach.observed.toFixed(4)} / $${breach.limit.toFixed(2)} cap).`
-    default:
-      return 'Scheduled run aborted: budget exceeded.'
-  }
+/**
+ * Human-readable terminal reason, persisted onto the task's lastError + the
+ * durable event. `terminal: true` is the POST-HOC case (grok/cursor: the run
+ * already FINISHED over budget — it was not aborted mid-run), so the copy says
+ * "finished over its …" instead of "aborted: … exceeded". The non-terminal
+ * phrasing is preserved byte-for-byte.
+ */
+export function budgetLastErrorMessage(
+  breach: BudgetBreach,
+  opts: { terminal?: boolean } = {}
+): string {
+  const noun =
+    breach.kind === 'wallclock'
+      ? 'wall-clock budget'
+      : breach.kind === 'tokens'
+        ? 'token budget'
+        : breach.kind === 'cost'
+          ? 'cost budget'
+          : 'budget'
+  const amount =
+    breach.kind === 'wallclock'
+      ? `${Math.round(breach.observed / 1000)}s / ${Math.round(breach.limit / 1000)}s cap`
+      : breach.kind === 'tokens'
+        ? `${breach.observed} / ${breach.limit} tokens`
+        : breach.kind === 'cost'
+          ? `$${breach.observed.toFixed(4)} / $${breach.limit.toFixed(2)} cap`
+          : ''
+  const tail = amount ? ` (${amount})` : ''
+  return opts.terminal
+    ? `Scheduled run finished over its ${noun}${tail}.`
+    : `Scheduled run aborted: ${noun} exceeded${tail}.`
 }

@@ -10381,6 +10381,15 @@ function sendAgentCompatExit(
     // drop per-run state so a late timer can't fire on a finished/reused run). The
     // terminal mark already happened at the kill decision (triggerKill); this is
     // cleanup-only and a no-op for unregistered runs.
+    // Residual 2 — POST-HOC token/cost budget for grok/cursor (no live token
+    // signal): their final tokenUsage rides the route here (the stream state is
+    // passed as the route arg; buildAgentExitStats above reads it the same way).
+    // Evaluate BEFORE onExit drops the registration; onTerminalUsage marks the
+    // task failed iff the final usage breached + no-ops for already-killed runs.
+    const terminalUsage = (
+      route as { tokenUsage?: { total_tokens?: number; total_cost_usd?: number } } | null | undefined
+    )?.tokenUsage
+    if (terminalUsage) workflowBudgetRegistry.onTerminalUsage(routed.appRunId, terminalUsage)
     workflowBudgetRegistry.onExit(routed.appRunId)
     const failoverScheduledTaskId = scheduledTaskIdByFailoverRun.get(routed.appRunId)
     if (failoverScheduledTaskId) {

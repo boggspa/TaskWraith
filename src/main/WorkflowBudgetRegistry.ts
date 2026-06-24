@@ -143,6 +143,38 @@ export class WorkflowBudgetRegistry {
   }
 
   /**
+   * POST-HOC token/cost check for providers with NO live token signal (grok,
+   * cursor): their tokenUsage is known only at the terminal exit, by which point
+   * the run has FINISHED and a mid-run abort is impossible. Called from
+   * sendAgentCompatExit (before onExit). If the FINAL usage exceeded a token/cost
+   * budget, mark the ScheduledTask FAILED — so failureStreak bumps + the user sees
+   * the overage — but do NOT abort (the process already exited). No-op for an
+   * unregistered or already-killed run (a live-signal run already mid-run-killed
+   * must not be double-marked). Sets the killed flag for idempotency so a racing
+   * onExit/onUsage no-ops.
+   */
+  onTerminalUsage(
+    runId: string,
+    usage: { total_tokens?: number; total_cost_usd?: number } | null | undefined
+  ): void {
+    if (this.killedRuns.has(runId)) return
+    const entry = this.runs.get(runId)
+    if (!entry) return
+    const breach = evaluateTokenCostBudget(entry.budget, usage)
+    if (!breach) return
+    this.killedRuns.add(runId)
+    this.clearRunTimer(runId)
+    const lastError = budgetLastErrorMessage(breach, { terminal: true })
+    this.deps.markTaskFailed(entry.budget.scheduledTaskId, lastError)
+    this.deps.onEvent?.({
+      kind: 'task-failed',
+      runId,
+      scheduledTaskId: entry.budget.scheduledTaskId,
+      lastError
+    })
+  }
+
+  /**
    * Wall-clock deadline reached (timer fired) — re-validate against the real
    * clock before killing, so a coalesced / delayed timer can't kill early.
    * No-op for an unregistered or already-killed run.
