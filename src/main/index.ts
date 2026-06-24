@@ -322,6 +322,14 @@ import { hasAnyBudget } from './WorkflowBudgetGuard'
 import { WorkflowBudgetRegistry } from './WorkflowBudgetRegistry'
 import { decideCancelInterrupt, shouldFlushPendingInterrupt } from './CodexPendingInterrupt'
 import { routeDueScheduledTask } from './HeadlessScheduledDispatch'
+import {
+  WorkflowLoopEngine,
+  mapLoopSnapshotToScheduledOutcome,
+  type WorkflowLoopStepInput,
+  type WorkflowLoopStepResult
+} from './WorkflowLoopEngine'
+import type { WorkflowLoopConfig } from './WorkflowLoopModel'
+import type { WorkflowRunEventInput } from './WorkflowRunStore'
 import { ComposerService, type ComposerInput } from './services/ComposerService'
 import {
   DiscordContextService,
@@ -6934,6 +6942,169 @@ function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): void {
 // the shared dispatch chokepoint, which keys off the threaded scheduledTaskId.
 // ENSEMBLE occurrences delegate to dispatchDueEnsembleScheduledTaskHeadless
 // (composeRun is solo-only; ensemble runs through the orchestrator).
+// Stage 2 slice 5 — run a due LOOP-workflow occurrence as a maker→verifier loop in
+// MAIN (the renderer has no loop engine). SLICE 5 IS MAKER-ONLY: the verifier config
+// is preserved on the WorkflowDefinition but not yet honored (slice 5b adds the
+// verifier step + verdict parser). The loop is bounded fail-safe by maxIterations +
+// the cumulative budget. CRUX (per recon): each iteration's run carries a fresh
+// appRunId and NO scheduledTaskId on its payload, so the dispatch chokepoint skips
+// the per-occurrence solo-completion / budget bookkeeping (Option A) — the LOOP owns
+// the SINGLE terminal mark at loop-end. Completion of each iteration's run is awaited
+// via auditRunTracker (the provider-agnostic stash-a-resolver the central pumps
+// already feed), tracked BEFORE dispatch (the Claude SDK fires the exit INLINE).
+async function dispatchDueScheduledLoopHeadless(
+  task: ScheduledTask,
+  loopCfg: WorkflowLoopConfig
+): Promise<void> {
+  const composer = composerServiceRef
+  const dispatch = dispatchRunWithProviderPauseRef
+  if (!composer || !dispatch) return
+  // Claim the task synchronously (before any await) so a racing tick can't double-fire.
+  const running = AppStore.updateScheduledTask(task.id, {
+    status: 'running',
+    firedAt: task.firedAt || new Date().toISOString(),
+    runId: task.runId || `loop-${task.provider}-${randomUUID()}`,
+    runningSince: new Date().toISOString()
+  })
+  if (!running || running.status !== 'running') return
+
+  const ledger = resolveWorkflowExecutionForTask(task.id)
+  const appendLoopEvent = (input: WorkflowRunEventInput): void => {
+    if (!ledger) return
+    try {
+      AppStore.appendWorkflowRunEvent({ ...ledger, ...input } as WorkflowRunEventInput)
+    } catch (e) {
+      console.error('Failed to append workflow loop ledger event', e)
+    }
+  }
+
+  // Maker-only for slice 5: strip the verifier so the engine runs the maker loop.
+  const engineConfig: WorkflowLoopConfig = {
+    acceptance: { maxIterations: loopCfg.acceptance.maxIterations },
+    limits: loopCfg.limits
+  }
+
+  const dispatchStep = async (input: WorkflowLoopStepInput): Promise<WorkflowLoopStepResult> => {
+    const prompt = input.priorOutput
+      ? `${task.prompt}\n\n[Your previous attempt — iteration ${input.iteration - 1}]\n${input.priorOutput}\n\n[Refine or continue the work above for iteration ${input.iteration}.]`
+      : task.prompt
+    let composed: AgentRunPayload
+    try {
+      // scheduledTaskId is passed to the INPUT (forces the unattended posture +
+      // resolves any verified elevation internally) but is deliberately NOT re-added
+      // to the output payload below — so the chokepoint skips the per-iteration
+      // solo/budget bookkeeping (Option A). appRunId = input.runId bridges completion.
+      composed = composer.composeRun({
+        chatId: task.chatId,
+        appRunId: input.runId,
+        provider: task.provider,
+        workspace: task.workspacePath,
+        prompt,
+        selectedModelType: task.selectedModelType,
+        customModel: task.customModel,
+        approvalMode: task.approvalMode,
+        sessionTrust: task.sessionTrust,
+        imageAttachments: task.imageAttachments,
+        externalPathGrants: task.externalPathGrants,
+        codexReasoningEffort: task.codexReasoningEffort,
+        codexServiceTier: task.codexServiceTier,
+        claudeReasoningEffort: task.claudeReasoningEffort,
+        claudeFastMode: task.claudeFastMode,
+        kimiThinkingEnabled: task.kimiThinkingEnabled,
+        runtimeProfileId: task.runtimeProfileId,
+        geminiAuthProfileId: task.geminiAuthProfileId,
+        scheduledTaskId: task.id
+      }) as AgentRunPayload
+    } catch (error) {
+      return { failed: true, error: error instanceof Error ? error.message : String(error) }
+    }
+    // Track BEFORE dispatch (inline-exit landmine) + arm an absolute backstop.
+    const completion = auditRunTracker.track(input.runId)
+    const backstop = setTimeout(
+      () => auditRunTracker.handleExit(input.runId, -1),
+      AUDIT_ROLE_RUN_TIMEOUT_MS
+    )
+    void completion.finally(() => clearTimeout(backstop))
+    const sender =
+      mainWindow && !mainWindow.webContents.isDestroyed()
+        ? mainWindow.webContents
+        : headlessRunSender
+    // NO scheduledTaskId on the dispatched payload (Option A) → chokepoint skips it.
+    void dispatch(composed, { sender })
+      .then((r) => {
+        if (!r?.dispatched) auditRunTracker.handleExit(input.runId, -1)
+      })
+      .catch(() => auditRunTracker.handleExit(input.runId, -1))
+    const outcome = await completion
+    // Per-iteration forensics (tagged iteration:N so the fold sums them without
+    // terminalizing the execution).
+    appendLoopEvent({
+      kind: 'harvested',
+      scheduledTaskId: task.id,
+      runId: input.runId,
+      iteration: input.iteration,
+      ...(typeof outcome.tokens === 'number' ? { tokens: outcome.tokens } : {}),
+      ...(typeof outcome.costUsd === 'number' ? { costUsd: outcome.costUsd } : {}),
+      ...(typeof outcome.durationMs === 'number' ? { durationMs: outcome.durationMs } : {})
+    } as WorkflowRunEventInput)
+    return {
+      ...(outcome.finalText !== undefined ? { output: outcome.finalText } : {}),
+      ...(typeof outcome.tokens === 'number' ? { tokens: outcome.tokens } : {}),
+      ...(typeof outcome.costUsd === 'number' ? { costUsd: outcome.costUsd } : {}),
+      ...(!outcome.ok ? { failed: true, error: outcome.error } : {})
+    }
+  }
+
+  const engine = new WorkflowLoopEngine({
+    dispatchStep,
+    now: () => Date.now(),
+    uuid: () => `loop-${task.provider}-${randomUUID()}`,
+    // Slice 5: no mid-loop cancel wiring yet (the loop is bounded by maxIterations +
+    // budget; a cancel surface is a follow-up).
+    isCancelled: () => false,
+    onState: (snap) => {
+      // Keep the stall reconciler's basis fresh per iteration (a loop slower than the
+      // 6h backstop must NOT be falsely reaped) + surface the in-flight iteration's
+      // runId so the liveness cross-check finds the live run. Only on running snapshots.
+      if (snap.status !== 'running') return
+      const live = snap.iterations[snap.iterations.length - 1]
+      AppStore.updateScheduledTask(task.id, {
+        runningSince: new Date().toISOString(),
+        ...(live?.makerRunId ? { runId: live.makerRunId } : {})
+      })
+    }
+  })
+
+  let snap
+  try {
+    snap = await engine.run(engineConfig)
+  } catch (error) {
+    AppStore.updateScheduledTask(task.id, {
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+      lastError: `Workflow loop crashed: ${error instanceof Error ? error.message : String(error)}`
+    })
+    return
+  }
+
+  // Execution-level terminal ledger event (cumulative spend); NO iteration tag.
+  appendLoopEvent({
+    kind: 'loop_settled',
+    scheduledTaskId: task.id,
+    tokens: snap.budget.spentTokens,
+    costUsd: snap.budget.spentCostUsd,
+    ...(snap.error ? { error: snap.error } : {})
+  } as WorkflowRunEventInput)
+
+  // The SINGLE terminal mark — only an infra 'failed' bumps failureStreak.
+  const outcome = mapLoopSnapshotToScheduledOutcome(snap)
+  AppStore.updateScheduledTask(task.id, {
+    status: outcome.status,
+    completedAt: new Date().toISOString(),
+    ...(outcome.lastError ? { lastError: outcome.lastError } : {})
+  })
+}
+
 async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<void> {
   if (task.kind === 'ensemble') {
     dispatchDueEnsembleScheduledTaskHeadless(task)
@@ -7016,6 +7187,18 @@ function emitDueScheduledTasks() {
             status: 'due',
             firedAt: new Date().toISOString()
           }) || task
+    // Stage 2 slice 5 — a LOOP-workflow occurrence runs the engine in MAIN regardless
+    // of rendererAvailable (the renderer has no loop engine). Solo only; bypasses
+    // routeDueScheduledTask. If the composer isn't wired yet (early boot) leave it
+    // 'due' to retry — never broadcast (a renderer would single-dispatch a loop).
+    const loopCfg =
+      dueTask.kind !== 'ensemble' && dueTask.workflowId
+        ? AppStore.getWorkflowDefinition(dueTask.workflowId)?.loop
+        : undefined
+    if (loopCfg) {
+      if (soloDispatchReady) void dispatchDueScheduledLoopHeadless(dueTask, loopCfg)
+      continue
+    }
     const route = routeDueScheduledTask(dueTask, {
       rendererAvailable,
       headlessEnabled,

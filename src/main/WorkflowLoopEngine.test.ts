@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   WorkflowLoopEngine,
+  mapLoopSnapshotToScheduledOutcome,
   type WorkflowLoopEngineDeps,
   type WorkflowLoopStepInput,
   type WorkflowLoopStepResult
@@ -178,5 +179,38 @@ describe('WorkflowLoopEngine', () => {
     // ≥1 'running' progress snapshot (after iter1 continue) + the terminal one.
     expect(snaps.some((s) => s.status === 'running')).toBe(true)
     expect(snaps[snaps.length - 1]).toEqual({ status: 'completed', stopReason: 'accepted' })
+  })
+})
+
+describe('mapLoopSnapshotToScheduledOutcome (slice 5 — loop-end completion mapping)', () => {
+  it('accepted / max_iterations → completed with NO note (clean stop, no failure)', () => {
+    expect(mapLoopSnapshotToScheduledOutcome({ status: 'completed', stopReason: 'accepted' })).toEqual({
+      status: 'completed'
+    })
+    expect(
+      mapLoopSnapshotToScheduledOutcome({ status: 'completed', stopReason: 'max_iterations' })
+    ).toEqual({ status: 'completed' })
+  })
+
+  it('rejected / inconclusive / budget_exhausted → completed WITH a note (NOT failed — no streak poison)', () => {
+    for (const stopReason of ['rejected', 'inconclusive', 'budget_exhausted'] as const) {
+      const out = mapLoopSnapshotToScheduledOutcome({ status: 'completed', stopReason })
+      // CRITICAL: a non-acceptance outcome of a correctly-run loop must NOT be 'failed'
+      // (failed bumps failureStreak → auto-disables a healthy recurring workflow).
+      expect(out.status).toBe('completed')
+      expect(out.lastError).toContain(stopReason)
+    }
+  })
+
+  it('infra failure → failed (the ONLY streak-bumping path)', () => {
+    expect(
+      mapLoopSnapshotToScheduledOutcome({ status: 'failed', stopReason: 'failed', error: 'maker crashed' })
+    ).toEqual({ status: 'failed', lastError: 'maker crashed' })
+  })
+
+  it('cancelled → cancelled', () => {
+    expect(
+      mapLoopSnapshotToScheduledOutcome({ status: 'cancelled', stopReason: 'cancelled' })
+    ).toEqual({ status: 'cancelled' })
   })
 })

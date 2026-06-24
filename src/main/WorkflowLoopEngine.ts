@@ -220,3 +220,33 @@ export class WorkflowLoopEngine {
     }
   }
 }
+
+/** Where a finished loop's ScheduledTask should land. PURE + testable — the one
+ * piece of loop-wiring logic that carries real risk (mis-mapping poisons the
+ * workflow's failureStreak). */
+export interface ScheduledLoopOutcome {
+  status: 'completed' | 'failed' | 'cancelled'
+  lastError?: string
+}
+
+/**
+ * Map a terminal loop snapshot to the single ScheduledTask terminal mark.
+ *  - cancelled → 'cancelled'.
+ *  - INFRA failure (a maker/verifier run crashed) → 'failed' (this is the ONLY path
+ *    that bumps failureStreak → can auto-disable the workflow at maxConsecutiveFailures).
+ *  - everything else COMPLETES: a clean accept or the configured maxIterations stop
+ *    silently; a verifier reject / inconclusive / budget stop completes WITH a note
+ *    but NOT as a failure — a non-acceptance outcome of a correctly-run loop must not
+ *    poison the streak and silently disable a healthy recurring workflow.
+ */
+export function mapLoopSnapshotToScheduledOutcome(
+  snap: Pick<WorkflowLoopRunSnapshot, 'status' | 'stopReason' | 'error'>
+): ScheduledLoopOutcome {
+  if (snap.status === 'cancelled') return { status: 'cancelled' }
+  if (snap.status === 'failed') return { status: 'failed', lastError: snap.error || 'Workflow loop failed.' }
+  const clean = snap.stopReason === 'accepted' || snap.stopReason === 'max_iterations'
+  return {
+    status: 'completed',
+    ...(clean ? {} : { lastError: `Loop stopped: ${snap.stopReason ?? 'unknown'}` })
+  }
+}
