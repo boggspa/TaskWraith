@@ -16,6 +16,7 @@ import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { NotificationZone } from './NotificationZone'
+import { CommittedDraftField } from './CommittedDraftField'
 import {
   ArrowUpSendIcon,
   ClaudeReturnSymbolIcon,
@@ -125,8 +126,11 @@ export interface FirstLaunchSheetProps {
   themeAppearance?: ThemeAppearance
   composerStyle?: ComposerStyle
   userBubbleColor?: UserBubbleColor
+  userName?: string
   onAppearancePreviewChange?: (
-    next: Partial<Pick<AppSettings, 'themeAppearance' | 'composerStyle' | 'userBubbleColor'>>
+    next: Partial<
+      Pick<AppSettings, 'themeAppearance' | 'composerStyle' | 'userBubbleColor' | 'userName'>
+    >
   ) => void
 }
 
@@ -393,6 +397,7 @@ export function FirstLaunchSheet({
   themeAppearance = 'system',
   composerStyle = 'default',
   userBubbleColor = 'system',
+  userName = '',
   onAppearancePreviewChange
 }: FirstLaunchSheetProps): React.JSX.Element | null {
   const dismissRef = useRef(onDismiss)
@@ -601,6 +606,19 @@ export function FirstLaunchSheet({
             them side-by-side in the same UI. Each provider keeps its own auth — sign in to the
             ones you want to use, skip the rest. Goals, approvals, audit runs, and usage history stay
             in TaskWraith&apos;s local ledger so each provider shares the same operating context.
+          </p>
+        </section>
+
+        <section className="first-launch-sheet-section">
+          <label className="settings-label">Your name (optional)</label>
+          <CommittedDraftField
+            className="settings-select"
+            committed={userName}
+            onCommit={(value) => onAppearancePreviewChange?.({ userName: value })}
+            placeholder="e.g. Chris"
+          />
+          <p className="first-launch-sheet-section-helper">
+            We&apos;ll use this to greet you in your General chats. Leave blank to skip.
           </p>
         </section>
 

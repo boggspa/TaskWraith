@@ -33,6 +33,8 @@ export type SettingsPanelUpdate = {
   mainPaneOpacityOverride?: AppSettings['mainPaneOpacityOverride']
   geminiCheckpointingEnabled?: boolean
   chatContextTurns?: number
+  /** Display name used to greet the user in New General Chat (blank = omit). */
+  userName?: AppSettings['userName']
   /** 1.0.5-EW25 — Display currency for cost / token-spend chips. */
   currency?: AppSettings['currency']
   /** 1.0.5-EW34 — Conservative-overestimate bias percent (0–25). */

@@ -4566,6 +4566,9 @@ function App(): React.JSX.Element {
     // (the `displayCurrency` const derives from `settings?.currency`
     // on each render), just persist the patch through the IPC
     // pipeline like every other AppSettings field.
+    if (next.userName !== undefined) {
+      settingsPatch.userName = next.userName
+    }
     if (next.currency !== undefined) {
       settingsPatch.currency = next.currency
     }
@@ -20585,6 +20588,7 @@ function App(): React.JSX.Element {
               providerRunPauses={settings?.providerRunPauses}
               kimiSanitiserEnabled={settings?.kimiSanitiserEnabled ?? false}
               kimiSanitiserCustomKeywords={settings?.kimiSanitiserCustomKeywords ?? ''}
+              userName={settings?.userName ?? ''}
               claudeBinaryPath={claudeBinaryPath}
               kimiBinaryPath={kimiBinaryPath}
               ollamaBaseUrl={ollamaBaseUrl}
@@ -22375,6 +22379,7 @@ function App(): React.JSX.Element {
         themeAppearance={appearance.themeAppearance || 'system'}
         composerStyle={appearance.composerStyle || 'default'}
         userBubbleColor={appearance.userBubbleColor || 'system'}
+        userName={settings?.userName ?? ''}
         onAppearancePreviewChange={handleSettingsChange}
       />
       {/* BugReportSheet — inline issue capture for testers. z-index

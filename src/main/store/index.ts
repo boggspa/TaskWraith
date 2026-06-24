@@ -420,6 +420,7 @@ const defaultSettings: AppSettings = {
   providerRunPauses: {},
   autoFailoverEnabled: false,
   workflowBudgetKillEnabled: true,
+  userName: '',
   claudeBinaryPath: '',
   kimiBinaryPath: '',
   ollamaBaseUrl: 'http://127.0.0.1:11434',

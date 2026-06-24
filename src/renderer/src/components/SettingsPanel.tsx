@@ -165,6 +165,7 @@ interface SettingsPanelProps {
   /** 1.0.5-EW26 — User's additional trigger keywords (newline-
    * separated; lines starting with `#` are treated as comments). */
   kimiSanitiserCustomKeywords: string
+  userName?: string
   claudeBinaryPath: string
   kimiBinaryPath: string
   ollamaBaseUrl: string
@@ -275,6 +276,7 @@ interface SettingsPanelProps {
     kimiSanitiserEnabled?: boolean
     /** 1.0.5-EW26 — User additions to the trigger keyword list. */
     kimiSanitiserCustomKeywords?: string
+    userName?: string
     claudeBinaryPath?: string
     kimiBinaryPath?: string
     ollamaBaseUrl?: string
@@ -1639,6 +1641,7 @@ export function SettingsPanel({
   providerRunPauses,
   kimiSanitiserEnabled,
   kimiSanitiserCustomKeywords,
+  userName = '',
   claudeBinaryPath,
   kimiBinaryPath,
   ollamaBaseUrl,
@@ -3337,6 +3340,18 @@ export function SettingsPanel({
         {
           activeTab === 'behavior' && (
             <>
+              <div className="settings-group">
+                <label className="settings-label">Your name</label>
+                <CommittedDraftField
+                  className="settings-select"
+                  committed={userName}
+                  onCommit={(value) => onChange({ userName: value })}
+                  placeholder="e.g. Chris — used to greet you in General chats"
+                />
+                <p className="settings-hint">
+                  Shown in the New General Chat greeting. Leave blank to omit.
+                </p>
+              </div>
               <div className="settings-group">
                 <label
                   className="settings-label"

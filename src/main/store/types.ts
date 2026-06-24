@@ -1409,6 +1409,9 @@ export interface AppSettings {
     height: number
     isMaximized?: boolean
   }
+  /** Display name used to greet the user in New General Chat. Optional;
+   * blank/whitespace is treated as "no name" and omitted from the greeting. */
+  userName?: string
   claudeBinaryPath?: string
   claudeApiKey?: string
   kimiBinaryPath?: string
