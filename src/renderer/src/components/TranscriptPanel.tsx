@@ -1405,7 +1405,12 @@ export const TranscriptPanel = memo(
                             }
                           >
                             <div className="user-message-content">
-                              <MarkdownMessage content={preview} chat={currentChat || undefined} />
+                              <MarkdownMessage
+                                content={preview}
+                                chat={currentChat || undefined}
+                                mediaRefs={mediaRefs}
+                                workspacePath={currentChat?.workspacePath}
+                              />
                             </div>
                             {mediaRefs.length > 0 && (
                               <ChatMessageMediaStrip
@@ -1477,11 +1482,15 @@ export const TranscriptPanel = memo(
                                   content={msg.content}
                                   chat={currentChat || undefined}
                                   isLive
+                                  mediaRefs={mediaRefs}
+                                  workspacePath={currentChat?.workspacePath}
                                 />
                               ) : (
                                 <MarkdownMessage
                                   content={msg.content}
                                   chat={currentChat || undefined}
+                                  mediaRefs={mediaRefs}
+                                  workspacePath={currentChat?.workspacePath}
                                 />
                               )
                             ) : (

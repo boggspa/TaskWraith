@@ -1,11 +1,13 @@
-import { Fragment, memo, useState, type MouseEvent, type ReactNode } from 'react'
+import { Fragment, memo, useContext, useState, type MouseEvent, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { HighlightedCodeBlock } from './HighlightedCodeBlock'
 import { AgentMention } from './AgentMention'
 import { ParticipantMention } from './ParticipantMention'
 import { FaviconLink } from './FaviconLink'
+import { MarkdownMediaContext } from './MarkdownMediaContext'
 import { classifyMarkdownLink } from '../lib/classifyMarkdownLink'
+import { resolveInlineMarkdownImage } from '../lib/resolveMarkdownImageRef'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
 import type { ChatRecord } from '../../../main/store/types'
 
@@ -148,6 +150,44 @@ function processChildren(children: ReactNode): ReactNode {
   return children
 }
 
+/**
+ * Inline image renderer for markdown `![alt](src)` nodes. Replaces the inert
+ * placeholder with the SAFE bounded thumbnail when `src` resolves (by path) to
+ * a persisted media ref the main process already produced. Reads
+ * `MarkdownMediaContext` because the ReactMarkdown component override can't be
+ * given props directly — and `StableMarkdownBlock` is memoised on `raw` alone,
+ * so a ref prop would go stale. Context updates re-render this consumer through
+ * the memo, which is exactly what we want when a thumbnail arrives post-persist.
+ *
+ * H4: the only `<img src>` ever emitted is a `data:` URL (see
+ * `resolveInlineMarkdownImage`); the raw markdown src is never loaded. No
+ * resolution → the original inert placeholder span.
+ */
+function InlineMarkdownImage({ src, alt }: { src?: string; alt?: string }): ReactNode {
+  const media = useContext(MarkdownMediaContext)
+  const trimmedAlt = typeof alt === 'string' ? alt.trim() : ''
+  const label = trimmedAlt ? `Image: ${trimmedAlt}` : 'Image'
+  const resolved =
+    src && media ? resolveInlineMarkdownImage(src, media.refs, media.workspacePath) : null
+  if (!resolved) {
+    return (
+      <span className="markdown-image-placeholder" role="note" aria-label={label}>
+        {label}
+      </span>
+    )
+  }
+  return (
+    <img
+      className="markdown-inline-image"
+      src={resolved.thumbnail}
+      alt={trimmedAlt || resolved.ref.name}
+      title={resolved.ref.name}
+      loading="lazy"
+      decoding="async"
+    />
+  )
+}
+
 const MARKDOWN_COMPONENTS: Components = {
   a({ href, children }) {
     if (typeof href === 'string' && href.startsWith('agent://')) {
@@ -197,12 +237,12 @@ const MARKDOWN_COMPONENTS: Components = {
       </a>
     )
   },
-  img({ alt }) {
-    const label = typeof alt === 'string' && alt.trim() ? `Image: ${alt.trim()}` : 'Image'
+  img({ alt, src }) {
     return (
-      <span className="markdown-image-placeholder" role="note" aria-label={label}>
-        {label}
-      </span>
+      <InlineMarkdownImage
+        src={typeof src === 'string' ? src : undefined}
+        alt={typeof alt === 'string' ? alt : undefined}
+      />
     )
   },
   pre({ children }) {

@@ -3359,6 +3359,35 @@
   margin-top: 0.25rem;
 }
 
+/* PR3 — inline markdown image: a `![]()` whose src resolves to a persisted
+   media ref is shown as the safe bounded thumbnail (always a data: URL). */
+.markdown-inline-image {
+  display: block;
+  max-width: min(100%, 480px);
+  max-height: 360px;
+  width: auto;
+  height: auto;
+  margin: 0.15rem 0;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.15));
+  object-fit: contain;
+}
+
+/* Inert fallback when a markdown image can't be resolved to a safe thumbnail
+   (remote src, unresolved path, SVG, oversize). Never loads the raw src. */
+.markdown-image-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.1em 0.5em;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px dashed var(--border-subtle, rgba(255, 255, 255, 0.12));
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.55));
+  font-size: var(--font-size-xs, 0.8em);
+  font-style: italic;
+}
+
 .message-markdown code {
   border: 1px solid rgb(var(--agent-accent-rgb) / 0.16);
   border-radius: 5px;

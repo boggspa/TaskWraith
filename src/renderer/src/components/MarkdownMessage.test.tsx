@@ -1,6 +1,18 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { MarkdownMessage } from './MarkdownMessage'
+import type { ChatMediaRef } from './ChatMediaPanel'
+
+const AVAILABLE_PNG_REF: ChatMediaRef = {
+  id: 'm1',
+  kind: 'image',
+  source: 'workspace_path',
+  name: 'out.png',
+  path: '/ws/out.png',
+  workspaceRelativePath: 'out.png',
+  status: 'available',
+  thumbnail: { dataBase64: 'iVBORw0KGgo=', mimeType: 'image/png' }
+}
 
 describe('MarkdownMessage', () => {
   it('renders GFM tables, task lists, inline code, and fenced code', () => {
@@ -113,6 +125,55 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('<blockquote>')
     // A nested <ul> inside the outer <li> proves list indentation survives.
     expect(html).toMatch(/<li>[\s\S]*<ul>[\s\S]*nested/)
+  })
+
+  it('PR3: replaces a resolvable markdown image with its safe data: thumbnail', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={'Here is the render: ![the output](out.png)'}
+        mediaRefs={[AVAILABLE_PNG_REF]}
+        workspacePath="/ws"
+      />
+    )
+    expect(html).toContain('markdown-inline-image')
+    expect(html).toContain('src="data:image/png;base64,iVBORw0KGgo="')
+    expect(html).toContain('alt="the output"')
+    // The placeholder is gone for the resolved image.
+    expect(html).not.toContain('markdown-image-placeholder')
+  })
+
+  it('PR3 SECURITY: a remote image src is never loaded, even with refs present', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={'![beacon](https://evil.example/track.png)'}
+        mediaRefs={[AVAILABLE_PNG_REF]}
+        workspacePath="/ws"
+      />
+    )
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('evil.example')
+    expect(html).toContain('markdown-image-placeholder')
+  })
+
+  it('PR3 SECURITY: an unsafe-SVG ref stays an inert placeholder', () => {
+    const svgRef: ChatMediaRef = {
+      id: 's1',
+      kind: 'image',
+      source: 'workspace_path',
+      name: 'diagram.svg',
+      path: '/ws/diagram.svg',
+      workspaceRelativePath: 'diagram.svg',
+      status: 'unsafe_svg'
+    }
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={'![chart](diagram.svg)'}
+        mediaRefs={[svgRef]}
+        workspacePath="/ws"
+      />
+    )
+    expect(html).not.toContain('<img')
+    expect(html).toContain('markdown-image-placeholder')
   })
 
   it('tokenises an @user address chip in both body text and headings', () => {

@@ -1,10 +1,13 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { AgentIdentityContext } from './AgentIdentityContext'
+import { MarkdownMediaContext, type MarkdownMediaContextValue } from './MarkdownMediaContext'
+import { markdownMediaSignature } from './MarkdownMessage'
 import { StableMarkdownBlock } from './StableMarkdownBlock'
 import { splitMarkdownIntoBlocks, type MarkdownBlockType } from '../lib/MarkdownBlockSplit'
 import { advanceReveal, graphemeCount, sliceGraphemes } from '../lib/advanceReveal'
 import { REVEAL_PARAMS } from '../../../shared/revealParams'
 import { useRevealClock } from '../lib/useRevealClock'
+import type { ChatMediaRef } from './ChatMediaPanel'
 import type { ChatRecord } from '../../../main/store/types'
 
 /*
@@ -34,6 +37,10 @@ interface RevealingMarkdownMessageProps {
   isLive: boolean
   /** Override; defaults to the OS / in-app reduced-motion setting. */
   reduceMotion?: boolean
+  /** This message's media refs, used to replace inline `![]()` placeholders. */
+  mediaRefs?: readonly ChatMediaRef[]
+  /** Chat workspace path, used to resolve relative markdown image paths. */
+  workspacePath?: string
 }
 
 function prefersReducedMotion(): boolean {
@@ -68,7 +75,9 @@ function RevealingMarkdownMessageImpl({
   content,
   chat,
   isLive,
-  reduceMotion
+  reduceMotion,
+  mediaRefs,
+  workspacePath
 }: RevealingMarkdownMessageProps) {
   const { stable, tail } = useMemo(() => splitMarkdownIntoBlocks(content), [content])
   const tailRaw = tail?.raw ?? ''
@@ -125,18 +134,33 @@ function RevealingMarkdownMessageImpl({
       }
     : undefined
 
+  // Stabilise the media context across the per-delta re-renders so inline
+  // images (if any are present on a live message) don't re-resolve every frame.
+  const mediaSig = markdownMediaSignature(mediaRefs, workspacePath)
+  const mediaSigRef = useRef<string | null>(null)
+  const mediaCtxRef = useRef<MarkdownMediaContextValue | undefined>(undefined)
+  if (mediaSigRef.current !== mediaSig) {
+    mediaSigRef.current = mediaSig
+    mediaCtxRef.current =
+      mediaRefs && mediaRefs.some((ref) => ref.kind === 'image')
+        ? { refs: mediaRefs, workspacePath }
+        : undefined
+  }
+
   return (
     <AgentIdentityContext.Provider value={chat}>
-      <div className="message-markdown message-markdown-pro">
-        {stable.map((block, index) => (
-          <StableMarkdownBlock key={`${index}-${block.id}`} raw={block.raw} />
-        ))}
-        {tail ? (
-          <div style={tailStyle}>
-            <StableMarkdownBlock key={`tail-${stable.length}`} raw={displayRaw} />
-          </div>
-        ) : null}
-      </div>
+      <MarkdownMediaContext.Provider value={mediaCtxRef.current}>
+        <div className="message-markdown message-markdown-pro">
+          {stable.map((block, index) => (
+            <StableMarkdownBlock key={`${index}-${block.id}`} raw={block.raw} />
+          ))}
+          {tail ? (
+            <div style={tailStyle}>
+              <StableMarkdownBlock key={`tail-${stable.length}`} raw={displayRaw} />
+            </div>
+          ) : null}
+        </div>
+      </MarkdownMediaContext.Provider>
     </AgentIdentityContext.Provider>
   )
 }

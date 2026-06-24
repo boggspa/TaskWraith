@@ -1,14 +1,44 @@
 import { memo, useMemo, useRef } from 'react'
 import { AgentIdentityContext } from './AgentIdentityContext'
+import { MarkdownMediaContext, type MarkdownMediaContextValue } from './MarkdownMediaContext'
 import { StableMarkdownBlock } from './StableMarkdownBlock'
 import { splitMarkdownIntoBlocks } from '../lib/MarkdownBlockSplit'
 import { deepEqual } from '../lib/messagesRenderEqual'
+import type { ChatMediaRef } from './ChatMediaPanel'
 import type { ChatRecord } from '../../../main/store/types'
 
 interface MarkdownMessageProps {
   content: string
   /** Chat used to look up subagent identities for `[@Name](agent://id)` chips. */
   chat?: ChatRecord
+  /** This message's media refs, used to replace inline `![]()` placeholders with
+   *  the safe bounded thumbnail. Omitted for callsites with no transcript media. */
+  mediaRefs?: readonly ChatMediaRef[]
+  /** Chat workspace path, used to resolve relative markdown image paths. */
+  workspacePath?: string
+}
+
+/**
+ * A cheap, stable signature of the slices of `mediaRefs` that affect inline
+ * image rendering: identity, status, the two path keys we match on, and the
+ * thumbnail payload size (a content swap re-hashes the id, but the length guards
+ * the rare same-id/new-bytes case). Drives BOTH the context-stabilising ref and
+ * `propsAreEqual`, so a no-op broadcast never re-renders the inline images while
+ * a new/updated thumbnail always does. Only image refs participate.
+ */
+export function markdownMediaSignature(
+  refs: readonly ChatMediaRef[] | undefined,
+  workspacePath?: string
+): string {
+  let sig = workspacePath ? `ws:${workspacePath};` : ''
+  if (!refs) return sig
+  for (const ref of refs) {
+    if (ref.kind !== 'image') continue
+    sig += `${ref.id}|${ref.status || ''}|${ref.path || ''}|${ref.workspaceRelativePath || ''}|${
+      ref.thumbnail?.dataBase64?.length ?? 0
+    };`
+  }
+  return sig
 }
 
 /**
@@ -97,7 +127,7 @@ export function identityContextEqual(a: ChatRecord | undefined, b: ChatRecord | 
   return participantsChipEqual(a?.ensemble?.participants, b?.ensemble?.participants)
 }
 
-function MarkdownMessageImpl({ content, chat }: MarkdownMessageProps) {
+function MarkdownMessageImpl({ content, chat, mediaRefs, workspacePath }: MarkdownMessageProps) {
   // useMemo the block split so a re-render NOT caused by a content change
   // (e.g. an identity-registry update) doesn't re-run the O(n) string scan.
   const { stable, tail } = useMemo(() => splitMarkdownIntoBlocks(content), [content])
@@ -114,14 +144,29 @@ function MarkdownMessageImpl({ content, chat }: MarkdownMessageProps) {
   if (!identityContextEqual(ctxRef.current, chat)) {
     ctxRef.current = chat
   }
+  // Stabilise the media-context value the same way: swap it only when the
+  // inline-render-relevant slice of the refs actually changes, so a streaming
+  // re-render (or any identity-only broadcast) leaves the inline images put.
+  const mediaSig = markdownMediaSignature(mediaRefs, workspacePath)
+  const mediaSigRef = useRef<string | null>(null)
+  const mediaCtxRef = useRef<MarkdownMediaContextValue | undefined>(undefined)
+  if (mediaSigRef.current !== mediaSig) {
+    mediaSigRef.current = mediaSig
+    mediaCtxRef.current =
+      mediaRefs && mediaRefs.some((ref) => ref.kind === 'image')
+        ? { refs: mediaRefs, workspacePath }
+        : undefined
+  }
   return (
     <AgentIdentityContext.Provider value={ctxRef.current}>
-      <div className="message-markdown message-markdown-pro">
-        {stable.map((block, index) => (
-          <StableMarkdownBlock key={`${index}-${block.id}`} raw={block.raw} />
-        ))}
-        {tail ? <StableMarkdownBlock key={`tail-${stable.length}`} raw={tail.raw} /> : null}
-      </div>
+      <MarkdownMediaContext.Provider value={mediaCtxRef.current}>
+        <div className="message-markdown message-markdown-pro">
+          {stable.map((block, index) => (
+            <StableMarkdownBlock key={`${index}-${block.id}`} raw={block.raw} />
+          ))}
+          {tail ? <StableMarkdownBlock key={`tail-${stable.length}`} raw={tail.raw} /> : null}
+        </div>
+      </MarkdownMediaContext.Provider>
     </AgentIdentityContext.Provider>
   )
 }
@@ -140,7 +185,12 @@ function propsAreEqual(prev: MarkdownMessageProps, next: MarkdownMessageProps): 
   // re-renders every markdown row (re-creating its mention Provider) ~100×/sec
   // even when nothing the chips read has changed. The compared slices are
   // small, so the value compare is far cheaper than the re-render it prevents.
-  return prev.content === next.content && identityContextEqual(prev.chat, next.chat)
+  return (
+    prev.content === next.content &&
+    identityContextEqual(prev.chat, next.chat) &&
+    markdownMediaSignature(prev.mediaRefs, prev.workspacePath) ===
+      markdownMediaSignature(next.mediaRefs, next.workspacePath)
+  )
 }
 
 export const MarkdownMessage = memo(MarkdownMessageImpl, propsAreEqual)

@@ -21,6 +21,9 @@ export interface ChatMediaRef {
   source: ChatMediaSource
   name: string
   path: string
+  /** Workspace-relative path for `workspace_path` refs — lets the inline
+   *  markdown-image resolver match `![](relative/path.png)` exactly. */
+  workspaceRelativePath?: string
   mimeType?: string
   thumbnail?: TranscriptMediaThumbnail
   status?: TranscriptMediaStatus
@@ -124,6 +127,9 @@ export function collectChatMediaRefs(
       source,
       name: mediaRef.name || chatMediaNameFromPath(path) || 'Image',
       path,
+      ...(mediaRef.workspaceRelativePath
+        ? { workspaceRelativePath: mediaRef.workspaceRelativePath }
+        : {}),
       mimeType: mediaRef.mimeType,
       thumbnail: mediaRef.thumbnail,
       status: mediaRef.status,
@@ -308,6 +314,9 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
       source,
       name: mediaRef.name || chatMediaNameFromPath(path) || 'Image',
       path,
+      ...(mediaRef.workspaceRelativePath
+        ? { workspaceRelativePath: mediaRef.workspaceRelativePath }
+        : {}),
       mimeType: mediaRef.mimeType,
       thumbnail: mediaRef.thumbnail,
       status: mediaRef.status,
