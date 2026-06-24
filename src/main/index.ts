@@ -318,6 +318,7 @@ import {
 } from './services/ProviderAutoFailover'
 import { hasAnyBudget } from './WorkflowBudgetGuard'
 import { WorkflowBudgetRegistry } from './WorkflowBudgetRegistry'
+import { decideCancelInterrupt, shouldFlushPendingInterrupt } from './CodexPendingInterrupt'
 import { ComposerService, type ComposerInput } from './services/ComposerService'
 import {
   DiscordContextService,
@@ -10110,6 +10111,20 @@ function setActiveCodexRunState(state: CodexRunState | null): void {
   activeCodexRunState = state
 }
 
+// Residual 1 — threadIds whose run was asked to cancel BEFORE turn/started set a
+// turnId. cancelProviderRun records the threadId here when it can't yet issue
+// turn/interrupt; handleCodexNotification flushes it the instant the turn starts.
+// Without this, a cancel/budget-kill landing between registerRunSession and
+// turn/started skips the interrupt and the Codex server turn runs on. Keyed by
+// threadId (the only id stable across that window + the id turn/interrupt needs).
+const pendingCodexInterrupts = new Set<string>()
+
+/** Issue a Codex turn/interrupt; best-effort, never throws. */
+async function issueCodexTurnInterrupt(threadId: string, turnId: string): Promise<void> {
+  if (!codexClient) return
+  await codexClient.request('turn/interrupt', { threadId, turnId }, 10_000).catch(() => {})
+}
+
 function findCodexRunStateForMessage(message: any): CodexRunState | null {
   const params = message?.params || {}
   const threadId =
@@ -10811,6 +10826,12 @@ function handleCodexNotification(message: any) {
     if (state.appRunId && state.turnId) {
       runManager.registerProviderRun(state.appRunId, state.turnId)
     }
+    // Residual 1 — a cancel/budget-kill that fired before this turn started
+    // recorded the threadId; now that we have a turnId, interrupt immediately.
+    if (shouldFlushPendingInterrupt(pendingCodexInterrupts, state) && state.threadId && state.turnId) {
+      pendingCodexInterrupts.delete(state.threadId)
+      void issueCodexTurnInterrupt(state.threadId, state.turnId)
+    }
     return
   }
 
@@ -11067,6 +11088,8 @@ function handleCodexNotification(message: any) {
   if (message.method === 'turn/completed' || message.method === 'review/completed') {
     if (state.completed) return
     state.completed = true
+    // Residual 1 — the run ended; drop any deferred interrupt for its thread.
+    if (state.threadId) pendingCodexInterrupts.delete(state.threadId)
     const turn = params.turn || params.review || {}
     const durationMs = Number(turn.durationMs || turn.duration_ms || 0)
     sendAgentCompatLine(
@@ -12600,17 +12623,13 @@ async function cancelProviderRun(
     }
     if (provider === 'codex') {
       const codexState = getCodexStateFromSession(session)
-      if (codexState?.threadId && codexState.turnId && codexClient) {
-        await codexClient
-          .request(
-            'turn/interrupt',
-            {
-              threadId: codexState.threadId,
-              turnId: codexState.turnId
-            },
-            10_000
-          )
-          .catch(() => {})
+      const decision = decideCancelInterrupt(codexState)
+      if (decision.interruptNow && codexState?.threadId && codexState.turnId) {
+        await issueCodexTurnInterrupt(codexState.threadId, codexState.turnId)
+      } else if (decision.deferThreadId) {
+        // Cancelled before turn/started — defer the interrupt so the server turn
+        // doesn't run on after cancel (flushed in handleCodexNotification).
+        pendingCodexInterrupts.add(decision.deferThreadId)
       }
     }
     return true
@@ -12660,17 +12679,13 @@ async function cancelProviderRun(
     return true
   }
 
-  if (activeCodexRunState?.threadId && activeCodexRunState.turnId && codexClient) {
-    await codexClient
-      .request(
-        'turn/interrupt',
-        {
-          threadId: activeCodexRunState.threadId,
-          turnId: activeCodexRunState.turnId
-        },
-        10_000
-      )
-      .catch(() => {})
+  const activeDecision = decideCancelInterrupt(activeCodexRunState)
+  if (activeDecision.interruptNow && activeCodexRunState?.threadId && activeCodexRunState.turnId) {
+    await issueCodexTurnInterrupt(activeCodexRunState.threadId, activeCodexRunState.turnId)
+    return true
+  }
+  if (activeDecision.deferThreadId) {
+    pendingCodexInterrupts.add(activeDecision.deferThreadId)
     return true
   }
 
