@@ -72,6 +72,28 @@ describe('runProviderAutoFailover', () => {
     expect(notices.at(-1)).toMatchObject({ kind: 'rerouted', target: 'codex' })
   })
 
+  it('carries scheduledTaskId onto the rerouted payload (and omits it when absent)', async () => {
+    const withTask = makeDeps()
+    await runProviderAutoFailover(withTask.deps, {
+      failedRunId: 'run-A',
+      failedProvider: 'claude',
+      appChatId: 'chat-1',
+      snapshot: baseSnapshot({ scheduledTaskId: 'task-7' })
+    })
+    expect(withTask.dispatched).toHaveLength(1)
+    expect(withTask.dispatched[0].scheduledTaskId).toBe('task-7')
+
+    const noTask = makeDeps()
+    await runProviderAutoFailover(noTask.deps, {
+      failedRunId: 'run-B',
+      failedProvider: 'claude',
+      appChatId: 'chat-1',
+      snapshot: baseSnapshot()
+    })
+    expect(noTask.dispatched).toHaveLength(1)
+    expect('scheduledTaskId' in noTask.dispatched[0]).toBe(false)
+  })
+
   it('uses the configured reroute target when set and live', async () => {
     const { deps, dispatched } = makeDeps({
       getSettings: () => ({ providerRunPauses: { claude: { paused: false, reroute: { provider: 'kimi' } } } })

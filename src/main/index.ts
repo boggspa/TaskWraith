@@ -1294,6 +1294,12 @@ let dispatchRunWithProviderPauseRef:
   | null = null
 const quotaWallSignalByRun = new Map<string, { provider: ProviderId; resetHintAt?: string }>()
 const failoverSnapshotByRun = new Map<string, FailoverRunSnapshot>()
+// A failover-rerouted run is dispatched MAIN-side with a fresh runId — the renderer
+// never registers an ActiveRunContext carrying scheduledTaskId for it, so its per-run
+// exit can't mark the scheduled task terminal (it would stay stuck 'running'). Bridge
+// it main-side: remember newRunId -> scheduledTaskId on reroute, mark terminal in
+// sendAgentCompatExit. Mirrors the ensemble fix (bb6b3aa8).
+const scheduledTaskIdByFailoverRun = new Map<string, string>()
 
 /**
  * Re-derive + re-sign a CAPPED, non-escalating permission posture for an
@@ -1353,7 +1359,10 @@ function captureFailoverSnapshot(payload: AgentRunPayload): FailoverRunSnapshot 
     kimiThinking: payload.kimiThinking,
     runtimeProfileId: payload.runtimeProfileId,
     geminiAuthProfileId: payload.geminiAuthProfileId,
-    failoverHopCount: payload.failoverHopCount
+    failoverHopCount: payload.failoverHopCount,
+    // routedPayload is the PRE-normalize raw renderer payload, so scheduledTaskId
+    // is still structurally present (normalizeAgentRunPayload strips it).
+    scheduledTaskId: (payload as { scheduledTaskId?: string }).scheduledTaskId
   }
 }
 
@@ -1395,7 +1404,7 @@ async function triggerProviderAutoFailover(
       ? mainWindow.webContents
       : createHeadlessRunSender()
   try {
-    await runProviderAutoFailover(
+    const failoverResult = await runProviderAutoFailover(
       {
         getSettings: () => AppStore.getSettings(),
         updateSettings: (partial) => AppStore.updateSettings(partial),
@@ -1408,6 +1417,11 @@ async function triggerProviderAutoFailover(
       },
       { failedRunId, failedProvider, appChatId, snapshot, resetHintAt }
     )
+    // Carry the scheduled-task linkage onto the rerouted run so its main-side exit
+    // marks the task terminal (the renderer never sees this run).
+    if (failoverResult.ok && failoverResult.newRunId && snapshot?.scheduledTaskId) {
+      scheduledTaskIdByFailoverRun.set(failoverResult.newRunId, snapshot.scheduledTaskId)
+    }
   } catch (error) {
     console.warn('[auto-failover] orchestration failed', error)
   }
@@ -9866,6 +9880,19 @@ function sendAgentCompatExit(
     // Auto-failover: on a terminal FAILED exit with a stashed quota-wall signal,
     // pause the throttled provider and re-dispatch the request to a healthy one.
     maybeTriggerProviderAutoFailover(routed.appRunId, provider, routed.appChatId, code)
+    // A failover-rerouted run exits MAIN-side; mark its scheduled task terminal
+    // (the renderer never registered a context for it). Idempotent: updateScheduledTask
+    // guards invalid terminal->terminal transitions, so a stale renderer mark is a no-op.
+    const failoverScheduledTaskId = scheduledTaskIdByFailoverRun.get(routed.appRunId)
+    if (failoverScheduledTaskId) {
+      scheduledTaskIdByFailoverRun.delete(routed.appRunId)
+      const failoverFailed = (code ?? -1) !== 0
+      AppStore.updateScheduledTask(failoverScheduledTaskId, {
+        status: failoverFailed ? 'failed' : 'completed',
+        completedAt: new Date().toISOString(),
+        ...(failoverFailed ? { lastError: 'Scheduled run failed after provider auto-failover.' } : {})
+      })
+    }
   }
   publishRunEvent('agent-exit', provider, routed, sender)
   if (provider === 'gemini') {

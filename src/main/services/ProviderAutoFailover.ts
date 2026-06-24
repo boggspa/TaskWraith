@@ -40,6 +40,9 @@ export interface FailoverRunSnapshot {
   kimiThinking?: boolean | null
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
+  /** Scheduled-task linkage so a rerouted run can still mark its task terminal
+   * (a main-dispatched failover run never registers a renderer run context). */
+  scheduledTaskId?: string
   /** Hop count of THIS run (0 for a user-initiated run, N for the Nth failover). */
   failoverHopCount?: number
 }
@@ -154,6 +157,10 @@ export async function runProviderAutoFailover(
     geminiAuthProfileId: snap.geminiAuthProfileId,
     handoffSourceRunId: req.failedRunId,
     failoverHopCount: sourceHop + 1,
+    // Transport-only (NOT a typed AgentRunPayload field; normalize strips it) —
+    // via spread to dodge the excess-property check, and so a 2nd-hop snapshot
+    // re-reads it and the linkage survives failover chains.
+    ...(snap.scheduledTaskId ? { scheduledTaskId: snap.scheduledTaskId } : {}),
     ...(snap.effectivePermissions ? { effectivePermissions: snap.effectivePermissions } : {})
   }
   // Sign for the (current) failed provider as a defensive baseline; the seam
