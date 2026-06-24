@@ -226,6 +226,73 @@ public enum RelayCandidates {
         return isLocalNetworkHost(host)
     }
 
+    /// Whether any of `hosts` (IPv4 dotted-quad literals) sits in one of THIS
+    /// device's active IPv4 subnets — i.e. a LAN door we could actually reach on
+    /// the current network. Returns nil when it can't be determined (no usable
+    /// interface address, or no host is an IPv4 literal), so callers keep their
+    /// default ordering instead of hard-skipping a door that might still route.
+    public static func anyHostInDeviceSubnet(_ hosts: [String]) -> Bool? {
+        let hostAddrs = hosts.compactMap { ipv4ToUInt32($0) }
+        guard !hostAddrs.isEmpty else { return nil }
+        guard let interfaces = deviceIPv4Interfaces(), !interfaces.isEmpty else { return nil }
+        return anyHost(hostAddrs, inAnyOf: interfaces)
+    }
+
+    /// Pure subnet test (no syscalls): is any host address on the same subnet as
+    /// any interface, per that interface's mask? Exposed for tests.
+    static func anyHost(
+        _ hostAddrs: [UInt32], inAnyOf interfaces: [(addr: UInt32, mask: UInt32)]
+    ) -> Bool {
+        for iface in interfaces {
+            for hostAddr in hostAddrs where (hostAddr & iface.mask) == (iface.addr & iface.mask) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Parse an IPv4 dotted-quad into a host-order UInt32; nil for non-literals
+    /// (hostnames, IPv6, malformed) so the caller can treat them as unknown.
+    static func ipv4ToUInt32(_ s: String) -> UInt32? {
+        let parts = s.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return nil }
+        var value: UInt32 = 0
+        for part in parts {
+            guard let octet = UInt32(part), octet <= 255 else { return nil }
+            value = (value << 8) | octet
+        }
+        return value
+    }
+
+    /// This device's active IPv4 (address, netmask) pairs from getifaddrs, in
+    /// host byte order; loopback and down interfaces are skipped. nil if the
+    /// syscall fails.
+    static func deviceIPv4Interfaces() -> [(addr: UInt32, mask: UInt32)]? {
+        var head: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&head) == 0 else { return nil }
+        defer { freeifaddrs(head) }
+        var result: [(addr: UInt32, mask: UInt32)] = []
+        var cursor = head
+        while let iface = cursor {
+            cursor = iface.pointee.ifa_next
+            guard
+                let addrPtr = iface.pointee.ifa_addr,
+                addrPtr.pointee.sa_family == sa_family_t(AF_INET),
+                let maskPtr = iface.pointee.ifa_netmask
+            else { continue }
+            let flags = iface.pointee.ifa_flags
+            if (flags & UInt32(IFF_UP)) == 0 || (flags & UInt32(IFF_LOOPBACK)) != 0 { continue }
+            let addr = addrPtr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                UInt32(bigEndian: $0.pointee.sin_addr.s_addr)
+            }
+            let mask = maskPtr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                UInt32(bigEndian: $0.pointee.sin_addr.s_addr)
+            }
+            result.append((addr: addr, mask: mask))
+        }
+        return result
+    }
+
     /// Derive a host's `/v1/beginpair` HTTP(S) endpoint from one of its relay
     /// URLs (QR-optional discovery): wss→https, ws→http — the SAME origin
     /// `tailscale serve` fronts the relay's ws + http on. Returns nil for an

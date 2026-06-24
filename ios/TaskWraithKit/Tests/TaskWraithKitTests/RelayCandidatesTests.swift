@@ -93,4 +93,47 @@ struct RelayCandidatesTests {
                 from: decodedLegacy.relayUrls, fallback: decodedLegacy.relayUrl)
                 == ["ws://192.168.0.147:8787"])
     }
+
+    @Test("ipv4ToUInt32 parses dotted-quads and rejects non-literals")
+    func ipv4Parse() {
+        #expect(RelayCandidates.ipv4ToUInt32("192.168.0.147") == 0xC0A8_0093)
+        #expect(RelayCandidates.ipv4ToUInt32("10.0.0.1") == 0x0A00_0001)
+        #expect(RelayCandidates.ipv4ToUInt32("255.255.255.0") == 0xFFFF_FF00)
+        // Rejects hostnames, IPv6, out-of-range octets, wrong arity, empty parts.
+        #expect(RelayCandidates.ipv4ToUInt32("mac.local") == nil)
+        #expect(RelayCandidates.ipv4ToUInt32("::1") == nil)
+        #expect(RelayCandidates.ipv4ToUInt32("192.168.0.256") == nil)
+        #expect(RelayCandidates.ipv4ToUInt32("192.168.0") == nil)
+        #expect(RelayCandidates.ipv4ToUInt32("192.168..1") == nil)
+    }
+
+    @Test("subnet match: a LAN door on this /24 is reachable, a different subnet is not")
+    func subnetMatch() {
+        // Device on 192.168.1.50/24.
+        let iface = (
+            addr: RelayCandidates.ipv4ToUInt32("192.168.1.50")!,
+            mask: RelayCandidates.ipv4ToUInt32("255.255.255.0")!)
+        let sameSubnet = RelayCandidates.ipv4ToUInt32("192.168.1.147")!
+        let otherSubnet = RelayCandidates.ipv4ToUInt32("192.168.0.147")!
+        // Same /24 → reachable LAN door → callers stay LAN-first.
+        #expect(RelayCandidates.anyHost([sameSubnet], inAnyOf: [iface]))
+        // Different /24 (the off-LAN case that burns the multi-minute timeout) →
+        // not reachable → callers should prefer the wss door first.
+        #expect(!RelayCandidates.anyHost([otherSubnet], inAnyOf: [iface]))
+        // Any one matching host is enough.
+        #expect(RelayCandidates.anyHost([otherSubnet, sameSubnet], inAnyOf: [iface]))
+        // A wider /16 device subnet would include 192.168.0.x too.
+        let iface16 = (
+            addr: RelayCandidates.ipv4ToUInt32("192.168.1.50")!,
+            mask: RelayCandidates.ipv4ToUInt32("255.255.0.0")!)
+        #expect(RelayCandidates.anyHost([otherSubnet], inAnyOf: [iface16]))
+    }
+
+    @Test("anyHostInDeviceSubnet can't evaluate name-only or empty inputs → nil")
+    func subnetNonLiteral() {
+        // .local mDNS names aren't IPv4 literals, so subnet math is undeterminable
+        // and the caller keeps its default ordering (never hard-skips the door).
+        #expect(RelayCandidates.anyHostInDeviceSubnet(["mac.local"]) == nil)
+        #expect(RelayCandidates.anyHostInDeviceSubnet([]) == nil)
+    }
 }

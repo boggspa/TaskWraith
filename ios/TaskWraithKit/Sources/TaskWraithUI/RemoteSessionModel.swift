@@ -630,11 +630,32 @@ public final class RemoteSessionModel: ObservableObject {
         socketHealthTask = nil
     }
 
-    private func preferRemoteRelayFirst() -> Bool {
+    private func preferRemoteRelayFirst(relayUrls: [String]?, fallback: String) -> Bool {
         guard let path = pathMonitor?.currentPath, path.status == .satisfied else { return false }
+        // Cellular / expensive non-Wi-Fi paths: a LAN ws:// door is unreachable,
+        // so the wss front door goes first — no LAN timeout to burn.
         if path.usesInterfaceType(.cellular) { return true }
-        return path.isExpensive && !path.usesInterfaceType(.wifi)
-            && !path.usesInterfaceType(.wiredEthernet)
+        if path.isExpensive && !path.usesInterfaceType(.wifi)
+            && !path.usesInterfaceType(.wiredEthernet) {
+            return true
+        }
+        // On Wi-Fi/Ethernet, LAN-first is the fast home path — but ONLY if a LAN
+        // door is actually on THIS network. A Mac advertising 192.168.0.x while
+        // the phone is on a different SSID/subnet (guest Wi-Fi, a separate site)
+        // can't be reached on that ws:// URL; dialing it first stalls on a long
+        // TCP timeout — the "~5 min to connect off-LAN" delay — before the wss
+        // door is even tried. If there ARE local candidates and none is in this
+        // device's subnet, prefer the remote door first. If we can't read the
+        // interfaces (nil), keep LAN-first — never hard-skip a door that may route.
+        let candidates = RelayCandidates.ordered(from: relayUrls, fallback: fallback)
+        let localHosts = candidates
+            .compactMap { URL(string: $0)?.host }
+            .filter { RelayCandidates.isLocalNetworkHost($0) }
+        guard !localHosts.isEmpty else { return false }
+        guard let reachableLAN = RelayCandidates.anyHostInDeviceSubnet(localHosts) else {
+            return false
+        }
+        return !reachableLAN
     }
 
     /// Re-attempt the identity load (e.g. after the user unlocked the
@@ -743,7 +764,8 @@ public final class RemoteSessionModel: ObservableObject {
     public func pairDiscoveredHost(_ host: DiscoveredHostInfo) async -> Bool {
         let candidates = RelayCandidates.ordered(
             from: host.relayUrls, fallback: host.relayUrls.first ?? "",
-            preferRemoteFirst: preferRemoteRelayFirst())
+            preferRemoteFirst: preferRemoteRelayFirst(
+                relayUrls: host.relayUrls, fallback: host.relayUrls.first ?? ""))
         let label = host.macDisplayName ?? "that host"
         var lastError = "Couldn't reach \(label) to start pairing."
         for relay in candidates {
@@ -851,7 +873,8 @@ public final class RemoteSessionModel: ObservableObject {
         // wss door right after it works fine.
         let candidates = RelayCandidates.ordered(
             from: bootstrap.relayUrls, fallback: bootstrap.relayUrl,
-            preferRemoteFirst: preferRemoteRelayFirst())
+            preferRemoteFirst: preferRemoteRelayFirst(
+                relayUrls: bootstrap.relayUrls, fallback: bootstrap.relayUrl))
         cancelSocketHealthCheck()
         teardown()
         trustedReconnectAttempt = nil
@@ -958,7 +981,8 @@ public final class RemoteSessionModel: ObservableObject {
         // first; cellular/expensive paths try the WSS front door first.
         let candidates = RelayCandidates.ordered(
             from: record.relayUrls, fallback: record.relayUrl,
-            preferRemoteFirst: preferRemoteRelayFirst())
+            preferRemoteFirst: preferRemoteRelayFirst(
+                relayUrls: record.relayUrls, fallback: record.relayUrl))
         cancelSocketHealthCheck()
         teardown()
         macDisplayName = Self.sanitizedMacName(record.macDisplayName)
@@ -3111,11 +3135,13 @@ public final class RemoteSessionModel: ObservableObject {
         public var reasoningEffort: String?
         public var fastModeEnabled: Bool
         public var thinkingEnabled: Bool
+        public var isBossman: Bool
         public init(
             id: String, provider: String, model: String?, role: String,
             brief: String, enabled: Bool,
             permissionPresetId: String? = nil, reasoningEffort: String? = nil,
-            fastModeEnabled: Bool = false, thinkingEnabled: Bool = false
+            fastModeEnabled: Bool = false, thinkingEnabled: Bool = false,
+            isBossman: Bool = false
         ) {
             self.id = id
             self.provider = provider
@@ -3127,6 +3153,7 @@ public final class RemoteSessionModel: ObservableObject {
             self.reasoningEffort = reasoningEffort
             self.fastModeEnabled = fastModeEnabled
             self.thinkingEnabled = thinkingEnabled
+            self.isBossman = isBossman
         }
     }
 
@@ -3150,6 +3177,7 @@ public final class RemoteSessionModel: ObservableObject {
             // applies them when present; omitting would preserve the old value).
             dict["fastModeEnabled"] = entry.fastModeEnabled
             dict["thinkingEnabled"] = entry.thinkingEnabled
+            dict["isBossman"] = entry.isBossman
             return dict
         }
         send(
@@ -3176,6 +3204,7 @@ public final class RemoteSessionModel: ObservableObject {
             }
             dict["fastModeEnabled"] = entry.fastModeEnabled
             dict["thinkingEnabled"] = entry.thinkingEnabled
+            dict["isBossman"] = entry.isBossman
             return dict
         }
         send(
