@@ -231,6 +231,9 @@ export class RunRepository {
         from: candidate.status,
         to: STEER_PROMOTING_STATUS,
         ownerToken: input.ownerToken,
+        transitionVersion: updated.transitionVersion,
+        promotionAttempt: updated.promotionAttempt,
+        queueMessageId: updated.queueMessageId,
         statusReason:
           input.statusReason?.trim() || 'Promoted from main scheduler for remote steering.',
         chatId: candidate.chatId,
@@ -260,6 +263,9 @@ export class RunRepository {
         from: STEER_PROMOTING_STATUS,
         to: 'starting',
         ownerToken: input.ownerToken,
+        transitionVersion: updated.transitionVersion,
+        promotionAttempt: updated.promotionAttempt,
+        queueMessageId: updated.queueMessageId,
         statusReason: optionalString(input.statusReason) || 'Leased from steer promotion queue.',
         chatId: candidate.chatId,
         provider: candidate.provider,
@@ -292,6 +298,9 @@ export class RunRepository {
         from: STEER_PROMOTING_STATUS,
         to: targetStatus,
         ownerToken: input.ownerToken,
+        transitionVersion: updated.transitionVersion,
+        promotionAttempt: updated.promotionAttempt,
+        queueMessageId: updated.queueMessageId,
         statusReason: reasonText,
         chatId: candidate.chatId,
         provider: candidate.provider,
@@ -319,13 +328,21 @@ export class RunRepository {
     from: RunQueueJobStatusLike
     to: RunQueueJobStatusLike
     ownerToken: string
+    transitionVersion?: number
+    promotionAttempt?: number
+    queueMessageId?: string
     statusReason: string
     chatId?: string
     provider: RunQueueJob['provider']
     workspaceId?: string
     workspacePath?: string
   }): RunEventRecord | null {
+    const idempotencyKey = this.steerLifecycleEventId(input)
+    const existing = this.findRunEventById(input.runId, idempotencyKey)
+    if (existing) return existing
+
     return this.appendRunEvent({
+      id: idempotencyKey,
       runId: input.runId,
       chatId: input.chatId,
       provider: input.provider,
@@ -337,12 +354,55 @@ export class RunRepository {
       summary: `Queue job steer transition: ${input.from} -> ${input.to}`,
       payload: {
         eventType: 'steerTransition',
+        idempotencyKey,
         fromStatus: input.from,
         toStatus: input.to,
         ownerToken: input.ownerToken,
+        transitionVersion: input.transitionVersion,
+        promotionAttempt: input.promotionAttempt,
+        queueMessageId: input.queueMessageId,
         statusReason: input.statusReason
       }
     })
+  }
+
+  private steerLifecycleEventId(input: {
+    runId: string
+    from: RunQueueJobStatusLike
+    to: RunQueueJobStatusLike
+    transitionVersion?: number
+    promotionAttempt?: number
+  }): string {
+    const version = Number.isFinite(input.transitionVersion)
+      ? Math.max(0, Math.floor(input.transitionVersion as number))
+      : Number.isFinite(input.promotionAttempt)
+        ? Math.max(0, Math.floor(input.promotionAttempt as number))
+        : 0
+    return [
+      'run-queue',
+      this.eventIdPart(input.runId),
+      'steer-transition',
+      version,
+      this.eventIdPart(String(input.from)),
+      this.eventIdPart(String(input.to))
+    ].join(':')
+  }
+
+  private eventIdPart(value: string): string {
+    return String(value || 'unknown')
+      .trim()
+      .replace(/[^a-zA-Z0-9._-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 96) || 'unknown'
+  }
+
+  private findRunEventById(runId: string, id: string): RunEventRecord | null {
+    try {
+      return this.getRunEvents({ runId, kinds: ['lifecycle'] }).find((event) => event.id === id) || null
+    } catch (error) {
+      console.error('Failed to read run events for idempotency check', error)
+      return null
+    }
   }
 
   private getRunQueuePromotionOwnerToken(job: RunQueueJobWithSteerMetadata): string | undefined {

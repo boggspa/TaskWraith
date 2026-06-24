@@ -455,4 +455,74 @@ describe('RunRepository', () => {
       update.mockRestore()
     }
   })
+
+  it('deduplicates retried steer lifecycle events with deterministic ids', () => {
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      emitRunQueueChanged: vi.fn(),
+      emitRunEventsChanged: vi.fn()
+    })
+    const promoted: any = {
+      id: 'run-1',
+      runId: 'run-1',
+      provider: 'gemini',
+      workspacePath: '/repo',
+      source: 'manual',
+      status: 'steer_promoting',
+      priority: 0,
+      attempt: 1,
+      promotionOwnerToken: 'owner-token',
+      transitionVersion: 3,
+      createdAt: '2026-05-08T00:00:00.000Z',
+      updatedAt: '2026-05-08T00:00:00.000Z'
+    }
+    const get = vi.spyOn(AppStore, 'getRunQueueJob').mockReturnValue(promoted)
+    const update = vi
+      .spyOn(AppStore, 'updateRunQueueJob')
+      .mockImplementation((_runId, partial: any) => ({ ...promoted, ...partial }))
+    const getEvents = vi.spyOn(AppStore, 'getRunEvents')
+    const append = vi.spyOn(AppStore, 'appendRunEvent').mockImplementation((input: any) => ({
+      schemaVersion: 1,
+      id: input.id,
+      sequence: 9,
+      timestamp: '2026-05-08T00:00:00.000Z',
+      ...input
+    }))
+
+    try {
+      getEvents.mockReturnValueOnce([])
+
+      const first = repository.fallbackPromotedSteerJob({
+        runId: 'run-1',
+        ownerToken: 'owner-token',
+        reason: 'retry queued'
+      })
+      const event = append.mock.results[0]?.value
+
+      expect(first?.status).toBe('queued')
+      expect(event?.id).toBe('run-queue:run-1:steer-transition:3:steer_promoting:queued')
+      expect(event?.payload).toMatchObject({
+        eventType: 'steerTransition',
+        idempotencyKey: 'run-queue:run-1:steer-transition:3:steer_promoting:queued',
+        transitionVersion: 3,
+        fromStatus: 'steer_promoting',
+        toStatus: 'queued'
+      })
+
+      getEvents.mockReturnValueOnce([event])
+      const second = repository.fallbackPromotedSteerJob({
+        runId: 'run-1',
+        ownerToken: 'owner-token',
+        reason: 'retry queued'
+      })
+
+      expect(second?.status).toBe('queued')
+      expect(append).toHaveBeenCalledTimes(1)
+    } finally {
+      get.mockRestore()
+      update.mockRestore()
+      getEvents.mockRestore()
+      append.mockRestore()
+    }
+  })
 })
