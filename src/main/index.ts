@@ -793,6 +793,7 @@ import {
 } from './KimiMcpBridge'
 import { tryRunGeminiApi } from './GeminiApiProvider'
 import { handleEnsembleContinue } from './EnsembleContinue'
+import { evaluateBossmanAutoApproval } from './BossmanAutoApproval'
 import { handleScoutBrief, type ScoutBriefConfidence } from './ScoutBrief'
 import { makeBlackboardEntry, upsertBlackboardEntry } from './blackboard/Blackboard'
 import { WorkspaceWriteIntentRegistry, type WriteIntentToken } from './WorkspaceWriteIntentRegistry'
@@ -5119,37 +5120,28 @@ function bossmanAutoApprovalMetadata(input: {
 }): Record<string, unknown> | null {
   const { session, ensembleRun, service, request, effectivePermissions, policy, decision } = input
   if (!session || !ensembleRun) return null
-  if (decision !== 'ask') return null
-  if (input.neverAutoAllow) return null
-  if (request.forcePrompt || request.externalPathDetection) return null
-  if (effectivePermissions?.readOnly) return null
-  if (service !== 'shellCommands' && service !== 'fileChanges') return null
   const chatId = session.state?.appChatId
-  const chat = chatId ? AppStore.getChat(chatId) : null
-  const ensemble = chat?.ensemble
-  const bossmanParticipantId = ensemble?.bossmanParticipantId
-  const autoApprovals = ensemble?.bossmanAutoApprovals
-  if (!bossmanParticipantId || autoApprovals?.enabled !== true) return null
-  if (autoApprovals.mode !== 'permission_preset_once') return null
-  if (!ensemble.participants.some((participant) => participant.id === bossmanParticipantId)) {
-    return null
-  }
-  if (!ensemble.participants.some((participant) => participant.id === ensembleRun.participantId)) {
-    return null
-  }
-  return {
+  const ensemble = (chatId ? AppStore.getChat(chatId) : null)?.ensemble
+  if (!ensemble) return null
+  // The security-critical guard logic lives in the pure, unit-tested
+  // `evaluateBossmanAutoApproval`. This wrapper only resolves the live
+  // session/chat and forwards the relevant facts.
+  return evaluateBossmanAutoApproval({
+    service,
+    decision,
     policy,
-    mode: autoApprovals.mode,
-    confirmedAt: autoApprovals.confirmedAt,
-    bossmanParticipantId,
+    neverAutoAllow: input.neverAutoAllow,
+    readOnly: effectivePermissions?.readOnly === true,
+    forcePrompt: request.forcePrompt === true,
+    hasExternalPathDetection: Boolean(request.externalPathDetection),
+    bossmanParticipantId: ensemble.bossmanParticipantId,
+    autoApprovals: ensemble.bossmanAutoApprovals,
+    participantIds: ensemble.participants.map((participant) => participant.id),
     targetParticipantId: ensembleRun.participantId,
     targetProvider: ensembleRun.provider,
     targetRole: ensembleRun.role,
-    roundId: ensembleRun.roundId,
-    actionClass: service,
-    rationale:
-      'Bossman Auto Approvals enabled by the user; request-scoped approval within participant permission preset and workspace policy.'
-  }
+    roundId: ensembleRun.roundId
+  })
 }
 
 async function requestAgenticServiceApproval(
