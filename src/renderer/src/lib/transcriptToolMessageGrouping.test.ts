@@ -50,9 +50,31 @@ describe('groupAdjacentToolMessages', () => {
     ])
 
     expect(grouped).toHaveLength(1)
-    expect(grouped[0].id).toBe('tool-group-t1-t2-2')
+    // Stable id derived from the first message only — does NOT change as the
+    // run grows (prevents the React-key churn that replayed the entrance fade).
+    expect(grouped[0].id).toBe('tool-group-t1')
     expect(grouped[0].toolActivities?.map((entry) => entry.id)).toEqual(['a1', 'a2'])
     expect(grouped[0].metadata?.groupedToolMessageIds).toEqual(['t1', 't2'])
+  })
+
+  it('keeps the grouped id STABLE as the run grows (no React-key churn)', () => {
+    // The id must not change as more tool messages stream into the same
+    // group — otherwise the React key churns, the grouped row remounts, and
+    // the CSS entrance fade replays as a flash near the tail. The growing
+    // membership is still observable via `groupedToolMessageIds`.
+    const two = groupAdjacentToolMessages([
+      toolMessage('t1', [activity('a1')]),
+      toolMessage('t2', [activity('a2')])
+    ])
+    const three = groupAdjacentToolMessages([
+      toolMessage('t1', [activity('a1')]),
+      toolMessage('t2', [activity('a2')]),
+      toolMessage('t3', [activity('a3')])
+    ])
+    expect(two[0].id).toBe('tool-group-t1')
+    expect(three[0].id).toBe('tool-group-t1')
+    expect(three[0].id).toBe(two[0].id) // stable identity across growth
+    expect(three[0].metadata?.groupedToolMessageIds).toEqual(['t1', 't2', 't3'])
   })
 
   it('does not group across assistant/user/system messages', () => {

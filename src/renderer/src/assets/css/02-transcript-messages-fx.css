@@ -3068,13 +3068,19 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
-  animation: fadeIn 0.2s ease-out;
+  /* Opacity-only entrance (no translateY slide) + short duration. The
+     transcript re-mounts rows for collision-proof keying (rowKey embeds the
+     list index) and virtualization, and a re-mount REPLAYS this animation —
+     the structural churn is cut by the stable tool-group id, but any residual
+     re-mount should read as a faint fade, never a sliding "jump"/flash near
+     the tail. */
+  animation: fadeIn 0.12s ease-out;
   align-items: flex-start;
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 [data-reduce-motion="true"] .message-group { animation: none; }

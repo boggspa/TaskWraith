@@ -50,10 +50,18 @@ function sameToolRunBoundary(a: ChatMessage, b: ChatMessage): boolean {
 function mergeToolRun(run: ChatMessage[]): ChatMessage {
   if (run.length === 1) return run[0]
   const first = run[0]
-  const last = run[run.length - 1]
   return {
     ...first,
-    id: `tool-group-${first.id}-${last.id}-${run.length}`,
+    // Identity is derived from the FIRST message only, so it stays STABLE as
+    // the run grows (more tool messages stream into the same group). Baking
+    // `last.id`/`run.length` into the id (as before) changed the id on every
+    // new tool, which churned the React key → remounted the grouped row → the
+    // CSS `fadeIn` entrance replayed = visible flashing near the tail during
+    // streaming. The growth is still tracked for measurement/diffing via
+    // `contentVersion` (tool activity count + statuses + output length) and the
+    // full constituent list is preserved in `groupedToolMessageIds` below, so
+    // nothing depends on the churning id.
+    id: `tool-group-${first.id}`,
     toolActivities: run.flatMap((message) => message.toolActivities || []),
     metadata: {
       ...first.metadata,

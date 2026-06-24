@@ -497,7 +497,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('<strong>Before tools</strong>')
     expect(html).toContain('<h2>After tools</h2>')
     expect(html).toContain('<li>grouped trace preserved</li>')
-    expect(html).toContain('tool-group-tool-one-tool-two-2')
+    expect(html).toContain('tool-group-tool-one')
     expect(html).toContain('Read 2 files')
   })
 
