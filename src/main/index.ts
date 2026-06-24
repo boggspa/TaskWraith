@@ -168,6 +168,7 @@ import {
 } from './bridge/BridgeTranscriptActivity'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../shared/runDiffBackfill'
 import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../shared/retiredProviders'
+import { sanitizeRawProviderMediaRefs } from '../shared/transcriptMediaRefSanitize'
 import { BridgeBroadcaster } from './BridgeBroadcaster'
 import {
   buildRemoteFirstLaunchState,
@@ -4691,7 +4692,9 @@ function appendBridgeRunJsonLine(state: BridgeRunTranscriptState, line: string):
       return
     }
     if (parsed.type === 'media_refs' && Array.isArray(parsed.mediaRefs)) {
-      appendBridgeRunMediaRefs(state, parsed.mediaRefs as TranscriptMediaRef[])
+      // RAW provider lane — sanitize untrusted provider refs before persisting
+      // (drops hostile paths/thumbnails/mimes; see transcriptMediaRefSanitize).
+      appendBridgeRunMediaRefs(state, sanitizeRawProviderMediaRefs(parsed.mediaRefs))
       if (!state.flushedOnce) flushBridgeRunTranscript(state.runId)
       else scheduleBridgeRunFlush(state.runId)
       return
@@ -4963,7 +4966,8 @@ function materializeBridgeRunProviderOutput(
     return
   }
   if (payload?.type === 'media_refs' && Array.isArray(payload.mediaRefs)) {
-    appendBridgeRunMediaRefs(state, payload.mediaRefs as TranscriptMediaRef[])
+    // RAW provider lane — sanitize untrusted provider refs before persisting.
+    appendBridgeRunMediaRefs(state, sanitizeRawProviderMediaRefs(payload.mediaRefs))
     if (!state.flushedOnce) flushBridgeRunTranscript(runId)
     else scheduleBridgeRunFlush(runId)
     return
@@ -5092,9 +5096,10 @@ function materializeBackgroundSubThreadProviderOutput(
     return
   }
   if (payload?.type === 'media_refs' && Array.isArray(payload.mediaRefs)) {
+    // RAW provider lane — sanitize untrusted provider refs before persisting.
     state.mediaRefs = mergeTranscriptMediaRefs(
       state.mediaRefs,
-      payload.mediaRefs as TranscriptMediaRef[]
+      sanitizeRawProviderMediaRefs(payload.mediaRefs)
     )
     if (!state.flushedOnce) {
       flushBackgroundSubThreadTranscript(runId)

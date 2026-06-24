@@ -48,6 +48,7 @@ import type { ScoutBriefRecord } from '../ScoutBrief'
 import { updateActiveGoalLifecycle } from '../GoalState'
 import { findTerminalSynthesizerRoundSummary } from '../EnsembleRoundSummary'
 import { mergeTranscriptMediaRefs } from './TranscriptMediaService'
+import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 // M4 (1.0.7) — auto-derive blackboard entries from the synthesizer's
 // round summary at round end, so the panel's agreed decisions / risks /
 // corrections propagate to next round's prompts as a compact digest.
@@ -2909,9 +2910,14 @@ export class EnsembleOrchestrator {
     // which is why that one is suppressed for ensemble). Accumulate + flush; the
     // refs land on this participant's last content message in flushRun.
     if (payload?.type === 'media_refs' && Array.isArray(payload.mediaRefs)) {
-      const incoming = (payload.mediaRefs as unknown[]).filter(
-        (ref): ref is TranscriptMediaRef => !!ref && typeof ref === 'object'
-      )
+      // RAW provider lane: these refs come straight from provider stdout, so a
+      // hostile/compromised provider controls every field. Sanitize before
+      // trusting any of it — drop unsafe `path`s, oversize/non-raster
+      // thumbnails, svg/unknown mimes, and bogus sources (see
+      // src/shared/transcriptMediaRefSanitize.ts). The sanitized main-side lane
+      // (createToolResultMediaRefs) is unaffected — its output re-validates
+      // cleanly here.
+      const incoming = sanitizeRawProviderMediaRefs(payload.mediaRefs)
       if (incoming.length > 0) {
         run.mediaRefs = mergeTranscriptMediaRefs(run.mediaRefs, incoming)
         this.flushRun(run)

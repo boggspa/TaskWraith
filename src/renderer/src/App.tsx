@@ -17,6 +17,7 @@ import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
 import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../shared/retiredProviders'
+import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { formatCost, setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
@@ -10324,9 +10325,14 @@ function App(): React.JSX.Element {
             if (updated.chatKind === 'ensemble') {
               return updated
             }
-            const incomingRefs = event.mediaRefs.filter(
-              (ref): ref is TranscriptMediaRef => !!ref && typeof ref === 'object'
-            )
+            // RAW provider lane (GeminiAdapter → here): the provider controls
+            // every field of these refs, so sanitize before merging onto the
+            // transcript — drop hostile `path`s (the desktop "Open file"
+            // overlay calls api.openExternalOrPath on them), oversize/non-raster
+            // thumbnails, svg/unknown mimes, and fake sources. Shared with the
+            // main-side ensemble + bridge ingestion points so the policy can't
+            // drift (src/shared/transcriptMediaRefSanitize.ts).
+            const incomingRefs = sanitizeRawProviderMediaRefs(event.mediaRefs)
             if (incomingRefs.length === 0) {
               return updated
             }
