@@ -71,6 +71,7 @@ import {
   collectDroppedAttachmentPaths
 } from '../lib/imageAttachments'
 import { ComposerImageThumb } from './ComposerImageThumb'
+import { CommittedDraftField } from './CommittedDraftField'
 import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -3797,13 +3798,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             {guestComposerSelectedModel === 'custom' &&
                               guestComposerProvider !== 'kimi' && (
                                 <span className="composer-inline-custom-model composer-guest-custom-model">
-                                  <input
+                                  <CommittedDraftField
                                     className="composer-inline-input"
                                     type="text"
-                                    value={currentGuestParticipant.customModel || ''}
-                                    onChange={(event) =>
+                                    committed={currentGuestParticipant.customModel || ''}
+                                    onCommit={(value) =>
                                       void setGuestParticipantForCurrentChat({
-                                        customModel: event.target.value
+                                        customModel: value
                                       })
                                     }
                                     placeholder="Model ID"

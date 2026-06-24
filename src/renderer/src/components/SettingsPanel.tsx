@@ -95,6 +95,7 @@ import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
 // daemon/APNs configuration sit together as a single device-management
 // page.
 import { PairingPage } from './PairingPage'
+import { CommittedDraftField } from './CommittedDraftField'
 import { MessagesBridgePanel } from './MessagesBridgePanel'
 import { LocalServersSettingsPanel } from './LocalServersSettingsPanel'
 import { RosterSettingsPanel } from './RosterSettingsPanel'
@@ -3949,10 +3950,11 @@ export function SettingsPanel({
                 <label className="settings-label" style={{ marginTop: 'var(--space-sm)' }}>
                   Custom triggers (one per line)
                 </label>
-                <textarea
+                <CommittedDraftField
+                  as="textarea"
                   className="settings-textarea"
-                  value={kimiSanitiserCustomKeywords ?? ''}
-                  onChange={(e) => onChange({ kimiSanitiserCustomKeywords: e.target.value })}
+                  committed={kimiSanitiserCustomKeywords ?? ''}
+                  onCommit={(value) => onChange({ kimiSanitiserCustomKeywords: value })}
                   placeholder={
                     '# Add phrases you have seen trigger Moonshot rejection.\n# Lines starting with # are comments.\n# Example:\nSouth China Sea\nNine Dash Line'
                   }
@@ -4628,34 +4630,30 @@ export function SettingsPanel({
                       gap: 'var(--space-xs)'
                     }}
                   >
-                    <input
+                    <CommittedDraftField
                       className="settings-select"
                       type="number"
                       min={1}
                       max={200}
                       placeholder="Agents auto"
-                      value={auditOrchestration?.budgetMaxAgents ?? ''}
-                      onChange={(event) =>
+                      committed={String(auditOrchestration?.budgetMaxAgents ?? '')}
+                      onCommit={(value) =>
                         updateAuditOrchestration({
-                          budgetMaxAgents: event.target.value.trim()
-                            ? Number(event.target.value)
-                            : undefined
+                          budgetMaxAgents: value.trim() ? Number(value) : undefined
                         })
                       }
                       aria-label="Audit max agents"
                     />
-                    <input
+                    <CommittedDraftField
                       className="settings-select"
                       type="number"
                       min={1}
                       step={1000}
                       placeholder="Tokens auto"
-                      value={auditOrchestration?.budgetMaxTokens ?? ''}
-                      onChange={(event) =>
+                      committed={String(auditOrchestration?.budgetMaxTokens ?? '')}
+                      onCommit={(value) =>
                         updateAuditOrchestration({
-                          budgetMaxTokens: event.target.value.trim()
-                            ? Number(event.target.value)
-                            : undefined
+                          budgetMaxTokens: value.trim() ? Number(value) : undefined
                         })
                       }
                       aria-label="Audit max tokens"
@@ -4801,10 +4799,10 @@ export function SettingsPanel({
                 </p>
 
                 <label className="settings-label">Claude CLI binary</label>
-                <input
+                <CommittedDraftField
                   className="settings-select"
-                  value={claudeBinaryPath}
-                  onChange={(e) => onChange({ claudeBinaryPath: e.target.value })}
+                  committed={claudeBinaryPath}
+                  onCommit={(value) => onChange({ claudeBinaryPath: value })}
                   placeholder="Auto-detect, or /Users/you/.local/bin/claude"
                 />
                 <p className="settings-hint">Optional path override.</p>
