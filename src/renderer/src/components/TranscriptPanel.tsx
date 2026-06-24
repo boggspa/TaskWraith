@@ -743,6 +743,7 @@ export const TranscriptPanel = memo(
     currency,
     currencyOverestimatePercent,
     showRunCompleteSummary,
+    isGlobal,
     providerRates
   }: TranscriptPanelProps) {
     const visibleMessages = useMemo(() => {
@@ -1661,27 +1662,37 @@ export const TranscriptPanel = memo(
             </div>
           )}
           {showRunCompleteSummary !== false && shouldShowRunCompleteNotice && runCompleteNotice && (
-            <div className="run-complete-card">
+            <div className={`run-complete-card${isGlobal ? ' is-global-stripped' : ''}`}>
               <div className="run-complete-main">
                 <div className="run-complete-metadata">
                   <strong>
-                    {runCompleteNotice.exitCode === 0
-                      ? 'Task complete'
-                      : runCompleteNotice.exitCode === 130
-                        ? 'Run cancelled'
-                        : `Task ended (code ${runCompleteNotice.exitCode})`}
+                    {isGlobal
+                      ? runCompleteNotice.exitCode === 0
+                        ? 'Done'
+                        : runCompleteNotice.exitCode === 130
+                          ? 'Stopped'
+                          : "Couldn't finish"
+                      : runCompleteNotice.exitCode === 0
+                        ? 'Task complete'
+                        : runCompleteNotice.exitCode === 130
+                          ? 'Run cancelled'
+                          : `Task ended (code ${runCompleteNotice.exitCode})`}
                   </strong>
-                  <span className="run-complete-time-row">
-                    <span>
-                      {new Date(runCompleteNotice.timestamp).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit'
-                      })}
+                  {!isGlobal && (
+                    <span className="run-complete-time-row">
+                      <span>
+                        {new Date(runCompleteNotice.timestamp).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit'
+                        })}
+                      </span>
+                      {runCompleteDurationText && <span>{runCompleteDurationText}</span>}
                     </span>
-                    {runCompleteDurationText && <span>{runCompleteDurationText}</span>}
-                  </span>
-                  {runCompleteNotice.exitCode === 0 && <span>Awaiting your next prompt.</span>}
+                  )}
+                  {!isGlobal && runCompleteNotice.exitCode === 0 && (
+                    <span>Awaiting your next prompt.</span>
+                  )}
                 </div>
                 <div className="run-complete-actions">
                   {(() => {
@@ -1710,7 +1721,18 @@ export const TranscriptPanel = memo(
                       </button>
                     )
                   })()}
-                  {currentRun?.runId && onOpenSideChatFromRun && (
+                  {isGlobal && currentRun?.runId && onInspectRun && (
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      type="button"
+                      onClick={() => onInspectRun(currentRun.runId)}
+                      title="Inspect this run"
+                      aria-label="Inspect this run"
+                    >
+                      Inspect
+                    </button>
+                  )}
+                  {!isGlobal && currentRun?.runId && onOpenSideChatFromRun && (
                     <button
                       className="btn btn-sm btn-ghost"
                       type="button"
@@ -1723,7 +1745,7 @@ export const TranscriptPanel = memo(
                   )}
                 </div>
               </div>
-              {runCompleteSummaryRows.length > 0 && (
+              {!isGlobal && runCompleteSummaryRows.length > 0 && (
                 <div className="run-complete-summary-card">
                   <div className="run-complete-summary-header">
                     <strong>Run details</strong>
@@ -1738,7 +1760,7 @@ export const TranscriptPanel = memo(
                   </div>
                 </div>
               )}
-              {escalationChips.length > 0 && (
+              {!isGlobal && escalationChips.length > 0 && (
                 <div
                   className="ensemble-escalation-advisory"
                   role="status"
@@ -1754,6 +1776,7 @@ export const TranscriptPanel = memo(
                   ))}
                 </div>
               )}
+              {(!isGlobal || displayFileChangeSummaries.length > 0) && (
               <div className="file-change-summary-card">
                 <div className="file-change-summary-header">
                   <strong>File changes</strong>
@@ -1818,6 +1841,7 @@ export const TranscriptPanel = memo(
                   )}
                 </div>
               </div>
+              )}
             </div>
           )}
           <div ref={endRef} />
