@@ -530,4 +530,28 @@ describe('AppStore workflow run ledger (Stage 1)', () => {
   it('returns an empty ledger for an unknown execution', () => {
     expect(AppStore.getWorkflowRunEvents('nope')).toEqual([])
   })
+
+  it('reconcileStaleWorkflowRunLedgers settles a crash-orphaned (non-terminal) ledger, idempotently', () => {
+    AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const executionId = task.workflowExecutionId as string
+    // Left mid-run by a crash: a 'running' ledger event, no terminal lifecycle event.
+    AppStore.updateScheduledTask(task.id, { status: 'running', runId: 'run-1', firedAt: plannedFor })
+
+    const settled = AppStore.reconcileStaleWorkflowRunLedgers()
+    expect(settled.some((e) => e.workflowExecutionId === executionId)).toBe(true)
+    expect(AppStore.getWorkflowRunEvents(executionId).map((e) => e.kind)).toEqual([
+      'running',
+      'stall_settled'
+    ])
+
+    // Idempotent across boots: stall_settled is terminal, so a second pass is a no-op
+    // for this execution (no unbounded re-settling / file growth).
+    const settledAgain = AppStore.reconcileStaleWorkflowRunLedgers()
+    expect(settledAgain.some((e) => e.workflowExecutionId === executionId)).toBe(false)
+    expect(AppStore.getWorkflowRunEvents(executionId).map((e) => e.kind)).toEqual([
+      'running',
+      'stall_settled'
+    ])
+  })
 })

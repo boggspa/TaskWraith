@@ -1447,18 +1447,33 @@ function recordWorkflowBudgetBreach(
 // startedAt). Best-effort; skipped for a non-workflow task or when there's nothing
 // to record (no token signal AND no start time — e.g. a grok/cursor mid-run exit).
 function recordWorkflowRunHarvest(scheduledTaskId: string, runId: string, route: unknown): void {
-  const resolved = resolveWorkflowExecutionForTask(scheduledTaskId)
-  if (!resolved) return
+  const task = AppStore.getScheduledTasks().find((t) => t.id === scheduledTaskId)
+  if (!task?.workflowExecutionId || !task.workflowId) return
   const usage = (route as { tokenUsage?: { total_tokens?: number; total_cost_usd?: number } } | null)
     ?.tokenUsage
-  const startedAt = (route as { startedAt?: number } | null)?.startedAt
   const tokens = typeof usage?.total_tokens === 'number' ? usage.total_tokens : undefined
   const costUsd = typeof usage?.total_cost_usd === 'number' ? usage.total_cost_usd : undefined
-  const durationMs = typeof startedAt === 'number' ? Math.max(0, Date.now() - startedAt) : undefined
+  // durationMs: prefer the provider stream's startedAt (most precise), else the
+  // task's into-running stamp (runningSince → firedAt). The fallback makes duration
+  // UNIVERSAL — recorded even for providers / exit paths that pass a BARE route with
+  // no stream startedAt (Ollama; every early-error / preflight / setup exit). tokens
+  // and costUsd stay best-effort: absent for Ollama (usage rides the result line,
+  // not the route) and for early errors (no usage produced yet) — by design.
+  const routeStartedAt = (route as { startedAt?: number } | null)?.startedAt
+  const startedAtMs =
+    typeof routeStartedAt === 'number'
+      ? routeStartedAt
+      : task.runningSince
+        ? Date.parse(task.runningSince)
+        : task.firedAt
+          ? Date.parse(task.firedAt)
+          : Number.NaN
+  const durationMs = Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : undefined
   if (tokens === undefined && costUsd === undefined && durationMs === undefined) return
   try {
     AppStore.appendWorkflowRunEvent({
-      ...resolved,
+      workflowExecutionId: task.workflowExecutionId,
+      workflowId: task.workflowId,
       kind: 'harvested',
       scheduledTaskId,
       runId,
