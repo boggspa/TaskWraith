@@ -73,6 +73,7 @@ import {
 } from '../RunEventStore'
 import {
   createWorkflowRunEvent,
+  filterWorkflowRunEvents,
   foldWorkflowRunSummary,
   nextWorkflowRunSequence,
   parseWorkflowRunEventLine,
@@ -81,6 +82,7 @@ import {
   serializeWorkflowRunEvent,
   type StaleLedgerExecution,
   type WorkflowRunEvent,
+  type WorkflowRunEventFilter,
   type WorkflowRunEventInput,
   type WorkflowRunSummary
 } from '../WorkflowRunStore'
@@ -789,6 +791,29 @@ function readWorkflowRunFile(filePath: string): WorkflowRunEvent[] {
     console.error(`Failed to read ${filePath}`, e)
     return []
   }
+}
+
+/** Async twin of readWorkflowRunFile — the per-file await yields the event loop so
+ * a renderer summaries query (slice 4) can't beachball MAIN (mirrors
+ * readRunEventFileAsync). */
+async function readWorkflowRunFileAsync(filePath: string): Promise<WorkflowRunEvent[]> {
+  try {
+    return (await fs.promises.readFile(filePath, 'utf-8'))
+      .split(/\r?\n/)
+      .map(parseWorkflowRunEventLine)
+      .filter((event): event is WorkflowRunEvent => Boolean(event))
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') console.error(`Failed to read ${filePath}`, e)
+    return []
+  }
+}
+
+/** Newest-first sort key for a run-execution summary: the latest meaningful
+ * timestamp it has (completed > started > dispatched > planned). 0 when none parse. */
+function workflowRunSummarySortKey(summary: WorkflowRunSummary): number {
+  const ts = summary.completedAt || summary.startedAt || summary.dispatchedAt || summary.plannedFor
+  const ms = ts ? Date.parse(ts) : Number.NaN
+  return Number.isFinite(ms) ? ms : 0
 }
 
 // Per-run artifact directory. Mirrors the path derivation in
@@ -3194,6 +3219,59 @@ export class AppStore {
       }
     }
     return settled
+  }
+
+  /** List every workflow-runs ledger file path. ASYNC readdir (slice 4 query path). */
+  private static async listWorkflowRunFilesAsync(): Promise<string[]> {
+    try {
+      return (await fs.promises.readdir(workflowRunsDir))
+        .filter((file) => file.endsWith('.jsonl'))
+        .map((file) => path.join(workflowRunsDir, file))
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+        console.error(`Failed to read ${workflowRunsDir}`, e)
+      }
+      return []
+    }
+  }
+
+  /**
+   * Stage 1 slice 4 — every workflow execution's folded summary (uncapped, unlike
+   * the 50-cap WorkflowDefinition.history), newest-first. Optionally scoped to one
+   * workflowId. ASYNC + per-file await so a renderer query can't beachball MAIN.
+   */
+  static async getWorkflowRunSummaries(workflowId?: string): Promise<WorkflowRunSummary[]> {
+    const files = await this.listWorkflowRunFilesAsync()
+    const summaries: WorkflowRunSummary[] = []
+    for (const file of files) {
+      const events = await readWorkflowRunFileAsync(file)
+      // execId from the events (authoritative; safeWorkflowRunFileName is lossy).
+      const execId = events.find((e) => e.workflowExecutionId)?.workflowExecutionId || ''
+      if (!execId) continue
+      const summary = foldWorkflowRunSummary(execId, events)
+      if (!workflowId || summary.workflowId === workflowId) summaries.push(summary)
+    }
+    return summaries.sort((a, b) => workflowRunSummarySortKey(b) - workflowRunSummarySortKey(a))
+  }
+
+  /**
+   * Stage 1 slice 4 — a filtered slice of run-ledger EVENTS. A workflowExecutionId
+   * scopes to one execution's file (cheap single read — the drill-in case);
+   * otherwise enumerates (async) and applies the filter. filterWorkflowRunEvents
+   * defends limit/fromTimestamp, so an untrusted renderer filter is safe to pass.
+   */
+  static async getWorkflowRunEventsFiltered(
+    filter: WorkflowRunEventFilter = {}
+  ): Promise<WorkflowRunEvent[]> {
+    if (filter.workflowExecutionId) {
+      return filterWorkflowRunEvents(this.getWorkflowRunEvents(filter.workflowExecutionId), filter)
+    }
+    const files = await this.listWorkflowRunFilesAsync()
+    const all: WorkflowRunEvent[] = []
+    for (const file of files) {
+      for (const event of await readWorkflowRunFileAsync(file)) all.push(event)
+    }
+    return filterWorkflowRunEvents(all, filter)
   }
 
   static appendRunEvents(inputs: RunEventInput[]): RunEventRecord[] {

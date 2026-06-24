@@ -102,6 +102,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'delete-workflow-definition': ['string'],
   'set-workflow-unattended-elevation': ['string', 'string'],
   'run-workflow-now': ['string'],
+  // Stage 1 slice 4 — durable run-ledger read queries.
+  'get-workflow-run-summaries': ['optionalString'],
+  'get-workflow-run-events': ['optionalObject'],
   // Audit-run orchestration (handlers in src/main/ipc/auditHandlers.ts).
   'audit-run:start': ['object'],
   'audit-run:cancel': ['nonEmptyString'],

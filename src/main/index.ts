@@ -22826,6 +22826,16 @@ if (isGeminiMcpBridgeProcess) {
 	      return updated
 	    })
 
+	    // Stage 1 slice 4 — read-only durable run-ledger queries (uncapped, unlike the
+	    // 50-cap WorkflowDefinition.history): per-workflow execution summaries +
+	    // per-execution event drill-in. No mutation / no broadcasts.
+	    ipcMain.handle('get-workflow-run-summaries', (_, workflowId?: string) =>
+	      AppStore.getWorkflowRunSummaries(typeof workflowId === 'string' ? workflowId : undefined)
+	    )
+	    ipcMain.handle('get-workflow-run-events', (_, filter: any = {}) =>
+	      AppStore.getWorkflowRunEventsFiltered(filter || {})
+	    )
+
 	    // Durable run queue. Renderer requests and observes; main owns persistence and leases.
     ipcMain.handle('get-run-queue-jobs', (_, filter?: RunQueueJobFilter) =>
       runQueueService.getJobs(filter)

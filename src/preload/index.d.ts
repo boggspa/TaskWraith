@@ -52,6 +52,11 @@ import {
   ProviderRunReroute
 } from '../main/store/types'
 import type {
+  WorkflowRunSummary,
+  WorkflowRunEvent,
+  WorkflowRunEventFilter
+} from '../main/WorkflowRunStore'
+import type {
   RemoteWorkspaceCapability,
   RemoteWorkspaceEntry
 } from '../main/RemoteWorkspaceAllowlist'
@@ -1242,6 +1247,8 @@ declare global {
         id: string,
         level: string
       ) => Promise<WorkflowDefinition | null>
+      getWorkflowRunSummaries: (workflowId?: string) => Promise<WorkflowRunSummary[]>
+      getWorkflowRunEvents: (filter?: WorkflowRunEventFilter) => Promise<WorkflowRunEvent[]>
       startAuditRun: (input: {
         mode?: AuditRunRecord['mode']
         chatId: string
