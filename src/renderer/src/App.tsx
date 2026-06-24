@@ -3420,8 +3420,18 @@ function App(): React.JSX.Element {
     appChatId?: string
   ): ActiveRunContext | null => {
     if (appRunId) {
-      const byRunId = activeRunsRef.current.get(appRunId)
-      if (byRunId) return byRunId
+      // A payload carrying an explicit appRunId must resolve by id ONLY. A miss
+      // means a foreign, MAIN-process-driven run: audit role-runs and
+      // WorkflowLoopEngine iterations stream agent-output/-exit with an appRunId
+      // the renderer never registered in activeRunsRef (that map is written solely
+      // by executeRun). Falling through to the chatId/provider heuristics below
+      // would splice such a run's stream — and its premature agent-exit — onto the
+      // user's OWN in-flight run of the same provider. Return null instead; every
+      // caller degrades gracefully (handleProviderOutput raw-logs, handleProvider
+      // Exit/Error early-return). The chatId + provider heuristics below remain ONLY
+      // for a payload that carries NO appRunId at all — the legacy fallback they were
+      // built for (all current providers, incl. Gemini, do carry one and hit byRunId).
+      return activeRunsRef.current.get(appRunId) ?? null
     }
     if (appChatId) {
       for (const context of activeRunsRef.current.values()) {
