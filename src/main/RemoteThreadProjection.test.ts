@@ -6,6 +6,8 @@ import {
   classifyRemoteKind,
   buildRunSummary,
   soloSpeakerForMessage,
+  REMOTE_IOS_PREVIEW_MAX,
+  REMOTE_IOS_ROW_EXPAND_MAX,
   type RemoteThreadSnapshot
 } from './RemoteThreadProjection'
 
@@ -121,6 +123,80 @@ describe('RemoteThreadProjection', () => {
       for (const row of snap.rows) {
         expect(MESSAGES.some((m) => m.id === row.id)).toBe(true)
       }
+    })
+  })
+
+  describe('latest assistant reply rides at full length (no settle-shrink)', () => {
+    const PREVIEW = REMOTE_IOS_PREVIEW_MAX
+    const LONG_A = 'A'.repeat(PREVIEW + 3000) // > preview, < expand ceiling
+    const LONG_B = 'B'.repeat(PREVIEW + 4000)
+
+    function thread(): ChatMessage[] {
+      return [
+        msg(0, { role: 'user', content: 'hi' }),
+        msg(1, { role: 'assistant', content: LONG_A }),
+        msg(2, { role: 'user', content: 'more' }),
+        msg(3, { role: 'assistant', content: LONG_B })
+      ]
+    }
+
+    it('delivers the most-recent assistant row in full while earlier long rows still truncate', () => {
+      const snap = project({ kind: 'latestN', n: 50 }, thread(), [], {
+        previewMaxChars: PREVIEW
+      })
+      const earlier = snap.rows.find((r) => r.id === 'm1')!
+      const latest = snap.rows.find((r) => r.id === 'm3')!
+      // The just-finished reply arrives whole — no "Show more", no shrink.
+      expect(latest.truncated).toBe(false)
+      expect(latest.preview).toBe(LONG_B)
+      // Older long replies stay bounded behind "Show more".
+      expect(earlier.truncated).toBe(true)
+      expect(earlier.preview.length).toBeLessThanOrEqual(PREVIEW)
+    })
+
+    it('targets the latest ASSISTANT row, not merely the last row', () => {
+      const withTrailingUser: ChatMessage[] = [
+        msg(0, { role: 'user', content: 'hi' }),
+        msg(1, { role: 'assistant', content: LONG_A }),
+        msg(2, { role: 'user', content: 'C'.repeat(PREVIEW + 1000) })
+      ]
+      const snap = project({ kind: 'latestN', n: 50 }, withTrailingUser, [], {
+        previewMaxChars: PREVIEW
+      })
+      const assistant = snap.rows.find((r) => r.id === 'm1')!
+      const trailingUser = snap.rows.find((r) => r.id === 'm2')!
+      expect(assistant.truncated).toBe(false) // latest assistant → full
+      expect(trailingUser.truncated).toBe(true) // a user row is never enlarged
+    })
+
+    it('still caps a single colossal reply at the Show-more ceiling', () => {
+      const huge: ChatMessage[] = [
+        msg(0, { role: 'user', content: 'hi' }),
+        msg(1, { role: 'assistant', content: 'Z'.repeat(REMOTE_IOS_ROW_EXPAND_MAX + 5000) })
+      ]
+      const snap = project({ kind: 'latestN', n: 50 }, huge, [], {
+        previewMaxChars: PREVIEW
+      })
+      const latest = snap.rows.find((r) => r.id === 'm1')!
+      expect(latest.truncated).toBe(true)
+      expect(latest.preview.length).toBeLessThanOrEqual(REMOTE_IOS_ROW_EXPAND_MAX)
+    })
+
+    it('keeps the latest assistant row full after restatement collapse (first occurrence wins)', () => {
+      // Two identical trailing restatements collapse to the FIRST (m1); that
+      // surviving id must be the one enlarged.
+      const dupes: ChatMessage[] = [
+        msg(0, { role: 'user', content: 'hi' }),
+        msg(1, { role: 'assistant', content: LONG_A }),
+        msg(2, { role: 'assistant', content: LONG_A })
+      ]
+      const snap = project({ kind: 'latestN', n: 50 }, dupes, [], {
+        previewMaxChars: PREVIEW
+      })
+      expect(snap.rows.map((r) => r.id)).toEqual(['m0', 'm1'])
+      const latest = snap.rows.find((r) => r.id === 'm1')!
+      expect(latest.truncated).toBe(false)
+      expect(latest.preview).toBe(LONG_A)
     })
   })
 

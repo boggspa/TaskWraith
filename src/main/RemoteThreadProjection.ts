@@ -1990,13 +1990,6 @@ export function projectRemoteThread(
     return null
   }
 
-  const toRow = (message: ChatMessage, att: RemoteAttentionKind | null): RemoteThreadRow => {
-    const row = buildRow(message, previewMax, att)
-    const speaker = opts.speakerForMessage?.(message)
-    if (speaker) row.speaker = speaker
-    return row
-  }
-
   // Fold consecutive identical assistant restatements (an ensemble continuation
   // loop persists the same reply once per round) before any windowing — so
   // totalRows and the window indices below all describe the collapsed view the
@@ -2009,6 +2002,32 @@ export function projectRemoteThread(
     attentionFor
   )
   const totalRows = visible.length
+
+  // The single most-recent assistant reply rides at full length (up to the
+  // Show-more ceiling) so a just-finished answer doesn't visibly shrink to a
+  // short preview the instant it settles. Exactly ONE row per snapshot is
+  // enlarged (bounded payload growth); older long messages still collapse
+  // behind "Show more". Resolved off `visible` — the collapse keeps the FIRST
+  // of a run of identical restatements, so that id is the one the client
+  // actually renders.
+  let latestAssistantRowId: string | null = null
+  for (let i = visible.length - 1; i >= 0; i -= 1) {
+    if (visible[i]?.role === 'assistant') {
+      latestAssistantRowId = visible[i].id
+      break
+    }
+  }
+
+  const toRow = (message: ChatMessage, att: RemoteAttentionKind | null): RemoteThreadRow => {
+    const rowPreviewMax =
+      message.id === latestAssistantRowId
+        ? Math.max(previewMax, REMOTE_IOS_ROW_EXPAND_MAX)
+        : previewMax
+    const row = buildRow(message, rowPreviewMax, att)
+    const speaker = opts.speakerForMessage?.(message)
+    if (speaker) row.speaker = speaker
+    return row
+  }
 
   const base = {
     threadId: opts.threadId,
