@@ -163,6 +163,7 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   svg_rasterize: 'Rasterized SVG',
   image_generate: 'Generated image',
   audio_render_wav: 'Rendered waveform',
+  audio_analyze: 'Analyzed audio',
 
   // ── Web search (also matched by category='search' branch) ────
   google_web_search: 'Searched the web',

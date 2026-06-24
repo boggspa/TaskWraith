@@ -398,6 +398,7 @@ import {
   createWorkspacePathMediaRefs,
   extractProviderImageBlocksFromRawEvent,
   validateWorkspaceImagePath,
+  validateWorkspaceAudioPath,
   TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
 } from './services/TranscriptMediaService'
 import {
@@ -635,7 +636,12 @@ import {
   DEFAULT_MAX_IMAGE_TOOL_CALLS_PER_RUN
 } from './mcp/ImageToolCallBudget'
 import { createNativeImageEngine } from './mcp/OffscreenImageRenderer'
-import { createAudioToolExecutors, isAudioMcpToolName } from './mcp/AudioToolExecutors'
+import {
+  createAudioToolExecutors,
+  isAudioMcpToolName,
+  type AudioToolContext,
+  type ResolvedAudioSource
+} from './mcp/AudioToolExecutors'
 import { createNativeAudioEngine } from './mcp/AudioRenderEngine'
 import {
   createImageGenExecutor,
@@ -1730,7 +1736,10 @@ const imageToolCallBudget = new ImageToolCallBudget()
 // In-house audio surface (proving slice). Headless Web Audio render -> pure-JS
 // WAV -> inline waveform PNG. Its own per-run flood budget (same class as the
 // image budget) since each call writes a content-addressed PNG asset.
-const audioToolExecutors = createAudioToolExecutors({ engine: createNativeAudioEngine() })
+const audioToolExecutors = createAudioToolExecutors({
+  engine: createNativeAudioEngine(),
+  resolveAudioSource
+})
 const audioToolCallBudget = new ImageToolCallBudget()
 
 // image_generate egress. Endpoints are a FIXED allowlist (never agent-controlled),
@@ -3914,6 +3923,34 @@ async function resolveImageSvgSource(
   const inline = typeof args.svg === 'string' ? args.svg : ''
   if (inline.trim()) return { ok: true, svg: inline }
   return { ok: false, reason: 'provide inline `svg` markup' }
+}
+
+// Source resolution for the audio_analyze MCP tool. Resolves a workspace audio
+// file by `sourcePath`, realpath-jailed inside the workspace + external grants
+// (the same guard family as the image pipeline, audio-sniffed instead of
+// raster-sniffed) — never an arbitrary agent-supplied absolute path.
+async function resolveAudioSource(
+  args: Record<string, unknown>,
+  ctx: AudioToolContext
+): Promise<ResolvedAudioSource> {
+  const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
+  const sourcePath = typeof args.sourcePath === 'string' ? args.sourcePath.trim() : ''
+  if (!sourcePath) return { ok: false, reason: 'provide sourcePath (a workspace audio file)' }
+  if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
+  const validation = validateWorkspaceAudioPath({
+    workspacePath: chat.workspacePath,
+    candidatePath: sourcePath,
+    externalPathGrants: normalizeExternalPathGrants(
+      collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+    )
+  })
+  if (!validation.ok) return { ok: false, reason: validation.reason }
+  return {
+    ok: true,
+    dataBase64: validation.dataBase64,
+    mimeType: validation.mimeType,
+    byteLength: validation.byteLength
+  }
 }
 
 const pendingCodexNativeGoalSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -6224,11 +6261,14 @@ function previewForGeminiMcpTool(
   }
 
   if (isAudioMcpToolName(toolName)) {
+    const isAnalyze = toolName === 'audio_analyze'
     return {
-      title: `Approve ${providerName} audio render`,
-      // Gated as fileChanges: a compute tool that writes a waveform PNG asset —
-      // denied under the read-only preset, like image_edit / write_file.
-      body: `${intentBody}${String(args.waveform || 'sine')} ${String(args.frequencyHz || 440)}Hz ${String(args.durationMs || 1000)}ms`,
+      title: isAnalyze ? `Approve ${providerName} audio analysis` : `Approve ${providerName} audio render`,
+      // Gated as fileChanges: a compute tool that reads/produces a waveform PNG
+      // asset — denied under the read-only preset, like image_edit / write_file.
+      body: isAnalyze
+        ? `${intentBody}analyze ${String(args.sourcePath || '')}`.trim()
+        : `${intentBody}${String(args.waveform || 'sine')} ${String(args.frequencyHz || 440)}Hz ${String(args.durationMs || 1000)}ms`,
       service: 'fileChanges' as AgenticServiceId,
       preview: {
         kind: 'tool',

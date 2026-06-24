@@ -677,3 +677,129 @@ export function validateWorkspaceImagePath({
     sha256: sha256Base64Url(buffer)
   }
 }
+
+const AUDIO_SOURCE_MIME_TYPES = new Set([
+  'audio/wav',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/ogg',
+  'audio/flac'
+])
+
+/** Generous cap on a decodable audio SOURCE. The tool OUTPUT (a waveform PNG) is
+ * small; this bounds the input we read + base64-inject into the offscreen
+ * decoder. ~20MB ≈ ~20 min MP3 / ~2 min 44.1k stereo WAV. */
+export const TRANSCRIPT_MEDIA_MAX_AUDIO_BYTES = 20 * 1024 * 1024
+
+export function isTranscriptAudioMime(mime: string | null | undefined): boolean {
+  return !!mime && AUDIO_SOURCE_MIME_TYPES.has(mime)
+}
+
+/** Magic-byte sniff for the audio containers Chromium's decodeAudioData accepts.
+ * Used to (a) reject a non-audio source path and (b) report the container in the
+ * analysis meta. Mirrors sniffImageMime's style. */
+export function sniffAudioMime(buffer: Buffer): string | null {
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.subarray(8, 12).toString('ascii') === 'WAVE'
+  ) {
+    return 'audio/wav'
+  }
+  if (buffer.length >= 4 && buffer.subarray(0, 4).toString('ascii') === 'fLaC') {
+    return 'audio/flac'
+  }
+  if (buffer.length >= 4 && buffer.subarray(0, 4).toString('ascii') === 'OggS') {
+    return 'audio/ogg'
+  }
+  // MP4/M4A: 'ftyp' box at offset 4.
+  if (buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp') {
+    return 'audio/mp4'
+  }
+  // MP3 with an ID3v2 tag.
+  if (buffer.length >= 3 && buffer.subarray(0, 3).toString('ascii') === 'ID3') {
+    return 'audio/mpeg'
+  }
+  // Bare MPEG/AAC frame sync (0xFFEx) — MP3 without a tag, or ADTS AAC.
+  if (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) {
+    return 'audio/mpeg'
+  }
+  return null
+}
+
+export interface WorkspaceAudioValidationOptions {
+  workspacePath: string
+  candidatePath: string
+  externalPathGrants?: { path: string }[]
+  maxBytes?: number
+}
+export type WorkspaceAudioValidationResult =
+  | {
+      ok: true
+      realPath: string
+      workspaceRelativePath?: string
+      mimeType: string
+      byteLength: number
+      dataBase64: string
+    }
+  | {
+      ok: false
+      reason: 'invalid_path' | 'missing' | 'not_file' | 'too_large' | 'outside_allowed_roots' | 'unsupported'
+    }
+
+/** Realpath-jailed, grant-aware, size-capped resolution of a workspace AUDIO
+ * file — the audio twin of validateWorkspaceImagePath, reusing the identical
+ * security primitives (decodeFileUrl, realpath jail, root membership), only the
+ * mime sniff differs (audio containers, not raster). Returns the bytes base64'd
+ * so the offscreen decoder can ingest them. */
+export function validateWorkspaceAudioPath({
+  workspacePath,
+  candidatePath,
+  externalPathGrants = [],
+  maxBytes = TRANSCRIPT_MEDIA_MAX_AUDIO_BYTES
+}: WorkspaceAudioValidationOptions): WorkspaceAudioValidationResult {
+  const decoded = decodeFileUrl(candidatePath.trim())
+  if (!decoded || decoded.includes('\0') || /^https?:\/\//i.test(decoded)) {
+    return { ok: false, reason: 'invalid_path' }
+  }
+  const absoluteCandidate = path.isAbsolute(decoded) ? decoded : path.resolve(workspacePath, decoded)
+  const realCandidate = realpathOrNull(absoluteCandidate)
+  if (!realCandidate) return { ok: false, reason: 'missing' }
+
+  const roots = [workspacePath, ...externalPathGrants.map((grant) => grant.path)].filter(Boolean)
+  const realRoots = roots.map((root) => realpathOrNull(root)).filter((root): root is string => !!root)
+  if (!realRoots.some((root) => pathWithinRoot(realCandidate, root))) {
+    return { ok: false, reason: 'outside_allowed_roots' }
+  }
+
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(realCandidate)
+  } catch {
+    return { ok: false, reason: 'missing' }
+  }
+  if (!stat.isFile()) return { ok: false, reason: 'not_file' }
+  if (stat.size <= 0 || stat.size > maxBytes) return { ok: false, reason: 'too_large' }
+
+  let buffer: Buffer
+  try {
+    buffer = fs.readFileSync(realCandidate)
+  } catch {
+    return { ok: false, reason: 'missing' }
+  }
+  const sniffed = sniffAudioMime(buffer)
+  if (!sniffed) return { ok: false, reason: 'unsupported' }
+  const realWorkspace = realpathOrNull(workspacePath)
+  const workspaceRelativePath =
+    realWorkspace && pathWithinRoot(realCandidate, realWorkspace)
+      ? path.relative(realWorkspace, realCandidate)
+      : undefined
+  return {
+    ok: true,
+    realPath: realCandidate,
+    ...(workspaceRelativePath ? { workspaceRelativePath } : {}),
+    mimeType: sniffed,
+    byteLength: buffer.length,
+    dataBase64: buffer.toString('base64')
+  }
+}

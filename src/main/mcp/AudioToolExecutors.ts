@@ -31,7 +31,7 @@ import { TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES } from '../services/TranscriptMed
  * output.
  */
 
-export const AUDIO_MCP_TOOL_NAMES = ['audio_render_wav'] as const
+export const AUDIO_MCP_TOOL_NAMES = ['audio_render_wav', 'audio_analyze'] as const
 export type AudioMcpToolName = (typeof AUDIO_MCP_TOOL_NAMES)[number]
 
 export function isAudioMcpToolName(name: string): name is AudioMcpToolName {
@@ -95,9 +95,41 @@ export interface AudioRenderMeta {
   wavHeaderOk: boolean
 }
 
+/** A real audio file, decoded + measured by the offscreen Web Audio engine.
+ * This is the introspection the "drive the real app" path can never give —
+ * peak/RMS/dBFS/clipping/silence off the actual samples, not an exported file. */
+export interface AudioAnalysisMeta {
+  durationMs: number
+  analysisSampleRate: number
+  channels: number
+  frames: number
+  peak: number
+  peakDbfs: number
+  rms: number
+  rmsDbfs: number
+  clippedSamples: number
+  clippedPercent: number
+  silencePercent: number
+}
+
+/** Decoder input: the audio bytes (base64) + the sniffed container + the canvas
+ * dims for the waveform. Bytes are passed to the page out-of-band (not embedded
+ * in the page HTML) to dodge the data:-URL size ceiling. */
+export interface AudioAnalysisInput {
+  dataBase64: string
+  mimeType: string
+  width: number
+  height: number
+}
+
 export interface AudioEngine {
   renderWaveformPng(spec: AudioRenderSpec): Promise<{ png: Buffer; meta: AudioRenderMeta }>
+  analyzeAudio(input: AudioAnalysisInput): Promise<{ png: Buffer; meta: AudioAnalysisMeta }>
 }
+
+export type ResolvedAudioSource =
+  | { ok: true; dataBase64: string; mimeType: string; byteLength: number }
+  | { ok: false; reason: string }
 
 export interface AudioToolContext {
   appChatId?: string
@@ -115,6 +147,11 @@ export interface AudioToolExecutors {
 
 export interface AudioToolExecutorDeps {
   engine: AudioEngine
+  /** Resolve an audio source (sourcePath inside the workspace) to bytes. */
+  resolveAudioSource: (
+    args: Record<string, unknown>,
+    ctx: AudioToolContext
+  ) => Promise<ResolvedAudioSource>
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -157,11 +194,12 @@ function fail(toolName: string, message: string): McpToolExecutionResult {
   return { text, isError: true, structuredContent: value, content: [{ type: 'text', text }] }
 }
 
-/** Wrap the produced waveform PNG into a tool result AFTER the C2 output sniff,
- * merging the audio introspection meta into the text payload. */
-function waveformResult(
+/** Wrap a produced PNG into a tool result AFTER the C2 output sniff, merging the
+ * tool's introspection meta (waveform stats, or decode analysis) into the text
+ * payload. Shared by audio_render_wav and audio_analyze. */
+function imageBlockResult(
   toolName: string,
-  meta: AudioRenderMeta,
+  extraMeta: Record<string, unknown>,
   png: Buffer
 ): McpToolExecutionResult {
   const sniffed = sniffImageMime(png)
@@ -175,7 +213,7 @@ function waveformResult(
     )
   }
   const full = {
-    ...meta,
+    ...extraMeta,
     ok: true,
     tool: toolName,
     mimeType: 'image/png',
@@ -188,6 +226,26 @@ function waveformResult(
     data: png.toString('base64')
   }
   return { text, structuredContent: full, content: [{ type: 'text', text }, block] }
+}
+
+/** Clamp output-canvas dimensions + enforce the framebuffer-area budget. */
+function resolveDims(args: Record<string, unknown>): { width: number; height: number } | { error: string } {
+  const width = clamp(
+    Math.round(numArg(args.width ?? args.w) ?? DEFAULT_WIDTH),
+    MIN_DIMENSION,
+    MAX_AUDIO_DIMENSION
+  )
+  const height = clamp(
+    Math.round(numArg(args.height ?? args.h) ?? DEFAULT_HEIGHT),
+    MIN_DIMENSION,
+    MAX_AUDIO_DIMENSION
+  )
+  if (width * height > MAX_AUDIO_RENDER_PIXELS) {
+    return {
+      error: `waveform too large (${width}×${height} = ${width * height}px; max ${MAX_AUDIO_RENDER_PIXELS}px). Reduce width/height.`
+    }
+  }
+  return { width, height }
 }
 
 /** Resolve raw tool args into a clamped, safe render spec. Returns an error
@@ -230,7 +288,7 @@ function resolveSpec(args: Record<string, unknown>): AudioRenderSpec | { error: 
 }
 
 export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioToolExecutors {
-  const { engine } = deps
+  const { engine, resolveAudioSource } = deps
 
   async function executeRenderWav(
     args: Record<string, unknown>,
@@ -240,18 +298,42 @@ export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioTool
     if ('error' in spec) return fail('audio_render_wav', spec.error)
     try {
       const { png, meta } = await engine.renderWaveformPng(spec)
-      return waveformResult('audio_render_wav', meta, png)
+      return imageBlockResult('audio_render_wav', { ...meta }, png)
     } catch (error) {
       return fail('audio_render_wav', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  async function executeAnalyze(
+    args: Record<string, unknown>,
+    ctx: AudioToolContext
+  ): Promise<McpToolExecutionResult> {
+    const dims = resolveDims(args)
+    if ('error' in dims) return fail('audio_analyze', dims.error)
+    const source = await resolveAudioSource(args, ctx)
+    if (!source.ok) return fail('audio_analyze', `could not read audio: ${source.reason}`)
+    try {
+      const { png, meta } = await engine.analyzeAudio({
+        dataBase64: source.dataBase64,
+        mimeType: source.mimeType,
+        width: dims.width,
+        height: dims.height
+      })
+      return imageBlockResult(
+        'audio_analyze',
+        { ...meta, sourceMimeType: source.mimeType, sourceBytes: source.byteLength },
+        png
+      )
+    } catch (error) {
+      return fail('audio_analyze', error instanceof Error ? error.message : String(error))
     }
   }
 
   return {
     executeAudioTool(toolName, rawArgs, ctx) {
       const args = asRecord(rawArgs)
-      // Only one tool in the family today; the name guard keeps the dispatch
-      // shape identical to the image executors for when audio_* grows.
       if (toolName === 'audio_render_wav') return executeRenderWav(args, ctx)
+      if (toolName === 'audio_analyze') return executeAnalyze(args, ctx)
       return Promise.resolve(fail(String(toolName), `unknown audio tool "${toolName}"`))
     }
   }

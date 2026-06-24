@@ -168,7 +168,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   // as an inline PNG attachment with peak/RMS/dBFS introspection. Headless,
   // network-cut, parameterized render (numbers + fixed-enum only — NOT eval).
   // Gated as a file change, like the image tools. See src/main/mcp/AudioToolExecutors.ts.
-  'audio_render_wav'
+  'audio_render_wav',
+  // Decode a REAL workspace audio file (wav/mp3/m4a/ogg/flac) and report
+  // peak/RMS/dBFS/clipping/silence + a waveform PNG — introspection the
+  // drive-the-real-app path can't give. Reads a path-jailed workspace file;
+  // gated as a file change (writes a waveform asset).
+  'audio_analyze'
 ] as const
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]

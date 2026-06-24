@@ -2280,6 +2280,31 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           height: { type: 'number', description: 'Waveform image height in px (default 256).' }
         }
       }
+    },
+    {
+      name: 'audio_analyze',
+      description:
+        'Decode a REAL audio file from the workspace and return its waveform as an inline PNG plus measured ' +
+        'introspection: duration, channels, sample rate, peak / RMS (and their dBFS), clipped-sample count + ' +
+        'percent, and silence percent. Use this to answer "is this audio clipping / too quiet / mostly silent / ' +
+        'how long is it" without opening a DAW. Source the file with `sourcePath` (a path inside the workspace); ' +
+        'supported containers: WAV, MP3, M4A/AAC, OGG, FLAC. Decoding is in-process (no network); analysis is on ' +
+        'the decoded PCM (resampled to 44.1kHz). Gated as a file change.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourcePath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to an audio file.' },
+          width: { type: 'number', description: 'Waveform image width in px (default 1024).' },
+          height: { type: 'number', description: 'Waveform image height in px (default 256).' }
+        },
+        required: ['sourcePath']
+      }
     }
   ]
   return orderTaskWraithMcpToolDefinitions(definitions)

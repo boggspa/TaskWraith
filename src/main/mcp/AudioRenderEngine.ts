@@ -1,5 +1,11 @@
 import { BrowserWindow, type WebContents } from 'electron'
-import type { AudioEngine, AudioRenderMeta, AudioRenderSpec } from './AudioToolExecutors'
+import type {
+  AudioAnalysisInput,
+  AudioAnalysisMeta,
+  AudioEngine,
+  AudioRenderMeta,
+  AudioRenderSpec
+} from './AudioToolExecutors'
 
 /**
  * Electron-backed engine for the audio_render_wav MCP tool.
@@ -320,7 +326,184 @@ async function renderWaveformPng(
   }
 }
 
+/**
+ * The in-page analysis function (defined by buildAnalyzePageHtml). Decodes the
+ * passed base64 audio via Web Audio decodeAudioData, measures peak/RMS/dBFS/
+ * clipping/silence across all channels, paints channel-0's envelope onto the
+ * full-window canvas, and resolves with the meta AFTER a paint commits. Pure JS,
+ * no template interpolation — the bytes arrive as an executeJavaScript argument,
+ * not embedded in the page, so a large file never inflates the page HTML / data:
+ * URL. decodeAudioData resamples to the context rate (44100), so the reported
+ * sample rate is the ANALYSIS rate.
+ */
+const ANALYZE_SCRIPT = `window.__twAnalyze = function(b64, W, H) {
+  var bin = atob(b64), len = bin.length, bytes = new Uint8Array(len);
+  for (var i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  var OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!OAC) return Promise.reject(new Error('OfflineAudioContext unavailable'));
+  var dctx = new OAC(1, 1, 44100);
+  return dctx.decodeAudioData(bytes.buffer).then(function(buf) {
+    var ch = buf.numberOfChannels, sr = buf.sampleRate, frames = buf.length;
+    var chans = [];
+    for (var c = 0; c < ch; c++) chans.push(buf.getChannelData(c));
+    var peak = 0, sumsq = 0, clipped = 0, total = 0;
+    for (var c = 0; c < ch; c++) {
+      var d = chans[c];
+      for (var i = 0; i < d.length; i++) {
+        var v = d[i]; var a = v < 0 ? -v : v;
+        if (a > peak) peak = a; sumsq += v * v; if (a >= 0.999) clipped++; total++;
+      }
+    }
+    var rms = total ? Math.sqrt(sumsq / total) : 0;
+    var silentFrames = 0;
+    for (var i = 0; i < frames; i++) {
+      var sil = true;
+      for (var c = 0; c < ch; c++) { if (Math.abs(chans[c][i]) >= 1e-3) { sil = false; break; } }
+      if (sil) silentFrames++;
+    }
+    var cv = document.getElementById('wf'), x = cv.getContext('2d');
+    x.clearRect(0, 0, W, H);
+    x.fillStyle = 'rgba(120,140,180,0.10)'; x.fillRect(0, 0, W, H);
+    var mid = H / 2;
+    x.strokeStyle = 'rgba(90,120,200,0.45)'; x.lineWidth = 1;
+    x.beginPath(); x.moveTo(0, mid); x.lineTo(W, mid); x.stroke();
+    x.fillStyle = 'rgba(70,110,200,0.85)';
+    var d0 = chans[0], step = Math.max(1, Math.floor(d0.length / W));
+    for (var px = 0; px < W; px++) {
+      var start = px * step; if (start >= d0.length) break;
+      var mn = 1, mx = -1;
+      for (var s = 0; s < step; s++) {
+        var idx = start + s; if (idx >= d0.length) break;
+        var val = d0[idx]; if (val < mn) mn = val; if (val > mx) mx = val;
+      }
+      var y1 = mid - mx * mid, y2 = mid - mn * mid;
+      x.fillRect(px, y1, 1, Math.max(1, y2 - y1));
+    }
+    function db(v) { return v > 0 ? Number((20 * Math.log10(v)).toFixed(2)) : -120; }
+    var meta = {
+      durationMs: Math.round(frames / sr * 1000), analysisSampleRate: sr, channels: ch, frames: frames,
+      peak: Number(peak.toFixed(5)), peakDbfs: db(peak), rms: Number(rms.toFixed(5)), rmsDbfs: db(rms),
+      clippedSamples: clipped, clippedPercent: Number((total ? clipped / total * 100 : 0).toFixed(4)),
+      silencePercent: Number((frames ? silentFrames / frames * 100 : 0).toFixed(2))
+    };
+    return new Promise(function(res) {
+      requestAnimationFrame(function() { requestAnimationFrame(function() { res(meta); }); });
+    });
+  });
+};`
+
+function buildAnalyzePageHtml(width: number, height: number): string {
+  return (
+    '<!doctype html><html><head><meta charset="utf-8"><title>analyze</title>' +
+    '<style>html,body{margin:0;padding:0;background:transparent}canvas{display:block}</style></head><body>' +
+    `<canvas id="wf" width="${width}" height="${height}"></canvas>` +
+    `<script>${ANALYZE_SCRIPT}</script></body></html>`
+  )
+}
+
+/** Load a page and resolve once the DOM + its scripts have run (so window.__twAnalyze exists). */
+function loadPageReady(wc: WebContents, dataUrl: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    wc.once('did-finish-load', () => resolve())
+    wc.once('did-fail-load', (_event, code, desc) => {
+      reject(new Error(`audio analyze load failed (${code}): ${desc || 'load error'}`))
+    })
+    wc.loadURL(dataUrl).catch(reject)
+  })
+}
+
+function asAnalysisMeta(raw: unknown): AudioAnalysisMeta {
+  if (!raw || typeof raw !== 'object' || typeof (raw as AudioAnalysisMeta).analysisSampleRate !== 'number') {
+    throw new Error('audio analyze returned incomplete metadata')
+  }
+  return raw as AudioAnalysisMeta
+}
+
+async function analyzeAudio(
+  input: AudioAnalysisInput,
+  timeoutMs = DEFAULT_RENDER_TIMEOUT_MS
+): Promise<{ png: Buffer; meta: AudioAnalysisMeta }> {
+  await acquireRenderSlot()
+  let win: BrowserWindow | null = null
+  let wc: WebContents | null = null
+  const detachNetwork = (): void => {
+    if (!wc) return
+    try {
+      wc.session.webRequest.onBeforeRequest(null)
+    } catch {
+      // session may already be torn down
+    }
+  }
+  try {
+    renderSeq += 1
+    win = new BrowserWindow({
+      width: input.width,
+      height: input.height,
+      show: false,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        partition: `taskwraith-audio-analyze-${renderSeq}`,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        experimentalFeatures: false,
+        javascript: true,
+        webgl: false,
+        plugins: false,
+        backgroundThrottling: false
+      }
+    })
+    wc = win.webContents
+    // Same scheme-aware egress cut as renderWaveformPng: allow only self-contained
+    // data:/blob:, cancel all real network. decodeAudioData makes no requests.
+    wc.session.webRequest.onBeforeRequest((details, callback) => {
+      const url = details.url || ''
+      if (url.startsWith('data:') || url.startsWith('blob:')) {
+        callback({})
+      } else {
+        callback({ cancel: true })
+      }
+    })
+    wc.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+    try {
+      wc.session.setPermissionCheckHandler(() => false)
+    } catch {
+      // Best effort — older Electron.
+    }
+    wc.session.on('will-download', (event) => event.preventDefault())
+    try {
+      wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+    } catch {
+      // Best effort — older Electron.
+    }
+    wc.setWindowOpenHandler(() => ({ action: 'deny' }))
+    win.setContentSize(input.width, input.height)
+    const html = buildAnalyzePageHtml(input.width, input.height)
+    const dataUrl = `data:text/html;charset=utf-8;base64,${Buffer.from(html, 'utf-8').toString('base64')}`
+    await withTimeout(loadPageReady(wc, dataUrl), timeoutMs, 'audio analyze load timed out')
+    // The audio bytes ride in as an executeJavaScript argument (out-of-band from
+    // the page HTML) so a large file never inflates the data: URL. executeJavaScript
+    // resolves with the function's returned promise value (the meta).
+    const expr = `window.__twAnalyze(${JSON.stringify(input.dataBase64)},${input.width},${input.height})`
+    const metaRaw = await withTimeout(wc.executeJavaScript(expr), timeoutMs, 'audio analyze timed out')
+    const meta = asAnalysisMeta(metaRaw)
+    const captured = await wc.capturePage()
+    const size = captured.getSize()
+    const image =
+      size.width !== input.width || size.height !== input.height
+        ? captured.resize({ width: input.width, height: input.height })
+        : captured
+    return { png: image.toPNG(), meta }
+  } finally {
+    detachNetwork()
+    if (win && !win.isDestroyed()) win.destroy()
+    releaseRenderSlot()
+  }
+}
+
 /** Build the real, Electron-backed AudioEngine. */
 export function createNativeAudioEngine(): AudioEngine {
-  return { renderWaveformPng }
+  return { renderWaveformPng, analyzeAudio }
 }

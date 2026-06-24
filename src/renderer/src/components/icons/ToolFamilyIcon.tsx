@@ -161,6 +161,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'svg_rasterize':
     case 'image_generate':
     case 'audio_render_wav':
+    case 'audio_analyze':
       return 'edit'
     case 'mcp_tool':
     case 'dynamic_tool':

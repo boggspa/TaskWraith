@@ -1,11 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
+  AudioAnalysisInput,
+  AudioAnalysisMeta,
   AudioRenderMeta,
   AudioRenderSpec,
   createAudioToolExecutors,
   isAudioMcpToolName,
   MAX_AUDIO_DURATION_MS,
-  type AudioEngine
+  type AudioEngine,
+  type ResolvedAudioSource
 } from './AudioToolExecutors'
 
 // PNG magic header so sniffImageMime() classifies our fake as raster PNG.
@@ -37,22 +40,52 @@ function imageContent(result: { content?: Array<{ type: string }> }) {
     | undefined
 }
 
-function build(overrides: { engine?: Partial<AudioEngine> } = {}) {
+const FAKE_ANALYSIS_META: AudioAnalysisMeta = {
+  durationMs: 1000,
+  analysisSampleRate: 44100,
+  channels: 2,
+  frames: 44100,
+  peak: 0.9,
+  peakDbfs: -0.92,
+  rms: 0.3,
+  rmsDbfs: -10.46,
+  clippedSamples: 12,
+  clippedPercent: 0.0136,
+  silencePercent: 4.2
+}
+
+function build(overrides: { engine?: Partial<AudioEngine>; source?: ResolvedAudioSource } = {}) {
   let lastSpec: AudioRenderSpec | null = null
+  let lastAnalyzeInput: AudioAnalysisInput | null = null
   const engine: AudioEngine = {
     renderWaveformPng: vi.fn(async (spec: AudioRenderSpec) => {
       lastSpec = spec
       return { png: FAKE_PNG, meta: metaFor(spec) }
     }),
+    analyzeAudio: vi.fn(async (input: AudioAnalysisInput) => {
+      lastAnalyzeInput = input
+      return { png: FAKE_PNG, meta: FAKE_ANALYSIS_META }
+    }),
     ...overrides.engine
   }
-  const executors = createAudioToolExecutors({ engine })
-  return { executors, engine, getSpec: () => lastSpec }
+  const resolveAudioSource = vi.fn(
+    async (): Promise<ResolvedAudioSource> =>
+      overrides.source ?? { ok: true, dataBase64: 'QUJD', mimeType: 'audio/wav', byteLength: 1024 }
+  )
+  const executors = createAudioToolExecutors({ engine, resolveAudioSource })
+  return {
+    executors,
+    engine,
+    resolveAudioSource,
+    getSpec: () => lastSpec,
+    getAnalyzeInput: () => lastAnalyzeInput
+  }
 }
 
 describe('isAudioMcpToolName', () => {
-  it('recognizes the audio tool only', () => {
+  it('recognizes the audio tools only', () => {
     expect(isAudioMcpToolName('audio_render_wav')).toBe(true)
+    expect(isAudioMcpToolName('audio_analyze')).toBe(true)
     expect(isAudioMcpToolName('image_edit')).toBe(false)
     expect(isAudioMcpToolName('canvas_screenshot')).toBe(false)
   })
@@ -146,5 +179,69 @@ describe('audio_render_wav', () => {
     const result = await executors.executeAudioTool('audio_render_wav', {}, {})
     expect(result.isError).toBe(true)
     expect(result.text).toContain('not a raster image')
+  })
+})
+
+describe('audio_analyze', () => {
+  it('decodes the resolved source and returns a PNG block + analysis meta', async () => {
+    const { executors, resolveAudioSource, getAnalyzeInput } = build()
+    const result = await executors.executeAudioTool(
+      'audio_analyze',
+      { sourcePath: 'clip.wav' },
+      { appChatId: 'c1' }
+    )
+    expect(result.isError).toBeFalsy()
+    expect(resolveAudioSource).toHaveBeenCalled()
+    const img = imageContent(result)
+    expect(img?.mimeType).toBe('image/png')
+    // Resolved bytes + clamped dims reach the engine.
+    expect(getAnalyzeInput()).toEqual({
+      dataBase64: 'QUJD',
+      mimeType: 'audio/wav',
+      width: 1024,
+      height: 256
+    })
+    const payload = JSON.parse(result.text) as Record<string, unknown>
+    expect(payload.ok).toBe(true)
+    expect(payload.peakDbfs).toBe(-0.92)
+    expect(payload.clippedSamples).toBe(12)
+    // The executor merges source provenance into the meta.
+    expect(payload.sourceMimeType).toBe('audio/wav')
+    expect(payload.sourceBytes).toBe(1024)
+  })
+
+  it('fails before reading the source when the canvas is oversized', async () => {
+    const { executors, resolveAudioSource, engine } = build()
+    const result = await executors.executeAudioTool(
+      'audio_analyze',
+      { sourcePath: 'clip.wav', width: 8192, height: 8192 },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('waveform too large')
+    expect(resolveAudioSource).not.toHaveBeenCalled()
+    expect(engine.analyzeAudio).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a source-resolution failure as a tool error', async () => {
+    const { executors, engine } = build({ source: { ok: false, reason: 'outside_allowed_roots' } })
+    const result = await executors.executeAudioTool('audio_analyze', { sourcePath: '../etc/x.wav' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('could not read audio')
+    expect(result.text).toContain('outside_allowed_roots')
+    expect(engine.analyzeAudio).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a decode failure as a tool error', async () => {
+    const { executors } = build({
+      engine: {
+        analyzeAudio: vi.fn(async () => {
+          throw new Error('Unable to decode audio data')
+        })
+      }
+    })
+    const result = await executors.executeAudioTool('audio_analyze', { sourcePath: 'clip.wav' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('Unable to decode audio data')
   })
 })
