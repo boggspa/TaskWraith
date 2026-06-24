@@ -59,6 +59,7 @@ import {
   type TranscriptMessageContextMenuSelection
 } from './TranscriptMessageContextMenu'
 import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } from './ChatMediaPanel'
+import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { FileTypeIcon } from './FileTypeIcon'
 import { RunCard } from './RunCard'
 import { ThinkingIndicator } from './AppChromeSymbols'
@@ -1395,6 +1396,16 @@ export const TranscriptPanel = memo(
                           ? truncateUserMessagePreview(msg.content)
                           : msg.content
                         const mediaRefs = collectMessageMediaRefs(msg)
+                        // Drop from the attachment strip any image already shown
+                        // inline in the (possibly truncated) rendered body.
+                        const inlineImageIds = collectInlineImageRefIds(
+                          preview,
+                          mediaRefs,
+                          currentChat?.workspacePath
+                        )
+                        const stripRefs = inlineImageIds.size
+                          ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
+                          : mediaRefs
                         return (
                           <div
                             className={`message-bubble user${
@@ -1410,11 +1421,12 @@ export const TranscriptPanel = memo(
                                 chat={currentChat || undefined}
                                 mediaRefs={mediaRefs}
                                 workspacePath={currentChat?.workspacePath}
+                                onPreviewImage={onPreviewImage}
                               />
                             </div>
-                            {mediaRefs.length > 0 && (
+                            {stripRefs.length > 0 && (
                               <ChatMessageMediaStrip
-                                refs={mediaRefs}
+                                refs={stripRefs}
                                 workspacePath={currentChat?.workspacePath}
                                 onPreviewImage={onPreviewImage}
                               />
@@ -1456,6 +1468,16 @@ export const TranscriptPanel = memo(
                     ) : (
                       (() => {
                         const mediaRefs = collectMessageMediaRefs(msg)
+                        // Drop from the attachment strip any image already shown
+                        // inline in the rendered body (deduped by resolved ref id).
+                        const inlineImageIds = collectInlineImageRefIds(
+                          msg.content,
+                          mediaRefs,
+                          currentChat?.workspacePath
+                        )
+                        const stripRefs = inlineImageIds.size
+                          ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
+                          : mediaRefs
                         return (
                           <div
                             className={`message-bubble ${
@@ -1484,6 +1506,7 @@ export const TranscriptPanel = memo(
                                   isLive
                                   mediaRefs={mediaRefs}
                                   workspacePath={currentChat?.workspacePath}
+                                  onPreviewImage={onPreviewImage}
                                 />
                               ) : (
                                 <MarkdownMessage
@@ -1491,14 +1514,15 @@ export const TranscriptPanel = memo(
                                   chat={currentChat || undefined}
                                   mediaRefs={mediaRefs}
                                   workspacePath={currentChat?.workspacePath}
+                                  onPreviewImage={onPreviewImage}
                                 />
                               )
                             ) : (
                               msg.content
                             )}
-                            {mediaRefs.length > 0 && (
+                            {stripRefs.length > 0 && (
                               <ChatMessageMediaStrip
-                                refs={mediaRefs}
+                                refs={stripRefs}
                                 workspacePath={currentChat?.workspacePath}
                                 onPreviewImage={onPreviewImage}
                               />

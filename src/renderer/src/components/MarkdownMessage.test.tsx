@@ -142,6 +142,22 @@ describe('MarkdownMessage', () => {
     expect(html).not.toContain('markdown-image-placeholder')
   })
 
+  it('PR3: a resolved inline image is a preview button when a handler is provided', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={'![the output](out.png)'}
+        mediaRefs={[AVAILABLE_PNG_REF]}
+        workspacePath="/ws"
+        onPreviewImage={() => {}}
+      />
+    )
+    expect(html).toContain('markdown-inline-image-button')
+    expect(html).toContain('markdown-inline-image')
+    expect(html).toContain('src="data:image/png;base64,iVBORw0KGgo="')
+    expect(html).toContain('aria-label="Preview image out.png"')
+    expect(html).toContain('alt="the output"')
+  })
+
   it('PR3 SECURITY: a remote image src is never loaded, even with refs present', () => {
     const html = renderToStaticMarkup(
       <MarkdownMessage

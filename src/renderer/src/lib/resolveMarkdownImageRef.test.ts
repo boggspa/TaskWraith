@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  collectInlineImageRefIds,
   inlineMarkdownImageThumbnail,
   posixNormalize,
   resolveInlineMarkdownImage,
@@ -163,5 +164,38 @@ describe('resolveInlineMarkdownImage — the render gate (H4)', () => {
   it('SECURITY: never resolves a remote src to any thumbnail', () => {
     const ref = imageRef({ path: 'https://example.com/x.png', workspaceRelativePath: undefined })
     expect(resolveInlineMarkdownImage('https://example.com/x.png', [ref])).toBeNull()
+  })
+})
+
+describe('collectInlineImageRefIds — strip dedup set', () => {
+  it('collects ids of images rendered inline (single + multiple + titled)', () => {
+    const a = imageRef({ id: 'a', path: '/ws/a.png', workspaceRelativePath: 'a.png' })
+    const b = imageRef({ id: 'b', path: '/ws/b.png', workspaceRelativePath: 'b.png' })
+    const content = 'See ![first](a.png) and ![second](b.png "a title").'
+    const ids = collectInlineImageRefIds(content, [a, b])
+    expect([...ids].sort()).toEqual(['a', 'b'])
+  })
+
+  it('handles angle-bracket destinations', () => {
+    const a = imageRef({ id: 'a', path: '/ws/my a.png', workspaceRelativePath: 'my a.png' })
+    expect(collectInlineImageRefIds('![x](<my a.png>)', [a]).has('a')).toBe(true)
+  })
+
+  it('excludes an image inside a code fence (rendered as literal code, not inline)', () => {
+    const a = imageRef({ id: 'a', path: '/ws/a.png', workspaceRelativePath: 'a.png' })
+    const content = ['```md', '![sample](a.png)', '```'].join('\n')
+    expect(collectInlineImageRefIds(content, [a]).size).toBe(0)
+  })
+
+  it('excludes inline-code images', () => {
+    const a = imageRef({ id: 'a', path: '/ws/a.png', workspaceRelativePath: 'a.png' })
+    expect(collectInlineImageRefIds('use `![x](a.png)` syntax', [a]).size).toBe(0)
+  })
+
+  it('returns empty when nothing resolves or there are no images', () => {
+    const a = imageRef({ id: 'a', path: '/ws/a.png', workspaceRelativePath: 'a.png' })
+    expect(collectInlineImageRefIds('no images here', [a]).size).toBe(0)
+    expect(collectInlineImageRefIds('![remote](https://x/y.png)', [a]).size).toBe(0)
+    expect(collectInlineImageRefIds('![none](other.png)', [a]).size).toBe(0)
   })
 })

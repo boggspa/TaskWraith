@@ -19,6 +19,11 @@ import type { ChatMediaRef } from './ChatMediaPanel'
 export interface MarkdownMediaContextValue {
   refs: readonly ChatMediaRef[]
   workspacePath?: string
+  /** When present, inline images become a button that opens the full-size
+   *  preview overlay for the resolved ref. A stable wrapper (the providing
+   *  component keeps the latest handler in a ref) so it never busts the
+   *  context value's identity stabilisation. */
+  onPreviewImage?: (ref: ChatMediaRef) => void
 }
 
 export const MarkdownMediaContext = createContext<MarkdownMediaContextValue | undefined>(undefined)

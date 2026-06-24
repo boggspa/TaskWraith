@@ -3374,6 +3374,24 @@
   object-fit: contain;
 }
 
+/* Clickable wrapper (opens the full-size preview) — a bare button, no chrome. */
+.markdown-inline-image-button {
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  border-radius: var(--radius-md, 10px);
+  max-width: min(100%, 480px);
+}
+.markdown-inline-image-button:hover .markdown-inline-image {
+  border-color: var(--border-strong, rgba(255, 255, 255, 0.22));
+}
+.markdown-inline-image-button:focus-visible {
+  outline: 2px solid var(--focus-ring, #5b9dff);
+  outline-offset: 2px;
+}
+
 /* Inert fallback when a markdown image can't be resolved to a safe thumbnail
    (remote src, unresolved path, SVG, oversize). Never loads the raw src. */
 .markdown-image-placeholder {

@@ -16,6 +16,8 @@ interface MarkdownMessageProps {
   mediaRefs?: readonly ChatMediaRef[]
   /** Chat workspace path, used to resolve relative markdown image paths. */
   workspacePath?: string
+  /** When provided, inline images open the full-size preview overlay on click. */
+  onPreviewImage?: (ref: ChatMediaRef) => void
 }
 
 /**
@@ -35,10 +37,47 @@ export function markdownMediaSignature(
   for (const ref of refs) {
     if (ref.kind !== 'image') continue
     sig += `${ref.id}|${ref.status || ''}|${ref.path || ''}|${ref.workspaceRelativePath || ''}|${
-      ref.thumbnail?.dataBase64?.length ?? 0
-    };`
+      ref.thumbnail?.mimeType || ''
+    }|${ref.thumbnail?.dataBase64?.length ?? 0};`
   }
   return sig
+}
+
+/**
+ * Build the (identity-stable) MarkdownMediaContext value. The value object is
+ * swapped only when the render-relevant ref slice OR the presence of a preview
+ * handler changes, so streaming re-renders leave the inline images untouched.
+ * `onPreviewImage` is wrapped behind a ref so the value stays stable even when
+ * the parent passes a fresh handler each render. Shared by MarkdownMessage and
+ * RevealingMarkdownMessage so the two can never drift.
+ */
+export function useStableMarkdownMediaValue(
+  mediaRefs: readonly ChatMediaRef[] | undefined,
+  workspacePath: string | undefined,
+  onPreviewImage: ((ref: ChatMediaRef) => void) | undefined
+): MarkdownMediaContextValue | undefined {
+  const onPreviewRef = useRef(onPreviewImage)
+  onPreviewRef.current = onPreviewImage
+  const previewCbRef = useRef<((ref: ChatMediaRef) => void) | undefined>(undefined)
+  if (!previewCbRef.current) {
+    previewCbRef.current = (ref: ChatMediaRef) => onPreviewRef.current?.(ref)
+  }
+  const hasPreview = Boolean(onPreviewImage)
+  const key = `${hasPreview ? '1' : '0'}|${markdownMediaSignature(mediaRefs, workspacePath)}`
+  const keyRef = useRef<string | null>(null)
+  const valueRef = useRef<MarkdownMediaContextValue | undefined>(undefined)
+  if (keyRef.current !== key) {
+    keyRef.current = key
+    valueRef.current =
+      mediaRefs && mediaRefs.some((ref) => ref.kind === 'image')
+        ? {
+            refs: mediaRefs,
+            workspacePath,
+            ...(hasPreview ? { onPreviewImage: previewCbRef.current } : {})
+          }
+        : undefined
+  }
+  return valueRef.current
 }
 
 /**
@@ -127,7 +166,13 @@ export function identityContextEqual(a: ChatRecord | undefined, b: ChatRecord | 
   return participantsChipEqual(a?.ensemble?.participants, b?.ensemble?.participants)
 }
 
-function MarkdownMessageImpl({ content, chat, mediaRefs, workspacePath }: MarkdownMessageProps) {
+function MarkdownMessageImpl({
+  content,
+  chat,
+  mediaRefs,
+  workspacePath,
+  onPreviewImage
+}: MarkdownMessageProps) {
   // useMemo the block split so a re-render NOT caused by a content change
   // (e.g. an identity-registry update) doesn't re-run the O(n) string scan.
   const { stable, tail } = useMemo(() => splitMarkdownIntoBlocks(content), [content])
@@ -144,22 +189,13 @@ function MarkdownMessageImpl({ content, chat, mediaRefs, workspacePath }: Markdo
   if (!identityContextEqual(ctxRef.current, chat)) {
     ctxRef.current = chat
   }
-  // Stabilise the media-context value the same way: swap it only when the
-  // inline-render-relevant slice of the refs actually changes, so a streaming
-  // re-render (or any identity-only broadcast) leaves the inline images put.
-  const mediaSig = markdownMediaSignature(mediaRefs, workspacePath)
-  const mediaSigRef = useRef<string | null>(null)
-  const mediaCtxRef = useRef<MarkdownMediaContextValue | undefined>(undefined)
-  if (mediaSigRef.current !== mediaSig) {
-    mediaSigRef.current = mediaSig
-    mediaCtxRef.current =
-      mediaRefs && mediaRefs.some((ref) => ref.kind === 'image')
-        ? { refs: mediaRefs, workspacePath }
-        : undefined
-  }
+  // Stabilise the media-context value: swap it only when the inline-render-
+  // relevant slice of the refs (or the preview-handler presence) actually
+  // changes, so a streaming re-render leaves the inline images put.
+  const mediaCtx = useStableMarkdownMediaValue(mediaRefs, workspacePath, onPreviewImage)
   return (
     <AgentIdentityContext.Provider value={ctxRef.current}>
-      <MarkdownMediaContext.Provider value={mediaCtxRef.current}>
+      <MarkdownMediaContext.Provider value={mediaCtx}>
         <div className="message-markdown message-markdown-pro">
           {stable.map((block, index) => (
             <StableMarkdownBlock key={`${index}-${block.id}`} raw={block.raw} />

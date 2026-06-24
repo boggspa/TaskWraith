@@ -165,3 +165,42 @@ export function resolveInlineMarkdownImage(
   if (!thumbnail.startsWith('data:')) return null
   return { ref, thumbnail }
 }
+
+/** Blank fenced + inline code so a `![](x)` shown as literal code (not an image)
+ *  isn't counted as rendered inline. Mirrors the persist-time extractor. */
+function blankMarkdownCode(content: string): string {
+  return content
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/~~~[\s\S]*?~~~/g, '')
+    .replace(/`[^`\n]*`/g, '')
+}
+
+// CommonMark image: `![label](<dest>|bare-dest "optional title")`.
+const MARKDOWN_IMAGE_RE =
+  /!\[(?:[^\]\\\n]|\\.){0,240}\]\(\s*(<[^>\n]*>|[^\s)]{1,2048})(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\s*\)/g
+
+/**
+ * The ids of the refs that the markdown body renders INLINE — i.e. those a
+ * `![](src)` in `content` resolves to via `resolveInlineMarkdownImage`. Lets the
+ * attachment strip drop refs already shown inline so an embedded image isn't
+ * displayed twice. Code-fenced `![]()` (rendered as literal code) is excluded,
+ * matching the persist-time ref extractor that blanks code ranges.
+ */
+export function collectInlineImageRefIds(
+  content: string | undefined,
+  refs: readonly ChatMediaRef[] | undefined,
+  workspacePath?: string
+): Set<string> {
+  const ids = new Set<string>()
+  if (!content || !content.includes('![') || !refs || refs.length === 0) return ids
+  const scan = blankMarkdownCode(content)
+  MARKDOWN_IMAGE_RE.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = MARKDOWN_IMAGE_RE.exec(scan)) !== null) {
+    let dest = match[1]
+    if (dest.startsWith('<') && dest.endsWith('>')) dest = dest.slice(1, -1)
+    const resolved = resolveInlineMarkdownImage(dest, refs, workspacePath)
+    if (resolved) ids.add(resolved.ref.id)
+  }
+  return ids
+}

@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { AgentIdentityContext } from './AgentIdentityContext'
-import { MarkdownMediaContext, type MarkdownMediaContextValue } from './MarkdownMediaContext'
-import { markdownMediaSignature } from './MarkdownMessage'
+import { MarkdownMediaContext } from './MarkdownMediaContext'
+import { useStableMarkdownMediaValue } from './MarkdownMessage'
 import { StableMarkdownBlock } from './StableMarkdownBlock'
 import { splitMarkdownIntoBlocks, type MarkdownBlockType } from '../lib/MarkdownBlockSplit'
 import { advanceReveal, graphemeCount, sliceGraphemes } from '../lib/advanceReveal'
@@ -41,6 +41,8 @@ interface RevealingMarkdownMessageProps {
   mediaRefs?: readonly ChatMediaRef[]
   /** Chat workspace path, used to resolve relative markdown image paths. */
   workspacePath?: string
+  /** When provided, inline images open the full-size preview overlay on click. */
+  onPreviewImage?: (ref: ChatMediaRef) => void
 }
 
 function prefersReducedMotion(): boolean {
@@ -77,7 +79,8 @@ function RevealingMarkdownMessageImpl({
   isLive,
   reduceMotion,
   mediaRefs,
-  workspacePath
+  workspacePath,
+  onPreviewImage
 }: RevealingMarkdownMessageProps) {
   const { stable, tail } = useMemo(() => splitMarkdownIntoBlocks(content), [content])
   const tailRaw = tail?.raw ?? ''
@@ -136,20 +139,11 @@ function RevealingMarkdownMessageImpl({
 
   // Stabilise the media context across the per-delta re-renders so inline
   // images (if any are present on a live message) don't re-resolve every frame.
-  const mediaSig = markdownMediaSignature(mediaRefs, workspacePath)
-  const mediaSigRef = useRef<string | null>(null)
-  const mediaCtxRef = useRef<MarkdownMediaContextValue | undefined>(undefined)
-  if (mediaSigRef.current !== mediaSig) {
-    mediaSigRef.current = mediaSig
-    mediaCtxRef.current =
-      mediaRefs && mediaRefs.some((ref) => ref.kind === 'image')
-        ? { refs: mediaRefs, workspacePath }
-        : undefined
-  }
+  const mediaCtx = useStableMarkdownMediaValue(mediaRefs, workspacePath, onPreviewImage)
 
   return (
     <AgentIdentityContext.Provider value={chat}>
-      <MarkdownMediaContext.Provider value={mediaCtxRef.current}>
+      <MarkdownMediaContext.Provider value={mediaCtx}>
         <div className="message-markdown message-markdown-pro">
           {stable.map((block, index) => (
             <StableMarkdownBlock key={`${index}-${block.id}`} raw={block.raw} />

@@ -176,15 +176,31 @@ function InlineMarkdownImage({ src, alt }: { src?: string; alt?: string }): Reac
       </span>
     )
   }
-  return (
+  const { ref } = resolved
+  const image = (
     <img
       className="markdown-inline-image"
       src={resolved.thumbnail}
-      alt={trimmedAlt || resolved.ref.name}
-      title={resolved.ref.name}
+      alt={trimmedAlt || ref.name}
+      title={ref.name}
       loading="lazy"
       decoding="async"
     />
+  )
+  const onPreview = media?.onPreviewImage
+  if (!onPreview) return image
+  // Clickable → full-size preview overlay (so dedup'ing the strip below loses
+  // no affordance). Plain <img> when no preview handler is wired.
+  return (
+    <button
+      type="button"
+      className="markdown-inline-image-button"
+      title={`Preview ${ref.name}`}
+      aria-label={`Preview image ${ref.name}`}
+      onClick={() => onPreview(ref)}
+    >
+      {image}
+    </button>
   )
 }
 
