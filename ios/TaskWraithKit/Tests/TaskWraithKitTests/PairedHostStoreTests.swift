@@ -251,4 +251,36 @@ struct PairedHostStoreTests {
         #expect(reread.list().isEmpty)
         #expect(reread.selectedHostId() == nil)
     }
+
+    // ── Push agreement key (macAgreePub) + App Group migration ──────────────
+
+    @Test("macAgreePub round-trips and is nil on records that predate it")
+    func macAgreePubRoundTrip() throws {
+        let rec = host(1).withMacAgreePub("YWdyZWVwdWI=")
+        #expect(rec.macAgreePub == "YWdyZWVwdWI=")
+        #expect(rec.macIdentityPubKey == key(1)) // other fields preserved
+        #expect(rec.relayUrls?.count == 2)
+        let data = try #require(PairedHostsCodec.encode(PairedHostsDocument().upserting(rec)))
+        #expect(PairedHostsCodec.decode(v2Data: data, legacyData: nil).hosts.first?.macAgreePub == "YWdyZWVwdWI=")
+        // A v2 record written before the field decodes as nil, not a failure.
+        let old = Data(
+            "{\"v\":2,\"hosts\":[{\"relayUrl\":\"ws://x\",\"macIdentityPubKey\":\"\(key(2))\",\"macDisplayName\":\"Old\"}],\"selectedHostId\":\"\(key(2))\"}"
+                .utf8)
+        #expect(PairedHostsCodec.decode(v2Data: old, legacyData: nil).hosts.first?.macAgreePub == nil)
+    }
+
+    @Test("migrate copies the document into the App Group suite, once")
+    func migrateToAppGroup() {
+        let appPrivate = freshDefaults()
+        let group = freshDefaults()
+        UserDefaultsPairedHostStore(defaults: appPrivate).upsert(host(1).withMacAgreePub("AAAA"))
+        UserDefaultsPairedHostStore.migrate(from: appPrivate, to: group)
+        #expect(
+            UserDefaultsPairedHostStore(defaults: group).find(macIdentityPubKey: key(1))?.macAgreePub
+                == "AAAA")
+        // Destination already has data → no-op (never clobber newer group data).
+        UserDefaultsPairedHostStore(defaults: appPrivate).upsert(host(2))
+        UserDefaultsPairedHostStore.migrate(from: appPrivate, to: group)
+        #expect(UserDefaultsPairedHostStore(defaults: group).find(macIdentityPubKey: key(2)) == nil)
+    }
 }

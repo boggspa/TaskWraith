@@ -59,6 +59,11 @@ public struct PairedHostRecord: Codable, Sendable, Equatable, Identifiable {
     /// ISO8601 timestamp of the pairing (optional; absent on migrated legacy
     /// records). Used to order the host list newest-first.
     public let pairedAt: String?
+    /// base64 raw X25519 push-agreement public key of THIS host, returned at
+    /// APNs-token registration. The Notification Service Extension derives the
+    /// static shared secret from it (+ the phone's identity seed) to decrypt this
+    /// host's rich pushes. Optional: nil before registration / on older records.
+    public let macAgreePub: String?
 
     /// Stable identity for SwiftUI `ForEach` / `Identifiable`.
     public var id: String { macIdentityPubKey }
@@ -69,7 +74,8 @@ public struct PairedHostRecord: Codable, Sendable, Equatable, Identifiable {
         macDisplayName: String,
         relayUrls: [String]? = nil,
         hostPlatform: String? = nil,
-        pairedAt: String? = nil
+        pairedAt: String? = nil,
+        macAgreePub: String? = nil
     ) {
         self.relayUrl = relayUrl
         self.relayUrls = relayUrls
@@ -77,6 +83,20 @@ public struct PairedHostRecord: Codable, Sendable, Equatable, Identifiable {
         self.macDisplayName = macDisplayName
         self.hostPlatform = hostPlatform
         self.pairedAt = pairedAt
+        self.macAgreePub = macAgreePub
+    }
+
+    /// A copy with the host's push-agreement public key set — used when the host
+    /// returns it at APNs-token registration, without disturbing other fields.
+    public func withMacAgreePub(_ key: String?) -> PairedHostRecord {
+        PairedHostRecord(
+            relayUrl: relayUrl,
+            macIdentityPubKey: macIdentityPubKey,
+            macDisplayName: macDisplayName,
+            relayUrls: relayUrls,
+            hostPlatform: hostPlatform,
+            pairedAt: pairedAt,
+            macAgreePub: key)
     }
 }
 
@@ -301,5 +321,20 @@ public struct UserDefaultsPairedHostStore: PairedHostStore, @unchecked Sendable 
         if defaults.data(forKey: Self.legacyKey) != nil {
             defaults.removeObject(forKey: Self.legacyKey)
         }
+    }
+}
+
+// ── App Group migration ──────────────────────────────────────────────────────
+
+extension UserDefaultsPairedHostStore {
+    /// One-time copy of the paired-host document from one UserDefaults domain to
+    /// another — used to migrate the app's private `.standard` blob into the
+    /// shared App Group suite the Notification Service Extension reads. No-op if
+    /// the destination already holds a document, so it never clobbers newer data.
+    public static func migrate(from source: UserDefaults, to destination: UserDefaults) {
+        guard destination.data(forKey: documentKey) == nil,
+            let blob = source.data(forKey: documentKey)
+        else { return }
+        destination.set(blob, forKey: documentKey)
     }
 }
