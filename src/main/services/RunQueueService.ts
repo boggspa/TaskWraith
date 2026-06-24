@@ -175,6 +175,9 @@ export class RunQueueService {
     const runId = optionalString(input?.runId)
     const ownerToken = optionalString(input?.ownerToken)
     if (!runId || !ownerToken) return null
+    const candidate = this.deps.appStore.getRunQueueJob(runId)
+    if (!candidate || candidate.status !== 'steer_promoting') return null
+    if (!this.deps.canLeaseJob(candidate)) return null
     return this.deps.getRunRepository().leasePromotedSteerJob({
       runId,
       ownerToken,

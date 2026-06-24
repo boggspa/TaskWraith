@@ -416,7 +416,8 @@ describe('RunQueueService', () => {
   })
 
   it('delegates steer promotion lease/fallback calls through repository API boundaries', () => {
-    const { deps, repository } = makeDeps()
+    const store = makeStore({ getRunQueueJob: vi.fn(() => makeJob({ status: 'steer_promoting' })) })
+    const { deps, repository } = makeDeps({ appStore: store })
     const service = new RunQueueService(deps)
     expect(service.promoteQueuedJobForSteer({ runId: 'run-1', ownerToken: 'owner-1' })).toEqual(
       makeJob({
@@ -459,6 +460,18 @@ describe('RunQueueService', () => {
       reason: 'lease failed',
       fallbackStatus: 'queued'
     })
+  })
+
+  it('rejects promoted steer leases when the target chat is still busy', () => {
+    const promoted = makeJob({ status: 'steer_promoting', chatId: 'chat-busy' })
+    const store = makeStore({ getRunQueueJob: vi.fn(() => promoted) })
+    const canLeaseJob = vi.fn(() => false)
+    const { deps, repository } = makeDeps({ appStore: store, canLeaseJob })
+    const service = new RunQueueService(deps)
+
+    expect(service.leasePromotedSteerJob({ runId: 'run-1', ownerToken: 'owner-1' })).toBeNull()
+    expect(canLeaseJob).toHaveBeenCalledWith(promoted)
+    expect(repository.leasePromotedSteerJob).not.toHaveBeenCalled()
   })
 
   it('sanitizes transition status and partial fields before delegating', () => {
