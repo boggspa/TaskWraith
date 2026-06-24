@@ -6169,6 +6169,53 @@ function App(): React.JSX.Element {
     }
   }
 
+  // Best-effort cleanup of abandoned, never-started "New Chat" tombstones,
+  // fired right after a new chat is created (`keepChatId` = the just-created
+  // chat, never reaped). DELETE-ONLY — the create factories always build a
+  // fresh record, so no per-type default is ever corrupted (the historical
+  // "drafts act weirdly between chat types" bug came from REUSING records,
+  // which we never do). The renderer supplies the do-not-reap signals the main
+  // process can't see: the active multiview/side/popout selection, an in-flight
+  // workflow-compose chat, and chats with unsent composer text.
+  const reapAbandonedChatsAfterCreate = (keepChatId: string): void => {
+    const protectedChatIds = new Set<string>()
+    for (const pane of multiview.panes) {
+      if (pane.chatId) protectedChatIds.add(pane.chatId)
+    }
+    if (sideChatId) protectedChatIds.add(sideChatId)
+    // An in-flight (not-yet-saved) workflow-compose chat is intentionally empty
+    // and invisible to the main process — protect it explicitly.
+    if (workflowDraft?.chatId) protectedChatIds.add(workflowDraft.chatId)
+    // Chats open in popout windows the main process can't enumerate; stale keys
+    // only over-protect (safe).
+    try {
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i)
+        if (key && key.startsWith(CHAT_POPOUT_HANDOFF_PREFIX)) {
+          protectedChatIds.add(key.slice(CHAT_POPOUT_HANDOFF_PREFIX.length))
+        }
+      }
+    } catch {
+      /* localStorage unavailable — the other guards still apply */
+    }
+    const draftChatIds = Object.entries(composerDraftsByChatIdRef.current)
+      .filter(([, text]) => typeof text === 'string' && text.trim().length > 0)
+      .map(([id]) => id)
+    void window.api
+      .reapAbandonedChats({
+        protectedChatIds: Array.from(protectedChatIds),
+        draftChatIds,
+        keepChatId
+      })
+      .then((res) => {
+        if (!res?.ok || !res.reaped?.length) return
+        const reaped = new Set(res.reaped)
+        for (const id of reaped) chatByIdRef.current.delete(id)
+        setChats((prev) => prev.filter((chat) => !reaped.has(chat.appChatId)))
+      })
+      .catch(() => {})
+  }
+
   const handleNewChat = async (wsId: string, wsPath: string) => {
     const newChat = await window.api.createChat(wsId, wsPath)
     const provider = getChatProvider(newChat)
@@ -6204,6 +6251,7 @@ function App(): React.JSX.Element {
       }
       requestUsageSummaryRefresh(wsId, provider)
     })
+    reapAbandonedChatsAfterCreate(newChat.appChatId)
   }
 
   const clearWorkspaceOnlyUiState = () => {
@@ -6290,11 +6338,13 @@ function App(): React.JSX.Element {
       chatByIdRef.current.set(newChat.appChatId, newChat)
       currentChatIdRef.current = newChat.appChatId
       await selectGlobalChat(newChat)
+      reapAbandonedChatsAfterCreate(newChat.appChatId)
       return
     }
     const newChat = await window.api.createGlobalChat()
     setChats((prev) => mergeChatRecord(prev, newChat))
     await selectGlobalChat(newChat)
+    reapAbandonedChatsAfterCreate(newChat.appChatId)
   }
 
   const handleNewEnsemble = async () => {
@@ -6325,6 +6375,7 @@ function App(): React.JSX.Element {
     setRunDiff(null)
     setRunCompleteNotice(null)
     setRawLogs([])
+    reapAbandonedChatsAfterCreate(newChat.appChatId)
     // 1.0.3 — no setup modal. EnsembleParticipantsAboveRow renders
     // inline once `setCurrentChat(newChat)` above lands the chat in
     // view; the user edits per-participant settings via chip flyouts.
