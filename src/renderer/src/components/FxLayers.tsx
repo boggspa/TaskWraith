@@ -70,6 +70,51 @@ export function SkyFogFilterDefs() {
   )
 }
 
+/**
+ * The shared SVG displacement filter behind the refractive "liquid glass"
+ * material. Referenced from CSS by a FIXED id (`filter: url(#tw-glass-refract)`)
+ * applied to a synthetic SHEEN layer — NOT the live backdrop or content — so the
+ * warp reads as a subtle, static glass-edge refraction.
+ *
+ * Same multiview dup-id rule as `SkyFogFilterDefs` above: `url(#id)` resolves to
+ * the FIRST matching id in document order, so emitting this inside a per-pane
+ * component would make every pane bind to pane-0's node. It therefore lives in
+ * ONE shared element, rendered once by App, gated by `isFxEnabled`.
+ *
+ * The displacement is STATIC: `feTurbulence` with a fixed `seed` synthesizes the
+ * noise once and does not animate by itself. No filter primitive is animated
+ * (animating filter params re-runs the whole filter every frame = perf death). */
+export function RefractionFilterDefs() {
+  return (
+    <svg className="fx-refract-filter" width="0" height="0" aria-hidden focusable="false">
+      <filter
+        id="tw-glass-refract"
+        x="-20%"
+        y="-20%"
+        width="140%"
+        height="140%"
+        colorInterpolationFilters="sRGB"
+      >
+        <feTurbulence
+          type="fractalNoise"
+          baseFrequency="0.009 0.013"
+          numOctaves="2"
+          seed="7"
+          result="glassNoise"
+        />
+        <feGaussianBlur in="glassNoise" stdDeviation="2.2" result="softNoise" />
+        <feDisplacementMap
+          in="SourceGraphic"
+          in2="softNoise"
+          scale="16"
+          xChannelSelector="R"
+          yChannelSelector="G"
+        />
+      </filter>
+    </svg>
+  )
+}
+
 export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState | null }) {
   const localHour = new Date().getHours()
   const skyKind = weather?.kind || 'unknown'

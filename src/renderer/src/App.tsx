@@ -456,6 +456,7 @@ import {
 import {
   AgentAuraLayer,
   LivingWorkspaceLayer,
+  RefractionFilterDefs,
   RunDataVizLayer,
   SkyFogFilterDefs,
   SkyWeatherVisual,
@@ -2555,6 +2556,9 @@ function App(): React.JSX.Element {
       Boolean(currentChat.linkedProviderSessionId))
   )
   const isFxEnabled = appearance.funFxEnabled && appearance.funFxMode !== 'off'
+  // Refraction is an independent MATERIAL toggle (not part of the fun-FX system),
+  // so its shared SVG filter mounts whenever refraction is on + transparency is allowed.
+  const refractionEnabled = appearance.advancedFx.refraction && !appearance.reduceTransparency
   const shouldShowSkyVisualFxInFxMode = isFxEnabled
     ? appearance.funFxMode === 'subtle'
       ? showSkyVisualFx || !showGhostCompanion
@@ -20871,6 +20875,10 @@ function App(): React.JSX.Element {
               * Present whenever FX is on so any sky (focused or pane, single or
               * split) can reference it. */}
             {isFxEnabled && <SkyFogFilterDefs />}
+            {/* Refractive "liquid glass" displacement filter — also defined ONCE
+              * for the whole region (CSS references #tw-glass-refract by a fixed
+              * id, so per-pane would collide on the dup-id rule). */}
+            {refractionEnabled && <RefractionFilterDefs />}
             <MultiviewPaneGrid
               layout={multiview.layout}
               panes={multiview.panes}

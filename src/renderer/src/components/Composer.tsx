@@ -1817,6 +1817,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
               onDragLeave={handleComposerDragLeave}
               onDrop={handleComposerDrop}
             >
+              {/* Refractive-glass lens — an aria-hidden, pointer-events:none layer
+                * that carries the baked sheen + displacement warp. Always present
+                * (cheap empty layer); its visibility + filter are gated purely in
+                * CSS on :root[data-advanced-fx-refraction="true"], so it's inert
+                * when refraction is off / Reduce Transparency is on. */}
+              <div className="composer-refraction-lens" aria-hidden />
               {showComposerChips && (
                 <div className="composer-chips">
                   {currentProvider === 'gemini' && persistentSessionNeedsRestart && (
