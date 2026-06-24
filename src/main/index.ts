@@ -18580,7 +18580,7 @@ if (isGeminiMcpBridgeProcess) {
           const result = await bridgeGitService.snapshot(path)
           if (!result.ok) return { ok: false, reason: result.error }
           const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
-          publishRemoteGitSnapshotCache(action.workspaceId)
+          if (action.publish !== false) publishRemoteGitSnapshotCache(action.workspaceId)
           return { ok: true, git }
         },
         gitStageAllFn: async (action) => {

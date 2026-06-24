@@ -1806,11 +1806,12 @@ public enum BridgeAction {
 
     public static func gitSnapshot(
         workspaceId: String,
-        actionId: String = UUID().uuidString
+        actionId: String = UUID().uuidString,
+        publish: Bool = true
     ) -> [String: Any] {
         encode([
             "kind": "gitSnapshot", "actionId": actionId,
-            "workspaceId": workspaceId,
+            "workspaceId": workspaceId, "publish": publish,
         ])
     }
 

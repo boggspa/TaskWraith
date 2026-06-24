@@ -3016,16 +3016,28 @@ public final class RemoteSessionModel: ObservableObject {
     // ── Git workflows — the Mac's GitService is the single authority; every
     //    mutation is an explicit phone UI action, never agent-initiated. ────
 
-    public func fetchGitSnapshot(workspaceId: String) async throws -> GitWorkspaceSnapshot {
+    private func fetchGitSnapshotPayload(workspaceId: String, publish: Bool) async throws
+        -> GitWorkspaceSnapshot
+    {
         if isDemo {
             guard let snap = Self.decodeDemo(GitWorkspaceSnapshot.self, Self.demoGitSnapshotJSON)
             else { throw RemoteFileActionError.malformedAck }
-            gitSnapshots[workspaceId] = snap
             return snap
         }
         let ack = try await requestFileAction(
-            BridgeAction.gitSnapshot(workspaceId: workspaceId), timeoutMs: 16_000)
+            BridgeAction.gitSnapshot(workspaceId: workspaceId, publish: publish), timeoutMs: 16_000)
         guard let git = ack.data?.git else { throw RemoteFileActionError.malformedAck }
+        return git
+    }
+
+    public func fetchGitSnapshotWithoutPublishing(workspaceId: String) async throws
+        -> GitWorkspaceSnapshot
+    {
+        try await fetchGitSnapshotPayload(workspaceId: workspaceId, publish: false)
+    }
+
+    public func fetchGitSnapshot(workspaceId: String) async throws -> GitWorkspaceSnapshot {
+        let git = try await fetchGitSnapshotPayload(workspaceId: workspaceId, publish: true)
         gitSnapshots[workspaceId] = git
         return git
     }

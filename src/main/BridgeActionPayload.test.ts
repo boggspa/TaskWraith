@@ -452,6 +452,30 @@ describe('decodeBridgeActionPayload', () => {
           decodeBridgeActionPayload(encode({ kind, actionId: `${kind}-2` })).payload
         ).toMatchObject({ kind: 'unknown', rawKind: kind })
       }
+
+      const quietSnapshot = decodeBridgeActionPayload(
+        encode({
+          kind: 'gitSnapshot',
+          actionId: 'gitSnapshot-quiet',
+          workspaceId: 'ws-1',
+          publish: false
+        })
+      ).payload
+      expect(quietSnapshot).toMatchObject({
+        kind: 'gitSnapshot',
+        workspaceId: 'ws-1',
+        publish: false
+      })
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'gitSnapshot',
+            actionId: 'gitSnapshot-bad-publish',
+            workspaceId: 'ws-1',
+            publish: 'false'
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'gitSnapshot' })
     })
 
     it('decodes gitStageAll as a mutating workspace-gated action', () => {

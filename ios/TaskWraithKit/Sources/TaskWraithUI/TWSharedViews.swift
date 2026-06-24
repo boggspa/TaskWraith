@@ -6850,6 +6850,8 @@ public struct ComposerDiffPill: View {
     let commitsAhead: Int
     var onTap: (() -> Void)? = nil
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     public init(
         filesChanged: Int, additions: Int, deletions: Int, commitsAhead: Int = 0,
         onTap: (() -> Void)? = nil
@@ -6998,14 +7000,26 @@ public struct ComposerDiffPill: View {
             if commitsAhead > 0 {
                 Text("↑ \(compact(commitsAhead))")
                     .foregroundStyle(TWTheme.statusAttention)
+                    .contentTransition(
+                        reduceMotion ? .identity : .numericText(value: Double(commitsAhead)))
+                    .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: commitsAhead)
             }
             if hasFileStats {
                 Text("\(filesChanged) file\(filesChanged == 1 ? "" : "s")")
                     .foregroundStyle(TWTheme.textSecondary)
+                    .contentTransition(
+                        reduceMotion ? .identity : .numericText(value: Double(filesChanged)))
+                    .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: filesChanged)
                 Text("+\(compact(additions))")
                     .foregroundStyle(TWTheme.statusSuccess)
+                    .contentTransition(
+                        reduceMotion ? .identity : .numericText(value: Double(additions)))
+                    .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: additions)
                 Text("−\(compact(deletions))")
                     .foregroundStyle(TWTheme.statusFailed)
+                    .contentTransition(
+                        reduceMotion ? .identity : .numericText(value: Double(deletions)))
+                    .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: deletions)
             }
         }
         .font(.caption.weight(.semibold).monospacedDigit())

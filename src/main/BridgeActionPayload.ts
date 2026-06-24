@@ -230,11 +230,14 @@ export interface BridgeWorkspaceDiffAction extends BridgeActionMetadata {
 }
 
 /** Read-only git status for an allowlisted workspace — branch, ahead/behind,
- * change counts, capped file list. Returned in the ack's data; nothing is
- * broadcast. Gated by `diffReview` (same read tier as `workspaceDiff`). */
+ * change counts, capped file list. Returned in the ack's data. By default the
+ * Mac also refreshes the remote git projection; callers that only need a local
+ * response can set `publish: false`. Gated by `diffReview` (same read tier as
+ * `workspaceDiff`). */
 export interface BridgeGitSnapshotAction extends BridgeActionMetadata {
   kind: 'gitSnapshot'
   workspaceId: string
+  publish?: boolean
 }
 
 /** `git add -A` for the workspace repo. Mutating — gated by `fileWrite`. */
@@ -1012,7 +1015,7 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
         ? (parsed as unknown as BridgeWorkspaceDiffAction)
         : { kind: 'unknown', rawKind: 'workspaceDiff', raw: parsed }
     case 'gitSnapshot':
-      return isWorkspaceScopedGitRead(parsed)
+      return isGitSnapshot(parsed)
         ? (parsed as unknown as BridgeGitSnapshotAction)
         : { kind: 'unknown', rawKind: 'gitSnapshot', raw: parsed }
     case 'gitStageAll':
@@ -1351,6 +1354,10 @@ function isWorkspaceDiff(v: Record<string, unknown>): boolean {
  * gitStageAll, githubPrStatus, githubPrReadiness). */
 function isWorkspaceScopedGitRead(v: Record<string, unknown>): boolean {
   return hasValidActionMetadata(v) && typeof v.workspaceId === 'string'
+}
+
+function isGitSnapshot(v: Record<string, unknown>): boolean {
+  return isWorkspaceScopedGitRead(v) && (v.publish === undefined || typeof v.publish === 'boolean')
 }
 
 const MAX_GIT_COMMIT_MESSAGE_LENGTH = 5_000

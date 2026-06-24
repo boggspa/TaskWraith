@@ -210,6 +210,14 @@ struct GitModelsTests {
             #expect(payload["kind"] as? String == expectedKind)
             #expect(payload["workspaceId"] as? String == "ws-1")
         }
+
+        let quietSnapshot = BridgeAction.gitSnapshot(workspaceId: "ws-1", publish: false)
+        let quietBase64 = try #require(quietSnapshot["payloadBase64"] as? String)
+        let quietData = try #require(Data(base64Encoded: quietBase64))
+        let quietPayload = try #require(
+            try JSONSerialization.jsonObject(with: quietData) as? [String: Any])
+        #expect(quietPayload["kind"] as? String == "gitSnapshot")
+        #expect(quietPayload["publish"] as? Bool == false)
     }
 
     @Test("threadMediaFetch helper encodes bounded media request")

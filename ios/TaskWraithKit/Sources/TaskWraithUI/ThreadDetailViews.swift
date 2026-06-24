@@ -26,6 +26,102 @@ private final class TranscriptFollowPin {
     var lastPinAt: Date = .distantPast
 }
 
+@MainActor
+private final class ComposerDiffPillRefreshState: ObservableObject {
+    @Published var snapshot: GitWorkspaceSnapshot?
+
+    private static let refreshIntervalNanos: UInt64 = 90_000_000_000
+
+    func run(
+        model: RemoteSessionModel,
+        workspaceId: String?,
+        initialSnapshot: GitWorkspaceSnapshot?
+    ) async {
+        snapshot = initialSnapshot
+        guard let workspaceId, !workspaceId.isEmpty, model.workspaceCanReviewDiffs(workspaceId)
+        else { return }
+        if snapshot == nil {
+            await refresh(model: model, workspaceId: workspaceId)
+        }
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: Self.refreshIntervalNanos)
+            guard !Task.isCancelled else { return }
+            await refresh(model: model, workspaceId: workspaceId)
+        }
+    }
+
+    private func refresh(model: RemoteSessionModel, workspaceId: String) async {
+        guard let next = try? await model.fetchGitSnapshotWithoutPublishing(workspaceId: workspaceId)
+        else { return }
+        snapshot = next
+    }
+}
+
+private struct ComposerDiffPillMetrics: Equatable {
+    var filesChanged: Int
+    var additions: Int
+    var deletions: Int
+    var commitsAhead: Int
+
+    var isVisible: Bool {
+        filesChanged > 0 || additions > 0 || deletions > 0 || commitsAhead > 0
+    }
+}
+
+private struct RefreshingComposerDiffPill: View {
+    @ObservedObject var model: RemoteSessionModel
+    let workspaceId: String?
+    let initialGitSnapshot: GitWorkspaceSnapshot?
+    let fallbackFilesChanged: Int
+    let fallbackAdditions: Int
+    let fallbackDeletions: Int
+    let fallbackCommitsAhead: Int
+    let reduceMotion: Bool
+    let onTap: () -> Void
+
+    @StateObject private var refreshState = ComposerDiffPillRefreshState()
+
+    private var snapshot: GitWorkspaceSnapshot? {
+        refreshState.snapshot ?? initialGitSnapshot
+    }
+
+    private var refreshIdentity: String {
+        workspaceId ?? ""
+    }
+
+    private var metrics: ComposerDiffPillMetrics {
+        ComposerDiffPillMetrics(
+            filesChanged: snapshot?.counts?.changed ?? fallbackFilesChanged,
+            additions: snapshot?.lineStats?.additions ?? fallbackAdditions,
+            deletions: snapshot?.lineStats?.deletions ?? fallbackDeletions,
+            commitsAhead: snapshot?.ahead ?? fallbackCommitsAhead)
+    }
+
+    var body: some View {
+        Group {
+            if metrics.isVisible {
+                ComposerDiffPill(
+                    filesChanged: metrics.filesChanged,
+                    additions: metrics.additions,
+                    deletions: metrics.deletions,
+                    commitsAhead: metrics.commitsAhead,
+                    onTap: onTap
+                )
+                .padding(.horizontal, 10)
+                .padding(.bottom, 2)
+                // Lifts in as the keyboard drops; fades when focus returns.
+                .transition(ComposerMotion.compactPillTransition(reduceMotion: reduceMotion))
+            }
+        }
+        .task(id: refreshIdentity) {
+            await refreshState.run(
+                model: model,
+                workspaceId: workspaceId,
+                initialSnapshot: initialGitSnapshot)
+        }
+    }
+}
+
 struct ThreadDetailView: View {
     @ObservedObject var model: RemoteSessionModel
     let taskId: String
@@ -968,20 +1064,18 @@ struct ThreadDetailView: View {
                     let pillDeletions =
                         primaryGitSnapshot?.lineStats?.deletions ?? diff?.deletions ?? 0
                     let pillCommitsAhead = primaryGitSnapshot?.ahead ?? 0
-                    if !composerFocused,
-                        pillFilesChanged > 0 || pillAdditions > 0 || pillDeletions > 0
-                            || pillCommitsAhead > 0
-                    {
-                        ComposerDiffPill(
-                            filesChanged: pillFilesChanged,
-                            additions: pillAdditions,
-                            deletions: pillDeletions,
-                            commitsAhead: pillCommitsAhead,
+                    if !composerFocused {
+                        RefreshingComposerDiffPill(
+                            model: model,
+                            workspaceId: primaryWorkspaceId,
+                            initialGitSnapshot: primaryGitSnapshot,
+                            fallbackFilesChanged: pillFilesChanged,
+                            fallbackAdditions: pillAdditions,
+                            fallbackDeletions: pillDeletions,
+                            fallbackCommitsAhead: pillCommitsAhead,
+                            reduceMotion: reduceMotion,
                             onTap: { openComposerDiff(workspaceId: primaryWorkspaceId) }
                         )
-                        .padding(.horizontal, 10)
-                        // Lifts in as the keyboard drops; fades when focus returns.
-                        .transition(ComposerMotion.compactPillTransition(reduceMotion: reduceMotion))
                     }
                     VStack(spacing: tuckedTab ? -10 : (detached ? 6 : 0)) {
                         // Above-rows group: inner VStack spacing matches the outer so
