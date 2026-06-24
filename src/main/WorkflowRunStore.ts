@@ -16,6 +16,8 @@
 // per EXECUTION (workflowExecutionId) so there is exactly one writer per file
 // (no cross-writer contention — the run-events model).
 
+import type { WorkflowLoopVerdict } from './WorkflowLoopModel'
+
 export const WORKFLOW_RUN_SCHEMA_VERSION = 1
 
 export type WorkflowRunEventKind =
@@ -73,6 +75,17 @@ export interface WorkflowRunEventInput {
    * events (running / loop_settled). Per-iteration sub-run events set it; the fold
    * uses it to keep them from terminalizing the whole execution + to count loops. */
   iteration?: number
+  /** Stage 2 slice 7 — the verifier's structured verdict for this iteration (the
+   * accept/revise/reject + evidence that drove continue/stop). Set ONLY on a verifier
+   * sub-run's event; absent on maker events + single occurrences. Persisted so the
+   * loop-progress UI can answer "why did iteration N continue / the loop stop". The
+   * fold does NOT aggregate it — the UI reads it off the raw per-iteration events. */
+  verdict?: WorkflowLoopVerdict
+  /** Stage 2 slice 7 — the loop's terminal stop reason (accepted / max_iterations /
+   * inconclusive / rejected / budget_exhausted / failed / cancelled). Set on the
+   * execution-level loop_settled event; the fold surfaces it onto the summary so the
+   * run list can show WHY a loop ended without re-reading every event. */
+  stopReason?: string
 }
 
 export interface WorkflowRunEvent extends WorkflowRunEventInput {
@@ -158,6 +171,8 @@ export interface WorkflowRunSummary {
   /** Stage 2 — the highest maker iteration observed (a LOOP execution); absent for
    * a single-occurrence run. */
   iterationCount?: number
+  /** Stage 2 slice 7 — the loop's terminal stop reason, folded from loop_settled. */
+  stopReason?: string
 }
 
 /**
@@ -201,6 +216,9 @@ export function foldWorkflowRunSummary(
     }
     if (event.breach) summary.breach = event.breach
     if (event.error) summary.error = event.error
+    // stopReason rides on the execution-level loop_settled event only (no iteration),
+    // so reading it unconditionally is safe — no per-iteration event carries one.
+    if (event.stopReason) summary.stopReason = event.stopReason
     if (typeof event.iteration === 'number') {
       summary.iterationCount = Math.max(summary.iterationCount ?? 0, event.iteration)
     }

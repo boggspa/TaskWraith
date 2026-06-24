@@ -7122,17 +7122,6 @@ async function dispatchDueScheduledLoopHeadless(
       })
       .catch(() => auditRunTracker.handleExit(input.runId, -1))
     const outcome = await completion
-    // Per-iteration forensics (tagged iteration:N so the fold sums them without
-    // terminalizing the execution).
-    appendLoopEvent({
-      kind: 'harvested',
-      scheduledTaskId: task.id,
-      runId: input.runId,
-      iteration: input.iteration,
-      ...(typeof outcome.tokens === 'number' ? { tokens: outcome.tokens } : {}),
-      ...(typeof outcome.costUsd === 'number' ? { costUsd: outcome.costUsd } : {}),
-      ...(typeof outcome.durationMs === 'number' ? { durationMs: outcome.durationMs } : {})
-    } as WorkflowRunEventInput)
     // Verifier steps parse a structured verdict from their final text; a missing or
     // unparseable marker leaves verdict null → the engine defaults to an evidence-less
     // { decision: 'revise' } → a fail-safe 'inconclusive' stop (never an infinite loop).
@@ -7144,6 +7133,19 @@ async function dispatchDueScheduledLoopHeadless(
     // judge provider; until then the verifier is best paired with a streaming provider.
     const verdict =
       input.role === 'verifier' && outcome.ok ? parseLoopVerdict(outcome.finalText) : null
+    // Per-iteration forensics (tagged iteration:N so the fold sums them without
+    // terminalizing the execution); the verifier iteration also persists its verdict
+    // (slice 7) so the loop-progress UI can show WHY each iteration continued / stopped.
+    appendLoopEvent({
+      kind: 'harvested',
+      scheduledTaskId: task.id,
+      runId: input.runId,
+      iteration: input.iteration,
+      ...(typeof outcome.tokens === 'number' ? { tokens: outcome.tokens } : {}),
+      ...(typeof outcome.costUsd === 'number' ? { costUsd: outcome.costUsd } : {}),
+      ...(typeof outcome.durationMs === 'number' ? { durationMs: outcome.durationMs } : {}),
+      ...(verdict ? { verdict } : {})
+    } as WorkflowRunEventInput)
     return {
       ...(outcome.finalText !== undefined ? { output: outcome.finalText } : {}),
       ...(typeof outcome.tokens === 'number' ? { tokens: outcome.tokens } : {}),
@@ -7192,6 +7194,7 @@ async function dispatchDueScheduledLoopHeadless(
   appendLoopEvent({
     kind: 'loop_settled',
     scheduledTaskId: task.id,
+    ...(snap.stopReason ? { stopReason: snap.stopReason } : {}),
     ...(snap.error ? { error: snap.error } : {})
   } as WorkflowRunEventInput)
 

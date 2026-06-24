@@ -72,6 +72,17 @@ describe('serialize / parse round-trip', () => {
     expect(parseWorkflowRunEventLine(line)).toEqual(e)
   })
 
+  it('round-trips a verifier verdict + a loop stopReason (slice 7 persistence)', () => {
+    const verifier = ev(
+      { kind: 'harvested', iteration: 2, tokens: 5, verdict: { decision: 'revise', evidence: 'add a test' } },
+      4,
+      '2026-06-24T00:00:04.000Z'
+    )
+    expect(parseWorkflowRunEventLine(serializeWorkflowRunEvent(verifier))).toEqual(verifier)
+    const settled = ev({ kind: 'loop_settled', stopReason: 'accepted' }, 5, '2026-06-24T00:00:05.000Z')
+    expect(parseWorkflowRunEventLine(serializeWorkflowRunEvent(settled))).toEqual(settled)
+  })
+
   it('rejects blank / malformed / wrong-schema lines', () => {
     expect(parseWorkflowRunEventLine('')).toBeNull()
     expect(parseWorkflowRunEventLine('   ')).toBeNull()
@@ -212,6 +223,33 @@ describe('foldWorkflowRunSummary', () => {
 
   it('leaves iterationCount undefined for a single-occurrence (non-loop) run', () => {
     expect(foldWorkflowRunSummary('exec-1', [ev({ kind: 'completed' }, 1, 't')]).iterationCount).toBeUndefined()
+  })
+
+  it('slice 7 — surfaces stopReason from loop_settled; per-iteration verdicts ride the raw events', () => {
+    const events = [
+      ev({ kind: 'running' }, 1, 't1'),
+      ev({ kind: 'harvested', iteration: 1, tokens: 100 }, 2, 't2'), // maker (no verdict)
+      ev(
+        { kind: 'harvested', iteration: 1, tokens: 5, verdict: { decision: 'revise', evidence: 'add a test' } },
+        3,
+        't3'
+      ), // verifier
+      ev({ kind: 'harvested', iteration: 2, tokens: 120 }, 4, 't4'),
+      ev({ kind: 'harvested', iteration: 2, tokens: 5, verdict: { decision: 'accept' } }, 5, 't5'),
+      ev({ kind: 'loop_settled', stopReason: 'accepted' }, 6, '2026-06-24T02:00:00.000Z')
+    ]
+    const summary = foldWorkflowRunSummary('exec-1', events)
+    expect(summary.stopReason).toBe('accepted') // surfaced for the run-list "why did it end"
+    expect(summary.status).toBe('loop_settled')
+    expect(summary.iterationCount).toBe(2)
+    expect(summary.tokens).toBe(230) // verdicts do not disturb the forensic sum
+    // The verdicts are NOT folded into the summary — the UI reads them off the events.
+    const verdicts = events.filter((e) => e.verdict).map((e) => e.verdict)
+    expect(verdicts).toEqual([{ decision: 'revise', evidence: 'add a test' }, { decision: 'accept' }])
+  })
+
+  it('slice 7 — leaves stopReason undefined for a single-occurrence run', () => {
+    expect(foldWorkflowRunSummary('exec-1', [ev({ kind: 'completed' }, 1, 't')]).stopReason).toBeUndefined()
   })
 
   it('ignores events for a different execution', () => {
