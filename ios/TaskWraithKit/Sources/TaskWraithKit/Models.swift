@@ -958,6 +958,7 @@ public struct RemoteEnsembleState: Codable, Sendable {
     public let roundId: String?
     public let status: String?
     public let activeParticipantId: String?
+    public let bossmanParticipantId: String?
     public let participants: [Participant]?
     /// The CONFIGURED (editable) roster — present even when idle.
     public let roster: [RosterEntry]?
@@ -993,12 +994,13 @@ public struct RemoteEnsembleState: Codable, Sendable {
         public let reasoningEffort: String?
         public let fastModeEnabled: Bool?
         public let thinkingEnabled: Bool?
+        public let isBossman: Bool?
         public init(
             id: String, provider: String, role: String?, enabled: Bool?,
             order: Int?, model: String?, brief: String?,
             permissionPresetId: String? = nil, reasoningEffort: String? = nil,
             fastModeEnabled: Bool? = nil, thinkingEnabled: Bool? = nil,
-            contextTokens: Int? = nil
+            contextTokens: Int? = nil, isBossman: Bool? = nil
         ) {
             self.id = id
             self.provider = provider
@@ -1012,6 +1014,7 @@ public struct RemoteEnsembleState: Codable, Sendable {
             self.fastModeEnabled = fastModeEnabled
             self.thinkingEnabled = thinkingEnabled
             self.contextTokens = contextTokens
+            self.isBossman = isBossman
         }
     }
 }

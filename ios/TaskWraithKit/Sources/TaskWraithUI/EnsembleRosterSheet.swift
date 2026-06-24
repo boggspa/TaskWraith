@@ -64,7 +64,8 @@ public struct EnsembleRosterSheet: View {
                     permissionPresetId: entry.permissionPresetId,
                     reasoningEffort: entry.reasoningEffort,
                     fastModeEnabled: entry.fastModeEnabled ?? false,
-                    thinkingEnabled: entry.thinkingEnabled ?? false
+                    thinkingEnabled: entry.thinkingEnabled ?? false,
+                    isBossman: entry.isBossman ?? false
                 )
             }
     }
@@ -101,6 +102,11 @@ public struct EnsembleRosterSheet: View {
                     canRemove: draft.count > 1,
                     onApply: { updated in
                         if let index = draft.firstIndex(where: { $0.id == updated.id }) {
+                            if updated.isBossman {
+                                for i in draft.indices {
+                                    draft[i].isBossman = draft[i].id == updated.id
+                                }
+                            }
                             draft[index] = updated
                         }
                         editingEntry = nil
@@ -231,6 +237,12 @@ public struct EnsembleRosterSheet: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
+            if entry.isBossman {
+                Image(systemName: "crown.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.yellow)
+                    .accessibilityHidden(true)
+            }
             if !entry.enabled {
                 Text("off")
                     .font(.caption2.weight(.semibold))
@@ -355,7 +367,8 @@ public struct EnsembleRosterSheet: View {
                     permissionPresetId: participant.permissionPresetId,
                     reasoningEffort: participant.reasoningEffort,
                     fastModeEnabled: participant.fastModeEnabled ?? false,
-                    thinkingEnabled: participant.thinkingEnabled ?? false
+                    thinkingEnabled: participant.thinkingEnabled ?? false,
+                    isBossman: participant.isBossman ?? false
                 )
             }
         guard !entries.isEmpty else { return }
@@ -368,9 +381,17 @@ public struct EnsembleRosterSheet: View {
         // an optimistic update that would only error + leave the UI diverged from
         // the (unchanged) Mac state. A later valid edit re-commits.
         guard !draft.isEmpty, draft.contains(where: { $0.enabled }) else { return }
+        normalizeBossmanMarker()
         pendingOrderIds = draft.map(\.id)
         model.updateEnsembleRoster(
             workspaceId: workspaceId, threadId: threadId, entries: draft)
+    }
+
+    private func normalizeBossmanMarker() {
+        guard let first = draft.firstIndex(where: { $0.isBossman }) else { return }
+        for index in draft.indices where index != first {
+            draft[index].isBossman = false
+        }
     }
 
     private func consumeFocusIfNeeded() {

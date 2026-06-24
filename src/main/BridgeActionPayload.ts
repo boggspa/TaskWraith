@@ -448,6 +448,8 @@ export interface BridgeRosterParticipant {
   fastModeEnabled?: boolean
   /** Kimi K2 thinking toggle. */
   thinkingEnabled?: boolean
+  /** Optional per-roster marker. Exactly one true value assigns Bossman. */
+  isBossman?: boolean
 }
 
 export interface BridgeSetThreadNotesAction extends BridgeActionMetadata {
@@ -1622,6 +1624,7 @@ function isEnsembleRosterUpdate(v: Record<string, unknown>): boolean {
     if (e.reasoningEffort !== undefined && typeof e.reasoningEffort !== 'string') return false
     if (e.fastModeEnabled !== undefined && typeof e.fastModeEnabled !== 'boolean') return false
     if (e.thinkingEnabled !== undefined && typeof e.thinkingEnabled !== 'boolean') return false
+    if (e.isBossman !== undefined && typeof e.isBossman !== 'boolean') return false
     return true
   })
 }

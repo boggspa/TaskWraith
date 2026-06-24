@@ -30,6 +30,7 @@ export type EnsembleRosterParticipantSnapshot = {
   role: string
   instructions: string
   order: number
+  isBossman?: boolean
   model?: string
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
@@ -239,7 +240,10 @@ export function buildEnsembleRosterPresetFromConfig(
     ...(typeof ensemble.ensembleContextChars === 'number'
       ? { ensembleContextChars: ensemble.ensembleContextChars }
       : {}),
-    participants: snapshotParticipantsForPreset(ensemble.participants || [])
+    participants: snapshotParticipantsForPreset(
+      ensemble.participants || [],
+      ensemble.bossmanParticipantId
+    )
   }
 }
 
@@ -250,15 +254,19 @@ export function buildEnsembleRosterPresetFromConfig(
  * `buildEnsembleRosterPresetFromConfig` and the Settings → Roster editor.
  */
 export function snapshotParticipantsForPreset(
-  participants: EnsembleParticipant[]
+  participants: EnsembleParticipant[],
+  bossmanParticipantId?: string
 ): EnsembleRosterParticipantSnapshot[] {
   const sorted = [...participants].sort((a, b) => a.order - b.order)
-  return sorted.map((participant, index) => snapshotParticipant(participant, index + 1))
+  return sorted.map((participant, index) =>
+    snapshotParticipant(participant, index + 1, participant.id === bossmanParticipantId)
+  )
 }
 
 function snapshotParticipant(
   participant: EnsembleParticipant,
-  order: number
+  order: number,
+  isBossman = false
 ): EnsembleRosterParticipantSnapshot {
   return {
     provider: participant.provider,
@@ -266,6 +274,7 @@ function snapshotParticipant(
     role: participant.role,
     instructions: participant.instructions,
     order,
+    ...(isBossman ? { isBossman: true } : {}),
     ...(participant.model ? { model: participant.model } : {}),
     ...(participant.runtimeProfileId ? { runtimeProfileId: participant.runtimeProfileId } : {}),
     ...(participant.geminiAuthProfileId != null
@@ -299,11 +308,21 @@ function nextParticipantId(existing: Set<string>, index: number): string {
 export function materializeParticipantsFromPreset(
   snapshots: EnsembleRosterParticipantSnapshot[]
 ): EnsembleParticipant[] {
+  return materializeParticipantsFromPresetWithBossman(snapshots).participants
+}
+
+export function materializeParticipantsFromPresetWithBossman(
+  snapshots: EnsembleRosterParticipantSnapshot[]
+): { participants: EnsembleParticipant[]; bossmanParticipantId?: string } {
   const sorted = [...snapshots].sort((a, b) => a.order - b.order)
   const existing = new Set<string>()
-  return sorted.map((snapshot, index) => {
+  let bossmanParticipantId: string | undefined
+  const participants = sorted.map((snapshot, index) => {
     const id = nextParticipantId(existing, index + 1)
     existing.add(id)
+    if (snapshot.isBossman === true && !bossmanParticipantId) {
+      bossmanParticipantId = id
+    }
     return {
       id,
       provider: snapshot.provider,
@@ -332,6 +351,7 @@ export function materializeParticipantsFromPreset(
       linkedProviderSessionId: null
     }
   })
+  return { participants, bossmanParticipantId }
 }
 
 function cloneSnapshot(
@@ -397,18 +417,21 @@ export function saveEnsembleRosterPresetFromParticipants(
     reasoningEffort?: string
     fastModeEnabled?: boolean
     thinkingEnabled?: boolean
+    isBossman?: boolean
   }>
 ): EnsembleRosterPreset {
   const trimmed = name.trim()
   if (!trimmed) {
     throw new Error('Preset name is required.')
   }
+  const bossmanIndex = participants.findIndex((participant) => participant.isBossman === true)
   const snapshots: EnsembleRosterParticipantSnapshot[] = participants.map((participant, index) => ({
     provider: participant.provider as ProviderId,
     enabled: participant.enabled ?? true,
     role: participant.role || '',
     instructions: participant.brief || '',
     order: index + 1,
+    ...(index === bossmanIndex ? { isBossman: true } : {}),
     ...(participant.model ? { model: participant.model } : {}),
     ...(participant.permissionPresetId
       ? { permissionPresetId: participant.permissionPresetId as PermissionPresetId }

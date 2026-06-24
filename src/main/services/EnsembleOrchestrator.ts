@@ -281,6 +281,52 @@ export interface EnsembleFanoutResult {
     | 'dispatch_failed'
 }
 
+export type EnsembleBossmanControlAction =
+  | 'skip_participant'
+  | 'stop_round'
+  | 'replace_participant'
+  | 'reorder_remaining'
+  | 'queue_followup'
+  | 'pause_work_session'
+  | 'complete_work_session'
+
+export interface EnsembleBossmanControlInput {
+  action?: EnsembleBossmanControlAction
+  roundId?: string
+  targetParticipantId?: string
+  targetRunId?: string
+  participantIds?: string[]
+  prompt?: string
+  reason?: string
+  replacement?: Partial<EnsembleParticipant> & { provider?: ProviderId }
+}
+
+export interface EnsembleBossmanControlResult {
+  ok: boolean
+  tool: 'ensemble_bossman_control'
+  action?: EnsembleBossmanControlAction
+  message: string
+  roundId?: string
+  participantId?: string
+  error?:
+    | 'no_active_run'
+    | 'not_ensemble'
+    | 'no_active_round'
+    | 'bossman_not_configured'
+    | 'not_bossman'
+    | 'invalid_action'
+    | 'stale_round'
+    | 'stale_target'
+    | 'stale_target_run'
+    | 'missing_prompt'
+    | 'missing_replacement'
+    | 'health_check_unavailable'
+    | 'replacement_unreachable'
+    | 'reorder_cooldown'
+    | 'queue_failed'
+    | 'no_active_work_session'
+}
+
 export interface EnsembleSideMessageInput {
   to?: unknown
   message?: string
@@ -936,6 +982,10 @@ interface ActiveRoundRuntime {
    * above-row, and the persistence type stays back-compat).
    */
   queuedPrompts: QueuedRoundEntry[]
+  remainingParticipants?: EnsembleParticipant[]
+  bossmanParticipantId?: string
+  bossmanBaselineParticipantIds?: string[]
+  bossmanBaselineParticipantCount?: number
   activeRunId?: string
   /**
    * 1.0.4-AK5 — set of run ids currently in flight for a parallel
@@ -1228,11 +1278,11 @@ export class EnsembleOrchestrator {
     if (!activeRunId) return false
     const active = this.runsByRunId.get(activeRunId)
     if (!active) return false
-    // Stop the provider stream first so we don't accumulate any more
-    // content after the skip lands. The cancel call is best-effort —
-    // some providers may have already finished mid-network.
-    await this.deps.cancelRun(active.participant.provider, active.runId).catch(() => undefined)
+    // Finalise/suppress first so the orchestrator advances immediately,
+    // then best-effort cancel the provider process.
     this.finalizeRun(active, 'skipped', 'Skipped by user.')
+    if (runtime.activeRunId === active.runId) runtime.activeRunId = undefined
+    await this.deps.cancelRun(active.participant.provider, active.runId).catch(() => undefined)
     return true
   }
 
@@ -1306,6 +1356,635 @@ export class EnsembleOrchestrator {
     if (!run) return false
     this.appendRoundStatus(run.chatId, run.roundId, note)
     return true
+  }
+
+  async bossmanControlForRun(
+    runId: string | undefined,
+    input: EnsembleBossmanControlInput
+  ): Promise<EnsembleBossmanControlResult> {
+    const action = input.action
+    if (!action) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        message: 'ensemble_bossman_control: action is required.',
+        error: 'invalid_action'
+      }
+    }
+    if (!runId) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        message: 'ensemble_bossman_control requires an active Ensemble participant run.',
+        error: 'no_active_run'
+      }
+    }
+    const caller = this.runsByRunId.get(runId)
+    if (!caller) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        message: 'No active Ensemble participant run matches this Bossman control call.',
+        error: 'no_active_run'
+      }
+    }
+    const chat = this.deps.getChat(caller.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        message: 'The active chat is not an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const runtime = this.roundsByChatId.get(caller.chatId)
+    if (!runtime || runtime.roundId !== caller.roundId || runtime.cancelled) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        message: 'There is no active Ensemble round for this Bossman control call.',
+        error: 'no_active_round'
+      }
+    }
+    if (input.roundId && input.roundId !== runtime.roundId) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: 'Bossman control rejected: roundId is no longer active.',
+        error: 'stale_round'
+      }
+    }
+    const bossmanParticipantId =
+      runtime.bossmanParticipantId ||
+      chat.ensemble.activeRound?.bossmanParticipantId ||
+      chat.ensemble.bossmanParticipantId
+    if (!bossmanParticipantId) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: 'Bossman control rejected: no Bossman is assigned for this Ensemble.',
+        error: 'bossman_not_configured'
+      }
+    }
+    if (caller.participant.id !== bossmanParticipantId) {
+      this.appendRoundStatus(
+        caller.chatId,
+        runtime.roundId,
+        `Bossman control rejected from ${caller.participant.role || caller.participant.provider}: only the assigned Bossman may use ensemble_bossman_control.`
+      )
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        participantId: caller.participant.id,
+        message: 'Bossman control rejected: caller is not the assigned Bossman participant.',
+        error: 'not_bossman'
+      }
+    }
+
+    if (
+      input.targetParticipantId &&
+      !this.roundHasParticipant(chat.ensemble.activeRound, runtime.roundId, input.targetParticipantId)
+    ) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: 'Bossman control rejected: targetParticipantId is not part of the active round.',
+        error: 'stale_target'
+      }
+    }
+    const targetRun = input.targetRunId ? this.runsByRunId.get(input.targetRunId) : undefined
+    if (
+      input.targetRunId &&
+      (!targetRun ||
+        targetRun.chatId !== runtime.chatId ||
+        targetRun.roundId !== runtime.roundId ||
+        (input.targetParticipantId && targetRun.participant.id !== input.targetParticipantId))
+    ) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: 'Bossman control rejected: targetRunId is no longer active for that participant.',
+        error: 'stale_target_run'
+      }
+    }
+
+    if (action === 'stop_round') {
+      const reason = input.reason || 'Stopped by Bossman.'
+      const ok = await this.cancelRound(runtime.chatId, reason)
+      return {
+        ok,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: ok ? `Bossman stopped the round: ${reason}` : 'Bossman stop failed: no active round.',
+        ...(ok ? {} : { error: 'no_active_round' as const })
+      }
+    }
+
+    if (action === 'skip_participant') {
+      return this.skipParticipantByBossman(runtime, input, targetRun)
+    }
+
+    if (action === 'reorder_remaining') {
+      return this.reorderRemainingByBossman(runtime, input.participantIds || [])
+    }
+
+    if (action === 'queue_followup') {
+      const prompt = (input.prompt || '').trim()
+      if (!prompt) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action,
+          roundId: runtime.roundId,
+          message: 'Bossman queue_followup requires a prompt.',
+          error: 'missing_prompt'
+        }
+      }
+      const ok = this.enqueueWorkSessionContinuation(runtime.chatId, prompt)
+      if (ok) {
+        this.appendRoundStatus(runtime.chatId, runtime.roundId, 'Bossman queued a follow-up round.')
+      }
+      return {
+        ok,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: ok
+          ? 'Bossman queued a follow-up round.'
+          : 'Bossman queue_followup failed: no active runtime queue.',
+        ...(ok ? {} : { error: 'queue_failed' as const })
+      }
+    }
+
+    if (action === 'pause_work_session' || action === 'complete_work_session') {
+      return this.transitionWorkSessionByBossman(runtime, action, input.reason)
+    }
+
+    if (action === 'replace_participant') {
+      return this.replaceParticipantByBossman(runtime, input, targetRun)
+    }
+
+    return {
+      ok: false,
+      tool: 'ensemble_bossman_control',
+      action,
+      roundId: runtime.roundId,
+      message: `ensemble_bossman_control: unsupported action "${action}".`,
+      error: 'invalid_action'
+    }
+  }
+
+  private roundHasParticipant(
+    round: EnsembleRoundState | undefined,
+    roundId: string,
+    participantId: string
+  ): boolean {
+    return (
+      round?.roundId === roundId &&
+      round.participants.some((participant) => participant.participantId === participantId)
+    )
+  }
+
+  private skipParticipantByBossman(
+    runtime: ActiveRoundRuntime,
+    input: EnsembleBossmanControlInput,
+    targetRun?: ActiveParticipantRun
+  ): EnsembleBossmanControlResult {
+    const reason = input.reason || 'Skipped by Bossman.'
+    let active = targetRun
+    if (!active && runtime.activeRunId) {
+      const candidate = this.runsByRunId.get(runtime.activeRunId)
+      if (
+        candidate &&
+        (!input.targetParticipantId || candidate.participant.id === input.targetParticipantId)
+      ) {
+        active = candidate
+      }
+    }
+    if (active) {
+      this.finalizeRun(active, 'skipped', reason)
+      if (runtime.activeRunId === active.runId) runtime.activeRunId = undefined
+      runtime.activeScoutRunIds?.delete(active.runId)
+      void this.deps.cancelRun(active.participant.provider, active.runId).catch(() => undefined)
+      return {
+        ok: true,
+        tool: 'ensemble_bossman_control',
+        action: 'skip_participant',
+        roundId: runtime.roundId,
+        participantId: active.participant.id,
+        message: `Bossman skipped ${active.participant.role || active.participant.provider}.`
+      }
+    }
+
+    const targetParticipantId = input.targetParticipantId
+    if (!targetParticipantId) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'skip_participant',
+        roundId: runtime.roundId,
+        message: 'Bossman skip requires targetParticipantId or targetRunId.',
+        error: 'stale_target'
+      }
+    }
+    const remaining = runtime.remainingParticipants || []
+    const index = remaining.findIndex((participant) => participant.id === targetParticipantId)
+    if (index < 0) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'skip_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message: 'Bossman skip rejected: target participant is no longer pending.',
+        error: 'stale_target'
+      }
+    }
+    const [participant] = remaining.splice(index, 1)
+    this.updateParticipantState(runtime.chatId, runtime.roundId, participant.id, 'skipped', reason)
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `Bossman skipped ${participant.role || participant.provider}. ${reason}`
+    )
+    return {
+      ok: true,
+      tool: 'ensemble_bossman_control',
+      action: 'skip_participant',
+      roundId: runtime.roundId,
+      participantId: participant.id,
+      message: `Bossman skipped pending participant ${participant.role || participant.provider}.`
+    }
+  }
+
+  private reorderRemainingByBossman(
+    runtime: ActiveRoundRuntime,
+    participantIds: string[]
+  ): EnsembleBossmanControlResult {
+    const remaining = runtime.remainingParticipants || []
+    const remainingIds = new Set(remaining.map((participant) => participant.id))
+    if (participantIds.length === 0 || participantIds.some((id) => !remainingIds.has(id))) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'reorder_remaining',
+        roundId: runtime.roundId,
+        message: 'Bossman reorder rejected: participantIds must name pending participants.',
+        error: 'stale_target'
+      }
+    }
+    const chat = this.deps.getChat(runtime.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'reorder_remaining',
+        roundId: runtime.roundId,
+        message: 'Bossman reorder rejected: active chat is no longer an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const completedCount = chat.ensemble.bossmanControlState?.completedRoundCount || 0
+    const lastReorderAt = chat.ensemble.bossmanControlState?.lastReorderAtCompletedRound
+    if (lastReorderAt !== undefined && completedCount - lastReorderAt < 2) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'reorder_remaining',
+        roundId: runtime.roundId,
+        message: 'Bossman reorder rejected: turn order can change once every two completed Ensemble rounds.',
+        error: 'reorder_cooldown'
+      }
+    }
+
+    const requested = participantIds
+      .map((id) => remaining.find((participant) => participant.id === id))
+      .filter((participant): participant is EnsembleParticipant => Boolean(participant))
+    const requestedSet = new Set(participantIds)
+    const nextRemaining = [
+      ...requested,
+      ...remaining.filter((participant) => !requestedSet.has(participant.id))
+    ]
+    remaining.length = 0
+    remaining.push(...nextRemaining)
+
+    const remainingSet = new Set(nextRemaining.map((participant) => participant.id))
+    const slotOrder = [...chat.ensemble.participants].sort((a, b) => a.order - b.order)
+    let cursor = 0
+    const reorderedSlots = slotOrder.map((participant) => {
+      if (!remainingSet.has(participant.id)) return participant
+      const next = nextRemaining[cursor]
+      cursor += 1
+      return next || participant
+    })
+    const orderById = new Map(
+      reorderedSlots.map((participant, index) => [participant.id, index + 1])
+    )
+    const nextParticipants = chat.ensemble.participants.map((participant) => ({
+      ...participant,
+      order: orderById.get(participant.id) || participant.order
+    }))
+    const activeRound =
+      chat.ensemble.activeRound?.roundId === runtime.roundId
+        ? {
+            ...chat.ensemble.activeRound,
+            participants: chat.ensemble.activeRound.participants.map((participant) => ({
+              ...participant,
+              order: orderById.get(participant.participantId) || participant.order
+            }))
+          }
+        : chat.ensemble.activeRound
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble,
+          participants: nextParticipants,
+          activeRound,
+          bossmanControlState: {
+            ...(chat.ensemble.bossmanControlState || {}),
+            completedRoundCount: completedCount,
+            lastReorderAtCompletedRound: completedCount
+          },
+          updatedAt: this.deps.nowIso()
+        },
+        updatedAt: this.deps.now()
+      },
+      'participant-updated'
+    )
+    this.appendRoundStatus(runtime.chatId, runtime.roundId, 'Bossman changed the remaining turn order.')
+    return {
+      ok: true,
+      tool: 'ensemble_bossman_control',
+      action: 'reorder_remaining',
+      roundId: runtime.roundId,
+      message: 'Bossman changed the remaining turn order.'
+    }
+  }
+
+  private transitionWorkSessionByBossman(
+    runtime: ActiveRoundRuntime,
+    action: Extract<EnsembleBossmanControlAction, 'pause_work_session' | 'complete_work_session'>,
+    reasonInput?: string
+  ): EnsembleBossmanControlResult {
+    const chat = this.deps.getChat(runtime.chatId)
+    const session = chat?.ensemble?.workSession
+    if (!chat?.ensemble || !session || !session.enabled || session.status !== 'active') {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action,
+        roundId: runtime.roundId,
+        message: 'Bossman Work Session control rejected: no active Work Session.',
+        error: 'no_active_work_session'
+      }
+    }
+    const reason =
+      reasonInput ||
+      (action === 'complete_work_session'
+        ? 'Bossman marked the Work Session complete.'
+        : 'Bossman paused the Work Session.')
+    const nowIso = this.deps.nowIso()
+    const status = action === 'complete_work_session' ? 'completed' : 'paused'
+    this.deps.saveChat({
+      ...chat,
+      ensemble: {
+        ...chat.ensemble,
+        workSession: {
+          ...session,
+          status,
+          endedReason: reason,
+          ...(status === 'completed' ? { endedAt: nowIso } : {})
+        },
+        updatedAt: nowIso
+      },
+      updatedAt: this.deps.now()
+    })
+    this.appendRoundStatus(runtime.chatId, runtime.roundId, `Bossman ${status === 'completed' ? 'completed' : 'paused'} the Work Session. ${reason}`)
+    return {
+      ok: true,
+      tool: 'ensemble_bossman_control',
+      action,
+      roundId: runtime.roundId,
+      message: `Bossman ${status === 'completed' ? 'completed' : 'paused'} the Work Session.`
+    }
+  }
+
+  private async replaceParticipantByBossman(
+    runtime: ActiveRoundRuntime,
+    input: EnsembleBossmanControlInput,
+    targetRun?: ActiveParticipantRun
+  ): Promise<EnsembleBossmanControlResult> {
+    const targetParticipantId = input.targetParticipantId || targetRun?.participant.id
+    const provider = input.replacement?.provider
+    if (!targetParticipantId || !provider) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'replace_participant',
+        roundId: runtime.roundId,
+        message: 'Bossman replace_participant requires targetParticipantId and replacement.provider.',
+        error: 'missing_replacement'
+      }
+    }
+    const chat = this.deps.getChat(runtime.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'replace_participant',
+        roundId: runtime.roundId,
+        message: 'Bossman replacement rejected: active chat is no longer an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const target = chat.ensemble.participants.find((participant) => participant.id === targetParticipantId)
+    if (!target) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'replace_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message: 'Bossman replacement rejected: target participant is not in the roster.',
+        error: 'stale_target'
+      }
+    }
+    if (!this.deps.probeParticipant) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'replace_participant',
+        roundId: runtime.roundId,
+        message: 'Bossman replacement rejected: provider health checks are unavailable.',
+        error: 'health_check_unavailable'
+      }
+    }
+    const replacementId = this.nextReplacementParticipantId(chat.ensemble.participants)
+    const replacement: EnsembleParticipant = {
+      id: replacementId,
+      provider,
+      enabled: true,
+      role: input.replacement?.role || providerLabel(provider),
+      instructions:
+        input.replacement?.instructions !== undefined
+          ? input.replacement.instructions
+          : target.instructions,
+      order: target.order,
+      ...(input.replacement?.model ? { model: input.replacement.model } : {}),
+      ...(input.replacement?.permissionPresetId
+        ? { permissionPresetId: input.replacement.permissionPresetId }
+        : target.permissionPresetId
+          ? { permissionPresetId: target.permissionPresetId }
+          : {}),
+      ...(input.replacement?.reasoningEffort
+        ? { reasoningEffort: input.replacement.reasoningEffort }
+        : {}),
+      ...(typeof input.replacement?.fastModeEnabled === 'boolean'
+        ? { fastModeEnabled: input.replacement.fastModeEnabled }
+        : {}),
+      ...(typeof input.replacement?.thinkingEnabled === 'boolean'
+        ? { thinkingEnabled: input.replacement.thinkingEnabled }
+        : {}),
+      linkedProviderSessionId: null
+    }
+    const health = await this.deps.probeParticipant(replacement)
+    if (!health.reachable) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'replace_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message: `Bossman replacement rejected: ${health.reason || `${provider} is not reachable`}.`,
+        error: 'replacement_unreachable'
+      }
+    }
+
+    const remaining = runtime.remainingParticipants || []
+    const pendingIndex = remaining.findIndex((participant) => participant.id === targetParticipantId)
+    const isActive =
+      targetRun ||
+      (runtime.activeRunId &&
+        this.runsByRunId.get(runtime.activeRunId)?.participant.id === targetParticipantId)
+    if (pendingIndex < 0 && !isActive) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'replace_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message: 'Bossman replacement rejected: target participant is no longer active or pending.',
+        error: 'stale_target'
+      }
+    }
+    if (pendingIndex >= 0) {
+      remaining.splice(pendingIndex, 1, replacement)
+    } else {
+      const activeRun =
+        targetRun ||
+        (runtime.activeRunId ? this.runsByRunId.get(runtime.activeRunId) : undefined)
+      if (activeRun) {
+        this.finalizeRun(activeRun, 'skipped', input.reason || 'Replaced by Bossman.')
+        if (runtime.activeRunId === activeRun.runId) runtime.activeRunId = undefined
+        runtime.activeScoutRunIds?.delete(activeRun.runId)
+        void this.deps.cancelRun(activeRun.participant.provider, activeRun.runId).catch(() => undefined)
+      }
+      remaining.unshift(replacement)
+    }
+
+    const latestChat = this.deps.getChat(runtime.chatId) || chat
+    const latestEnsemble = latestChat.ensemble || chat.ensemble
+    const replaceReason = input.reason || 'Replaced by Bossman.'
+    const nextParticipants = latestEnsemble.participants
+      .filter((participant) => participant.id !== targetParticipantId)
+      .concat(replacement)
+      .sort((a, b) => a.order - b.order)
+      .map((participant, index) => ({ ...participant, order: index + 1 }))
+    const replacementOrder = nextParticipants.find((participant) => participant.id === replacement.id)?.order || replacement.order
+    const activeRound =
+      latestEnsemble.activeRound?.roundId === runtime.roundId
+        ? {
+            ...latestEnsemble.activeRound,
+            participants: [
+              ...latestEnsemble.activeRound.participants.map((participant) =>
+                participant.participantId === targetParticipantId && pendingIndex >= 0
+                  ? {
+                      ...participant,
+                      status: 'skipped' as const,
+                      reason: replaceReason,
+                      endedAt: this.deps.nowIso()
+                    }
+                  : participant
+              ),
+              {
+                participantId: replacement.id,
+                provider: replacement.provider,
+                role: replacement.role,
+                order: replacementOrder,
+                status: 'idle' as const
+              }
+            ].map((participant) => ({
+              ...participant,
+              order:
+                nextParticipants.find((configured) => configured.id === participant.participantId)
+                  ?.order || participant.order
+            }))
+          }
+        : chat.ensemble.activeRound
+    this.saveChatWithCheckpoint(
+      {
+        ...latestChat,
+        ensemble: {
+          ...latestEnsemble,
+          participants: nextParticipants,
+          activeRound,
+          ...(latestEnsemble.bossmanParticipantId === targetParticipantId
+            ? { bossmanParticipantId: undefined, bossmanAutoApprovals: undefined }
+            : {}),
+          updatedAt: this.deps.nowIso()
+        },
+        updatedAt: this.deps.now()
+      },
+      'participant-updated'
+    )
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `Bossman replaced ${target.role || target.provider} with ${replacement.role || replacement.provider}.`
+    )
+    return {
+      ok: true,
+      tool: 'ensemble_bossman_control',
+      action: 'replace_participant',
+      roundId: runtime.roundId,
+      participantId: replacement.id,
+      message: `Bossman replaced ${target.role || target.provider} with ${replacement.role || replacement.provider}.`
+    }
+  }
+
+  private nextReplacementParticipantId(participants: EnsembleParticipant[]): string {
+    const existing = new Set(participants.map((participant) => participant.id))
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const id = `bossman-replacement-${Date.now().toString(36)}-${attempt}`
+      if (!existing.has(id)) return id
+    }
+    return `bossman-replacement-${Math.random().toString(36).slice(2, 10)}`
   }
 
   async fanoutForRun(runId: string | undefined, input: EnsembleFanoutInput): Promise<EnsembleFanoutResult> {
@@ -2337,6 +3016,11 @@ export class EnsembleOrchestrator {
       orchestrationMode,
       continuationHops: 0,
       maxContinuationHops,
+      ...(chat.ensemble.bossmanParticipantId
+        ? { bossmanParticipantId: chat.ensemble.bossmanParticipantId }
+        : {}),
+      bossmanBaselineParticipantIds: ordered.map((participant) => participant.id),
+      bossmanBaselineParticipantCount: ordered.length,
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
       participants: ordered.map((participant) => ({
         participantId: participant.id,
@@ -2410,6 +3094,11 @@ export class EnsembleOrchestrator {
       ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
       cancelled: false,
       queuedPrompts: [...carryOverQueue],
+      ...(chat.ensemble.bossmanParticipantId
+        ? { bossmanParticipantId: chat.ensemble.bossmanParticipantId }
+        : {}),
+      bossmanBaselineParticipantIds: ordered.map((participant) => participant.id),
+      bossmanBaselineParticipantCount: ordered.length,
       orchestrationMode,
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
       continuationHops: 0,
@@ -2439,6 +3128,7 @@ export class EnsembleOrchestrator {
     // for-loop iterated `participants` directly; reordering required
     // a queue + while-loop pattern.
     const remaining: EnsembleParticipant[] = [...participants]
+    runtime.remainingParticipants = remaining
     let dispatchAttempts = 0
     let unreachableFailures = 0
     if (this.deps.probeParticipant && remaining.length > 0 && !runtime.cancelled) {
@@ -3966,6 +4656,14 @@ export class EnsembleOrchestrator {
       })
       nextEscalationSignals = appendEscalationSignals(chat.ensemble.escalationSignals, fresh)
     }
+    const nextBossmanControlState =
+      status === 'completed'
+        ? {
+            ...(chat.ensemble.bossmanControlState || {}),
+            completedRoundCount:
+              (chat.ensemble.bossmanControlState?.completedRoundCount || 0) + 1
+          }
+        : chat.ensemble.bossmanControlState
     this.saveChatWithCheckpoint(
       {
         ...chat,
@@ -3979,6 +4677,7 @@ export class EnsembleOrchestrator {
                 [roundId]: summaryRecord
               }
             : chat.ensemble.roundSummaries,
+          ...(nextBossmanControlState ? { bossmanControlState: nextBossmanControlState } : {}),
           ...(nextBlackboard ? { blackboard: nextBlackboard } : {}),
           ...(nextEscalationSignals ? { escalationSignals: nextEscalationSignals } : {}),
           updatedAt: endedAt

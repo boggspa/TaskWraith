@@ -1295,6 +1295,76 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'ensemble_bossman_control',
+      description:
+        'In Ensemble Mode, allows the assigned Bossman participant to make event-bound orchestration decisions: skip/stop participants, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-Bossman callers and stale round/run/participant ids are rejected and audited.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: [
+              'skip_participant',
+              'stop_round',
+              'replace_participant',
+              'reorder_remaining',
+              'queue_followup',
+              'pause_work_session',
+              'complete_work_session'
+            ]
+          },
+          roundId: {
+            type: 'string',
+            description: 'Optional stale-command guard. Must match the active Ensemble round id.'
+          },
+          targetParticipantId: {
+            type: 'string',
+            description:
+              'Required for skip/replace unless targetRunId identifies the active target.'
+          },
+          targetRunId: {
+            type: 'string',
+            description: 'Optional stale-run guard for active participant or fan-out lane skips.'
+          },
+          participantIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'For reorder_remaining: pending participant ids in desired priority order. Omitted pending participants keep their relative order after these ids.'
+          },
+          prompt: {
+            type: 'string',
+            description: 'For queue_followup: prompt for the next queued round.'
+          },
+          reason: {
+            type: 'string',
+            description: 'Human-readable rationale recorded into the transcript/status metadata.'
+          },
+          replacement: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string', enum: selectableProviderIds() },
+              role: { type: 'string' },
+              instructions: { type: 'string' },
+              model: { type: 'string' },
+              permissionPresetId: { type: 'string' },
+              reasoningEffort: { type: 'string' },
+              fastModeEnabled: { type: 'boolean' },
+              thinkingEnabled: { type: 'boolean' }
+            },
+            required: ['provider']
+          }
+        },
+        required: ['action']
+      }
+    },
+    {
       name: 'list_ensemble_participants',
       description:
         'In Ensemble Mode, list the current participants, providers, roles, models, and per-round statuses for the active round.',

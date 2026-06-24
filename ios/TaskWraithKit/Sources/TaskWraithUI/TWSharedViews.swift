@@ -3978,7 +3978,8 @@ public struct EditableRosterStrip: View {
                     permissionPresetId: entry.permissionPresetId,
                     reasoningEffort: entry.reasoningEffort,
                     fastModeEnabled: entry.fastModeEnabled ?? false,
-                    thinkingEnabled: entry.thinkingEnabled ?? false
+                    thinkingEnabled: entry.thinkingEnabled ?? false,
+                    isBossman: entry.isBossman ?? false
                 )
             }
     }
@@ -4109,6 +4110,12 @@ public struct EditableRosterStrip: View {
                     .foregroundStyle(labelColor)
                     .lineLimit(1)
                     .strikethrough(retired, color: TWTheme.textMuted)
+                if entry.isBossman {
+                    Image(systemName: "crown.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.yellow)
+                        .accessibilityHidden(true)
+                }
                 if status == "done" {
                     Image(systemName: "checkmark")
                         .font(.system(size: 8, weight: .bold))
@@ -4157,9 +4164,17 @@ public struct EditableRosterStrip: View {
 
     private func commit() {
         guard !draft.isEmpty else { return }
+        normalizeBossmanMarker()
         pendingOrderIds = draft.map(\.id)
         model.updateEnsembleRoster(
             workspaceId: workspaceId, threadId: threadId, entries: draft)
+    }
+
+    private func normalizeBossmanMarker() {
+        guard let first = draft.firstIndex(where: { $0.isBossman }) else { return }
+        for index in draft.indices where index != first {
+            draft[index].isBossman = false
+        }
     }
 }
 
@@ -4229,6 +4244,10 @@ struct RosterChipEditor: View {
                 Section {
                     Toggle("Enabled in ensemble rounds", isOn: $entry.enabled)
                         .tint(TWTheme.providerAccent(entry.provider))
+                    Toggle(isOn: $entry.isBossman) {
+                        Label("Bossman", systemImage: entry.isBossman ? "crown.fill" : "crown")
+                    }
+                    .tint(.yellow)
                 }
                 Section("Role") {
                     TextField("Role name", text: $entry.role)

@@ -14118,6 +14118,42 @@ async function executeGeminiMcpTool(
       }))
       toolIsError = result.ok === false
       text = mcpJson(result)
+    } else if (toolName === 'ensemble_bossman_control') {
+      const result = await (ensembleOrchestratorRef?.bossmanControlForRun(context.appRunId, {
+        action:
+          args.action === 'skip_participant' ||
+          args.action === 'stop_round' ||
+          args.action === 'replace_participant' ||
+          args.action === 'reorder_remaining' ||
+          args.action === 'queue_followup' ||
+          args.action === 'pause_work_session' ||
+          args.action === 'complete_work_session'
+            ? args.action
+            : undefined,
+        roundId: optionalString(args.roundId || args.round_id),
+        targetParticipantId: optionalString(
+          args.targetParticipantId || args.target_participant_id
+        ),
+        targetRunId: optionalString(args.targetRunId || args.target_run_id),
+        participantIds: Array.isArray(args.participantIds)
+          ? args.participantIds.filter((id: unknown): id is string => typeof id === 'string')
+          : Array.isArray(args.participant_ids)
+            ? args.participant_ids.filter((id: unknown): id is string => typeof id === 'string')
+            : undefined,
+        prompt: optionalString(args.prompt),
+        reason: optionalString(args.reason),
+        replacement:
+          args.replacement && typeof args.replacement === 'object' && !Array.isArray(args.replacement)
+            ? (args.replacement as Record<string, any>)
+            : undefined
+      }) ?? Promise.resolve({
+        ok: false,
+        tool: 'ensemble_bossman_control' as const,
+        message: 'Ensemble orchestrator is not available.',
+        error: 'no_active_run' as const
+      }))
+      toolIsError = result.ok === false
+      text = mcpJson(result)
     } else if (toolName === 'list_ensemble_participants') {
       const result = ensembleOrchestratorRef?.listParticipantsForRun(context.appRunId) || {
         ok: false,
@@ -17619,9 +17655,34 @@ if (isGeminiMcpBridgeProcess) {
           if (next.filter((participant) => participant.enabled).length === 0) {
             return { ok: false, error: 'At least one participant must stay enabled' }
           }
+          const bossmanMarkedIndexes = action.participants
+            .map((entry, index) => (entry.isBossman === true ? index : -1))
+            .filter((index) => index >= 0)
+          if (bossmanMarkedIndexes.length > 1) {
+            return { ok: false, error: 'Only one participant may be marked as Bossman.' }
+          }
+          const markedBossmanParticipantId =
+            bossmanMarkedIndexes.length === 1 ? next[bossmanMarkedIndexes[0]]?.id : undefined
+          const preservedBossmanParticipantId =
+            bossmanMarkedIndexes.length === 0 &&
+            chat.ensemble.bossmanParticipantId &&
+            next.some((participant) => participant.id === chat.ensemble?.bossmanParticipantId)
+              ? chat.ensemble.bossmanParticipantId
+              : undefined
+          const bossmanParticipantId = markedBossmanParticipantId ?? preservedBossmanParticipantId
+          const bossmanAutoApprovals =
+            bossmanParticipantId && bossmanParticipantId === chat.ensemble.bossmanParticipantId
+              ? chat.ensemble.bossmanAutoApprovals
+              : undefined
           const updated: ChatRecord = {
             ...chat,
-            ensemble: { ...chat.ensemble, participants: next },
+            ensemble: {
+              ...chat.ensemble,
+              participants: next,
+              ...(bossmanParticipantId
+                ? { bossmanParticipantId, bossmanAutoApprovals }
+                : { bossmanParticipantId: undefined, bossmanAutoApprovals: undefined })
+            },
             updatedAt: Date.now()
           }
           AppStore.saveChat(updated)

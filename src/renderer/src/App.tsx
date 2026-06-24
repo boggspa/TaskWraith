@@ -67,6 +67,7 @@ import {
   AuditRunRecord,
   ActiveGoal,
   ActiveGoalStatus,
+  WorkSessionConfig,
   TranscriptMediaRef
 } from '../../main/store/types'
 import {
@@ -288,7 +289,7 @@ import { reasoningDisplayLabel, shortModelName } from './lib/composerChipFormat'
 import {
   deleteEnsembleRosterPreset,
   listEnsembleRosterPresets,
-  materializeParticipantsFromPreset,
+  materializeParticipantsFromPresetWithBossman,
   saveEnsembleRosterPresetFromParticipants,
   subscribeEnsembleRosterPresets,
   type EnsembleRosterPreset
@@ -14675,7 +14676,9 @@ function App(): React.JSX.Element {
   const applyEnsembleRosterPreset = useCallback(
     (preset: EnsembleRosterPreset) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble || isCurrentEnsembleRoundRunning) return
-      const participants = materializeParticipantsFromPreset(preset.participants)
+      const { participants, bossmanParticipantId } = materializeParticipantsFromPresetWithBossman(
+        preset.participants
+      )
       const nextMaxParticipants = Math.min(
         12,
         Math.max(preset.maxParticipants, participants.length, 2)
@@ -14696,6 +14699,8 @@ function App(): React.JSX.Element {
             ? { ensembleContextChars: preset.ensembleContextChars }
             : {}),
           participants,
+          bossmanParticipantId,
+          bossmanAutoApprovals: undefined,
           updatedAt: new Date().toISOString()
         }
       }
@@ -14865,9 +14870,19 @@ function App(): React.JSX.Element {
       synthesizerParticipantId
     }: WorkSessionSetupConfirmInput) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+      const bossmanParticipantId = currentChat.ensemble.bossmanParticipantId
+      const bossmanIsSessionParticipant =
+        Boolean(bossmanParticipantId) &&
+        currentChat.ensemble.participants.some((participant) => participant.id === bossmanParticipantId) &&
+        (config.allowedParticipantIds === null ||
+          config.allowedParticipantIds.includes(bossmanParticipantId as string))
+      const managedConfig: WorkSessionConfig = {
+        ...config,
+        managerParticipantId: bossmanIsSessionParticipant ? bossmanParticipantId : undefined
+      }
       updateChatById(currentChat.appChatId, (source) => {
         return applyWorkSessionConfirmation(source, {
-          config,
+          config: managedConfig,
           roundMode,
           synthesizerParticipantId
         })

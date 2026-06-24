@@ -405,6 +405,7 @@ export interface RemoteEnsembleRosterEntry {
   reasoningEffort?: string
   fastModeEnabled?: boolean
   thinkingEnabled?: boolean
+  isBossman?: boolean
 }
 
 /** A saved ensemble roster preset projected to paired devices (iOS Roster
@@ -427,6 +428,7 @@ export interface RemoteEnsembleState {
   status: 'idle' | 'running' | 'completed' | 'cancelled' | 'failed'
   orchestrationMode?: string
   activeParticipantId?: string
+  bossmanParticipantId?: string
   continuationHops?: number
   maxContinuationHops?: number
   queuedPromptCount: number
@@ -1142,6 +1144,7 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
     status: activeRound?.status ?? 'idle',
     orchestrationMode: activeRound?.orchestrationMode ?? ensemble.orchestrationMode,
     activeParticipantId: activeRound?.activeParticipantId,
+    bossmanParticipantId: ensemble.bossmanParticipantId,
     continuationHops: activeRound?.continuationHops,
     maxContinuationHops: activeRound?.maxContinuationHops ?? ensemble.maxContinuationHops,
     queuedPromptCount: queuedPromptCount(activeRound),
@@ -1165,6 +1168,7 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
           role: participant.role,
           enabled: participant.enabled,
           order: participant.order,
+          ...(participant.id === ensemble.bossmanParticipantId ? { isBossman: true } : {}),
           ...(participant.model ? { model: participant.model } : {}),
           ...(contextTokens > 0 ? { contextTokens } : {}),
           ...(participant.instructions

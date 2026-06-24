@@ -583,6 +583,13 @@ export interface EnsembleRoundState {
   orchestrationMode?: EnsembleOrchestrationMode
   continuationHops?: number
   maxContinuationHops?: number
+  /** Bossman captured at round start. Event-bound control commands must
+   * resolve against this id rather than mutable role/provider labels. */
+  bossmanParticipantId?: string
+  /** Participant ids present at the start of the round. Used to detect
+   * replacement/addition commands that would exceed the round baseline. */
+  bossmanBaselineParticipantIds?: string[]
+  bossmanBaselineParticipantCount?: number
   /**
    * 1.0.5-C1 — Concurrent-mode lane records, keyed by `laneId`.
    * Only populated when the round dispatched in concurrent mode
@@ -829,6 +836,21 @@ export interface EnsembleConfig {
    */
   ensembleContextChars?: number
   participants: EnsembleParticipant[]
+  /** Optional user-designated Ensemble manager. No Bossman is assigned by
+   * default; controls are rejected unless the active run belongs to this id. */
+  bossmanParticipantId?: string
+  /** Opt-in auto-approval preference. The current runtime only records and
+   * surfaces this explicit consent; approval execution remains constrained by
+   * the permission ledger/policy layer. */
+  bossmanAutoApprovals?: {
+    enabled: boolean
+    mode: 'permission_preset_once'
+    confirmedAt: string
+  }
+  bossmanControlState?: {
+    completedRoundCount?: number
+    lastReorderAtCompletedRound?: number
+  }
   sessionActivityLedger?: SessionActivityLedgerEntry[]
   activeRound?: EnsembleRoundState
   updatedAt?: string
@@ -953,6 +975,9 @@ export interface WorkSessionConfig {
   /** Designated lead — gets the first speaker slot of every round.
    * Optional; absent = roster-order. */
   leadParticipantId?: string
+  /** Captured from the Ensemble Bossman when a Work Session starts. When set,
+   * only this participant may advance or complete the autonomous loop. */
+  managerParticipantId?: string
   /** Permission preset clamped over each participant for the
    * duration of the session. Fed into the existing
    * `resolveEffectiveRunPermissions` pipeline so workspace grants +

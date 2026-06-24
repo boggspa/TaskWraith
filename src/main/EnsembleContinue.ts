@@ -85,6 +85,7 @@ export interface EnsembleContinueResult {
   error?:
     | 'no_active_work_session'
     | 'participant_not_allowed'
+    | 'work_session_manager_required'
     | 'continuation_already_queued'
     | 'missing_next_prompt'
     | 'invalid_acceptance_status'
@@ -170,6 +171,20 @@ export function handleEnsembleContinue(
     }
   }
   const acceptanceStatus: EnsembleContinueAcceptance = raw ?? 'inProgress'
+
+  if (
+    workSession.managerParticipantId &&
+    deps.callingParticipantId !== workSession.managerParticipantId &&
+    (acceptanceStatus === 'complete' || acceptanceStatus === 'inProgress')
+  ) {
+    return {
+      ok: false,
+      status: 'active',
+      message: `ensemble_continue: this Work Session is managed by Bossman participant ${workSession.managerParticipantId}. Other participants may report findings, but cannot advance or complete the autonomous loop.`,
+      queued: false,
+      error: 'work_session_manager_required'
+    }
+  }
 
   // --- 'complete' --------------------------------------------------
   if (acceptanceStatus === 'complete') {

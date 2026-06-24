@@ -91,6 +91,7 @@ function mapSnapshot(
     role: typeof entry.role === 'string' && entry.role ? entry.role : (entry.provider as string),
     enabled: typeof entry.enabled === 'boolean' ? entry.enabled : true,
     order: typeof entry.order === 'number' ? entry.order : index + 1,
+    ...(entry.isBossman === true ? { isBossman: true } : {}),
     ...(typeof entry.model === 'string' ? { model: entry.model } : {}),
     ...(brief !== undefined ? { brief } : {}),
     ...(typeof entry.permissionPresetId === 'string'

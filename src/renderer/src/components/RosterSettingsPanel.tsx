@@ -16,7 +16,7 @@ import {
   duplicateEnsembleRosterPreset,
   getEnsembleRosterPreset,
   listEnsembleRosterPresets,
-  materializeParticipantsFromPreset,
+  materializeParticipantsFromPresetWithBossman,
   snapshotParticipantsForPreset,
   subscribeEnsembleRosterPresets,
   upsertEnsembleRosterPreset,
@@ -52,6 +52,7 @@ import { ProviderBadgeIcon } from './Sidebar'
 type RosterEditing = {
   meta: Omit<EnsembleRosterPreset, 'participants'>
   participants: EnsembleParticipant[]
+  bossmanParticipantId?: string
 }
 
 interface RosterSettingsPanelProps {
@@ -124,8 +125,10 @@ interface RosterParticipantRowProps {
   grokAvailable: boolean
   cursorAvailable: boolean
   showApplyToAll: boolean
+  isBossman: boolean
   onMove: (id: string, direction: -1 | 1) => void
   onRemove: (id: string) => void
+  onSetBossman: (id: string | undefined) => void
   onPatch: (id: string, patch: Partial<EnsembleParticipant>, persist?: boolean) => void
   onFlush: () => void
   onApplyPermissionsToAll: (source: EnsembleParticipant) => void
@@ -141,8 +144,10 @@ function RosterParticipantRow({
   grokAvailable,
   cursorAvailable,
   showApplyToAll,
+  isBossman,
   onMove,
   onRemove,
+  onSetBossman,
   onPatch,
   onFlush,
   onApplyPermissionsToAll
@@ -348,6 +353,15 @@ function RosterParticipantRow({
           </label>
           <button
             type="button"
+            className={`settings-roster-bossman${isBossman ? ' is-active' : ''}`}
+            onClick={() => onSetBossman(isBossman ? undefined : participant.id)}
+            title={isBossman ? 'Clear Bossman' : 'Set as Bossman'}
+            aria-pressed={isBossman}
+          >
+            Bossman
+          </button>
+          <button
+            type="button"
             className="settings-roster-remove"
             onClick={() => onRemove(participant.id)}
             disabled={!canRemove}
@@ -439,7 +453,7 @@ export function RosterSettingsPanel({
     try {
       upsertEnsembleRosterPreset({
         ...next.meta,
-        participants: snapshotParticipantsForPreset(next.participants)
+        participants: snapshotParticipantsForPreset(next.participants, next.bossmanParticipantId)
       })
     } catch {
       // floor/name guards keep this valid; defensive
@@ -481,9 +495,11 @@ export function RosterSettingsPanel({
       return
     }
     const { participants, ...meta } = preset
+    const materialized = materializeParticipantsFromPresetWithBossman(participants)
     const loaded: RosterEditing = {
       meta,
-      participants: materializeParticipantsFromPreset(participants)
+      participants: materialized.participants,
+      bossmanParticipantId: materialized.bossmanParticipantId
     }
     editingRef.current = loaded
     dirtyRef.current = false
@@ -631,7 +647,24 @@ export function RosterSettingsPanel({
       const participants = current.participants
         .filter((participant) => participant.id !== id)
         .map((participant, i) => ({ ...participant, order: i + 1 }))
-      commit({ ...current, participants })
+      commit({
+        ...current,
+        participants,
+        bossmanParticipantId:
+          current.bossmanParticipantId === id ? undefined : current.bossmanParticipantId
+      })
+    },
+    [commit]
+  )
+
+  const setBossmanParticipant = useCallback(
+    (id: string | undefined): void => {
+      const current = editingRef.current
+      if (!current) return
+      commit({
+        ...current,
+        bossmanParticipantId: id && current.participants.some((p) => p.id === id) ? id : undefined
+      })
     },
     [commit]
   )
@@ -824,8 +857,10 @@ export function RosterSettingsPanel({
                     grokAvailable={grokAvailable}
                     cursorAvailable={cursorAvailable}
                     showApplyToAll={orderedParticipants.length > 1}
+                    isBossman={editing.bossmanParticipantId === participant.id}
                     onMove={moveParticipant}
                     onRemove={removeParticipant}
+                    onSetBossman={setBossmanParticipant}
                     onPatch={patchParticipant}
                     onFlush={flushText}
                     onApplyPermissionsToAll={applyPermissionsToAll}

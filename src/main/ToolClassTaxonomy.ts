@@ -149,6 +149,7 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'create_handoff_card',
   'agent_delegation_role',
   'ensemble_continue',
+  'ensemble_bossman_control',
   'scout_brief',
   'blackboard_post',
   // Persistent thread goal lifecycle (no workspace mutation).

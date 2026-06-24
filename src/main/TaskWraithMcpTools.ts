@@ -80,6 +80,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'ensemble_yield',
   'ensemble_send',
   'ensemble_fanout',
+  'ensemble_bossman_control',
   'list_ensemble_participants',
   'schedule_wakeup',
   'cancel_wakeup',
