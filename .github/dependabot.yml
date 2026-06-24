@@ -1,0 +1,42 @@
+# Dependabot — surface outdated / known-vulnerable dependencies as reviewable PRs.
+#
+# Kept deliberately low-noise: minor + patch bumps are GROUPED into a single
+# weekly PR per ecosystem; majors still arrive individually (they need review
+# anyway). This complements `npm run security:deps` rather than replacing it.
+#
+# NOTE: a Dependabot PR that bumps a native / install-script dependency will go
+# RED on `security:supply-chain` until its pinned `pkg@version` entry in
+# scripts/security-supply-chain-check.cjs is updated to match — that is the
+# install-script allowlist working as intended, not a false alarm.
+#
+# This file configures VERSION updates only. Automated SECURITY-advisory PRs are
+# a separate switch: Settings → Code security → "Dependabot security updates".
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(dev-deps)"
+
+  # Keep workflow actions (actions/checkout, setup-node, …) current + pinnable —
+  # a supply-chain surface that's easy to forget.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(ci)"
