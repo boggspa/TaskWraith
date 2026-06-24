@@ -1071,6 +1071,11 @@ interface ActiveRoundRuntime {
    * grants — matches pre-AT4 behaviour for those rounds.
    */
   externalPathGrants?: ExternalPathGrant[]
+  /**
+   * Set for a scheduled/workflow occurrence; forces read-only
+   * participant postures (no unattended auto-accept of edits).
+   */
+  unattended?: boolean
   pendingWakeups?: Map<string, EnsembleWakeupRecord>
   readyWakeups?: EnsembleWakeupRecord[]
   wakeWaiter?: () => void
@@ -1142,6 +1147,13 @@ export class EnsembleOrchestrator {
      * and only dispatches read-only participants in parallel for now.
      */
     concurrentMode?: boolean
+    /**
+     * P1b — set for a scheduled/workflow occurrence (unattended run).
+     * Forces every participant's posture to read-only so an unattended
+     * scheduled ensemble can't silently auto-accept edits via a
+     * write-capable participant preset.
+     */
+    unattended?: boolean
   }): { status: 'started' | 'queued' | 'steered' | 'ignored'; roundId?: string } {
     // 1.0.4-AF — strip a leading `/discuss` (alias `/meta`) token so
     // the slash never reaches the panel verbatim. The flag flows
@@ -1169,7 +1181,8 @@ export class EnsembleOrchestrator {
           parsed.selfReflective,
           input.externalPathGrants,
           input.concurrentMode,
-          input.discordContextSnapshots
+          input.discordContextSnapshots,
+          input.unattended
         )
         this.appendRoundStatus(
           input.chatId,
@@ -1223,7 +1236,8 @@ export class EnsembleOrchestrator {
       parsed.selfReflective,
       input.externalPathGrants,
       input.concurrentMode,
-      input.discordContextSnapshots
+      input.discordContextSnapshots,
+      input.unattended
     )
     return { status: 'started', roundId }
   }
@@ -3047,7 +3061,8 @@ export class EnsembleOrchestrator {
      */
     externalPathGrants: ExternalPathGrant[] = [],
     concurrentMode?: boolean,
-    discordContextSnapshotsInput?: DiscordContextSnapshot[]
+    discordContextSnapshotsInput?: DiscordContextSnapshot[],
+    unattended?: boolean
   ): string {
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) throw new Error('Ensemble chat not found.')
@@ -3189,7 +3204,8 @@ export class EnsembleOrchestrator {
       continuationHops: 0,
       maxContinuationHops,
       ...(selfReflective ? { selfReflective: true } : {}),
-      ...(externalPathGrants.length > 0 ? { externalPathGrants: [...externalPathGrants] } : {})
+      ...(externalPathGrants.length > 0 ? { externalPathGrants: [...externalPathGrants] } : {}),
+      ...(unattended ? { unattended: true } : {})
     }
     this.roundsByChatId.set(chatId, runtime)
     if (concurrentFallbackReason) {
@@ -4948,6 +4964,28 @@ export class EnsembleOrchestrator {
       presetId?: string | null
     } = {}
   ): EffectiveRunPermissions {
+    // P1b — unattended (scheduled/workflow) ensemble clamp. A scheduled
+    // ensemble round runs with no human at the keyboard, so a
+    // write-capable participant preset (or a workspace-write session
+    // override) would silently auto-accept edits. Force the safe
+    // read-only posture for EVERY participant of an unattended round,
+    // regardless of preset / overrides / work-session config. This is
+    // the single chokepoint for both the serial writer and every
+    // fan-out lane, and the read_only preset resolves to approvalMode
+    // 'plan' + readOnly:true, so both signing sites sign the safe
+    // posture automatically.
+    const roundUnattended = this.roundsByChatId.get(chat.appChatId)?.unattended === true
+    if (roundUnattended) {
+      return resolveEffectiveRunPermissions({
+        provider: participant.provider,
+        workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
+        settings: this.deps.getSettings(),
+        presetId: 'read_only',
+        overrides: null
+        // Deliberately drop explicitExternalPathGrants: an unattended
+        // round must not widen file access via composer-supplied grants.
+      })
+    }
     // 1.0.4-AK3 — Work Session permission clamp. When an active
     // Work Session is in flight, the session-wide
     // `permissionPresetId` overrides per-participant presets for

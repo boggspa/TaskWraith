@@ -24705,7 +24705,11 @@ if (isGeminiMcpBridgeProcess) {
           ...(payload?.dmTargetParticipantId
             ? { dmTargetParticipantId: payload.dmTargetParticipantId }
             : {}),
-          ...(externalPathGrants.length > 0 ? { externalPathGrants } : {})
+          ...(externalPathGrants.length > 0 ? { externalPathGrants } : {}),
+          // P1b — a scheduled occurrence is unattended; the orchestrator
+          // clamps every participant to a read-only posture so an
+          // unattended round can't auto-accept edits.
+          unattended: Boolean(payload?.scheduledTaskId)
         })
         // Scheduled ensemble: remember roundId -> scheduledTaskId so the round-settle
         // hook can mark the task terminal. Keyed by roundId so only THIS round counts.

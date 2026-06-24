@@ -5068,6 +5068,67 @@ Next action:
     )
     expect(scoutNote).toBeUndefined()
   })
+
+  it('P1b: clamps every participant to a read-only posture for an unattended (scheduled) round', async () => {
+    // Default fixture: Claude (read_only) then Codex (workspace_write).
+    // An unattended/scheduled round must force BOTH to read-only so a
+    // write-capable participant preset can't auto-accept edits with no
+    // human at the keyboard. Claude is read-only natively, so the
+    // load-bearing assertion is on Codex (the write-capable seat); we
+    // drive Codex by completing Claude's run first.
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run the scheduled occurrence.',
+      event: { sender: {} as Electron.WebContents },
+      unattended: true
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('claude')
+    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('read_only')
+    expect(harness.dispatched[0].effectivePermissions?.readOnly).toBe(true)
+    expect(harness.dispatched[0].approvalMode).toBe('plan')
+
+    // Advance to the write-capable Codex participant.
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    // Codex carries `workspace_write` in the fixture; the unattended
+    // clamp must override it to read-only (plan + readOnly).
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('read_only')
+    expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(true)
+    expect(harness.dispatched[1].effectivePermissions?.approvalMode).toBe('plan')
+    expect(harness.dispatched[1].approvalMode).toBe('plan')
+    expect(harness.dispatched[1].effectivePermissions?.agenticServices.shellCommands).toBe('deny')
+    expect(harness.dispatched[1].effectivePermissions?.agenticServices.fileChanges).toBe('deny')
+  })
+
+  it('P1b: an interactive round (unattended omitted) preserves the write-capable preset', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run interactively.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('claude')
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('workspace_write')
+    expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(false)
+  })
 })
 
 describe('parseSelfReflectivePrefix', () => {
