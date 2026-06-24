@@ -7,7 +7,18 @@ import type {
   RunQueueJobStatus
 } from '../../../main/store/types'
 
-const ACTIVE_STATUSES: RunQueueJobStatus[] = ['queued', 'starting', 'active']
+type ActiveRunQueueStatus = RunQueueJobStatus | 'promoting' | 'steer_promoting'
+
+const ACTIVE_STATUSES: ActiveRunQueueStatus[] = [
+  'queued',
+  'starting',
+  'active',
+  'promoting',
+  'steer_promoting'
+]
+
+const isActiveQueueStatus = (status: string): status is ActiveRunQueueStatus =>
+  (ACTIVE_STATUSES as readonly string[]).includes(status)
 
 /** Right-chevron matching the other sidebar section headers (rotates when
  * expanded). Inlined to avoid a Sidebar ↔ ActiveRunsSection import cycle. */
@@ -60,7 +71,9 @@ export function ActiveRunsSection({
   const refresh = useCallback(async () => {
     if (typeof window.api.getRunQueueJobs !== 'function') return
     try {
-      const result = await window.api.getRunQueueJobs({ statuses: ACTIVE_STATUSES })
+      const result = await window.api.getRunQueueJobs({
+        statuses: ACTIVE_STATUSES as unknown as RunQueueJobStatus[]
+      })
       setJobs(Array.isArray(result) ? result : [])
     } catch {
       setJobs([])
@@ -93,7 +106,10 @@ export function ActiveRunsSection({
     return () => window.removeEventListener('focus', onFocus)
   }, [refresh])
 
-  const visibleJobs = jobs.filter((job) => ACTIVE_STATUSES.includes(job.status))
+  const visibleJobs = jobs.filter(
+    (job): job is RunQueueJob & { status: ActiveRunQueueStatus } =>
+      isActiveQueueStatus(job.status)
+  )
 
   // 1.0.6 — persistent section: always render (so it permanently occupies the
   // top slot under Search / above Pinned), collapsible like the other
@@ -179,9 +195,11 @@ function formatElapsed(job: RunQueueJob): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
-function statusLabel(status: RunQueueJobStatus): string {
+function statusLabel(status: ActiveRunQueueStatus): string {
   if (status === 'queued') return 'Queued'
   if (status === 'starting') return 'Starting'
+  if (status === 'promoting') return 'Promoting'
+  if (status === 'steer_promoting') return 'Steering'
   // "Active" reads more naturally than "Running" and pairs with the
   // contrast-aware accent shimmer-sweep CSS hook on `.tone-running`.
   if (status === 'active') return 'Active'
@@ -189,9 +207,15 @@ function statusLabel(status: RunQueueJobStatus): string {
 }
 
 function statusTone(
-  status: RunQueueJobStatus
+  status: ActiveRunQueueStatus
 ): 'success' | 'warning' | 'danger' | 'muted' | 'running' {
-  if (status === 'active' || status === 'starting') return 'running'
+  if (
+    status === 'active' ||
+    status === 'starting' ||
+    status === 'promoting' ||
+    status === 'steer_promoting'
+  )
+    return 'running'
   return 'muted'
 }
 

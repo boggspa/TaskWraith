@@ -1,6 +1,130 @@
-import type { ChatRecord, RunQueueJob } from '../../../main/store/types'
+import type { ChatMessage, ChatRecord, RunQueueJob } from '../../../main/store/types'
 import type { QueuedMessageRowEntry } from '../components/QueuedMessagesAboveRow'
 import type { QueuedRunRequest } from './runRequestTypes'
+
+type QueuedRunLifecycleStatus =
+  | 'queued'
+  | 'dispatched'
+  | 'promoted'
+  | 'cancelled'
+  | 'edited'
+  | 'unknown'
+
+type QueuedRunLifecycleProjectionInput = {
+  messages: ChatMessage[]
+  pendingQueuedAppRunIds?: ReadonlySet<string>
+  queuedRunStatusByAppRunId?: Partial<Record<string, string>>
+}
+
+const WILL_DISPATCH_SUFFIX =
+  /\n—\s*Will dispatch when this chat's current [^\n.]+\.?\s*(?:\n|$)/
+
+const stripQueuedLifecycleSuffix = (content: string): string => content.replace(WILL_DISPATCH_SUFFIX, '').trim()
+
+const coerceQueuedLifecycleStatus = (
+  appRunId: string,
+  pendingQueuedAppRunIds?: ReadonlySet<string>,
+  queuedRunStatusByAppRunId?: Partial<Record<string, string>>
+): QueuedRunLifecycleStatus => {
+  if (pendingQueuedAppRunIds && pendingQueuedAppRunIds.has(appRunId)) {
+    return 'queued'
+  }
+  const rawStatus = typeof queuedRunStatusByAppRunId?.[appRunId] === 'string'
+    ? queuedRunStatusByAppRunId[appRunId]
+    : undefined
+  switch (rawStatus) {
+    case 'queued':
+      return 'queued'
+    case 'steer_promoting':
+    case 'promoted':
+      return 'promoted'
+    case 'cancelled':
+    case 'failed':
+      return 'cancelled'
+    case 'completed':
+      return 'dispatched'
+    case 'active':
+    case 'starting':
+    case 'dispatched':
+      return 'dispatched'
+    case 'edited':
+      return 'edited'
+    default:
+      return 'unknown'
+  }
+}
+
+const queuedLifecycleSuffix = (status: QueuedRunLifecycleStatus): string | null => {
+  switch (status) {
+    case 'promoted':
+      return '— Promoted to dispatch'
+    case 'cancelled':
+      return '— Cancelled before dispatch'
+    case 'edited':
+      return '— Removed from queue for editing'
+    case 'dispatched':
+    case 'unknown':
+      return '— Run no longer queued'
+    default:
+      return null
+  }
+}
+
+const projectQueuedLifecycleMessageContent = (
+  content: string,
+  status: QueuedRunLifecycleStatus
+): string => {
+  if (status === 'queued') return content
+  const stripped = stripQueuedLifecycleSuffix(content)
+  const suffix = queuedLifecycleSuffix(status)
+  if (!suffix) return stripped
+  if (stripped === content && content.includes('—')) return content
+  return `${stripped}\n${suffix}`
+}
+
+export const deriveQueuedLifecycleProjection = ({
+  messages,
+  pendingQueuedAppRunIds,
+  queuedRunStatusByAppRunId
+}: QueuedRunLifecycleProjectionInput): ChatMessage[] => {
+  if (!Array.isArray(messages) || messages.length === 0) return []
+  const projected: ChatMessage[] = []
+  for (const message of messages) {
+    if (message?.metadata?.kind !== 'queuedRunRequest') {
+      projected.push(message)
+      continue
+    }
+    const appRunId =
+      typeof message.metadata?.appRunId === 'string' && message.metadata.appRunId
+        ? message.metadata.appRunId
+        : undefined
+    if (!appRunId) {
+      projected.push({
+        ...message,
+        role: 'system'
+      })
+      continue
+    }
+    const status = coerceQueuedLifecycleStatus(
+      appRunId,
+      pendingQueuedAppRunIds,
+      queuedRunStatusByAppRunId
+    )
+    if (status === 'queued') {
+      projected.push({
+        ...message,
+        role: 'system'
+      })
+      continue
+    }
+    projected.push({
+      ...message,
+      role: 'system',
+      content: projectQueuedLifecycleMessageContent(message.content, status)
+    })
+  }
+  return projected
+}
 
 export const collectRunQueueJobIds = (jobs: RunQueueJob[]): Set<string> => {
   const ids = new Set<string>()

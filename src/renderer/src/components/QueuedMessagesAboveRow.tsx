@@ -77,6 +77,12 @@ function truncatePrompt(prompt: string): string {
   return `${trimmed.slice(0, PROMPT_PREVIEW_LIMIT)}…`
 }
 
+function getPositionedRowLabel(entry: QueuedMessageRowEntry, position: number, total: number): string {
+  const prompt = truncatePrompt(entry.prompt)
+  const positionLabel = `${position} of ${total}`
+  return `Queued message ${positionLabel} from ${getProviderName(entry.provider)}: ${prompt}`
+}
+
 function resolveDmRoleLabel(
   chat: ChatRecord | null,
   participantId: string | undefined
@@ -92,7 +98,7 @@ function resolveDmRoleLabel(
  * by unrelated parent (App) state changes. The composer draft state
  * lives at App-level, so every keystroke re-runs the App render
  * body; without memo here, this component also re-renders on every
- * keystroke even though its props (chat, entries, the four handlers)
+ * keystroke even though its props (chat, entries, onEdit, onDelete, onSteer, onReorder)
  * are all `useMemo`/`useCallback`'d at the call site and don't
  * change. With memo, typing in the composer no longer drags this
  * subtree through the reconciler. Helps most on long threads where
@@ -108,7 +114,7 @@ function QueuedMessagesAboveRowImpl({
 }: QueuedMessagesAboveRowProps): React.JSX.Element | null {
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
-  const listRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<HTMLUListElement | null>(null)
 
   const handleReorder = useCallback(
     (sourceId: string, targetId: string | null) => {
@@ -126,11 +132,30 @@ function QueuedMessagesAboveRowImpl({
     [entries, onReorder]
   )
 
+  const handleMove = useCallback(
+    (sourceId: string, offset: -1 | 1) => {
+      const sourceIndex = entries.findIndex((entry) => entry.id === sourceId)
+      if (sourceIndex === -1) return
+      const targetIndex = sourceIndex + offset
+      if (targetIndex < 0 || targetIndex >= entries.length) return
+      const next = [...entries]
+      const [moved] = next.splice(sourceIndex, 1)
+      next.splice(targetIndex, 0, moved)
+      onReorder(next.map((entry) => entry.id))
+    },
+    [entries, onReorder]
+  )
+
   if (!entries.length) return null
 
   return (
     <div className="queued-messages-above-row" role="region" aria-label="Queued messages">
-      <div className="queued-messages-above-row-list" ref={listRef}>
+      <ul
+        className="queued-messages-above-row-list"
+        role="list"
+        ref={listRef}
+        style={{ listStyle: 'none', margin: 0, padding: 0 }}
+      >
         {entries.map((entry, index) => (
           <QueuedMessageRow
             key={entry.id}
@@ -141,15 +166,19 @@ function QueuedMessagesAboveRowImpl({
             dmRoleLabel={resolveDmRoleLabel(chat, entry.dmTargetParticipantId)}
             isDragOver={dragOverId === entry.id && dragId !== entry.id}
             isDragging={dragId === entry.id}
+            canMoveUp={index > 0}
+            canMoveDown={index < entries.length - 1}
             onEdit={() => onEdit(entry.id)}
             onDelete={() => onDelete(entry.id)}
             onSteer={() => onSteer(entry.id)}
+            onMoveUp={() => handleMove(entry.id, -1)}
+            onMoveDown={() => handleMove(entry.id, 1)}
             onDragStart={() => setDragId(entry.id)}
             onDragHover={(overId) => setDragOverId(overId)}
             onDragEnd={(droppedOnId) => handleReorder(entry.id, droppedOnId)}
           />
         ))}
-      </div>
+      </ul>
     </div>
   )
 }
@@ -172,9 +201,13 @@ interface QueuedMessageRowProps {
   dmRoleLabel: string | null
   isDragOver: boolean
   isDragging: boolean
+  canMoveUp: boolean
+  canMoveDown: boolean
   onEdit: () => void
   onDelete: () => void
   onSteer: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
   onDragStart: () => void
   onDragHover: (overId: string | null) => void
   onDragEnd: (droppedOnId: string | null) => void
@@ -188,14 +221,21 @@ function QueuedMessageRow({
   dmRoleLabel,
   isDragOver,
   isDragging,
+  canMoveUp,
+  canMoveDown,
   onEdit,
   onDelete,
   onSteer,
+  onMoveUp,
+  onMoveDown,
   onDragStart,
   onDragHover,
   onDragEnd
 }: QueuedMessageRowProps): React.JSX.Element {
-  const rowRef = useRef<HTMLDivElement | null>(null)
+  const rowLabel = getPositionedRowLabel(entry, position, total)
+  const providerLabel = getProviderName(entry.provider)
+  const moveUpPosition = Math.max(position - 1, 1)
+  const moveDownPosition = Math.min(position + 1, total)
 
   const handlePointerDown = useCallback(
     (event: React.PointerEvent) => {
@@ -257,12 +297,15 @@ function QueuedMessageRow({
   )
 
   return (
-    <div
-      ref={rowRef}
+    <li
+      role="listitem"
+      aria-label={rowLabel}
+      aria-posinset={position}
+      aria-setsize={total}
       data-queued-id={entry.id}
       onPointerDown={handlePointerDown}
       className={`queued-messages-row provider-${entry.provider} ${isDragging ? 'is-dragging' : ''} ${isDragOver ? 'is-drag-over' : ''}`}
-      title={`Queued message ${position} of ${total}. Drag to reorder.`}
+      title={`${rowLabel}. Drag to reorder.`}
     >
       <span className="queued-messages-row-meta" aria-hidden>
         <ProviderBadgeIcon provider={entry.provider} />
@@ -275,14 +318,42 @@ function QueuedMessageRow({
       <span className="queued-messages-row-actions">
         <button
           type="button"
+          className="queued-messages-row-action queued-messages-row-action-move"
+          onClick={(event) => {
+            event.stopPropagation()
+            onMoveUp()
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          disabled={!canMoveUp}
+          title={`Move queued message ${position} to position ${moveUpPosition} in the queue.`}
+          aria-label={`Move ${providerLabel} queued message ${position} up to ${moveUpPosition} in the queue`}
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          className="queued-messages-row-action queued-messages-row-action-move"
+          onClick={(event) => {
+            event.stopPropagation()
+            onMoveDown()
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          disabled={!canMoveDown}
+          title={`Move queued message ${position} to position ${moveDownPosition} in the queue.`}
+          aria-label={`Move ${providerLabel} queued message ${position} down to ${moveDownPosition} in the queue`}
+        >
+          ↓
+        </button>
+        <button
+          type="button"
           className="queued-messages-row-action queued-messages-row-action-steer"
           onClick={(event) => {
             event.stopPropagation()
             onSteer()
           }}
           onPointerDown={(event) => event.stopPropagation()}
-          title="Steer: cancel the active run and dispatch this message now."
-          aria-label="Steer queued message"
+          title={`Steer ${providerLabel} queued message ${position}: dispatch this queued message now.`}
+          aria-label={`Steer ${providerLabel} queued message ${position} from the queue now`}
         >
           ↳ Steer
         </button>
@@ -294,8 +365,8 @@ function QueuedMessageRow({
             onEdit()
           }}
           onPointerDown={(event) => event.stopPropagation()}
-          title="Edit: load this prompt into the composer for revision."
-          aria-label="Edit queued message"
+          title={`Edit ${providerLabel} queued message ${position}: load this prompt into the composer.`}
+          aria-label={`Edit ${providerLabel} queued message ${position} in the composer`}
         >
           Edit
         </button>
@@ -307,12 +378,12 @@ function QueuedMessageRow({
             onDelete()
           }}
           onPointerDown={(event) => event.stopPropagation()}
-          title="Delete this queued message."
-          aria-label="Delete queued message"
+          title={`Delete ${providerLabel} queued message ${position} from the queue.`}
+          aria-label={`Delete ${providerLabel} queued message ${position} from the queue`}
         >
           ✕
         </button>
       </span>
-    </div>
+    </li>
   )
 }

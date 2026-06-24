@@ -15,7 +15,12 @@ const baseChat = (patch: Partial<ChatRecord> = {}): ChatRecord =>
     ...patch
   }) as ChatRecord
 
-type RunLike = { endedAt?: string; exitCode?: number; startedAt?: string }
+type RunLike = {
+  endedAt?: string
+  exitCode?: number
+  startedAt?: string
+  suppressRunSummary?: boolean
+}
 const withRuns = (...list: RunLike[]): Partial<ChatRecord> =>
   ({ runs: list }) as unknown as Partial<ChatRecord>
 
@@ -39,7 +44,12 @@ const ensemblePatch = (status: 'running' | 'completed' | 'cancelled'): Partial<C
 
 describe('RUNNING_RUN_QUEUE_STATUSES', () => {
   it('mirrors the canonical active set in src/main/RunQueue.ts (narrow, no queued/paused)', () => {
-    expect([...RUNNING_RUN_QUEUE_STATUSES].sort()).toEqual(['active', 'cancelling', 'starting'])
+    expect([...RUNNING_RUN_QUEUE_STATUSES].sort()).toEqual([
+      'active',
+      'cancelling',
+      'starting',
+      'steer_promoting'
+    ])
     // The distinction from chatThinkingState's thinking set is the whole point.
     expect(RUNNING_RUN_QUEUE_STATUSES.has('queued')).toBe(false)
     expect(RUNNING_RUN_QUEUE_STATUSES.has('paused')).toBe(false)
@@ -58,13 +68,20 @@ describe('deriveChatIsRunning', () => {
     expect(deriveChatIsRunning({ chat: baseChat(), runningChatIds: new Set(['chat-1']) })).toBe(true)
   })
 
-  it('is true for an active run-queue job, false for queued/paused/other-chat jobs', () => {
+  it('is true for active and steer-promoting run-queue jobs, false for queued/paused/other-chat jobs', () => {
     const run = (status: string, chatId = 'chat-1') => ({ chatId, status })
     expect(
       deriveChatIsRunning({
         chat: baseChat(),
         runningChatIds: new Set(),
         runQueueJobs: [run('active')]
+      })
+    ).toBe(true)
+    expect(
+      deriveChatIsRunning({
+        chat: baseChat(),
+        runningChatIds: new Set(),
+        runQueueJobs: [run('steer_promoting')]
       })
     ).toBe(true)
     expect(
@@ -129,7 +146,8 @@ describe('deriveChatRunCompleteNotice', () => {
     ).toEqual({
       timestamp: '2026-06-09T00:05:00.000Z',
       exitCode: 1,
-      startedAt: '2026-06-09T00:00:00.000Z'
+      startedAt: '2026-06-09T00:00:00.000Z',
+      suppressRunSummary: false
     })
   })
 
@@ -137,7 +155,28 @@ describe('deriveChatRunCompleteNotice', () => {
     expect(deriveChatRunCompleteNotice(baseChat(withRuns({ endedAt: 'e' })), false)).toEqual({
       timestamp: 'e',
       exitCode: 0,
-      startedAt: undefined
+      startedAt: undefined,
+      suppressRunSummary: false
+    })
+  })
+
+  it('preserves persisted steer-summary suppression from the last run', () => {
+    expect(
+      deriveChatRunCompleteNotice(
+        baseChat(
+          withRuns({
+            endedAt: '2026-06-09T00:05:00.000Z',
+            exitCode: 130,
+            suppressRunSummary: true
+          })
+        ),
+        false
+      )
+    ).toEqual({
+      timestamp: '2026-06-09T00:05:00.000Z',
+      exitCode: 130,
+      startedAt: undefined,
+      suppressRunSummary: true
     })
   })
 })

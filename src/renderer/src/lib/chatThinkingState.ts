@@ -2,6 +2,7 @@ import type { ChatRecord } from '../../../main/store/types'
 
 const ACTIVE_RUN_QUEUE_STATUSES = new Set([
   'queued',
+  'steer_promoting',
   'starting',
   'active',
   'paused',

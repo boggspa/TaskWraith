@@ -58,6 +58,7 @@ export interface BuildChatViewPropsInput {
   thinkingModelBadge?: TranscriptPanelProps['thinkingModelBadge']
   liveActivityViewport?: boolean
   pendingQueuedAppRunIds?: TranscriptPanelProps['pendingQueuedAppRunIds']
+  queuedRunStatusByAppRunId?: TranscriptPanelProps['queuedRunStatusByAppRunId']
   onInspectRun?: TranscriptPanelProps['onInspectRun']
   currency?: TranscriptPanelProps['currency']
   currencyOverestimatePercent?: number
@@ -121,6 +122,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     compactDensity: input.compactDensity,
     liveActivityViewport: input.liveActivityViewport,
     pendingQueuedAppRunIds: input.pendingQueuedAppRunIds,
+    queuedRunStatusByAppRunId: input.queuedRunStatusByAppRunId,
     onCopyMessage: input.onCopyMessage,
     onDeleteMessage: input.onDeleteMessage ?? NOOP,
     onTogglePinMessage: input.onTogglePinMessage,

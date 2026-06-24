@@ -14,7 +14,12 @@ import type { RunCompleteNotice } from './runCompleteNotice'
  * chat is NOT "running" and must not show the Running label. Same-looking
  * formulas, intentionally different status sets.
  */
-export const RUNNING_RUN_QUEUE_STATUSES = new Set<string>(['starting', 'active', 'cancelling'])
+export const RUNNING_RUN_QUEUE_STATUSES = new Set<string>([
+  'steer_promoting',
+  'starting',
+  'active',
+  'cancelling'
+])
 
 export interface DeriveChatIsRunningInput {
   chat: ChatRecord | null | undefined
@@ -63,6 +68,7 @@ export function deriveChatRunCompleteNotice(
   return {
     timestamp: lastRun.endedAt,
     exitCode: lastRun.exitCode ?? 0,
-    startedAt: lastRun.startedAt || undefined
+    startedAt: lastRun.startedAt || undefined,
+    suppressRunSummary: Boolean(lastRun.suppressRunSummary)
   }
 }

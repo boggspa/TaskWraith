@@ -21,6 +21,7 @@ import {
   resolveGuestCompanionRuns
 } from '../lib/runCompleteSummary'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
+import { deriveQueuedLifecycleProjection } from '../lib/queuedMessageRows'
 import {
   TRANSCRIPT_VIRTUALIZATION_ENABLED,
   DEFAULT_OVERSCAN_PX,
@@ -37,7 +38,7 @@ import {
 import type { PlanChoiceState } from '../lib/planModeChoice'
 import type { DisplayCurrency } from '../lib/formatCost'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
-import type { RunCompleteNotice } from '../lib/runCompleteNotice'
+import { shouldSuppressRunCompleteSummary, type RunCompleteNotice } from '../lib/runCompleteNotice'
 import { EMPTY_CHAT_MESSAGES } from '../lib/stableEmpties'
 import { groupAdjacentToolMessages } from '../lib/transcriptToolMessageGrouping'
 import { ActivityStack } from './ActivityStack'
@@ -184,6 +185,7 @@ export type TranscriptPanelProps = {
    * the appRunId drops from this set and the transcript card
    * reappears as the historical "this run was queued" record. */
   pendingQueuedAppRunIds?: Set<string>
+  queuedRunStatusByAppRunId?: Partial<Record<string, string>>
   /**
    * 1.0.4-AQ4 — per-message actions on hover.
    *
@@ -725,6 +727,7 @@ export const TranscriptPanel = memo(
     compactDensity,
     liveActivityViewport,
     pendingQueuedAppRunIds,
+    queuedRunStatusByAppRunId,
     onCopyMessage,
     onDeleteMessage,
     onTogglePinMessage,
@@ -745,19 +748,24 @@ export const TranscriptPanel = memo(
   }: TranscriptPanelProps) {
     const visibleMessages = useMemo(() => {
       const source = isWelcomeChat ? EMPTY_CHAT_MESSAGES : messages
+      const projected = deriveQueuedLifecycleProjection({
+        messages: source,
+        pendingQueuedAppRunIds,
+        queuedRunStatusByAppRunId
+      })
       // Dedup: when a queued-message system card's job is still in
       // the `queued` set, suppress the card here — the queued-
       // messages above-row is the live representation. Once the job
       // dispatches, the card resurfaces as a historical "this was
       // queued" record. Untagged messages always pass through.
-      if (!pendingQueuedAppRunIds || pendingQueuedAppRunIds.size === 0) return source
-      return source.filter((msg) => {
+      if (!pendingQueuedAppRunIds || pendingQueuedAppRunIds.size === 0) return projected
+      return projected.filter((msg) => {
         if (msg.metadata?.kind !== 'queuedRunRequest') return true
         const appRunId = typeof msg.metadata?.appRunId === 'string' ? msg.metadata.appRunId : null
         if (!appRunId) return true
         return !pendingQueuedAppRunIds.has(appRunId)
       })
-    }, [isWelcomeChat, messages, pendingQueuedAppRunIds])
+    }, [isWelcomeChat, messages, pendingQueuedAppRunIds, queuedRunStatusByAppRunId])
     const [messageContextMenu, setMessageContextMenu] =
       useState<TranscriptMessageContextMenuSelection | null>(null)
     const closeMessageContextMenu = useCallback(() => {
@@ -811,7 +819,8 @@ export const TranscriptPanel = memo(
       if (visibleMessages.some((message) => message.id === messageContextMenu.message.id)) return
       setMessageContextMenu(null)
     }, [messageContextMenu, visibleMessages])
-    const shouldShowRunCompleteNotice = Boolean(runCompleteNotice && !isWelcomeChat)
+    const shouldShowRunCompleteNotice =
+      Boolean(runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice))
     const runCompleteSummaryRows = useMemo(() => {
       // Ensemble chats: aggregate across every participant in the
       // round so the user sees ALL contributing models (not just the
@@ -1921,6 +1930,7 @@ export const TranscriptPanel = memo(
     previous.chats === next.chats &&
     previous.runningChatIds === next.runningChatIds &&
     previous.pendingQueuedAppRunIds === next.pendingQueuedAppRunIds &&
+    previous.queuedRunStatusByAppRunId === next.queuedRunStatusByAppRunId &&
     previous.onCopyMessage === next.onCopyMessage &&
     previous.onDeleteMessage === next.onDeleteMessage &&
     previous.onMessageSelectionCandidate === next.onMessageSelectionCandidate &&

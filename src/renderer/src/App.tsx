@@ -645,12 +645,14 @@ const getInitialChatPopoutChatId = (): string => {
 }
 
 const ACTIVE_RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
+  'steer_promoting',
   'starting',
   'active',
   'cancelling'
 ])
 const GUEST_PENDING_RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
   'queued',
+  'steer_promoting',
   'starting',
   'active',
   'cancelling'
@@ -1283,7 +1285,8 @@ function deriveRunCompleteNotice(
   return {
     timestamp: lastRun.endedAt,
     exitCode: lastRun.exitCode ?? 0,
-    startedAt: lastRun.startedAt || undefined
+    startedAt: lastRun.startedAt || undefined,
+    suppressRunSummary: Boolean(lastRun.suppressRunSummary)
   }
 }
 
@@ -1477,6 +1480,10 @@ function App(): React.JSX.Element {
   // never a red "Failed" (Grok ACP) or a misleading green "success" (signal-
   // killed Grok-headless / Cursor whose exit code coerces to 0).
   const intentionalCancelRunIdsRef = useRef<Set<string>>(new Set())
+  // Suppress the transient run-complete flash/chip when a steer handoff
+  // intentionally interrupts a run. This is separate from intentional
+  // cancellation because Stop should still surface its stopped feedback.
+  const steerSuppressedSummaryRunIdsRef = useRef<Set<string>>(new Set())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [guestDispatchPendingParentChatIds, setGuestDispatchPendingParentChatIds] = useState<
     Set<string>
@@ -8232,6 +8239,7 @@ function App(): React.JSX.Element {
       const completedScheduledTaskId = context.scheduledTaskId
       const completedRunDiffUnavailable = context.diffUnavailable
       const isGlobalCompletedRun = !context.baseWorkspacePath
+      const suppressSteerSummary = steerSuppressedSummaryRunIdsRef.current.delete(completedRunId)
       const completedWorkspacePath =
         isGlobalCompletedRun || completedRunDiffUnavailable ? null : context.workspacePath
       const completedRunStartedAt = context.startedAt
@@ -8264,7 +8272,9 @@ function App(): React.JSX.Element {
           scheduledTaskId: completedScheduledTaskId
         }
       })
-      handlers.triggerFxBurst('run-complete')
+      if (!suppressSteerSummary) {
+        handlers.triggerFxBurst('run-complete')
+      }
       // Turn-based guest participation (parity with the bridge): the host run
       // just finished — fire the deferred guest now, with the host's reply
       // already in the parent transcript so the guest can respond to it.
@@ -8279,7 +8289,7 @@ function App(): React.JSX.Element {
           })
         }
       }
-      if (context.warnings.length > 0) {
+      if (context.warnings.length > 0 && !suppressSteerSummary) {
         handlers.triggerFxBurst('run-summary')
       }
       if (isVisibleCompletedRun()) {
@@ -8307,6 +8317,9 @@ function App(): React.JSX.Element {
           if (wasIntentionalCancel) {
             targetRun.cancelled = true
           }
+          if (suppressSteerSummary) {
+            targetRun.suppressRunSummary = true
+          }
           // Normalise a user-cancel to the conventional SIGINT code so the
           // persisted run + re-derived run-complete card read "Stopped" on
           // reload, regardless of the real signal-kill exit the provider sent.
@@ -8329,7 +8342,7 @@ function App(): React.JSX.Element {
           // User-intentional stop (steer or Stop): show the muted "Stopped"
           // card (exit 130) and skip the red failure message entirely, even
           // when the provider reported a non-zero/abnormal exit on the kill.
-          if (!isEnsembleChat && isVisibleCompletedRun()) {
+          if (!isEnsembleChat && isVisibleCompletedRun() && !suppressSteerSummary) {
             setRunCompleteNotice({
               timestamp: completedAt,
               exitCode: 130,
@@ -8337,7 +8350,7 @@ function App(): React.JSX.Element {
             })
           }
         } else if (exitCode === 0) {
-          if (!isEnsembleChat && isVisibleCompletedRun()) {
+          if (!isEnsembleChat && isVisibleCompletedRun() && !suppressSteerSummary) {
             setRunCompleteNotice({
               timestamp: completedAt,
               exitCode,
@@ -8352,7 +8365,7 @@ function App(): React.JSX.Element {
           // exit code + last error line in the system message. Code 130
           // is the SIGINT a user Cancel produces — report it as a
           // cancellation, not a failure.
-          if (!isEnsembleChat && isVisibleCompletedRun()) {
+          if (!isEnsembleChat && isVisibleCompletedRun() && !suppressSteerSummary) {
             setRunCompleteNotice({
               timestamp: completedAt,
               exitCode,
@@ -9065,6 +9078,234 @@ function App(): React.JSX.Element {
     if (request.codexNativeReview) return 'review'
     if (request.existingPrompt) return 'retry'
     return 'manual'
+  }
+
+  /**
+   * Expected renderer -> preload API contract for solo queued-row steer
+   * promotion.
+   *
+   * Upstream names this as `promoteQueuedRunForSteer`. In this fork, the
+   * legacy API name `promoteQueuedJobForSteer` may still be present.
+   *
+   * Input:
+   *   - runId: The queue row to promote.
+   *   - provider?: Chat provider for coordinator bookkeeping.
+   *   - chatId?: Target chat for the row (telemetry + anti-mismatch guard).
+   *   - statusReason?: Human-readable reason for the transition.
+   *   - queueMessageId?: Optional queue-entry id for diagnostics.
+   *   - transitionVersion?: Optional queue-coordinator transition token.
+   *   - ownerToken?: Optional caller-owned key for coordinator pairing.
+   *
+   * Output:
+   *   - ok === true/kind === 'dispatch-permission': includes a runnable
+   *     request snapshot and optional promotionToken/ownerToken.
+   *   - ok === false/kind === 'fallback': includes reason and may still
+   *     include request to keep user-visible row for retry.
+   */
+  type PromoteQueuedRunForSteerInput = {
+    runId: string
+    provider?: ProviderId
+    chatId?: string
+    statusReason?: string
+    queueMessageId?: string
+    transitionVersion?: number
+    ownerToken?: string
+  }
+  type PromoteQueuedRunForSteerResponse = {
+    ok?: boolean
+    kind?: string
+    request?: RunQueueRequestSnapshot
+    promotionToken?: string
+    ownerToken?: string
+    reason?: string
+    runId?: string
+    jobStatus?: RunQueueJobStatus
+    cancelRequested?: boolean
+    requeuedTo?: 'queued'
+    status?: RunQueueJobStatus
+  }
+
+  const invokePromoteQueuedRunForSteer = async (
+    input: PromoteQueuedRunForSteerInput
+  ): Promise<PromoteQueuedRunForSteerResponse | null> => {
+    const modernApi = (window.api as {
+      promoteQueuedRunForSteer?: (
+        request: PromoteQueuedRunForSteerInput
+      ) => Promise<PromoteQueuedRunForSteerResponse> | PromoteQueuedRunForSteerResponse
+    }).promoteQueuedRunForSteer
+    const legacyApi = (window.api as {
+      promoteQueuedJobForSteer?: (
+        request: PromoteQueuedRunForSteerInput
+      ) => Promise<PromoteQueuedRunForSteerResponse> | PromoteQueuedRunForSteerResponse
+    }).promoteQueuedJobForSteer
+    const promotionApi = typeof modernApi === 'function' ? modernApi : legacyApi
+    if (typeof promotionApi !== 'function') return null
+
+    try {
+      const result = await promotionApi(input)
+      if (!result || typeof result !== 'object') return null
+      const response = result as Record<string, unknown>
+      const rawRequest = response.request
+      const request =
+        rawRequest && typeof rawRequest === 'object' && !Array.isArray(rawRequest)
+          ? (rawRequest as RunQueueRequestSnapshot)
+          : undefined
+      return {
+        ok: typeof response.ok === 'boolean' ? response.ok : undefined,
+        kind: typeof response.kind === 'string' ? response.kind : undefined,
+        request,
+        promotionToken:
+          typeof response.promotionToken === 'string' ? response.promotionToken : undefined,
+        ownerToken: typeof response.ownerToken === 'string' ? response.ownerToken : undefined,
+        reason: typeof response.reason === 'string' ? response.reason : undefined,
+        runId: typeof response.runId === 'string' ? response.runId : undefined,
+        jobStatus:
+          typeof response.jobStatus === 'string'
+            ? (response.jobStatus as RunQueueJobStatus)
+            : undefined,
+        cancelRequested:
+          typeof response.cancelRequested === 'boolean' ? response.cancelRequested : undefined,
+        requeuedTo: response.requeuedTo === 'queued' ? 'queued' : undefined,
+        status: typeof response.status === 'string' ? (response.status as RunQueueJobStatus) : undefined
+      }
+    } catch (error) {
+      console.warn('[queued-steer] promoteQueuedRunForSteer failed', error)
+      return null
+    }
+  }
+
+  const invokeLeasePromotedSteerJob = async (input: {
+    runId: string
+    ownerToken: string
+    statusReason?: string
+  }): Promise<{
+    ok?: boolean
+    kind?: string
+    request?: RunQueueRequestSnapshot
+    ownerToken?: string
+    status?: RunQueueJobStatus
+  } | null> => {
+    const maybeApi = window.api as {
+      leasePromotedSteerJob?: (
+        input: {
+          runId: string
+          ownerToken: string
+          statusReason?: string
+        }
+      ) => Promise<{ ok?: boolean; kind?: string; request?: RunQueueRequestSnapshot; ownerToken?: string; status?: RunQueueJobStatus }>
+    }
+    if (typeof maybeApi.leasePromotedSteerJob !== 'function') return null
+    try {
+      return await maybeApi.leasePromotedSteerJob(input)
+    } catch (error) {
+      console.warn('[queued-steer] leasePromotedSteerJob failed', error)
+      return null
+    }
+  }
+
+  const invokeFallbackPromotedSteerJob = async (input: {
+    runId: string
+    ownerToken: string
+    reason: string
+    fallbackStatus?: 'queued' | 'cancelled' | 'failed'
+  }): Promise<{ ok?: boolean; status?: RunQueueJobStatus; reason?: string } | null> => {
+    const maybeApi = window.api as {
+      fallbackPromotedSteerJob?: (input: {
+        runId: string
+        ownerToken: string
+        reason: string
+        fallbackStatus?: 'queued' | 'cancelled' | 'failed'
+      }) => Promise<{ ok?: boolean; status?: RunQueueJobStatus; reason?: string }>
+    }
+    if (typeof maybeApi.fallbackPromotedSteerJob !== 'function') return null
+    try {
+      return await maybeApi.fallbackPromotedSteerJob(input)
+    } catch (error) {
+      console.warn('[queued-steer] fallbackPromotedSteerJob failed', error)
+      return null
+    }
+  }
+
+  const buildSteerQueuedRunRequest = (
+    snapshot: RunQueueRequestSnapshot | undefined,
+    fallbackRequest: QueuedRunRequest
+  ): QueuedRunRequest => {
+    if (!snapshot) return fallbackRequest
+    return {
+      ...fallbackRequest,
+      prompt: snapshot.prompt,
+      ...(snapshot.displayPrompt ? { displayPrompt: snapshot.displayPrompt } : {}),
+      selectedModelType: snapshot.selectedModelType || fallbackRequest.selectedModelType,
+      customModel: snapshot.customModel || fallbackRequest.customModel,
+      approvalMode: snapshot.approvalMode || fallbackRequest.approvalMode,
+      sessionTrust:
+        typeof snapshot.sessionTrust === 'boolean' ? snapshot.sessionTrust : fallbackRequest.sessionTrust,
+      imageAttachments: snapshot.imageAttachments.length
+        ? snapshot.imageAttachments.map((attachment, index) => ({
+            id: attachment.id || `${fallbackRequest.appRunId || 'queued-steer'}-attachment-${index}`,
+            path: attachment.path,
+            name: attachment.name || getImageName(attachment.path)
+          }))
+        : fallbackRequest.imageAttachments,
+      ...(snapshot.discordContextSelection
+        ? { discordContextSelection: snapshot.discordContextSelection }
+        : {}),
+      ...(snapshot.externalPathGrants
+        ? { externalPathGrants: snapshot.externalPathGrants }
+        : {}),
+      ...(snapshot.geminiWorktree ? { geminiWorktree: snapshot.geminiWorktree } : {}),
+      ...(snapshot.codexNativeReview ? { codexNativeReview: true } : {}),
+      ...(snapshot.codexReasoningEffort !== undefined
+        ? { codexReasoningEffort: snapshot.codexReasoningEffort }
+        : {}),
+      ...(snapshot.codexServiceTier !== undefined
+        ? { codexServiceTier: snapshot.codexServiceTier }
+        : {}),
+      ...(snapshot.claudeReasoningEffort !== undefined
+        ? { claudeReasoningEffort: snapshot.claudeReasoningEffort }
+        : {}),
+      ...(snapshot.claudeFastMode !== undefined ? { claudeFastMode: snapshot.claudeFastMode } : {}),
+      ...(snapshot.kimiThinkingEnabled !== undefined
+        ? { kimiThinkingEnabled: snapshot.kimiThinkingEnabled }
+        : {}),
+      ...(snapshot.scheduledTaskId ? { scheduledTaskId: snapshot.scheduledTaskId } : {}),
+      ...(snapshot.runtimeProfileId ? { runtimeProfileId: snapshot.runtimeProfileId } : {}),
+      ...(snapshot.geminiAuthProfileId
+        ? { geminiAuthProfileId: snapshot.geminiAuthProfileId }
+        : {}),
+      ...(snapshot.handoffSourceRunId ? { handoffSourceRunId: snapshot.handoffSourceRunId } : {}),
+      ...(snapshot.guestParentChatId ? { guestParentChatId: snapshot.guestParentChatId } : {}),
+      ...(snapshot.guestRole ? { guestRole: snapshot.guestRole } : {})
+    }
+  }
+
+  const attachSteerMetadataToRequest = (
+    request: QueuedRunRequest,
+    promotionToken?: string,
+    ownerToken?: string
+  ): QueuedRunRequest => {
+    if (!promotionToken && !ownerToken) return request
+    return {
+      ...request,
+      ...(promotionToken
+        ? ({ steerPromotionToken: promotionToken } as Record<string, string>)
+        : {}),
+      ...(ownerToken ? ({ steerOwnerToken: ownerToken } as Record<string, string>) : {})
+    } as QueuedRunRequest
+  }
+
+  const restoreQueuedRunForSteer = (request: QueuedRunRequest): void => {
+    setQueuedRuns((prev) => {
+      const requestKey = request.appRunId
+      const exists = prev.some((existing) => {
+        if (requestKey) {
+          return existing.appRunId === requestKey
+        }
+        return existing.prompt === request.prompt && queuedRunFallbackId(existing) === queuedRunFallbackId(request)
+      })
+      if (exists) return prev
+      return [...prev, request]
+    })
   }
 
   const createRunQueueRequestSnapshot = (request: QueuedRunRequest): RunQueueRequestSnapshot => ({
@@ -11778,6 +12019,13 @@ function App(): React.JSX.Element {
       activeContext?.runId || targetRun?.runId
     )
     syncRunningState()
+  }
+
+  const resolveActiveRunContextForChat = (chatId: string): ActiveRunContext | null => {
+    for (const ctx of activeRunsRef.current.values()) {
+      if (ctx.chatId === chatId) return ctx
+    }
+    return null
   }
 
   const handleSideCancel = async () => {
@@ -16596,12 +16844,12 @@ function App(): React.JSX.Element {
   const currentChatQueuedRunCount = runQueueJobs.filter(
     (job) => job.chatId === currentChat?.appChatId && job.status === 'queued'
   ).length
-  // Set of `appRunId`s whose run-queue job is still in `'queued'`
+  // Set of `appRunId`s whose run-queue job is still in `queued`
   // status. Used by the transcript dedup filter to suppress the
   // in-transcript "Queued (#N): …" system card while the queued-
   // messages above-row is showing it live. Once the job dispatches
-  // (status leaves `'queued'`), the card resurfaces as the
-  // historical "this run was queued" record.
+  // or is reserved for steer (status leaves `queued`), the card
+  // resurfaces as historical lifecycle context.
   const pendingQueuedAppRunIds = useMemo(() => {
     const set = new Set<string>()
     for (const job of runQueueJobs) {
@@ -16609,6 +16857,15 @@ function App(): React.JSX.Element {
       if (typeof job.runId === 'string' && job.runId) set.add(job.runId)
     }
     return set
+  }, [runQueueJobs])
+  const queuedRunStatusByAppRunId = useMemo(() => {
+    const statusByRunId: Partial<Record<string, string>> = {}
+    for (const job of runQueueJobs) {
+      if (typeof job.runId === 'string' && job.runId) {
+        statusByRunId[job.runId] = job.status
+      }
+    }
+    return statusByRunId
   }, [runQueueJobs])
   // Composer above-row stack input: queued requests targeting the
   // active chat, projected to the row component's narrow display
@@ -16846,16 +17103,23 @@ function App(): React.JSX.Element {
   // dispatch this queued request immediately. Same gentle handoff
   // as the composer's Steer button — no restart of unrelated state.
   const handleSteerToQueuedMessage = useCallback(
-    (entryId: string, targetChat?: ChatRecord | null) => {
+      async (entryId: string, targetChat?: ChatRecord | null) => {
+      const appendFailure = (message: string, context?: string): void => {
+        const targetChatId = targetChat?.appChatId || currentChat?.appChatId
+        const content = context ? `${message}: ${context}` : message
+        console.warn('[queued-steer] ', content)
+        if (targetChatId) {
+          appendThreadRawLog(targetChatId, { type: 'stderr', content })
+          return
+        }
+        setRawLogs((previous) => [...previous, { type: 'stderr', content, timestamp: new Date().toISOString() }])
+      }
+
       // Ensemble-queued: cancel the current round and dispatch the
       // targeted queued prompt as a fresh round (mode='steer'). The
       // orchestrator's cancelRound clears `runtime.queuedPrompts`,
       // so we need to re-stage the remaining queue entries on the
-      // NEW round after dispatch. For ship-night simplicity we only
-      // promote the targeted index immediately; entries after it
-      // get lost on the steer (a known trade-off — drag-to-reorder
-      // gives the user a way to bring something else to the front
-      // first if they prefer).
+      // NEW round after dispatch.
       const ensembleMatch = entryId.match(/^ensemble-queued-(.+)-(\d+)$/)
       if (ensembleMatch) {
         const idx = Number(ensembleMatch[2])
@@ -16864,10 +17128,14 @@ function App(): React.JSX.Element {
         if (!chat || !round) return
         const currentQueue =
           Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
-            ? round.queuedPrompts
-            : round.queuedPrompt
-              ? [round.queuedPrompt]
-              : []
+          ? round.queuedPrompts
+          : round.queuedPrompt
+            ? [round.queuedPrompt]
+            : []
+        if (currentQueue.length > 1) {
+          appendFailure('Steer is temporarily disabled for queued ensemble prompts with FIFO length >1')
+          return
+        }
         const prompt = currentQueue[idx]
         if (!prompt) return
         // Optimistically remove the targeted entry from the local
@@ -16902,39 +17170,266 @@ function App(): React.JSX.Element {
         (job ? resolveQueuedDesktopRunRequest(job) : null) ||
         queuedRunsRef.current.find((request) => queuedRunFallbackId(request) === entryId)
       if (!match) return
-      const targetChatId = match.chatRecord?.appChatId || currentChat?.appChatId
-      // Remove from queue first so the schedule loop doesn't race
-      // and dispatch it again from the queue.
-      setQueuedRuns((prev) =>
-        prev.filter(
-          (request) =>
-            queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
-        )
-      )
-      // Cancel current run if one is in flight, then dispatch this
-      // request. `handleCancel` handles ensemble vs solo internally.
-      const dispatchSteered = (): void => {
-        const runId = job?.runId || match.appRunId
-        if (runId) {
-          void window.api
-            .transitionRunQueueJob(runId, 'cancelled', {
-              statusReason: 'Promoted via Steer; running now.'
-            })
-            .catch(() => {})
-        }
-        void executeRunRef.current({ ...match })
+      const targetChatId = match.chatRecord?.appChatId || job?.chatId || currentChat?.appChatId
+      const targetRecord =
+        targetChat ||
+        match.chatRecord ||
+        (targetChatId ? chatByIdRef.current.get(targetChatId) : null) ||
+        null
+
+      const activeContext = targetChatId ? resolveActiveRunContextForChat(targetChatId) : null
+      const targetChatBusy = Boolean(targetChatId && isChatBusy(targetChatId))
+      const cancelTargetRunId = targetChatBusy
+        ? activeContext?.runId || targetRecord?.runs?.[targetRecord.runs.length - 1]?.runId
+        : undefined
+
+      const runId = job?.runId || match.appRunId
+      if (!runId) {
+        appendFailure('Cannot steer queued row', 'missing queued run id')
+        return
       }
-      if (targetChatId && isChatBusy(targetChatId)) {
-        const targetRecord =
-          targetChat || match.chatRecord || chatByIdRef.current.get(targetChatId) || null
-        if (targetRecord && targetRecord.appChatId !== currentChat?.appChatId) {
-          void cancelLinkedChatRun(targetRecord).then(dispatchSteered)
+
+      const promotion = await invokePromoteQueuedRunForSteer({
+        runId,
+        provider: match.provider,
+        chatId: targetChatId,
+        statusReason: 'Promoted from queued-row steer. Cancelling active run first.',
+        queueMessageId: entryId,
+        transitionVersion: job?.transitionVersion
+      })
+
+      if (!promotion) {
+        appendFailure(
+          'Steer promotion API is unavailable in this TaskWraith build',
+          'skipping queued-row promote+dispatch'
+        )
+        return
+      }
+      const promotionPermitted =
+        promotion.ok === true || promotion.kind === 'dispatch-permission'
+
+      if (!promotionPermitted) {
+        appendFailure(
+          'Queued run steer promotion failed',
+          promotion.reason || 'the request could not be handed off safely'
+        )
+        return
+      }
+
+      const matchedRequest = buildSteerQueuedRunRequest(promotion.request, match)
+      const dispatchRequest = attachSteerMetadataToRequest(
+        {
+          ...matchedRequest,
+          appRunId: runId
+        },
+        promotion.promotionToken,
+        promotion.ownerToken
+      )
+
+      const providerLabel = getProviderLabel(dispatchRequest.provider)
+
+      const leasePromotedForDispatch = async (): Promise<boolean> => {
+        if (!promotion.ownerToken) return true
+        const lease = await invokeLeasePromotedSteerJob({
+          runId,
+          ownerToken: promotion.ownerToken,
+          statusReason: 'Queued-row steer was leased for dispatch.'
+        })
+        if (lease?.ok === true) return true
+        const reason = lease?.kind || 'steer lease did not succeed'
+        appendFailure('Queued run steer lease failed', reason)
+        const fallback = await invokeFallbackPromotedSteerJob({
+          runId,
+          ownerToken: promotion.ownerToken,
+          reason: `Queued-row steer lease failed: ${reason}.`,
+          fallbackStatus: 'queued'
+        })
+        if (fallback?.ok !== true) {
+          queueRunRequest(
+            dispatchRequest,
+            `Queued-row steer lease failed; queued fallback for this row.`
+          )
         } else {
-          void handleCancel().then(dispatchSteered)
+          restoreQueuedRunForSteer(dispatchRequest)
+        }
+        return false
+      }
+
+      // Remove from queue once steering is authorized, so we don't
+      // double-dispatch this row while cancellation is in flight.
+      setQueuedRuns((prev) =>
+        prev.filter((request) => request.appRunId !== runId && queuedRunFallbackId(request) !== entryId)
+      )
+
+      if (!targetChatId || !cancelTargetRunId) {
+        const leased = await leasePromotedForDispatch()
+        if (!leased) return
+        void executeRunRef.current(dispatchRequest)
+        return
+      }
+
+      const cancellingState = beginSteer({
+        chatId: targetChatId,
+        cancelTargetRunId
+      })
+      setSteerState(cancellingState)
+      steerStateRef.current = cancellingState
+      steerSuppressionChatIdsRef.current.add(targetChatId)
+      steerSuppressedSummaryRunIdsRef.current.add(cancelTargetRunId)
+      intentionalCancelRunIdsRef.current.add(cancelTargetRunId)
+      appendThreadRawLog(targetChatId, {
+        type: 'info',
+        content: `Steer to queued prompt: interrupting current ${providerLabel} turn to dispatch a replacement.`
+      })
+
+      appendThreadRawLog(targetChatId, {
+        type: 'info',
+        content: 'Steer requested from queued message; waiting for active run to terminate before dispatch.'
+      })
+
+      void window.api.cancelAgentRun(activeContext?.provider || dispatchRequest.provider, cancelTargetRunId)
+
+      const startedAt = Date.now()
+      let outcome: 'cancel-landed' | 'timeout' = 'timeout'
+      const maxIterations =
+        Math.ceil(DEFAULT_STEER_CANCEL_TIMEOUT_MS / DEFAULT_STEER_POLL_INTERVAL_MS) + 5
+      for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+        const decision = decideSteerWait({
+          chatId: targetChatId,
+          startedAt,
+          now: Date.now(),
+          hasRunForChat: (chatId) => {
+            for (const ctx of activeRunsRef.current.values()) {
+              if (ctx.chatId === chatId) return true
+            }
+            return false
+          }
+        })
+        if (decision.kind === 'cancel-landed') {
+          outcome = 'cancel-landed'
+          break
+        }
+        if (decision.kind === 'timeout') {
+          outcome = 'timeout'
+          break
+        }
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, DEFAULT_STEER_POLL_INTERVAL_MS)
+        })
+      }
+
+      const stillCurrent = steerStateRef.current
+      if (stillCurrent.phase !== 'cancelling' || stillCurrent.chatId !== targetChatId) {
+        steerSuppressionChatIdsRef.current.delete(targetChatId)
+        steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
+        intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
+        return
+      }
+
+      if (outcome === 'cancel-landed') {
+        steerSuppressionChatIdsRef.current.delete(targetChatId)
+        const leased = await leasePromotedForDispatch()
+        if (!leased) {
+          steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
+          intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
+          setSteerState(resetSteer())
+          steerStateRef.current = resetSteer()
+          return
+        }
+        updateChatById(targetChatId, (source) => {
+          const steeredAt = new Date().toISOString()
+          const promptPreview = (dispatchRequest.displayPrompt || dispatchRequest.prompt || '').trim()
+          const previewOneLiner =
+            promptPreview.length > 240 ? `${promptPreview.slice(0, 240)}…` : promptPreview
+          return {
+            ...source,
+            messages: [
+              ...source.messages,
+              {
+                id: `steered-${dispatchRequest.appRunId || createMessageId()}`,
+                role: 'system',
+                content: previewOneLiner
+                  ? `↳ Steered: interrupted to run a queued prompt — ${previewOneLiner}`
+                  : '↳ Steered: interrupted to run a queued prompt.',
+                timestamp: steeredAt,
+                metadata: {
+                  kind: 'steerHandoff',
+                  appRunId: dispatchRequest.appRunId,
+                  provider: dispatchRequest.provider,
+                  promptPreview: previewOneLiner,
+                  interruptedRunId: cancelTargetRunId
+                }
+              }
+            ],
+            updatedAt: Date.now()
+          }
+        })
+
+        const dispatchingState = transitionToDispatching({
+          prev: steerStateRef.current,
+          chatId: targetChatId
+        })
+        setSteerState(dispatchingState)
+        steerStateRef.current = dispatchingState
+
+        // Live target chat may have changed since the initial row scan,
+        // so resolve from refs before the run dispatch.
+        const currentTarget =
+          (targetChatId && chatByIdRef.current.get(targetChatId)) || targetRecord || null
+        const liveRequest = currentTarget ? { ...dispatchRequest, chatRecord: currentTarget } : dispatchRequest
+        void executeRunRef.current(liveRequest)
+        window.setTimeout(() => {
+          const latest = steerStateRef.current
+          if (latest.phase === 'dispatching' && latest.chatId === targetChatId) {
+            setSteerState(resetSteer())
+            steerStateRef.current = resetSteer()
+          }
+        }, 350)
+        return
+      }
+
+      steerSuppressionChatIdsRef.current.delete(targetChatId)
+      steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
+      intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
+      restoreQueuedRunForSteer(dispatchRequest)
+      if (promotion.ownerToken) {
+        const fallback = await invokeFallbackPromotedSteerJob({
+          runId,
+          ownerToken: promotion.ownerToken,
+          reason: `Steer timed out after ${(DEFAULT_STEER_CANCEL_TIMEOUT_MS / 1000).toFixed(0)}s.`,
+          fallbackStatus: 'queued'
+        }).catch(() => null)
+        if (fallback?.ok !== true) {
+          queueRunRequest(
+            dispatchRequest,
+            `Steer timed out after ${(DEFAULT_STEER_CANCEL_TIMEOUT_MS / 1000).toFixed(0)}s; queued fallback for this row.`
+          )
         }
       } else {
-        dispatchSteered()
+        queueRunRequest(
+          dispatchRequest,
+          `Steer timed out after ${(DEFAULT_STEER_CANCEL_TIMEOUT_MS / 1000).toFixed(0)}s; queued fallback for this row.`
+        )
       }
+      const failedMessage = `Steer timed out after ${(DEFAULT_STEER_CANCEL_TIMEOUT_MS / 1000).toFixed(0)}s; the ${providerLabel} run is still running. Your queued prompt was re-queued.`
+      const failedState = markSteerFailed({
+        chatId: targetChatId,
+        reason: 'timeout',
+        message: failedMessage
+      })
+      setSteerState(failedState)
+      steerStateRef.current = failedState
+      appendThreadRawLog(targetChatId, {
+        type: 'stderr',
+        content: failedMessage
+      })
+      window.setTimeout(() => {
+        const latest = steerStateRef.current
+        if (latest.phase === 'failed' && latest.chatId === targetChatId && latest.reason === 'timeout') {
+          setSteerState(resetSteer())
+          steerStateRef.current = resetSteer()
+        }
+      }, 3_000)
     },
     // `handleCancel` intentionally remains live from the current render; queued steering only
     // needs this callback to refresh when the target chat changes.
@@ -19384,6 +19879,7 @@ function App(): React.JSX.Element {
         isWelcomeChat={viewerIsWelcomeChat}
         isThinking={viewerIsRunning}
         runCompleteNotice={deriveChatRunCompleteNotice(viewerChat, viewerIsRunning)}
+        queuedRunStatusByAppRunId={queuedRunStatusByAppRunId}
         currentRun={viewerRun}
         currentWorkspacePath={viewerWorkspace?.path}
         welcomeUsageDashboardData={welcomeUsageDashboardData}
@@ -21566,6 +22062,7 @@ function App(): React.JSX.Element {
                 onAgentQuestionDismiss={handleAgentQuestionDismiss}
                 runCompleteNotice={visibleRunCompleteNotice}
                 runCompleteDurationText={runCompleteDurationText}
+                queuedRunStatusByAppRunId={queuedRunStatusByAppRunId}
                 currentChat={currentChat}
                 isGlobal={isGlobalChat(currentChat)}
                 currentRun={currentRun}
@@ -21937,6 +22434,7 @@ function App(): React.JSX.Element {
               onAgentQuestionDismiss={() => {}}
               runCompleteNotice={sideRunCompleteNotice}
               runCompleteDurationText={null}
+              queuedRunStatusByAppRunId={queuedRunStatusByAppRunId}
               currentChat={sideChat}
               isGlobal={isGlobalChat(sideChat)}
               currentRun={sideRun}

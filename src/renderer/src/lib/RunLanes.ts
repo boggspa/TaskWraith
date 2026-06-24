@@ -85,7 +85,13 @@ export const resolveCockpitRunSource = (
 
 const runLanePhaseFromStatus = (status: string): RunLane['phase'] => {
   if (status === 'queued' || status === 'starting') return 'queued'
-  if (status === 'active' || status === 'running') return 'active'
+  if (
+    status === 'active' ||
+    status === 'running' ||
+    status === 'promoting' ||
+    status === 'steer_promoting'
+  )
+    return 'active'
   if (status === 'paused') return 'paused'
   if (status === 'cancelled' || status === 'cancelling') return 'cancelled'
   if (status === 'failed') return 'failed'

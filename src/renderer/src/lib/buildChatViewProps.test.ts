@@ -83,13 +83,15 @@ describe('buildChatViewProps (viewer policy)', () => {
     const onOpenSubThread = vi.fn()
     const onCopyMessage = vi.fn()
     const onPreviewImage = vi.fn()
+    const queuedRunStatusByAppRunId = { 'run-1': 'steer_promoting' }
     const p = buildChatViewProps(
       makeInput({
         onInspectRun,
         onOpenSubThread,
         onCopyMessage,
         onPreviewImage,
-        liveActivityViewport: true
+        liveActivityViewport: true,
+        queuedRunStatusByAppRunId
       })
     )
     expect(p.onInspectRun).toBe(onInspectRun)
@@ -97,5 +99,6 @@ describe('buildChatViewProps (viewer policy)', () => {
     expect(p.onCopyMessage).toBe(onCopyMessage)
     expect(p.onPreviewImage).toBe(onPreviewImage)
     expect(p.liveActivityViewport).toBe(true)
+    expect(p.queuedRunStatusByAppRunId).toBe(queuedRunStatusByAppRunId)
   })
 })

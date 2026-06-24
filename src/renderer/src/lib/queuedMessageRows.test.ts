@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatRecord, RunQueueJob } from '../../../main/store/types'
 import type { QueuedRunRequest } from './runRequestTypes'
 import {
+  deriveQueuedLifecycleProjection,
   appendLocalQueuedRunEntries,
   preserveOptimisticEnsembleQueue
 } from './queuedMessageRows'
@@ -67,6 +68,26 @@ const job = (overrides: Partial<RunQueueJob> = {}): RunQueueJob =>
 
 const fallbackId = (queued: QueuedRunRequest): string =>
   queued.appRunId || `${queued.provider}-${queued.prompt.slice(0, 16)}`
+
+const queuedLifecycleMessage = ({
+  appRunId = 'run-1',
+  statusText = 'Queued (#1): Display prompt\n— Will dispatch when this chat\'s current Codex turn finishes.'
+}: {
+  appRunId?: string
+  statusText?: string
+} = {}): {
+  id: string
+  role: 'tool' | 'system'
+  content: string
+  timestamp: string
+  metadata: { kind: 'queuedRunRequest'; appRunId: string; queuePosition: number; provider: 'codex' }
+} => ({
+  id: `queued-${appRunId}`,
+  role: 'tool',
+  content: statusText,
+  timestamp: '2026-06-22T10:00:00.000Z',
+  metadata: { kind: 'queuedRunRequest', appRunId, queuePosition: 1, provider: 'codex' }
+})
 
 describe('queued message row helpers', () => {
   it('adds a local queued request before the durable queue echo arrives', () => {
@@ -150,5 +171,49 @@ describe('queued message row helpers', () => {
     const merged = preserveOptimisticEnsembleQueue(incoming, local)
 
     expect(merged).toBe(incoming)
+  })
+
+  it('keeps queued lifecycle rows above transcript while still queued', () => {
+    const projected = deriveQueuedLifecycleProjection({
+      messages: [queuedLifecycleMessage()],
+      pendingQueuedAppRunIds: new Set(['run-1'])
+    })
+
+    expect(projected).toHaveLength(1)
+    expect(projected[0]?.role).toBe('system')
+    expect(projected[0]?.content).toContain('Will dispatch')
+  })
+
+  it('projects promoted queued cards when queue dispatch completed', () => {
+    const projected = deriveQueuedLifecycleProjection({
+      messages: [queuedLifecycleMessage({ appRunId: 'run-promoted' })],
+      pendingQueuedAppRunIds: new Set(),
+      queuedRunStatusByAppRunId: { 'run-promoted': 'steer_promoting' }
+    })
+
+    expect(projected[0]?.content).toContain('— Promoted to dispatch')
+    expect(projected[0]?.content).not.toContain('Will dispatch')
+  })
+
+  it('projects cancelled queued cards when queue lifecycle changed', () => {
+    const projected = deriveQueuedLifecycleProjection({
+      messages: [queuedLifecycleMessage({ appRunId: 'run-cancelled' })],
+      pendingQueuedAppRunIds: new Set(),
+      queuedRunStatusByAppRunId: { 'run-cancelled': 'cancelled' }
+    })
+
+    expect(projected[0]?.content).toContain('— Cancelled before dispatch')
+    expect(projected[0]?.content).not.toContain('Will dispatch')
+  })
+
+  it('projects edited queued cards with edited lifecycle label', () => {
+    const projected = deriveQueuedLifecycleProjection({
+      messages: [queuedLifecycleMessage({ appRunId: 'run-edited' })],
+      pendingQueuedAppRunIds: new Set(),
+      queuedRunStatusByAppRunId: { 'run-edited': 'edited' }
+    })
+
+    expect(projected[0]?.content).toContain('— Removed from queue for editing')
+    expect(projected[0]?.content).not.toContain('Will dispatch')
   })
 })

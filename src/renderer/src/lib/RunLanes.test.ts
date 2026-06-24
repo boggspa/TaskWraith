@@ -37,6 +37,8 @@ const runtimeProfile = (overrides: Partial<RuntimeProfile> = {}): RuntimeProfile
   ...overrides
 })
 
+type TestQueueStatus = RunQueueJob['status'] | 'promoting' | 'steer_promoting'
+
 const queuedJob = (overrides: Partial<RunQueueJob> = {}): RunQueueJob => ({
   id: 'run-1',
   runId: 'run-1',
@@ -56,6 +58,12 @@ const queuedJob = (overrides: Partial<RunQueueJob> = {}): RunQueueJob => ({
   updatedAt: now,
   ...overrides
 })
+
+const queuedJobWithStatus = (status: TestQueueStatus, overrides: Partial<RunQueueJob> = {}): RunQueueJob =>
+  queuedJob({
+    ...overrides,
+    status: status as RunQueueJob['status']
+  })
 
 const scheduledTask = (overrides: Partial<ScheduledTask> = {}): ScheduledTask => ({
   id: 'task-1',
@@ -169,6 +177,34 @@ describe('buildRunLanes', () => {
 
     expect(lanes[0].conflictSummary).toBe('Shares workspace with 1 other live lane.')
     expect(lanes[1].conflictSummary).toBe('Shares workspace with 1 other live lane.')
+  })
+
+  it('keeps queued-promoting jobs in active run lanes', () => {
+    const lanes = buildRunLanes(
+      [queuedJobWithStatus('promoting', { runId: 'promote-1', id: 'promote-1' })],
+      [chat()],
+      [],
+      [runtimeProfile()]
+    )
+
+    expect(lanes[0]).toMatchObject({
+      phase: 'active',
+      status: 'promoting'
+    })
+  })
+
+  it('keeps steer-promoting jobs in active run lanes', () => {
+    const lanes = buildRunLanes(
+      [queuedJobWithStatus('steer_promoting', { runId: 'steer-1', id: 'steer-1' })],
+      [chat()],
+      [],
+      [runtimeProfile()]
+    )
+
+    expect(lanes[0]).toMatchObject({
+      phase: 'active',
+      status: 'steer_promoting'
+    })
   })
 })
 
