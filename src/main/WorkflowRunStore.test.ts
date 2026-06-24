@@ -152,6 +152,21 @@ describe('foldWorkflowRunSummary', () => {
     expect(summary.completedAt).toBeUndefined()
   })
 
+  it('treats harvested as a forensic annotation (folds tokens/cost/duration, status unchanged)', () => {
+    const summary = foldWorkflowRunSummary('exec-1', [
+      ev({ kind: 'running' }, 1, 't1'),
+      ev({ kind: 'completed' }, 2, '2026-06-24T00:01:00.000Z'),
+      ev({ kind: 'harvested', tokens: 4200, costUsd: 0.19, durationMs: 30000 }, 3, 't3')
+    ])
+    // status stays terminal 'completed'; the harvest only contributes forensics.
+    expect(summary.status).toBe('completed')
+    expect(summary.isTerminal).toBe(true)
+    expect(summary.completedAt).toBe('2026-06-24T00:01:00.000Z')
+    expect(summary.tokens).toBe(4200)
+    expect(summary.costUsd).toBe(0.19)
+    expect(summary.durationMs).toBe(30000)
+  })
+
   it('treats stall_settled as a TERMINAL close (the startup reconciler writes it)', () => {
     const summary = foldWorkflowRunSummary('exec-1', [
       ev({ kind: 'dispatched', runId: 'run-1' }, 1, 't1'),

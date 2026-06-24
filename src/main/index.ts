@@ -1403,6 +1403,72 @@ const headlessRunSender = new Proxy(
 // failed at the kill DECISION (triggerKill), not on exit — the default Claude SDK
 // abort never reaches sendAgentCompatExit, and the mark must beat the renderer's
 // run-end mark. Timers .unref() so an armed kill never holds the loop open at quit.
+// Stage 1 slice 3 — resolve a scheduled task's workflow execution id (the run
+// ledger's per-execution file key) + its workflowId. undefined for an ad-hoc
+// (non-workflow) scheduled task → the caller skips the ledger append (the run
+// ledger is workflow-scoped). Same lookup the budget registration uses.
+function resolveWorkflowExecutionForTask(
+  scheduledTaskId: string | undefined
+): { workflowExecutionId: string; workflowId: string } | undefined {
+  if (!scheduledTaskId) return undefined
+  const task = AppStore.getScheduledTasks().find((t) => t.id === scheduledTaskId)
+  if (!task?.workflowExecutionId || !task.workflowId) return undefined
+  return { workflowExecutionId: task.workflowExecutionId, workflowId: task.workflowId }
+}
+
+// Slice 3 (a) — record a budget breach into the durable run ledger. Best-effort
+// (a ledger write must never break the kill / terminal path).
+function recordWorkflowBudgetBreach(
+  scheduledTaskId: string,
+  runId: string,
+  breach: { kind: 'tokens' | 'cost' | 'wallclock'; limit: number; observed: number }
+): void {
+  const resolved = resolveWorkflowExecutionForTask(scheduledTaskId)
+  if (!resolved) return
+  try {
+    AppStore.appendWorkflowRunEvent({
+      ...resolved,
+      kind: 'budget_breach',
+      scheduledTaskId,
+      runId,
+      breach: { kind: breach.kind, limit: breach.limit, observed: breach.observed }
+    })
+  } catch (e) {
+    console.error('Failed to record workflow budget_breach ledger event', e)
+  }
+}
+
+// Slice 3 (b) — harvest a finished scheduled run's tokens/cost/duration into the
+// run ledger as a forensic 'harvested' annotation (does NOT change lifecycle
+// status — it rides alongside the terminal lifecycle event the sync path already
+// wrote). `route` is the run state carried into sendAgentCompatExit (tokenUsage +
+// startedAt). Best-effort; skipped for a non-workflow task or when there's nothing
+// to record (no token signal AND no start time — e.g. a grok/cursor mid-run exit).
+function recordWorkflowRunHarvest(scheduledTaskId: string, runId: string, route: unknown): void {
+  const resolved = resolveWorkflowExecutionForTask(scheduledTaskId)
+  if (!resolved) return
+  const usage = (route as { tokenUsage?: { total_tokens?: number; total_cost_usd?: number } } | null)
+    ?.tokenUsage
+  const startedAt = (route as { startedAt?: number } | null)?.startedAt
+  const tokens = typeof usage?.total_tokens === 'number' ? usage.total_tokens : undefined
+  const costUsd = typeof usage?.total_cost_usd === 'number' ? usage.total_cost_usd : undefined
+  const durationMs = typeof startedAt === 'number' ? Math.max(0, Date.now() - startedAt) : undefined
+  if (tokens === undefined && costUsd === undefined && durationMs === undefined) return
+  try {
+    AppStore.appendWorkflowRunEvent({
+      ...resolved,
+      kind: 'harvested',
+      scheduledTaskId,
+      runId,
+      ...(tokens !== undefined ? { tokens } : {}),
+      ...(costUsd !== undefined ? { costUsd } : {}),
+      ...(durationMs !== undefined ? { durationMs } : {})
+    })
+  } catch (e) {
+    console.error('Failed to record workflow run harvest ledger event', e)
+  }
+}
+
 const workflowBudgetRegistry = new WorkflowBudgetRegistry({
   abort: (provider, runId) => {
     void cancelProviderRun(provider, runId)
@@ -1426,6 +1492,11 @@ const workflowBudgetRegistry = new WorkflowBudgetRegistry({
       console.warn(
         `[workflow-budget] killing run ${event.runId} (${event.provider}, task ${event.scheduledTaskId}): ${event.breach.kind} budget exceeded`
       )
+      recordWorkflowBudgetBreach(event.scheduledTaskId, event.runId, event.breach)
+    } else if (event.kind === 'task-failed' && event.breach) {
+      // POST-HOC grok/cursor overage (onTerminalUsage): no 'killed' event fired for
+      // it, so record the breach here so the ledger still captures it.
+      recordWorkflowBudgetBreach(event.scheduledTaskId, event.runId, event.breach)
     }
   }
 })
@@ -10689,6 +10760,8 @@ function sendAgentCompatExit(
         completedAt: new Date().toISOString(),
         ...(failoverFailed ? { lastError: 'Scheduled run failed after provider auto-failover.' } : {})
       })
+      // Slice 3: harvest the run's tokens/cost/duration into the durable run ledger.
+      recordWorkflowRunHarvest(failoverScheduledTaskId, routed.appRunId, route)
       // A failover run also lives in the solo map (it dispatched through the same
       // chokepoint); the failover mark above is authoritative — drop the solo entry.
       scheduledTaskIdBySoloRun.delete(routed.appRunId)
@@ -10703,6 +10776,8 @@ function sendAgentCompatExit(
         status: runCancelled ? 'cancelled' : (code ?? -1) === 0 ? 'completed' : 'failed',
         completedAt: new Date().toISOString()
       })
+      // Slice 3: harvest the run's tokens/cost/duration into the durable run ledger.
+      recordWorkflowRunHarvest(soloScheduledTaskId, routed.appRunId, route)
     }
   }
   publishRunEvent('agent-exit', provider, routed, sender)

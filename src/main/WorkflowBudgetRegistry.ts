@@ -78,7 +78,16 @@ export interface WorkflowBudgetRegistryDeps {
 export type WorkflowBudgetEvent =
   | { kind: 'registered'; runId: string; provider: ProviderId; scheduledTaskId: string }
   | { kind: 'killed'; runId: string; provider: ProviderId; scheduledTaskId: string; breach: BudgetBreach }
-  | { kind: 'task-failed'; runId: string; scheduledTaskId: string; lastError: string }
+  | {
+      kind: 'task-failed'
+      runId: string
+      scheduledTaskId: string
+      lastError: string
+      // Present only for the POST-HOC grok/cursor overage (onTerminalUsage); the
+      // mid-run kill carries the breach on its 'killed' event instead. Lets a
+      // ledger consumer record the breach for the post-hoc path too.
+      breach?: BudgetBreach
+    }
 
 interface RunEntry {
   budget: RegisteredBudget
@@ -170,7 +179,8 @@ export class WorkflowBudgetRegistry {
       kind: 'task-failed',
       runId,
       scheduledTaskId: entry.budget.scheduledTaskId,
-      lastError
+      lastError,
+      breach
     })
   }
 

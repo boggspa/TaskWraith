@@ -347,6 +347,18 @@ describe('WorkflowBudgetRegistry.onTerminalUsage — post-hoc (grok/cursor)', ()
     expect(h.aborts).toHaveLength(0)
   })
 
+  it('emits a task-failed event CARRYING the breach (slice 3 — for the run ledger)', () => {
+    const h = makeHarness()
+    h.registry.register(budget({ maxTokens: 1000, provider: 'grok' }))
+    h.registry.onTerminalUsage('run-1', { total_tokens: 1500 })
+    const failed = h.events.find((e) => e.kind === 'task-failed')
+    expect(failed).toBeDefined()
+    expect(failed).toMatchObject({
+      kind: 'task-failed',
+      breach: { kind: 'tokens', limit: 1000, observed: 1500 }
+    })
+  })
+
   it('is idempotent with a prior mid-run kill (no double mark, no second abort)', () => {
     const h = makeHarness()
     h.registry.register(budget({ maxTokens: 1000 }))

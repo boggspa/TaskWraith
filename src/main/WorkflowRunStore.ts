@@ -28,6 +28,10 @@ export type WorkflowRunEventKind =
   | 'skipped'
   | 'budget_breach'
   | 'stall_settled'
+  // Pure forensic annotation (slice 3): carries the harvested tokens/costUsd/
+  // durationMs of a finished run. Does NOT advance lifecycle status — it rides
+  // alongside the terminal lifecycle event so the fold picks up the consumption.
+  | 'harvested'
 
 /** Terminal lifecycle kinds (a fold stops advancing `status` past one of these).
  * `stall_settled` IS terminal: the startup reconciler (slice 2) writes it to close
@@ -195,10 +199,10 @@ export function foldWorkflowRunSummary(
         break
     }
 
-    // Lifecycle status advances on every kind EXCEPT budget_breach, which is a
-    // pure annotation (the real terminal lifecycle event follows it). stall_settled
+    // Lifecycle status advances on every kind EXCEPT the pure annotations
+    // (budget_breach + harvested), which only carry forensic fields. stall_settled
     // IS terminal (the reconciler's close event; nothing follows it).
-    if (event.kind !== 'budget_breach') {
+    if (event.kind !== 'budget_breach' && event.kind !== 'harvested') {
       summary.status = event.kind
       summary.isTerminal = TERMINAL_KINDS.has(event.kind)
     }
