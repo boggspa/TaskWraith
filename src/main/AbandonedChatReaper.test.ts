@@ -128,6 +128,17 @@ describe('isReapableAbandonedChat — ensemble safety', () => {
   })
 })
 
+describe('isReapableAbandonedChat — iOS remote drafts are off-limits', () => {
+  it('never reaps a chat with the remoteDraft provider metadata', () => {
+    expect(isReapableAbandonedChat(chat({ providerMetadata: { remoteDraft: { source: 'ios' } } }))).toBe(
+      false
+    )
+  })
+  it('never reaps a legacy ios- prefixed draft', () => {
+    expect(isReapableAbandonedChat(chat({ appChatId: 'ios-abc' }))).toBe(false)
+  })
+})
+
 describe('isReapableAbandonedChat — archived + age gate', () => {
   it('protects an archived chat', () => {
     expect(isReapableAbandonedChat(chat({ archived: true }))).toBe(false)
@@ -184,6 +195,23 @@ describe('reapAbandonedChats (orchestration)', () => {
     // Only the two genuine tombstones are reaped; ensemble is never reaped here.
     expect(reaped.sort()).toEqual(['t1', 't2'])
     expect(deleted.sort()).toEqual(['t1', 't2'])
+  })
+
+  it('caps the burst at `limit`, leaving the rest for the next create', () => {
+    const tombstones = Array.from({ length: 5 }, (_, i) => chat({ appChatId: `t${i}` }))
+    const deleted: string[] = []
+    const reaped = reapAbandonedChats(
+      {
+        getChats: () => tombstones,
+        getWorkflowChatIds: () => new Set(),
+        getScheduledChatIds: () => new Set(),
+        deleteChat: (id) => deleted.push(id)
+      },
+      {},
+      2
+    )
+    expect(reaped).toHaveLength(2)
+    expect(deleted).toHaveLength(2)
   })
 
   it('returns [] and deletes nothing when there is nothing abandoned', () => {

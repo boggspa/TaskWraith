@@ -51,6 +51,16 @@ export interface AbandonedReapContext {
 /** Titles a never-renamed fresh chat still carries (per the create factories). */
 const DEFAULT_TITLES: ReadonlySet<string> = new Set(['New Chat', 'New Ensemble'])
 
+/** providerMetadata key that marks an iOS-originated remote draft (mirrors
+ *  RemoteDraftChats.REMOTE_DRAFT_METADATA_KEY — duplicated to keep this module
+ *  dependency-free). */
+const REMOTE_DRAFT_METADATA_KEY = 'remoteDraft'
+
+/** Upper bound on deletions per create-time reap so a huge first-run backlog
+ *  can't stall the main thread in one synchronous burst; the remainder is
+ *  cleared by the next new-chat. */
+export const MAX_CREATE_TIME_REAP = 200
+
 const inSet = (set: ReadonlySet<string> | undefined, id: string): boolean =>
   set !== undefined && set.has(id)
 
@@ -66,6 +76,13 @@ export function isReapableAbandonedChat(
   if (!chat || chat.archived) return false
   if (ctx.keepChatId !== undefined && chat.appChatId === ctx.keepChatId) return false
   if (inSet(ctx.protectedChatIds, chat.appChatId)) return false
+
+  // ── iOS remote drafts are owned by the RemoteDraftChats subsystem (its own
+  //    age-gated reaper). The desktop create-time path is age-blind and can't
+  //    see the phone's unsent text, so touching one could delete a draft the
+  //    phone is composing in RIGHT NOW. Leave all remote drafts to that owner. ──
+  if (chat.providerMetadata?.[REMOTE_DRAFT_METADATA_KEY] !== undefined) return false
+  if (chat.appChatId?.startsWith('ios-')) return false
 
   // ── Started: a turn, a run, a bound provider session, or pruned memory. ──
   if ((chat.messages?.length || 0) > 0) return false
@@ -144,7 +161,8 @@ export interface ReapAbandonedChatsDeps {
  */
 export function reapAbandonedChats(
   deps: ReapAbandonedChatsDeps,
-  renderer: RendererReapContext = {}
+  renderer: RendererReapContext = {},
+  limit: number = MAX_CREATE_TIME_REAP
 ): string[] {
   const ids = reapableAbandonedChatIds(deps.getChats(), {
     protectedChatIds: new Set(renderer.protectedChatIds ?? []),
@@ -153,8 +171,9 @@ export function reapAbandonedChats(
     scheduledChatIds: deps.getScheduledChatIds(),
     keepChatId: renderer.keepChatId
   })
-  for (const id of ids) deps.deleteChat(id)
-  return ids
+  const toReap = limit >= 0 ? ids.slice(0, limit) : ids
+  for (const id of toReap) deps.deleteChat(id)
+  return toReap
 }
 
 /** Chat ids that are a parent of at least one other chat in `chats`. */
