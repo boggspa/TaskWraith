@@ -87,6 +87,12 @@ export type EnsembleQueuedSteerResult = {
   roundId?: string
   error?: string
 }
+export type EnsembleQueuedPromptMutationResult = {
+  ok: boolean
+  prompt?: string
+  queuedPrompts?: string[]
+  error?: string
+}
 
 /**
  * 1.0.7 — sentinel workspace id for global-chat ensemble usage records. MUST
@@ -1328,6 +1334,47 @@ export class EnsembleOrchestrator {
       'Ensemble steered: interrupted the active speaker and started a queued prompt.'
     )
     return { status: 'steered', roundId }
+  }
+
+  removeQueuedPrompt(input: {
+    chatId: string
+    index: number
+    textPrefix?: string
+  }): EnsembleQueuedPromptMutationResult {
+    const runtime = this.roundsByChatId.get(input.chatId)
+    if (!runtime || runtime.cancelled) {
+      return { ok: false, error: 'No active Ensemble round' }
+    }
+    const index = Number.isFinite(input.index) ? Math.floor(input.index) : -1
+    if (index < 0 || index >= runtime.queuedPrompts.length) {
+      return { ok: false, error: 'Queued item no longer exists' }
+    }
+
+    const selected = runtime.queuedPrompts[index]
+    if (!selected) {
+      return { ok: false, error: 'Queued item no longer exists' }
+    }
+    if (input.textPrefix && !selected.prompt.startsWith(input.textPrefix)) {
+      return { ok: false, error: 'Queue changed underneath — refresh and retry' }
+    }
+
+    runtime.queuedPrompts = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== index)
+    const nextQueuedPrompts = runtime.queuedPrompts.map((entry) => entry.prompt)
+    this.updateChatRound(input.chatId, (round) =>
+      round?.roundId === runtime.roundId
+        ? {
+            ...round,
+            queuedPrompt: nextQueuedPrompts[0],
+            queuedPrompts: nextQueuedPrompts
+          }
+        : round
+    )
+
+    return {
+      ok: true,
+      prompt: selected.prompt,
+      queuedPrompts: nextQueuedPrompts
+    }
   }
 
   async cancelRound(chatId: string, reason = 'cancelled'): Promise<boolean> {

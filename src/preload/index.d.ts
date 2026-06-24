@@ -1103,6 +1103,11 @@ declare global {
         textPrefix?: string
         concurrentMode?: boolean
       }) => Promise<{ status: string; roundId?: string; error?: string }>
+      removeQueuedEnsemblePrompt: (payload: {
+        chatId: string
+        index: number
+        textPrefix?: string
+      }) => Promise<{ ok: boolean; prompt?: string; queuedPrompts?: string[]; error?: string }>
       cancelEnsembleRound: (chatId: string) => Promise<boolean>
       skipEnsembleParticipant: (chatId: string) => Promise<boolean>
       getLatestSessionCheckpoint: (chatId: string) => Promise<SessionCheckpointRecord | null>

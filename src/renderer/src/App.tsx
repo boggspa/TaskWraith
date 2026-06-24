@@ -16974,24 +16974,47 @@ function App(): React.JSX.Element {
               : []
         const target = currentQueue[idx]
         if (!target) return
-        setChatPromptDraft(chat.appChatId, target)
-        const nextQueue = [...currentQueue.slice(0, idx), ...currentQueue.slice(idx + 1)]
-        const nextChat: ChatRecord = {
-          ...chat,
-          ensemble: {
-            ...chat.ensemble!,
-            activeRound: {
-              ...round,
-              queuedPrompt: nextQueue[0],
-              queuedPrompts: nextQueue
-            },
-            updatedAt: new Date().toISOString()
+        void window.api
+          .removeQueuedEnsemblePrompt({
+            chatId: chat.appChatId,
+            index: idx,
+            textPrefix: target
+          })
+          .then((result) => {
+            if (result?.ok !== true) {
+              appendThreadRawLog(chat.appChatId, {
+                type: 'stderr',
+                content: result?.error || 'Queued Ensemble prompt could not be edited.'
+              })
+              return
+            }
+            setChatPromptDraft(chat.appChatId, result.prompt || target)
+            const nextQueue = Array.isArray(result.queuedPrompts)
+              ? result.queuedPrompts
+              : [...currentQueue.slice(0, idx), ...currentQueue.slice(idx + 1)]
+            const nextChat: ChatRecord = {
+              ...chat,
+              ensemble: {
+                ...chat.ensemble!,
+                activeRound: {
+                  ...round,
+                  queuedPrompt: nextQueue[0],
+                  queuedPrompts: nextQueue
+                },
+                updatedAt: new Date().toISOString()
+              }
+            }
+            chatByIdRef.current.set(nextChat.appChatId, nextChat)
+            setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
+            setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
+          })
+          .catch((error) => {
+            appendThreadRawLog(chat.appChatId, {
+              type: 'stderr',
+              content: `Queued Ensemble prompt could not be edited: ${redactLog(String(error))}`
+            })
           }
-        }
-        chatByIdRef.current.set(nextChat.appChatId, nextChat)
-        setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
-        setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
-        void window.api.saveChat(nextChat)
+        )
         return
       }
       const job = runQueueJobsRef.current.find(
@@ -17051,23 +17074,47 @@ function App(): React.JSX.Element {
               ? [round.queuedPrompt]
               : []
         if (idx < 0 || idx >= currentQueue.length) return
-        const nextQueue = [...currentQueue.slice(0, idx), ...currentQueue.slice(idx + 1)]
-        const nextChat: ChatRecord = {
-          ...chat,
-          ensemble: {
-            ...chat.ensemble!,
-            activeRound: {
-              ...round,
-              queuedPrompt: nextQueue[0],
-              queuedPrompts: nextQueue
-            },
-            updatedAt: new Date().toISOString()
+        const target = currentQueue[idx]
+        void window.api
+          .removeQueuedEnsemblePrompt({
+            chatId: chat.appChatId,
+            index: idx,
+            textPrefix: target
+          })
+          .then((result) => {
+            if (result?.ok !== true) {
+              appendThreadRawLog(chat.appChatId, {
+                type: 'stderr',
+                content: result?.error || 'Queued Ensemble prompt could not be removed.'
+              })
+              return
+            }
+            const nextQueue = Array.isArray(result.queuedPrompts)
+              ? result.queuedPrompts
+              : [...currentQueue.slice(0, idx), ...currentQueue.slice(idx + 1)]
+            const nextChat: ChatRecord = {
+              ...chat,
+              ensemble: {
+                ...chat.ensemble!,
+                activeRound: {
+                  ...round,
+                  queuedPrompt: nextQueue[0],
+                  queuedPrompts: nextQueue
+                },
+                updatedAt: new Date().toISOString()
+              }
+            }
+            chatByIdRef.current.set(nextChat.appChatId, nextChat)
+            setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
+            setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
+          })
+          .catch((error) => {
+            appendThreadRawLog(chat.appChatId, {
+              type: 'stderr',
+              content: `Queued Ensemble prompt could not be removed: ${redactLog(String(error))}`
+            })
           }
-        }
-        chatByIdRef.current.set(nextChat.appChatId, nextChat)
-        setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
-        setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
-        void window.api.saveChat(nextChat)
+        )
         return
       }
       const job = runQueueJobsRef.current.find(

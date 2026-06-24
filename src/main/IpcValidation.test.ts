@@ -263,7 +263,30 @@ describe('IpcValidation', () => {
         { chatId: 'ensemble-1', prompt: 'Review this change', mode: 'normal' }
       ])
     ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('steer-queued-ensemble-prompt', [
+        { chatId: 'ensemble-1', index: 1, textPrefix: 'Queued prompt' }
+      ])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('remove-queued-ensemble-prompt', [
+        { chatId: 'ensemble-1', index: 1, textPrefix: 'Queued prompt' }
+      ])
+    ).not.toThrow()
     expect(() => validateIpcArgs('cancel-ensemble-round', ['ensemble-1'])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('promote-queued-job-for-steer', [
+        { runId: 'run-1', ownerToken: 'owner-1', chatId: 'chat-1' }
+      ])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('lease-promoted-steer-job', [{ runId: 'run-1', ownerToken: 'owner-1' }])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('fallback-promoted-steer-job', [
+        { runId: 'run-1', ownerToken: 'owner-1', reason: 'timeout' }
+      ])
+    ).not.toThrow()
     expect(() =>
       validateIpcArgs('create-sub-thread', [
         {

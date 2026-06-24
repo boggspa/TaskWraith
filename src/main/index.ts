@@ -19181,24 +19181,19 @@ if (isGeminiMcpBridgeProcess) {
             bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
             return { ok, ...result }
           }
-          const nextQueue = queue.filter((_, index) => index !== action.index)
-          const updated: ChatRecord = {
-            ...chat,
-            ensemble: {
-              ...chat.ensemble,
-              activeRound: {
-                ...round,
-                queuedPrompt: nextQueue[0],
-                queuedPrompts: nextQueue
-              }
-            },
-            updatedAt: Date.now()
+          const result = ensembleOrchestratorRef?.removeQueuedPrompt({
+            chatId: action.threadId,
+            index: action.index,
+            ...(action.textPrefix ? { textPrefix: action.textPrefix } : {})
+          }) ?? { ok: false, error: 'Ensemble orchestrator is not initialized.' }
+          if (!result.ok) {
+            return { ok: false, error: result.error || 'Queued item could not be removed.' }
           }
-          AppStore.saveChat(updated)
-          broadcastChatUpdated(updated)
+          const updated = AppStore.getChat(action.threadId)
+          if (updated) broadcastChatUpdated(updated)
           broadcastThreadUpdate(action.threadId)
           bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
-          return { ok: true }
+          return result
         },
         ensembleRosterUpdateFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
@@ -26478,6 +26473,34 @@ if (isGeminiMcpBridgeProcess) {
             ? { concurrentMode: Boolean(payload.concurrentMode) }
             : {})
         }) ?? { status: 'ignored', error: 'Ensemble orchestrator is not initialized.' }
+      }
+    )
+
+    ipcMain.handle(
+      'remove-queued-ensemble-prompt',
+      async (
+        _,
+        payload: {
+          chatId?: string
+          index?: number
+          textPrefix?: string
+        }
+      ) => {
+        if (AppStore.getSettings().ensembleModeEnabled === false) {
+          throw new Error('Ensemble Mode is disabled.')
+        }
+        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload.index)) : -1
+        const result = ensembleOrchestratorRef?.removeQueuedPrompt({
+          chatId,
+          index,
+          ...(typeof payload?.textPrefix === 'string' ? { textPrefix: payload.textPrefix } : {})
+        }) ?? { ok: false, error: 'Ensemble orchestrator is not initialized.' }
+        const updated = AppStore.getChat(chatId)
+        if (updated) broadcastChatUpdated(updated)
+        broadcastThreadUpdate(chatId)
+        bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+        return result
       }
     )
 

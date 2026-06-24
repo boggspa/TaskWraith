@@ -819,6 +819,11 @@ const api = {
     textPrefix?: string
     concurrentMode?: boolean
   }) => ipcRenderer.invoke('steer-queued-ensemble-prompt', payload),
+  removeQueuedEnsemblePrompt: (payload: {
+    chatId: string
+    index: number
+    textPrefix?: string
+  }) => ipcRenderer.invoke('remove-queued-ensemble-prompt', payload),
   cancelEnsembleRound: (chatId: string) => ipcRenderer.invoke('cancel-ensemble-round', chatId),
   skipEnsembleParticipant: (chatId: string) =>
     ipcRenderer.invoke('skip-ensemble-participant', chatId),

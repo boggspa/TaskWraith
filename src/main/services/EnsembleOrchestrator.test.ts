@@ -1592,6 +1592,55 @@ Next action:
     )
   })
 
+  it('removes queued prompts from runtime state so deleted entries do not dispatch later', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    for (const prompt of ['Queued A', 'Queued B']) {
+      const queued = harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt,
+        event: { sender: {} as Electron.WebContents },
+        mode: 'queue'
+      })
+      expect(queued.status).toBe('queued')
+    }
+
+    const removed = harness.orchestrator.removeQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: 'Queued A'
+    })
+
+    expect(removed).toMatchObject({
+      ok: true,
+      prompt: 'Queued A',
+      queuedPrompts: ['Queued B']
+    })
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual(['Queued B'])
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      {
+        appRunId: harness.dispatched[0].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      {
+        type: 'result',
+        status: 'success'
+      }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].prompt).toContain('Queued B')
+    expect(harness.dispatched[1].prompt).not.toContain('Queued A')
+    expect(harness.chat.ensemble?.activeRound?.prompt).toBe('Queued B')
+  })
+
   it('continues to the next participant when the current participant yields', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
