@@ -538,6 +538,7 @@ const defaultSettings: AppSettings = {
     agentAura: true,
     livingWorkspace: true,
     dataViz: true,
+    refraction: true,
     intensity: 'cinematic'
   },
   agenticServices: {

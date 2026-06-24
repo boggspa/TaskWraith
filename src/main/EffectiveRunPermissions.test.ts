@@ -29,6 +29,7 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
       agentAura: false,
       livingWorkspace: false,
       dataViz: false,
+      refraction: false,
       intensity: 'subtle'
     },
     reduceTransparency: false,

@@ -818,6 +818,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       livingWorkspace:
         'livingWorkspace' in source ? Boolean(source.livingWorkspace) : current.livingWorkspace,
       dataViz: 'dataViz' in source ? Boolean(source.dataViz) : current.dataViz,
+      refraction: 'refraction' in source ? Boolean(source.refraction) : current.refraction,
       intensity
     }
   }

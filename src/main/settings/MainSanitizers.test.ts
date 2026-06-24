@@ -75,6 +75,7 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
       agentAura: true,
       livingWorkspace: true,
       dataViz: true,
+      refraction: true,
       intensity: 'cinematic'
     },
     currency: 'USD',
@@ -441,5 +442,51 @@ describe('MainSanitizers settings patches', () => {
     ).toMatchObject({
       messageBridgeEnabled: true
     })
+  })
+
+  it('round-trips advancedFx.refraction and coerces non-boolean values', () => {
+    const settings = makeSettings() // refraction defaults true in the fixture
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+
+    // Explicit false survives.
+    expect(
+      sanitizeSettingsPatch({ advancedFx: { ...settings.advancedFx, refraction: false } }).advancedFx
+    ).toMatchObject({ refraction: false })
+
+    // Explicit true survives.
+    expect(
+      sanitizeSettingsPatch({ advancedFx: { ...settings.advancedFx, refraction: true } }).advancedFx
+    ).toMatchObject({ refraction: true })
+
+    // A malformed/non-boolean value is coerced via Boolean() — never persists as garbage.
+    expect(
+      sanitizeSettingsPatch({
+        advancedFx: { ...settings.advancedFx, refraction: 'yes' as unknown as boolean }
+      }).advancedFx
+    ).toMatchObject({ refraction: true })
+    expect(
+      sanitizeSettingsPatch({
+        advancedFx: { ...settings.advancedFx, refraction: 0 as unknown as boolean }
+      }).advancedFx
+    ).toMatchObject({ refraction: false })
+  })
+
+  it('back-fills advancedFx.refraction from current when the key is absent', () => {
+    const settings = makeSettings({
+      advancedFx: {
+        agentAura: true,
+        livingWorkspace: true,
+        dataViz: true,
+        refraction: false,
+        intensity: 'cinematic'
+      }
+    })
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+
+    // Patch omits refraction; sanitizer must preserve the current value, not reset to default.
+    const sanitized = sanitizeSettingsPatch({
+      advancedFx: { agentAura: false } as unknown as AppSettings['advancedFx']
+    })
+    expect(sanitized.advancedFx).toMatchObject({ agentAura: false, refraction: false })
   })
 })

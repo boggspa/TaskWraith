@@ -25,6 +25,7 @@ const DEFAULT_ADVANCED_FX: AppSettings['advancedFx'] = {
   agentAura: true,
   livingWorkspace: true,
   dataViz: true,
+  refraction: true,
   intensity: 'cinematic'
 }
 
@@ -158,8 +159,23 @@ function normalizeAdvancedFx(
     agentAura: value?.agentAura ?? DEFAULT_ADVANCED_FX.agentAura,
     livingWorkspace: value?.livingWorkspace ?? DEFAULT_ADVANCED_FX.livingWorkspace,
     dataViz: value?.dataViz ?? DEFAULT_ADVANCED_FX.dataViz,
+    refraction: value?.refraction ?? DEFAULT_ADVANCED_FX.refraction,
     intensity
   }
+}
+
+/**
+ * Refractive "liquid glass" is a MATERIAL choice, independent of the "fun FX"
+ * system (agent auras / weather). It is its own toggle, gated only on Reduce
+ * Transparency (NOT Reduce Motion — the refraction is static, and NOT funFxEnabled
+ * — a user who wants glass shouldn't have to also enable the cinematic FX layers).
+ * Exported as a pure helper so the gating logic is unit-testable.
+ */
+export function resolveRefractionEnabled(input: {
+  reduceTransparency: boolean
+  refraction: boolean
+}): boolean {
+  return !input.reduceTransparency && input.refraction
 }
 
 export function useAppearance() {
@@ -316,6 +332,15 @@ export function useAppearance() {
     root.setAttribute(
       'data-advanced-fx-data-viz',
       String(next.funFxEnabled && !next.reduceMotion && next.advancedFx.dataViz)
+    )
+    root.setAttribute(
+      'data-advanced-fx-refraction',
+      String(
+        resolveRefractionEnabled({
+          reduceTransparency: next.reduceTransparency,
+          refraction: next.advancedFx.refraction
+        })
+      )
     )
     root.setAttribute('data-advanced-fx-intensity', next.advancedFx.intensity)
     root.setAttribute('data-compact', String(next.compactDensity))

@@ -1328,6 +1328,8 @@ export interface AdvancedFxSettings {
   agentAura: boolean
   livingWorkspace: boolean
   dataViz: boolean
+  /** Refractive "liquid glass" material on popovers/surfaces; respects Reduce Transparency. */
+  refraction: boolean
   intensity: Exclude<FunFxMode, 'off'>
 }
 

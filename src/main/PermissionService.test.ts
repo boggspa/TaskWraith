@@ -38,6 +38,7 @@ const settings: AppSettings = {
     agentAura: true,
     livingWorkspace: true,
     dataViz: true,
+    refraction: true,
     intensity: 'cinematic'
   },
   reduceTransparency: false,

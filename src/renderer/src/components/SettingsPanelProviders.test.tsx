@@ -57,6 +57,7 @@ function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): Setting
       agentAura: false,
       livingWorkspace: false,
       dataViz: false,
+      refraction: false,
       intensity: 'subtle'
     },
     autoUpdateEnabled: true,

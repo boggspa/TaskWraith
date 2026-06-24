@@ -3306,6 +3306,22 @@ export function SettingsPanel({
                           onChange={(e) => updateAdvancedFx({ dataViz: e.target.checked })}
                         />
                       </label>
+                      <label className="settings-service-row settings-fx-toggle">
+                        <span>
+                          Refractive glass (experimental)
+                          <small>
+                            Refractive liquid-glass material on the composer, pickers and
+                            panels — replaces flat frost with a light-bending sheen + rim.
+                            Independent of Advanced FX; respects Reduce Transparency.
+                          </small>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={!reduceTransparency && advancedFx.refraction}
+                          disabled={reduceTransparency}
+                          onChange={(e) => updateAdvancedFx({ refraction: e.target.checked })}
+                        />
+                      </label>
                     </div>
                     <div className="settings-option-list settings-option-list-inline">
                       {FUN_FX_MODES.filter((option) => option.value !== 'off').map((option) => (

@@ -28,6 +28,7 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
       agentAura: true,
       livingWorkspace: true,
       dataViz: true,
+      refraction: true,
       intensity: 'cinematic'
     },
     reduceTransparency: false,
@@ -89,6 +90,8 @@ describe('SettingsService', () => {
     const service = new SettingsService(deps)
     expect(service.getSettings()).toBe(settings)
     expect(deps.getSettings).toHaveBeenCalledTimes(1)
+    // Pin the refractive-glass default so a dropped field is caught here.
+    expect(service.getSettings().advancedFx.refraction).toBe(true)
   })
 
   it('sanitizes before persisting a settings patch', () => {
