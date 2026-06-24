@@ -13,6 +13,7 @@ import type {
   ActiveGoal,
   AppSettings,
   ChatRecord,
+  ChatRun,
   EnsembleConfig,
   EnsembleParticipant,
   EnsembleWakeupRecord,
@@ -564,8 +565,85 @@ describe('EnsembleOrchestrator', () => {
       id: 'claude',
       provider: 'claude',
       role: 'Reviewer',
-      status: 'running'
+      status: 'running',
+      contextTokens: 0,
+      contextWindow: 200_000,
+      contextPercent: 0
     })
+  })
+
+  it('lists latest per-participant context usage for the calling run', async () => {
+    const chat = makeChat()
+    chat.ensemble!.participants[0].model = 'claude-opus-4-8-1m'
+    chat.ensemble!.participants[1].model = 'gpt-5.5'
+    chat.runs = [
+      {
+        runId: 'claude-old',
+        provider: 'claude',
+        ensembleParticipantId: 'claude',
+        startedAt: '2026-05-24T00:00:00.000Z',
+        status: 'success',
+        stats: { input_tokens: 40_000, output_tokens: 1_000, total_tokens: 41_000 }
+      },
+      {
+        runId: 'claude-new',
+        provider: 'claude',
+        ensembleParticipantId: 'claude',
+        startedAt: '2026-05-24T00:05:00.000Z',
+        status: 'success',
+        stats: { input_tokens: 120_000, output_tokens: 3_000, total_tokens: 123_000 }
+      },
+      {
+        runId: 'claude-statless-later',
+        provider: 'claude',
+        ensembleParticipantId: 'claude',
+        startedAt: '2026-05-24T00:09:00.000Z',
+        status: 'running'
+      },
+      {
+        runId: 'codex-latest',
+        provider: 'codex',
+        ensembleParticipantId: 'codex',
+        startedAt: '2026-05-24T00:03:00.000Z',
+        status: 'success',
+        stats: {
+          inputTokens: 30_000,
+          outputTokens: 1_000,
+          totalTokens: 31_000,
+          totalTokenLimit: 900_000
+        }
+      },
+      {
+        runId: 'codex-total-only-later',
+        provider: 'codex',
+        ensembleParticipantId: 'codex',
+        startedAt: '2026-05-24T00:08:00.000Z',
+        status: 'success',
+        stats: { totalTokens: 99_000, totalTokenLimit: 700_000 }
+      }
+    ] as ChatRun[]
+    const harness = makeHarness({ initialChat: chat })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'List context.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = harness.orchestrator.listParticipantsForRun(harness.dispatched[0].appRunId)
+    expect(result.ok).toBe(true)
+    const byId = new Map(result.participants?.map((participant) => [participant.id, participant]))
+    expect(byId.get('claude')).toMatchObject({
+      contextTokens: 123_000,
+      contextWindow: 1_000_000
+    })
+    expect(byId.get('claude')?.contextPercent).toBeCloseTo(12.3, 5)
+    expect(byId.get('codex')).toMatchObject({
+      contextTokens: 31_000,
+      contextWindow: 900_000
+    })
+    expect(byId.get('codex')?.contextPercent).toBeCloseTo(3.44444, 5)
   })
 
   it('schedules a wakeup and resumes the same participant in the active round', async () => {

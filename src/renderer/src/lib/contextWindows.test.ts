@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatContextTokens, resolveContextWindow } from './contextWindows'
+import { contextPercent, formatContextTokens, resolveContextWindow } from './contextWindows'
 import type { ProviderId } from '../../../main/store/types'
 
 describe('resolveContextWindow', () => {
@@ -79,5 +79,14 @@ describe('formatContextTokens', () => {
   it('leaves sub-thousand values as plain numbers', () => {
     expect(formatContextTokens(999)).toBe('999')
     expect(formatContextTokens(0)).toBe('0')
+  })
+})
+
+describe('contextPercent', () => {
+  it('clamps usage percentages to finite meter bounds', () => {
+    expect(contextPercent(50_000, 200_000)).toBe(25)
+    expect(contextPercent(500_000, 200_000)).toBe(100)
+    expect(contextPercent(-5, 200_000)).toBe(0)
+    expect(contextPercent(50_000, 0)).toBe(0)
   })
 })

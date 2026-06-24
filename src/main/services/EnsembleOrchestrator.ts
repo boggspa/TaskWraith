@@ -72,6 +72,7 @@ import {
   type DiscordContextReadMetadata,
   type DiscordContextSnapshot
 } from '../channels/DiscordContextService'
+import { contextPercent, resolveContextWindow } from '../../shared/contextWindows'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
 
@@ -2395,6 +2396,9 @@ export class EnsembleOrchestrator {
       order: number
       enabled: boolean
       status: EnsembleParticipantStatus
+      contextTokens: number
+      contextWindow: number
+      contextPercent: number
     }>
   } {
     if (!runId) return { ok: false, error: 'list_ensemble_participants requires an active run id.' }
@@ -2414,15 +2418,26 @@ export class EnsembleOrchestrator {
       chatId: chat.appChatId,
       roundId: run.roundId,
       activeParticipantId: run.participant.id,
-      participants: (chat.ensemble.participants || []).map((participant) => ({
-        id: participant.id,
-        provider: participant.provider,
-        role: participant.role,
-        model: participant.model,
-        order: participant.order,
-        enabled: participant.enabled,
-        status: states.get(participant.id) || 'idle'
-      }))
+      participants: (chat.ensemble.participants || []).map((participant) => {
+        const participantContext = latestRunContextUsage(chat.runs ?? [], participant.id)
+        const participantContextWindow = resolveContextWindow(
+          participant.provider,
+          participant.model,
+          participantContext.totalTokenLimit
+        )
+        return {
+          id: participant.id,
+          provider: participant.provider,
+          role: participant.role,
+          model: participant.model,
+          order: participant.order,
+          enabled: participant.enabled,
+          status: states.get(participant.id) || 'idle',
+          contextTokens: participantContext.tokens,
+          contextWindow: participantContextWindow,
+          contextPercent: contextPercent(participantContext.tokens, participantContextWindow)
+        }
+      })
     }
   }
 
@@ -5322,6 +5337,74 @@ function promptWithAttachmentReferences(
       `${index + 1}. ${attachment.name ? `${attachment.name}: ` : ''}"${attachment.path}"`
   )
   return `${prompt}\n\nAttachment references for this request:\n${lines.join('\n')}`
+}
+
+function numericRunStat(stats: Record<string, unknown>, ...paths: Array<string | string[]>): number {
+  for (const path of paths) {
+    const keys = Array.isArray(path) ? path : [path]
+    let cursor: unknown = stats
+    let found = true
+    for (const key of keys) {
+      if (!cursor || typeof cursor !== 'object' || !(key in cursor)) {
+        found = false
+        break
+      }
+      cursor = (cursor as Record<string, unknown>)[key]
+    }
+    if (!found) continue
+    const value = cursor
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.max(0, Math.trunc(value))
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed)) return Math.max(0, Math.trunc(parsed))
+    }
+  }
+  return 0
+}
+
+/**
+ * Ensemble participants each run in their own model window. The useful current
+ * context proxy is the latest run for that participant, not the cumulative sum
+ * across every run, because each turn resends the accumulated transcript.
+ */
+function latestRunContextUsage(
+  runs: ReadonlyArray<ChatRun>,
+  participantId: string
+): { tokens: number; totalTokenLimit?: number } {
+  let bestTime = Number.NEGATIVE_INFINITY
+  let best: { tokens: number; totalTokenLimit?: number } = { tokens: 0 }
+  for (const run of runs) {
+    if (run.ensembleParticipantId !== participantId) continue
+    const stats = (run.stats ?? {}) as Record<string, unknown>
+    const input = numericRunStat(stats, 'input_tokens', 'inputTokens')
+    const output = numericRunStat(stats, 'output_tokens', 'outputTokens')
+    const tokens = input + output
+    if (tokens <= 0) continue
+    const totalTokenLimit = numericRunStat(
+      stats,
+      'totalTokenLimit',
+      'totalTokensLimit',
+      'total_tokens_limit',
+      'total_limit_tokens',
+      'modelContextWindow',
+      ['tokenLimits', 'total'],
+      ['token_limits', 'total'],
+      ['usageLimits', 'total_tokens'],
+      ['limits', 'total_tokens']
+    )
+    const parsed = Date.parse(run.startedAt || '')
+    const time = Number.isFinite(parsed) ? parsed : 0
+    if (time >= bestTime) {
+      bestTime = time
+      best = {
+        tokens,
+        ...(totalTokenLimit > 0 ? { totalTokenLimit } : {})
+      }
+    }
+  }
+  return best
 }
 
 /**

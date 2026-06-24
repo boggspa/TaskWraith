@@ -1367,7 +1367,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'list_ensemble_participants',
       description:
-        'In Ensemble Mode, list the current participants, providers, roles, models, and per-round statuses for the active round.',
+        'In Ensemble Mode, list the current participants, providers, roles, models, per-round statuses, and estimated per-participant context usage for the active round. Context usage fields are latest usage-bearing run estimates: contextTokens is latest input+output tokens, contextWindow is the resolved token window, and contextPercent is a 0-100 usage percentage; in-flight output is not included.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
