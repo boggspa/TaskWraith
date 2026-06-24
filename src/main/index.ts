@@ -5094,6 +5094,60 @@ function ensembleApprovalContext(
   }
 }
 
+function bossmanAutoApprovalMetadata(input: {
+  session: ReturnType<typeof runManager.get> | undefined
+  ensembleRun: EnsembleRunIdentity | undefined
+  service: AgenticServiceId
+  workspacePath: string | undefined
+  request: {
+    method: string
+    title: string
+    body: string
+    preview?: any
+    runId?: string
+    forcePrompt?: boolean
+    externalPathDetection?: PendingExternalPathDetection
+  }
+  effectivePermissions: EffectiveRunPermissions | undefined
+  policy: string
+  decision: string
+  neverAutoAllow: boolean
+}): Record<string, unknown> | null {
+  const { session, ensembleRun, service, request, effectivePermissions, policy, decision } = input
+  if (!session || !ensembleRun) return null
+  if (decision !== 'ask') return null
+  if (input.neverAutoAllow) return null
+  if (request.forcePrompt || request.externalPathDetection) return null
+  if (effectivePermissions?.readOnly) return null
+  if (service !== 'shellCommands' && service !== 'fileChanges') return null
+  const chatId = session.state?.appChatId
+  const chat = chatId ? AppStore.getChat(chatId) : null
+  const ensemble = chat?.ensemble
+  const bossmanParticipantId = ensemble?.bossmanParticipantId
+  const autoApprovals = ensemble?.bossmanAutoApprovals
+  if (!bossmanParticipantId || autoApprovals?.enabled !== true) return null
+  if (autoApprovals.mode !== 'permission_preset_once') return null
+  if (!ensemble.participants.some((participant) => participant.id === bossmanParticipantId)) {
+    return null
+  }
+  if (!ensemble.participants.some((participant) => participant.id === ensembleRun.participantId)) {
+    return null
+  }
+  return {
+    policy,
+    mode: autoApprovals.mode,
+    confirmedAt: autoApprovals.confirmedAt,
+    bossmanParticipantId,
+    targetParticipantId: ensembleRun.participantId,
+    targetProvider: ensembleRun.provider,
+    targetRole: ensembleRun.role,
+    roundId: ensembleRun.roundId,
+    actionClass: service,
+    rationale:
+      'Bossman Auto Approvals enabled by the user; request-scoped approval within participant permission preset and workspace policy.'
+  }
+}
+
 async function requestAgenticServiceApproval(
   sender: Electron.WebContents | null,
   provider: ProviderId,
@@ -5208,6 +5262,34 @@ async function requestAgenticServiceApproval(
       workspaceGrantAllowed ? 'workspace_grant' : sessionGrantAllowed ? 'session_grant' : 'policy',
       workspaceGrantAllowed ? 'workspace' : sessionGrantAllowed ? 'session' : 'request',
       { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
+    )
+    return true
+  }
+  const bossmanAutoMetadata = bossmanAutoApprovalMetadata({
+    session,
+    ensembleRun,
+    service,
+    workspacePath,
+    request,
+    effectivePermissions,
+    policy,
+    decision,
+    neverAutoAllow
+  })
+  if (bossmanAutoMetadata) {
+    auditService.recordAutomaticApprovalDecision(
+      provider,
+      auditRoute,
+      service,
+      workspacePath,
+      request,
+      'autoAllow',
+      'bossman_auto',
+      'request',
+      {
+        ...bossmanAutoMetadata,
+        ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+      }
     )
     return true
   }

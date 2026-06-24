@@ -169,6 +169,46 @@ describe('AuditService', () => {
     })
   })
 
+  it('records Bossman auto approvals as request-scoped ledger decisions with participant metadata', () => {
+    const { records } = makeDeps()
+    const service = new AuditService(
+      makeDeps({ recordApprovalLedgerDecision: (input) => records.push(input) }).deps
+    )
+    service.recordAutomaticApprovalDecision(
+      'codex',
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      'fileChanges',
+      '/workspace',
+      { method: 'write_file', title: 'Edit file', body: 'Update implementation' },
+      'autoAllow',
+      'bossman_auto',
+      'request',
+      {
+        bossmanParticipantId: 'claude-boss',
+        targetParticipantId: 'codex-worker',
+        approvalId: 'pending-approval-1',
+        actionClass: 'fileChanges',
+        rationale: 'Protecting the current work session.'
+      }
+    )
+    expect(records[0]).toMatchObject({
+      decision: 'autoAllow',
+      decisionSource: 'bossman_auto',
+      grantedScope: 'request',
+      expiration: {
+        mode: 'none',
+        description: 'Allowed automatically by the current TaskWraith policy for this request.'
+      },
+      metadata: {
+        bossmanParticipantId: 'claude-boss',
+        targetParticipantId: 'codex-worker',
+        approvalId: 'pending-approval-1',
+        actionClass: 'fileChanges',
+        rationale: 'Protecting the current work session.'
+      }
+    })
+  })
+
   it('uses workspace and session expiration descriptions for broader grants', () => {
     const { records } = makeDeps()
     const service = new AuditService(
