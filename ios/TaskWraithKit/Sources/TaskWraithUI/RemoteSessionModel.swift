@@ -4077,7 +4077,7 @@ public final class RemoteSessionModel: ObservableObject {
         send(
             BridgeAction.createThread(workspaceId: "global", variant: "global"),
             timeoutMs: 12_000,
-            successLabel: "Global chat created.",
+            successLabel: "General chat created.",
             navigateOnAck: true
         ) { [weak self] threadId in
             guard let self, let threadId else { return }

@@ -135,7 +135,7 @@ struct HomeView: View {
                     // render through the normal transcript welcome surface.
                     Button("New chat") { openCanvas(.workspace) }
                     Button("New ensemble") { openCanvas(.ensemble) }
-                    Button("New global chat") { openCanvas(.global) }
+                    Button("New general chat") { openCanvas(.global) }
                 } label: {
                     ToolbarIconPillLabel("New", systemImage: "square.and.pencil")
                 }
@@ -478,7 +478,7 @@ struct HomeView: View {
                 }
             } header: {
                 GlassPillHeader(
-                    title: "Global Chats", systemImage: "globe",
+                    title: "General Chats", systemImage: "globe",
                     count: globalCards.count,
                     collapsed: collapsedSections.contains("globalChats")
                 ) { toggleSection("globalChats") }

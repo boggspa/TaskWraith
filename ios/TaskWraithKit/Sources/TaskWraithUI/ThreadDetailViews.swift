@@ -1521,7 +1521,7 @@ struct ThreadEmptyWelcomeCanvas: View {
             return .scoped(prefix: "New ensemble for ", name: workspaceName)
         }
         if isGlobal {
-            return .plain("New global chat.")
+            return .plain("New general chat.")
         }
         return .scoped(prefix: "New chat for ", name: workspaceName)
     }
@@ -1622,8 +1622,8 @@ struct ThreadEmptyWelcomeCanvas: View {
         return RotatingActivityHeatmap(flavors: [
             .init(
                 id: "scope",
-                title: isGlobal ? "Global Activity" : "Workspace Activity",
-                caption: isGlobal ? "global chats" : "current workspace",
+                title: isGlobal ? "General Activity" : "Workspace Activity",
+                caption: isGlobal ? "general chats" : "current workspace",
                 accent: accent,
                 events: twActivityHeatmapEvents(from: scopedCards)),
             .init(

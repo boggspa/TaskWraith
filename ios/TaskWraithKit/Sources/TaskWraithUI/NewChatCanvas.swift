@@ -85,7 +85,7 @@ struct NewChatBootstrapView: View {
             return targetWorkspaceId == nil
                 ? "Syncing workspaces from your Mac…" : "Creating ensemble…"
         case .global:
-            return "Creating global chat…"
+            return "Creating general chat…"
         }
     }
 
@@ -123,7 +123,7 @@ struct NewChatBootstrapView: View {
         switch mode {
         case .workspace: return "Couldn't start this chat"
         case .ensemble: return "Couldn't start this ensemble"
-        case .global: return "Couldn't start a global chat"
+        case .global: return "Couldn't start a general chat"
         }
     }
 
