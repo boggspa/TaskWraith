@@ -4113,10 +4113,16 @@ function composeDelegatedProviderPrompt(args: {
   resumeSessionId?: string
 }): string {
   // Kimi's `--resume` restores the session token but not the visible
-  // transcript. Normal composer turns compensate via PromptComposition;
-  // agent-driven sub-thread recalls need the same treatment or the Kimi
-  // child sees only the newest follow-up prompt.
-  if (args.provider !== 'kimi') return args.prompt
+  // transcript; Grok's default ACP transport opens a fresh session each turn
+  // with no resume at all. Normal composer turns compensate via
+  // PromptComposition; agent-driven sub-thread RECALLS (a 2nd+ delegated turn)
+  // need the same treatment or the child sees only the newest follow-up prompt.
+  // Other providers resume their native session, so pass their prompt through.
+  // (composeRunPrompt below performs the actual provider-gated injection — for
+  // Grok it only fires when ACP is on, matching the gate there.)
+  const needsHostTranscriptInjection =
+    args.provider === 'kimi' || (args.provider === 'grok' && grokAcpEnabled())
+  if (!needsHostTranscriptInjection) return args.prompt
   const settings = AppStore.getSettings()
   return composeRunPrompt({
     provider: args.provider,

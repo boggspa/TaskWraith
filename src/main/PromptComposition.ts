@@ -7,6 +7,7 @@ import { classifyOllamaPromptIntent } from './ollama/OllamaPromptIntent'
 import { ollamaTierAwareWorkflowHint } from './ollama/OllamaModelProfiles'
 import { suggestOllamaTierBump } from './ollama/OllamaTierSuggestion'
 import { formatActiveGoalPromptBlock, shouldInjectActiveGoal } from './GoalState'
+import { grokAcpEnabled } from './grokGate'
 import type {
   ActiveGoal,
   ChatMessage,
@@ -593,6 +594,17 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     codexNextModelKey &&
     codexPreviousModelKey !== codexNextModelKey
   const kimiNeedsContextInjection = provider === 'kimi'
+  // Grok over its DEFAULT ACP transport opens a fresh `session/new` every turn
+  // and never resumes prior history (there is no ACP `session/load`; the headless
+  // `--resume` path is bypassed, and each turn spawns a fresh `grok agent stdio`
+  // process). So — exactly like Kimi — the host must re-inject a compact
+  // transcript or the run is context-blind across turns. UNCONDITIONAL (not gated
+  // on `!resumeSessionId`) because the ACP path has no usable resume to defer to.
+  // Gated to the ACP transport: when ACP is off (TASKWRAITH_GROK_ACP=0) the
+  // headless `--resume` restores history natively and injecting here would
+  // double-feed. (Does not affect ensemble Grok — that path builds its own tagged
+  // transcript via EnsemblePrompt and never reaches composeRunPrompt.)
+  const grokNeedsContextInjection = provider === 'grok' && grokAcpEnabled()
   const geminiNeedsContextInjection = provider === 'gemini' && !resumeSessionId
   const codexNeedsContextInjection =
     provider === 'codex' && !resumeSessionId && !codexModelChangedAfterWork
@@ -605,6 +617,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   const ollamaNeedsContextInjection = provider === 'ollama' && ollamaPromptIntent === 'workspace'
   const shouldAppendContextForRun =
     kimiNeedsContextInjection ||
+    grokNeedsContextInjection ||
     geminiNeedsContextInjection ||
     codexNeedsContextInjection ||
     ollamaNeedsContextInjection
@@ -639,17 +652,19 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   }
   let applicationLog = kimiNeedsContextInjection
     ? `Context turns: ${contextTurnsApplied} (Kimi: appending compact conversation context because Wire protocol --resume does not restore message history)`
-    : codexNeedsContextInjection
-      ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
-      : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
-        ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
-        : ollamaNeedsContextInjection
-          ? `Context turns: ${contextTurnsApplied} (Ollama: compact local context — search/read narrowly; ${contextBudget.maxBlockChars} char cap)`
-          : provider !== 'gemini'
-            ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
-            : resumeSessionId
-              ? 'Context turns: 0 (resuming Gemini CLI session context)'
-              : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
+    : grokNeedsContextInjection
+      ? `Context turns: ${contextTurnsApplied} (Grok: appending compact conversation context because the ACP transport opens a fresh session each turn)`
+      : codexNeedsContextInjection
+        ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
+        : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
+          ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
+          : ollamaNeedsContextInjection
+            ? `Context turns: ${contextTurnsApplied} (Ollama: compact local context — search/read narrowly; ${contextBudget.maxBlockChars} char cap)`
+            : provider !== 'gemini'
+              ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
+              : resumeSessionId
+                ? 'Context turns: 0 (resuming Gemini CLI session context)'
+                : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
 
   let codexHandoffApplied: ComposeRunPromptResult['codexHandoffApplied'] | undefined
   let uiNoticeMessage: string | undefined

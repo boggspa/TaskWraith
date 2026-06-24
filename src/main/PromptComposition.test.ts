@@ -690,3 +690,61 @@ describe('buildConversationContextBlock channel messages', () => {
     expect(block).toContain('<channel_message binding="binding-1"')
   })
 })
+
+describe('composeRunPrompt Grok ACP cross-turn context', () => {
+  // Grok's DEFAULT transport (ACP) opens a fresh session/new every turn and never
+  // resumes — so, like Kimi, the host must re-inject a compact transcript or the
+  // run is context-blind across turns. Gated to the ACP transport.
+  const priorTurns = [
+    message({ role: 'user', content: 'Can Grok land commits with official AI credentials?' }),
+    message({
+      role: 'assistant',
+      content: 'Claude and Cursor have verified co-author trailers; Grok has none yet.'
+    })
+  ]
+
+  it('injects a compact transcript on the default ACP transport (no native resume)', () => {
+    const result = composeRunPrompt({
+      provider: 'grok',
+      finalPrompt: 'What about Kimi?',
+      messages: priorTurns,
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Grok'
+    })
+
+    expect(result.contextualPrompt).toContain('Conversation context')
+    expect(result.contextualPrompt).toContain('official AI credentials')
+    expect(result.contextualPrompt).toContain('Claude and Cursor have verified co-author trailers')
+    expect(result.contextualPrompt).toContain('Current user request:\nWhat about Kimi?')
+    expect(result.applicationLog).toContain('Grok: appending compact conversation context')
+    expect(result.contextTurnsApplied).toBeGreaterThan(0)
+  })
+
+  it('does NOT inject when the ACP transport is disabled (headless --resume is authoritative)', () => {
+    const prev = process.env.TASKWRAITH_GROK_ACP
+    process.env.TASKWRAITH_GROK_ACP = '0'
+    try {
+      const result = composeRunPrompt({
+        provider: 'grok',
+        finalPrompt: 'What about Kimi?',
+        messages: priorTurns,
+        chatContextTurns: 6,
+        codexHandoffsApplied: [],
+        isGlobalRun: false,
+        approvalMode: 'default',
+        providerLabel: 'Grok'
+      })
+
+      expect(result.contextualPrompt).not.toContain('Conversation context')
+      expect(result.contextualPrompt).not.toContain('official AI credentials')
+      expect(result.applicationLog).toContain('provider/session history is authoritative')
+      expect(result.contextTurnsApplied).toBe(0)
+    } finally {
+      if (prev === undefined) delete process.env.TASKWRAITH_GROK_ACP
+      else process.env.TASKWRAITH_GROK_ACP = prev
+    }
+  })
+})
