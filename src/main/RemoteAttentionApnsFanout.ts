@@ -1,10 +1,16 @@
 import type { BridgeApnsPushResult, BridgeRemoteAttentionPushPayload } from './BridgeApnsPusher'
 import type { BridgeApnsTokenStore } from './BridgeApnsTokenStore'
+import { sealPush } from '../shared/e2ee/pushSeal'
+import { buildCompletionPushPlaintext, type CompletionPushContent } from './CompletionPushContent'
 
 export interface RemoteAttentionApnsFanoutDeps {
   getTokenStore: () => BridgeApnsTokenStore | null
   getPusher: () => unknown
   isUserAtDesktop: () => boolean
+  /** The Mac's 32-byte identity seed, used to seal per-device ENCRYPTED rich
+   * push content. When absent (or a device registered no agreement key), pushes
+   * ship without the blob and the device shows the generic alert. */
+  getMacIdentitySeed?: () => Buffer | null
   log?: (line: string) => void
   now?: () => number
   coalesceMs?: number
@@ -39,7 +45,9 @@ export class RemoteAttentionApnsFanout {
     this.coalesceMs = deps.coalesceMs ?? DEFAULT_COALESCE_MS
   }
 
-  notify(input: Omit<BridgeRemoteAttentionPushPayload, 'pairID'>): void {
+  notify(
+    input: Omit<BridgeRemoteAttentionPushPayload, 'pairID'> & { rich?: CompletionPushContent }
+  ): void {
     const tokenStore = this.deps.getTokenStore()
     const pusher = this.deps.getPusher() as Pushable | null
     if (!tokenStore || !pusher) return
@@ -64,6 +72,25 @@ export class RemoteAttentionApnsFanout {
       void (async () => {
         try {
           const payload = sanitizePayload(entry.pairID, input)
+          // Per-device: seal the rich content to THIS device's agreement key, if
+          // it registered one and we hold the Mac seed. Non-fatal — on failure
+          // the push still ships with its generic alert (the NSE just has nothing
+          // to decrypt). Each device gets a distinct key, so this is per-iteration.
+          const macSeed = this.deps.getMacIdentitySeed?.() ?? null
+          if (input.rich && entry.agreePubRaw && macSeed) {
+            try {
+              payload.twpush = sealPush({
+                senderIdentitySeed: macSeed,
+                recipientAgreePubRaw: Buffer.from(entry.agreePubRaw, 'base64'),
+                pairId: entry.pairID,
+                plaintext: buildCompletionPushPlaintext(input.rich)
+              })
+            } catch (err) {
+              this.log(
+                `[APNs] rich push seal failed for pairID=${entry.pairID}: ${err instanceof Error ? err.message : String(err)}`
+              )
+            }
+          }
           const result = await pusher.pushRemoteAttentionToToken!(
             entry.deviceToken,
             entry.env,

@@ -30,6 +30,12 @@ export interface BridgeApnsTokenEntry {
   deviceToken: string
   env: BridgeApnsEnv
   updatedAt: number
+  /** base64 raw X25519 push-agreement public key. The device derives it from its
+   * identity seed and sends it at registration; the Mac uses it to seal
+   * per-device ENCRYPTED rich push content (see src/shared/e2ee/pushSeal.ts).
+   * Optional — absent for pre-feature registrations, which just get the generic
+   * alert. Not a secret (a public key), so plain JSON like the token is fine. */
+  agreePubRaw?: string
 }
 
 export interface BridgeApnsTokenStoreOptions {
@@ -68,7 +74,12 @@ export class BridgeApnsTokenStore {
   /** Register or replace a device token for a pairing. Token rotation is
    * normal — the iOS OS may issue a new token at any time, and the iOS app
    * is expected to re-register. */
-  upsert(pairID: string, deviceToken: string, env: BridgeApnsEnv): BridgeApnsTokenEntry {
+  upsert(
+    pairID: string,
+    deviceToken: string,
+    env: BridgeApnsEnv,
+    agreePubRaw?: string
+  ): BridgeApnsTokenEntry {
     if (!pairID) throw new Error('BridgeApnsTokenStore: pairID is required')
     if (!deviceToken) throw new Error('BridgeApnsTokenStore: deviceToken is required')
     if (env !== 'production' && env !== 'sandbox') {
@@ -78,7 +89,14 @@ export class BridgeApnsTokenStore {
       pairID,
       deviceToken,
       env,
-      updatedAt: this.now()
+      updatedAt: this.now(),
+      // Preserve a prior agreement key if this re-registration omits it (e.g. an
+      // older app build re-registering its token) — only overwrite when provided.
+      ...(agreePubRaw
+        ? { agreePubRaw }
+        : this.tokens.get(pairID)?.agreePubRaw
+          ? { agreePubRaw: this.tokens.get(pairID)!.agreePubRaw }
+          : {})
     }
     this.tokens.set(pairID, entry)
     this.persist()
@@ -167,6 +185,7 @@ function isValidEntry(value: unknown): value is BridgeApnsTokenEntry {
     typeof v.pairID === 'string' &&
     typeof v.deviceToken === 'string' &&
     (v.env === 'production' || v.env === 'sandbox') &&
-    typeof v.updatedAt === 'number'
+    typeof v.updatedAt === 'number' &&
+    (v.agreePubRaw === undefined || typeof v.agreePubRaw === 'string')
   )
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RemoteAttentionApnsFanout } from './RemoteAttentionApnsFanout'
 import type { BridgeApnsEnv, BridgeRemoteAttentionPushPayload } from './BridgeApnsPusher'
+import { deriveAgreementPublicRaw, openPush } from '../shared/e2ee/pushSeal'
 
 const flushFanout = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -64,6 +65,75 @@ describe('RemoteAttentionApnsFanout', () => {
     expect(payload.summary).toBeUndefined()
     expect(JSON.stringify(payload)).not.toContain('rm -rf')
     expect(JSON.stringify(payload)).not.toContain('/Users/dev')
+  })
+
+  it('seals per-device rich content the paired device can open (runComplete)', async () => {
+    const macSeed = Buffer.alloc(32, 0x11)
+    const deviceSeed = Buffer.alloc(32, 0x22)
+    const tokenStore = makeTokenStore([
+      {
+        pairID: 'pair-1',
+        deviceToken: 'token-1',
+        env: 'production',
+        agreePubRaw: deriveAgreementPublicRaw(deviceSeed).toString('base64')
+      }
+    ] as never)
+    const pushRemoteAttentionToToken = vi.fn(async () => ({ delivered: true, apnsId: 'a' }))
+    const fanout = new RemoteAttentionApnsFanout({
+      getTokenStore: () => tokenStore as never,
+      getPusher: () => ({ pushRemoteAttentionToToken }),
+      isUserAtDesktop: () => false,
+      getMacIdentitySeed: () => macSeed
+    })
+    fanout.notify({
+      reason: 'runComplete',
+      threadId: 't',
+      taskId: 't',
+      runId: 'r',
+      rich: { title: 'Codex', preview: 'Refactored the card', filesChanged: 3, additions: 12, deletions: 4 }
+    })
+    await flushFanout()
+    const payload = (pushRemoteAttentionToToken.mock.calls as unknown as AttentionPushCall[])[0][2]
+    expect(payload.twpush).toBeDefined()
+    // No plaintext leaks into the payload — ciphertext only.
+    expect(JSON.stringify(payload)).not.toContain('Refactored')
+    // The paired device opens the blob to the exact rich content.
+    const opened = JSON.parse(
+      openPush({
+        recipientIdentitySeed: deviceSeed,
+        senderAgreePubRaw: deriveAgreementPublicRaw(macSeed),
+        pairId: 'pair-1',
+        envelope: payload.twpush!
+      }).toString('utf8')
+    )
+    expect(opened).toEqual({
+      title: 'Codex',
+      preview: 'Refactored the card',
+      filesChanged: 3,
+      additions: 12,
+      deletions: 4
+    })
+  })
+
+  it('omits the blob when the device registered no agreement key (generic alert)', async () => {
+    const tokenStore = makeTokenStore([
+      { pairID: 'pair-1', deviceToken: 'token-1', env: 'production' as const }
+    ])
+    const pushRemoteAttentionToToken = vi.fn(async () => ({ delivered: true, apnsId: 'a' }))
+    const fanout = new RemoteAttentionApnsFanout({
+      getTokenStore: () => tokenStore as never,
+      getPusher: () => ({ pushRemoteAttentionToToken }),
+      isUserAtDesktop: () => false,
+      getMacIdentitySeed: () => Buffer.alloc(32, 0x11)
+    })
+    fanout.notify({
+      reason: 'runComplete',
+      threadId: 't',
+      rich: { title: 'x', preview: 'y', filesChanged: 0, additions: 0, deletions: 0 }
+    })
+    await flushFanout()
+    const payload = (pushRemoteAttentionToToken.mock.calls as unknown as AttentionPushCall[])[0][2]
+    expect(payload.twpush).toBeUndefined()
   })
 
   it('drops path-like workspace ids before attention and wake pushes', async () => {
