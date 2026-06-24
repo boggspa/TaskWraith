@@ -2106,8 +2106,17 @@ public func twMentionCandidates(
 /// token and would defeat the gate). Sorted so a pure reorder is a no-op.
 func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) -> String {
     guard !participants.isEmpty else { return "" }
+    // Escape the field/record delimiters first (role is user-editable free
+    // text and could legitimately contain "|" or ";"); without this, two
+    // distinct rosters could hash to the same signature and miss a re-tint.
+    func esc(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "|", with: "\\|")
+            .replacingOccurrences(of: ";", with: "\\;")
+    }
     return participants
-        .map { "\($0.participantId)|\($0.provider ?? "")|\($0.role ?? "")" }
+        .map { "\(esc($0.participantId))|\(esc($0.provider ?? ""))|\(esc($0.role ?? ""))" }
         .sorted()
         .joined(separator: ";")
 }

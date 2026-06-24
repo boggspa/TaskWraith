@@ -2009,12 +2009,17 @@ export function projectRemoteThread(
   // enlarged (bounded payload growth); older long messages still collapse
   // behind "Show more". Resolved off `visible` — the collapse keeps the FIRST
   // of a run of identical restatements, so that id is the one the client
-  // actually renders.
+  // actually renders. Scoped to the routine `latestN` push: `aroundRow`/
+  // `beforeRow` are targeted fetches whose caller sets the cap deliberately
+  // (e.g. Show-more sends its own 32000), and the latest reply never falls in
+  // a `beforeRow` (load-older) window — so the bump belongs only here.
   let latestAssistantRowId: string | null = null
-  for (let i = visible.length - 1; i >= 0; i -= 1) {
-    if (visible[i]?.role === 'assistant') {
-      latestAssistantRowId = visible[i].id
-      break
+  if (opts.mode.kind === 'latestN') {
+    for (let i = visible.length - 1; i >= 0; i -= 1) {
+      if (visible[i]?.role === 'assistant') {
+        latestAssistantRowId = visible[i].id
+        break
+      }
     }
   }
 
