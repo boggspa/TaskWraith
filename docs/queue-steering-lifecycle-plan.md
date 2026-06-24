@@ -342,9 +342,10 @@ Work Session continuations, or sub-thread auto-resume into this slice.
    Stop-button cancellation should continue to show stopped/cancelled feedback.
 6. Add a small lifecycle projection helper so cancelled, edited, or promoted
    queued cards do not resurface with stale "will dispatch" text.
-7. Preserve/restage remaining FIFO entries for desktop ensemble queued-row
-   Steer, or disable unsafe multi-item steer until preservation exists. Remote
-   queue-item steer can follow once its projection/indexing is aligned.
+7. Preserve/restage remaining FIFO entries for desktop and remote ensemble
+   queued-row Steer, or disable unsafe multi-item steer until preservation
+   exists. Remote projection must use the same canonical queue indexing as the
+   orchestrator.
 
 ### Later Slices
 
@@ -352,8 +353,8 @@ Work Session continuations, or sub-thread auto-resume into this slice.
    add run/epoch delta isolation.
 2. Project queue/steer lifecycle UI from durable state; retire or harden
    renderer-created queued/steer transcript markers.
-3. Harden remote ensemble queue identity and queued-row steer preservation with
-   stable queued entry ids.
+3. Harden ensemble queue identity with stable queued entry ids beyond
+   index/text-prefix guards.
 4. Bring remote composer onto the same promote/lease path after generic queue
    normalization preserves remote provenance.
 5. Bring scheduled/headless dispatch, wakeups, Work Session continuations, and

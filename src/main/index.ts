@@ -19070,38 +19070,21 @@ if (isGeminiMcpBridgeProcess) {
             return { ok: false, error: 'No active Ensemble round' }
           }
           const round = chat.ensemble.activeRound
-          // Combined injection-order view: legacy single slot, then array —
-          // matches the projection's index addressing.
-          const legacy = round.queuedPrompt ? [round.queuedPrompt] : []
-          const combined = [...legacy, ...(round.queuedPrompts ?? [])]
-          const item = combined[action.index]
+          // Canonical queue view: `queuedPrompts` is the full FIFO when present;
+          // `queuedPrompt` is only the legacy single-slot fallback.
+          const queue =
+            Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
+              ? round.queuedPrompts
+              : round.queuedPrompt
+                ? [round.queuedPrompt]
+                : []
+          const item = queue[action.index]
           if (item === undefined) {
             return { ok: false, error: 'Queued item no longer exists' }
           }
           if (action.textPrefix && !item.startsWith(action.textPrefix)) {
             return { ok: false, error: 'Queue changed underneath — refresh and retry' }
           }
-          const nextLegacy =
-            legacy.length > 0 && action.index === 0 ? undefined : round.queuedPrompt
-          const arrayIndex = action.index - legacy.length
-          const nextArray =
-            arrayIndex >= 0
-              ? (round.queuedPrompts ?? []).filter((_, i) => i !== arrayIndex)
-              : (round.queuedPrompts ?? [])
-          const updated: ChatRecord = {
-            ...chat,
-            ensemble: {
-              ...chat.ensemble,
-              activeRound: {
-                ...round,
-                queuedPrompt: nextLegacy,
-                queuedPrompts: nextArray
-              }
-            },
-            updatedAt: Date.now()
-          }
-          AppStore.saveChat(updated)
-          broadcastChatUpdated(updated)
           if (action.op === 'steerNow') {
             const liveQueueSender = mainWindow?.webContents
             const sender =
@@ -19109,17 +19092,34 @@ if (isGeminiMcpBridgeProcess) {
                 ? liveQueueSender
                 : createHeadlessRunSender()
             const fakeEvent = { sender } as unknown as Electron.IpcMainInvokeEvent
-            const result = ensembleOrchestratorRef?.startRound({
+            const result = ensembleOrchestratorRef?.steerQueuedPrompt({
               chatId: action.threadId,
-              prompt: item,
               event: fakeEvent,
-              mode: 'steer'
+              index: action.index,
+              textPrefix: action.textPrefix
             })
-            const ok = result?.status === 'started' || result?.status === 'steered'
+            const ok = result?.status === 'steered'
+            const updated = AppStore.getChat(action.threadId)
+            if (updated) broadcastChatUpdated(updated)
             broadcastThreadUpdate(action.threadId)
             bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
             return { ok, ...result }
           }
+          const nextQueue = queue.filter((_, index) => index !== action.index)
+          const updated: ChatRecord = {
+            ...chat,
+            ensemble: {
+              ...chat.ensemble,
+              activeRound: {
+                ...round,
+                queuedPrompt: nextQueue[0],
+                queuedPrompts: nextQueue
+              }
+            },
+            updatedAt: Date.now()
+          }
+          AppStore.saveChat(updated)
+          broadcastChatUpdated(updated)
           broadcastThreadUpdate(action.threadId)
           bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           return { ok: true }

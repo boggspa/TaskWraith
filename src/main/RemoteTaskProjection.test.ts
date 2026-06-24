@@ -4,6 +4,7 @@ import {
   buildMobileDiffSummary,
   buildMobileQuestionCard,
   buildRemoteCanvasPreviews,
+  combinedQueuedPrompts,
   buildRemoteEnsembleState,
   buildRemoteProjectionEnvelope,
   buildRemoteShellAppearance,
@@ -451,6 +452,38 @@ describe('RemoteTaskProjection', () => {
       queuedPromptCount: 1,
       participantCount: 1
     })
+  })
+
+  it('does not duplicate the legacy queuedPrompt head when queuedPrompts has the full FIFO', () => {
+    const activeRound = {
+      roundId: 'round-1',
+      status: 'running',
+      prompt: 'Coordinate',
+      startedAt: ISO,
+      queuedPrompt: 'first',
+      queuedPrompts: ['first', 'second'],
+      participants: []
+    } as NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>
+
+    expect(combinedQueuedPrompts(activeRound)).toEqual(['first', 'second'])
+
+    const card = buildRemoteTaskCard(
+      chat({
+        chatKind: 'ensemble',
+        ensemble: {
+          enabled: true,
+          maxParticipants: 2,
+          participants: [],
+          activeRound
+        }
+      })
+    )
+
+    expect(card.ensembleState?.queuedPromptCount).toBe(2)
+    expect(card.ensembleState?.queuedPrompts).toEqual([
+      { index: 0, text: 'first' },
+      { index: 1, text: 'second' }
+    ])
   })
 
   it('keeps an ensemble card "running" while the round is running even if the latest participant run succeeded', () => {

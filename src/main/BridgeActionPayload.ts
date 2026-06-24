@@ -550,7 +550,7 @@ export interface BridgeEnsembleQueueItemAction extends BridgeActionMetadata {
   kind: 'ensembleQueueItem'
   workspaceId: string
   threadId: string
-  /** Index into the COMBINED queue (legacy slot first, then the array). */
+  /** Index into the canonical queue (`queuedPrompts[]`, or legacy `queuedPrompt` fallback). */
   index: number
   /** Optional race guard — first chars of the expected text; the executor
    * rejects if the item at `index` no longer starts with it. */

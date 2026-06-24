@@ -1440,23 +1440,22 @@ function sumFiles(files: DiffFileSummary[], key: 'additions' | 'deletions'): num
   return files.reduce((total, file) => total + (file[key] ?? 0), 0)
 }
 
-/** Injection-order queue view: legacy single slot first, then the array —
- * the SAME combined order the orchestrator drains and the desktop renders.
+/** Canonical queue view. Newer active rounds mirror the full FIFO in
+ * `queuedPrompts` and keep `queuedPrompt` as the head for legacy readers.
+ * Older records may only have `queuedPrompt`, so fall back to that single slot.
  * Index addressing for remote steerNow/remove uses this order. */
 export function combinedQueuedPrompts(
   activeRound: EnsembleConfig['activeRound']
 ): string[] {
   if (!activeRound) return []
-  return [
-    ...(activeRound.queuedPrompt ? [activeRound.queuedPrompt] : []),
-    ...(activeRound.queuedPrompts ?? [])
-  ]
+  if (Array.isArray(activeRound.queuedPrompts) && activeRound.queuedPrompts.length > 0) {
+    return activeRound.queuedPrompts
+  }
+  return activeRound.queuedPrompt ? [activeRound.queuedPrompt] : []
 }
 
 function queuedPromptCount(activeRound: EnsembleConfig['activeRound']): number {
-  if (!activeRound) return 0
-  const queuedPrompts = activeRound.queuedPrompts?.length ?? 0
-  return queuedPrompts + (activeRound.queuedPrompt ? 1 : 0)
+  return combinedQueuedPrompts(activeRound).length
 }
 
 function projectEnsembleParticipant(
