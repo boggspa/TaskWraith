@@ -14,6 +14,7 @@ import {
   powerSaveBlocker,
   nativeImage,
   clipboard,
+  protocol,
   Tray
 } from 'electron'
 import type {
@@ -644,6 +645,7 @@ import {
   type ResolvedAudioSource
 } from './mcp/AudioToolExecutors'
 import { createNativeAudioEngine } from './mcp/AudioRenderEngine'
+import { registerTwMediaProtocol, TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
 import {
   createImageGenExecutor,
   isImageGenMcpToolName,
@@ -2273,6 +2275,12 @@ installIpcValidation(ipcMain)
 // Ask Chromium to keep expensive renderer visuals on the GPU raster path where supported.
 app.commandLine.appendSwitch('enable-gpu-rasterization')
 app.commandLine.appendSwitch('enable-zero-copy')
+
+// Register the twmedia:// scheme as privileged (standard + secure + stream) BEFORE
+// app `ready` — required, and callable only once, pre-ready. `stream:true` lets
+// <video>/<audio> stream + seek transcript media over HTTP Range (S0b). The handler
+// itself is registered post-ready in app.whenReady() below.
+protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE])
 
 // Swallow EPIPE on stderr writes. Common cause: the BridgeDaemon
 // subprocess streams chatty stderr lines through `onStderr → console.error`;
@@ -17069,6 +17077,10 @@ if (isGeminiMcpBridgeProcess) {
     // Rebrand continuity: seed the new TaskWraith userData dir from a legacy
     // AGBench install BEFORE the store performs its first lazy read.
     migrateLegacyUserDataSync()
+    // Serve content-addressed transcript media (audio/video) over twmedia:// with
+    // HTTP Range so <video>/<audio> can stream + seek (S0b). Base dir matches the
+    // lazy TranscriptMediaAssetStore (userData/transcript-media).
+    registerTwMediaProtocol(join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR))
     electronApp.setAppUserModelId('com.electron')
     registerProductCrashHandlers()
 
