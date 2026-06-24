@@ -433,6 +433,7 @@ import {
   AuditRunRecord,
   ExternalPathGrant,
   ScheduledTask,
+  ScheduledEnsembleSnapshot,
   AgenticServiceId,
   GeminiMcpBridgeStatus,
   ProviderCapabilityContract,
@@ -6688,6 +6689,95 @@ function clearScheduledTaskTimer() {
   }
 }
 
+// Stage 0b-dispatch (ensemble) — apply a schedule-time ensemble snapshot onto a
+// chat MAIN-side. Tiny pure replica of the renderer's applyScheduledEnsembleSnapshot
+// (src/renderer/src/lib/scheduledEnsembleSnapshot.ts) so the main process doesn't
+// import renderer code. Returns a new chat (original unchanged).
+function applyScheduledEnsembleSnapshotMain(
+  chat: ChatRecord,
+  snapshot: ScheduledEnsembleSnapshot
+): ChatRecord {
+  if (!chat.ensemble) return chat
+  return {
+    ...chat,
+    ensemble: {
+      ...chat.ensemble,
+      orchestrationMode: snapshot.orchestrationMode,
+      participants: snapshot.participants.map((participant) => ({ ...participant })),
+      ...(typeof snapshot.maxParticipants === 'number'
+        ? { maxParticipants: snapshot.maxParticipants }
+        : {}),
+      ...(typeof snapshot.maxContinuationHops === 'number'
+        ? { maxContinuationHops: snapshot.maxContinuationHops }
+        : {}),
+      updatedAt: new Date().toISOString()
+    }
+  }
+}
+
+// Stage 0b-dispatch (ensemble) — start a due ENSEMBLE scheduled round from MAIN
+// when no renderer can (windowless). Mirrors the run-ensemble-round IPC handler:
+// apply the schedule-time roster/mode snapshot + persist (the orchestrator reads
+// the chat LIVE via getChat), then startRound with the headless sender. The
+// 'running' mark + startRound are SYNCHRONOUS, so a racing tick can't
+// double-dispatch. Completion rides the EXISTING bridge —
+// scheduledTaskIdByEnsembleRound[roundId] -> the orchestrator's round-settle hook
+// (completeSessionCheckpoint) marks the task terminal, the same path the
+// renderer-dispatched ensemble uses.
+function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): void {
+  const orchestrator = ensembleOrchestratorRef
+  if (!orchestrator) return
+  const failTask = (lastError: string): void => {
+    AppStore.updateScheduledTask(task.id, {
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+      lastError
+    })
+  }
+  try {
+    const chat = AppStore.getChat(task.chatId)
+    if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+      failTask('Headless ensemble dispatch: chat is not an ensemble.')
+      return
+    }
+    // Apply the schedule-time snapshot + persist so the orchestrator (getChat) sees
+    // the dispatch-time roster/mode — exactly as the renderer does before dispatch.
+    if (task.ensembleSnapshot) {
+      AppStore.saveChat(applyScheduledEnsembleSnapshotMain(chat, task.ensembleSnapshot))
+    }
+    const running = AppStore.updateScheduledTask(task.id, {
+      status: 'running',
+      firedAt: task.firedAt || new Date().toISOString(),
+      runId: task.runId || `ensemble-scheduled-${randomUUID()}`
+    })
+    // Transition guard rejected due->running (a racing path claimed it).
+    if (!running || running.status !== 'running') return
+    // P2 — honor a verified unattended elevation (HMAC + current); null => the
+    // orchestrator clamps every participant read-only (P1b).
+    const elevation = resolveUnattendedElevation(task.id)
+    const started = orchestrator.startRound({
+      chatId: task.chatId,
+      prompt: task.prompt,
+      event: { sender: headlessRunSender },
+      mode: 'normal',
+      imageAttachments: imageAttachmentSnapshots(task.imageAttachments),
+      unattended: true,
+      ...(elevation ? { unattendedElevationLevel: elevation.ack.level } : {})
+    })
+    if (started.roundId) {
+      // Bridge roundId -> scheduledTaskId so the round-settle hook marks terminal.
+      scheduledTaskIdByEnsembleRound.set(started.roundId, task.id)
+    } else {
+      // No round began (e.g. empty roster / no participants) — don't wedge 'running'.
+      failTask(`Headless ensemble dispatch: round did not start (${started.status}).`)
+    }
+  } catch (error) {
+    failTask(
+      `Headless ensemble dispatch failed: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
+
 // Stage 0b-dispatch: compose + dispatch a due SOLO scheduled task from MAIN when
 // no renderer can (windowless). Mirrors the renderer executeRun dispatch essence
 // (composeRun -> runAgent) without the renderer-only UI bookkeeping. The
@@ -6695,9 +6785,13 @@ function clearScheduledTaskTimer() {
 // tick can't double-dispatch — getDueScheduledTasks stops returning a non-'due'
 // task once claimed. Completion + the per-occurrence budget kill are handled by
 // the shared dispatch chokepoint, which keys off the threaded scheduledTaskId.
-// Ensemble occurrences never reach here (routeDueScheduledTask defers them — they
-// dispatch via runEnsembleRound, not composeRun).
+// ENSEMBLE occurrences delegate to dispatchDueEnsembleScheduledTaskHeadless
+// (composeRun is solo-only; ensemble runs through the orchestrator).
 async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<void> {
+  if (task.kind === 'ensemble') {
+    dispatchDueEnsembleScheduledTaskHeadless(task)
+    return
+  }
   const composer = composerServiceRef
   const dispatch = dispatchRunWithProviderPauseRef
   if (!composer || !dispatch) return
@@ -6759,25 +6853,35 @@ function emitDueScheduledTasks() {
   const dueTasks = AppStore.getDueScheduledTasks()
   const rendererAvailable = Boolean(mainWindow && !mainWindow.webContents.isDestroyed())
   const headlessEnabled = AppStore.getSettings().headlessScheduledDispatchEnabled !== false
-  const composerReady = Boolean(composerServiceRef && dispatchRunWithProviderPauseRef)
+  const soloDispatchReady = Boolean(composerServiceRef && dispatchRunWithProviderPauseRef)
+  const ensembleDispatchReady = Boolean(ensembleOrchestratorRef)
   for (const task of dueTasks) {
+    // Mark 'due' only on the FIRST transition (overdue 'pending' -> 'due'). An
+    // already-'due' task (deferred + retried each tick) is used as-is: re-writing it
+    // every tick would churn scheduledTasks.json AND bump firedAt — which also resets
+    // the stall reconciler's 'due' basis (firedAt), so a genuinely wedged 'due' task
+    // could never reach the backstop. The broadcast/headless retry below still fires
+    // each tick regardless, so deferral stays self-healing.
     const dueTask =
-      AppStore.updateScheduledTask(task.id, {
-        status: 'due',
-        firedAt: new Date().toISOString()
-      }) || task
+      task.status === 'due'
+        ? task
+        : AppStore.updateScheduledTask(task.id, {
+            status: 'due',
+            firedAt: new Date().toISOString()
+          }) || task
     const route = routeDueScheduledTask(dueTask, {
       rendererAvailable,
       headlessEnabled,
-      composerReady
+      soloDispatchReady,
+      ensembleDispatchReady
     })
     if (route === 'broadcast') {
       mainWindow?.webContents.send('scheduled-task-due', dueTask)
     } else if (route === 'headless') {
-      // Stage 0b-dispatch: no renderer to receive the broadcast — fire this SOLO
-      // task from main. dispatchDueScheduledTaskHeadless marks it 'running'
-      // synchronously, so the next tick won't re-dispatch it. A 'defer' route
-      // leaves it 'due' to retry next tick (getDueScheduledTasks re-returns 'due').
+      // Stage 0b-dispatch: no renderer to receive the broadcast — fire this task
+      // from main (composeRun for SOLO, the orchestrator for ENSEMBLE). The
+      // dispatcher marks it 'running' synchronously, so the next tick won't
+      // re-dispatch it. A 'defer' route leaves it 'due' to retry next tick.
       void dispatchDueScheduledTaskHeadless(dueTask)
     }
   }
