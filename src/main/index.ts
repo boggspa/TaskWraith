@@ -391,7 +391,8 @@ import {
   createToolResultMediaRefs,
   createWorkspacePathMediaRefs,
   extractProviderImageBlocksFromRawEvent,
-  validateWorkspaceImagePath
+  validateWorkspaceImagePath,
+  TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
 } from './services/TranscriptMediaService'
 import {
   TRANSCRIPT_MEDIA_ASSET_DIR,
@@ -616,6 +617,14 @@ import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type { CanvasDriverKind, CanvasEventRecord } from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
+import {
+  createImageToolExecutors,
+  isImageMcpToolName,
+  type ImageToolContext,
+  type ResolvedRasterSource,
+  type ResolvedSvgSource
+} from './mcp/ImageToolExecutors'
+import { createNativeImageEngine } from './mcp/OffscreenImageRenderer'
 import {
   createRecallToolExecutors,
   isRecallMcpToolName,
@@ -1647,6 +1656,11 @@ const canvasService = new CanvasService({
   logger: console
 })
 const canvasToolExecutors = createCanvasToolExecutors({ controller: canvasService })
+const imageToolExecutors = createImageToolExecutors({
+  engine: createNativeImageEngine(),
+  resolveRasterSource: resolveImageRasterSource,
+  resolveSvgSource: resolveImageSvgSource
+})
 // Renderer canvas-pane (live-embed) IPC: open-embedded / set-bounds / set-visible
 // / close / list. Human-initiated (un-gated); the driver still enforces SSRF.
 registerCanvasEmbedIpc(ipcMain, { controller: canvasService, embed: canvasEmbedController })
@@ -3645,6 +3659,70 @@ function fullWorkspaceTranscriptMedia(
   }
 }
 
+// Source resolution for the image_edit MCP tool. Resolves a raster image the
+// agent references by `sourceMediaId` (an image already in this chat — a user
+// upload or a prior tool result, scanned across the chat's messages) or by
+// `sourcePath` (validated + realpath-jailed inside the workspace/grants via the
+// same guard the rest of the media pipeline uses). Never reads an arbitrary
+// agent-supplied absolute path.
+async function resolveImageRasterSource(
+  args: Record<string, unknown>,
+  ctx: ImageToolContext
+): Promise<ResolvedRasterSource> {
+  const maxBytes = TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
+  const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
+  const mediaId = typeof args.sourceMediaId === 'string' ? args.sourceMediaId.trim() : ''
+  if (mediaId) {
+    if (!chat) return { ok: false, reason: 'no active chat to resolve sourceMediaId' }
+    for (const message of chat.messages ?? []) {
+      const refs = Array.isArray(message.metadata?.mediaRefs)
+        ? (message.metadata.mediaRefs as TranscriptMediaRef[])
+        : []
+      const ref = refs.find((candidate) => candidate.id === mediaId && candidate.kind === 'image')
+      if (!ref) continue
+      const read =
+        ref.source === 'workspace_path'
+          ? fullWorkspaceTranscriptMedia(chat, ref, maxBytes)
+          : fullTranscriptMediaFromAsset(ref, maxBytes)
+      if (!read.ok) return { ok: false, reason: read.reason }
+      const mimeType =
+        (read as { mimeType?: string }).mimeType || ref.mimeType || 'image/png'
+      return { ok: true, buffer: Buffer.from(read.dataBase64, 'base64'), mimeType }
+    }
+    return { ok: false, reason: `no image with id "${mediaId}" in this chat` }
+  }
+  const sourcePath = typeof args.sourcePath === 'string' ? args.sourcePath.trim() : ''
+  if (sourcePath) {
+    if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
+    const validation = validateWorkspaceImagePath({
+      workspaceId: chat.workspaceId,
+      workspacePath: chat.workspacePath,
+      candidatePath: sourcePath,
+      externalPathGrants: normalizeExternalPathGrants(
+        collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+      ),
+      maxBytes
+    })
+    if (!validation.ok) return { ok: false, reason: validation.reason }
+    const buffer = fsSync.readFileSync(validation.realPath)
+    return { ok: true, buffer, mimeType: validation.mimeType }
+  }
+  return { ok: false, reason: 'provide sourceMediaId or sourcePath' }
+}
+
+// Source resolution for svg_rasterize. v1: inline `svg` text only (the agent
+// that generated the SVG already has it). Reading an .svg FILE would need a
+// path jail that does NOT raster-sniff (validateWorkspaceImagePath rejects SVG
+// by design) — deferred.
+async function resolveImageSvgSource(
+  args: Record<string, unknown>,
+  _ctx: ImageToolContext
+): Promise<ResolvedSvgSource> {
+  const inline = typeof args.svg === 'string' ? args.svg : ''
+  if (inline.trim()) return { ok: true, svg: inline }
+  return { ok: false, reason: 'provide inline `svg` markup' }
+}
+
 const pendingCodexNativeGoalSyncTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function codexNativeGoalSyncStateKey(chat: ChatRecord | null | undefined): string {
@@ -4602,7 +4680,18 @@ function ingestBridgeRunToolResult(state: BridgeRunTranscriptState, payload: any
   // prose ("The file ... has been updated successfully") — but a result
   // that IS the patch stays as the detail line under the chips.
   if (summary && !(activity.category === 'write' && activity.diffSummary && !stats && !failed)) {
-    activity.resultSummary = summary.length > 200 ? `${summary.slice(0, 197)}...` : summary
+    // Reasoning / thinking traces bypass the tight 200-char preview cap so the
+    // full trace projects to the transcript (and bridge/phone) instead of being
+    // truncated behind an "open raw events" marker. Mirrors the renderer's
+    // pairToolResult reasoning carve-out (renderer lib/ToolParser.ts).
+    const reasoningName = (activity.toolName || '').toLowerCase().replace(/^mcp__\w+__/i, '')
+    const isReasoning =
+      reasoningName === 'thinking' ||
+      reasoningName === 'reasoning' ||
+      reasoningName.endsWith('_thinking') ||
+      reasoningName.endsWith('_reasoning')
+    const cap = isReasoning ? 100_000 : 200
+    activity.resultSummary = summary.length > cap ? `${summary.slice(0, cap - 3)}...` : summary
   }
 }
 
@@ -5889,6 +5978,29 @@ function previewForGeminiMcpTool(
         kind: 'command',
         command,
         cwd
+      }
+    }
+  }
+
+  if (toolName === 'image_edit' || toolName === 'svg_rasterize') {
+    const summary =
+      toolName === 'image_edit'
+        ? `op=${String(args.op || '?')} ${String(args.sourceMediaId || args.sourcePath || '')}`.trim()
+        : `${String(args.width || 1024)}x${String(args.height || 768)} SVG -> PNG`
+    return {
+      title:
+        toolName === 'image_edit'
+          ? `Approve ${providerName} image edit`
+          : `Approve ${providerName} SVG rasterize`,
+      // Gated as fileChanges: a mutating/compute tool that produces an image —
+      // denied under the read-only preset, like write_file.
+      body: `${intentBody}${summary}`,
+      service: 'fileChanges' as AgenticServiceId,
+      preview: {
+        kind: 'tool',
+        toolName,
+        params: args,
+        ...intentPreview
       }
     }
   }
@@ -14374,6 +14486,14 @@ async function executeGeminiMcpTool(
     } else if (isRecallMcpToolName(toolName)) {
       applyRichResult(
         await recallToolExecutors.executeRecallTool(toolName, args, context, parentProvider)
+      )
+    } else if (isImageMcpToolName(toolName)) {
+      applyRichResult(
+        await imageToolExecutors.executeImageTool(toolName, args, {
+          appChatId: context.appChatId,
+          appRunId: context.appRunId,
+          workspacePath: context.workspacePath
+        })
       )
     } else if (isDesktopMcpToolName(toolName)) {
       applyRichResult(

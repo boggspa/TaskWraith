@@ -2159,6 +2159,70 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         },
         required: ['runId']
       }
+    },
+    {
+      name: 'image_edit',
+      description:
+        'Edit an EXISTING image and return the result as a PNG attachment shown inline in the chat. ' +
+        'Use this to redact/blur sensitive regions (e.g. an IP address, a "Network Stats" card) before sharing, ' +
+        'or to crop/resize. Source the image with `sourceMediaId` (the id of an image already in this chat — a ' +
+        'user upload or a prior tool result) OR `sourcePath` (a path inside the workspace). ops: ' +
+        '"blur" (soft-blur the whole image, or just `region` if given; `radius` px), ' +
+        '"redact" (cover `region` with a solid black box — irreversible, best for secrets), ' +
+        '"crop" (to `region`), "resize" (to `width`/`height`). `region` is {x,y,width,height} in source pixels. ' +
+        'This is NOT image generation; it transforms pixels deterministically. Gated as a file change.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          op: { type: 'string', enum: ['blur', 'redact', 'crop', 'resize'] },
+          sourceMediaId: { type: 'string', description: 'Id of an image already in this chat.' },
+          sourcePath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace.' },
+          region: {
+            type: 'object',
+            description: 'Target rectangle in source pixels (blur/redact/crop).',
+            properties: {
+              x: { type: 'number' },
+              y: { type: 'number' },
+              width: { type: 'number' },
+              height: { type: 'number' }
+            },
+            required: ['x', 'y', 'width', 'height']
+          },
+          radius: { type: 'number', description: 'Blur radius in px (blur op).' },
+          width: { type: 'number', description: 'Target width (resize op).' },
+          height: { type: 'number', description: 'Target height (resize op).' }
+        },
+        required: ['op']
+      }
+    },
+    {
+      name: 'svg_rasterize',
+      description:
+        'Rasterize SVG markup to a PNG, returned as an attachment shown inline in the chat. ' +
+        'Pass the SVG as inline `svg` text. Set `width`/`height` for the output canvas. Use this to PREVIEW an ' +
+        'SVG you just generated (the transcript does not render SVG inline). Rendered in a sandboxed, ' +
+        'network-cut surface. Gated as a file change.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          svg: { type: 'string', description: 'Inline SVG markup.' },
+          width: { type: 'number', description: 'Output width in px (default 1024).' },
+          height: { type: 'number', description: 'Output height in px (default 768).' }
+        },
+        required: ['svg']
+      }
     }
   ]
   return orderTaskWraithMcpToolDefinitions(definitions)

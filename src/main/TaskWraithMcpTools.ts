@@ -153,7 +153,13 @@ export const TASKWRAITH_MCP_TOOLS = [
   // approval service. See src/main/mcp/RecallToolExecutors.ts.
   'tw_recall_find',
   'tw_recall_read',
-  'tw_recall_read_events'
+  'tw_recall_read_events',
+  // Image processing — edit (blur/redact/crop/resize) an existing image, or
+  // rasterize SVG to PNG. Output rides back as a visible transcript attachment.
+  // Gated as a file change (mutating/compute; denied under read-only), NEVER
+  // auto-allowed. See src/main/mcp/ImageToolExecutors.ts.
+  'image_edit',
+  'svg_rasterize'
 ] as const
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]

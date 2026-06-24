@@ -157,6 +157,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'creative_midi_dispatch':
     case 'provider_usage_status':
       return 'diagnostic'
+    case 'image_edit':
+    case 'svg_rasterize':
+      return 'edit'
     case 'mcp_tool':
     case 'dynamic_tool':
       return 'mcp'

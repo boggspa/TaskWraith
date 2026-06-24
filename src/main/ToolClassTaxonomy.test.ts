@@ -84,9 +84,11 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'delegate_to_subthread',
         'git_commit',
         'git_stage',
+        'image_edit',
         'replace',
         'run_shell_command',
         'run_task',
+        'svg_rasterize',
         'switch_auth_profile',
         'write_file'
       ].sort()
