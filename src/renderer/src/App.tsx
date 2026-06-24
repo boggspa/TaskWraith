@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
+import { messagesRenderEqual } from './lib/messagesRenderEqual'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
 import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'
 import { readComposerDrafts, writeComposerDrafts } from './lib/composerDraftStore'
@@ -8720,7 +8721,25 @@ function App(): React.JSX.Element {
         setChats((prev) => mergeChatRecord(prev, merged))
         chatByIdRef.current.set(merged.appChatId, merged)
         if (currentChatIdRef.current === merged.appChatId) {
-          setCurrentChat(merged)
+          // Ensemble runs broadcast a fresh whole-chat snapshot 10–100×/sec;
+          // most change only chat-level metadata (round flips, per-participant
+          // tallies), not the rendered message list — yet each arrives as a new
+          // `messages` array that would re-fire the messages-update snap effect
+          // (keyed on `currentChat?.messages` identity) and re-render the
+          // transcript. When the rendered list is unchanged, preserve the
+          // PREVIOUS `messages` reference so the snap/re-render is skipped while
+          // the chat-level metadata still updates. STRICT by construction
+          // (messagesRenderEqual): a false negative only costs a redundant
+          // render, never a frozen transcript. Routed through the functional
+          // setter so it compares against the actual committed state.
+          setCurrentChat((prev) =>
+            prev &&
+            prev.appChatId === merged.appChatId &&
+            prev.messages !== merged.messages &&
+            messagesRenderEqual(prev.messages, merged.messages)
+              ? { ...merged, messages: prev.messages }
+              : merged
+          )
           if (merged.chatKind === 'ensemble' && merged.ensemble?.activeRound?.status === 'running') {
             setIsThinking(true)
           }
