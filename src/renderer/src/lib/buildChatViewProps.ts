@@ -1,4 +1,5 @@
 import type { TranscriptPanelProps } from '../components/TranscriptPanel'
+import { isGlobalChat } from './chatScope'
 
 /**
  * Build the TranscriptPanel prop bundle for a Multiview pane-scoped transcript.
@@ -90,6 +91,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     runCompleteNotice: input.runCompleteNotice,
     runCompleteDurationText: null,
     currentChat: input.chat,
+    isGlobal: isGlobalChat(input.chat),
     currentRun: input.currentRun ?? null,
     currentWorkspacePath: input.currentWorkspacePath,
     currentProviderLabel: input.providerLabel,

@@ -92,6 +92,12 @@ export type TranscriptPanelProps = {
   runCompleteNotice: RunCompleteNotice | null
   runCompleteDurationText: string | null
   currentChat: ChatRecord | null
+  /**
+   * True when the rendered chat has `scope === 'global'` (General/Global Chats).
+   * Presentation-only: gates friendlier, less-technical rendering. Derived by
+   * the host via `isGlobalChat(...)` so this component stays presentation-pure.
+   */
+  isGlobal?: boolean
   currentRun?: ChatRun | null
   currentWorkspacePath?: string
   currentProviderLabel: string

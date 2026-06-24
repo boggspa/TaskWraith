@@ -21372,6 +21372,7 @@ function App(): React.JSX.Element {
                 runCompleteNotice={visibleRunCompleteNotice}
                 runCompleteDurationText={runCompleteDurationText}
                 currentChat={currentChat}
+                isGlobal={isGlobalChat(currentChat)}
                 currentRun={currentRun}
                 currentWorkspacePath={currentWorkspace?.path}
                 currentProviderLabel={currentProviderLabel}
@@ -21744,6 +21745,7 @@ function App(): React.JSX.Element {
               runCompleteNotice={sideRunCompleteNotice}
               runCompleteDurationText={null}
               currentChat={sideChat}
+              isGlobal={isGlobalChat(sideChat)}
               currentRun={sideRun}
               currentWorkspacePath={sideWorkspace?.path}
               currentProviderLabel={getProviderLabel(sideProvider)}
