@@ -219,6 +219,17 @@ function isCanvasOpenableUrl(url: string): boolean {
   return /^https?:\/\//i.test(url.trim())
 }
 
+/** Turn a raw canvas-open failure into a short reason for the affordance tooltip
+ *  (mirrors CanvasComposerButton's helper; the most common case here is an
+ *  SSRF-blocked private host or a dead URL). */
+function friendlyCanvasError(raw: string | undefined): string {
+  const msg = raw || 'Could not open in Canvas.'
+  if (/CONNECTION_REFUSED|ERR_|NAME_NOT_RESOLVED|timed out/i.test(msg)) {
+    return "Couldn't load that URL in Canvas — is it reachable?"
+  }
+  return msg
+}
+
 /**
  * An external markdown link plus an explicit "Open in Canvas" affordance.
  *
@@ -242,6 +253,7 @@ function MarkdownExternalLink({
   children: ReactNode
 }): ReactNode {
   const [canvasState, setCanvasState] = useState<'idle' | 'opening' | 'error'>('idle')
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const link = (
     <FaviconLink
       href={href}
@@ -259,19 +271,27 @@ function MarkdownExternalLink({
   const openInCanvas = (event: MouseEvent<HTMLButtonElement>): void => {
     event.preventDefault()
     event.stopPropagation()
+    if (canvasState === 'opening') return // re-entrancy guard: don't spawn N windows
     const openWindow = (
       window as unknown as {
-        api?: { canvas?: { openWindow?: (a: { url: string }) => Promise<{ ok: boolean }> } }
+        api?: {
+          canvas?: { openWindow?: (a: { url: string }) => Promise<{ ok: boolean; error?: string }> }
+        }
       }
     ).api?.canvas?.openWindow
     if (!openWindow) return
     setCanvasState('opening')
+    setErrorMsg(null)
+    const fail = (raw: string | undefined): void => {
+      setCanvasState('error')
+      setErrorMsg(friendlyCanvasError(raw))
+    }
     try {
       void openWindow({ url: resolved })
-        .then((result) => setCanvasState(result?.ok ? 'idle' : 'error'))
-        .catch(() => setCanvasState('error'))
-    } catch {
-      setCanvasState('error')
+        .then((result) => (result?.ok ? setCanvasState('idle') : fail(result?.error)))
+        .catch((err) => fail(err instanceof Error ? err.message : String(err)))
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -282,7 +302,8 @@ function MarkdownExternalLink({
         type="button"
         className="markdown-open-in-canvas"
         data-canvas-state={canvasState}
-        title={canvasState === 'error' ? "Couldn't open in Canvas" : 'Open in Canvas'}
+        disabled={canvasState === 'opening'}
+        title={canvasState === 'error' ? errorMsg || 'Could not open in Canvas' : 'Open in Canvas'}
         aria-label="Open link in Canvas"
         onClick={openInCanvas}
       >
