@@ -400,6 +400,7 @@ import {
   extractProviderImageBlocksFromRawEvent,
   validateWorkspaceImagePath,
   validateWorkspaceAudioPath,
+  validateWorkspaceMediaPath,
   TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
 } from './services/TranscriptMediaService'
 import {
@@ -646,6 +647,8 @@ import {
 } from './mcp/AudioToolExecutors'
 import { createNativeAudioEngine } from './mcp/AudioRenderEngine'
 import { registerTwMediaProtocol, TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
+import { createFfmpegToolExecutors, isFfmpegMcpToolName } from './mcp/FfmpegToolExecutors'
+import { ffmpegMissingError, resolveFfmpegBinaries } from './media/FfmpegResolver'
 import {
   createImageGenExecutor,
   isImageGenMcpToolName,
@@ -1830,6 +1833,40 @@ const audioToolExecutors = createAudioToolExecutors({
   resolveAudioSource
 })
 const audioToolCallBudget = new ImageToolCallBudget()
+const ffmpegToolCallBudget = new ImageToolCallBudget()
+// ffmpeg/ffprobe MCP tools (S1b). Run the USER-installed binary over a realpath-
+// jailed input with a FIXED argv (intents not flags, -protocol_whitelist file).
+// The runner is execFile with maxBuffer + timeout — argv array, no shell.
+const ffmpegToolExecutors = createFfmpegToolExecutors({
+  jailInput: (sourcePath, ctx) => {
+    const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
+    if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
+    const validation = validateWorkspaceMediaPath({
+      workspacePath: chat.workspacePath,
+      candidatePath: sourcePath,
+      externalPathGrants: normalizeExternalPathGrants(
+        collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+      )
+    })
+    return validation.ok
+      ? { ok: true, realPath: validation.realPath, mimeType: validation.mimeType }
+      : { ok: false, reason: validation.reason }
+  },
+  resolveFfprobe: () => resolveFfmpegBinaries().ffprobePath,
+  runFfprobe: (binaryPath, args) =>
+    new Promise((resolve, reject) => {
+      execFile(
+        binaryPath,
+        args,
+        { maxBuffer: 16 * 1024 * 1024, timeout: 60_000, shell: false },
+        (err, stdout, stderr) => {
+          if (err) reject(new Error(`ffprobe failed: ${String(stderr).trim() || err.message}`))
+          else resolve({ stdout, stderr })
+        }
+      )
+    }),
+  missingMessage: (which) => ffmpegMissingError(which)
+})
 
 // image_generate egress. Endpoints are a FIXED allowlist (never agent-controlled),
 // the API key comes from safeStorage and rides only in the Authorization header
@@ -6345,6 +6382,22 @@ function previewForGeminiMcpTool(
       // Gated as fileChanges: a mutating/compute tool that produces an image —
       // denied under the read-only preset, like write_file.
       body: `${intentBody}${summary}`,
+      service: 'fileChanges' as AgenticServiceId,
+      preview: {
+        kind: 'tool',
+        toolName,
+        params: args,
+        ...intentPreview
+      }
+    }
+  }
+
+  if (isFfmpegMcpToolName(toolName)) {
+    return {
+      title: `Approve ${providerName} media probe`,
+      // Gated as fileChanges: runs an external subprocess (ffprobe) — denied under
+      // the read-only preset.
+      body: `${intentBody}probe ${String(args.sourcePath || '')}`.trim(),
       service: 'fileChanges' as AgenticServiceId,
       preview: {
         kind: 'tool',
@@ -14953,7 +15006,10 @@ async function executeGeminiMcpTool(
     // — which gives the agent no idea the fix is a write-capable preset (and, for
     // image_generate, an enabled key). Tell it the actual requirement.
     const deniedError =
-      isImageMcpToolName(toolName) || isImageGenMcpToolName(toolName) || isAudioMcpToolName(toolName)
+      isImageMcpToolName(toolName) ||
+      isImageGenMcpToolName(toolName) ||
+      isAudioMcpToolName(toolName) ||
+      isFfmpegMcpToolName(toolName)
         ? `Media tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${
             toolName === 'image_generate'
               ? ', and image generation must be enabled with an API key in TaskWraith Settings'
@@ -15135,6 +15191,25 @@ async function executeGeminiMcpTool(
         )
       } else {
         applyRichResult(await imageGenExecutor.executeImageGen(args))
+      }
+    } else if (isFfmpegMcpToolName(toolName)) {
+      const ffmpegRunKey = context.appRunId || context.appChatId || 'global'
+      if (!ffmpegToolCallBudget.tryConsume(ffmpegRunKey)) {
+        applyRichResult(
+          mcpStructuredJsonResult({
+            ok: false,
+            tool: toolName,
+            error: `media tool call limit reached (${DEFAULT_MAX_IMAGE_TOOL_CALLS_PER_RUN}) for this run.`
+          })
+        )
+      } else {
+        applyRichResult(
+          await ffmpegToolExecutors.executeFfmpegTool(toolName, args, {
+            appChatId: context.appChatId,
+            appRunId: context.appRunId,
+            workspacePath: context.workspacePath
+          })
+        )
       }
     } else if (isAudioMcpToolName(toolName)) {
       const audioRunKey = context.appRunId || context.appChatId || 'global'

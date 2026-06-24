@@ -156,6 +156,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'creative_blender_python':
     case 'creative_midi_dispatch':
     case 'provider_usage_status':
+    case 'video_probe':
       return 'diagnostic'
     case 'image_edit':
     case 'svg_rasterize':

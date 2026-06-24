@@ -803,3 +803,97 @@ export function validateWorkspaceAudioPath({
     dataBase64: buffer.toString('base64')
   }
 }
+
+const VIDEO_SOURCE_MIME_TYPES = new Set([
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'video/x-msvideo'
+])
+
+/** Generous cap for an ffmpeg INPUT file. It's read by PATH (never loaded into
+ * memory), so this bounds how large a file we'll hand to ffmpeg/ffprobe. */
+export const TRANSCRIPT_MEDIA_MAX_INPUT_BYTES = 1024 * 1024 * 1024
+
+/** Coarse magic-byte sniff for common video containers — "is this plausibly a
+ * video file" for the ffmpeg input jail. ffprobe gives the authoritative stream
+ * info; this only rejects obvious non-media before we exec a subprocess. */
+export function sniffVideoMime(buffer: Buffer): string | null {
+  if (buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp') {
+    const brand = buffer.subarray(8, 12).toString('ascii')
+    return brand.startsWith('qt') ? 'video/quicktime' : 'video/mp4'
+  }
+  // EBML (Matroska / WebM).
+  if (buffer.length >= 4 && buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3) {
+    return 'video/webm'
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.subarray(8, 12).toString('ascii') === 'AVI '
+  ) {
+    return 'video/x-msvideo'
+  }
+  return null
+}
+
+export function isTranscriptVideoMime(mime: string | null | undefined): boolean {
+  return !!mime && VIDEO_SOURCE_MIME_TYPES.has(mime)
+}
+
+export type WorkspaceMediaValidationResult =
+  | { ok: true; realPath: string; mimeType: string; byteLength: number }
+  | {
+      ok: false
+      reason: 'invalid_path' | 'missing' | 'not_file' | 'too_large' | 'outside_allowed_roots' | 'unsupported'
+    }
+
+/** Realpath-jailed, size-capped resolution of a workspace AUDIO or VIDEO file for
+ * ffmpeg/ffprobe INPUT. Reuses the exact jail primitives as the audio/image
+ * validators, but does NOT read the whole file (a video can be gigabytes) — only
+ * the 64-byte header for a coarse media sniff — and returns the realPath (ffmpeg
+ * opens it by path), never the bytes. */
+export function validateWorkspaceMediaPath({
+  workspacePath,
+  candidatePath,
+  externalPathGrants = [],
+  maxBytes = TRANSCRIPT_MEDIA_MAX_INPUT_BYTES
+}: WorkspaceAudioValidationOptions): WorkspaceMediaValidationResult {
+  const decoded = decodeFileUrl(candidatePath.trim())
+  if (!decoded || decoded.includes('\0') || /^https?:\/\//i.test(decoded)) {
+    return { ok: false, reason: 'invalid_path' }
+  }
+  const absoluteCandidate = path.isAbsolute(decoded) ? decoded : path.resolve(workspacePath, decoded)
+  const realCandidate = realpathOrNull(absoluteCandidate)
+  if (!realCandidate) return { ok: false, reason: 'missing' }
+
+  const roots = [workspacePath, ...externalPathGrants.map((grant) => grant.path)].filter(Boolean)
+  const realRoots = roots.map((root) => realpathOrNull(root)).filter((root): root is string => !!root)
+  if (!realRoots.some((root) => pathWithinRoot(realCandidate, root))) {
+    return { ok: false, reason: 'outside_allowed_roots' }
+  }
+
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(realCandidate)
+  } catch {
+    return { ok: false, reason: 'missing' }
+  }
+  if (!stat.isFile()) return { ok: false, reason: 'not_file' }
+  if (stat.size <= 0 || stat.size > maxBytes) return { ok: false, reason: 'too_large' }
+
+  const header = Buffer.alloc(64)
+  try {
+    const fd = fs.openSync(realCandidate, 'r')
+    try {
+      fs.readSync(fd, header, 0, 64, 0)
+    } finally {
+      fs.closeSync(fd)
+    }
+  } catch {
+    return { ok: false, reason: 'missing' }
+  }
+  const sniffed = sniffAudioMime(header) || sniffVideoMime(header)
+  if (!sniffed) return { ok: false, reason: 'unsupported' }
+  return { ok: true, realPath: realCandidate, mimeType: sniffed, byteLength: stat.size }
+}

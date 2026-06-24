@@ -2305,6 +2305,32 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         },
         required: ['sourcePath']
       }
+    },
+    {
+      name: 'video_probe',
+      description:
+        'Analyze a media file (video or audio) in the workspace with ffprobe and return its structure as JSON: ' +
+        'container/format, duration, bitrate; per-stream video codec + width/height + fps + rotation + HDR flag + ' +
+        'pixel format, and audio codec + channels + sample rate. Use this to inspect a clip before transcoding or ' +
+        'to answer "what codec / resolution / length is this". Requires a user-installed ffmpeg/ffprobe ' +
+        '(`brew install ffmpeg`); if absent the call returns an actionable "install ffmpeg" error. Reads a path ' +
+        'inside the workspace only (realpath-jailed). Runs an external subprocess, so gated as a file change.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourcePath: {
+            type: 'string',
+            description: 'Workspace-relative or absolute path inside the workspace to a video/audio file.'
+          }
+        },
+        required: ['sourcePath']
+      }
     }
   ]
   return orderTaskWraithMcpToolDefinitions(definitions)

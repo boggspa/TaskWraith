@@ -173,7 +173,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   // peak/RMS/dBFS/clipping/silence + a waveform PNG — introspection the
   // drive-the-real-app path can't give. Reads a path-jailed workspace file;
   // gated as a file change (writes a waveform asset).
-  'audio_analyze'
+  'audio_analyze',
+  // Analyze a workspace media file with the user-installed ffprobe (S1b): codec,
+  // dimensions, fps, duration, rotation, HDR, channels — over a realpath-jailed
+  // path with a FIXED argv (intents not flags; -protocol_whitelist file). Runs an
+  // external subprocess, so gated as a file change. See src/main/mcp/FfmpegToolExecutors.ts.
+  'video_probe'
 ] as const
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]
