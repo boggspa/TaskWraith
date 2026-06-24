@@ -15412,6 +15412,35 @@ async function executeGeminiMcpTool(
       provider: parentProvider,
       server: GEMINI_MCP_SERVER_NAME
     })
+    // PR1 (keystone): surface any image the tool returned as a VISIBLE
+    // transcript attachment. The `content` image blocks above go to the MODEL
+    // only — without this `media_refs` line even canvas_screenshot is invisible
+    // in the transcript. createToolResultMediaRefs magic-byte-sniffs and rejects
+    // SVG, so the visible lane stays raster-only. Codex renders transcript media
+    // from its own app-server stream (emitMcpToolTranscriptEvent is a no-op for
+    // it), so guard the same way and leave codex MCP-image visibility to a
+    // follow-up rather than double-emit down the wrong channel.
+    const resultImageBlocks = (finalRichResult?.content ?? []).filter(
+      (block) => block.type === 'image'
+    )
+    if (resultImageBlocks.length > 0 && context.sender && parentProvider !== 'codex') {
+      const mediaRefs = createToolResultMediaRefs({
+        messageId: context.appRunId || `${parentProvider}-mcp-${toolName}`,
+        runId: context.appRunId || undefined,
+        toolName,
+        source: 'tool_result',
+        blocks: resultImageBlocks,
+        assetWriter: ({ sha256, buffer, mimeType }) =>
+          writeTranscriptMediaAsset({ sha256, buffer, mimeType })
+      })
+      if (mediaRefs.length > 0) {
+        sendAgentCompatLine(context.sender, parentProvider, {
+          type: 'media_refs',
+          mediaRefs,
+          provider: parentProvider
+        })
+      }
+    }
     if (finalRichResult) {
       return { ...finalRichResult, ...(toolIsError ? { isError: true } : {}) }
     }
