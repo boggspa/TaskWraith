@@ -162,6 +162,11 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   webfetch: 'Fetched a web page',
   web_fetch: 'Fetched a web page',
 
+  // ── Cross-thread recall (`tw_recall_*` MCP tools) ────────────
+  tw_recall_find: 'Searched past threads',
+  tw_recall_read: 'Read a past run',
+  tw_recall_read_events: 'Read a past run',
+
   // ── Knowledge graph (Gemini `kg_*` family) ───────────────────
   kg_search: 'Searched knowledge graph',
   kg_list: 'Listed knowledge graph',

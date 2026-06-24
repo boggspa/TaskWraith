@@ -856,7 +856,12 @@ function pairEnsembleToolResult(activity: ToolActivity, event: any, endedAt: str
         : typeof event?.result === 'string'
           ? event.result
           : ''
-  const truncated = output.length > 500 ? `${output.substring(0, 500)}...` : output
+  // Reasoning / thinking traces render in full in the transcript (parity with
+  // the renderer's pairToolResult + the bridge-ingest carve-out), so they
+  // bypass the 500-char preview cap that bounds ordinary ensemble tool output.
+  const reasoningTool = /(?:^|_)(?:thinking|reasoning)$/i.test(stripToolNamespace(activity.toolName))
+  const cap = reasoningTool ? 100_000 : 500
+  const truncated = output.length > cap ? `${output.substring(0, cap)}...` : output
   const displayName =
     status === 'success' && stripToolNamespace(activity.toolName) === 'ensemble_yield'
       ? activity.displayName.replace(/\byielding\b/i, 'yielded')

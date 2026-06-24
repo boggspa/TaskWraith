@@ -266,11 +266,20 @@ function buildSanitizedDetail(
       return { rows, previews }
     }
     if (resultText) {
+      const reasoning = toolName === 'codex_reasoning' || isReasoningToolName(toolName)
+      // Reasoning renders in full so the user can read it inline (no Raw Events
+      // detour), bounded only by a generous ceiling so a pathological multi-100KB
+      // trace can't reparse a giant markdown block per streaming frame when a
+      // live row is expanded. A length gate (not activity.status) is deliberate:
+      // only Codex streams reasoning as 'running' — the `_thinking` providers
+      // emit interim chunks as 'success', so a status gate would be a no-op for
+      // them.
       previews.push({
-        label:
-          toolName === 'codex_reasoning' || isReasoningToolName(toolName) ? 'Thoughts' : 'Update',
-        // Phase L5 slice 1 — same bump as shell output.
-        content: truncateText(resultText, { maxLength: 6000, maxLines: 60 }),
+        label: reasoning ? 'Thoughts' : 'Update',
+        content: truncateText(resultText, {
+          maxLength: reasoning ? 50000 : 6000,
+          maxLines: reasoning ? 600 : 60
+        }),
         tone: 'neutral'
       })
     }
@@ -1133,7 +1142,7 @@ function getInlineActivityTitle(
         Searched for <strong>{query}</strong>
       </>
     ) : (
-      <>{activity.displayName || 'Searched project'}</>
+      <>{activity.displayName || 'Searched'}</>
     )
   }
 
@@ -1161,8 +1170,17 @@ function getInlineActivityTitle(
       activity.resultSummary ||
       activity.outputPreview ||
       getStringParam(parameters, ['summary', 'message', 'text', 'intent'])
+    // Reasoning rows keep a tight one-line collapsed preview, but end with a
+    // plain ellipsis instead of the "open raw events" marker — the full trace
+    // is one click away in the expanded "Thoughts" card (no Raw Events detour).
+    const collapsedReasoning = isReasoningToolName(activity.toolName || '')
     return summary ? (
-      <>{truncateText(summary, 120)}</>
+      <>
+        {truncateText(
+          summary,
+          collapsedReasoning ? { maxLength: 120, footer: () => '…' } : 120
+        )}
+      </>
     ) : (
       <>{displayName || activity.displayName || 'Task update'}</>
     )

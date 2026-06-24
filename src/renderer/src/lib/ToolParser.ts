@@ -453,7 +453,10 @@ const SEARCH_LIKE_TOOL_NAMES = new Set([
   'google_web_search',
   'googlewebsearch',
   'web_search',
-  'websearch'
+  'websearch',
+  'workspace_search',
+  'file_search',
+  'tw_recall_find'
 ])
 
 /**
@@ -667,16 +670,29 @@ export function getToolDisplayName(toolName: string, parameters?: Record<string,
         (params.query as string) ||
         (params.search_query as string) ||
         (params.pattern as string) ||
+        (params.taskQuery as string) ||
+        (params.freeText as string) ||
         ''
-      if (toolName.toLowerCase().includes('web_search')) {
-        return query ? `Searched web for ${query}` : 'Searched web'
+      // Deterministic, target-specific search labels. Web / past-thread
+      // (cross-thread recall) / workspace searches all used to collapse to the
+      // misleading "Searched project" default — and Grok's ACP search, which
+      // arrives as a bare `search` kind with no canonical name, hit it every
+      // time. Key off the canonical tool name so the row says what was searched.
+      if (unqualifiedName.includes('web_search')) {
+        return query ? `Searched the web for ${query}` : 'Searched the web'
+      }
+      if (unqualifiedName.includes('tw_recall')) {
+        return query ? `Searched past threads for ${query}` : 'Searched past threads'
+      }
+      if (unqualifiedName.includes('workspace_search')) {
+        return query ? `Searched the workspace for ${query}` : 'Searched the workspace'
       }
       const searchPath = (params.path as string) || (params.dir as string) || ''
       return query
         ? `Searched for ${query}`
         : searchPath
           ? `Searched ${searchPath}`
-          : 'Searched project'
+          : 'Searched'
     }
     case 'shell':
       return 'Shell command'
@@ -974,6 +990,16 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
     ? new Date(endedAt).getTime() - new Date(activity.startedAt).getTime()
     : undefined
 
+  // Reasoning / thinking traces are the one result the user explicitly wants
+  // to read in full in the transcript, so they bypass the 500-char preview cap
+  // that keeps ordinary (potentially huge) tool output bounded. The render
+  // layer still bounds the live-streaming view; the full text shows once the
+  // reasoning activity settles. See ActivityStack buildSanitizedDetail.
+  const isReasoning = isReasoningToolName(activity.toolName || '')
+  const summaryText = isReasoning
+    ? resultOutput
+    : resultOutput.substring(0, 500) + (resultOutput.length > 500 ? '...' : '')
+
   return {
     ...activity,
     status,
@@ -982,11 +1008,11 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
     diffSummary:
       deriveToolDiffSummary(activity.toolName, activity.parameters, resultOutput) ||
       activity.diffSummary,
-    resultSummary: resultOutput.substring(0, 500) + (resultOutput.length > 500 ? '...' : ''),
-    outputPreview: resultOutput.substring(0, 500) + (resultOutput.length > 500 ? '...' : ''),
+    resultSummary: summaryText,
+    outputPreview: summaryText,
     rawResultEvent: toolResultEvent,
     // Legacy
-    outputSummary: resultOutput.substring(0, 500) + (resultOutput.length > 500 ? '...' : '')
+    outputSummary: summaryText
   }
 }
 

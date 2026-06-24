@@ -1470,6 +1470,11 @@ function App(): React.JSX.Element {
   // on from. Cleared when the cancel lands OR the steer times out (in
   // the timeout case the prior run survives so deltas are legitimate).
   const steerSuppressionChatIdsRef = useRef<Set<string>>(new Set())
+  // Runs the user intentionally stopped (steer or the Stop button). Consumed in
+  // handleProviderExit so an interrupted turn reads as a muted "Cancelled" —
+  // never a red "Failed" (Grok ACP) or a misleading green "success" (signal-
+  // killed Grok-headless / Cursor whose exit code coerces to 0).
+  const intentionalCancelRunIdsRef = useRef<Set<string>>(new Set())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [guestDispatchPendingParentChatIds, setGuestDispatchPendingParentChatIds] = useState<
     Set<string>
@@ -8141,6 +8146,7 @@ function App(): React.JSX.Element {
       const hasToolCalls = context.toolCallsCount > 0
       const exitCode = extractExitCode(payload) ?? 0
       const completedRunId = context.runId
+      const wasIntentionalCancel = intentionalCancelRunIdsRef.current.delete(completedRunId)
       const completedRunChatId = context.chatId
       const completedScheduledTaskId = context.scheduledTaskId
       const completedRunDiffUnavailable = context.diffUnavailable
@@ -8209,14 +8215,21 @@ function App(): React.JSX.Element {
           if (targetRun.status === 'success' && context.warnings.length > 0) {
             targetRun.status = 'success_with_warnings'
           } else if (!targetRun.status) {
-            targetRun.status =
-              exitCode === 0
+            targetRun.status = wasIntentionalCancel
+              ? 'cancelled'
+              : exitCode === 0
                 ? context.warnings.length > 0
                   ? 'success_with_warnings'
                   : 'success'
                 : 'failed'
           }
-          targetRun.exitCode = exitCode || undefined
+          if (wasIntentionalCancel) {
+            targetRun.cancelled = true
+          }
+          // Normalise a user-cancel to the conventional SIGINT code so the
+          // persisted run + re-derived run-complete card read "Stopped" on
+          // reload, regardless of the real signal-kill exit the provider sent.
+          targetRun.exitCode = wasIntentionalCancel ? 130 : exitCode || undefined
           targetRun.warnings = [...context.warnings]
           if (shouldBackfillRunStats(targetRun.stats, completedRunExitStats)) {
             targetRun.stats = completedRunExitStats
@@ -8231,7 +8244,18 @@ function App(): React.JSX.Element {
         // per ROUND via the dedicated `activeRound.status` effect
         // below.
         const isEnsembleChat = updated.chatKind === 'ensemble'
-        if (exitCode === 0) {
+        if (wasIntentionalCancel) {
+          // User-intentional stop (steer or Stop): show the muted "Stopped"
+          // card (exit 130) and skip the red failure message entirely, even
+          // when the provider reported a non-zero/abnormal exit on the kill.
+          if (!isEnsembleChat && isVisibleCompletedRun()) {
+            setRunCompleteNotice({
+              timestamp: completedAt,
+              exitCode: 130,
+              startedAt: targetRun?.startedAt || completedRunStartedAt || undefined
+            })
+          }
+        } else if (exitCode === 0) {
           if (!isEnsembleChat && isVisibleCompletedRun()) {
             setRunCompleteNotice({
               timestamp: completedAt,
@@ -8239,8 +8263,7 @@ function App(): React.JSX.Element {
               startedAt: targetRun?.startedAt || completedRunStartedAt || undefined
             })
           }
-        }
-        if (exitCode !== 0) {
+        } else if (exitCode !== 0) {
           // A failed run used to surface only a terse "Check Raw Events"
           // line with the exit code thrown away. Now we (a) raise the
           // run-complete card (same as success) so the outcome is
@@ -11876,6 +11899,12 @@ function App(): React.JSX.Element {
     // than relying on the cancel call's return value, because the
     // provider-specific main-side code may resolve before/after the
     // renderer sees `agent-exit`.
+    // Flag the interrupted run as a user-intentional cancel BEFORE the kill so
+    // handleProviderExit (which fires on the resulting `agent-exit`) marks it
+    // "Cancelled" instead of deriving "failed"/"success" from the exit code.
+    if (cancelTargetRunId) {
+      intentionalCancelRunIdsRef.current.add(cancelTargetRunId)
+    }
     void window.api.cancelAgentRun(request.provider, cancelTargetRunId).catch((error) => {
       console.warn('[steer] cancelAgentRun rejected:', error)
     })
@@ -11927,6 +11956,7 @@ function App(): React.JSX.Element {
     const stillCurrent = steerStateRef.current
     if (stillCurrent.phase !== 'cancelling' || stillCurrent.chatId !== targetChatId) {
       steerSuppressionChatIdsRef.current.delete(targetChatId)
+      if (cancelTargetRunId) intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
       return
     }
 
@@ -11977,7 +12007,17 @@ function App(): React.JSX.Element {
       setSteerState(dispatchingState)
       steerStateRef.current = dispatchingState
 
-      void executeRun(request)
+      // Re-base the dispatch on the LIVE chat record. `request.chatRecord` is a
+      // snapshot captured at steer-click time — before the interrupted run's
+      // terminal status and the `↳ Steered` note landed — so passing it would
+      // make executeRun's immediate saveChat clobber both. The live ref has them.
+      const liveChatForSteer = chatByIdRef.current.get(targetChatId)
+      const steerDispatchRequest =
+        liveChatForSteer && !isChatSummaryRecord(liveChatForSteer)
+          ? { ...request, chatRecord: liveChatForSteer }
+          : request
+
+      void executeRun(steerDispatchRequest)
       // Reset to idle on the next tick; `executeRun` schedules the
       // dispatch synchronously enough that the indicator visibly
       // flips from "interrupting" to "dispatching" and then off.
@@ -11996,6 +12036,9 @@ function App(): React.JSX.Element {
     // naturally), so its remaining tokens are legitimate transcript
     // content the user should still see.
     steerSuppressionChatIdsRef.current.delete(targetChatId)
+    // The prior run survives and will complete on its own, so it must NOT be
+    // marked a user-cancel (else its natural exit would read "Cancelled").
+    if (cancelTargetRunId) intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
     // The user's prompt is too valuable to drop, so queue it (the
     // existing fallback) and surface a visible error note. The active
     // run keeps running; when it finishes the queue scheduler
@@ -14060,6 +14103,11 @@ function App(): React.JSX.Element {
       return
     }
     const runId = currentRun?.runId
+    // Mark the Stop as a user-intentional cancel so the run reads "Cancelled",
+    // not "Failed", when its exit lands (same path as steer).
+    if (runId) {
+      intentionalCancelRunIdsRef.current.add(runId)
+    }
     await window.api.cancelAgentRun(currentProvider, runId)
     syncRunningState()
   }

@@ -338,8 +338,21 @@ describe('ToolParser', () => {
       expect(getToolDisplayName('ask_user_question', {})).toBe('Asked user')
       expect(getToolDisplayName('askuserquestion', {})).toBe('Asked user')
     })
-    it('shows Searched project', () => {
-      expect(getToolDisplayName('grep_search', {})).toBe('Searched project')
+    it('shows a generic Searched label when the target is unknown', () => {
+      expect(getToolDisplayName('grep_search', {})).toBe('Searched')
+    })
+    it('labels searches by their target deterministically', () => {
+      expect(getToolDisplayName('web_search', { query: 'M4 Ultra price' })).toBe(
+        'Searched the web for M4 Ultra price'
+      )
+      expect(getToolDisplayName('web_search', {})).toBe('Searched the web')
+      expect(getToolDisplayName('workspace_search', { query: 'foo' })).toBe(
+        'Searched the workspace for foo'
+      )
+      expect(getToolDisplayName('tw_recall_find', { taskQuery: 'M3 Ultra' })).toBe(
+        'Searched past threads for M3 Ultra'
+      )
+      expect(getToolDisplayName('mcp__TaskWraith__tw_recall_find', {})).toBe('Searched past threads')
     })
     it('shows Shell command', () => {
       expect(getToolDisplayName('run_shell_command', {})).toBe('Shell command')
@@ -486,6 +499,19 @@ describe('ToolParser', () => {
       const result = pairToolResult(use, { output: longOutput })
       expect(result.resultSummary).toMatch(/\.\.\.$/)
       expect(result.resultSummary!.length).toBeLessThanOrEqual(503)
+    })
+    it('keeps reasoning / thinking traces in full (no preview cap)', () => {
+      const use = createToolActivity({
+        type: 'tool_use',
+        tool_name: 'grok_thinking',
+        tool_id: 't1',
+        parameters: { kind: 'reasoning' }
+      })
+      const longTrace = 'reasoning '.repeat(200) // ~2000 chars, well over the 500 cap
+      const result = pairToolResult(use, { output: longTrace })
+      expect(result.resultSummary).toBe(longTrace)
+      expect(result.resultSummary!.length).toBeGreaterThan(500)
+      expect(result.resultSummary).not.toMatch(/\.\.\.$/)
     })
   })
 
