@@ -118,6 +118,66 @@ export async function selectAdvertisableRelayUrls(
 }
 
 /**
+ * Stale-while-revalidate cache over selectAdvertisableRelayUrls. The discovery
+ * advertisement (/v1/hostinfo) is POLLED by phones, and the relay's hostInfo
+ * provider is synchronous — so it can't block on a network probe per poll.
+ * `readSync` hands back the last probed set (dead doors dropped) and refreshes
+ * in the background when stale; it falls back to the RAW candidates on a cold
+ * cache or a transient all-dead probe so discovery never HIDES the host.
+ *
+ * The pairing path deliberately stays on the uncached probe: it's user-initiated
+ * and infrequent, and its serve self-heal needs a fresh, authoritative answer
+ * (a stale "wss is alive" could skip a heal that's actually needed).
+ */
+export interface AdvertisableRelayCache {
+  readSync(candidates: string[]): string[]
+  refresh(candidates: string[]): Promise<AdvertisableRelaySelection>
+}
+
+export function createAdvertisableRelayCache(
+  options: {
+    ttlMs?: number
+    probe?: (candidates: string[]) => Promise<AdvertisableRelaySelection>
+    now?: () => number
+  } = {}
+): AdvertisableRelayCache {
+  const ttlMs = options.ttlMs ?? 15_000
+  const probe = options.probe ?? ((candidates) => selectAdvertisableRelayUrls(candidates))
+  const now = options.now ?? ((): number => Date.now())
+  const cache = new Map<string, { selection: AdvertisableRelaySelection; at: number }>()
+  const inflight = new Set<string>()
+  const keyOf = (candidates: string[]): string => candidates.join('\n')
+
+  const refresh = async (candidates: string[]): Promise<AdvertisableRelaySelection> => {
+    const key = keyOf(candidates)
+    const existing = cache.get(key)
+    if (inflight.has(key)) return existing?.selection ?? { advertisable: candidates, warnings: [] }
+    inflight.add(key)
+    try {
+      const selection = await probe(candidates)
+      cache.set(key, { selection, at: now() })
+      return selection
+    } catch {
+      // A probe failure must never poison the cache or hide the host.
+      return existing?.selection ?? { advertisable: candidates, warnings: [] }
+    } finally {
+      inflight.delete(key)
+    }
+  }
+
+  return {
+    readSync(candidates) {
+      if (candidates.length === 0) return []
+      const entry = cache.get(keyOf(candidates))
+      if (!entry || now() - entry.at >= ttlMs) void refresh(candidates)
+      const probed = entry?.selection.advertisable ?? []
+      return probed.length > 0 ? probed : candidates
+    },
+    refresh
+  }
+}
+
+/**
  * Dial the advertised relay origin once. Reachable = any HTTP response.
  * Unreachable carries the dial failure verbatim (ECONNREFUSED, timeout,
  * ENOTFOUND, TLS alert, …) so the pairing surface can show the real reason.

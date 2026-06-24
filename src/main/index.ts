@@ -280,7 +280,11 @@ import {
 } from './TailscaleServe'
 import { tailscaleUpWithAuthKey } from './TailscaleAuth'
 import { discoverTailnetHosts } from './TailnetDiscovery'
-import { probeRelayFrontDoor, selectAdvertisableRelayUrls } from './remote/relayReachability'
+import {
+  createAdvertisableRelayCache,
+  probeRelayFrontDoor,
+  selectAdvertisableRelayUrls
+} from './remote/relayReachability'
 import {
   resolveAutoUpdateServiceEnabled,
   UpdateService,
@@ -19830,10 +19834,20 @@ if (isGeminiMcpBridgeProcess) {
       // can only open a window, never pair on its own. Both read `iosRemoteRuntime`
       // at request time (it's assigned later, inside startRuntime), so they return
       // null until the runtime is up; nothing here exposes a secret.
-      const relayHostInfoProvider = (): Record<string, unknown> | null =>
-        iosRemoteRuntime
-          ? (iosRemoteRuntime.describeHost() as unknown as Record<string, unknown>)
-          : null
+      // S1-4: discovery (/v1/hostinfo) is POLLED, and the relay's hostInfo
+      // provider is sync, so drop doors the Mac can't reach itself via a
+      // stale-while-revalidate cache — never re-probes per poll, never hides the
+      // host (raw fallback on a cold/all-dead probe). The pairing path keeps its
+      // own fresh, uncached probe (it needs an authoritative answer to self-heal).
+      const advertisableRelayCache = createAdvertisableRelayCache()
+      const relayHostInfoProvider = (): Record<string, unknown> | null => {
+        if (!iosRemoteRuntime) return null
+        const info = iosRemoteRuntime.describeHost()
+        return {
+          ...info,
+          relayUrls: advertisableRelayCache.readSync(info.relayUrls)
+        } as unknown as Record<string, unknown>
+      }
       const relayBeginPairProvider = async (): Promise<Record<string, unknown> | null> => {
         if (!iosRemoteRuntime) return null
         // beginPairingOnDemand (not beginPairing): an anonymous tailnet POST may

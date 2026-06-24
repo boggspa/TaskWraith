@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  createAdvertisableRelayCache,
   probeRelayFrontDoor,
   probeUrlForRelay,
-  selectAdvertisableRelayUrls
+  selectAdvertisableRelayUrls,
+  type AdvertisableRelaySelection
 } from './relayReachability'
 
 describe('probeUrlForRelay', () => {
@@ -144,5 +146,60 @@ describe('selectAdvertisableRelayUrls', () => {
     )
     expect(selection.advertisable).toEqual([])
     expect(selection.warnings).toHaveLength(2)
+  })
+})
+
+describe('createAdvertisableRelayCache', () => {
+  const lan = 'ws://192.168.0.147:8787'
+  const wss = 'wss://mac.tailnet.ts.net'
+
+  it('drops dead doors once probed (the off-LAN case: keep wss, drop the dead LAN door)', async () => {
+    const probe = vi.fn(async () => ({ advertisable: [wss], warnings: ['lan dead'] }))
+    const cache = createAdvertisableRelayCache({ probe, now: () => 1000 })
+    await cache.refresh([lan, wss])
+    expect(cache.readSync([lan, wss])).toEqual([wss])
+  })
+
+  it('cold readSync returns the raw candidates (never hides the host) but kicks a probe', () => {
+    const probe = vi.fn(() => new Promise<AdvertisableRelaySelection>(() => {})) // never resolves
+    const cache = createAdvertisableRelayCache({ probe, now: () => 1000 })
+    expect(cache.readSync([lan, wss])).toEqual([lan, wss])
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
+
+  it('serves from cache within the TTL and re-probes once past it', async () => {
+    let t = 1000
+    const probe = vi.fn(async () => ({ advertisable: [wss], warnings: [] }))
+    const cache = createAdvertisableRelayCache({ probe, ttlMs: 5000, now: () => t })
+    await cache.refresh([lan, wss])
+    expect(probe).toHaveBeenCalledTimes(1)
+    t = 4000
+    cache.readSync([lan, wss]) // within TTL → no re-probe
+    expect(probe).toHaveBeenCalledTimes(1)
+    t = 7000
+    cache.readSync([lan, wss]) // stale → background re-probe
+    expect(probe).toHaveBeenCalledTimes(2)
+  })
+
+  it('falls back to the raw candidates when every door is dead (host stays discoverable)', async () => {
+    const probe = vi.fn(async () => ({ advertisable: [], warnings: ['all dead'] }))
+    const cache = createAdvertisableRelayCache({ probe, now: () => 1000 })
+    await cache.refresh([lan, wss])
+    expect(cache.readSync([lan, wss])).toEqual([lan, wss])
+  })
+
+  it('a probe rejection does not poison the cache or hide the host', async () => {
+    const probe = vi.fn(async () => {
+      throw new Error('boom')
+    })
+    const cache = createAdvertisableRelayCache({ probe, now: () => 1000 })
+    const sel = await cache.refresh([lan, wss])
+    expect(sel.advertisable).toEqual([lan, wss])
+    expect(cache.readSync([lan, wss])).toEqual([lan, wss])
+  })
+
+  it('an empty candidate list advertises nothing', () => {
+    const cache = createAdvertisableRelayCache({ probe: vi.fn(), now: () => 1000 })
+    expect(cache.readSync([])).toEqual([])
   })
 })
