@@ -1386,6 +1386,66 @@ describe('RemoteThreadProjection', () => {
       ])
     })
 
+    it('projects audio/video refs with their kind + poster thumbnail (S0d)', () => {
+      const messages = [
+        msg(1, {
+          metadata: {
+            mediaRefs: [
+              {
+                id: 'media-vid',
+                kind: 'video',
+                format: 'container',
+                source: 'tool_result',
+                name: 'Clip',
+                mimeType: 'video/mp4',
+                thumbnail: { dataBase64: 'POSTER', mimeType: 'image/jpeg', width: 160, height: 90 },
+                status: 'available'
+              },
+              {
+                id: 'media-aud',
+                kind: 'audio',
+                format: 'container',
+                source: 'tool_result',
+                name: 'Render',
+                mimeType: 'audio/wav',
+                status: 'available'
+              }
+            ]
+          }
+        })
+      ]
+
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      const media = snapshot.rows[0].media || []
+      expect(media.map((m) => m.kind)).toEqual(['video', 'audio'])
+      expect(media[0].mimeType).toBe('video/mp4')
+      // The poster (a raster image) rides embedded so iOS shows it without a fetch.
+      expect(media[0].thumbnail?.dataBase64).toBe('POSTER')
+      expect(media[1].kind).toBe('audio')
+    })
+
+    it('drops an AV ref whose container mime is not allow-listed (defensive)', () => {
+      const messages = [
+        msg(1, {
+          metadata: {
+            mediaRefs: [
+              {
+                id: 'media-avi',
+                kind: 'video',
+                format: 'container',
+                source: 'tool_result',
+                name: 'Old clip',
+                mimeType: 'video/x-msvideo',
+                status: 'available'
+              }
+            ]
+          }
+        })
+      ]
+      const snapshot = project({ kind: 'latestN', n: 5 }, messages)
+      expect(snapshot.rows[0].media || []).toEqual([])
+    })
+
     it('keeps unsafe or oversized media as metadata without thumbnail bytes', () => {
       const messages = [
         msg(1, {

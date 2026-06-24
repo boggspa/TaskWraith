@@ -40,6 +40,7 @@ import type {
   DiffFileSummary,
   ProviderId,
   TranscriptMediaFormat,
+  TranscriptMediaKind,
   TranscriptMediaSource,
   TranscriptMediaStatus,
   TranscriptMediaThumbnail,
@@ -454,7 +455,7 @@ export interface RemoteAgentQuestion {
 
 export interface RemoteThreadRowMedia {
   id: string
-  kind: 'image'
+  kind: TranscriptMediaKind
   format: TranscriptMediaFormat
   source: TranscriptMediaSource
   name: string
@@ -1055,7 +1056,8 @@ const REMOTE_MEDIA_SOURCES = new Set<TranscriptMediaSource>([
   'upload',
   'tool_result'
 ])
-const REMOTE_MEDIA_FORMATS = new Set<TranscriptMediaFormat>(['raster', 'svg'])
+const REMOTE_MEDIA_FORMATS = new Set<TranscriptMediaFormat>(['raster', 'svg', 'container'])
+const REMOTE_MEDIA_KINDS = new Set<TranscriptMediaKind>(['image', 'audio', 'video'])
 const REMOTE_MEDIA_STATUSES = new Set<TranscriptMediaStatus>([
   'available',
   'missing',
@@ -1072,7 +1074,21 @@ const REMOTE_MEDIA_MIME_TYPES = new Set([
   'image/webp',
   'image/gif',
   'image/bmp',
-  'image/svg+xml'
+  'image/svg+xml',
+  // Audio/video (S0d) — projected so iOS shows a poster thumbnail (the poster
+  // itself is still a raster image, gated by REMOTE_THUMBNAIL_MIME_TYPES). Real
+  // playback fetch is S6; no path/bytes are carried to the phone here.
+  'audio/wav',
+  'audio/x-wav',
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/aac',
+  'audio/ogg',
+  'audio/flac',
+  'audio/x-flac',
+  'video/mp4',
+  'video/quicktime',
+  'video/webm'
 ])
 const REMOTE_MAX_MEDIA_REFS_PER_ROW = 8
 const REMOTE_MAX_MEDIA_THUMB_BASE64 = 180_000
@@ -1106,7 +1122,8 @@ function buildRowMedia(metadata: Record<string, unknown> | undefined): RemoteThr
     if (media.length >= REMOTE_MAX_MEDIA_REFS_PER_ROW) break
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
     const record = raw as Record<string, unknown>
-    if (record.kind !== 'image') continue
+    const kind = record.kind as TranscriptMediaKind
+    if (!REMOTE_MEDIA_KINDS.has(kind)) continue
     const id = typeof record.id === 'string' ? record.id.trim() : ''
     const name = typeof record.name === 'string' ? record.name.trim() : ''
     const mimeType = typeof record.mimeType === 'string' ? record.mimeType.trim().toLowerCase() : ''
@@ -1119,7 +1136,7 @@ function buildRowMedia(metadata: Record<string, unknown> | undefined): RemoteThr
     if (status !== undefined && !REMOTE_MEDIA_STATUSES.has(status)) continue
     const item: RemoteThreadRowMedia = {
       id,
-      kind: 'image',
+      kind,
       format,
       source,
       name,
