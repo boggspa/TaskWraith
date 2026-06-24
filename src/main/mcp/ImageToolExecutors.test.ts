@@ -163,3 +163,69 @@ describe('svg_rasterize', () => {
     expect(result.text).toContain('empty')
   })
 })
+
+describe('offscreen render pixel budget (framebuffer-OOM DoS guard)', () => {
+  // The renderer per-axis-clamps to 8192, but 8192×8192 ≈ 67M px ≈ ~1GB of
+  // capturePage framebuffer. The executor pre-checks the AREA and fails closed
+  // BEFORE the engine (and its window allocation) is ever touched.
+  it('rejects a blur whose source area exceeds the pixel budget', async () => {
+    // 8000×4000 = 32M px > 24M cap.
+    const { executors, engine } = build({
+      engine: { getSize: () => ({ width: 8000, height: 4000 }) }
+    })
+    const result = await executors.executeImageTool('image_edit', { op: 'blur' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toMatch(/too large/)
+    expect(engine.renderHtmlToPng).not.toHaveBeenCalled()
+  })
+
+  it('rejects a redact whose source area exceeds the pixel budget', async () => {
+    // 6000×5000 = 30M px > 24M cap.
+    const { executors, engine } = build({
+      engine: { getSize: () => ({ width: 6000, height: 5000 }) }
+    })
+    const result = await executors.executeImageTool(
+      'image_edit',
+      { op: 'redact', region: { x: 0, y: 0, width: 100, height: 100 } },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toMatch(/too large/)
+    expect(engine.renderHtmlToPng).not.toHaveBeenCalled()
+  })
+
+  it('allows a large blur that stays within the pixel budget', async () => {
+    // 4096×4096 = 16.78M px < 24M cap → proceeds to the renderer.
+    const { executors, engine } = build({
+      engine: { getSize: () => ({ width: 4096, height: 4096 }) }
+    })
+    const result = await executors.executeImageTool('image_edit', { op: 'blur' }, {})
+    expect(result.isError).toBeFalsy()
+    expect(engine.renderHtmlToPng).toHaveBeenCalled()
+  })
+
+  it('rejects an svg_rasterize whose requested dimensions exceed the pixel budget', async () => {
+    const { executors, engine } = build()
+    const result = await executors.executeImageTool(
+      'svg_rasterize',
+      { svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>', width: 8000, height: 4000 },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toMatch(/too large/)
+    expect(engine.renderHtmlToPng).not.toHaveBeenCalled()
+  })
+
+  it('crop and resize are unaffected (they never touch the offscreen renderer)', async () => {
+    const { executors, engine } = build({
+      engine: { getSize: () => ({ width: 8000, height: 8000 }) }
+    })
+    const cropped = await executors.executeImageTool(
+      'image_edit',
+      { op: 'crop', region: { x: 0, y: 0, width: 50, height: 50 } },
+      {}
+    )
+    expect(cropped.isError).toBeFalsy()
+    expect(engine.crop).toHaveBeenCalled()
+  })
+})

@@ -27,6 +27,13 @@ const DEFAULT_RENDER_TIMEOUT_MS = 15_000
 /** Hard ceiling on any rendered/processed dimension — guards against a
  * decompression/canvas memory bomb (e.g. an SVG declaring width=999999). */
 export const MAX_IMAGE_DIMENSION = 8192
+/** Cap total rendered AREA, not just each axis: the per-axis clamp still permits
+ * 8192×8192 ≈ 67M px ≈ a ~1GB `capturePage` framebuffer, and the downstream 8MB
+ * output cap only fires AFTER that allocation. 24M px ≈ 96MB RGBA per render;
+ * with MAX_CONCURRENT_RENDERS that bounds peak at a few hundred MB. Rejects the
+ * 8192² bomb while still allowing 4096² and typical camera-resolution photos.
+ * Mirrored in ImageToolExecutors (kept local there to stay Electron-free). */
+export const MAX_OFFSCREEN_RENDER_PIXELS = 24_000_000
 /** Cap concurrent offscreen renders so N agents firing image tools can't spawn
  * N GPU surfaces and exhaust memory. Excess renders queue. */
 const MAX_CONCURRENT_RENDERS = 3
@@ -89,34 +96,28 @@ async function renderHtmlToPng(
 ): Promise<Buffer> {
   const w = Math.max(1, Math.min(MAX_IMAGE_DIMENSION, Math.floor(width)))
   const h = Math.max(1, Math.min(MAX_IMAGE_DIMENSION, Math.floor(height)))
+  // Area guard — the authoritative backstop, BEFORE acquiring a slot or
+  // allocating the window. The per-axis clamp above bounds each side but not the
+  // product, so 8192×8192 would still allocate a ~1GB framebuffer. (Callers
+  // pre-check the same budget for a clean tool error; this catches any other
+  // caller and is the true allocation-site defense.)
+  if (w * h > MAX_OFFSCREEN_RENDER_PIXELS) {
+    throw new Error(
+      `offscreen render too large (${w}×${h} = ${w * h}px; max ${MAX_OFFSCREEN_RENDER_PIXELS}px)`
+    )
+  }
   await acquireRenderSlot()
-  renderSeq += 1
-  const win = new BrowserWindow({
-    width: w,
-    height: h,
-    show: false,
-    backgroundColor: '#00000000',
-    webPreferences: {
-      // Fresh, NON-persisted partition per render — fully isolated session.
-      partition: `taskwraith-image-render-${renderSeq}`,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-      experimentalFeatures: false,
-      // The rendered HTML is pure CSS (blur/redact) or an <img> SVG — it NEVER
-      // needs JavaScript. Disabling it structurally kills every script vector
-      // (dynamic fetch, RTCPeerConnection exfil, SVG <script>) regardless of the
-      // egress cut. Strongest single containment for this surface.
-      javascript: false,
-      webgl: false,
-      plugins: false,
-      backgroundThrottling: false
-    }
-  })
-  const wc = win.webContents
+  // BrowserWindow construction and the `webContents` access below can throw
+  // (GPU/compositor init failure, OOM, Electron mid-teardown). They MUST live
+  // INSIDE the try so the `finally` always runs and the slot is released — a
+  // throw before the try would skip `releaseRenderSlot()`, and after
+  // MAX_CONCURRENT_RENDERS such failures `acquireRenderSlot()` would queue
+  // forever, wedging EVERY offscreen render until restart (an availability DoS
+  // in the very guard meant to prevent one).
+  let win: BrowserWindow | null = null
+  let wc: WebContents | null = null
   const detachNetwork = () => {
+    if (!wc) return // window/webContents never came up — nothing to detach
     try {
       wc.session.webRequest.onBeforeRequest(null)
     } catch {
@@ -124,6 +125,32 @@ async function renderHtmlToPng(
     }
   }
   try {
+    renderSeq += 1
+    win = new BrowserWindow({
+      width: w,
+      height: h,
+      show: false,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        // Fresh, NON-persisted partition per render — fully isolated session.
+        partition: `taskwraith-image-render-${renderSeq}`,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        experimentalFeatures: false,
+        // The rendered HTML is pure CSS (blur/redact) or an <img> SVG — it NEVER
+        // needs JavaScript. Disabling it structurally kills every script vector
+        // (dynamic fetch, RTCPeerConnection exfil, SVG <script>) regardless of the
+        // egress cut. Strongest single containment for this surface.
+        javascript: false,
+        webgl: false,
+        plugins: false,
+        backgroundThrottling: false
+      }
+    })
+    wc = win.webContents
     // Cut ALL egress for this render: nothing the page references may load.
     wc.session.webRequest.onBeforeRequest((_details, callback) => callback({ cancel: true }))
     wc.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
@@ -149,11 +176,12 @@ async function renderHtmlToPng(
     // the requested LOGICAL dimensions so output size/coords are honest and the
     // downstream 8MB cap isn't tripped by an unexpected 4x byte volume.
     const size = captured.getSize()
-    const image = size.width !== w || size.height !== h ? captured.resize({ width: w, height: h }) : captured
+    const image =
+      size.width !== w || size.height !== h ? captured.resize({ width: w, height: h }) : captured
     return image.toPNG()
   } finally {
     detachNetwork()
-    if (!win.isDestroyed()) win.destroy()
+    if (win && !win.isDestroyed()) win.destroy()
     releaseRenderSlot()
   }
 }

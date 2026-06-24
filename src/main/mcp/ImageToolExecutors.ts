@@ -33,6 +33,12 @@ export function isImageMcpToolName(name: string): name is ImageMcpToolName {
 }
 
 export const MAX_IMAGE_DIMENSION = 8192
+/** Local mirror of OffscreenImageRenderer.MAX_OFFSCREEN_RENDER_PIXELS — kept here
+ * (not imported) so this module stays Electron-free / unit-testable, exactly as
+ * MAX_IMAGE_DIMENSION is. Caps the offscreen-render AREA so a per-axis-legal
+ * 8192×8192 (~1GB framebuffer) is rejected with a clean tool error before the
+ * window is ever created. */
+export const MAX_OFFSCREEN_RENDER_PIXELS = 24_000_000
 const MAX_BLUR_RADIUS = 200
 const RENDER_TIMEOUT_MS = 20_000
 const MAX_SVG_CHARS = 2_000_000
@@ -98,6 +104,17 @@ function intArg(value: unknown): number | null {
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
+}
+
+/** True when an offscreen render of w×h would exceed the framebuffer area cap.
+ * Both dims are already per-axis-clamped to MAX_IMAGE_DIMENSION by callers; this
+ * bounds the PRODUCT (8192×8192 is per-axis-legal but ~1GB of framebuffer). */
+function exceedsRenderPixelBudget(w: number, h: number): boolean {
+  return w * h > MAX_OFFSCREEN_RENDER_PIXELS
+}
+
+function renderPixelBudgetMessage(w: number, h: number): string {
+  return `render too large (${w}×${h} = ${w * h}px; max ${MAX_OFFSCREEN_RENDER_PIXELS}px). Reduce dimensions.`
 }
 
 function fail(toolName: string, message: string): McpToolExecutionResult {
@@ -231,9 +248,13 @@ export function createImageToolExecutors(deps: ImageToolExecutorDeps): ImageTool
         const png = engine.resize(source.buffer, { width: targetW, height: targetH })
         return pngResult('image_edit', { op, width: targetW, height: targetH }, png)
       }
-      // blur / redact go through the offscreen renderer.
+      // blur / redact go through the offscreen renderer — guard the framebuffer
+      // area BEFORE building the (potentially large) data URL or spinning a window.
       const region = parseRegion(args.region, imgW, imgH)
       if (region && 'error' in region) return fail('image_edit', region.error)
+      if (exceedsRenderPixelBudget(imgW, imgH)) {
+        return fail('image_edit', renderPixelBudgetMessage(imgW, imgH))
+      }
       const dataUrl = rasterDataUrl(source.buffer, inMime as string)
       let html: string
       if (op === 'redact') {
@@ -262,6 +283,9 @@ export function createImageToolExecutors(deps: ImageToolExecutorDeps): ImageTool
     }
     const width = clamp(intArg(args.width ?? args.w) ?? 1024, 1, MAX_IMAGE_DIMENSION)
     const height = clamp(intArg(args.height ?? args.h) ?? 768, 1, MAX_IMAGE_DIMENSION)
+    if (exceedsRenderPixelBudget(width, height)) {
+      return fail('svg_rasterize', renderPixelBudgetMessage(width, height))
+    }
     try {
       const svgDataUrl = `data:image/svg+xml;base64,${Buffer.from(source.svg, 'utf-8').toString('base64')}`
       const png = await engine.renderHtmlToPng(svgHtml(svgDataUrl, width, height), width, height, RENDER_TIMEOUT_MS)
