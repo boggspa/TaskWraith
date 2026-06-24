@@ -3251,6 +3251,11 @@ let auditRunInFlight = false
 // audit forever. Generous because it only fires on a true hang; normal
 // completion clears it.
 const AUDIT_ROLE_RUN_TIMEOUT_MS = 15 * 60 * 1000
+// Stage 2 — per-iteration backstop for a workflow LOOP step. A maker can legitimately
+// run long, so 15min is too aggressive; the loop uses the workflow's configured
+// per-run timeoutSeconds when set, else this generous default. When it fires it
+// CANCELS the (otherwise-orphaned) provider run, not just the tracked promise.
+const WORKFLOW_LOOP_STEP_TIMEOUT_MS = 30 * 60 * 1000
 
 // v1: providers whose plan-mode runs can actually reach the MCP bridge to record
 // audit_* artifacts. gemini/grok/cursor keep the --sandbox seatbelt in plan mode
@@ -6969,6 +6974,15 @@ async function dispatchDueScheduledLoopHeadless(
   if (!running || running.status !== 'running') return
 
   const ledger = resolveWorkflowExecutionForTask(task.id)
+  // Per-iteration backstop: the workflow's configured per-run timeout if set, else a
+  // generous default — so a long-but-healthy maker isn't mislabeled an infra failure.
+  const wfLimits = task.workflowId
+    ? AppStore.getWorkflowDefinition(task.workflowId)?.limits
+    : undefined
+  const stepTimeoutMs =
+    typeof wfLimits?.timeoutSeconds === 'number' && wfLimits.timeoutSeconds > 0
+      ? wfLimits.timeoutSeconds * 1000
+      : WORKFLOW_LOOP_STEP_TIMEOUT_MS
   const appendLoopEvent = (input: WorkflowRunEventInput): void => {
     if (!ledger) return
     try {
@@ -7020,10 +7034,12 @@ async function dispatchDueScheduledLoopHeadless(
     }
     // Track BEFORE dispatch (inline-exit landmine) + arm an absolute backstop.
     const completion = auditRunTracker.track(input.runId)
-    const backstop = setTimeout(
-      () => auditRunTracker.handleExit(input.runId, -1),
-      AUDIT_ROLE_RUN_TIMEOUT_MS
-    )
+    const backstop = setTimeout(() => {
+      // CANCEL the provider run — settling the tracked promise alone leaves it
+      // running (it would keep editing/spending after the loop moves on).
+      void cancelProviderRun(task.provider, input.runId)
+      auditRunTracker.handleExit(input.runId, -1)
+    }, stepTimeoutMs)
     void completion.finally(() => clearTimeout(backstop))
     const sender =
       mainWindow && !mainWindow.webContents.isDestroyed()
@@ -7063,15 +7079,15 @@ async function dispatchDueScheduledLoopHeadless(
     // budget; a cancel surface is a follow-up).
     isCancelled: () => false,
     onState: (snap) => {
-      // Keep the stall reconciler's basis fresh per iteration (a loop slower than the
-      // 6h backstop must NOT be falsely reaped) + surface the in-flight iteration's
-      // runId so the liveness cross-check finds the live run. Only on running snapshots.
+      // Keep the stall reconciler's basis fresh per iteration: each completed
+      // iteration re-stamps runningSince so the 6h backstop measures time-since-last-
+      // iteration, not loop-start (a loop running > 6h total is NOT falsely reaped).
+      // Only on running snapshots — never resurrect a terminal task. Note: the
+      // run-queue liveness cross-check does NOT help a loop (a main-side run creates no
+      // RunQueueJob), so runningSince freshness is the sole stall safety — which
+      // suffices, since each iteration is itself bounded by stepTimeoutMs.
       if (snap.status !== 'running') return
-      const live = snap.iterations[snap.iterations.length - 1]
-      AppStore.updateScheduledTask(task.id, {
-        runningSince: new Date().toISOString(),
-        ...(live?.makerRunId ? { runId: live.makerRunId } : {})
-      })
+      AppStore.updateScheduledTask(task.id, { runningSince: new Date().toISOString() })
     }
   })
 
@@ -7087,12 +7103,13 @@ async function dispatchDueScheduledLoopHeadless(
     return
   }
 
-  // Execution-level terminal ledger event (cumulative spend); NO iteration tag.
+  // Execution-level terminal ledger event; NO iteration tag and NO tokens/costUsd —
+  // the per-iteration 'harvested' events already sum to the cumulative total
+  // (foldWorkflowRunSummary SUMS forensics across events), so repeating the cumulative
+  // here would DOUBLE-count the loop's spend in the summary.
   appendLoopEvent({
     kind: 'loop_settled',
     scheduledTaskId: task.id,
-    tokens: snap.budget.spentTokens,
-    costUsd: snap.budget.spentCostUsd,
     ...(snap.error ? { error: snap.error } : {})
   } as WorkflowRunEventInput)
 
