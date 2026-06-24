@@ -1479,6 +1479,7 @@ function App(): React.JSX.Element {
   // intentionally interrupts a run. This is separate from intentional
   // cancellation because Stop should still surface its stopped feedback.
   const steerSuppressedSummaryRunIdsRef = useRef<Set<string>>(new Set())
+  const queuedSteerInFlightRunIdsRef = useRef<Set<string>>(new Set())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [guestDispatchPendingParentChatIds, setGuestDispatchPendingParentChatIds] = useState<
     Set<string>
@@ -9090,6 +9091,8 @@ function App(): React.JSX.Element {
    *   - queueMessageId?: Optional queue-entry id for diagnostics.
    *   - transitionVersion?: Optional queue-coordinator transition token.
    *   - ownerToken?: Optional caller-owned key for coordinator pairing.
+   *   - cancelRunId/cancelProvider?: Optional active run that main should
+   *     intentionally cancel only after reserving the queued row.
    *
    * Output:
    *   - ok === true/kind === 'dispatch-permission': includes a runnable
@@ -9105,6 +9108,8 @@ function App(): React.JSX.Element {
     queueMessageId?: string
     transitionVersion?: number
     ownerToken?: string
+    cancelRunId?: string
+    cancelProvider?: ProviderId
   }
   type PromoteQueuedRunForSteerResponse = {
     ok?: boolean
@@ -17226,16 +17231,38 @@ function App(): React.JSX.Element {
         return
       }
 
+      if (queuedSteerInFlightRunIdsRef.current.has(runId)) return
+      queuedSteerInFlightRunIdsRef.current.add(runId)
+      const clearQueuedSteerInFlight = (): void => {
+        queuedSteerInFlightRunIdsRef.current.delete(runId)
+      }
+      const cancelProvider = activeContext?.provider || match.provider
+      const clearQueuedSteerSuppression = (): void => {
+        if (!targetChatId || !cancelTargetRunId) return
+        steerSuppressionChatIdsRef.current.delete(targetChatId)
+        steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
+        intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
+      }
+      if (targetChatId && cancelTargetRunId) {
+        steerSuppressionChatIdsRef.current.add(targetChatId)
+        steerSuppressedSummaryRunIdsRef.current.add(cancelTargetRunId)
+        intentionalCancelRunIdsRef.current.add(cancelTargetRunId)
+      }
+
       const promotion = await invokePromoteQueuedRunForSteer({
         runId,
         provider: match.provider,
         chatId: targetChatId,
         statusReason: 'Promoted from queued-row steer. Cancelling active run first.',
         queueMessageId: entryId,
-        transitionVersion: job?.transitionVersion
+        transitionVersion: job?.transitionVersion,
+        cancelRunId: cancelTargetRunId,
+        cancelProvider
       })
 
       if (!promotion) {
+        clearQueuedSteerSuppression()
+        clearQueuedSteerInFlight()
         appendFailure(
           'Steer promotion API is unavailable in this TaskWraith build',
           'skipping queued-row promote+dispatch'
@@ -17246,6 +17273,8 @@ function App(): React.JSX.Element {
         promotion.ok === true || promotion.kind === 'dispatch-permission'
 
       if (!promotionPermitted) {
+        clearQueuedSteerSuppression()
+        clearQueuedSteerInFlight()
         appendFailure(
           'Queued run steer promotion failed',
           promotion.reason || 'the request could not be handed off safely'
@@ -17300,8 +17329,12 @@ function App(): React.JSX.Element {
 
       if (!targetChatId || !cancelTargetRunId) {
         const leased = await leasePromotedForDispatch()
-        if (!leased) return
+        if (!leased) {
+          clearQueuedSteerInFlight()
+          return
+        }
         void executeRunRef.current(dispatchRequest)
+        clearQueuedSteerInFlight()
         return
       }
 
@@ -17311,9 +17344,6 @@ function App(): React.JSX.Element {
       })
       setSteerState(cancellingState)
       steerStateRef.current = cancellingState
-      steerSuppressionChatIdsRef.current.add(targetChatId)
-      steerSuppressedSummaryRunIdsRef.current.add(cancelTargetRunId)
-      intentionalCancelRunIdsRef.current.add(cancelTargetRunId)
       appendThreadRawLog(targetChatId, {
         type: 'info',
         content: `Steer to queued prompt: interrupting current ${providerLabel} turn to dispatch a replacement.`
@@ -17324,7 +17354,9 @@ function App(): React.JSX.Element {
         content: 'Steer requested from queued message; waiting for active run to terminate before dispatch.'
       })
 
-      void window.api.cancelAgentRun(activeContext?.provider || dispatchRequest.provider, cancelTargetRunId)
+      if (promotion.cancelRequested !== true) {
+        void window.api.cancelAgentRun(cancelProvider, cancelTargetRunId)
+      }
 
       const startedAt = Date.now()
       let outcome: 'cancel-landed' | 'timeout' = 'timeout'
@@ -17360,6 +17392,7 @@ function App(): React.JSX.Element {
         steerSuppressionChatIdsRef.current.delete(targetChatId)
         steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
         intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
+        clearQueuedSteerInFlight()
         return
       }
 
@@ -17371,6 +17404,7 @@ function App(): React.JSX.Element {
           intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
           setSteerState(resetSteer())
           steerStateRef.current = resetSteer()
+          clearQueuedSteerInFlight()
           return
         }
         updateChatById(targetChatId, (source) => {
@@ -17415,6 +17449,7 @@ function App(): React.JSX.Element {
           (targetChatId && chatByIdRef.current.get(targetChatId)) || targetRecord || null
         const liveRequest = currentTarget ? { ...dispatchRequest, chatRecord: currentTarget } : dispatchRequest
         void executeRunRef.current(liveRequest)
+        clearQueuedSteerInFlight()
         window.setTimeout(() => {
           const latest = steerStateRef.current
           if (latest.phase === 'dispatching' && latest.chatId === targetChatId) {
@@ -17467,6 +17502,7 @@ function App(): React.JSX.Element {
           steerStateRef.current = resetSteer()
         }
       }, 3_000)
+      clearQueuedSteerInFlight()
     },
     // `handleCancel` intentionally remains live from the current render; queued steering only
     // needs this callback to refresh when the target chat changes.
