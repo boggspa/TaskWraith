@@ -17,6 +17,8 @@ public struct TWRemoteShellAppearance: Codable, Sendable, Equatable {
     public let reduceMotion: Bool?
     public let reduceTransparency: Bool?
     public let compactDensity: Bool?
+    /// Display name for the General-chat greeting ('' / nil = no name).
+    public let userName: String?
 
     public init(
         composerStyle: String,
@@ -25,7 +27,8 @@ public struct TWRemoteShellAppearance: Codable, Sendable, Equatable {
         preferredColorScheme: String? = nil,
         reduceMotion: Bool? = nil,
         reduceTransparency: Bool? = nil,
-        compactDensity: Bool? = nil
+        compactDensity: Bool? = nil,
+        userName: String? = nil
     ) {
         self.composerStyle = composerStyle
         self.generatedAt = generatedAt
@@ -34,11 +37,12 @@ public struct TWRemoteShellAppearance: Codable, Sendable, Equatable {
         self.reduceMotion = reduceMotion
         self.reduceTransparency = reduceTransparency
         self.compactDensity = compactDensity
+        self.userName = userName
     }
 
     private enum CodingKeys: String, CodingKey {
         case composerStyle, generatedAt, appearanceMode, preferredColorScheme
-        case reduceMotion, reduceTransparency, compactDensity
+        case reduceMotion, reduceTransparency, compactDensity, userName
     }
 
     public init(from decoder: Decoder) throws {
@@ -50,6 +54,7 @@ public struct TWRemoteShellAppearance: Codable, Sendable, Equatable {
         reduceMotion = try? c.decode(Bool.self, forKey: .reduceMotion)
         reduceTransparency = try? c.decode(Bool.self, forKey: .reduceTransparency)
         compactDensity = try? c.decode(Bool.self, forKey: .compactDensity)
+        userName = try? c.decode(String.self, forKey: .userName)
     }
 
     /// Parsed composer style (preserves unknown raw values for diagnostics).

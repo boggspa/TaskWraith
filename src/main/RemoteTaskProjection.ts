@@ -483,6 +483,8 @@ export interface RemoteShellAppearance {
   reduceTransparency: boolean
   reduceMotion: boolean
   compactDensity: boolean
+  /** Display name for the General-chat greeting on the phone ('' = no name). */
+  userName: string
   preferredColorScheme: RemoteShellColorScheme
   colors: RemoteShellAppearanceColors
 }
@@ -535,6 +537,7 @@ export type BuildRemoteShellAppearanceSettings = Partial<
     | 'reduceTransparency'
     | 'reduceMotion'
     | 'compactDensity'
+    | 'userName'
   >
 >
 
@@ -641,7 +644,8 @@ const DEFAULT_REMOTE_SHELL_SETTINGS: Required<BuildRemoteShellAppearanceSettings
   composerStyle: 'default',
   reduceTransparency: false,
   reduceMotion: false,
-  compactDensity: false
+  compactDensity: false,
+  userName: ''
 }
 
 export function buildRemoteProjectionEnvelope<TPayload>(
@@ -694,6 +698,7 @@ export function buildRemoteShellAppearance(
     reduceTransparency: resolved.reduceTransparency,
     reduceMotion: resolved.reduceMotion,
     compactDensity: resolved.compactDensity,
+    userName: resolved.userName,
     preferredColorScheme: preferredColorSchemeForRemoteShell(resolved.themeAppearance),
     colors: {
       ...DEFAULT_REMOTE_SHELL_COLORS,

@@ -210,6 +210,9 @@ public final class RemoteSessionModel: ObservableObject {
     private var lastShellAppearanceGeneratedAt: String?
     /// The Mac-projected composer style (nil until the first shellAppearance).
     public var projectedComposerStyle: TWComposerStyle? { projectedShellAppearance?.style }
+    /// Display name projected from the Mac for the General-chat greeting
+    /// (nil / empty = no name; the greeting then shows just the time-of-day).
+    public var projectedUserName: String? { projectedShellAppearance?.userName }
     @Published public private(set) var lastActionMessage: String?
     /// Set after createThread succeeds — HomeView navigates to the new chat.
     @Published public var navigationTarget: String?
@@ -2341,9 +2344,13 @@ public final class RemoteSessionModel: ObservableObject {
         else { return }
         lastShellAppearanceGeneratedAt = appearance.generatedAt
         // The Mac re-stamps generatedAt on every snapshot, so the timestamp gate
-        // alone would republish constantly. Only composerStyle is consumed on iOS
-        // (projectedComposerStyle), so republish only when it actually changes.
-        guard appearance.composerStyle != projectedShellAppearance?.composerStyle else { return }
+        // alone would republish constantly. iOS consumes composerStyle
+        // (projectedComposerStyle) AND userName (projectedUserName) — republish
+        // when EITHER changes, else a name edit (same composerStyle) never lands.
+        guard
+            appearance.composerStyle != projectedShellAppearance?.composerStyle
+                || appearance.userName != projectedShellAppearance?.userName
+        else { return }
         projectedShellAppearance = appearance
     }
 
