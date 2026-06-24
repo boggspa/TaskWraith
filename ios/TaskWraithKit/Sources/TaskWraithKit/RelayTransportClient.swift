@@ -277,7 +277,7 @@ public actor RelayTransportClient {
         guard let session else { return }
         do { try session.sendApp(method, params: params) } catch {
             eventContinuation.yield(
-                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: nil)))
+                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
         }
         await drainAndTransmit()
     }
@@ -351,7 +351,7 @@ public actor RelayTransportClient {
                     established = false
                     wsTask = nil
                     eventContinuation.yield(
-                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: nil)))
+                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
                     eventContinuation.yield(.closed)
                 }
                 return
@@ -376,7 +376,7 @@ public actor RelayTransportClient {
                     established = false
                     wsTask = nil
                     eventContinuation.yield(
-                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: nil)))
+                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
                     eventContinuation.yield(.closed)
                     return
                 }
@@ -410,7 +410,7 @@ public actor RelayTransportClient {
         }
         if let error = session.takeError() {
             eventContinuation.yield(
-                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: nil)))
+                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
         }
     }
 

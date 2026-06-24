@@ -1961,6 +1961,17 @@ public enum TransportErrorCopy {
                 + "Remote access via Tailscale off and on in the Mac's Settings → Devices."
         case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost:
             return "No network connection — check Wi-Fi or cellular on this device, then retry."
+        case NSURLErrorBadServerResponse:
+            // -1011: the WebSocket upgrade got a non-101 reply — classically a 502
+            // from `tailscale serve` when the relay behind its front door is dead
+            // (or the relay refused the upgrade). The door is up; the relay is not.
+            if isTailnet {
+                return "\(host) answered, but TaskWraith's relay behind it didn't (a 502 error). "
+                    + "Open TaskWraith on the Mac and make sure it's running with "
+                    + "Settings → Devices → Remote access via Tailscale enabled, then refresh the QR and retry."
+            }
+            return "\(host) answered, but TaskWraith's relay there didn't complete the connection. "
+                + "Make sure TaskWraith is running on the Mac, then refresh the pairing code and retry."
         default:
             return ns.localizedDescription
         }

@@ -75,4 +75,26 @@ struct TransportErrorCopyTests {
             for: urlError(NSURLErrorHTTPTooManyRedirects), relayUrl: nil)
         #expect(message == "Could not connect to the server.")
     }
+
+    @Test("-1011 on a ts.net host explains the 502 (front door up, relay behind it down)")
+    func badServerResponseTailnet() {
+        let message = TransportErrorCopy.friendlyMessage(
+            for: urlError(NSURLErrorBadServerResponse),
+            relayUrl: "wss://mac.tailnet.ts.net")
+        #expect(message.contains("mac.tailnet.ts.net"))
+        #expect(message.contains("502"))
+        #expect(message.contains("Remote access via Tailscale"))
+        // The raw "bad response from the server" wall must be gone.
+        #expect(message != "Could not connect to the server.")
+    }
+
+    @Test("-1011 on a LAN host points at the Mac's relay, not a 502")
+    func badServerResponseLan() {
+        let message = TransportErrorCopy.friendlyMessage(
+            for: urlError(NSURLErrorBadServerResponse),
+            relayUrl: "ws://192.168.1.20:8787")
+        #expect(message.contains("192.168.1.20"))
+        #expect(message.contains("TaskWraith is running"))
+        #expect(!message.contains("502"))
+    }
 }
