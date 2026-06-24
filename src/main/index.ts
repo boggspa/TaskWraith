@@ -24482,22 +24482,27 @@ if (isGeminiMcpBridgeProcess) {
           ? routedPayload.workspace
           : undefined
       await repairKnownStaleGeminiMcpBridgeConfigs(repairCwd).catch(() => {})
-      const dispatchResult = await runCoordinator.dispatch(routedPayload, event)
-      // Snapshot the dispatched request so a later quota wall can re-run it.
-      if (AppStore.getSettings().autoFailoverEnabled && dispatchResult.appRunId) {
-        failoverSnapshotByRun.set(dispatchResult.appRunId, captureFailoverSnapshot(routedPayload))
-      }
-      // Per-occurrence mid-run budget kill (SOLO scheduled runs only). routedPayload
-      // is the PRE-normalize raw payload, so scheduledTaskId is still present (same
-      // read as captureFailoverSnapshot). Resolve the workflow's limits via
-      // scheduledTaskId -> task.workflowId -> WorkflowDefinition.limits. The per-workflow
-      // limits ARE the opt-in (hasAnyBudget); workflowBudgetKillEnabled is the escape
-      // hatch. NOT wired for ensemble — this solo chokepoint never sees a round runId.
+      // Per-occurrence SOLO-scheduled-run bookkeeping (completion mark + mid-run
+      // budget kill) MUST be wired BEFORE dispatch. The default Claude (Agent SDK)
+      // path consumes its stream INLINE and fires sendAgentCompatExit SYNCHRONOUSLY
+      // before runCoordinator.dispatch returns; a post-dispatch set/register would
+      // miss the whole run — the solo completion mark would never fire (the task
+      // wedges 'running' until the 6h stall reconciler, which records it 'failed'
+      // and can auto-disable the workflow after maxConsecutiveFailures), and onUsage
+      // budget checks during the inline run would find no registration. routedPayload
+      // is the PRE-normalize raw payload, so scheduledTaskId + appRunId are present;
+      // routeWithRunId PRESERVES a set appRunId and a scheduled run always carries
+      // one (composeRun), so soloRunId matches the appRunId sendAgentCompatExit reads.
+      // Per-workflow limits ARE the opt-in (hasAnyBudget); workflowBudgetKillEnabled
+      // is the escape hatch. NOT wired for ensemble — this chokepoint never sees a
+      // round runId.
       const budgetScheduledTaskId = (routedPayload as { scheduledTaskId?: string }).scheduledTaskId
-      if (budgetScheduledTaskId && dispatchResult.appRunId) {
+      const soloRunId = typeof routedPayload.appRunId === 'string' ? routedPayload.appRunId : ''
+      if (budgetScheduledTaskId && soloRunId) {
         // Stage 0b-completion: main marks this solo scheduled run terminal in
-        // sendAgentCompatExit, so a mid-run renderer close can't wedge it.
-        scheduledTaskIdBySoloRun.set(dispatchResult.appRunId, budgetScheduledTaskId)
+        // sendAgentCompatExit, so a mid-run renderer close (or a windowless run)
+        // can't wedge it.
+        scheduledTaskIdBySoloRun.set(soloRunId, budgetScheduledTaskId)
         const budgetSettings = AppStore.getSettings()
         if (budgetSettings.workflowBudgetKillEnabled !== false) {
           const task = AppStore.getScheduledTasks().find((t) => t.id === budgetScheduledTaskId)
@@ -24506,7 +24511,7 @@ if (isGeminiMcpBridgeProcess) {
             : undefined
           if (hasAnyBudget(limits)) {
             workflowBudgetRegistry.register({
-              runId: dispatchResult.appRunId,
+              runId: soloRunId,
               scheduledTaskId: budgetScheduledTaskId,
               provider: routedPayload.provider,
               startedAtMs: Date.now(),
@@ -24516,6 +24521,11 @@ if (isGeminiMcpBridgeProcess) {
             })
           }
         }
+      }
+      const dispatchResult = await runCoordinator.dispatch(routedPayload, event)
+      // Snapshot the dispatched request so a later quota wall can re-run it.
+      if (AppStore.getSettings().autoFailoverEnabled && dispatchResult.appRunId) {
+        failoverSnapshotByRun.set(dispatchResult.appRunId, captureFailoverSnapshot(routedPayload))
       }
       return dispatchResult
     }
