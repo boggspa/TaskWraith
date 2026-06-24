@@ -280,7 +280,7 @@ import {
 } from './TailscaleServe'
 import { tailscaleUpWithAuthKey } from './TailscaleAuth'
 import { discoverTailnetHosts } from './TailnetDiscovery'
-import { selectAdvertisableRelayUrls } from './remote/relayReachability'
+import { probeRelayFrontDoor, selectAdvertisableRelayUrls } from './remote/relayReachability'
 import {
   resolveAutoUpdateServiceEnabled,
   UpdateService,
@@ -19761,6 +19761,9 @@ if (isGeminiMcpBridgeProcess) {
         cliPath: string | null
       ): void => {
         const port = embeddedPort(null)
+        // Release fronts :443, a dev build :8443 — distinct serve handlers so the
+        // two coexist on one Mac instead of fighting over one :443 mapping.
+        const httpsPort = app.isPackaged ? 443 : 8443
         void createRelayServer({
           port,
           hostInfo: relayHostInfoProvider,
@@ -19783,31 +19786,40 @@ if (isGeminiMcpBridgeProcess) {
               `[remote-bridge] embedded relay on :${handle.port} behind tailscale serve — Mac via loopback, phones via ${candidates.join(' → ')} (${dnsName})`
             )
             if (cliPath) {
-              // Release fronts :443, a dev build :8443 — distinct serve handlers so
-              // the two coexist on one Mac instead of fighting over one :443 mapping
-              // (the loser's re-assert kept silently killing the winner's door).
-              const httpsPort = app.isPackaged ? 443 : 8443
-              const serve = await getTailscaleServeStatus({
-                cliPath,
-                relayPort: handle.port,
-                httpsPort
-              })
-              if (!serve.configured) {
-                console.warn(
-                  `[remote-bridge] tailscale serve is NOT fronting :${handle.port} on :${httpsPort}${
-                    serve.error ? ` (status error: ${serve.error})` : ''
-                  } — re-asserting the front door`
+              // Confirm the relay actually answers on its loopback port BEFORE we
+              // (re)assert a serve door over it. `tailscale serve --bg` PERSISTS
+              // across app restarts, so if a prior run left a door up and this
+              // run's relay isn't really answering, fronting it would hand phones
+              // a 502 ("bad response from server"). Bind → verify → serve.
+              const loopback = await probeRelayFrontDoor(`ws://127.0.0.1:${handle.port}`)
+              if (!loopback.reachable) {
+                console.error(
+                  `[remote-bridge] embedded relay on :${handle.port} is not answering loopback (${loopback.detail}) — tearing down any stale serve front door on :${httpsPort} rather than advertising a dead relay`
                 )
-                const enabled = await enableTailscaleServe({
+                await disableTailscaleServe({ cliPath, httpsPort })
+              } else {
+                const serve = await getTailscaleServeStatus({
                   cliPath,
                   relayPort: handle.port,
                   httpsPort
                 })
-                console[enabled.ok ? 'log' : 'error'](
-                  enabled.ok
-                    ? `[remote-bridge] tailscale serve re-enabled for :${handle.port}`
-                    : `[remote-bridge] tailscale serve enable FAILED: ${enabled.message ?? 'unknown'} — phones cannot reach ${wssUrl} until this is fixed (pairing will refuse to advertise it)`
-                )
+                if (!serve.configured) {
+                  console.warn(
+                    `[remote-bridge] tailscale serve is NOT fronting :${handle.port} on :${httpsPort}${
+                      serve.error ? ` (status error: ${serve.error})` : ''
+                    } — re-asserting the front door`
+                  )
+                  const enabled = await enableTailscaleServe({
+                    cliPath,
+                    relayPort: handle.port,
+                    httpsPort
+                  })
+                  console[enabled.ok ? 'log' : 'error'](
+                    enabled.ok
+                      ? `[remote-bridge] tailscale serve re-enabled for :${handle.port} on :${httpsPort}`
+                      : `[remote-bridge] tailscale serve enable FAILED: ${enabled.message ?? 'unknown'} — phones cannot reach ${wssUrl} until this is fixed (pairing will refuse to advertise it)`
+                  )
+                }
               }
             } else {
               console.warn(
@@ -19816,12 +19828,24 @@ if (isGeminiMcpBridgeProcess) {
             }
             startRuntime(`ws://127.0.0.1:${handle.port}`, wssUrl, candidates)
           })
-          .catch((err: unknown) => {
+          .catch(async (err: unknown) => {
             console.error(
               `[remote-bridge] embedded relay failed to start on :${port} (${
                 err instanceof Error ? err.message : String(err)
               }) — remote iOS pairing disabled. Free the port or set TASKWRAITH_RELAY_PORT.`
             )
+            // The relay never bound, but a `serve --bg` door from a previous run
+            // persists in tailscaled and would now proxy to a dead port — a 502
+            // trap for any phone that dials it. Take OUR OWN front door down
+            // (httpsPort-scoped, so this never touches the other build's door).
+            if (cliPath) {
+              const torn = await disableTailscaleServe({ cliPath, httpsPort })
+              if (!torn.ok) {
+                console.warn(
+                  `[remote-bridge] could not tear down the stale serve door on :${httpsPort}: ${torn.message ?? 'unknown'}`
+                )
+              }
+            }
           })
       }
       void (async () => {
