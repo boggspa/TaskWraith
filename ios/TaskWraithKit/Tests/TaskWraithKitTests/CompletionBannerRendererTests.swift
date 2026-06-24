@@ -41,6 +41,15 @@ struct CompletionBannerRendererTests {
                 title: "", failed: true, preview: "  ", filesChanged: 0, additions: 0, deletions: 0))
         #expect(f.title == "\u{26A0}\u{FE0F} TaskWraith")
         #expect(f.body == "Run needs your attention.")
+        // A SUCCESSFUL decrypt of degenerate all-empty-string content (a run that
+        // changed nothing) must still yield a NON-EMPTY title AND body — the
+        // NSE's "never worse than the generic banner" guarantee rests on these
+        // two fallbacks, so pin them explicitly.
+        let e = CompletionBannerRenderer.render(
+            CompletionBannerInput(
+                title: "", failed: false, preview: "", filesChanged: 0, additions: 0, deletions: 0))
+        #expect(e.title == "TaskWraith")
+        #expect(e.body == "Run finished.")
     }
 
     @Test("diffBannerLine: singular/plural + nil when nothing changed")

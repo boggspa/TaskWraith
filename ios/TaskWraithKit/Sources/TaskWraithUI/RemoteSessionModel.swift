@@ -320,6 +320,10 @@ public final class RemoteSessionModel: ObservableObject {
         // only if the seed is unloadable (the Mac then sends generic pushes).
         let agreePub = (try? TWPushSeal.agreementPublicRaw(fromSeed: identitySeed))?
             .base64EncodedString()
+        // Capture the host this registration is being SENT to, so the ack's
+        // macAgreePub is stored against THAT host even if the user switches hosts
+        // before the ack lands (a stale ack would otherwise key the wrong record).
+        let expectedHostId = pinnedMacIdentityB64 ?? selectedHostId
         send(
             BridgeAction.registerApnsToken(
                 deviceToken: token.hex, env: token.env, agreePub: agreePub),
@@ -342,22 +346,23 @@ public final class RemoteSessionModel: ObservableObject {
             },
             onAckResult: { [weak self] accepted, ack in
                 guard let self, accepted, let ack else { return }
-                self.storeMacAgreePubFromAck(ack)
+                self.storeMacAgreePubFromAck(ack, expectedHostId: expectedHostId)
             })
     }
 
     /// Persist the Mac's push-agreement public key (from the `registerApnsToken`
-    /// ack) onto the connected host's paired record so the Notification Service
-    /// Extension can derive the static shared secret to decrypt that host's rich
-    /// pushes while the app is backgrounded/closed.
-    private func storeMacAgreePubFromAck(_ ack: AckResult) {
+    /// ack) onto the paired record of the host the registration was SENT to, so
+    /// the Notification Service Extension can derive the static shared secret to
+    /// decrypt that host's rich pushes while the app is backgrounded/closed.
+    private func storeMacAgreePubFromAck(_ ack: AckResult, expectedHostId: String?) {
         guard let data = ack.result,
             let actionAck = try? JSONDecoder().decode(BridgeActionAck.self, from: data),
             let macAgreePub = actionAck.data?.macAgreePub, !macAgreePub.isEmpty
         else { return }
-        // The host that just answered is the live session's pinned identity (fall
-        // back to the selected host if the pin isn't recorded yet).
-        guard let hostId = pinnedMacIdentityB64 ?? selectedHostId,
+        // Key the record by the host captured at send time — never re-derive from
+        // live state here, or a host switch between send and ack could store this
+        // Mac's key onto a different host (→ the NSE would try the wrong secret).
+        guard let hostId = expectedHostId,
             let host = pairingStore.find(macIdentityPubKey: hostId),
             host.macAgreePub != macAgreePub
         else { return }
