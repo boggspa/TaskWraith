@@ -384,6 +384,7 @@ import {
   type RunEventChannel
 } from './RunEventBus'
 import { AppStore } from './store'
+import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
 import {
@@ -22041,6 +22042,52 @@ if (isGeminiMcpBridgeProcess) {
       chatService.deleteChat(chatId)
       broadcastThreadList()
     })
+    /**
+     * Reap abandoned never-started "New Chat" tombstones (delete-only). The
+     * renderer supplies the do-not-reap signals the main process can't see —
+     * the active/multiview/popout selection and chats with unsent composer
+     * text — plus the just-created `keepChatId`. The main side adds the
+     * workflow + scheduled-task links. Ensembles are never reaped (the service
+     * supplies no default-roster check), so a curated roster is never lost.
+     * Returns the reaped ids so the renderer can drop them from its own state.
+     */
+    ipcMain.handle(
+      'reap-abandoned-chats',
+      (
+        _,
+        renderer: { protectedChatIds?: string[]; draftChatIds?: string[]; keepChatId?: string } = {}
+      ) => {
+        try {
+          const reaped = reapAbandonedChats(
+            {
+              getChats: () => AppStore.getChats(),
+              getWorkflowChatIds: () =>
+                new Set(
+                  AppStore.getWorkflowDefinitions()
+                    .map((wf) => wf.template?.chatId)
+                    .filter((id): id is string => typeof id === 'string')
+                ),
+              getScheduledChatIds: () =>
+                new Set(
+                  AppStore.getScheduledTasks()
+                    .filter(
+                      (t) => t.status === 'pending' || t.status === 'due' || t.status === 'running'
+                    )
+                    .map((t) => t.chatId)
+                    .filter((id): id is string => typeof id === 'string')
+                ),
+              deleteChat: (id) => chatService.deleteChat(id)
+            },
+            renderer ?? {}
+          )
+          if (reaped.length > 0) broadcastThreadList()
+          return { ok: true, reaped }
+        } catch (error) {
+          console.warn('[reap-abandoned-chats] failed:', error)
+          return { ok: false, reaped: [] as string[] }
+        }
+      }
+    )
     /**
      * Slash-picker `/clear`: wipe the chat's message + run history while
      * keeping the chat record so the user stays anchored to the same

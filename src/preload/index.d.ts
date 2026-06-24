@@ -1198,6 +1198,11 @@ declare global {
       readDiscordContext: (selection: DiscordContextSelection) => Promise<DiscordContextSnapshot>
       saveChat: (chat: ChatRecord) => Promise<void>
       deleteChat: (chatId: string) => Promise<void>
+      reapAbandonedChats: (renderer: {
+        protectedChatIds?: string[]
+        draftChatIds?: string[]
+        keepChatId?: string
+      }) => Promise<{ ok: boolean; reaped: string[] }>
       truncateChat: (chatId: string) => Promise<ChatRecord | null>
       clearChats: (workspaceId?: string) => Promise<void>
       recordUsage: (usage: Omit<UsageRecord, 'id' | 'timestamp'>) => Promise<void>

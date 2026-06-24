@@ -910,6 +910,11 @@ const api = {
     ipcRenderer.invoke('discord-context:read-channel', selection),
   saveChat: (chat: any) => ipcRenderer.invoke('save-chat', chat),
   deleteChat: (chatId: string) => ipcRenderer.invoke('delete-chat', chatId),
+  reapAbandonedChats: (renderer: {
+    protectedChatIds?: string[]
+    draftChatIds?: string[]
+    keepChatId?: string
+  }) => ipcRenderer.invoke('reap-abandoned-chats', renderer),
   /** Slash-picker `/clear` — wipes the chat's messages + runs while
    * leaving the record (and its provider session id) intact. */
   truncateChat: (chatId: string) => ipcRenderer.invoke('truncate-chat', chatId),
