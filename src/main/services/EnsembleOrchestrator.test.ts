@@ -10,12 +10,14 @@ import {
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { DiscordContextSnapshot } from '../channels/DiscordContextService'
 import type {
+  ActiveGoal,
   AppSettings,
   ChatRecord,
   EnsembleConfig,
   EnsembleParticipant,
   EnsembleWakeupRecord,
-  UsageRecord
+  UsageRecord,
+  WorkSessionConfig
 } from '../store/types'
 
 const ensemble: EnsembleConfig = {
@@ -66,6 +68,35 @@ function makeChat(): ChatRecord {
     messages: [],
     runs: [],
     ensemble: { ...ensemble, participants: ensemble.participants.map((p) => ({ ...p })) }
+  }
+}
+
+function buildWorkSession(over: Partial<WorkSessionConfig> = {}): WorkSessionConfig {
+  return {
+    enabled: true,
+    status: 'active',
+    objective: 'Ship the feature',
+    acceptanceCriteria: 'It works.',
+    allowedParticipantIds: null,
+    permissionPresetId: 'workspace_write',
+    maxRoundsPerProvider: 38,
+    maxDurationMs: 6 * 60 * 60 * 1000,
+    enableScoutPass: false,
+    roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+    totalRoundsUsed: 0,
+    ...over
+  }
+}
+
+function buildActiveGoal(id: string): ActiveGoal {
+  return {
+    id,
+    objective: `Objective ${id}`,
+    status: 'active',
+    mode: 'taskwraith_steered',
+    provider: 'claude',
+    createdAt: '2026-05-24T00:00:00.000Z',
+    updatedAt: '2026-05-24T00:00:00.000Z'
   }
 }
 
@@ -186,6 +217,13 @@ function makeHarness(
     persistSessionCheckpoint?: (chat: ChatRecord, reason: string) => void
     completeSessionCheckpoint?: (chatId: string, roundId: string, status: string) => void
     recordUsage?: (entry: Omit<UsageRecord, 'id' | 'timestamp'>) => void
+    recordBossmanControlRejection?: (rejection: {
+      provider: string
+      workspacePath: string | undefined
+      chatId: string
+      runId: string | undefined
+      metadata: Record<string, unknown>
+    }) => void
   } = {}
 ) {
   let chat = options.initialChat
@@ -221,7 +259,10 @@ function makeHarness(
     ...(options.completeSessionCheckpoint
       ? { completeSessionCheckpoint: options.completeSessionCheckpoint }
       : {}),
-    ...(options.recordUsage ? { recordUsage: options.recordUsage } : {})
+    ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
+    ...(options.recordBossmanControlRejection
+      ? { recordBossmanControlRejection: options.recordBossmanControlRejection }
+      : {})
   })
   return {
     get chat() {
@@ -1868,6 +1909,268 @@ Next action:
     )
     expect(rejected.ok).toBe(false)
     expect(rejected.error).toBe('not_bossman')
+  })
+
+  it('audits a non-Bossman control attempt to the durable ledger', async () => {
+    const rejections: Array<{ metadata: Record<string, unknown> }> = []
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({
+      initialChat,
+      recordBossmanControlRejection: (rejection) => rejections.push(rejection)
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const rejected = await harness.orchestrator.bossmanControlForRun(harness.dispatched[1].appRunId, {
+      action: 'stop_round'
+    })
+    expect(rejected.error).toBe('not_bossman')
+    expect(rejections).toHaveLength(1)
+    expect(rejections[0].metadata).toMatchObject({
+      kind: 'bossman_control_rejected',
+      rejectionReason: 'not_bossman',
+      action: 'stop_round',
+      attemptingParticipantId: 'codex',
+      assignedBossmanParticipantId: 'claude'
+    })
+  })
+
+  it('rejects skip with an unknown target participant (stale_target)', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'skip_participant',
+      targetParticipantId: 'ghost'
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('stale_target')
+  })
+
+  it('rejects skip with an unknown target run (stale_target_run)', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'skip_participant',
+      targetRunId: 'no-such-run'
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('stale_target_run')
+  })
+
+  it('skips the active participant: finalises first, then best-effort cancels and advances', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'skip_participant',
+      targetRunId: harness.dispatched[0].appRunId,
+      targetParticipantId: 'claude',
+      reason: 'Re-route to Codex.'
+    })
+    expect(result.ok).toBe(true)
+    // The active run was finalised as skipped...
+    const claudeState = harness.chat.ensemble?.activeRound?.participants.find(
+      (participant) => participant.participantId === 'claude'
+    )
+    expect(claudeState?.status).toBe('skipped')
+    // ...the provider process was best-effort cancelled...
+    expect(harness.cancelRun).toHaveBeenCalled()
+    // ...and the orchestrator advanced to the next participant immediately.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+  })
+
+  it('replaces a pending participant after a successful health check', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'replace_participant',
+      targetParticipantId: 'codex',
+      replacement: { provider: 'kimi', role: 'Pinch Hitter' }
+    })
+    expect(result.ok).toBe(true)
+    expect(result.participantId).toMatch(/^bossman-replacement-/)
+    const roster = harness.chat.ensemble!.participants
+    expect(roster.some((participant) => participant.id === 'codex')).toBe(false)
+    expect(roster.some((p) => p.provider === 'kimi' && p.role === 'Pinch Hitter')).toBe(true)
+    expect(roster).toHaveLength(2)
+  })
+
+  it('rejects a replacement when the provider health check fails (replacement_unreachable)', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({
+      initialChat,
+      // Reachable for the round's own pre-flight dispatch, unreachable for the
+      // replacement candidate (kimi).
+      probeParticipant: async (participant) => ({ reachable: participant.provider !== 'kimi' })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'replace_participant',
+      targetParticipantId: 'codex',
+      replacement: { provider: 'kimi' }
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('replacement_unreachable')
+    // Roster untouched.
+    expect(harness.chat.ensemble!.participants.some((p) => p.id === 'codex')).toBe(true)
+  })
+
+  it('rejects a replacement that would grow the round beyond its baseline (baseline_exceeded)', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    let harness: ReturnType<typeof makeHarness>
+    harness = makeHarness({
+      initialChat,
+      probeParticipant: async (participant) => {
+        // Simulate a concurrent roster add (2 -> 3) landing WHILE the
+        // replacement health check is in flight. Baseline was 2.
+        if (participant.id.startsWith('bossman-replacement')) {
+          harness.chat.ensemble!.participants.push({
+            id: 'late-add',
+            provider: 'grok',
+            enabled: true,
+            role: 'Late',
+            instructions: '',
+            order: 3
+          })
+        }
+        return { reachable: true }
+      }
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'replace_participant',
+      targetParticipantId: 'codex',
+      replacement: { provider: 'kimi' }
+    })
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('baseline_exceeded')
+    // The original target is untouched — the round was not mutated.
+    expect(harness.chat.ensemble!.participants.some((p) => p.id === 'codex')).toBe(true)
+  })
+
+  it('enforces the reorder cooldown (once per two completed rounds)', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const first = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'reorder_remaining',
+      participantIds: ['codex']
+    })
+    expect(first.ok).toBe(true)
+    const second = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'reorder_remaining',
+      participantIds: ['codex']
+    })
+    expect(second.ok).toBe(false)
+    expect(second.error).toBe('reorder_cooldown')
+  })
+
+  it('completes a linked active goal when Bossman completes the managed Work Session', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.workSession = buildWorkSession({
+      managerParticipantId: 'claude',
+      linkedActiveGoalId: 'goal-1'
+    })
+    initialChat.activeGoal = buildActiveGoal('goal-1')
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Drive the session.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'complete_work_session'
+    })
+    expect(result.ok).toBe(true)
+    expect(harness.chat.ensemble?.workSession?.status).toBe('completed')
+    expect(harness.chat.activeGoal?.status).toBe('completed')
+    expect(harness.chat.activeGoal?.completedAt).toBeTruthy()
+  })
+
+  it('leaves an unrelated active goal untouched on Work Session completion', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.workSession = buildWorkSession({
+      managerParticipantId: 'claude',
+      linkedActiveGoalId: 'goal-1'
+    })
+    // The chat's CURRENT active goal is a different one — the session's linked
+    // goal is no longer active, so completion must not touch it.
+    initialChat.activeGoal = buildActiveGoal('goal-2')
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Drive the session.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'complete_work_session'
+    })
+    expect(result.ok).toBe(true)
+    expect(harness.chat.ensemble?.workSession?.status).toBe('completed')
+    expect(harness.chat.activeGoal?.status).toBe('active')
   })
 
   it('classifies ECONNREFUSED dispatch errors and continues to the next participant', async () => {

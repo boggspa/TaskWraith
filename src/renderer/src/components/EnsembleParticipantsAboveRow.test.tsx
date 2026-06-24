@@ -282,4 +282,47 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('ensemble-above-add-participant')
     expect(html).toContain('Add Ensemble participant')
   })
+
+  // Bossman — a gold crown renders before the assigned participant's role,
+  // and "Bossman" is woven into the chip's accessible name/title. The crown
+  // glyph itself is decorative (aria-hidden).
+  it('renders a Bossman crown on the assigned participant only', () => {
+    const chat = makeChat([
+      makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
+      makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })
+    ])
+    chat.ensemble!.bossmanParticipantId = 'ensemble-claude'
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    // Exactly one crown, on the Bossman chip.
+    const crownHits = html.match(/ensemble-above-chip-crown/g) || []
+    expect(crownHits.length).toBe(1)
+    // "Bossman" appears in the accessible name (aria-label) of the chip.
+    expect(html).toContain('aria-label="Bossman Explorer"')
+    // The crown glyph is decorative.
+    expect(html).toContain('aria-hidden="true"')
+  })
+
+  it('renders no crown when no Bossman is assigned', () => {
+    const chat = makeChat([
+      makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
+      makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })
+    ])
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    expect(html).not.toContain('ensemble-above-chip-crown')
+    expect(html).not.toContain('Bossman')
+  })
 })
