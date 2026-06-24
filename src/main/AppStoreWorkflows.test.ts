@@ -347,4 +347,89 @@ describe('AppStore workflows', () => {
 
     expect(() => AppStore.saveWorkflowDefinition(input)).toThrow('workspace-scoped')
   })
+
+  it('stamps runningSince on the transition into running and does not reset it on a benign re-patch', () => {
+    AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const running = AppStore.updateScheduledTask(task.id, { status: 'running', runId: 'run-1' })
+    expect(running?.runningSince).toBeTruthy()
+    const firstStamp = running?.runningSince
+    const repatched = AppStore.updateScheduledTask(task.id, { runId: 'run-1' })
+    expect(repatched?.status).toBe('running')
+    expect(repatched?.runningSince).toBe(firstStamp)
+    expect(task.runningSince).toBeUndefined()
+  })
+
+  it('settleStalledScheduledTasks settles a due-wedge and unblocks the next occurrence', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const materializeMs = Date.parse(plannedFor)
+    const [task] = AppStore.materializeDueWorkflows(materializeMs)
+    expect(task.status).toBe('due')
+    AppStore.updateScheduledTask(task.id, {
+      status: 'due',
+      firedAt: new Date(materializeMs).toISOString()
+    })
+    expect(AppStore.getWorkflowDefinition(saved.id)?.activeExecutionId).toBe(
+      task.workflowExecutionId
+    )
+    const settled = AppStore.settleStalledScheduledTasks(() => false, materializeMs + 7 * 60 * 60 * 1000)
+    expect(settled.map((t) => t.id)).toEqual([task.id])
+    expect(settled[0].status).toBe('failed')
+    const workflow = AppStore.getWorkflowDefinition(saved.id)
+    expect(workflow?.activeExecutionId).toBeUndefined()
+    expect(workflow?.failureStreak).toBe(1)
+    expect(workflow?.lastStatus).toBe('failed')
+  })
+
+  it('settleStalledScheduledTasks settles a running-wedge with a dead job but SKIPS a live one', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const materializeMs = Date.parse(plannedFor)
+    const [task] = AppStore.materializeDueWorkflows(materializeMs)
+    // Explicit runningSince so the backstop is measured against mock time (the
+    // auto-stamp uses real wall-clock, which a mocked nowMs can't reach).
+    AppStore.updateScheduledTask(task.id, {
+      status: 'running',
+      runId: 'run-1',
+      runningSince: new Date(materializeMs).toISOString()
+    })
+    const later = materializeMs + 7 * 60 * 60 * 1000
+
+    // LIVE job -> not settled (false-positive guard).
+    expect(AppStore.settleStalledScheduledTasks((id) => id === 'run-1', later)).toHaveLength(0)
+    expect(AppStore.getScheduledTasks().find((t) => t.id === task.id)?.status).toBe('running')
+    expect(AppStore.getWorkflowDefinition(saved.id)?.activeExecutionId).toBe(
+      task.workflowExecutionId
+    )
+
+    // DEAD job -> settled.
+    const settled = AppStore.settleStalledScheduledTasks(() => false, later)
+    expect(settled.map((t) => t.id)).toEqual([task.id])
+    expect(AppStore.getWorkflowDefinition(saved.id)?.activeExecutionId).toBeUndefined()
+    // Idempotent: a second sweep settles nothing (transition guard).
+    expect(AppStore.settleStalledScheduledTasks(() => false, later)).toHaveLength(0)
+  })
+
+  it('settleStalledScheduledTasks engages maxConsecutiveFailures after N wedged occurrences', () => {
+    const saved = AppStore.saveWorkflowDefinition(
+      workflowInput({ limits: { maxRunsPerDay: 24, maxConsecutiveFailures: 2 } })
+    )
+    const backstop = 7 * 60 * 60 * 1000
+    for (let i = 0; i < 2; i++) {
+      const nextRunAt = AppStore.getWorkflowDefinition(saved.id)?.nextRunAt
+      if (!nextRunAt) break
+      const occMs = Date.parse(nextRunAt)
+      const [task] = AppStore.materializeDueWorkflows(occMs)
+      expect(task).toBeTruthy()
+      AppStore.updateScheduledTask(task.id, {
+        status: 'running',
+        runId: `run-${i}`,
+        runningSince: new Date(occMs).toISOString()
+      })
+      AppStore.settleStalledScheduledTasks(() => false, occMs + backstop)
+    }
+    const workflow = AppStore.getWorkflowDefinition(saved.id)
+    expect(workflow?.failureStreak).toBeGreaterThanOrEqual(2)
+    expect(workflow?.enabled).toBe(false)
+    expect(workflow?.nextRunAt).toBeUndefined()
+  })
 })

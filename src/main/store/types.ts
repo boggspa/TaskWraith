@@ -2822,6 +2822,14 @@ export interface ScheduledTask {
   updatedAt: string
   runId?: string
   firedAt?: string
+  /**
+   * ISO timestamp stamped ONLY on the transition INTO 'running' in
+   * `AppStore.updateScheduledTask`. The stall reconciler measures a running
+   * task's staleness from here (never `updatedAt`, which a benign re-patch would
+   * reset). Absent on tasks that went running before this field existed — the
+   * reconciler falls back to `firedAt`.
+   */
+  runningSince?: string
   completedAt?: string
   lastError?: string
   workflowId?: string

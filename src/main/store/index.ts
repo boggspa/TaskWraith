@@ -96,6 +96,11 @@ import {
   resolveNextWorkflowRunAt
 } from '../workflows/WorkflowScheduler'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
+import {
+  DEFAULT_STALL_BACKSTOP_MS,
+  findStalledScheduledTasks,
+  stallReason
+} from '../WorkflowStallReconciler'
 
 function cloneEnsembleForSideChat(parent: ChatRecord, provider: ProviderId) {
   const source = parent.ensemble || createDefaultEnsembleConfig(provider)
@@ -2746,6 +2751,17 @@ export class AppStore {
       return current
     }
     const updated = { ...current, ...partial, id, updatedAt: new Date().toISOString() }
+    // Stamp `runningSince` ONLY on the transition INTO 'running'. Self-contained
+    // wall-clock — NOT bound to updatedAt, and NOT reset on benign re-patches of an
+    // already-running task, so the stall reconciler can age a wedge out. Honour an
+    // explicit caller-supplied runningSince.
+    if (
+      updated.status === 'running' &&
+      current.status !== 'running' &&
+      partial.runningSince === undefined
+    ) {
+      updated.runningSince = new Date().toISOString()
+    }
     tasks[index] = updated
     writeJson(scheduledTasksPath, tasks)
     this.syncWorkflowFromScheduledTask(updated)
@@ -2790,6 +2806,48 @@ export class AppStore {
       this.syncWorkflowFromScheduledTask(task)
     }
     return recovered
+  }
+
+  /**
+   * Universal BACKSTOP for wedged scheduled-workflow occurrences. A scheduled
+   * workflow stamps `activeExecutionId` at materialize time and skips the next
+   * occurrence while that execution is non-terminal; a stuck occurrence
+   * ('due'/'running'/overdue 'pending') silently disables the workflow forever.
+   * Settles any occurrence aged past `backstopMs` with no live run to 'failed' via
+   * the normal `updateScheduledTask` path — which (through
+   * `syncWorkflowFromScheduledTask`) clears `activeExecutionId`, bumps
+   * `failureStreak`, and engages `maxConsecutiveFailures`. Idempotent (the
+   * transition guard makes already-terminal tasks no-ops), so a genuinely-alive
+   * run's real terminal write is never stolen. Returns only the tasks actually
+   * settled this call so the caller can de-dupe the loud event per real settle.
+   */
+  static settleStalledScheduledTasks(
+    isRunLive: (runId: string) => boolean,
+    nowMs: number = Date.now(),
+    backstopMs: number = DEFAULT_STALL_BACKSTOP_MS
+  ): ScheduledTask[] {
+    const candidates = findStalledScheduledTasks(
+      this.getScheduledTasks(),
+      isRunLive,
+      nowMs,
+      backstopMs
+    )
+    if (candidates.length === 0) return []
+    const completedAt = new Date(nowMs).toISOString()
+    const settled: ScheduledTask[] = []
+    for (const { task, basis, ageMs } of candidates) {
+      const updated = this.updateScheduledTask(task.id, {
+        status: 'failed',
+        completedAt,
+        lastError: stallReason(task, basis, ageMs, backstopMs)
+      })
+      // Count as settled ONLY if the write actually flipped it to failed (the
+      // guard returns the unchanged record if it was concurrently advanced).
+      if (updated && updated.status === 'failed' && updated.completedAt === completedAt) {
+        settled.push(updated)
+      }
+    }
+    return settled
   }
 
   // Run queue

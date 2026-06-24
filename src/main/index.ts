@@ -379,6 +379,7 @@ import {
   type RunEventChannel
 } from './RunEventBus'
 import { AppStore } from './store'
+import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
 import {
   buildChatMarkdownTranscript,
@@ -812,6 +813,10 @@ let codexExecProcess: ChildProcess | null = null
 // don't nag on every run. See `maybeWarnNewerCodexBinary`.
 let codexNewerBinaryWarned = false
 let scheduledTaskTimer: ReturnType<typeof setTimeout> | null = null
+// ~10-min floor sweep so a 'due'/'pending'/'running' wedge self-heals even when
+// no occurrence is being materialized (the piggyback path is event-driven).
+let stallReconcilerInterval: ReturnType<typeof setInterval> | null = null
+const stalledOccurrenceEventKeys = new Set<string>()
 let activeGeminiToolContext: GeminiToolContext | null = null
 const rendererConsoleBuffer: Array<{
   timestamp: string
@@ -6220,7 +6225,82 @@ function emitDueScheduledTasks() {
     mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
     mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
   }
+  // Universal wedge backstop, piggybacked on every materialize tick.
+  reconcileStalledScheduledTasks()
   scheduleNextTaskTimer()
+}
+
+/**
+ * Liveness predicate for the stall reconciler. A run-queue job counts as ALIVE
+ * iff it is in a not-yet-terminal status. NOTE: the live in-flight status is
+ * 'active' (NOT 'running' — that value does not exist in RunQueueJobStatus).
+ * 'paused' = approval-paused (a legitimately stalled-but-alive run we must not
+ * false-fail). Terminal = completed/failed/cancelled; a missing job is dead.
+ */
+function isScheduledRunLive(runId: string): boolean {
+  const job = AppStore.getRunQueueJob(runId)
+  if (!job) return false
+  switch (job.status) {
+    case 'queued':
+    case 'starting':
+    case 'active':
+    case 'paused':
+    case 'cancelling':
+      return true
+    default:
+      return false
+  }
+}
+
+/**
+ * BACKSTOP sweep: settle wedged scheduled-workflow occurrences so a stuck one
+ * can't silently disable a workflow forever. Settling clears `activeExecutionId`
+ * (unblocking the next occurrence). Idempotent in the store. LOUD surface, de-duped
+ * per occurrence: one durable run event + a scheduled-tasks-changed /
+ * workflow-definitions-changed broadcast, the first time each workflowExecutionId
+ * is settled this session.
+ */
+function reconcileStalledScheduledTasks(): void {
+  let settled: ScheduledTask[]
+  try {
+    settled = AppStore.settleStalledScheduledTasks(isScheduledRunLive, Date.now())
+  } catch {
+    return
+  }
+  if (settled.length === 0) return
+
+  let emittedLoud = false
+  for (const task of settled) {
+    const key = task.workflowExecutionId || task.id
+    if (stalledOccurrenceEventKeys.has(key)) continue
+    stalledOccurrenceEventKeys.add(key)
+    emittedLoud = true
+    appendDurableRunEvent({
+      runId: task.runId || task.id,
+      chatId: task.chatId,
+      workspaceId: task.workspaceId,
+      workspacePath: task.workspacePath,
+      provider: task.provider,
+      kind: 'lifecycle',
+      phase: 'control',
+      source: 'main',
+      summary:
+        task.lastError ||
+        'Settled a wedged scheduled-workflow occurrence to unblock future runs',
+      payload: {
+        eventType: 'scheduled_workflow_stall_settled',
+        scheduledTaskId: task.id,
+        workflowId: task.workflowId,
+        workflowExecutionId: task.workflowExecutionId,
+        settledAt: task.completedAt,
+        lastError: task.lastError
+      }
+    })
+  }
+  if (emittedLoud) {
+    mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
+    mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+  }
 }
 
 function scheduleNextTaskTimer() {
@@ -20245,6 +20325,10 @@ if (isGeminiMcpBridgeProcess) {
     app.on('will-quit', () => {
       stopMessageChannelPolling()
       stopBridgeDaemon()
+      if (stallReconcilerInterval) {
+        clearInterval(stallReconcilerInterval)
+        stallReconcilerInterval = null
+      }
       iosRemoteRuntime?.dispose()
       void embeddedRelayHandle?.close()
       localServersServiceRef?.stop()
@@ -20266,6 +20350,16 @@ if (isGeminiMcpBridgeProcess) {
     const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()
     recordStartupRecoveryEvents(startupRecoveryRecords)
     AppStore.recoverInterruptedScheduledTasksAfterStartup()
+    // Widened backstop at boot: the 'running'-only startup recovery above misses a
+    // 'due'/'pending' wedge held across a restart (e.g. renderer closed mid-dispatch).
+    // Settle those too so the workflow unblocks at launch.
+    reconcileStalledScheduledTasks()
+    // ~10-min floor sweep so a wedge self-heals even with no materialize traffic.
+    stallReconcilerInterval = setInterval(
+      reconcileStalledScheduledTasks,
+      Math.min(10 * 60 * 1000, DEFAULT_STALL_BACKSTOP_MS)
+    )
+    stallReconcilerInterval.unref?.()
     AppStore.recoverExpiredApprovalLedger()
     void getGeminiMcpBridgeStatus({
       autoRepairIfEnabled: AppStore.getSettings().geminiMcpBridgeEnabled
