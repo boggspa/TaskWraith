@@ -136,6 +136,7 @@ export function openPush(args: {
   const salt = b64.decode(args.envelope.s)
   const nonce = b64.decode(args.envelope.n)
   const tag = b64.decode(args.envelope.tag)
+  if (nonce.length !== NONCE_LEN) throw new Error('bad nonce length')
   if (tag.length !== TAG_LEN) throw new Error('bad tag length')
   const key = Buffer.from(hkdfSync('sha256', ss, salt, AEAD_INFO, 32))
   const decipher = createDecipheriv('aes-256-gcm', key, nonce)

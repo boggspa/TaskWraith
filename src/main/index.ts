@@ -20424,8 +20424,16 @@ if (isGeminiMcpBridgeProcess) {
           ).load()
           try {
             macIdentitySeedRef = exportRawEd25519Seed(identity.privateKey)
-          } catch {
+          } catch (seedErr) {
+            // Fail closed: no seed ⇒ registerApnsToken returns no macAgreePub ⇒
+            // paired phones silently fall back to GENERIC pushes. Log it so that
+            // "rich pushes never arrive" is diagnosable rather than mysterious.
             macIdentitySeedRef = null
+            console.log(
+              `[ios-remote] push-agreement seed export failed — rich pushes disabled: ${
+                seedErr instanceof Error ? seedErr.message : String(seedErr)
+              }`
+            )
           }
           iosRemoteRuntimeError = null
         } catch (err) {

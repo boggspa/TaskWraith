@@ -11,6 +11,14 @@
  *
  * JSON contract (must match the Swift CompletionPushContent decoder): keys
  * `title`, `preview`, `filesChanged`, `additions`, `deletions`.
+ *
+ * FROZEN CONTRACT — the Swift decoder declares all five fields NON-OPTIONAL, so
+ * its JSONDecoder throws (→ the NSE shows the generic banner) if ANY key is
+ * missing or retyped. `buildCompletionPushPlaintext` below therefore ALWAYS
+ * emits all five as bare string/integer values. Do NOT make a field conditional
+ * (e.g. omit a zero count) or change a number to a string without updating the
+ * Swift `CompletionPushContent` in lockstep — otherwise every rich push silently
+ * degrades to "Task complete" with no error anywhere.
  */
 
 export interface CompletionPushContent {
