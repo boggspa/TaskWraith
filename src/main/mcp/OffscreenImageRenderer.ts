@@ -27,7 +27,30 @@ const DEFAULT_RENDER_TIMEOUT_MS = 15_000
 /** Hard ceiling on any rendered/processed dimension — guards against a
  * decompression/canvas memory bomb (e.g. an SVG declaring width=999999). */
 export const MAX_IMAGE_DIMENSION = 8192
+/** Cap concurrent offscreen renders so N agents firing image tools can't spawn
+ * N GPU surfaces and exhaust memory. Excess renders queue. */
+const MAX_CONCURRENT_RENDERS = 3
 let renderSeq = 0
+let activeRenders = 0
+const renderQueue: Array<() => void> = []
+
+async function acquireRenderSlot(): Promise<void> {
+  if (activeRenders < MAX_CONCURRENT_RENDERS) {
+    activeRenders += 1
+    return
+  }
+  // Queue; the releasing render hands its slot over directly (count unchanged).
+  await new Promise<void>((resolve) => renderQueue.push(resolve))
+}
+
+function releaseRenderSlot(): void {
+  const next = renderQueue.shift()
+  if (next) {
+    next() // transfer the slot to the waiter — activeRenders stays the same
+  } else {
+    activeRenders -= 1
+  }
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -66,6 +89,7 @@ async function renderHtmlToPng(
 ): Promise<Buffer> {
   const w = Math.max(1, Math.min(MAX_IMAGE_DIMENSION, Math.floor(width)))
   const h = Math.max(1, Math.min(MAX_IMAGE_DIMENSION, Math.floor(height)))
+  await acquireRenderSlot()
   renderSeq += 1
   const win = new BrowserWindow({
     width: w,
@@ -80,10 +104,25 @@ async function renderHtmlToPng(
       sandbox: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
-      experimentalFeatures: false
+      experimentalFeatures: false,
+      // The rendered HTML is pure CSS (blur/redact) or an <img> SVG — it NEVER
+      // needs JavaScript. Disabling it structurally kills every script vector
+      // (dynamic fetch, RTCPeerConnection exfil, SVG <script>) regardless of the
+      // egress cut. Strongest single containment for this surface.
+      javascript: false,
+      webgl: false,
+      plugins: false,
+      backgroundThrottling: false
     }
   })
   const wc = win.webContents
+  const detachNetwork = () => {
+    try {
+      wc.session.webRequest.onBeforeRequest(null)
+    } catch {
+      // session may already be torn down
+    }
+  }
   try {
     // Cut ALL egress for this render: nothing the page references may load.
     wc.session.webRequest.onBeforeRequest((_details, callback) => callback({ cancel: true }))
@@ -94,14 +133,28 @@ async function renderHtmlToPng(
       // Best effort — older Electron.
     }
     wc.session.on('will-download', (event) => event.preventDefault())
+    // WebRTC (ICE/STUN/data-channel) is UDP and bypasses webRequest — close it
+    // so the egress cut is complete (mirrors CanvasWebDriver.hardenSession).
+    try {
+      wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+    } catch {
+      // Best effort — older Electron.
+    }
     wc.setWindowOpenHandler(() => ({ action: 'deny' }))
     win.setContentSize(w, h)
     const dataUrl = `data:text/html;charset=utf-8;base64,${Buffer.from(html, 'utf-8').toString('base64')}`
     await withTimeout(loadAndSettle(wc, dataUrl), timeoutMs, 'offscreen render timed out')
-    const image = await wc.capturePage()
+    const captured = await wc.capturePage()
+    // capturePage returns PHYSICAL pixels (2x on a Retina display). Normalize to
+    // the requested LOGICAL dimensions so output size/coords are honest and the
+    // downstream 8MB cap isn't tripped by an unexpected 4x byte volume.
+    const size = captured.getSize()
+    const image = size.width !== w || size.height !== h ? captured.resize({ width: w, height: h }) : captured
     return image.toPNG()
   } finally {
+    detachNetwork()
     if (!win.isDestroyed()) win.destroy()
+    releaseRenderSlot()
   }
 }
 

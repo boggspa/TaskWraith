@@ -1661,6 +1661,21 @@ const imageToolExecutors = createImageToolExecutors({
   resolveRasterSource: resolveImageRasterSource,
   resolveSvgSource: resolveImageSvgSource
 })
+// Per-run cap on image-tool calls — bounds disk/asset flooding (an agent looping
+// image_edit with varied params writes distinct content-addressed assets). The
+// Map is size-capped so it can't grow unbounded across a long app session.
+const MAX_IMAGE_TOOL_CALLS_PER_RUN = 100
+const MAX_IMAGE_TOOL_RUN_KEYS = 1000
+const imageToolCallCounts = new Map<string, number>()
+function bumpImageToolCallCount(runKey: string): number {
+  const next = (imageToolCallCounts.get(runKey) ?? 0) + 1
+  if (!imageToolCallCounts.has(runKey) && imageToolCallCounts.size >= MAX_IMAGE_TOOL_RUN_KEYS) {
+    const oldest = imageToolCallCounts.keys().next().value
+    if (oldest !== undefined) imageToolCallCounts.delete(oldest)
+  }
+  imageToolCallCounts.set(runKey, next)
+  return next
+}
 // Renderer canvas-pane (live-embed) IPC: open-embedded / set-bounds / set-visible
 // / close / list. Human-initiated (un-gated); the driver still enforces SSRF.
 registerCanvasEmbedIpc(ipcMain, { controller: canvasService, embed: canvasEmbedController })
@@ -14488,13 +14503,24 @@ async function executeGeminiMcpTool(
         await recallToolExecutors.executeRecallTool(toolName, args, context, parentProvider)
       )
     } else if (isImageMcpToolName(toolName)) {
-      applyRichResult(
-        await imageToolExecutors.executeImageTool(toolName, args, {
-          appChatId: context.appChatId,
-          appRunId: context.appRunId,
-          workspacePath: context.workspacePath
-        })
-      )
+      const imageRunKey = context.appRunId || context.appChatId || 'global'
+      if (bumpImageToolCallCount(imageRunKey) > MAX_IMAGE_TOOL_CALLS_PER_RUN) {
+        applyRichResult(
+          mcpStructuredJsonResult({
+            ok: false,
+            tool: toolName,
+            error: `image tool call limit reached (${MAX_IMAGE_TOOL_CALLS_PER_RUN}) for this run.`
+          })
+        )
+      } else {
+        applyRichResult(
+          await imageToolExecutors.executeImageTool(toolName, args, {
+            appChatId: context.appChatId,
+            appRunId: context.appRunId,
+            workspacePath: context.workspacePath
+          })
+        )
+      }
     } else if (isDesktopMcpToolName(toolName)) {
       applyRichResult(
         await desktopToolExecutors.executeDesktopTool(toolName, args, context, parentProvider)

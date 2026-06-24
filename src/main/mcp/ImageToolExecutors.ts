@@ -172,11 +172,12 @@ function parseRegion(raw: unknown, imgW: number, imgH: number): ImageRect | { er
   if (x === null || y === null || width === null || height === null) {
     return { error: 'region requires numeric x, y, width, height' }
   }
-  const cx = clamp(x, 0, imgW)
-  const cy = clamp(y, 0, imgH)
+  // Clamp the origin to [0, imgDim-1] so there is always >=1px of room — a
+  // crop rect can never extend past the image edge.
+  const cx = clamp(x, 0, imgW - 1)
+  const cy = clamp(y, 0, imgH - 1)
   const cw = clamp(width, 1, imgW - cx)
   const ch = clamp(height, 1, imgH - cy)
-  if (cw < 1 || ch < 1) return { error: 'region is outside the image bounds' }
   return { x: cx, y: cy, width: cw, height: ch }
 }
 
