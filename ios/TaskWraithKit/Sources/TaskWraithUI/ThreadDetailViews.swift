@@ -1533,7 +1533,9 @@ struct ThreadEmptyWelcomeCanvas: View {
     private var canSwitchPrimaryWorkspace: Bool { !isGlobal && !model.workspaces.isEmpty }
     private var accent: Color {
         if card.isEnsemble { return TWTheme.chroma2 }
-        if isGlobal { return TWTheme.chroma3 }
+        // General chats now glow with the live provider hue too (was a flat
+        // chroma3) so the greeting heading + ghost shadow track the composer
+        // provider pill — the same mechanism workspace chats use below.
         // Follow the LIVE composer provider (echoed into `draftProvider` via the
         // composer's `providerEcho`), not the thread's frozen `card.provider`, so
         // the hero glow / title / scope chip / heatmap recolor the instant the
@@ -1563,7 +1565,7 @@ struct ThreadEmptyWelcomeCanvas: View {
                 // iPhone (compact width) drops the bottom heatmap so the dashboard
                 // above the ghost fits without a scroll screen — the dashboard's
                 // Workspaces / Providers tabs already cover that activity. iPad keeps it.
-                if !isCompactWidth {
+                if !isCompactWidth && !isGlobal {
                     activityFooter
                         .padding(.top, 8)
                 }
@@ -1584,12 +1586,15 @@ struct ThreadEmptyWelcomeCanvas: View {
             Group {
                 switch titleParts {
                 case .scoped(let prefix, let name):
+                    // General greeting takes no trailing period (parity with the
+                    // Electron heading "Good morning, Chris"); workspace/ensemble
+                    // keep the "." that closes "New chat for <ws>."
                     Text(prefix)
                         .foregroundStyle(TWTheme.textSecondary)
                         + Text(name)
                         .foregroundStyle(accent)
                         .fontWeight(.semibold)
-                        + Text(".")
+                        + Text(isGlobal ? "" : ".")
                         .foregroundStyle(TWTheme.textSecondary)
                 case .plain(let text):
                     Text(text)
@@ -1598,10 +1603,12 @@ struct ThreadEmptyWelcomeCanvas: View {
             }
             .font(.title3)
             .multilineTextAlignment(.center)
-            Text(blurb)
-                .font(.footnote)
-                .foregroundStyle(TWTheme.textTertiary)
-                .multilineTextAlignment(.center)
+            if !isGlobal {
+                Text(blurb)
+                    .font(.footnote)
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .multilineTextAlignment(.center)
+            }
         }
     }
 
@@ -1615,7 +1622,16 @@ struct ThreadEmptyWelcomeCanvas: View {
             return .scoped(prefix: "New ensemble for ", name: workspaceName)
         }
         if isGlobal {
-            return .plain("New general chat.")
+            // Personal time-of-day greeting (shared Greeting twin), with the
+            // projected user name in the accent-glow `name` slot when present;
+            // an empty name glows the greeting itself. No subtitle (see blurb).
+            let name = (model.projectedUserName ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let greeting = Greeting.greeting(
+                forHour: Calendar.current.component(.hour, from: Date()))
+            return name.isEmpty
+                ? .scoped(prefix: "", name: greeting)
+                : .scoped(prefix: "\(greeting), ", name: name)
         }
         return .scoped(prefix: "New chat for ", name: workspaceName)
     }
@@ -1701,7 +1717,8 @@ struct ThreadEmptyWelcomeCanvas: View {
     // 560 + ScrollView give it dynamic sizing (1-col stats on a phone, 2 on iPad).
     // Slice A renders the fixture; slice C swaps in `model.welcomeDashboard` (live).
     @ViewBuilder private var dashboardCard: some View {
-        if let data = model.welcomeDashboard, data.lifetimeHasActivity {
+        // Omitted on General chats — the stripped welcome is greeting + composer.
+        if !isGlobal, let data = model.welcomeDashboard, data.lifetimeHasActivity {
             WelcomeUsageDashboardCard(dashboard: data, accent: accent)
         }
     }
