@@ -48,6 +48,8 @@ function isActiveRunStatus(status: unknown): boolean {
     status === 'running' ||
     status === 'queued' ||
     status === 'starting' ||
+    status === 'cancelling' ||
+    status === 'steer_promoting' ||
     status === 'active' ||
     status === 'paused'
   )

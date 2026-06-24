@@ -119,24 +119,27 @@ describe('resolveSubThreadRecall', () => {
     }
   })
 
-  it('rejects recall while the sub-thread has an active run', () => {
-    const sub = makeChat({
-      appChatId: 'sub-running',
-      parentChatId: parent,
-      provider: 'kimi',
-      linkedProviderSessionId: 'kimi-session-99',
-      runs: [{ runId: 'run-1', provider: 'kimi', startedAt: 't', status: 'running' }]
-    })
-    const result = resolveSubThreadRecall(
-      { subThreadId: 'sub-running', parentChatId: parent, targetProvider: 'kimi' },
-      makeLookup([sub])
-    )
-    expect(result.mode).toBe('error')
-    if (result.mode === 'error') {
-      expect(result.message).toMatch(/still running/i)
-      expect(result.message).toMatch(/rejected in v1/i)
+  it.each(['running', 'queued', 'starting', 'active', 'paused', 'cancelling', 'steer_promoting'])(
+    'rejects recall while the sub-thread has a %s run',
+    (status) => {
+      const sub = makeChat({
+        appChatId: `sub-${status}`,
+        parentChatId: parent,
+        provider: 'kimi',
+        linkedProviderSessionId: 'kimi-session-99',
+        runs: [{ runId: 'run-1', provider: 'kimi', startedAt: 't', status }]
+      })
+      const result = resolveSubThreadRecall(
+        { subThreadId: `sub-${status}`, parentChatId: parent, targetProvider: 'kimi' },
+        makeLookup([sub])
+      )
+      expect(result.mode).toBe('error')
+      if (result.mode === 'error') {
+        expect(result.message).toContain(`still ${status}`)
+        expect(result.message).toMatch(/rejected in v1/i)
+      }
     }
-  })
+  )
 
   it('errors when subThreadId does not match any chat', () => {
     const result = resolveSubThreadRecall(
