@@ -18,7 +18,8 @@ import {
   type WorkflowLoopBudget,
   type WorkflowLoopConfig,
   type WorkflowLoopStopReason,
-  type WorkflowLoopVerdict
+  type WorkflowLoopVerdict,
+  type WorkflowLoopVerdictDecision
 } from './WorkflowLoopModel'
 
 export type WorkflowLoopStepRole = 'maker' | 'verifier'
@@ -249,4 +250,84 @@ export function mapLoopSnapshotToScheduledOutcome(
     status: 'completed',
     ...(clean ? {} : { lastError: `Loop stopped: ${snap.stopReason ?? 'unknown'}` })
   }
+}
+
+// ── Slice 5b — verifier prompt + verdict parsing ──────────────────────────────
+// PURE helpers so the marker grammar the verifier is TAUGHT (buildLoopVerifierPrompt)
+// stays co-located with — and tested alongside — the parser that must AGREE with it
+// (parseLoopVerdict). The real verifier dispatch (index.ts dispatchStep, role
+// 'verifier') composes buildLoopVerifierPrompt as the run prompt and feeds the run's
+// final assistant text back through parseLoopVerdict to produce the WorkflowLoopStepResult
+// verdict the engine acts on.
+
+/**
+ * The verifier judging prompt. The verifier is an INDEPENDENT judge run (fresh
+ * context, asked to CRITIQUE rather than produce) that reads the maker's work
+ * product and may inspect the workspace (read-only under the unattended posture).
+ * It is instructed to end with a single `LOOP_VERDICT:` line that parseLoopVerdict
+ * extracts. The evidence requirement on `revise` is what the engine's evidence-anchor
+ * rule (decideLoopContinuation) enforces — a revise with no evidence stops the loop
+ * 'inconclusive' rather than burning iterations on unsupported feedback.
+ */
+export function buildLoopVerifierPrompt(taskGoal: string, workProduct: string): string {
+  // Neutralize any LOOP_VERDICT marker the task goal / work product themselves
+  // contain (e.g. a workflow whose task is ABOUT this loop code, or a hallucinated
+  // marker), so that if the verifier quotes the artifact back in its reply ("for
+  // reference, here is what I reviewed: …") the echoed copy can NEVER be parsed as
+  // the verdict. parseLoopVerdict is last-match-wins, so an echoed 'accept' could
+  // otherwise outvote the verifier's real judgment — only its OWN fresh verdict
+  // line (written from this prompt, not from the redacted text) must ever survive.
+  const redact = (s: string): string => s.replace(/LOOP_VERDICT:/gi, 'LOOP-VERDICT-REDACTED:')
+  const safeGoal = redact(taskGoal)
+  const safeProduct = redact(workProduct)
+  return [
+    'You are an independent reviewer. Judge whether the work below satisfies the task.',
+    '',
+    '[Task]',
+    safeGoal,
+    '',
+    '[Work product to review — the latest attempt]',
+    safeProduct.trim() ? safeProduct : '(no textual work product was produced — inspect the workspace)',
+    '',
+    'Inspect the workspace if needed, then respond with EXACTLY ONE verdict line as the LAST line of your reply:',
+    '  LOOP_VERDICT: accept',
+    '  LOOP_VERDICT: revise <specific, actionable evidence of what is wrong and must change>',
+    '  LOOP_VERDICT: reject <why this approach cannot succeed and should not be retried>',
+    '',
+    'Rules:',
+    '- accept ONLY if the task is fully satisfied.',
+    '- A revise REQUIRES concrete evidence. A revise with no evidence is treated as inconclusive and STOPS the loop.',
+    '- Put the LOOP_VERDICT line LAST; write nothing after it.'
+  ].join('\n')
+}
+
+/**
+ * Parse a verifier run's final text into a structured verdict. Mirrors the audit/
+ * builder marker-parse pattern (a `KEY: value` line). Tolerant by design: scans
+ * every line and takes the LAST `LOOP_VERDICT:` match (an echoed example earlier in
+ * the reply cannot outvote the real, final verdict), case-insensitive, and lenient
+ * on a trailing word suffix ('accepted' → accept). Returns null when no recognizable
+ * marker is present — the engine then defaults to an evidence-less { decision:
+ * 'revise' }, which decideLoopContinuation resolves to a fail-safe 'inconclusive'
+ * stop (a verifier that won't commit can never loop the maker forever).
+ */
+export function parseLoopVerdict(finalText: string | undefined | null): WorkflowLoopVerdict | null {
+  if (!finalText || typeof finalText !== 'string') return null
+  // Match the marker anywhere on a line (not only at line-start, so "My verdict:
+  // LOOP_VERDICT: accept" still parses); `.` excludes newlines so evidence is the
+  // rest of THAT line. `g` drives the last-match scan below. The decision verb is
+  // bounded by `(?:ed)?\b` — it tolerates the past tense ('accepted') but a longer
+  // word must NOT reduce to a bare verb: 'acceptance criteria are NOT met' must
+  // parse as no-verdict (→ null → inconclusive), never as a false 'accept'.
+  const re = /LOOP_VERDICT:[^\S\n]*(accept|revise|reject)(?:ed)?\b[^\S\n]*(.*)/gi
+  let match: RegExpExecArray | null
+  let last: RegExpExecArray | null = null
+  while ((match = re.exec(finalText)) !== null) last = match
+  if (!last) return null
+  const decision = last[1].toLowerCase() as WorkflowLoopVerdictDecision
+  const evidence = last[2]?.trim()
+  // accept is decisive on its own; revise/reject carry the (optional) evidence that
+  // the evidence-anchor rule reads — a revise WITHOUT evidence stops 'inconclusive'.
+  if (decision === 'accept') return { decision: 'accept' }
+  return { decision, ...(evidence ? { evidence } : {}) }
 }

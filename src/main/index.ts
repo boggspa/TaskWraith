@@ -325,6 +325,8 @@ import { routeDueScheduledTask } from './HeadlessScheduledDispatch'
 import {
   WorkflowLoopEngine,
   mapLoopSnapshotToScheduledOutcome,
+  buildLoopVerifierPrompt,
+  parseLoopVerdict,
   type WorkflowLoopStepInput,
   type WorkflowLoopStepResult
 } from './WorkflowLoopEngine'
@@ -6990,10 +6992,13 @@ function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): void {
 // the shared dispatch chokepoint, which keys off the threaded scheduledTaskId.
 // ENSEMBLE occurrences delegate to dispatchDueEnsembleScheduledTaskHeadless
 // (composeRun is solo-only; ensemble runs through the orchestrator).
-// Stage 2 slice 5 — run a due LOOP-workflow occurrence as a maker→verifier loop in
-// MAIN (the renderer has no loop engine). SLICE 5 IS MAKER-ONLY: the verifier config
-// is preserved on the WorkflowDefinition but not yet honored (slice 5b adds the
-// verifier step + verdict parser). The loop is bounded fail-safe by maxIterations +
+// Stage 2 slice 5/5b — run a due LOOP-workflow occurrence as a maker→verifier loop
+// in MAIN (the renderer has no loop engine). Slice 5b honors a configured verifier:
+// each iteration the maker produces, then an independent verifier judges it via a
+// LOOP_VERDICT marker (buildLoopVerifierPrompt/parseLoopVerdict) and the engine
+// stops on accept/reject (or a no-evidence revise → inconclusive). With no verifier
+// configured this is the slice-5 maker-only loop. The loop is bounded fail-safe by
+// maxIterations + the verifier's evidence-anchor rule +
 // the cumulative budget. CRUX (per recon): each iteration's run carries a fresh
 // appRunId and NO scheduledTaskId on its payload, so the dispatch chokepoint skips
 // the per-occurrence solo-completion / budget bookkeeping (Option A) — the LOOP owns
@@ -7035,16 +7040,38 @@ async function dispatchDueScheduledLoopHeadless(
     }
   }
 
-  // Maker-only for slice 5: strip the verifier so the engine runs the maker loop.
+  // Slice 5b — honor the verifier when configured: the engine then runs a
+  // maker→verifier→decide loop (slice 5 was maker-only). The verifier.provider
+  // OVERRIDE (cross-provider judging) is preserved on the config but NOT yet honored
+  // — the verifier run reuses the maker's provider/model (5c follow-up); passing it
+  // through here is inert at the engine level (only dispatchStep reads a provider).
+  // With no verifier configured this is exactly the maker-only loop from slice 5.
   const engineConfig: WorkflowLoopConfig = {
-    acceptance: { maxIterations: loopCfg.acceptance.maxIterations },
+    acceptance: {
+      maxIterations: loopCfg.acceptance.maxIterations,
+      ...(loopCfg.acceptance.verifier ? { verifier: loopCfg.acceptance.verifier } : {})
+    },
     limits: loopCfg.limits
   }
 
   const dispatchStep = async (input: WorkflowLoopStepInput): Promise<WorkflowLoopStepResult> => {
-    const prompt = input.priorOutput
-      ? `${task.prompt}\n\n[Your previous attempt — iteration ${input.iteration - 1}]\n${input.priorOutput}\n\n[Refine or continue the work above for iteration ${input.iteration}.]`
-      : task.prompt
+    // Role branch (slice 5b). MAKER: continue/refine the task, threading the prior
+    // attempt + the reviewer's revise feedback. VERIFIER: an independent judge run
+    // over the maker's latest output (buildLoopVerifierPrompt); its final text is
+    // parsed back into a verdict below. Both roles share the Option-A dispatch (no
+    // scheduledTaskId on the payload), so neither writes per-iteration bookkeeping.
+    const reviewerFeedback =
+      input.role === 'maker'
+        ? input.priorVerdict?.evidence || input.priorVerdict?.rationale || ''
+        : ''
+    const prompt =
+      input.role === 'verifier'
+        ? buildLoopVerifierPrompt(task.prompt, input.priorOutput ?? '')
+        : input.priorOutput
+          ? `${task.prompt}\n\n[Your previous attempt — iteration ${input.iteration - 1}]\n${input.priorOutput}${
+              reviewerFeedback ? `\n\n[Reviewer feedback — address this]\n${reviewerFeedback}` : ''
+            }\n\n[Refine or continue the work above for iteration ${input.iteration}.]`
+          : task.prompt
     let composed: AgentRunPayload
     try {
       // scheduledTaskId is passed to the INPUT (forces the unattended posture +
@@ -7106,11 +7133,23 @@ async function dispatchDueScheduledLoopHeadless(
       ...(typeof outcome.costUsd === 'number' ? { costUsd: outcome.costUsd } : {}),
       ...(typeof outcome.durationMs === 'number' ? { durationMs: outcome.durationMs } : {})
     } as WorkflowRunEventInput)
+    // Verifier steps parse a structured verdict from their final text; a missing or
+    // unparseable marker leaves verdict null → the engine defaults to an evidence-less
+    // { decision: 'revise' } → a fail-safe 'inconclusive' stop (never an infinite loop).
+    // NOTE: outcome.finalText is reliable only for providers whose output flows through
+    // the auditRunTracker pump (the CLI streamers + Codex-ACP); a tracker-bypassing
+    // path (e.g. Codex exec-fallback) yields empty finalText → null → inconclusive on
+    // iteration 1. Fail-safe (no streak poison) but the verifier is inert there — the
+    // verifier.provider override (5c) is what will let a workflow pin a known-good
+    // judge provider; until then the verifier is best paired with a streaming provider.
+    const verdict =
+      input.role === 'verifier' && outcome.ok ? parseLoopVerdict(outcome.finalText) : null
     return {
       ...(outcome.finalText !== undefined ? { output: outcome.finalText } : {}),
       ...(typeof outcome.tokens === 'number' ? { tokens: outcome.tokens } : {}),
       ...(typeof outcome.costUsd === 'number' ? { costUsd: outcome.costUsd } : {}),
-      ...(!outcome.ok ? { failed: true, error: outcome.error } : {})
+      ...(!outcome.ok ? { failed: true, error: outcome.error } : {}),
+      ...(verdict ? { verdict } : {})
     }
   }
 
