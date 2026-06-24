@@ -1558,7 +1558,10 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
         return {
           executed: true,
           message: `APNs token registered for pairID="${action.pairID}" (env=${action.env})`,
-          data: { pairID: action.pairID, env: action.env }
+          // macAgreePub lets the device derive the static shared secret to
+          // decrypt rich pushes — undefined until the bridge identity loads
+          // (the device then just keeps getting generic pushes).
+          data: { pairID: action.pairID, env: action.env, macAgreePub: result.macAgreePub }
         }
       }
       return {
