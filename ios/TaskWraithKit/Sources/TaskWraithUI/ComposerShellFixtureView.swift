@@ -41,9 +41,7 @@ struct ComposerShellSwatch: View {
     }
 
     private var shellMock: some View {
-        let shape = RoundedRectangle(
-            cornerRadius: shell.geometry.surfaceCornerRadius, style: .continuous)
-        return VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Message…")
                 .font(fontForDesign)
                 .foregroundStyle(shell.palette.placeholder)
@@ -56,22 +54,10 @@ struct ComposerShellSwatch: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(surfaceBackground(shape))
-        .overlay(
-            shape.strokeBorder(
-                shell.palette.border, lineWidth: shell.palette.rim?.width ?? 1))
-    }
-
-    @ViewBuilder
-    private func surfaceBackground(_ shape: RoundedRectangle) -> some View {
-        switch shell.material {
-        case .transparent:
-            Color.clear
-        case .glass:
-            shape.fill(shell.palette.surfaceFill.opacity(0.6))  // illustrative frost
-        case .solid, .paper:
-            shape.fill(shell.palette.surfaceFill)
-        }
+        // Use the REAL composer-shell chrome (glass / paper-grain / perforation /
+        // rim-chase / inset-rim / glow / mask) so each swatch mirrors the live
+        // composer surface instead of a flat illustrative frost.
+        .composerShell(shell)
     }
 
     private var fontForDesign: Font {
@@ -101,44 +87,6 @@ struct ComposerShellSwatch: View {
     }
 
     private var sendButton: some View {
-        Image(systemName: sendSymbol)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(sendForeground)
-            .frame(width: shell.sendButton.size * 0.7, height: shell.sendButton.size * 0.7)
-            .background(sendBackground)
-    }
-
-    private var sendSymbol: String {
-        switch shell.sendButton.glyph {
-        case .returnArrow: return "return"
-        case .arrowUp: return "arrow.up"
-        case .runTriangle: return "play.fill"
-        }
-    }
-
-    private var sendForeground: Color {
-        switch shell.sendButton.fill {
-        case .accent, .neutral: return .white
-        case .outline, .plain: return shell.sendButton.tint
-        }
-    }
-
-    @ViewBuilder
-    private var sendBackground: some View {
-        let shape = sendShape
-        switch shell.sendButton.fill {
-        case .accent: shape.fill(shell.sendButton.tint)
-        case .neutral: shape.fill(shell.palette.textPrimary.opacity(0.9))
-        case .outline: shape.stroke(shell.sendButton.tint, lineWidth: 1)
-        case .plain: shape.fill(Color.clear)
-        }
-    }
-
-    private var sendShape: AnyShape {
-        switch shell.sendButton.shape {
-        case .capsule: return AnyShape(Circle())
-        case .rounded(let radius): return AnyShape(RoundedRectangle(cornerRadius: radius))
-        case .rect(let radius): return AnyShape(RoundedRectangle(cornerRadius: radius))
-        }
+        ComposerPreviewSendLabel(shell: shell)
     }
 }

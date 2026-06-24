@@ -309,3 +309,23 @@ struct ComposerRecipeSendLabel: View {
         }
     }
 }
+
+/// The send button as the composer PREVIEWS should show it (inert/quiescent):
+/// mirrors the live composer's branch in `ComposerView.primaryActionButton` —
+/// the native button for the default shell, the recipe label for every other
+/// shell. Keeps previews honest if the live default branch ever changes.
+@MainActor
+@ViewBuilder
+func ComposerPreviewSendLabel(shell: ResolvedComposerShell) -> some View {
+    if shell.style == .defaultShell {
+        // Mirrors ComposerView's native default button in its disabled state
+        // (previews are inert, so primaryActionColor resolves to textMuted).
+        Image(systemName: "arrow.up.circle.fill")
+            .font(.system(size: 34, weight: .semibold))
+            .foregroundStyle(TWTheme.textMuted)
+            .frame(width: 38, height: 38)
+            .contentShape(Circle())
+    } else {
+        ComposerRecipeSendLabel(shell: shell, isRunActive: false, enabled: false)
+    }
+}

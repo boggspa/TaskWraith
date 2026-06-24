@@ -5602,28 +5602,33 @@ public struct AppSettingsSheet: View {
     }
 
     private var composerPreviewCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let shell = twResolvedComposerShell(model: model, presentation: .welcome)
+        return VStack(alignment: .leading, spacing: 10) {
+            // Transcript-font sample — previews the chosen transcript font,
+            // independent of the composer shell. Keep this line.
             Text("Assistant transcript text uses \(themes.transcriptFontPreference.label).")
                 .font(TWFont.font(for: themes.transcriptFontPreference, size: 15, relativeTo: .body))
                 .foregroundStyle(TWTheme.textPrimary)
+            // Composer input line — must use the shell's composer font + placeholder ink.
+            Text("Message the assistant…")
+                .font(twComposerFont(shell.fontDesign, .callout))
+                .foregroundStyle(shell.palette.placeholder)
             HStack(spacing: 8) {
                 Text(composerShellLabel)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(TWTheme.chroma1)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
-                    .background(TWTheme.chroma1.opacity(0.14), in: Capsule())
+                    .background(TWTheme.chroma1.opacity(0.14), in: twControlShape(shell.geometry.controlShape))
                 Text("Tools")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(themes.toolTheme.color)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
-                    .background(themes.toolTheme.color.opacity(0.14), in: Capsule())
+                    .background(themes.toolTheme.color.opacity(0.14), in: twControlShape(shell.geometry.controlShape))
                 Spacer(minLength: 0)
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(TWTheme.chroma1)
-            }
+                ComposerPreviewSendLabel(shell: shell)
+}
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -5631,7 +5636,7 @@ public struct AppSettingsSheet: View {
         // preview uses). Draw it unconditionally — a static preview has no real
         // input drawing the surface, so input-owns shells (claude / cursor / …)
         // must be shelled here too or they render blank.
-        .composerShell(twResolvedComposerShell(model: model, presentation: .welcome))
+        .composerShell(shell)
     }
 
     #if os(iOS)

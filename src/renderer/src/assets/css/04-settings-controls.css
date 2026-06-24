@@ -523,6 +523,89 @@
   padding: 2px 4px 0;
 }
 
+/* ── Refractive "liquid glass" lens — preview parity ─────────────────────────
+ * The live composer renders `.composer-refraction-lens` as an aria-hidden first
+ * child of `.composer-surface`; ComposerShellPreview mirrors that node. The real
+ * lighting rule (shard 03) is keyed on the GLOBAL :root[data-composer-style=
+ * "default"], so inside a preview it would (a) light the lens on EVERY preview
+ * card whenever the USER's own shell happens to be default, and (b) ignore which
+ * shell the card is previewing. Re-key onto the CARD's own data-composer-style so
+ * the lens tracks the PREVIEWED shell instead. Native `default` shell only (the
+ * branded shells have their own surface treatment the lens interfered with),
+ * gated on the same global refraction toggle + degrade guards as the live rule. */
+:root[data-advanced-fx-refraction="true"]
+  .settings-composer-preview-card:not([data-composer-style="default"])
+  .composer-refraction-lens {
+  /* Suppress the leak: the global :root[...][data-composer-style="default"] rule
+   * would otherwise match this lens whenever the user's own shell is default. */
+  display: none !important;
+}
+:root[data-advanced-fx-refraction="true"]
+  .settings-composer-preview-card[data-composer-style="default"]
+  .composer-refraction-lens {
+  display: block;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0; /* above the surface fill, below the content (z-index 2 below) */
+  background:
+    radial-gradient(
+      140% 100% at 50% -12%,
+      var(--tw-glass-sheen, rgba(168, 194, 255, 0.26)),
+      transparent 58%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 85%, transparent) 0%,
+      transparent 32%,
+      transparent 68%,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 45%, transparent) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.58)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 12%, transparent);
+  contain: layout paint;
+  isolation: isolate;
+}
+/* NOTE: the live lens adds a displacement warp (`filter: url(#tw-glass-refract)`)
+ * at the cinematic/epic tiers. We deliberately do NOT mirror it here. The
+ * `#tw-glass-refract` <filter> is mounted inside `.chat-split-region`, which is
+ * `display:none` while the Settings pane is open — so a `url()` reference from the
+ * Settings preview resolves against a filter that isn't in the render tree (no-op
+ * on Chromium). Wiring the warp into previews would require hoisting the filter
+ * defs to an always-rendered app-root location and verifying in-app; the baked
+ * sheen + rim above already carry the glass identity, so the preview shows the
+ * stable (subtle-tier) glass at every intensity. */
+/* Light themes carried on the CARD (data-theme) — screen-blend the sheen so the
+ * bright surface never blows out (mirrors the live :root-keyed rule). */
+:root[data-advanced-fx-refraction="true"]
+  .settings-composer-preview-card[data-composer-style="default"]:is(
+    [data-theme="light"],
+    [data-theme="mist"],
+    [data-theme="sage"]
+  )
+  .composer-refraction-lens {
+  mix-blend-mode: screen;
+}
+/* Degrade: Reduce Transparency → lens off (mirrors shard 03). */
+:root[data-reduce-transparency="true"]
+  .settings-composer-preview-card
+  .composer-refraction-lens {
+  display: none !important;
+}
+/* Keep the composer content layered ABOVE the z-index:0 lens. The shared
+ * `[data-composer-style="default"] .composer-inner-module` rule (shard 03) already
+ * gives the inner module `z-index:2` and DOES reach this card (the card carries the
+ * attribute) — but the sibling telemetry rail gets no such z-index, so restate both
+ * here for one explicit, self-contained guarantee; without it the absolutely-
+ * positioned lens would paint over the telemetry controls. */
+.settings-composer-preview-card[data-composer-style="default"] .composer-inner-module,
+.settings-composer-preview-card[data-composer-style="default"] .composer-telemetry-row {
+  position: relative;
+  z-index: 2;
+}
+
 /* Model usage tab — cross-provider quota dashboard.
  *
  * Headline-tile strip up top (Total tokens / Runs / Providers), then

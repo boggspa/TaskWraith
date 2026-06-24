@@ -17,16 +17,7 @@ import { ProviderGlyph } from './icons/ProviderGlyph'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { NotificationZone } from './NotificationZone'
 import { CommittedDraftField } from './CommittedDraftField'
-import {
-  ArrowUpSendIcon,
-  ClaudeReturnSymbolIcon,
-  CopyResponseIcon,
-  FolderSymbolIcon,
-  GoalSymbolIcon,
-  RunSymbolIcon,
-  ScreenWatchSymbolIcon
-} from './AppChromeSymbols'
-import { ComposerCumulativeTimecode, ComposerRunTimecode } from './ComposerTimecodes'
+import { ComposerShellPreview } from './ComposerShellPreview'
 // 1.0.7-EW — onboarding "out of usage" card state. ModelUsageAggregate is the
 // same per-provider quota shape the sidebar Model Usage card consumes; type-only
 // import so there's no runtime cycle with App.tsx (mirrors ModelUsageCard).
@@ -284,103 +275,6 @@ const ONBOARDING_BUBBLE_OPTIONS: Array<{ value: UserBubbleColor; label: string }
   { value: 'graphite', label: 'Graphite' }
 ]
 
-function getOnboardingComposerPreview(style: ComposerStyle): {
-  provider: 'codex' | 'claude' | 'gemini' | 'kimi'
-  providerLabel: string
-  modelLabel: string
-  permissionLabel: string
-  placeholder: string
-} {
-  switch (style) {
-    case 'codex':
-      return {
-        provider: 'codex',
-        providerLabel: 'Codex',
-        modelLabel: 'GPT-5.5',
-        permissionLabel: 'Full Workspace Access',
-        placeholder: 'Ask Codex anything. @ to mention files'
-      }
-    case 'claude':
-      return {
-        provider: 'claude',
-        providerLabel: 'Claude',
-        // 1.0.6 — Opus 4.8 is the current default (4.7 now "Legacy").
-        modelLabel: 'Opus 4.8',
-        permissionLabel: 'Plan / Read-only',
-        placeholder: 'Describe a task or ask a question'
-      }
-    case 'cursor':
-      // Preview-only. Cursor here is the VISUAL shell, not the
-      // ProviderId 'cursor' — keep `provider: 'gemini'` (its layout
-      // heritage) for the preview's provider class; the flat-gray
-      // Cursor CSS strips all chroma anyway.
-      return {
-        provider: 'gemini',
-        providerLabel: 'Cursor',
-        modelLabel: 'Composer 2.5',
-        permissionLabel: 'Default Approval',
-        placeholder: 'Enter prompt for Cursor…'
-      }
-    case 'grok':
-      // Preview-only. Grok is a visual shell, not a provider — keep
-      // `provider: 'gemini'` (its layout heritage) for the preview's
-      // provider class; the Grok CSS strips all chroma anyway.
-      return {
-        provider: 'gemini',
-        providerLabel: 'Grok',
-        modelLabel: 'Grok Composer 2.5 Fast',
-        permissionLabel: 'Default Approval',
-        placeholder: 'What do you want to know?'
-      }
-    case 'gemini':
-      return {
-        provider: 'gemini',
-        providerLabel: 'Gemini',
-        modelLabel: 'Pro 3.1',
-        permissionLabel: 'Default Approval',
-        placeholder: 'Ask Gemini'
-      }
-    case 'kimi':
-      return {
-        provider: 'kimi',
-        providerLabel: 'Kimi',
-        modelLabel: 'K2.7 Code',
-        permissionLabel: 'Read workspace',
-        placeholder: 'Type "/" to use quick actions'
-      }
-    case 'obsidian':
-      // 1.0.5-EW65 — Premium dark composer. Placeholder reads
-      // restrained on purpose; the rim-shine chase animation +
-      // solid charcoal fill carry the identity in the preview.
-      return {
-        provider: 'codex',
-        providerLabel: 'TaskWraith',
-        modelLabel: 'Auto',
-        permissionLabel: 'Premium',
-        placeholder: 'Compose…'
-      }
-    case 'alabaster':
-      // 1.0.5-EW65 — Polar twin of Obsidian. Same restrained
-      // preview copy; the cream fill + charcoal rim chase
-      // carry the identity.
-      return {
-        provider: 'codex',
-        providerLabel: 'TaskWraith',
-        modelLabel: 'Auto',
-        permissionLabel: 'Premium',
-        placeholder: 'Compose…'
-      }
-    default:
-      return {
-        provider: 'codex',
-        providerLabel: 'TaskWraith',
-        modelLabel: 'Auto',
-        permissionLabel: 'Default Approval',
-        placeholder: 'Ask anything...'
-      }
-  }
-}
-
 export function FirstLaunchSheet({
   open,
   onDismiss,
@@ -481,7 +375,6 @@ export function FirstLaunchSheet({
     'Grok',
     'Authenticate the Grok CLI (in `~/.grok/bin`) in your shell, then launch Grok runs.'
   )
-  const composerPreview = getOnboardingComposerPreview(composerStyle)
 
   const baseProviderRows: ProviderRowSpec[] = [
     {
@@ -774,257 +667,21 @@ export function FirstLaunchSheet({
             </div>
 
             {/*
-              1.0.5-EW32 — Use the same rich composer preview as
-              Settings → Appearance. Pre-EW32 the onboarding sheet
-              had its own minimal placeholder (`first-launch-sheet-
-              preview-composer`) that looked nearly identical across
-              the 9 composer styles — defeats the point of letting
-              users pick a shell on first launch. Switched to the
-              `settings-composer-preview-card` structure that
-              SettingsPanel uses; the CSS for that card already
-              renders the per-shell flourishes (above-bar layout,
-              inline pickers, action button placement etc.). The
-              `first-launch-sheet-composer-preview` wrapper class
-              stays for the onboarding-specific outer spacing.
+              Onboarding renders the SAME shared <ComposerShellPreview> the
+              Settings → Appearance pane uses, so the shell a tester picks here
+              previews identically to the live composer (and can never drift
+              from the Settings copy — there is no longer a second replica). The
+              onboarding sheet omits the font props (the user hasn't chosen
+              fonts yet) so the preview inherits, and leaves `editable` off so
+              the inert placeholder div keeps the focus-trap traversal clean.
+              The `first-launch-sheet-composer-preview` wrapper stays for the
+              onboarding-specific outer spacing.
             */}
             <div className="first-launch-sheet-composer-preview" aria-label="Composer preview">
-              <div
-                className="settings-composer-preview-card"
-                data-theme={themeAppearance}
-                data-composer-style={composerStyle}
-                data-interface-style={composerStyle}
-              >
-                <div className="settings-composer-preview-transcript">
-                  <span className="settings-composer-preview-speaker">
-                    {composerPreview.providerLabel}
-                  </span>
-                  <p>
-                    Assistant transcript text uses this typeface, including inline code, file names,
-                    and longer status lines.
-                  </p>
-                  <div className="settings-composer-preview-tool-row" aria-hidden="true">
-                    <span>Edited</span>
-                    <code>src/renderer/src/App.tsx</code>
-                    <strong>+42</strong>
-                    <em>-8</em>
-                  </div>
-                </div>
-                <div
-                  className={`composer-area settings-composer-preview-area interface-${composerStyle}`}
-                  aria-label={`${composerPreview.providerLabel} composer preview`}
-                >
-                  <div className="composer-above-bar-stack">
-                    <div className="composer-above-bar style-unified">
-                      <div className="composer-above-bar-pill composer-above-bar-pill--git">
-                        <span className="composer-above-bar-branch">
-                          <svg
-                            width="13"
-                            height="13"
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            aria-hidden
-                          >
-                            <circle cx="4" cy="3.5" r="1.6" />
-                            <circle cx="4" cy="12.5" r="1.6" />
-                            <circle cx="12" cy="7" r="1.6" />
-                            <path d="M4 5.1v5.8M5.6 7c2 0 4.8 0 4.8-1.5" />
-                          </svg>
-                          <span>
-                            Preview workspace ·{' '}
-                            <em className="composer-above-bar-secondary-branch git-tone-main">
-                              main
-                            </em>
-                          </span>
-                        </span>
-                      </div>
-                      <div className="composer-above-bar-pill composer-above-bar-pill--changes">
-                        <span className="composer-above-bar-files-cluster">
-                          <span className="composer-above-bar-files">
-                            <strong>2</strong> files changed
-                          </span>
-                          <span className="composer-above-bar-stats">
-                            <span className="composer-diff-add">+42</span>
-                            <span className="composer-diff-del">-8</span>
-                          </span>
-                        </span>
-                      </div>
-                      <div className="composer-above-bar-pill composer-above-bar-pill--action">
-                        <button
-                          type="button"
-                          className="composer-above-bar-action"
-                          tabIndex={-1}
-                          aria-hidden="true"
-                        >
-                          {composerStyle === 'codex' || composerStyle === 'grok'
-                            ? 'Create PR'
-                            : 'Review changes'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="composer-surface settings-composer-preview-surface">
-                    {/*
-                      1.0.6-EW68/EW70 — wrap the textarea + control rows
-                      in .composer-textarea-wrap / .composer-bottom-controls
-                      so the Obsidian/Alabaster two-rect split + reorder CSS
-                      applies to the preview too. For the other shells these
-                      wrappers are layout-neutral (textarea-wrap is a plain
-                      relative box; bottom-controls is display:contents).
-
-                      Console redesign — both the textarea-wrap AND the
-                      bottom-controls are wrapped together in
-                      .composer-inner-module (theme-tone inset panel inside
-                      the solid frame), mirroring the real default composer.
-                      The base `.composer-inner-module { display: contents }`
-                      rule keeps this layout-neutral for the non-default
-                      shell previews; the chips stay OUTSIDE/above it.
-                    */}
-                    <div className="composer-inner-module">
-                      <div className="composer-textarea-wrap">
-                        <div
-                          className="composer-textarea settings-composer-preview-textarea"
-                          aria-hidden="true"
-                          style={{ minHeight: '60px' }}
-                        >
-                          {composerPreview.placeholder}
-                        </div>
-                      </div>
-                      <div className="composer-bottom-controls">
-                        <div className="composer-control-footer settings-composer-preview-footer">
-                          <div className="composer-inline-pickers">
-                            <div className="composer-inline-pickers-left" aria-hidden="true">
-                              <button
-                                type="button"
-                                className="composer-picker-label settings-composer-preview-control"
-                                data-composer-control="attach"
-                                tabIndex={-1}
-                              >
-                                +
-                              </button>
-                              <span
-                                className="composer-picker-label settings-composer-preview-control"
-                                data-composer-control="provider"
-                              >
-                                {composerPreview.providerLabel}
-                              </span>
-                              <span
-                                className="composer-picker-label settings-composer-preview-control"
-                                data-composer-control="permission"
-                              >
-                                {composerPreview.permissionLabel}
-                              </span>
-                              <span
-                                className="composer-picker-label settings-composer-preview-control"
-                                data-composer-control="model"
-                              >
-                                {composerPreview.modelLabel}
-                              </span>
-                            </div>
-                            <div className="composer-inline-actions" aria-hidden="true">
-                              <span className="context-wheel settings-composer-preview-context">
-                                <svg viewBox="0 0 18 18" width="18" height="18">
-                                  <circle
-                                    cx="9"
-                                    cy="9"
-                                    r="6.6"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    opacity="0.22"
-                                  />
-                                  <path
-                                    d="M9 2.4a6.6 6.6 0 0 1 5.4 10.4"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                  />
-                                </svg>
-                              </span>
-                              <span className="composer-send-cluster">
-                                <button
-                                  type="button"
-                                  className="composer-action-btn run-btn"
-                                  tabIndex={-1}
-                                  aria-label="Preview send button"
-                                >
-                                  {composerStyle === 'claude' ? (
-                                    <ClaudeReturnSymbolIcon />
-                                  ) : composerStyle === 'codex' ||
-                                    composerStyle === 'gemini' ||
-                                    composerStyle === 'cursor' ||
-                                    composerStyle === 'grok' ||
-                                    composerStyle === 'kimi' ? (
-                                    <ArrowUpSendIcon />
-                                  ) : (
-                                    <RunSymbolIcon />
-                                  )}
-                                </button>
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    {/* Composer telemetry rail — sibling of .composer-inner-module
-                        inside .composer-surface, matching the live composer.
-                        Static/inert in the onboarding preview. */}
-                    <div
-                      className="composer-telemetry-row"
-                      data-has-token-tally="true"
-                      aria-hidden="true"
-                    >
-                      <ComposerRunTimecode running={false} startedAt={null} />
-                      <ComposerCumulativeTimecode
-                        running={false}
-                        startedAt={null}
-                        cumulativeBaseMs={0}
-                      />
-                      <button
-                        type="button"
-                        className="composer-screen-watch-button settings-composer-preview-control"
-                        tabIndex={-1}
-                      >
-                        <ScreenWatchSymbolIcon />
-                      </button>
-                      <span className="composer-goal-control-wrap">
-                        <button
-                          type="button"
-                          className="composer-goal-button is-idle settings-composer-preview-control"
-                          tabIndex={-1}
-                        >
-                          <GoalSymbolIcon />
-                        </button>
-                      </span>
-                      <span className="composer-copy-transcript-wrap">
-                        <button
-                          type="button"
-                          className="composer-copy-transcript-button settings-composer-preview-control"
-                          tabIndex={-1}
-                        >
-                          <CopyResponseIcon />
-                        </button>
-                      </span>
-                      <button
-                        type="button"
-                        className="composer-picker-label composer-workspace-button settings-composer-preview-control"
-                        data-composer-control="workspace"
-                        tabIndex={-1}
-                      >
-                        <FolderSymbolIcon />
-                        <span className="composer-workspace-button-label">
-                          Preview workspace +1
-                        </span>
-                      </button>
-                      <span className="composer-thread-token-tally">1.2M in / 5k out</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <ComposerShellPreview
+                composerStyle={composerStyle}
+                themeAppearance={themeAppearance}
+              />
             </div>
           </div>
         </section>

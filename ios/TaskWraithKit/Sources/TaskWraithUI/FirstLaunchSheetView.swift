@@ -260,13 +260,11 @@ struct FirstLaunchSheetView: View {
                 .font(twComposerFont(shell.fontDesign, .callout))
                 .foregroundStyle(shell.palette.placeholder)
             HStack(spacing: 8) {
-                previewPill("Claude", accent: TWTheme.providerAccent("claude"))
-                previewPill("Plan", accent: TWTheme.statusAttention)
+                previewPill("Claude", accent: TWTheme.providerAccent("claude"), shape: shell.geometry.controlShape)
+                previewPill("Plan", accent: TWTheme.statusAttention, shape: shell.geometry.controlShape)
                 Spacer(minLength: 0)
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(TWTheme.chroma1)
-            }
+                ComposerPreviewSendLabel(shell: shell)
+}
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -277,13 +275,13 @@ struct FirstLaunchSheetView: View {
         .composerShell(shell)
     }
 
-    private func previewPill(_ title: String, accent: Color) -> some View {
+    private func previewPill(_ title: String, accent: Color, shape: ComposerControlShape) -> some View {
         Text(title)
             .font(.caption.weight(.semibold))
             .foregroundStyle(accent)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(accent.opacity(0.14), in: Capsule())
+            .background(accent.opacity(0.14), in: twControlShape(shape))
     }
 
     private var approvalsSection: some View {
