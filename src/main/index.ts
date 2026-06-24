@@ -1737,6 +1737,19 @@ function imageGenConfig(): ImageGenConfig {
     configuredProviders: imageGenConfiguredProviders()
   }
 }
+const IMAGE_GEN_REQUEST_TIMEOUT_MS = 60_000
+const IMAGE_GEN_IMAGE_FETCH_TIMEOUT_MS = 30_000
+// fetch + a hard abort timeout: neither `fetch` nor the broker cap bounds the
+// socket here, so a slow/hostile endpoint would otherwise hang the run.
+async function imageGenFetch(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
 async function generateImageViaApi(input: {
   provider: ImageGenProvider
   prompt: string
@@ -1754,12 +1767,16 @@ async function generateImageViaApi(input: {
   }
   let response: Response
   try {
-    response = await fetch(IMAGE_GEN_ENDPOINTS[input.provider], {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
-      body: JSON.stringify(body),
-      redirect: 'error'
-    })
+    response = await imageGenFetch(
+      IMAGE_GEN_ENDPOINTS[input.provider],
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+        body: JSON.stringify(body),
+        redirect: 'error'
+      },
+      IMAGE_GEN_REQUEST_TIMEOUT_MS
+    )
   } catch (error) {
     return { ok: false, reason: `request failed: ${error instanceof Error ? error.message : String(error)}` }
   }
@@ -1780,8 +1797,18 @@ async function generateImageViaApi(input: {
     return { ok: false, reason: 'provider returned a non-public image URL' }
   }
   try {
-    const imageResponse = await fetch(parsed.url as string, { redirect: 'error' })
+    const imageResponse = await imageGenFetch(
+      parsed.url as string,
+      { redirect: 'error' },
+      IMAGE_GEN_IMAGE_FETCH_TIMEOUT_MS
+    )
     if (!imageResponse.ok) return { ok: false, reason: `image fetch HTTP ${imageResponse.status}` }
+    // Reject before buffering if the host declares an oversized body (a hostile
+    // host could otherwise stream GBs into arrayBuffer and OOM the process).
+    const declaredLength = Number(imageResponse.headers?.get?.('content-length') || 0)
+    if (declaredLength > TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES) {
+      return { ok: false, reason: 'generated image exceeds the size limit' }
+    }
     const buffer = Buffer.from(await imageResponse.arrayBuffer())
     if (buffer.length > TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES) {
       return { ok: false, reason: 'generated image exceeds the size limit' }
@@ -6131,7 +6158,7 @@ function previewForGeminiMcpTool(
       const endpoint =
         prov === 'xai' ? 'api.x.ai' : prov === 'openai' ? 'api.openai.com' : 'the configured image provider'
       title = `Approve ${providerName} image generation`
-      summary = `Generate via ${endpoint}\nPrompt: ${String(args.prompt || '')}`
+      summary = `Generate via ${endpoint}\nPrompt: ${String(args.prompt || '').slice(0, 2000)}`
     } else if (toolName === 'image_edit') {
       title = `Approve ${providerName} image edit`
       summary = `op=${String(args.op || '?')} ${String(args.sourceMediaId || args.sourcePath || '')}`.trim()
