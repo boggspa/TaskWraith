@@ -133,4 +133,63 @@ describe('RunLifecycleCoordinator', () => {
     })
     expect(cancelProviderRun).not.toHaveBeenCalled()
   })
+
+  it('does not use generic queue transitions for steer ownership paths', async () => {
+    let job = makeJob()
+    const transitionJob = vi.fn(() => makeJob({ status: 'steer_promoting' }))
+    const cancelProviderRun = vi.fn(() => true)
+    const queue: RunLifecycleCoordinatorDeps['queue'] = {
+      getRunQueueJob: () => job,
+      transitionJob
+    }
+    const coordinator = new RunLifecycleCoordinator({ queue, cancelProviderRun })
+
+    const promote = await coordinator.promoteQueuedJobForSteer({
+      runId: 'queued-run',
+      ownerToken: 'owner-1',
+      provider: 'codex',
+      cancelRunId: 'active-run',
+      cancelProvider: 'codex'
+    })
+
+    expect(promote).toMatchObject({
+      ok: false,
+      kind: 'fallback',
+      runId: 'queued-run',
+      ownerToken: 'owner-1',
+      jobStatus: 'queued',
+      cancelRequested: false
+    })
+    expect(cancelProviderRun).not.toHaveBeenCalled()
+    expect(transitionJob).not.toHaveBeenCalled()
+
+    job = makeJob({ status: 'steer_promoting', promotionOwnerToken: 'owner-1' })
+
+    const lease = await coordinator.leasePromotedSteerJob({
+      runId: 'queued-run',
+      ownerToken: 'owner-1'
+    })
+    expect(lease).toMatchObject({
+      ok: false,
+      kind: 'not-available',
+      runId: 'queued-run',
+      ownerToken: 'owner-1',
+      reason: 'Steer lease did not succeed.'
+    })
+    expect(transitionJob).not.toHaveBeenCalled()
+
+    const fallback = await coordinator.fallbackPromotedSteerJob({
+      runId: 'queued-run',
+      ownerToken: 'owner-1',
+      reason: 'timed out'
+    })
+    expect(fallback).toMatchObject({
+      ok: false,
+      kind: 'not-found',
+      runId: 'queued-run',
+      ownerToken: 'owner-1',
+      reason: 'Could not transition run queued-run out of steer promotion.'
+    })
+    expect(transitionJob).not.toHaveBeenCalled()
+  })
 })

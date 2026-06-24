@@ -381,14 +381,6 @@ export class RunLifecycleCoordinator {
       return Promise.resolve(this.deps.queue.promoteQueuedJobForSteer({ runId, ...input }))
     }
 
-    if (this.deps.queue.transitionJob) {
-      return Promise.resolve(
-        this.deps.queue.transitionJob(runId, 'steer_promoting', {
-          statusReason: input.statusReason
-        })
-      )
-    }
-
     return null
   }
 
@@ -403,14 +395,6 @@ export class RunLifecycleCoordinator {
     const job = this.deps.queue.getRunQueueJob(runId)
     if (!job || job.status !== 'steer_promoting') {
       return null
-    }
-
-    if (this.deps.queue.transitionJob) {
-      return Promise.resolve(
-        this.deps.queue.transitionJob(runId, 'starting', {
-          statusReason: input.statusReason
-        })
-      )
     }
 
     return null
@@ -435,11 +419,7 @@ export class RunLifecycleCoordinator {
       )
     }
 
-    const status = input.fallbackStatus || 'queued'
-    if (!this.deps.queue.transitionJob) {
-      return this.deps.queue.getRunQueueJob(runId)
-    }
-    return this.deps.queue.transitionJob(runId, status, { statusReason: input.reason })
+    return null
   }
 
   private statusReason(primary: string | undefined, fallback: string): string {

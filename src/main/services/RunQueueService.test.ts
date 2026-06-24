@@ -273,6 +273,24 @@ describe('RunQueueService', () => {
     )
   })
 
+  it('does not allow generic queue requests to create steer promotion rows', () => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    service.requestJob({
+      runId: 'run-1',
+      provider: 'codex',
+      workspacePath: '/input',
+      chatId: 'chat-1',
+      status: 'steer_promoting'
+    })
+    expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-1',
+        status: 'queued'
+      })
+    )
+  })
+
   it('preserves remote source and remoteComposer snapshot fields', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
@@ -477,13 +495,11 @@ describe('RunQueueService', () => {
   it('sanitizes transition status and partial fields before delegating', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
-    service.transitionJob('run-1', 'steer_promoting', {
+    const promoted = service.transitionJob('run-1', 'steer_promoting', {
       statusReason: ' steer '
     })
-    expect(repository.transitionRunQueueJob).toHaveBeenCalledWith('run-1', 'steer_promoting', {
-      statusReason: ' steer ',
-      lastError: undefined
-    })
+    expect(promoted).toBeNull()
+    expect(repository.transitionRunQueueJob).not.toHaveBeenCalled()
 
     service.transitionJob('run-1', 'not-a-status' as RunQueueJob['status'], {
       statusReason: ' reason ',

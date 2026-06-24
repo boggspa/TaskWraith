@@ -211,9 +211,11 @@ export class RunQueueService {
     status: RunQueueJobStatus,
     partial: Partial<RunQueueJob> = {}
   ): RunQueueJob | null {
+    const nextStatus = sanitizeRunQueueStatus(status)
+    if (nextStatus === 'steer_promoting') return null
     return this.deps
       .getRunRepository()
-      .transitionRunQueueJob(runIdOrId, sanitizeRunQueueStatus(status), {
+      .transitionRunQueueJob(runIdOrId, nextStatus, {
         statusReason: optionalString(partial?.statusReason),
         lastError: optionalString(partial?.lastError)
       })
@@ -245,7 +247,7 @@ export class RunQueueService {
       workspaceId = workspace?.id || optionalString(record.workspaceId)
       this.deps.validateChatWorkspaceIdentity(chatId, workspace)
     }
-    const status = sanitizeRunQueueStatus(record.status, 'queued')
+    const status = sanitizePublicRunQueueStatus(record.status, 'queued')
     return {
       id: optionalString(record.id) || runId,
       runId,
@@ -339,6 +341,14 @@ function sanitizeRunQueueStatus(
   return typeof value === 'string' && RUN_QUEUE_STATUSES.has(value as RunQueueJobStatus)
     ? (value as RunQueueJobStatus)
     : fallback
+}
+
+function sanitizePublicRunQueueStatus(
+  value: unknown,
+  fallback: RunQueueJobStatus = 'queued'
+): RunQueueJobStatus {
+  const status = sanitizeRunQueueStatus(value, fallback)
+  return status === 'steer_promoting' ? fallback : status
 }
 
 function sanitizeRunQueueSource(value: unknown): RunQueueJobSource {
