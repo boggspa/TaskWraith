@@ -14568,11 +14568,23 @@ async function executeGeminiMcpTool(
   })
 
   if (!allowed) {
+    // Actionable copy for image tools: they are gated as File changes, so a
+    // read-only/plan preset denies them with the generic "File changes denied"
+    // — which gives the agent no idea the fix is a write-capable preset (and, for
+    // image_generate, an enabled key). Tell it the actual requirement.
+    const deniedError =
+      isImageMcpToolName(toolName) || isImageGenMcpToolName(toolName)
+        ? `Image tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${
+            toolName === 'image_generate'
+              ? ', and image generation must be enabled with an API key in TaskWraith Settings'
+              : ''
+          }.`
+        : `${AGENTIC_SERVICE_LABELS[approvalPreview.service]} denied by TaskWraith.`
     const deniedResult = mcpStructuredJsonResult({
       ok: false,
       tool: toolName,
       service: approvalPreview.service,
-      error: `${AGENTIC_SERVICE_LABELS[approvalPreview.service]} denied by TaskWraith.`
+      error: deniedError
     })
     emitMcpToolTranscriptEvent({
       type: 'tool_result',

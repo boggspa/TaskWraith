@@ -5303,7 +5303,10 @@ export function SettingsPanel({
                     TaskWraith MCP bridge
                     <small>
                       Enables the bundled TaskWraith MCP server for supported CLI/provider
-                      runtimes.
+                      runtimes — including the image tools (image_edit, svg_rasterize,
+                      image_generate) for Grok &amp; Cursor. Claude/Codex/Gemini get them
+                      natively; image_generate additionally needs to be enabled with an API
+                      key.
                     </small>
                   </span>
                 </label>

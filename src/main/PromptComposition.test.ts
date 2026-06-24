@@ -5,7 +5,8 @@ import {
   buildGuestParticipantPresenceContextBlock,
   buildGuestParticipantReplyContextBlock,
   buildPendingSubThreadResultContextBlock,
-  composeRunPrompt
+  composeRunPrompt,
+  promptNeedsImageToolsHint
 } from './PromptComposition'
 import type { ChatMessage } from './store/types'
 
@@ -408,7 +409,7 @@ describe('composeRunPrompt sub-thread returns', () => {
         providerLabel: provider
       })
 
-      expect(result.contextualPrompt).toContain('taskwraith-runtime-v2')
+      expect(result.contextualPrompt).toContain(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
       expect(result.runtimePreambleVersion).toBe(TASKWRAITH_RUNTIME_PREAMBLE_VERSION)
       expect(result.runtimePreambleProvider).toBe(provider)
       expect(result.contextualPrompt).toContain(delegateTool)
@@ -746,5 +747,91 @@ describe('composeRunPrompt Grok ACP cross-turn context', () => {
       if (prev === undefined) delete process.env.TASKWRAITH_GROK_ACP
       else process.env.TASKWRAITH_GROK_ACP = prev
     }
+  })
+})
+
+describe('image-tool discoverability (PR5)', () => {
+  it('detects image-work intent and ignores unrelated prompts', () => {
+    for (const p of [
+      'please blur the secrets in this screenshot',
+      'rasterize the SVG you generated',
+      'crop and resize the logo',
+      'redact the API key in the image',
+      'generate a diagram'
+    ]) {
+      expect(promptNeedsImageToolsHint(p)).toBe(true)
+    }
+    for (const p of ['fix the failing test', 'refactor the auth module', 'what is the imagined plan']) {
+      expect(promptNeedsImageToolsHint(p)).toBe(false)
+    }
+  })
+
+  it('names the image tools in the cold-run preamble', () => {
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'do some work',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude'
+    })
+    // Cold run (no resume) → full preamble injected, which now names image tools.
+    expect(result.contextualPrompt).toContain('Image tools are also available over MCP')
+  })
+
+  it('re-injects only the image note on a resumed session when the prompt is image-related', () => {
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'blur the screenshot please',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      resumeSessionId: 'sess-1',
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'claude'
+    })
+    // Resumed session → full preamble suppressed (no "Key examples"), but the
+    // image-intent note re-fires.
+    expect(result.contextualPrompt).toContain('TaskWraith image tools are available over MCP')
+    expect(result.contextualPrompt).not.toContain('Key examples')
+  })
+
+  it('does NOT inject the image note on a resumed session for a non-image prompt', () => {
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'fix the failing test',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      resumeSessionId: 'sess-1',
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'claude'
+    })
+    expect(result.contextualPrompt).not.toContain('TaskWraith image tools are available over MCP')
+  })
+
+  it('does NOT inject the image note on a global run even with image intent', () => {
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'blur the screenshot',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: true,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      resumeSessionId: 'sess-1',
+      runtimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+      runtimePreambleProvider: 'claude'
+    })
+    expect(result.contextualPrompt).not.toContain('TaskWraith image tools are available over MCP')
   })
 })

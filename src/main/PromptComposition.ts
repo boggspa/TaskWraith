@@ -75,7 +75,20 @@ export function resolveContextBudget(provider: ProviderId, modelId?: string): Co
   return DEFAULT_CONTEXT_BUDGET
 }
 
-export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v2'
+// Bumped v2 -> v3 to add the image-tools mention: existing resumable
+// gemini/claude/codex sessions re-inject the preamble once so they learn the
+// image tools exist.
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v3'
+
+/**
+ * Standalone one-shot hint re-injected on a RESUMED session (where the full
+ * preamble is correctly suppressed) when the user's prompt is image-related, so
+ * the agent is reminded the deterministic image tools exist instead of shelling
+ * out / pasting data URLs. The full preamble already carries an image line for
+ * cold runs; this only covers the resumed-session gap.
+ */
+const TASKWRAITH_IMAGE_TOOLS_NOTE =
+  'TaskWraith image tools are available over MCP: image_edit (blur/redact/crop/resize an existing image), svg_rasterize (render an SVG you produced to a PNG — the transcript does not show SVG inline), and image_generate (text-to-image, only when the user has enabled it with an API key in Settings; otherwise the call is refused). Prefer these over shelling out or pasting data URLs.'
 
 /**
  * Shared edit-discipline note appended to every write-capable cloud-provider
@@ -101,6 +114,15 @@ function promptNeedsDelegationExpansion(prompt: string): boolean {
   if (NEGATED_DELEGATION_PATTERN.test(prompt)) return false
   if (!DELEGATION_INTENT_PATTERN.test(prompt)) return false
   return OPERATIONAL_DELEGATION_PATTERN.test(prompt)
+}
+
+// Image-work intent — narrow enough to avoid firing on incidental mentions, but
+// covers the verbs/nouns that map to the image tools (edit/generate/rasterize).
+const IMAGE_INTENT_PATTERN =
+  /\b(images?|pictures?|photos?|screenshots?|svgs?|thumbnails?|icons?|logos?|diagrams?|blur(?:red|ring)?|redact(?:ed|ing|ion)?|rasteri[sz]e[ds]?|rasteri[sz]ing|crop(?:ped|ping)?|resiz(?:e[ds]?|ing))\b/i
+
+export function promptNeedsImageToolsHint(prompt: string): boolean {
+  return IMAGE_INTENT_PATTERN.test(prompt)
 }
 
 function shouldInjectTaskWraithRuntimePreamble(args: {
@@ -149,6 +171,7 @@ function buildTaskWraithRuntimePreamble(args: {
     `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
     'Use TaskWraith MCP tools for workspace reads/search, edits, git, task/test verification, user questions, diagnostics, and sub-thread control.',
     `${taskWraithToolNamespaceHint(args.provider)} Key examples: ${searchTool}, ${patchTool}, ${statusTool}, ${taskTool}, ${delegateTool}.`,
+    'Image tools are also available over MCP: image_edit (blur/redact/crop/resize), svg_rasterize (preview an SVG you produced as a PNG — the transcript does not render SVG inline), and image_generate (text-to-image, only when the user has enabled it with a key in Settings). Prefer them over shelling out or pasting data URLs.',
     CLOUD_EDIT_DISCIPLINE_NOTE,
     `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native Task/invoke_agent/subagent paths for cross-provider work because they cannot reach other TaskWraith providers.`,
     ...(args.provider === 'codex'
@@ -727,6 +750,20 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     })
     contextualPrompt = `${taskWraithRuntimePreamble}\n\n${contextualPrompt}`
     runtimePreambleInjected = true
+  }
+
+  // Resumed-session image discoverability: the full preamble (which already
+  // names the image tools) is suppressed on resumable sessions, so if THIS turn
+  // is image-related, re-inject just the image-tools note. Skipped when the full
+  // preamble already fired this run (no duplication) and on global/plan runs
+  // (which never get the image tools anyway).
+  if (
+    !runtimePreambleInjected &&
+    !isGlobalRun &&
+    approvalMode !== 'plan' &&
+    promptNeedsImageToolsHint(finalPrompt)
+  ) {
+    contextualPrompt = `${TASKWRAITH_IMAGE_TOOLS_NOTE}\n\n${contextualPrompt}`
   }
 
   if (provider === 'ollama' && !isGlobalRun) {
