@@ -1357,6 +1357,13 @@ const failoverSnapshotByRun = new Map<string, FailoverRunSnapshot>()
 // sendAgentCompatExit. Mirrors the ensemble fix (bb6b3aa8).
 const scheduledTaskIdByFailoverRun = new Map<string, string>()
 
+// Stage 0b-completion: a SOLO scheduled run is normally marked terminal by the
+// renderer; if the renderer closes mid-run the task wedges (the stall reconciler
+// is the only backstop, 6h later). Bridge it main-side too: remember
+// appRunId -> scheduledTaskId at dispatch, mark terminal in sendAgentCompatExit.
+// Idempotent vs the renderer mark (updateScheduledTask's transition guard).
+const scheduledTaskIdBySoloRun = new Map<string, string>()
+
 // Per-occurrence mid-run BUDGET KILL (WorkflowLimits enforcement). SOLO scheduled
 // runs only — ensemble is OUT (no per-participant scheduledTaskId; shared round
 // accounting; never failed over). abort = cancelProviderRun (RC1: NOT
@@ -10399,6 +10406,20 @@ function sendAgentCompatExit(
         status: failoverFailed ? 'failed' : 'completed',
         completedAt: new Date().toISOString(),
         ...(failoverFailed ? { lastError: 'Scheduled run failed after provider auto-failover.' } : {})
+      })
+      // A failover run also lives in the solo map (it dispatched through the same
+      // chokepoint); the failover mark above is authoritative — drop the solo entry.
+      scheduledTaskIdBySoloRun.delete(routed.appRunId)
+    }
+    // Stage 0b-completion: mark a SOLO scheduled run terminal MAIN-side so a
+    // mid-run renderer close can't leave it wedged. Idempotent: updateScheduledTask's
+    // transition guard no-ops if the renderer already marked it.
+    const soloScheduledTaskId = scheduledTaskIdBySoloRun.get(routed.appRunId)
+    if (soloScheduledTaskId) {
+      scheduledTaskIdBySoloRun.delete(routed.appRunId)
+      AppStore.updateScheduledTask(soloScheduledTaskId, {
+        status: (code ?? -1) === 0 ? 'completed' : 'failed',
+        completedAt: new Date().toISOString()
       })
     }
   }
@@ -24293,6 +24314,9 @@ if (isGeminiMcpBridgeProcess) {
       // hatch. NOT wired for ensemble — this solo chokepoint never sees a round runId.
       const budgetScheduledTaskId = (routedPayload as { scheduledTaskId?: string }).scheduledTaskId
       if (budgetScheduledTaskId && dispatchResult.appRunId) {
+        // Stage 0b-completion: main marks this solo scheduled run terminal in
+        // sendAgentCompatExit, so a mid-run renderer close can't wedge it.
+        scheduledTaskIdBySoloRun.set(dispatchResult.appRunId, budgetScheduledTaskId)
         const budgetSettings = AppStore.getSettings()
         if (budgetSettings.workflowBudgetKillEnabled !== false) {
           const task = AppStore.getScheduledTasks().find((t) => t.id === budgetScheduledTaskId)
