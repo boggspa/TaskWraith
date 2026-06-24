@@ -210,7 +210,26 @@ export class RunRepository {
     if (candidate.status === STEER_PROMOTING_STATUS) {
       const ownerToken = this.getRunQueuePromotionOwnerToken(candidate)
       if (ownerToken && ownerToken !== input.ownerToken) return null
-      if (ownerToken === input.ownerToken) return candidate
+      if (ownerToken === input.ownerToken) {
+        this.appendSteerLifecycleEvent({
+          runId,
+          from: 'queued',
+          to: STEER_PROMOTING_STATUS,
+          ownerToken: input.ownerToken,
+          transitionVersion: candidate.transitionVersion,
+          promotionAttempt: candidate.promotionAttempt,
+          queueMessageId: candidate.queueMessageId,
+          statusReason:
+            optionalString(candidate.statusReason) ||
+            optionalString(input.statusReason) ||
+            'Promoted from main scheduler for remote steering.',
+          chatId: candidate.chatId,
+          provider: candidate.provider,
+          workspacePath: candidate.workspacePath,
+          workspaceId: candidate.workspaceId
+        })
+        return candidate
+      }
     }
     if (candidate.status !== 'queued') return null
     const now = new Date().toISOString()

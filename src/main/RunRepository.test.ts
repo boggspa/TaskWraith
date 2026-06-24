@@ -286,6 +286,74 @@ describe('RunRepository', () => {
     }
   })
 
+  it('repairs missing steer promotion events on same-owner retries', () => {
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      emitRunQueueChanged: vi.fn(),
+      emitRunEventsChanged: vi.fn()
+    })
+    const promoted: RunQueueJob = {
+      id: 'run-1',
+      runId: 'run-1',
+      chatId: 'chat-1',
+      provider: 'gemini',
+      workspacePath: '/repo',
+      source: 'manual',
+      status: 'steer_promoting',
+      statusReason: 'Existing promotion',
+      priority: 0,
+      attempt: 1,
+      createdAt: '2026-05-08T00:00:00.000Z',
+      updatedAt: '2026-05-08T00:00:00.000Z',
+      promotionOwnerToken: 'owner-token',
+      promotionAttempt: 2,
+      transitionVersion: 3,
+      queueMessageId: 'message-1'
+    } as RunQueueJob
+    const get = vi.spyOn(AppStore, 'getRunQueueJob').mockReturnValue(promoted)
+    const update = vi
+      .spyOn(AppStore, 'updateRunQueueJob')
+      .mockImplementation((_runId, _partial: any) => promoted)
+    const getEvents = vi.spyOn(AppStore, 'getRunEvents').mockReturnValue([])
+    const append = vi.spyOn(AppStore, 'appendRunEvent').mockImplementation((input: any) => ({
+      schemaVersion: 1,
+      id: input.id,
+      sequence: 8,
+      timestamp: '2026-05-08T00:00:00.000Z',
+      ...input
+    }))
+
+    try {
+      const retried = repository.promoteQueuedJobForSteer({
+        runId: 'run-1',
+        ownerToken: 'owner-token'
+      })
+      const event = append.mock.results[0]?.value
+
+      expect(retried).toBe(promoted)
+      expect(update).not.toHaveBeenCalled()
+      expect(getEvents).toHaveBeenCalledWith({ runId: 'run-1', kinds: ['lifecycle'] })
+      expect(append).toHaveBeenCalledTimes(1)
+      expect(event?.id).toBe('run-queue:run-1:steer-transition:3:queued:steer_promoting')
+      expect(event?.payload).toMatchObject({
+        eventType: 'steerTransition',
+        idempotencyKey: 'run-queue:run-1:steer-transition:3:queued:steer_promoting',
+        fromStatus: 'queued',
+        toStatus: 'steer_promoting',
+        ownerToken: 'owner-token',
+        transitionVersion: 3,
+        promotionAttempt: 2,
+        queueMessageId: 'message-1',
+        statusReason: 'Existing promotion'
+      })
+    } finally {
+      get.mockRestore()
+      update.mockRestore()
+      getEvents.mockRestore()
+      append.mockRestore()
+    }
+  })
+
   it('rejects steer promotion requests with a mismatched owner token', () => {
     const repository = new RunRepository({
       providerLabel: (provider) => provider,
