@@ -1,4 +1,4 @@
-import { greetingForHour } from '../../../shared/greeting'
+import { greetingForHour, GREETING_PROMPT } from '../../../shared/greeting'
 
 type WelcomeHeadingCopy = {
   beforeWorkspace: string
@@ -312,8 +312,12 @@ export const buildWelcomeCopy = (context: WelcomeCopyContext): WelcomeCopy => {
   const greetingName = (context.userName ?? '').trim()
   const heading: WelcomeHeadingCopy = context.isGlobalChat
     ? greetingName
-      ? { beforeWorkspace: `${greeting}, `, workspaceName: greetingName, afterWorkspace: '' }
-      : { beforeWorkspace: '', workspaceName: greeting, afterWorkspace: '' }
+      ? {
+          beforeWorkspace: `${greeting}, ${GREETING_PROMPT} `,
+          workspaceName: greetingName,
+          afterWorkspace: '?'
+        }
+      : { beforeWorkspace: `${greeting}, `, workspaceName: GREETING_PROMPT, afterWorkspace: '?' }
     : {
         // 1.0.6-CRUX25 — keep the greeting simple + universal:
         // "New <Provider> thread for <Workspace>." The diff-count /

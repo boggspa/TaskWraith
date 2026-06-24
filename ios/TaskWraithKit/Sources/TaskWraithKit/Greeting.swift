@@ -22,6 +22,9 @@ public enum Greeting {
     public static let afternoon = "Good afternoon"
     public static let evening = "Good evening"
 
+    /// Static call-to-action following the greeting in the General-chat heading.
+    public static let prompt = "What's on your mind"
+
     /// Map a local hour (0-23) to a time-of-day greeting.
     public static func greeting(forHour hour: Int) -> String {
         if hour < afternoonStartHour { return morning }
@@ -35,7 +38,9 @@ public enum Greeting {
     public static func build(forHour hour: Int, name: String?) -> String {
         let base = greeting(forHour: hour)
         let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? base : "\(base), \(trimmed)"
+        return trimmed.isEmpty
+            ? "\(base), \(prompt)?"
+            : "\(base), \(prompt) \(trimmed)?"
     }
 
     /// Convenience: greeting for the current device-local time.

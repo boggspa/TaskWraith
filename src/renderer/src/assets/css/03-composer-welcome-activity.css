@@ -949,6 +949,14 @@
   line-height: 1.22;
 }
 
+/* General Chat welcome heading renders 1.5x — the stripped greeting screen
+   leans on the "<greeting>, What's on your mind …?" message, so it carries more
+   visual weight. Scoped to .chat-scope-global so workspace/ensemble welcomes
+   are unaffected (the 3-class selector beats the single-element base above). */
+.app-transcript.chat-scope-global .welcome-hero h1 {
+  font-size: clamp(33px, 3.675vw, 45px);
+}
+
 .welcome-hero h1 strong {
   color: rgba(245, 252, 255, 1);
   font-weight: 720;

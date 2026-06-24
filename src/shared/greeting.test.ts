@@ -7,6 +7,7 @@ import {
   GREETING_EVENING,
   GREETING_EVENING_START_HOUR,
   GREETING_MORNING,
+  GREETING_PROMPT,
   buildGreeting,
   greetingForHour
 } from './greeting'
@@ -23,21 +24,21 @@ describe('greetingForHour', () => {
 })
 
 describe('buildGreeting', () => {
-  it('appends a present name', () => {
-    expect(buildGreeting(9, 'Chris')).toBe('Good morning, Chris')
-    expect(buildGreeting(14, 'Chris')).toBe('Good afternoon, Chris')
-    expect(buildGreeting(20, 'Chris')).toBe('Good evening, Chris')
+  it('appends a present name with the call-to-action', () => {
+    expect(buildGreeting(9, 'Chris')).toBe("Good morning, What's on your mind Chris?")
+    expect(buildGreeting(14, 'Chris')).toBe("Good afternoon, What's on your mind Chris?")
+    expect(buildGreeting(20, 'Chris')).toBe("Good evening, What's on your mind Chris?")
   })
 
-  it('omits empty / whitespace-only / nullish names', () => {
-    expect(buildGreeting(9, '')).toBe('Good morning')
-    expect(buildGreeting(9, '   ')).toBe('Good morning')
-    expect(buildGreeting(9, null)).toBe('Good morning')
-    expect(buildGreeting(9, undefined)).toBe('Good morning')
+  it('omits empty / whitespace-only / nullish names but keeps the question', () => {
+    expect(buildGreeting(9, '')).toBe("Good morning, What's on your mind?")
+    expect(buildGreeting(9, '   ')).toBe("Good morning, What's on your mind?")
+    expect(buildGreeting(9, null)).toBe("Good morning, What's on your mind?")
+    expect(buildGreeting(9, undefined)).toBe("Good morning, What's on your mind?")
   })
 
   it('trims surrounding whitespace from a present name', () => {
-    expect(buildGreeting(9, '  Chris  ')).toBe('Good morning, Chris')
+    expect(buildGreeting(9, '  Chris  ')).toBe("Good morning, What's on your mind Chris?")
   })
 })
 
@@ -59,9 +60,10 @@ describe('Greeting.swift drift guard', () => {
     expect(Number(evening![1])).toBe(GREETING_EVENING_START_HOUR)
   })
 
-  it('mirrors the three greeting strings', () => {
+  it('mirrors the three greeting strings + the call-to-action prompt', () => {
     expect(swift).toContain(`"${GREETING_MORNING}"`)
     expect(swift).toContain(`"${GREETING_AFTERNOON}"`)
     expect(swift).toContain(`"${GREETING_EVENING}"`)
+    expect(swift).toContain(`"${GREETING_PROMPT}"`)
   })
 })

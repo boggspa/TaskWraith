@@ -22,6 +22,10 @@ export const GREETING_MORNING = 'Good morning'
 export const GREETING_AFTERNOON = 'Good afternoon'
 export const GREETING_EVENING = 'Good evening'
 
+/** Static call-to-action that follows the time-of-day greeting in the New
+ * General Chat heading: "<greeting>, What's on your mind[ <name>]?". */
+export const GREETING_PROMPT = "What's on your mind"
+
 /** Map a local hour (0-23) to a time-of-day greeting. */
 export function greetingForHour(hour: number): string {
   if (hour < GREETING_AFTERNOON_START_HOUR) return GREETING_MORNING
@@ -30,14 +34,16 @@ export function greetingForHour(hour: number): string {
 }
 
 /**
- * Build the full greeting line, appending the user's name when present.
- * Empty / whitespace-only names are omitted, so the result is e.g.
- * "Good morning" or "Good morning, Chris". The name is never sanitized here —
- * callers render it as inert text (React escapes / SwiftUI Text), so control
- * chars are displayed, never executed.
+ * Build the full New General Chat greeting line. With a name:
+ * "Good morning, What's on your mind Chris?"; without:
+ * "Good morning, What's on your mind?". Empty / whitespace-only names are
+ * omitted. The name is never sanitized here — callers render it as inert text
+ * (React escapes / SwiftUI Text), so control chars are displayed, never executed.
  */
 export function buildGreeting(hour: number, name?: string | null): string {
   const greeting = greetingForHour(hour)
   const trimmed = (name ?? '').trim()
-  return trimmed ? `${greeting}, ${trimmed}` : greeting
+  return trimmed
+    ? `${greeting}, ${GREETING_PROMPT} ${trimmed}?`
+    : `${greeting}, ${GREETING_PROMPT}?`
 }

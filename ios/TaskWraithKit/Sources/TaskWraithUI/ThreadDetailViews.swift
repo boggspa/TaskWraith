@@ -1525,6 +1525,9 @@ struct ThreadEmptyWelcomeCanvas: View {
     let card: RemoteTaskCard
     @Binding var draft: String
     @State private var draftProvider = ""
+    /// 1.5x the .title3 base (~20pt) for the General-chat greeting heading only;
+    /// @ScaledMetric keeps it responsive to the user's Dynamic Type setting.
+    @ScaledMetric(relativeTo: .title3) private var globalGreetingFontSize: CGFloat = 30
     @Environment(\.horizontalSizeClass) private var hSizeClass
     /// iPhone portrait = compact width; iPad (and landscape regular) = regular.
     private var isCompactWidth: Bool { hSizeClass == .compact }
@@ -1586,22 +1589,22 @@ struct ThreadEmptyWelcomeCanvas: View {
             Group {
                 switch titleParts {
                 case .scoped(let prefix, let name):
-                    // General greeting takes no trailing period (parity with the
-                    // Electron heading "Good morning, Chris"); workspace/ensemble
-                    // keep the "." that closes "New chat for <ws>."
+                    // General greeting closes with "?" ("...What's on your mind
+                    // Chris?"); workspace/ensemble keep the "." that closes
+                    // "New chat for <ws>."
                     Text(prefix)
                         .foregroundStyle(TWTheme.textSecondary)
                         + Text(name)
                         .foregroundStyle(accent)
                         .fontWeight(.semibold)
-                        + Text(isGlobal ? "" : ".")
+                        + Text(isGlobal ? "?" : ".")
                         .foregroundStyle(TWTheme.textSecondary)
                 case .plain(let text):
                     Text(text)
                         .foregroundStyle(TWTheme.textSecondary)
                 }
             }
-            .font(.title3)
+            .font(isGlobal ? .system(size: globalGreetingFontSize) : .title3)
             .multilineTextAlignment(.center)
             if !isGlobal {
                 Text(blurb)
@@ -1629,9 +1632,11 @@ struct ThreadEmptyWelcomeCanvas: View {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let greeting = Greeting.greeting(
                 forHour: Calendar.current.component(.hour, from: Date()))
+            // "<greeting>, What's on your mind[ <name>]?" — the user name (or the
+            // prompt itself when no name) sits in the accent-glow slot; "?" added by hero.
             return name.isEmpty
-                ? .scoped(prefix: "", name: greeting)
-                : .scoped(prefix: "\(greeting), ", name: name)
+                ? .scoped(prefix: "\(greeting), ", name: Greeting.prompt)
+                : .scoped(prefix: "\(greeting), \(Greeting.prompt) ", name: name)
         }
         return .scoped(prefix: "New chat for ", name: workspaceName)
     }
