@@ -204,6 +204,94 @@ function InlineMarkdownImage({ src, alt }: { src?: string; alt?: string }): Reac
   )
 }
 
+function CanvasLinkGlyph(): ReactNode {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M1.5 5.5h13" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  )
+}
+
+/** Only http(s) targets are previewable in a Canvas (validateCanvasUrl rejects
+ *  everything else main-side anyway; this gates the affordance's visibility). */
+function isCanvasOpenableUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url.trim())
+}
+
+/**
+ * An external markdown link plus an explicit "Open in Canvas" affordance.
+ *
+ * The user's ask was to load transcript links into the Canvas; for safety this
+ * is EXPLICIT-CLICK ONLY (never auto-load — the Canvas is a scriptable webview;
+ * auto-following an agent-authored URL is a CSRF/SSRF vector). The click routes
+ * through `window.api.canvas.openWindow`, which runs the full canvas SSRF stack
+ * (validateCanvasUrl + per-request gate + hardened webview) — strictly safer
+ * than the existing system-browser open for the same link. The affordance is a
+ * SIBLING of the anchor (a <button> nested in an <a> is invalid HTML).
+ */
+function MarkdownExternalLink({
+  href,
+  resolved,
+  onClick,
+  children
+}: {
+  href: string
+  resolved: string
+  onClick: (event: MouseEvent<HTMLAnchorElement>) => void
+  children: ReactNode
+}): ReactNode {
+  const [canvasState, setCanvasState] = useState<'idle' | 'opening' | 'error'>('idle')
+  const link = (
+    <FaviconLink
+      href={href}
+      resolvedUrl={resolved}
+      target="_blank"
+      rel="noreferrer"
+      onClick={onClick}
+      data-link-kind="external"
+    >
+      {children}
+    </FaviconLink>
+  )
+  if (!isCanvasOpenableUrl(resolved)) return link
+
+  const openInCanvas = (event: MouseEvent<HTMLButtonElement>): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    const openWindow = (
+      window as unknown as {
+        api?: { canvas?: { openWindow?: (a: { url: string }) => Promise<{ ok: boolean }> } }
+      }
+    ).api?.canvas?.openWindow
+    if (!openWindow) return
+    setCanvasState('opening')
+    try {
+      void openWindow({ url: resolved })
+        .then((result) => setCanvasState(result?.ok ? 'idle' : 'error'))
+        .catch(() => setCanvasState('error'))
+    } catch {
+      setCanvasState('error')
+    }
+  }
+
+  return (
+    <span className="markdown-external-link">
+      {link}
+      <button
+        type="button"
+        className="markdown-open-in-canvas"
+        data-canvas-state={canvasState}
+        title={canvasState === 'error' ? "Couldn't open in Canvas" : 'Open in Canvas'}
+        aria-label="Open link in Canvas"
+        onClick={openInCanvas}
+      >
+        <CanvasLinkGlyph />
+      </button>
+    </span>
+  )
+}
+
 const MARKDOWN_COMPONENTS: Components = {
   a({ href, children }) {
     if (typeof href === 'string' && href.startsWith('agent://')) {
@@ -231,16 +319,13 @@ const MARKDOWN_COMPONENTS: Components = {
     const isExternal = classification.kind === 'external'
     if (isExternal) {
       return (
-        <FaviconLink
+        <MarkdownExternalLink
           href={typeof href === 'string' ? href : '#'}
-          resolvedUrl={classification.resolved}
-          target="_blank"
-          rel="noreferrer"
+          resolved={classification.resolved}
           onClick={handleClick}
-          data-link-kind={classification.kind}
         >
           {children}
-        </FaviconLink>
+        </MarkdownExternalLink>
       )
     }
     return (

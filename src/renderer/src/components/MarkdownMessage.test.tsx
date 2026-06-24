@@ -87,6 +87,31 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('favicon-image-fallback')
   })
 
+  it('PR4: external http(s) links get an explicit Open-in-Canvas affordance', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage content={'Open [docs](https://example.com/guide).'} />
+    )
+    expect(html).toContain('favicon-link')
+    expect(html).toContain('markdown-open-in-canvas')
+    expect(html).toContain('aria-label="Open link in Canvas"')
+  })
+
+  it('PR4: mailto links are external but get NO canvas affordance', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage content={'Mail [me](mailto:a@b.com).'} />
+    )
+    expect(html).toContain('favicon-link')
+    expect(html).not.toContain('markdown-open-in-canvas')
+  })
+
+  it('PR4: path / file links get NO canvas affordance', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage content={'See [file](./src/app.ts).'} />
+    )
+    expect(html).not.toContain('markdown-open-in-canvas')
+    expect(html).not.toContain('favicon-link')
+  })
+
   it('renders identically across calls and matches block-by-block output (append-only contract)', () => {
     // Phase L1a: the renderer is now block-aware. This test verifies
     // two invariants the streaming hot path depends on:

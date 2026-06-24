@@ -3374,6 +3374,45 @@
   object-fit: contain;
 }
 
+/* PR4 — "Open in Canvas" affordance on external transcript links. Explicit
+   click only; a subtle sibling glyph that brightens on hover/focus. */
+.markdown-external-link {
+  white-space: nowrap;
+}
+.markdown-open-in-canvas {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.18em;
+  padding: 0 0.15em;
+  border: 0;
+  background: none;
+  color: var(--text-tertiary, rgba(255, 255, 255, 0.5));
+  cursor: pointer;
+  vertical-align: -0.12em;
+  opacity: 0.45;
+  border-radius: var(--radius-sm, 5px);
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.markdown-external-link:hover .markdown-open-in-canvas,
+.markdown-open-in-canvas:hover,
+.markdown-open-in-canvas:focus-visible {
+  opacity: 1;
+  color: var(--text-primary, #fff);
+}
+.markdown-open-in-canvas:focus-visible {
+  outline: 2px solid var(--focus-ring, #5b9dff);
+  outline-offset: 1px;
+}
+.markdown-open-in-canvas[data-canvas-state='opening'] {
+  opacity: 0.7;
+  cursor: progress;
+}
+.markdown-open-in-canvas[data-canvas-state='error'] {
+  color: var(--status-failed, #e5484d);
+  opacity: 1;
+}
+
 /* Clickable wrapper (opens the full-size preview) — a bare button, no chrome. */
 .markdown-inline-image-button {
   display: inline-block;
