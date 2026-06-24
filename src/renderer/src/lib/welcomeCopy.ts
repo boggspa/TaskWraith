@@ -1,3 +1,5 @@
+import { greetingForHour } from '../../../shared/greeting'
+
 type WelcomeHeadingCopy = {
   beforeWorkspace: string
   workspaceName: string
@@ -30,6 +32,10 @@ export type WelcomeCopyContext = {
   providerLabel: string
   permissionModeLabel: string
   isGlobalChat: boolean
+  /** Local hour (0-23) for the General-chat time-of-day greeting. */
+  nowHour?: number
+  /** Optional display name appended to the General-chat greeting. */
+  userName?: string
   hasDiff: boolean
   diffCount: number
   scheduledTaskCount: number
@@ -296,17 +302,18 @@ const buildWelcomeStarters = (context: WelcomeCopyContext): WelcomeStarter[] => 
 }
 
 export const buildWelcomeCopy = (context: WelcomeCopyContext): WelcomeCopy => {
+  // General (global) chats open on a personal time-of-day greeting
+  // ("Good morning" / "Good morning, Chris") instead of "New <Provider>
+  // General Chat." The name slot stays the bold/glow span so it keeps the
+  // provider-hue glow; an empty userName glows the greeting itself. The
+  // subtitle is dropped for General chats (the '' subheading below) — the
+  // welcome is intentionally stripped to greeting + composer + notifications.
+  const greeting = greetingForHour(context.nowHour ?? 12)
+  const greetingName = (context.userName ?? '').trim()
   const heading: WelcomeHeadingCopy = context.isGlobalChat
-    ? {
-        beforeWorkspace: `New ${context.providerLabel} `,
-        // 1.0.4-AS6 — capitalise as a proper noun. Pre-AS6 read
-        // "New Claude global chat." which felt sentence-case in the
-        // middle of a Title-Cased heading; the workspace-name slot
-        // is bold/glow-styled like the workspace name on
-        // workspace-bound chats and reads naturally as Title Case.
-        workspaceName: 'General Chat',
-        afterWorkspace: '.'
-      }
+    ? greetingName
+      ? { beforeWorkspace: `${greeting}, `, workspaceName: greetingName, afterWorkspace: '' }
+      : { beforeWorkspace: '', workspaceName: greeting, afterWorkspace: '' }
     : {
         // 1.0.6-CRUX25 — keep the greeting simple + universal:
         // "New <Provider> thread for <Workspace>." The diff-count /
@@ -318,7 +325,7 @@ export const buildWelcomeCopy = (context: WelcomeCopyContext): WelcomeCopy => {
       }
 
   const subheading = context.isGlobalChat
-    ? 'A general chat for broad planning, setup checks, or choosing the right folder to work in.'
+    ? ''
     : context.lastRunStatus === 'failed'
       ? 'Start by narrowing the failure path, then make one fix and verify it.'
       : context.hasDiff

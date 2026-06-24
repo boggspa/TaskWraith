@@ -17211,6 +17211,7 @@ function App(): React.JSX.Element {
   // the real dashboard (prevents appear → hide → reappear flicker).
   const shouldShowWelcomeUsageDashboard =
     isWelcomeChat &&
+    !isCurrentGlobalChat &&
     usageInitialized &&
     welcomeUsageDashboardData.lifetimeHasActivity &&
     !isMultiviewSplit
@@ -17603,6 +17604,8 @@ function App(): React.JSX.Element {
     providerLabel: currentProviderLabel,
     permissionModeLabel,
     isGlobalChat: isCurrentGlobalChat,
+    nowHour: new Date().getHours(),
+    userName: settings?.userName,
     hasDiff: hasWelcomeDiff,
     diffCount: welcomeDiffCount,
     scheduledTaskCount: relevantScheduledTasks.length,
@@ -19039,6 +19042,8 @@ function App(): React.JSX.Element {
       providerLabel: viewerProviderLabel,
       permissionModeLabel: 'Default Approval',
       isGlobalChat: viewerIsGlobalChat,
+      nowHour: new Date().getHours(),
+      userName: settings?.userName,
       hasDiff: false,
       diffCount: 0,
       scheduledTaskCount: 0
@@ -19289,10 +19294,13 @@ function App(): React.JSX.Element {
         welcomeUsageTab={welcomeUsageTab}
         onWelcomeUsageTabChange={setWelcomeUsageTab}
         showWelcomeUsageDashboard={
-          viewerShouldShowWelcomeUsageDashboard && welcomeDashboardCardEnabled
+          viewerShouldShowWelcomeUsageDashboard &&
+          !viewerIsGlobalChat &&
+          welcomeDashboardCardEnabled
         }
         reserveWelcomeUsageDashboard={
           viewerIsWelcomeChat &&
+          !viewerIsGlobalChat &&
           welcomeDashboardCardEnabled &&
           !usageInitialized &&
           !isMultiviewSplit
@@ -20003,6 +20011,8 @@ function App(): React.JSX.Element {
         providerLabel: viewerProviderLabel,
         permissionModeLabel: 'Default Approval',
         isGlobalChat: viewerIsGlobalChat,
+        nowHour: new Date().getHours(),
+        userName: settings?.userName,
         hasDiff: false,
         diffCount: 0,
         scheduledTaskCount: 0
@@ -21584,7 +21594,7 @@ function App(): React.JSX.Element {
               fetch resolves and only when the dashboard would plausibly
               render (welcome screen + card enabled). Collapses harmlessly for
               brand-new accounts that turn out to have no history. */}
-          {isWelcomeChat && welcomeDashboardCardEnabled && !usageInitialized && (
+          {isWelcomeChat && !isCurrentGlobalChat && welcomeDashboardCardEnabled && !usageInitialized && (
               <div
                 className="welcome-usage-region welcome-usage-region-small welcome-usage-region-reserved"
                 ref={welcomeDashboardRegionRef}

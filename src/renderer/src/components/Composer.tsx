@@ -1398,7 +1398,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   </strong>
                   <span>{welcomeCopy.heading.afterWorkspace}</span>
                 </h1>
-                <p>{welcomeCopy.subheading}</p>
+                {welcomeCopy.subheading && <p>{welcomeCopy.subheading}</p>}
                 {/*
                   Welcome workspace picker (1.0.3). The sidebar already has a
                   workspace list, but landing on the welcome screen of a new
@@ -1408,16 +1408,19 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   a one-click affordance: recent workspaces as quick chips,
                   plus a "Browse…" button to open the system folder picker.
                   Workspaces show their displayName + folder basename when
-                  different.
+                  different. Hidden on General chats — the stripped welcome
+                  is greeting + composer + notifications only.
                 */}
-                <WelcomeWorkspacePicker
-                  workspaces={workspaces}
-                  currentWorkspace={currentWorkspace}
-                  isGlobalChat={isCurrentGlobalChat}
-                  onPickExisting={handleSelectExistingWorkspace}
-                  onAddNewWorkspace={handleSelectWorkspace}
-                  onSelectNoWorkspace={handleNewGlobalChat}
-                />
+                {!isCurrentGlobalChat && (
+                  <WelcomeWorkspacePicker
+                    workspaces={workspaces}
+                    currentWorkspace={currentWorkspace}
+                    isGlobalChat={isCurrentGlobalChat}
+                    onPickExisting={handleSelectExistingWorkspace}
+                    onAddNewWorkspace={handleSelectWorkspace}
+                    onSelectNoWorkspace={handleNewGlobalChat}
+                  />
+                )}
               </div>
             )}
             {/*
@@ -4655,7 +4658,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 }
               />
             )}
-            {isWelcomeChat && !isCurrentEnsembleChat && !isWorkflowChatWelcome && !isMultiviewSplit && (
+            {isWelcomeChat &&
+              !isCurrentEnsembleChat &&
+              !isWorkflowChatWelcome &&
+              !isCurrentGlobalChat &&
+              !isMultiviewSplit && (
               /*
                 Solo-provider starter cards. Hidden when multiview is split (a
                 short split cell can't fit the hero + starters + composer, so
