@@ -6198,6 +6198,14 @@ function App(): React.JSX.Element {
     } catch {
       /* localStorage unavailable — the other guards still apply */
     }
+    // Staged-but-unsent intent the main process can't see: image attachments
+    // and Discord context selections live in renderer state keyed by chatId.
+    for (const [id, imgs] of Object.entries(imageAttachmentsByChatIdRef.current)) {
+      if (imgs && imgs.length > 0) protectedChatIds.add(id)
+    }
+    for (const [id, selection] of Object.entries(discordContextSelectionByChatId)) {
+      if (selection) protectedChatIds.add(id)
+    }
     const draftChatIds = Object.entries(composerDraftsByChatIdRef.current)
       .filter(([, text]) => typeof text === 'string' && text.trim().length > 0)
       .map(([id]) => id)
@@ -6209,7 +6217,11 @@ function App(): React.JSX.Element {
       })
       .then((res) => {
         if (!res?.ok || !res.reaped?.length) return
-        const reaped = new Set(res.reaped)
+        // Never drop the chat the user is now viewing: a sub-second navigate-
+        // back race could reap a chat that became current during the async
+        // round-trip (it re-persists on first send anyway).
+        const reaped = new Set(res.reaped.filter((id) => id !== currentChatIdRef.current))
+        if (reaped.size === 0) return
         for (const id of reaped) chatByIdRef.current.delete(id)
         setChats((prev) => prev.filter((chat) => !reaped.has(chat.appChatId)))
       })
