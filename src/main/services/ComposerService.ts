@@ -20,6 +20,7 @@ import {
   coerceApprovalMode,
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
+import { resolveUnattendedApprovalMode } from '../UnattendedPostureGate'
 import { resolveProviderDispatch, type ProviderDispatchResolution } from '../ProviderRunPause'
 import { resolveActiveGoalForProvider } from '../GoalState'
 import {
@@ -50,6 +51,10 @@ export interface ComposerImageAttachment {
 export interface ComposerInput {
   chatId: string
   appRunId?: string
+  /** Present ONLY for an unattended scheduled-task / workflow occurrence. Its
+   * presence forces a safe posture (see resolveUnattendedApprovalMode); an
+   * interactive run never carries it. */
+  scheduledTaskId?: string
   provider?: ProviderId
   providerReroute?: ProviderRunReroute
   scope?: ChatScope
@@ -194,11 +199,24 @@ export class ComposerService {
             resolveApprovalMode(scope, requestedApprovalMode, trustedApprovalChat),
             appRunId
           )
+    // Unattended (scheduled/workflow) runs must NEVER silently inherit the chat's
+    // elevated approvalMode. capRequestedApprovalMode can't prevent it: the "trusted"
+    // ceiling is the scheduled chat's OWN persisted mode (a poisoned floor) and the
+    // run carries an appRunId (so the no-appRunId cap is bypassed). Derive the safe
+    // posture from scheduledTaskId presence and FORCE it here — BEFORE the
+    // effectiveRunPermissions/plan-population block below, so a forced 'plan' actually
+    // populates read-only permissions instead of being read-only in name only.
+    // P1: no elevation ack yet → always 'plan'. (P2 wires a verified WorkflowDefinition
+    // ack so a user can opt back into Default / Full-Access unattended loops.)
+    const unattended = Boolean(optionalString(input.scheduledTaskId))
+    if (unattended) {
+      approvalMode = resolveUnattendedApprovalMode(undefined, approvalMode)
+    }
     const imagePaths = normalizeImagePaths(
       effectiveInput.imageAttachments || effectiveInput.attachments || []
     )
     const externalPathGrants =
-      scope !== 'global'
+      scope !== 'global' && !(unattended && approvalMode === 'plan')
         ? normalizeComposerExternalPathGrants(effectiveInput.externalPathGrants || [], provider)
         : []
     const discordContextSnapshots = normalizeDiscordContextSnapshots(input.discordContextSnapshots)

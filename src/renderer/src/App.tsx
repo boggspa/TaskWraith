@@ -9751,6 +9751,10 @@ function App(): React.JSX.Element {
         composedPayload = await window.api.composeRun({
           chatId: runChat.appChatId,
           appRunId: currentRunId,
+          // Unattended marker: presence forces a safe posture in ComposerService
+          // (a scheduled occurrence must not silently inherit the chat's elevated
+          // approvalMode). Mirrors the ensemble dispatch path.
+          ...(request.scheduledTaskId ? { scheduledTaskId: request.scheduledTaskId } : {}),
           provider: runProvider,
           scope: isGlobalRun ? 'global' : 'workspace',
           ...(isGlobalRun ? {} : { workspace: runWorkspace!.path }),

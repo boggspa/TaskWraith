@@ -7,6 +7,7 @@ import type {
 } from '../store/types'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
+import { resolveUnattendedApprovalMode } from '../UnattendedPostureGate'
 import { selectFailoverTarget } from '../RerouteFailoverPosture'
 
 /**
@@ -138,6 +139,14 @@ export async function runProviderAutoFailover(
   // Re-run the SAME request. provider stays the FAILED one; the dispatch seam
   // reroutes it to `target` and re-signs the (capped, non-escalating) posture.
   const newRunId = deps.makeRunId(req.failedProvider)
+  // An unattended (scheduled) run that fails over must NOT regain its elevated
+  // posture on the re-sign. This re-dispatch bypasses ComposerService.composeRun's
+  // unattended clamp, so re-assert the safe posture here when the snapshot is a
+  // scheduled occurrence (presence of scheduledTaskId). Non-scheduled failovers are
+  // byte-for-byte unchanged.
+  const reroutedApprovalMode = snap.scheduledTaskId
+    ? resolveUnattendedApprovalMode(undefined, snap.approvalMode)
+    : snap.approvalMode
   const payload: AgentRunPayload = {
     provider: req.failedProvider,
     scope: snap.scope,
@@ -146,7 +155,7 @@ export async function runProviderAutoFailover(
     activeGoal: snap.activeGoal,
     appRunId: newRunId,
     appChatId: snap.appChatId,
-    approvalMode: snap.approvalMode,
+    approvalMode: reroutedApprovalMode,
     model: snap.model,
     reasoningEffort: snap.reasoningEffort,
     serviceTier: snap.serviceTier,

@@ -1032,3 +1032,61 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     expect(clamped.effectivePermissions).toEqual(SENTINEL_READONLY)
   })
 })
+
+describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => {
+  it('FORCES plan for an unattended run even when the chat’s stored mode is auto_edit (trusted-floor poisoning)', () => {
+    // The chat persisted auto_edit, so capRequestedApprovalMode’s trusted ceiling is
+    // itself auto_edit and the run carries an appRunId — i.e. every pre-existing cap
+    // is a no-op. The scheduledTaskId clamp must still force a safe posture.
+    const payload = compose(
+      { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
+      { provider: 'codex', approvalMode: 'auto_edit', appRunId: 'run-1', scheduledTaskId: 'task-1' }
+    )
+    expect(payload.approvalMode).toBe('plan')
+    // Read-only permissions must be POPULATED (forced before the plan-population
+    // block) — not read-only in name only.
+    expect(payload.effectivePermissions?.readOnly).toBe(true)
+    expect(payload.effectivePermissions?.presetId).toBe('read_only')
+  })
+
+  it('clears externalPathGrants for the forced-plan unattended run (interactive contrast keeps them)', () => {
+    const grant = makeGrant({
+      provider: 'codex',
+      access: 'write',
+      kind: 'directory',
+      path: '/outside'
+    })
+    // Interactive (no scheduledTaskId): the grant survives normalization.
+    const interactive = compose(
+      { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
+      {
+        provider: 'codex',
+        approvalMode: 'auto_edit',
+        appRunId: 'run-1',
+        externalPathGrants: [grant]
+      }
+    )
+    expect(interactive.externalPathGrants.length).toBeGreaterThan(0)
+    // The SAME run as a scheduled occurrence is forced to plan AND its grants cleared.
+    const unattended = compose(
+      { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
+      {
+        provider: 'codex',
+        approvalMode: 'auto_edit',
+        appRunId: 'run-1',
+        scheduledTaskId: 'task-1',
+        externalPathGrants: [grant]
+      }
+    )
+    expect(unattended.approvalMode).toBe('plan')
+    expect(unattended.externalPathGrants).toEqual([])
+  })
+
+  it('leaves an INTERACTIVE elevated run untouched (clamp is scoped strictly to scheduledTaskId)', () => {
+    const payload = compose(
+      { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
+      { provider: 'codex', approvalMode: 'auto_edit', appRunId: 'run-1' }
+    )
+    expect(payload.approvalMode).toBe('auto_edit')
+  })
+})

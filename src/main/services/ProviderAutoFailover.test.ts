@@ -94,6 +94,28 @@ describe('runProviderAutoFailover', () => {
     expect('scheduledTaskId' in noTask.dispatched[0]).toBe(false)
   })
 
+  it('re-asserts a safe posture for a scheduled (unattended) failover, leaving interactive elevated', async () => {
+    // A scheduled occurrence carries scheduledTaskId — its re-dispatch must clamp
+    // back to plan (this path bypasses ComposerService's unattended clamp).
+    const scheduled = makeDeps()
+    await runProviderAutoFailover(scheduled.deps, {
+      failedRunId: 'run-A',
+      failedProvider: 'claude',
+      appChatId: 'chat-1',
+      snapshot: baseSnapshot({ scheduledTaskId: 'task-7', approvalMode: 'auto_edit' })
+    })
+    expect(scheduled.dispatched[0].approvalMode).toBe('plan')
+
+    // An interactive failover (no scheduledTaskId) keeps its requested mode.
+    const interactive = makeDeps()
+    await runProviderAutoFailover(interactive.deps, {
+      failedRunId: 'run-B',
+      failedProvider: 'claude',
+      snapshot: baseSnapshot({ approvalMode: 'auto_edit' })
+    })
+    expect(interactive.dispatched[0].approvalMode).toBe('auto_edit')
+  })
+
   it('uses the configured reroute target when set and live', async () => {
     const { deps, dispatched } = makeDeps({
       getSettings: () => ({ providerRunPauses: { claude: { paused: false, reroute: { provider: 'kimi' } } } })
