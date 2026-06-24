@@ -34,17 +34,23 @@
  */
 
 /**
- * Distance, in CSS pixels, within which a scroll position counts as the
- * live edge. This is intentionally tight: once the user scrolls away,
- * auto-follow stays off until they return to the actual bottom.
- * A tiny tolerance covers sub-pixel layout and WebKit rounding.
+ * Distance, in CSS pixels, within which a scroll position RE-ENGAGES
+ * auto-follow. Intentionally tighter than the disengage threshold: once
+ * the user scrolls away, follow re-arms only when they return to the
+ * genuine live edge (≤2px). Keeping this strictly below
+ * `STICK_DISENGAGE_PX` creates a small hysteresis dead-band (see below)
+ * so a single pixel of layout jitter at the bottom cannot oscillate the
+ * follow state.
  */
-export const STICK_ENGAGE_PX = 4
+export const STICK_ENGAGE_PX = 2
 
 /**
- * Distance beyond which auto-follow disengages. Matched to the engage
- * threshold so the user owns scroll as soon as they leave the bottom,
- * while still tolerating sub-pixel rounding at the live edge.
+ * Distance beyond which auto-follow DISENGAGES. Kept sensitive (small) so
+ * the user owns scroll the instant they move away from the bottom — note
+ * this also backstops scrollbar-drag / keyboard scroll-ups that never
+ * fire the wheel/touch intent listeners. The `2 < d ≤ 4` gap between
+ * engage and disengage is the hysteresis dead-band: within it the follow
+ * state is sticky, so micro-jitter at the live edge does not flap it.
  */
 export const STICK_DISENGAGE_PX = 4
 

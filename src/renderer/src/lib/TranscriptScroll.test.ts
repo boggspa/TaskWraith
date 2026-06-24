@@ -51,10 +51,12 @@ describe('TranscriptScroll', () => {
       expect(shouldDisengageAutoFollow(STICK_DISENGAGE_PX + 1)).toBe(true)
     })
 
-    it('uses the same tight threshold for engage and disengage', () => {
-      // Auto-follow is no longer a broad sticky band: leaving the
-      // live edge disengages, returning to it re-engages.
-      expect(STICK_ENGAGE_PX).toBe(STICK_DISENGAGE_PX)
+    it('uses hysteresis: a tighter engage band than disengage', () => {
+      // Re-engage requires being genuinely at the live edge; disengage is
+      // sensitive (a small scrollbar drag away releases follow). The gap
+      // between them is a dead-band that stops a single pixel of layout
+      // jitter at the bottom from oscillating the follow state.
+      expect(STICK_ENGAGE_PX).toBeLessThan(STICK_DISENGAGE_PX)
     })
 
     it('rejects non-finite inputs defensively', () => {

@@ -2329,6 +2329,13 @@ function App(): React.JSX.Element {
   // Holds the rAF id for the pending post-frame re-pin so consecutive
   // streaming updates can coalesce into a single re-pin write per frame.
   const repinRafIdRef = useRef<number | null>(null)
+  // Set true immediately before each programmatic snap-to-bottom write so
+  // the auto-follow `evaluate` listener can distinguish the app's OWN scroll
+  // from a genuine user scroll. Without it, a snap landed the scroll at the
+  // bottom, `evaluate` read distance≈0 and RE-ENGAGED follow — clobbering a
+  // deliberate scroll-up. That self-sustaining loop is the force-scroll-override
+  // bug. Mirrors `anchorWriteRef` in TranscriptPanel's virtual-window listener.
+  const programmaticScrollRef = useRef(false)
   // "↓ N new messages" jump-to-latest pill state (Slack/Discord/YouTube
   // pattern). After the 1.0.4 race-window fix the user can scroll up
   // freely without auto-scroll fighting them — but they had no visible
@@ -2381,6 +2388,18 @@ function App(): React.JSX.Element {
   // hot-swap the implementation under test.
   const handleJumpToLatestRef = useRef(handleJumpToLatest)
   handleJumpToLatestRef.current = handleJumpToLatest
+  // Perform an internal snap-to-bottom that the auto-follow `evaluate`
+  // listener will recognise as the app's own write (via programmaticScrollRef)
+  // and therefore NOT mistake for the user arriving at the live edge. Every
+  // internal snap path — messages-update sync write + its rAF re-pin, the
+  // code-block and content-resize re-pins, and the chat-switch landing — routes
+  // through here so none can re-engage follow against a deliberate scroll-up.
+  // (The jump-to-latest pill at `handleJumpToLatest` is deliberately NOT routed
+  // through this: it is user-initiated and re-arms follow on purpose.)
+  const snapScrollToBottom = useCallback((node: HTMLElement) => {
+    programmaticScrollRef.current = true
+    node.scrollTop = node.scrollHeight
+  }, [])
   // Raw Events panel auto-follow mirror of the transcript pair above.
   // The Inspector's Raw Events tab streams every run event as it arrives;
   // an earlier implementation unconditionally scrolled the panel to the
@@ -6912,6 +6931,19 @@ function App(): React.JSX.Element {
     let rafId: number | null = null
     const evaluate = () => {
       rafId = null
+      // A programmatic snap-to-bottom (any internal re-pin / chat-switch /
+      // messages-update write, all routed through `snapScrollToBottom`) also
+      // dispatches a scroll event. Do NOT let our own write re-interpret the
+      // resulting bottom position as "the user returned to the live edge" and
+      // re-engage follow — that is the loop that overrode a deliberate
+      // scroll-up. Consume the one-shot flag and skip this evaluation; a
+      // genuine user scroll on a later frame carries no flag and is handled
+      // normally. (Disengage is intentionally skipped here too: the issuing
+      // code already knows the follow intent of its own write.)
+      if (programmaticScrollRef.current) {
+        programmaticScrollRef.current = false
+        return
+      }
       const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
       // Only the actual bottom opts back into auto-follow. This keeps
       // transcript scrolling fully user-owned until they deliberately
@@ -7081,7 +7113,7 @@ function App(): React.JSX.Element {
         ) {
           return
         }
-        node.scrollTop = node.scrollHeight
+        snapScrollToBottom(node)
       })
     }
 
@@ -7160,7 +7192,7 @@ function App(): React.JSX.Element {
         ) {
           return
         }
-        node.scrollTop = node.scrollHeight
+        snapScrollToBottom(node)
       })
     })
 
@@ -7245,20 +7277,23 @@ function App(): React.JSX.Element {
     // and `autoFollowRef` is still `true` from the previous frame.
     //
     //   (1) `userScrolledAwayInFrameRef` already records the user's
-    //   wheel/touch/key intent. The rAF re-pin path checks it (line
-    //   8794) but the synchronous write below previously didn't —
-    //   the old code reset the flag at the top of the effect, losing
-    //   the signal before it could be honoured. Now the flag is read
-    //   first; if set we bail entirely and never reset it, so the
-    //   next streaming tick will also bail until the scroll listener
-    //   (line 8547) clears it when the user actually returns to the
-    //   bottom.
+    //   wheel/touch/key intent (set synchronously by the wheel/touch
+    //   listeners). The rAF re-pin path checks it, but the synchronous
+    //   write below previously didn't — the old code reset the flag at
+    //   the top of the effect, losing the signal before it could be
+    //   honoured. Now the flag is read first; if set we bail entirely
+    //   and never reset it, so the next streaming tick will also bail
+    //   until the scroll-`evaluate` listener clears it when the user
+    //   actually returns to the bottom.
     //
-    //   The scroll listener now updates synchronously, so
-    //   `autoFollowRef` is the "was at the bottom before this message
-    //   update" signal. Do not re-measure distance here: after a large
-    //   incoming message, the user who was previously bottom-pinned
-    //   would incorrectly look far from the bottom.
+    //   The scroll-`evaluate` listener is rAF-COALESCED (not synchronous),
+    //   so `autoFollowRef` is read here as the "was at the bottom before
+    //   this message update" signal rather than re-measuring distance:
+    //   after a large incoming message the previously-bottom-pinned user
+    //   would momentarily look far from the bottom. The user's *disengage*
+    //   intent is still captured synchronously by the wheel/touch
+    //   listeners above, and our own snap can no longer self-re-engage
+    //   follow (see `programmaticScrollRef` / `snapScrollToBottom`).
     if (userScrolledAwayInFrameRef.current) {
       incrementUnreadIfNewMessagesArrived()
       return
@@ -7268,9 +7303,9 @@ function App(): React.JSX.Element {
     // event landing between this sync write and the rAF callback
     // should disable the re-pin.
     userScrolledAwayInFrameRef.current = false
-    // Single scrollTop write per messages-update; the browser clamps to
+    // Single snap per messages-update; the browser clamps to
     // [0, scrollHeight - clientHeight] so we don't need to compute target.
-    scroller.scrollTop = scroller.scrollHeight
+    snapScrollToBottom(scroller)
     // Schedule a follow-up rAF re-pin. The cleanup returned below cancels
     // it when the effect re-runs (next messages update) or the component
     // unmounts, so consecutive streaming updates coalesce naturally into
@@ -7287,7 +7322,7 @@ function App(): React.JSX.Element {
       ) {
         return
       }
-      node.scrollTop = node.scrollHeight
+      snapScrollToBottom(node)
     })
     return () => {
       // Cancel any pending re-pin if the effect is torn down (component
@@ -7321,7 +7356,7 @@ function App(): React.JSX.Element {
     }
     // Defer one frame so the new messages render before we measure.
     const rafId = requestAnimationFrame(() => {
-      scroller.scrollTop = scroller.scrollHeight
+      snapScrollToBottom(scroller)
     })
     return () => cancelAnimationFrame(rafId)
     // Chat-switch only: message growth is handled by the message layout effect above.
