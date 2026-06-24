@@ -1281,6 +1281,12 @@ export const TranscriptPanel = memo(
                           formatAssistantMessageLabel(msg, currentProviderLabel, currentProvider, {
                             isEnsembleChat: currentChat?.chatKind === 'ensemble'
                           })
+                        // Solo General (global, non-ensemble) chats read as one
+                        // friendly "Assistant" voice: drop the provider tint +
+                        // model badge. Ensemble keeps per-speaker tint/badge so
+                        // the reader can tell who actually spoke.
+                        const soloGlobal =
+                          isGlobal === true && currentChat?.chatKind !== 'ensemble'
                         // 1.0.7 — participant-rename continuity. The
                         // header keeps the FROZEN role label; this quiet
                         // badge tells the reader the seat has since been
@@ -1297,13 +1303,15 @@ export const TranscriptPanel = memo(
                         return (
                           <div
                             className={`message-meta${
-                              providerClass || provider
+                              !soloGlobal && (providerClass || provider)
                                 ? ` provider-${providerClass || provider}`
                                 : ''
                             }`}
                           >
-                            <span className="message-meta-label">{label}</span>
-                            {modelBadge && (
+                            <span className="message-meta-label">
+                              {soloGlobal ? 'Assistant' : label}
+                            </span>
+                            {!soloGlobal && modelBadge && (
                               <span
                                 className="message-meta-model-badge"
                                 title={`Model: ${modelBadge}`}
