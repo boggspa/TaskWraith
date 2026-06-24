@@ -164,6 +164,7 @@ describe('RunQueue', () => {
         workspacePath: '/workspace',
         source: 'system',
         status: 'steer_promoting',
+        promotionOwnerToken: 'owner-token-123',
         promotionToken: 'token-123',
         promotionAttempt: 4,
         transitionVersion: 2,
@@ -174,6 +175,7 @@ describe('RunQueue', () => {
     )
 
     expect(steering.status).toBe('steer_promoting')
+    expect(steering.promotionOwnerToken).toBe('owner-token-123')
     expect(steering.promotionToken).toBe('token-123')
     expect(steering.promotionAttempt).toBe(4)
     expect(steering.transitionVersion).toBe(2)
@@ -186,6 +188,7 @@ describe('RunQueue', () => {
       '2026-05-06T00:01:00.000Z'
     )
     expect(failed.status).toBe('failed')
+    expect(failed.promotionOwnerToken).toBeUndefined()
     expect(failed.promotionToken).toBeUndefined()
     expect(failed.transitionVersion).toBeUndefined()
     expect(failed.promotionAttempt).toBeUndefined()

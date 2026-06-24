@@ -214,6 +214,7 @@ export function updateRunQueueJobRecord(
   if (!RUN_QUEUE_NONTERMINAL_STATUS_SET[status]) {
     next.promotionAttempt = undefined
     next.transitionVersion = undefined
+    next.promotionOwnerToken = undefined
     next.promotionToken = undefined
     next.queueMessageId = undefined
   }
