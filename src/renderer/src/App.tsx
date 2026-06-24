@@ -10456,7 +10456,10 @@ function App(): React.JSX.Element {
           const exitMatch = redacted.match(/Process exited with code\s+(\d+)/i)
           if (exitMatch) {
             const exitCode = Number(exitMatch[1])
-            if (exitCode === 0 && isVisibleRunChat()) {
+            const suppressRawCompletionNotice =
+              steerSuppressedSummaryRunIdsRef.current.has(currentRunId) ||
+              intentionalCancelRunIdsRef.current.has(currentRunId)
+            if (exitCode === 0 && isVisibleRunChat() && !suppressRawCompletionNotice) {
               // Skip per-participant notice for ensemble (round-level
               // effect handles it). Same reasoning as the main exit
               // handler above.
@@ -12245,6 +12248,7 @@ function App(): React.JSX.Element {
     // handleProviderExit (which fires on the resulting `agent-exit`) marks it
     // "Cancelled" instead of deriving "failed"/"success" from the exit code.
     if (cancelTargetRunId) {
+      steerSuppressedSummaryRunIdsRef.current.add(cancelTargetRunId)
       intentionalCancelRunIdsRef.current.add(cancelTargetRunId)
     }
     void window.api.cancelAgentRun(request.provider, cancelTargetRunId).catch((error) => {
@@ -12298,7 +12302,10 @@ function App(): React.JSX.Element {
     const stillCurrent = steerStateRef.current
     if (stillCurrent.phase !== 'cancelling' || stillCurrent.chatId !== targetChatId) {
       steerSuppressionChatIdsRef.current.delete(targetChatId)
-      if (cancelTargetRunId) intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
+      if (cancelTargetRunId) {
+        steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
+        intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
+      }
       return
     }
 
@@ -12380,7 +12387,10 @@ function App(): React.JSX.Element {
     steerSuppressionChatIdsRef.current.delete(targetChatId)
     // The prior run survives and will complete on its own, so it must NOT be
     // marked a user-cancel (else its natural exit would read "Cancelled").
-    if (cancelTargetRunId) intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
+    if (cancelTargetRunId) {
+      steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
+      intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
+    }
     // The user's prompt is too valuable to drop, so queue it (the
     // existing fallback) and surface a visible error note. The active
     // run keeps running; when it finishes the queue scheduler
