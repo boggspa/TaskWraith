@@ -8,6 +8,7 @@ import {
   compactToolDisplayName,
   durationLabel,
   extractToolUrlTargets,
+  friendlyGlobalToolLabel,
   providerLabel,
   resolveProvider,
   statusLabel
@@ -19,9 +20,17 @@ interface CompactToolTraceProps {
   /** Chat-level provider — used when the activity itself doesn't
    * carry a `metadata.provider` / `metadata.ensembleProvider`. */
   provider?: ProviderId
+  /** Slice 6a — when true (chat.scope === 'global'), the collapsed one-line
+   * trace softens to a friendly summary ("Searched the web…") for web tools.
+   * Softens, never hides: the foldout still carries the full raw output. */
+  globalScope?: boolean
 }
 
-export function CompactToolTrace({ activity, provider }: CompactToolTraceProps) {
+export function CompactToolTrace({
+  activity,
+  provider,
+  globalScope = false
+}: CompactToolTraceProps) {
   const [expanded, setExpanded] = useState(false)
   const resolvedProvider = resolveProvider(activity, provider)
   const family = toolNameToFamily(activity.toolName)
@@ -31,6 +40,7 @@ export function CompactToolTrace({ activity, provider }: CompactToolTraceProps) 
   const toolName = compactToolDisplayName(activity)
   const provLabel = providerLabel(resolvedProvider)
   const urlTargets = extractToolUrlTargets(activity)
+  const softLabel = globalScope ? friendlyGlobalToolLabel(activity) : null
 
   const sections = expanded ? buildFoldoutSections(activity) : []
 
@@ -53,8 +63,8 @@ export function CompactToolTrace({ activity, provider }: CompactToolTraceProps) 
             <span className={`compact-tool-trace-pip category-${activity.category || 'unknown'}`} />
           )}
         </span>
-        <span className="compact-tool-trace-name">{toolName}</span>
-        {provLabel && (
+        <span className="compact-tool-trace-name">{softLabel || toolName}</span>
+        {!softLabel && provLabel && (
           <>
             <span className="compact-tool-trace-sep" aria-hidden>
               ·

@@ -42,6 +42,7 @@ import {
   type TodoItem
 } from '../../../main/TodoList'
 import { durationLabel } from './CompactToolTrace.lib'
+import { isGlobalChat } from '../lib/chatScope'
 import {
   agentInvocationRouteLabel,
   agentInvocationSourceClassName,
@@ -1725,7 +1726,12 @@ export function ActivityStack({
     // falls back to the chat-level `provider` passed here.
     if (compactDensity && !thread) {
       return (
-        <CompactToolTrace key={item.activity.id} activity={item.activity} provider={provider} />
+        <CompactToolTrace
+          key={item.activity.id}
+          activity={item.activity}
+          provider={provider}
+          globalScope={isGlobalChat(chat)}
+        />
       )
     }
     return (
