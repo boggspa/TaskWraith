@@ -10499,12 +10499,21 @@ function sendAgentCompatExit(
     )?.tokenUsage
     if (terminalUsage) workflowBudgetRegistry.onTerminalUsage(routed.appRunId, terminalUsage)
     workflowBudgetRegistry.onExit(routed.appRunId)
+    // A USER-cancelled run settles via cancelProviderRun -> runManager.finish(
+    // 'cancelled'), which is terminal-STICKY (a later exit-code finish() no-ops,
+    // RunManager.finish guard). So a deliberate cancel must mark the scheduled task
+    // 'cancelled', NOT 'failed' from the abort exit code — else it wrongly bumps the
+    // workflow failureStreak. The renderer marks 'cancelled' too, but a WINDOWLESS
+    // run has no renderer, so main owns it. (A budget kill also routes through
+    // cancelProviderRun, but triggerKill already marked the task 'failed' first, so
+    // the transition guard no-ops this 'cancelled' write — the 'failed' stands.)
+    const runCancelled = runManager.get(routed.appRunId)?.status === 'cancelled'
     const failoverScheduledTaskId = scheduledTaskIdByFailoverRun.get(routed.appRunId)
     if (failoverScheduledTaskId) {
       scheduledTaskIdByFailoverRun.delete(routed.appRunId)
-      const failoverFailed = (code ?? -1) !== 0
+      const failoverFailed = !runCancelled && (code ?? -1) !== 0
       AppStore.updateScheduledTask(failoverScheduledTaskId, {
-        status: failoverFailed ? 'failed' : 'completed',
+        status: runCancelled ? 'cancelled' : failoverFailed ? 'failed' : 'completed',
         completedAt: new Date().toISOString(),
         ...(failoverFailed ? { lastError: 'Scheduled run failed after provider auto-failover.' } : {})
       })
@@ -10519,7 +10528,7 @@ function sendAgentCompatExit(
     if (soloScheduledTaskId) {
       scheduledTaskIdBySoloRun.delete(routed.appRunId)
       AppStore.updateScheduledTask(soloScheduledTaskId, {
-        status: (code ?? -1) === 0 ? 'completed' : 'failed',
+        status: runCancelled ? 'cancelled' : (code ?? -1) === 0 ? 'completed' : 'failed',
         completedAt: new Date().toISOString()
       })
     }
