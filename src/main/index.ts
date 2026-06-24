@@ -626,6 +626,10 @@ import {
   type ResolvedRasterSource,
   type ResolvedSvgSource
 } from './mcp/ImageToolExecutors'
+import {
+  ImageToolCallBudget,
+  DEFAULT_MAX_IMAGE_TOOL_CALLS_PER_RUN
+} from './mcp/ImageToolCallBudget'
 import { createNativeImageEngine } from './mcp/OffscreenImageRenderer'
 import {
   createImageGenExecutor,
@@ -1686,20 +1690,10 @@ const imageToolExecutors = createImageToolExecutors({
   resolveSvgSource: resolveImageSvgSource
 })
 // Per-run cap on image-tool calls — bounds disk/asset flooding (an agent looping
-// image_edit with varied params writes distinct content-addressed assets). The
-// Map is size-capped so it can't grow unbounded across a long app session.
-const MAX_IMAGE_TOOL_CALLS_PER_RUN = 100
-const MAX_IMAGE_TOOL_RUN_KEYS = 1000
-const imageToolCallCounts = new Map<string, number>()
-function bumpImageToolCallCount(runKey: string): number {
-  const next = (imageToolCallCounts.get(runKey) ?? 0) + 1
-  if (!imageToolCallCounts.has(runKey) && imageToolCallCounts.size >= MAX_IMAGE_TOOL_RUN_KEYS) {
-    const oldest = imageToolCallCounts.keys().next().value
-    if (oldest !== undefined) imageToolCallCounts.delete(oldest)
-  }
-  imageToolCallCounts.set(runKey, next)
-  return next
-}
+// image_edit / svg_rasterize / image_generate with varied params writes distinct
+// content-addressed assets). Shared across all three tools so they count toward
+// one per-run budget. See ImageToolCallBudget (mirrors ApprovalBudgetTracker).
+const imageToolCallBudget = new ImageToolCallBudget()
 
 // image_generate egress. Endpoints are a FIXED allowlist (never agent-controlled),
 // the API key comes from safeStorage and rides only in the Authorization header
@@ -14669,12 +14663,12 @@ async function executeGeminiMcpTool(
       )
     } else if (isImageMcpToolName(toolName)) {
       const imageRunKey = context.appRunId || context.appChatId || 'global'
-      if (bumpImageToolCallCount(imageRunKey) > MAX_IMAGE_TOOL_CALLS_PER_RUN) {
+      if (!imageToolCallBudget.tryConsume(imageRunKey)) {
         applyRichResult(
           mcpStructuredJsonResult({
             ok: false,
             tool: toolName,
-            error: `image tool call limit reached (${MAX_IMAGE_TOOL_CALLS_PER_RUN}) for this run.`
+            error: `image tool call limit reached (${DEFAULT_MAX_IMAGE_TOOL_CALLS_PER_RUN}) for this run.`
           })
         )
       } else {
@@ -14688,12 +14682,12 @@ async function executeGeminiMcpTool(
       }
     } else if (isImageGenMcpToolName(toolName)) {
       const imageRunKey = context.appRunId || context.appChatId || 'global'
-      if (bumpImageToolCallCount(imageRunKey) > MAX_IMAGE_TOOL_CALLS_PER_RUN) {
+      if (!imageToolCallBudget.tryConsume(imageRunKey)) {
         applyRichResult(
           mcpStructuredJsonResult({
             ok: false,
             tool: toolName,
-            error: `image tool call limit reached (${MAX_IMAGE_TOOL_CALLS_PER_RUN}) for this run.`
+            error: `image tool call limit reached (${DEFAULT_MAX_IMAGE_TOOL_CALLS_PER_RUN}) for this run.`
           })
         )
       } else {
