@@ -768,6 +768,11 @@ const api = {
   runEnsembleRound: (payload: {
     chatId: string
     prompt: string
+    /** When dispatched by a SCHEDULED workflow occurrence, the task id rides
+     * through so the main-side round-settle hook can mark the task terminal
+     * (scheduled ensemble runs have no per-participant scheduledTaskId, so
+     * without this they stay stuck 'running'). */
+    scheduledTaskId?: string
     mode?: string
     concurrentMode?: boolean
     imageAttachments?: ComposerImageAttachment[]

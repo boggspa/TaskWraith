@@ -1057,6 +1057,7 @@ declare global {
       runEnsembleRound: (payload: {
         chatId: string
         prompt: string
+        scheduledTaskId?: string
         mode?: 'normal' | 'queue' | 'steer'
         concurrentMode?: boolean
         imageAttachments?: ComposerImageAttachment[]

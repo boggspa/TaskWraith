@@ -9676,6 +9676,7 @@ function App(): React.JSX.Element {
           await window.api.runEnsembleRound({
             chatId: runChat.appChatId,
             prompt: request.prompt,
+            ...(request.scheduledTaskId ? { scheduledTaskId: request.scheduledTaskId } : {}),
             mode,
             concurrentMode,
             imageAttachments: request.imageAttachments.map((attachment) => ({

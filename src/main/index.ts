@@ -1423,6 +1423,12 @@ function emitAutoFailoverNotice(notice: AutoFailoverNotice): void {
   }
 }
 let ensembleOrchestratorRef: EnsembleOrchestrator | null = null
+// Scheduled ENSEMBLE occurrences carry no per-participant scheduledTaskId, so the
+// renderer's per-run exit (which marks single-provider scheduled tasks terminal)
+// never fires for them — the task would stay stuck 'running' forever. Bridge it
+// main-side: capture roundId -> scheduledTaskId at dispatch, mark the task in the
+// round-settle hook (completeSessionCheckpoint), then forget it.
+const scheduledTaskIdByEnsembleRound = new Map<string, string>()
 let wakeupTimerServiceRef: WakeupTimerService | null = null
 let sessionCheckpointStoreRef: SessionCheckpointStore | null = null
 let updateServiceRef: UpdateService | null = null
@@ -23704,8 +23710,21 @@ if (isGeminiMcpBridgeProcess) {
       cancelWakeupTimer: (wakeupId) => wakeupTimerServiceRef?.cancel(wakeupId),
       persistSessionCheckpoint: (chat, reason) =>
         sessionCheckpointStoreRef?.upsertFromChat(chat, reason),
-      completeSessionCheckpoint: (chatId, roundId, status) =>
-        sessionCheckpointStoreRef?.completeRound(chatId, roundId, status),
+      completeSessionCheckpoint: (chatId, roundId, status) => {
+        sessionCheckpointStoreRef?.completeRound(chatId, roundId, status)
+        // Mark a scheduled ensemble occurrence terminal here — focus-independent,
+        // main-side — since the renderer never sees a per-participant scheduledTaskId.
+        const ensembleScheduledTaskId = scheduledTaskIdByEnsembleRound.get(roundId)
+        if (ensembleScheduledTaskId) {
+          scheduledTaskIdByEnsembleRound.delete(roundId)
+          AppStore.updateScheduledTask(ensembleScheduledTaskId, {
+            status:
+              status === 'completed' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed',
+            completedAt: new Date().toISOString(),
+            ...(status === 'failed' ? { lastError: 'Scheduled ensemble round failed.' } : {})
+          })
+        }
+      },
       releaseWriteIntentsForLane: (laneId) => workspaceWriteIntentRegistry.releaseAllForLane(laneId),
       // A non-Bossman participant that tries to drive `ensemble_bossman_control`
       // is an attempted control escalation — record it to the durable approval
@@ -24527,6 +24546,7 @@ if (isGeminiMcpBridgeProcess) {
           discordContextSnapshots?: DiscordContextSnapshot[]
           dmTargetParticipantId?: string
           externalPathGrants?: ExternalPathGrant[]
+          scheduledTaskId?: string
         }
       ) => {
         if (AppStore.getSettings().ensembleModeEnabled === false) {
@@ -24551,7 +24571,7 @@ if (isGeminiMcpBridgeProcess) {
         const discordContextSnapshots = Array.isArray(payload?.discordContextSnapshots)
           ? payload.discordContextSnapshots
           : []
-        return ensembleOrchestratorRef?.startRound({
+        const ensembleStartResult = ensembleOrchestratorRef?.startRound({
           chatId,
           prompt,
           event,
@@ -24566,6 +24586,12 @@ if (isGeminiMcpBridgeProcess) {
             : {}),
           ...(externalPathGrants.length > 0 ? { externalPathGrants } : {})
         })
+        // Scheduled ensemble: remember roundId -> scheduledTaskId so the round-settle
+        // hook can mark the task terminal. Keyed by roundId so only THIS round counts.
+        if (payload?.scheduledTaskId && ensembleStartResult?.roundId) {
+          scheduledTaskIdByEnsembleRound.set(ensembleStartResult.roundId, payload.scheduledTaskId)
+        }
+        return ensembleStartResult
       }
     )
 
