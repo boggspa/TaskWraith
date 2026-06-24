@@ -72,6 +72,15 @@ import {
   serializeRunEventRecord
 } from '../RunEventStore'
 import {
+  createWorkflowRunEvent,
+  nextWorkflowRunSequence,
+  parseWorkflowRunEventLine,
+  safeWorkflowRunFileName,
+  serializeWorkflowRunEvent,
+  type WorkflowRunEvent,
+  type WorkflowRunEventInput
+} from '../WorkflowRunStore'
+import {
   capApprovalLedgerRecords,
   createApprovalLedgerRecord,
   expireScopedApprovalLedgerRecords,
@@ -168,6 +177,10 @@ const runEventsDir = path.join(userDataPath, 'run-events')
 const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
 const runEventSequenceCache = new Map<string, number>()
 const runEventHashCache = new Map<string, string>()
+// Stage 1 — durable per-execution workflow run ledger (one .jsonl per
+// workflowExecutionId, append-only; the run-events model). Single writer per file.
+const workflowRunsDir = path.join(userDataPath, 'workflow-runs')
+const workflowRunSequenceCache = new Map<string, number>()
 const deletedChatIds = new Set<string>()
 const deletedRunIds = new Set<string>()
 const WORKFLOW_HISTORY_LIMIT = 50
@@ -353,6 +366,28 @@ function scheduledTaskStatusToWorkflowStatus(
   if (status === 'failed') return 'failed'
   if (status === 'cancelled') return 'cancelled'
   return null
+}
+
+/** Map a workflow execution status to a durable-ledger event kind (Stage 1). */
+function workflowStatusToRunEventKind(
+  status: WorkflowExecutionRecord['status']
+): WorkflowRunEvent['kind'] | null {
+  switch (status) {
+    case 'running':
+      return 'running'
+    case 'completed':
+      return 'completed'
+    case 'failed':
+      return 'failed'
+    case 'cancelled':
+      return 'cancelled'
+    case 'skipped':
+      return 'skipped'
+    case 'queued':
+      return 'materialized'
+    default:
+      return null
+  }
 }
 
 function isTerminalScheduledTaskStatus(status: ScheduledTask['status']): boolean {
@@ -732,6 +767,24 @@ function migrateLegacySettingsIfMissing() {
 
 function runEventFilePath(runId: string): string {
   return path.join(runEventsDir, safeRunEventFileName(runId))
+}
+
+function workflowRunFilePath(workflowExecutionId: string): string {
+  return path.join(workflowRunsDir, safeWorkflowRunFileName(workflowExecutionId))
+}
+
+function readWorkflowRunFile(filePath: string): WorkflowRunEvent[] {
+  try {
+    if (!fs.existsSync(filePath)) return []
+    return fs
+      .readFileSync(filePath, 'utf-8')
+      .split(/\r?\n/)
+      .map(parseWorkflowRunEventLine)
+      .filter((event): event is WorkflowRunEvent => Boolean(event))
+  } catch (e) {
+    console.error(`Failed to read ${filePath}`, e)
+    return []
+  }
 }
 
 // Per-run artifact directory. Mirrors the path derivation in
@@ -2720,6 +2773,9 @@ export class AppStore {
     const nowIso = new Date().toISOString()
     const history = [...workflow.history]
     let executionIndex = history.findIndex((execution) => execution.id === task.workflowExecutionId)
+    // Stage 1 — the prior recorded status, captured BEFORE the history mutation,
+    // so the durable ledger only gets an event on an ACTUAL status transition.
+    const priorExecStatus = executionIndex >= 0 ? history[executionIndex].status : null
     if (executionIndex < 0) {
       history.push({
         id: task.workflowExecutionId,
@@ -2780,6 +2836,27 @@ export class AppStore {
               : resolveNextWorkflowRunAt(workflow.trigger, nowMs, nowMs)
         } else {
           workflow.nextRunAt = undefined
+        }
+      }
+    }
+    // Stage 1 — append a durable ledger event on a real status transition
+    // (running/completed/failed/cancelled — the values sync produces). Best-effort:
+    // a ledger write failure must NEVER break the workflow sync.
+    if (priorExecStatus !== nextStatus) {
+      const ledgerKind = workflowStatusToRunEventKind(nextStatus)
+      if (ledgerKind) {
+        try {
+          this.appendWorkflowRunEvent({
+            workflowExecutionId: task.workflowExecutionId,
+            workflowId: workflow.id,
+            kind: ledgerKind,
+            scheduledTaskId: task.id,
+            runId: task.runId,
+            plannedFor: task.workflowOccurrenceAt || task.runAt,
+            ...(task.lastError ? { error: task.lastError } : {})
+          })
+        } catch (e) {
+          console.error('Failed to append workflow run event', e)
         }
       }
     }
@@ -3025,6 +3102,37 @@ export class AppStore {
     runEventSequenceCache.set(input.runId, record.sequence)
     runEventHashCache.set(input.runId, record.hash || previousHash)
     return record
+  }
+
+  /**
+   * Stage 1 — append a lifecycle event to a workflow EXECUTION's durable ledger
+   * (workflow-runs/<executionId>.jsonl). Per-execution file = single writer (no
+   * cross-writer clobber). Mirrors appendRunEvent's per-file append; always
+   * fsync'd (the ledger is low-frequency — a handful of events per occurrence).
+   */
+  static appendWorkflowRunEvent(input: WorkflowRunEventInput): WorkflowRunEvent {
+    const filePath = workflowRunFilePath(input.workflowExecutionId)
+    const cached = workflowRunSequenceCache.get(input.workflowExecutionId)
+    const sequence =
+      cached !== undefined ? cached + 1 : nextWorkflowRunSequence(readWorkflowRunFile(filePath))
+    const event = createWorkflowRunEvent(input, sequence)
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    const fd = fs.openSync(filePath, 'a')
+    try {
+      fs.writeFileSync(fd, serializeWorkflowRunEvent(event), 'utf-8')
+      fs.fsyncSync(fd)
+    } finally {
+      fs.closeSync(fd)
+    }
+    workflowRunSequenceCache.set(input.workflowExecutionId, event.sequence)
+    return event
+  }
+
+  /** Read a workflow execution's durable lifecycle ledger (all events, in sequence order). */
+  static getWorkflowRunEvents(workflowExecutionId: string): WorkflowRunEvent[] {
+    return readWorkflowRunFile(workflowRunFilePath(workflowExecutionId)).sort(
+      (a, b) => a.sequence - b.sequence
+    )
   }
 
   static appendRunEvents(inputs: RunEventInput[]): RunEventRecord[] {

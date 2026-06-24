@@ -491,3 +491,43 @@ describe('AppStore workflow unattended elevation (P2)', () => {
     expect(AppStore.getWorkflowDefinition(saved.id)?.unattendedElevation).toBeUndefined()
   })
 })
+
+describe('AppStore workflow run ledger (Stage 1)', () => {
+  it('records the running → completed lifecycle in the durable per-execution ledger', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const executionId = task.workflowExecutionId as string
+
+    AppStore.updateScheduledTask(task.id, { status: 'running', runId: 'run-1', firedAt: plannedFor })
+    AppStore.updateScheduledTask(task.id, {
+      status: 'completed',
+      completedAt: '2026-06-07T20:05:00.000Z'
+    })
+
+    const events = AppStore.getWorkflowRunEvents(executionId)
+    expect(events.map((e) => e.kind)).toEqual(['running', 'completed'])
+    expect(events.every((e) => e.workflowExecutionId === executionId)).toBe(true)
+    expect(events.every((e) => e.workflowId === saved.id)).toBe(true)
+    expect(events[0].runId).toBe('run-1')
+    expect(events.map((e) => e.sequence)).toEqual([1, 2]) // append-only, monotonic
+  })
+
+  it('records a failed terminal with its error and does not duplicate on a no-op re-patch', () => {
+    AppStore.saveWorkflowDefinition(workflowInput())
+    const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))
+    const executionId = task.workflowExecutionId as string
+
+    AppStore.updateScheduledTask(task.id, { status: 'running', runId: 'run-1' })
+    AppStore.updateScheduledTask(task.id, { status: 'failed', lastError: 'boom' })
+    // A re-patch that does not change status must not append a duplicate event.
+    AppStore.updateScheduledTask(task.id, { status: 'failed', lastError: 'boom' })
+
+    const events = AppStore.getWorkflowRunEvents(executionId)
+    expect(events.map((e) => e.kind)).toEqual(['running', 'failed'])
+    expect(events[1].error).toBe('boom')
+  })
+
+  it('returns an empty ledger for an unknown execution', () => {
+    expect(AppStore.getWorkflowRunEvents('nope')).toEqual([])
+  })
+})
