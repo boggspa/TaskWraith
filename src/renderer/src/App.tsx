@@ -2321,6 +2321,11 @@ function App(): React.JSX.Element {
   // avoid re-renders.
   const autoFollowRef = useRef(true)
   const sideAutoFollowRef = useRef(true)
+  // Set true immediately before the side-chat panel's programmatic snap so its
+  // evaluate listener doesn't mistake the app's own write for the user
+  // returning to the live edge and re-engage follow. Mirrors the main
+  // transcript's `programmaticScrollRef`.
+  const sideProgrammaticScrollRef = useRef(false)
   // Tracks whether the user has initiated a real upward scroll (wheel,
   // touchmove, page-up/arrow-up) since the last paint. The post-frame
   // re-pin in the messages-update layoutEffect is suppressed when this is
@@ -2737,9 +2742,79 @@ function App(): React.JSX.Element {
     const scroller = sideTranscriptScrollRef.current
     if (!scroller) return
     requestAnimationFrame(() => {
+      sideProgrammaticScrollRef.current = true
       scroller.scrollTop = scroller.scrollHeight
     })
   }, [sideChat?.appChatId, sideChat?.messages?.length, sideChat?.updatedAt])
+  // Side-chat panel auto-follow disengage/re-engage. The snap effect above
+  // pins the side panel to the bottom on every messages/updatedAt change while
+  // `sideAutoFollowRef` is true — but nothing ever turned it OFF when the user
+  // scrolled up to read, so a side-chat run would yank them back down (the same
+  // override class fixed on the main transcript). Twin the main transcript's
+  // intent + evaluate listeners onto the side scroller, including the
+  // programmatic-scroll guard so the snap's own write can't re-engage. Leaner
+  // than the main pair: the side panel has no unread pill or re-pin path.
+  useEffect(() => {
+    const scroller = sideTranscriptScrollRef.current
+    if (!scroller) return
+
+    let rafId: number | null = null
+    const evaluate = () => {
+      rafId = null
+      if (sideProgrammaticScrollRef.current) {
+        sideProgrammaticScrollRef.current = false
+        return
+      }
+      const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
+      if (shouldEngageAutoFollow(distanceFromBottom)) {
+        sideAutoFollowRef.current = true
+      } else if (shouldDisengageAutoFollow(distanceFromBottom)) {
+        sideAutoFollowRef.current = false
+      }
+    }
+    const onScroll = () => {
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(evaluate)
+    }
+
+    const handleUpwardIntent = (deltaY: number) => {
+      if (deltaY >= 0) return
+      if (scroller.scrollTop > 0) {
+        sideAutoFollowRef.current = false
+      }
+    }
+    const onWheel = (event: WheelEvent) => handleUpwardIntent(event.deltaY)
+    let lastTouchY: number | null = null
+    const onTouchStart = (event: TouchEvent) => {
+      lastTouchY = event.touches[0]?.clientY ?? null
+    }
+    const onTouchMove = (event: TouchEvent) => {
+      const currentY = event.touches[0]?.clientY ?? null
+      if (currentY === null || lastTouchY === null) return
+      handleUpwardIntent(lastTouchY - currentY)
+      lastTouchY = currentY
+    }
+    const onTouchEnd = () => {
+      lastTouchY = null
+    }
+
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    scroller.addEventListener('wheel', onWheel, { passive: true })
+    scroller.addEventListener('touchstart', onTouchStart, { passive: true })
+    scroller.addEventListener('touchmove', onTouchMove, { passive: true })
+    scroller.addEventListener('touchend', onTouchEnd, { passive: true })
+    return () => {
+      scroller.removeEventListener('scroll', onScroll)
+      scroller.removeEventListener('wheel', onWheel)
+      scroller.removeEventListener('touchstart', onTouchStart)
+      scroller.removeEventListener('touchmove', onTouchMove)
+      scroller.removeEventListener('touchend', onTouchEnd)
+      if (rafId !== null) cancelAnimationFrame(rafId)
+    }
+    // Re-bind on side-scroller remount: the side TranscriptPanel is keyed by
+    // `side-${sideChat.appChatId}`, so the scroll node is replaced on side-chat
+    // switch — same rationale as the main transcript's appChatId-keyed effects.
+  }, [sideChat?.appChatId])
   useEffect(() => {
     if (!sideChatMenuOpen) return
     const handlePointerDown = (event: MouseEvent) => {
