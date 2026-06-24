@@ -178,7 +178,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   // dimensions, fps, duration, rotation, HDR, channels — over a realpath-jailed
   // path with a FIXED argv (intents not flags; -protocol_whitelist file). Runs an
   // external subprocess, so gated as a file change. See src/main/mcp/FfmpegToolExecutors.ts.
-  'video_probe'
+  'video_probe',
+  // Extract one PNG frame from a workspace video (S1b-2) via ffmpeg — rides the
+  // proven image media spine and renders inline. The audio/video PRODUCERS
+  // (transcode/extract) are deferred to S1b-3 (they need a trusted non-image
+  // media_refs channel — the existing media_refs sinks are provider-controlled).
+  'video_thumbnail'
 ] as const
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]

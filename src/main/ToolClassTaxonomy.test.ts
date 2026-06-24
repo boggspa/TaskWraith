@@ -94,6 +94,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'svg_rasterize',
         'switch_auth_profile',
         'video_probe',
+        'video_thumbnail',
         'write_file'
       ].sort()
     )

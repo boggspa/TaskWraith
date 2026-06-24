@@ -165,6 +165,7 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   audio_render_wav: 'Rendered waveform',
   audio_analyze: 'Analyzed audio',
   video_probe: 'Probed media',
+  video_thumbnail: 'Captured frame',
 
   // ── Web search (also matched by category='search' branch) ────
   google_web_search: 'Searched the web',

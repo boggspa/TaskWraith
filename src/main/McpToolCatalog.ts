@@ -2331,6 +2331,23 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         },
         required: ['sourcePath']
       }
+    },
+    {
+      name: 'video_thumbnail',
+      description:
+        'Capture a single PNG frame from a workspace video as an inline thumbnail, using ffmpeg. Params: ' +
+        'sourcePath, `atMs` (timestamp in ms, default 0), `width` (px, keeps aspect). Requires ffmpeg. ' +
+        'Gated as a file change.',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourcePath: { type: 'string', description: 'Workspace path to a video file.' },
+          atMs: { type: 'number', description: 'Timestamp in ms to grab the frame (default 0).' },
+          width: { type: 'number', description: 'Thumbnail width in px (keeps aspect ratio).' }
+        },
+        required: ['sourcePath']
+      }
     }
   ]
   return orderTaskWraithMcpToolDefinitions(definitions)

@@ -163,6 +163,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'image_generate':
     case 'audio_render_wav':
     case 'audio_analyze':
+    case 'video_thumbnail':
       return 'edit'
     case 'mcp_tool':
     case 'dynamic_tool':

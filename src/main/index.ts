@@ -414,6 +414,7 @@ import {
 import {
   TRANSCRIPT_MEDIA_ASSET_DIR,
   TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
+  TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES,
   TranscriptMediaAssetStore
 } from './services/TranscriptMediaAssetStore'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
@@ -657,6 +658,7 @@ import { createNativeAudioEngine } from './mcp/AudioRenderEngine'
 import { registerTwMediaProtocol, TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
 import { createFfmpegToolExecutors, isFfmpegMcpToolName } from './mcp/FfmpegToolExecutors'
 import { ffmpegMissingError, resolveFfmpegBinaries } from './media/FfmpegResolver'
+import { createSemaphore } from './media/Semaphore'
 import {
   createImageGenExecutor,
   isImageGenMcpToolName,
@@ -1845,6 +1847,10 @@ const ffmpegToolCallBudget = new ImageToolCallBudget()
 // ffmpeg/ffprobe MCP tools (S1b). Run the USER-installed binary over a realpath-
 // jailed input with a FIXED argv (intents not flags, -protocol_whitelist file).
 // The runner is execFile with maxBuffer + timeout — argv array, no shell.
+// Bound concurrent ffmpeg encoders (CPU-heavy transcode/thumbnail); ffprobe is
+// metadata-only and stays uncapped. Output stages in a dir WE own.
+const mediaProcessLimiter = createSemaphore(2)
+const MEDIA_STAGING_DIR = join(app.getPath('userData'), 'media-staging')
 const ffmpegToolExecutors = createFfmpegToolExecutors({
   jailInput: (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
@@ -1873,6 +1879,42 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
         }
       )
     }),
+  resolveFfmpeg: () => resolveFfmpegBinaries().ffmpegPath,
+  // Encoders are CPU-heavy + can run minutes — longer timeout, gated by the
+  // concurrency semaphore so N agents can't spawn N encoders. argv, no shell.
+  runFfmpeg: (binaryPath, args) =>
+    mediaProcessLimiter.run(
+      () =>
+        new Promise((resolve, reject) => {
+          execFile(
+            binaryPath,
+            args,
+            { maxBuffer: 4 * 1024 * 1024, timeout: 300_000, shell: false },
+            (err, stdout, stderr) => {
+              if (err) reject(new Error(`ffmpeg failed: ${String(stderr).trim() || err.message}`))
+              else resolve({ stdout, stderr })
+            }
+          )
+        })
+    ),
+  stagingPath: (ext) => {
+    fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
+    return join(MEDIA_STAGING_DIR, `tw-${randomUUID()}.${ext}`)
+  },
+  readOutput: (filePath) => {
+    const stat = fsSync.statSync(filePath)
+    if (stat.size > TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES) {
+      throw new Error(`output too large (${stat.size} bytes; max ${TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES})`)
+    }
+    return fsSync.readFileSync(filePath)
+  },
+  removeFile: (filePath) => {
+    try {
+      fsSync.unlinkSync(filePath)
+    } catch {
+      // best-effort staging cleanup
+    }
+  },
   missingMessage: (which) => ffmpegMissingError(which)
 })
 
@@ -6406,11 +6448,12 @@ function previewForGeminiMcpTool(
   }
 
   if (isFfmpegMcpToolName(toolName)) {
+    const verb = toolName === 'video_probe' ? 'probe' : 'thumbnail'
     return {
-      title: `Approve ${providerName} media probe`,
-      // Gated as fileChanges: runs an external subprocess (ffprobe) — denied under
-      // the read-only preset.
-      body: `${intentBody}probe ${String(args.sourcePath || '')}`.trim(),
+      title: `Approve ${providerName} media ${verb}`,
+      // Gated as fileChanges: runs an external ffmpeg/ffprobe subprocess — denied
+      // under the read-only preset.
+      body: `${intentBody}${verb} ${String(args.sourcePath || '')}`.trim(),
       service: 'fileChanges' as AgenticServiceId,
       preview: {
         kind: 'tool',
