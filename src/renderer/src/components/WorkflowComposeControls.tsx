@@ -15,6 +15,8 @@
  * column.
  */
 
+import type { UnattendedElevationLevel } from '../../../main/UnattendedPostureGate'
+
 export interface WorkflowComposeControlsProps {
   cadence: 'manual' | 'interval'
   onCadenceChange: (cadence: 'manual' | 'interval') => void
@@ -29,10 +31,27 @@ export interface WorkflowComposeControlsProps {
   /** Hide the ensemble toggle entirely (E2 ships single-provider workflows; the
    *  ensemble toggle + its above-row animation arrive in a later slice). */
   showEnsembleToggle?: boolean
+  /**
+   * P2b: the chosen UNATTENDED permission level. Default 'safe' (read-only). This
+   * is captured as INTENT only — the verified ack is minted post-save by the
+   * set-workflow-unattended-elevation IPC (the save/update sanitizers strip a
+   * renderer-supplied ack), so this control never writes onto the workflow object.
+   */
+  unattendedLevel: UnattendedElevationLevel
+  onUnattendedLevelChange: (level: UnattendedElevationLevel) => void
 }
 
 const ENSEMBLE_LOCKED_TITLE =
   "Ensemble mode can't be changed after the workflow starts."
+
+const UNATTENDED_LEVEL_OPTIONS: ReadonlyArray<{
+  level: UnattendedElevationLevel
+  label: string
+}> = [
+  { level: 'safe', label: 'Safe (read-only)' },
+  { level: 'default', label: 'Default permissions' },
+  { level: 'full_access', label: 'Full Workspace Access' }
+]
 
 export function WorkflowComposeControls({
   cadence,
@@ -44,7 +63,9 @@ export function WorkflowComposeControls({
   ensembleEnabled,
   onEnsembleEnabledChange,
   ensembleLocked = false,
-  showEnsembleToggle = true
+  showEnsembleToggle = true,
+  unattendedLevel,
+  onUnattendedLevelChange
 }: WorkflowComposeControlsProps): React.JSX.Element {
   const clampMin1 = (raw: number): number => Math.max(1, Math.round(raw))
 
@@ -137,6 +158,27 @@ export function WorkflowComposeControls({
           }
         />
       </label>
+
+      <div className="workflow-creator-field">
+        <span id="workflow-compose-unattended-label">Unattended permissions</span>
+        <div
+          className="workflow-creator-segmented"
+          role="group"
+          aria-labelledby="workflow-compose-unattended-label"
+        >
+          {UNATTENDED_LEVEL_OPTIONS.map((option) => (
+            <button
+              key={option.level}
+              type="button"
+              className={unattendedLevel === option.level ? 'is-active' : ''}
+              onClick={() => onUnattendedLevelChange(option.level)}
+              aria-pressed={unattendedLevel === option.level}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

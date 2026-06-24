@@ -4649,6 +4649,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 ensembleEnabled={workflowDraft.ensembleEnabled}
                 onEnsembleEnabledChange={handleToggleWorkflowEnsemble}
                 showEnsembleToggle={isEnsembleModeEnabled}
+                unattendedLevel={workflowDraft.unattendedLevel ?? 'safe'}
+                onUnattendedLevelChange={(unattendedLevel) =>
+                  setWorkflowDraft((prev) => (prev ? { ...prev, unattendedLevel } : prev))
+                }
               />
             )}
             {isWelcomeChat && !isCurrentEnsembleChat && !isWorkflowChatWelcome && !isMultiviewSplit && (

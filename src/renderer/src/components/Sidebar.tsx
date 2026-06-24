@@ -184,6 +184,7 @@ interface SidebarProps {
   onEditWorkflowInterval?: (workflow: WorkflowDefinition) => void
   onCancelWorkflowExecution?: (workflow: WorkflowDefinition) => void
   onDeleteWorkflow?: (workflowId: string) => void
+  onSetWorkflowUnattended?: (workflow: WorkflowDefinition) => void
   /** Opens the iPhone/iPad pairing sheet (QR + JSON). When undefined
    * the remote-connection icon falls back to opening Settings →
    * Bridge Networking as a discoverability hint. */
@@ -1247,7 +1248,14 @@ const WORKFLOW_COUNTER_STATUSES = [
 ] as const
 
 type WorkflowCounterStatus = (typeof WORKFLOW_COUNTER_STATUSES)[number]
-type WorkflowActionIconKind = 'run' | 'pause' | 'resume' | 'cadence' | 'cancel' | 'delete'
+type WorkflowActionIconKind =
+  | 'run'
+  | 'pause'
+  | 'resume'
+  | 'cadence'
+  | 'cancel'
+  | 'delete'
+  | 'unattended'
 
 function isWorkflowExecutionActive(status?: string): boolean {
   return Boolean(status && !WORKFLOW_TERMINAL_STATUSES.has(status))
@@ -1332,6 +1340,15 @@ function WorkflowActionIcon({ kind }: { kind: WorkflowActionIconKind }) {
       <svg viewBox="0 0 24 24" aria-hidden>
         <path d="M6.1 6.1h11.8v11.8H6.1Z" />
         <path d="M5 19 19 5" />
+      </svg>
+    )
+  }
+  if (kind === 'unattended') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M12 4.5 21 19.5H3Z" />
+        <path d="M12 10v4.5" />
+        <circle cx="12" cy="17.4" r=".75" />
       </svg>
     )
   }
@@ -1501,6 +1518,7 @@ export function Sidebar({
   onEditWorkflowInterval,
   onCancelWorkflowExecution,
   onDeleteWorkflow,
+  onSetWorkflowUnattended,
   onShowPairingSheet,
   modelUsageApiSpend
 }: SidebarProps) {
@@ -2724,6 +2742,15 @@ export function Sidebar({
                       : 'Paused'
                     const selected = selectedWorkflowId === workflow.id
                     const statusCounters = getWorkflowStatusCounters(workflow.history)
+                    // P2b: a minted, non-safe unattended-elevation ack.
+                    const unattendedElevation =
+                      workflow.unattendedElevation && workflow.unattendedElevation.level !== 'safe'
+                        ? workflow.unattendedElevation
+                        : null
+                    const unattendedElevationLabel =
+                      unattendedElevation?.level === 'full_access'
+                        ? 'Full Workspace Access'
+                        : 'Default'
                     return (
                       <div key={workflow.id} className="sidebar-workflow-block">
                         <button
@@ -2759,6 +2786,15 @@ export function Sidebar({
                               {formatWorkflowTrigger(workflow)}
                             </span>
                           </span>
+                          {unattendedElevation && (
+                            <span
+                              className="sidebar-workflow-unattended-badge"
+                              title={`Runs unattended with ${unattendedElevationLabel} permissions`}
+                              aria-label={`Runs unattended with ${unattendedElevationLabel} permissions`}
+                            >
+                              ⚠
+                            </span>
+                          )}
                           <span
                             className={`sidebar-workflow-status tone-${workflowStatusTone(status)}`}
                           >
@@ -2812,6 +2848,23 @@ export function Sidebar({
                                   aria-label={`Edit ${workflow.name} cadence`}
                                 >
                                   <WorkflowActionIcon kind="cadence" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`sidebar-workflow-action${
+                                    unattendedElevation ? ' is-active' : ''
+                                  }`}
+                                  onClick={() => onSetWorkflowUnattended?.(workflow)}
+                                  disabled={!onSetWorkflowUnattended}
+                                  title={
+                                    unattendedElevation
+                                      ? `Unattended: ${unattendedElevationLabel} — click to revoke`
+                                      : 'Unattended permissions'
+                                  }
+                                  aria-label={`Unattended permissions for ${workflow.name}`}
+                                  aria-pressed={Boolean(unattendedElevation)}
+                                >
+                                  <WorkflowActionIcon kind="unattended" />
                                 </button>
                                 {isActiveExecution && (
                                   <button
