@@ -22,6 +22,8 @@ import TaskWraithKit
 /// during streaming the body already recomputes on every token.
 private final class TranscriptFollowPin {
     var scheduled = false
+    /// Wall-clock of the last pin — throttles the ~24fps reveal-driven pins.
+    var lastPinAt: Date = .distantPast
 }
 
 struct ThreadDetailView: View {
@@ -1282,6 +1284,16 @@ struct ThreadDetailView: View {
     /// transient sentinel flip during a big update so following can't get stuck.
     private func requestFollowPin(_ proxy: ScrollViewProxy, force: Bool = false) {
         guard force || autoFollow else { return }
+        // Throttle NON-forced pins (chiefly the ~24fps reveal pump's
+        // onRevealFrame) to ~10fps. Continuous scrolling during a stream burned
+        // CPU and — landing a scroll between a tap's touch-down and touch-up —
+        // cancelled the "Show more" tap as a drag. Forced pins (new row, new
+        // token batch via onChange(streamingTexts), agent-exit, thread open)
+        // always fire, so the bottom is still reached exactly at every real
+        // content change; the reveal pins only fill in between those.
+        let now = Date()
+        if !force, now.timeIntervalSince(followPin.lastPinAt) < 0.1 { return }
+        followPin.lastPinAt = now
         guard !followPin.scheduled else { return }
         followPin.scheduled = true
         Task { @MainActor in
@@ -2060,6 +2072,12 @@ struct ThreadRowView: View {
                     }
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(TWTheme.chroma1)
+                    // Make the whole padded rectangle tappable (not just the
+                    // caption glyphs) so the first tap lands even while the row
+                    // is re-laying-out under the finger during a stream.
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
                     .disabled(isExpanding)
                 }
             }

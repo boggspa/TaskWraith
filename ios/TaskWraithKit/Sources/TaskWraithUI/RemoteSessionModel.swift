@@ -2781,9 +2781,18 @@ public final class RemoteSessionModel: ObservableObject {
 
     /// Pull the full body for a clipped row from the Mac.
     public func expandRow(threadId: String, rowId: String) {
-        guard let client else { return }
-        guard let workspaceId = remoteScopeForThread(threadId)
-        else { return }
+        // Don't no-op silently on a guard-fail: expandingRows is NOT set here,
+        // so the button never disables and a silent return is indistinguishable
+        // from a dropped tap ("took a couple of goes"). Surface a transient
+        // banner so the tap visibly does something.
+        guard let client else {
+            lastActionMessage = "Not connected — can't load the full message yet."
+            return
+        }
+        guard let workspaceId = remoteScopeForThread(threadId) else {
+            lastActionMessage = "Reconnecting — try Show more again in a moment."
+            return
+        }
         expandingRows.insert(rowId)
         let params = BridgeAction.threadRowExpand(
             workspaceId: workspaceId, threadId: threadId, rowId: rowId)
