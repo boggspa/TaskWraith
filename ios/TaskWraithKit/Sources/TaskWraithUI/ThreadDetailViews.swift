@@ -1525,9 +1525,9 @@ struct ThreadEmptyWelcomeCanvas: View {
     let card: RemoteTaskCard
     @Binding var draft: String
     @State private var draftProvider = ""
-    /// 1.5x the .title3 base (~20pt) for the General-chat greeting heading only;
-    /// @ScaledMetric keeps it responsive to the user's Dynamic Type setting.
-    @ScaledMetric(relativeTo: .title3) private var globalGreetingFontSize: CGFloat = 30
+    /// 1.275x the .title3 base (~20pt) for the General-chat greeting heading
+    /// only; @ScaledMetric keeps it responsive to the user's Dynamic Type setting.
+    @ScaledMetric(relativeTo: .title3) private var globalGreetingFontSize: CGFloat = 25.5
     @Environment(\.horizontalSizeClass) private var hSizeClass
     /// iPhone portrait = compact width; iPad (and landscape regular) = regular.
     private var isCompactWidth: Bool { hSizeClass == .compact }
@@ -1589,19 +1589,22 @@ struct ThreadEmptyWelcomeCanvas: View {
             Group {
                 switch titleParts {
                 case .scoped(let prefix, let name):
-                    // General greeting closes with "?" ("...What's on your mind
-                    // Chris?"); workspace/ensemble keep the "." that closes
-                    // "New chat for <ws>."
+                    // workspace/ensemble: "New chat for <ws>." — name accent-glows.
                     Text(prefix)
                         .foregroundStyle(TWTheme.textSecondary)
                         + Text(name)
                         .foregroundStyle(accent)
                         .fontWeight(.semibold)
-                        + Text(isGlobal ? "?" : ".")
+                        + Text(".")
                         .foregroundStyle(TWTheme.textSecondary)
                 case .plain(let text):
                     Text(text)
                         .foregroundStyle(TWTheme.textSecondary)
+                case .glow(let text):
+                    // General greeting: the whole line in the provider accent.
+                    Text(text)
+                        .foregroundStyle(accent)
+                        .fontWeight(.semibold)
                 }
             }
             .font(isGlobal ? .system(size: globalGreetingFontSize) : .title3)
@@ -1618,6 +1621,9 @@ struct ThreadEmptyWelcomeCanvas: View {
     private enum TitleParts {
         case scoped(prefix: String, name: String)
         case plain(String)
+        /// Whole-string provider glow (General greeting): the entire line is
+        /// rendered in `accent`.
+        case glow(String)
     }
 
     private var titleParts: TitleParts {
@@ -1625,18 +1631,12 @@ struct ThreadEmptyWelcomeCanvas: View {
             return .scoped(prefix: "New ensemble for ", name: workspaceName)
         }
         if isGlobal {
-            // Personal time-of-day greeting (shared Greeting twin), with the
-            // projected user name in the accent-glow `name` slot when present;
-            // an empty name glows the greeting itself. No subtitle (see blurb).
-            let name = (model.projectedUserName ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let greeting = Greeting.greeting(
-                forHour: Calendar.current.component(.hour, from: Date()))
-            // "<greeting>, What's on your mind[ <name>]?" — the user name (or the
-            // prompt itself when no name) sits in the accent-glow slot; "?" added by hero.
-            return name.isEmpty
-                ? .scoped(prefix: "\(greeting), ", name: Greeting.prompt)
-                : .scoped(prefix: "\(greeting), \(Greeting.prompt) ", name: name)
+            // The WHOLE greeting glows (provider accent): "<greeting>, What's on
+            // your mind[ <name>]?" rendered as one accent string (shared twin).
+            let greeting = Greeting.build(
+                forHour: Calendar.current.component(.hour, from: Date()),
+                name: model.projectedUserName)
+            return .glow(greeting)
         }
         return .scoped(prefix: "New chat for ", name: workspaceName)
     }
