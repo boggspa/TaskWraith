@@ -355,6 +355,7 @@ import {
 import { buildProviderRunFailureSnippet } from './lib/providerRunFailureSnippet'
 import { rawLogFromRunEvent, type RawLogEntry } from './lib/rawLogEntry'
 import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQueueScheduling'
+import { ACTIVE_RUN_QUEUE_STATUSES, isChatBusyForDispatch } from './lib/chatBusyState'
 import {
   buildPlanImportDisplayPrompt,
   buildInitialPlanImportReview,
@@ -644,12 +645,6 @@ const getInitialChatPopoutChatId = (): string => {
   return params.get('popout') === 'chat' ? params.get('chat') || '' : ''
 }
 
-const ACTIVE_RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
-  'steer_promoting',
-  'starting',
-  'active',
-  'cancelling'
-])
 const GUEST_PENDING_RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
   'queued',
   'steer_promoting',
@@ -3316,16 +3311,16 @@ function App(): React.JSX.Element {
   // running in the new chat. Codex's app-server, Claude's SDK, Gemini
   // / Kimi CLI all handle concurrent dispatches per chat just fine;
   // the UI-level lock was the only thing forcing serialisation.
-  const isChatBusy = (chatId: string | null | undefined): boolean => {
-    if (!chatId) return false
-    for (const ctx of activeRunsRef.current.values()) {
-      if (ctx.chatId === chatId) return true
-    }
-    for (const job of runQueueJobsRef.current) {
-      if (job.chatId === chatId && ACTIVE_RUN_QUEUE_STATUSES.has(job.status)) return true
-    }
-    return false
-  }
+  const isChatBusy = (
+    chatId: string | null | undefined,
+    options: { ignoreQueueRunId?: string } = {}
+  ): boolean =>
+    isChatBusyForDispatch({
+      chatId,
+      activeRuns: activeRunsRef.current.values(),
+      runQueueJobs: runQueueJobsRef.current,
+      ignoreQueueRunId: options.ignoreQueueRunId
+    })
 
   const collectActiveRunChatIds = (): Set<string> => {
     const ids = new Set<string>()
@@ -10077,7 +10072,7 @@ function App(): React.JSX.Element {
       // provider — the underlying runner (Codex app-server thread,
       // fresh CLI process for Gemini/Kimi, independent SDK call for
       // Claude) handles concurrency per-chat.
-      if (isChatBusy(runChat.appChatId)) {
+      if (isChatBusy(runChat.appChatId, { ignoreQueueRunId: currentRunId })) {
         queueRunRequest(
           request,
           `This ${getProviderLabel(runProvider)} chat already has an in-flight run; TaskWraith will dispatch this turn when the chat's previous turn finishes.`
