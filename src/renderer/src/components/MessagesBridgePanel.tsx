@@ -1388,7 +1388,7 @@ export function MessagesBridgePanel(): JSX.Element {
             className="btn btn-sm btn-ghost"
             onClick={() => void createOperatorChat()}
           >
-            New global chat
+            New general chat
           </button>
         </div>
         <label className="settings-field">
@@ -1791,7 +1791,7 @@ function upsertBindingInList(
 function formatChatLabel(chat: ChatRecord): string {
   const title = chat.title?.trim() || 'Untitled chat'
   const scope =
-    chat.scope === 'global' ? 'Global' : chat.workspacePath?.split(/[\\/]/).pop() || 'Workspace'
+    chat.scope === 'global' ? 'General' : chat.workspacePath?.split(/[\\/]/).pop() || 'Workspace'
   return `${title} (${scope})`
 }
 

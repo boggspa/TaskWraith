@@ -304,7 +304,7 @@ export function OllamaTierPicker({
                 <span className="composer-combined-picker-row-sub">
                   {gated
                     ? tier4Unavailable
-                      ? 'Unavailable in global chats — open a workspace thread.'
+                      ? 'Unavailable in general chats — open a workspace thread.'
                       : 'Requires workspace parity acknowledgement.'
                     : option.helper}
                 </span>
@@ -379,7 +379,7 @@ export function OllamaTierPicker({
         title={
           parityIneffective
             ? tier4Unavailable
-              ? 'Tier 4 is selected but is unavailable in global chats — the model runs read-only. Open a workspace chat to use Tier 4.'
+              ? 'Tier 4 is selected but is unavailable in general chats — the model runs read-only. Open a workspace chat to use Tier 4.'
               : 'Tier 4 is selected but this workspace has not been granted provider parity — the model runs read-only. Open the picker to re-acknowledge Tier 4 and enable it.'
             : 'Ollama tool-control tier and run profile for this chat'
         }

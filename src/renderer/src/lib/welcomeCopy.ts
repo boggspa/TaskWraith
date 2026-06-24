@@ -304,7 +304,7 @@ export const buildWelcomeCopy = (context: WelcomeCopyContext): WelcomeCopy => {
         // middle of a Title-Cased heading; the workspace-name slot
         // is bold/glow-styled like the workspace name on
         // workspace-bound chats and reads naturally as Title Case.
-        workspaceName: 'Global Chat',
+        workspaceName: 'General Chat',
         afterWorkspace: '.'
       }
     : {
@@ -318,7 +318,7 @@ export const buildWelcomeCopy = (context: WelcomeCopyContext): WelcomeCopy => {
       }
 
   const subheading = context.isGlobalChat
-    ? 'Use system scope for broad planning, setup checks, or choosing the right workspace.'
+    ? 'A general chat for broad planning, setup checks, or choosing the right folder to work in.'
     : context.lastRunStatus === 'failed'
       ? 'Start by narrowing the failure path, then make one fix and verify it.'
       : context.hasDiff

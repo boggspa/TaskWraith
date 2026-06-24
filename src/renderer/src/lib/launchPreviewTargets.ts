@@ -258,7 +258,7 @@ export function launchPreviewActionTitle(
   targets: LaunchPreviewTarget[],
   hasWorkspace: boolean
 ): string {
-  if (!hasWorkspace) return 'Preview unavailable for global chats'
+  if (!hasWorkspace) return 'Preview unavailable for general chats'
   if (targets.length === 0) return 'No launch or preview target'
   const first = targets[0]
   if (targets.length === 1 && first) {

@@ -246,7 +246,7 @@ export function BugReportSheet({
   // bug-reports.md, or the pre-filled PUBLIC GitHub issue. The project folder
   // stays visible for triage; only the home/user prefix is stripped.
   const workspaceLabel = useMemo(
-    () => (currentWorkspacePath ? tildifyHomePath(currentWorkspacePath) : '(global chat)'),
+    () => (currentWorkspacePath ? tildifyHomePath(currentWorkspacePath) : '(general chat)'),
     [currentWorkspacePath]
   )
 

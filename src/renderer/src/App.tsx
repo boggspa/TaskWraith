@@ -16113,7 +16113,7 @@ function App(): React.JSX.Element {
     null
   const sideChatWelcomeWorkspaceLabel = sideChatTypePickerParentChat
     ? isGlobalChat(sideChatTypePickerParentChat)
-      ? 'Global Chat'
+      ? 'General Chat'
       : getWorkspaceForChat(sideChatTypePickerParentChat)?.displayName ||
         sideChatTypePickerParentChat.workspacePath?.split(/[\\/]/).filter(Boolean).pop() ||
         'Workspace'
@@ -16890,7 +16890,7 @@ function App(): React.JSX.Element {
     approvalMode === 'plan'
       ? 'Read-only sandbox'
       : isCurrentGlobalChat
-        ? 'System scope, prompts'
+        ? 'General chat, prompts'
         : approvalMode === 'auto_edit'
           ? hasAgenticApprovalGate
             ? 'Workspace write, gated'
@@ -18434,7 +18434,7 @@ function App(): React.JSX.Element {
       previewMenuTarget?.paneId === viewerPaneId &&
       previewMenuTarget.chatId === viewerChatId
     const viewerWorkspaceName = viewerIsGlobalChat
-      ? 'Global Chat'
+      ? 'General Chat'
       : viewerWorkspace?.displayName ||
         viewerChat.workspacePath?.split(/[\\/]/).filter(Boolean).pop() ||
         'TaskWraith'
@@ -19695,7 +19695,7 @@ function App(): React.JSX.Element {
       const viewerIsGlobalChat = isGlobalChat(viewerChat)
       const viewerWorkspace = paneCtxHelpers.getWorkspaceForChat(viewerChat)
       const viewerWorkspaceName = viewerIsGlobalChat
-        ? 'Global Chat'
+        ? 'General Chat'
         : viewerWorkspace?.displayName ||
           viewerChat.workspacePath?.split(/[\\/]/).filter(Boolean).pop() ||
           'TaskWraith'

@@ -1003,7 +1003,7 @@ export const buildWelcomeUsageDashboardData = (
         key === NO_WORKSPACE_KEY
           ? 'No workspace'
           : key === GLOBAL_CHATS_WORKSPACE_KEY
-            ? 'Global Chat'
+            ? 'General Chat'
             : LEGACY_AGBENCH_GLOBAL_CHATS_WORKSPACE_KEYS.has(key)
               ? 'Legacy Global Chats'
               : workspaces.find((w) => w.id === key)?.displayName || key

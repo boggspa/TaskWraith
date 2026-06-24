@@ -180,9 +180,9 @@ export function WelcomeWorkspacePicker({
           onClick={onSelectNoWorkspace}
           disabled={isGlobalChat}
           aria-current={isGlobalChat ? 'page' : undefined}
-          title="Use a workspace-less global chat"
+          title="A general chat that isn't tied to any folder"
         >
-          <span className="welcome-workspace-picker-chip-name">Global Chat</span>
+          <span className="welcome-workspace-picker-chip-name">General Chat</span>
         </button>
         {inline.map((ws) => (
           <span key={ws.id} className="welcome-workspace-picker-chip-wrap">

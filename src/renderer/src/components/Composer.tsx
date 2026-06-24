@@ -1162,7 +1162,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       {isCurrentGlobalChat ? (
                         <>
                           <span>New Ensemble chat in </span>
-                          <strong className={workspaceNameClass}>Global Chat</strong>
+                          <strong className={workspaceNameClass}>General Chat</strong>
                           <span>.</span>
                         </>
                       ) : (

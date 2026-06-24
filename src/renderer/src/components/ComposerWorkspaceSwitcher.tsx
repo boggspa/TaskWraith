@@ -617,7 +617,7 @@ export function ComposerWorkspaceSwitcher({
                       ? 'Workspaces you add become writable from your phone (incl. git commit/push).'
                       : 'Workspaces you add become viewable from your phone.'}
                     {remoteAllowlist.length === 0
-                      ? ' Your first remote grant also exposes global chats to your phone in plan mode.'
+                      ? ' Your first remote grant also exposes general chats to your phone in plan mode.'
                       : ''}
                   </p>
                 )}
@@ -728,7 +728,7 @@ export function ComposerWorkspaceSwitcher({
                   ∅
                 </span>
                 <span className="welcome-workspace-popover-row-name">
-                  No workspace (system chat)
+                  General chat (no folder)
                 </span>
               </button>
             </div>

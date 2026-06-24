@@ -1893,11 +1893,11 @@ export function Sidebar({
   }, [chats])
   const selectedChatId = activeChatId ?? currentChat?.appChatId ?? null
   const currentScopeTitle =
-    currentWorkspace?.displayName || (currentChat?.scope === 'global' ? 'Global chats' : 'TaskWraith')
+    currentWorkspace?.displayName || (currentChat?.scope === 'global' ? 'General chats' : 'TaskWraith')
   const runningCount = runningChatIdSet.size
   const primaryNewTitle = currentWorkspace
     ? `New chat in ${currentWorkspace.displayName}`
-    : 'New system chat'
+    : 'New general chat'
   const handlePrimaryNewChat = () => {
     setNewMenuOpen(false)
     if (currentWorkspace) {
@@ -3109,7 +3109,7 @@ export function Sidebar({
                           ? `${getProviderName(activeParticipant.provider)} / ${activeRole}`
                           : getProviderName(activeParticipant.provider)
                         : chat.scope === 'global'
-                          ? 'Global ensemble'
+                          ? 'General ensemble'
                           : 'Workspace ensemble'
                       const subThreads = subThreadsByParentId.get(chat.appChatId) ?? []
                       const subThreadsExpanded = isSidebarSearchActive
@@ -3541,8 +3541,8 @@ export function Sidebar({
                   type="button"
                   className="sidebar-section-header-action sidebar-global-chat-create"
                   onClick={onNewGlobalChat}
-                  title="New system chat"
-                  aria-label="New system chat"
+                  title="New general chat"
+                  aria-label="New general chat"
                 >
                   <PlusSymbolIcon />
                 </button>

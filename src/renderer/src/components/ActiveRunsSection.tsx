@@ -162,7 +162,7 @@ export function ActiveRunsSection({
 }
 
 function getWorkspaceShortName(job: RunQueueJob, chat: ChatRecord | null): string {
-  if (job.scope === 'global' || chat?.scope === 'global') return 'Global'
+  if (job.scope === 'global' || chat?.scope === 'global') return 'General'
   const workspacePath = job.workspacePath || chat?.workspacePath || ''
   const basename = workspacePath.split(/[\\/]/).filter(Boolean).pop()
   if (basename) return basename
