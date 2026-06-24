@@ -25,7 +25,8 @@ describe('EnsembleRosterPresetsCache.mapRawPresetsToRemote', () => {
             model: 'gpt-5.5',
             permissionPresetId: 'workspace_write',
             reasoningEffort: 'high',
-            fastModeEnabled: true
+            fastModeEnabled: true,
+            isBossman: true
           },
           {
             provider: 'claude',
@@ -55,7 +56,8 @@ describe('EnsembleRosterPresetsCache.mapRawPresetsToRemote', () => {
       brief: 'Build it.',
       permissionPresetId: 'workspace_write',
       reasoningEffort: 'high',
-      fastModeEnabled: true
+      fastModeEnabled: true,
+      isBossman: true
     })
     // role falls back to provider; disabled preserved; instructions→brief omitted when empty
     expect(out[0].participants[1]).toMatchObject({

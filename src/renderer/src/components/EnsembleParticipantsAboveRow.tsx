@@ -262,6 +262,28 @@ function ParticipantStatusIcon({ status }: { status: string }): React.JSX.Elemen
   )
 }
 
+function BossmanCrownIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M4.7 17.8h14.6l1.2-9.1-4.8 3.4-3.7-6-3.7 6-4.8-3.4 1.2 9.1Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path d="M5.4 20h13.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 interface EnsembleParticipantsAboveRowProps {
   chat: ChatRecord
   selectedParticipantId: string | null
@@ -438,6 +460,57 @@ export function EnsembleParticipantsAboveRow({
     persist(next)
   }
 
+  const patchEnsemble = (
+    patch: Partial<NonNullable<ChatRecord['ensemble']>>,
+    source: ChatRecord = chat
+  ): void => {
+    if (source.chatKind !== 'ensemble' || !source.ensemble) return
+    const nextChat: ChatRecord = {
+      ...source,
+      ensemble: {
+        ...source.ensemble,
+        ...patch,
+        updatedAt: new Date().toISOString()
+      }
+    }
+    onChatChange(withSessionActivityLedger(source, nextChat))
+  }
+
+  const setBossmanParticipant = (participantId: string | undefined): void => {
+    if (isRoundRunning) return
+    const nextBossmanParticipantId =
+      participantId && participants.some((participant) => participant.id === participantId)
+        ? participantId
+        : undefined
+    patchEnsemble({
+      bossmanParticipantId: nextBossmanParticipantId,
+      bossmanAutoApprovals:
+        nextBossmanParticipantId &&
+        nextBossmanParticipantId === chat.ensemble?.bossmanParticipantId
+          ? chat.ensemble.bossmanAutoApprovals
+          : undefined
+    })
+  }
+
+  const setBossmanAutoApprovals = (enabled: boolean): void => {
+    if (isRoundRunning || !chat.ensemble?.bossmanParticipantId) return
+    if (enabled) {
+      const confirmed = window.confirm(
+        'Allow Bossman Auto Approvals for this Ensemble? Bossman can only resolve one-shot approvals within the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
+      )
+      if (!confirmed) return
+    }
+    patchEnsemble({
+      bossmanAutoApprovals: enabled
+        ? {
+            enabled: true,
+            mode: 'permission_preset_once',
+            confirmedAt: new Date().toISOString()
+          }
+        : undefined
+    })
+  }
+
   const persist = (nextParticipants: EnsembleParticipant[]): void => {
     // 1.0.4-AR2 — preserve any existing per-chat `maxParticipants`
     // override that's already in range [MIN, MAX]. Pre-AR2 every
@@ -471,12 +544,22 @@ export function EnsembleParticipantsAboveRow({
       MAX_ENSEMBLE_PARTICIPANTS,
       Math.max(preservedMax, nextParticipants.length)
     )
+    const existingBossmanParticipantId = chat.ensemble?.bossmanParticipantId
+    const bossmanParticipantId =
+      existingBossmanParticipantId &&
+      nextParticipants.some((participant) => participant.id === existingBossmanParticipantId)
+        ? existingBossmanParticipantId
+        : undefined
     const nextChat: ChatRecord = {
       ...chat,
       ensemble: {
         ...chat.ensemble!,
         maxParticipants: clampedMax,
         participants: nextParticipants.map((p, idx) => ({ ...p, order: idx + 1 })),
+        bossmanParticipantId,
+        bossmanAutoApprovals: bossmanParticipantId
+          ? chat.ensemble?.bossmanAutoApprovals
+          : undefined,
         updatedAt: new Date().toISOString()
       }
     }
@@ -748,6 +831,13 @@ export function EnsembleParticipantsAboveRow({
               }}
               onCloseOverflow={() => setOverflowOpenId(null)}
               onPatch={(patch) => updateParticipant(participant.id, patch)}
+              isBossman={chat.ensemble?.bossmanParticipantId === participant.id}
+              autoApprovalsEnabled={
+                chat.ensemble?.bossmanParticipantId === participant.id &&
+                chat.ensemble?.bossmanAutoApprovals?.enabled === true
+              }
+              onSetBossman={setBossmanParticipant}
+              onToggleBossmanAutoApprovals={setBossmanAutoApprovals}
               locked={isRoundRunning}
               onDragStart={(info) => {
                 setDragId(participant.id)
@@ -1055,6 +1145,10 @@ interface ParticipantChipProps {
    * direct access to `removeParticipant` from this component). */
   onCloseOverflow: () => void
   onPatch: (patch: Partial<EnsembleParticipant>) => void
+  isBossman: boolean
+  autoApprovalsEnabled: boolean
+  onSetBossman: (participantId: string | undefined) => void
+  onToggleBossmanAutoApprovals: (enabled: boolean) => void
   locked: boolean
   /**
    * Pointer-based drag callbacks (replaces HTML5 native drag).
@@ -1109,6 +1203,10 @@ function ParticipantChip({
   onClick,
   onCloseOverflow,
   onPatch,
+  isBossman,
+  autoApprovalsEnabled,
+  onSetBossman,
+  onToggleBossmanAutoApprovals,
   locked,
   onDragStart,
   onDragMove,
@@ -1212,8 +1310,8 @@ function ParticipantChip({
       // participant's detail popover to see linkage state.
       title={
         participant.linkedProviderSessionId
-          ? `${getProviderName(participant.provider)} — ${participant.role || 'Participant'} · Linked session: ${participant.linkedProviderSessionId}`
-          : `${getProviderName(participant.provider)} — ${participant.role || 'Participant'}`
+          ? `${isBossman ? 'Bossman · ' : ''}${getProviderName(participant.provider)} — ${participant.role || 'Participant'} · Linked session: ${participant.linkedProviderSessionId}`
+          : `${isBossman ? 'Bossman · ' : ''}${getProviderName(participant.provider)} — ${participant.role || 'Participant'}`
       }
     >
       {/*
@@ -1230,6 +1328,7 @@ function ParticipantChip({
         role="button"
         tabIndex={0}
         aria-pressed={isSelected}
+        aria-label={`${isBossman ? 'Bossman ' : ''}${participant.role || getProviderName(participant.provider)}`}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
@@ -1250,8 +1349,13 @@ function ParticipantChip({
         */}
         <span
           className="ensemble-above-chip-role"
-          title={participant.role || getProviderName(participant.provider)}
+          title={
+            isBossman
+              ? `Bossman — ${participant.role || getProviderName(participant.provider)}`
+              : participant.role || getProviderName(participant.provider)
+          }
         >
+          {isBossman ? <BossmanCrownIcon className="ensemble-above-chip-crown" /> : null}
           {participant.role || getProviderName(participant.provider)}
         </span>
         {/* 1.0.4-AV2 — per-participant token-spend chip. Renders
@@ -1344,6 +1448,10 @@ function ParticipantChip({
           anchor={chipAnchor}
           participant={participant}
           onPatch={onPatch}
+          isBossman={isBossman}
+          autoApprovalsEnabled={autoApprovalsEnabled}
+          onSetBossman={onSetBossman}
+          onToggleBossmanAutoApprovals={onToggleBossmanAutoApprovals}
           locked={locked}
           onClose={onCloseOverflow}
           onRetry={onRetry}
@@ -1360,6 +1468,10 @@ interface OverflowPopoverProps {
   anchor: HTMLElement | null
   participant: EnsembleParticipant
   onPatch: (patch: Partial<EnsembleParticipant>) => void
+  isBossman: boolean
+  autoApprovalsEnabled: boolean
+  onSetBossman: (participantId: string | undefined) => void
+  onToggleBossmanAutoApprovals: (enabled: boolean) => void
   /* 1.0.5-EW22 — `onRemove` / `canRemove` removed. Remove gesture
    * moved to the row's "-" sibling button. */
   locked: boolean
@@ -1378,6 +1490,10 @@ export function EnsembleParticipantOverflowPopover({
   anchor,
   participant,
   onPatch,
+  isBossman,
+  autoApprovalsEnabled,
+  onSetBossman,
+  onToggleBossmanAutoApprovals,
   locked,
   onClose,
   onRetry,
@@ -1447,7 +1563,7 @@ export function EnsembleParticipantOverflowPopover({
         transform: 'translateY(-100%)'
       }}
       role="dialog"
-      aria-label={`Edit ${getProviderName(participant.provider)} role and enabled state`}
+      aria-label={`Edit ${isBossman ? 'Bossman ' : ''}${getProviderName(participant.provider)} role and enabled state`}
     >
       <label className="ensemble-above-overflow-enable">
         <input
@@ -1457,6 +1573,34 @@ export function EnsembleParticipantOverflowPopover({
           onChange={(event) => onPatch({ enabled: event.target.checked })}
         />
         <span>Enabled in ensemble rounds</span>
+      </label>
+      <label className="ensemble-above-overflow-bossman">
+        <input
+          type="checkbox"
+          checked={isBossman}
+          disabled={locked}
+          onChange={(event) => onSetBossman(event.target.checked ? participant.id : undefined)}
+        />
+        <span className="ensemble-above-overflow-bossman-label">
+          <BossmanCrownIcon className="ensemble-above-overflow-crown" />
+          Bossman
+        </span>
+      </label>
+      <label
+        className={`ensemble-above-overflow-auto-approval${!isBossman ? ' is-disabled' : ''}`}
+        title={
+          isBossman
+            ? 'Allow Bossman to resolve preset-limited one-shot approvals.'
+            : 'Assign this participant as Bossman before enabling auto approvals.'
+        }
+      >
+        <input
+          type="checkbox"
+          checked={autoApprovalsEnabled}
+          disabled={locked || !isBossman}
+          onChange={(event) => onToggleBossmanAutoApprovals(event.target.checked)}
+        />
+        <span>Allow Auto Approvals</span>
       </label>
       <label className="ensemble-above-overflow-role">
         <span className="ensemble-above-overflow-label">Role</span>

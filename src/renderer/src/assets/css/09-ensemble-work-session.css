@@ -915,6 +915,15 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ensemble-above-chip-crown {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--warning, #e6b450) 88%, #ffffff);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--warning, #e6b450) 34%, transparent));
 }
 
 /* Scale down role text inside very narrow chips so more characters stay
@@ -1039,6 +1048,36 @@
   font-size: var(--font-size-sm);
   cursor: pointer;
   user-select: none;
+}
+
+.ensemble-above-overflow-bossman,
+.ensemble-above-overflow-auto-approval {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ensemble-above-overflow-bossman-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 650;
+}
+
+.ensemble-above-overflow-crown {
+  color: color-mix(in srgb, var(--warning, #e6b450) 90%, #ffffff);
+}
+
+.ensemble-above-overflow-auto-approval {
+  color: var(--text-secondary);
+}
+
+.ensemble-above-overflow-auto-approval.is-disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .ensemble-above-overflow-role {

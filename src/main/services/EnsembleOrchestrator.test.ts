@@ -1794,6 +1794,82 @@ Next action:
     expect(skipMessage?.metadata?.ensembleProvider).toBe('claude')
   })
 
+  it('lets Bossman skip a pending participant without dispatching them', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'skip_participant',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        targetParticipantId: 'codex',
+        reason: 'Codex lacks context for this turn.'
+      }
+    )
+    expect(result.ok).toBe(true)
+    const codexState = harness.chat.ensemble?.activeRound?.participants.find(
+      (participant) => participant.participantId === 'codex'
+    )
+    expect(codexState?.status).toBe('skipped')
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      {
+        appRunId: harness.dispatched[0].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(1)
+  })
+
+  it('rejects Bossman control from non-Bossman callers and stale round ids', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const stale = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'skip_participant',
+      roundId: 'old-round',
+      targetParticipantId: 'codex'
+    })
+    expect(stale.ok).toBe(false)
+    expect(stale.error).toBe('stale_round')
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      {
+        appRunId: harness.dispatched[0].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const rejected = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[1].appRunId,
+      {
+        action: 'stop_round',
+        roundId: harness.chat.ensemble?.activeRound?.roundId,
+        reason: 'Not allowed.'
+      }
+    )
+    expect(rejected.ok).toBe(false)
+    expect(rejected.error).toBe('not_bossman')
+  })
+
   it('classifies ECONNREFUSED dispatch errors and continues to the next participant', async () => {
     // 1.0.4 — Claude/Explorer's introspective feedback after a real
     // production round where ensemble_yield hit ECONNREFUSED on the

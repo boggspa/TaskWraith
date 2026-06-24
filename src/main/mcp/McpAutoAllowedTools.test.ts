@@ -31,6 +31,7 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'git_stage',
       'git_commit',
       'run_task',
+      'ensemble_bossman_control',
       'web_search',
       'web_fetch',
       ...MCP_APP_STATE_MUTATION_TOOLS
@@ -90,6 +91,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'run_task',
       'ensemble_send',
       'ensemble_fanout',
+      'ensemble_bossman_control',
       'schedule_wakeup',
       'cancel_wakeup',
       'blackboard_post',

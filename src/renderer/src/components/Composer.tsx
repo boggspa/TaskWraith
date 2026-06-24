@@ -1244,6 +1244,27 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   participant.id === welcomeParticipantOverflow.participantId
                               )
                               if (!overflowParticipant) return null
+                              const persistWelcomeEnsemblePatch = (patch: Record<string, unknown>) => {
+                                if (!currentChat?.ensemble) return
+                                const updatedChat = {
+                                  ...currentChat,
+                                  ensemble: {
+                                    ...currentChat.ensemble,
+                                    ...patch,
+                                    updatedAt: new Date().toISOString()
+                                  }
+                                }
+                                chatByIdRef.current.set(updatedChat.appChatId, updatedChat)
+                                setCurrentChat((prev) =>
+                                  prev?.appChatId === updatedChat.appChatId ? updatedChat : prev
+                                )
+                                setChats((prev) =>
+                                  prev.map((c) =>
+                                    c.appChatId === updatedChat.appChatId ? updatedChat : c
+                                  )
+                                )
+                                void window.api.saveChat(updatedChat)
+                              }
                               return (
                                 <EnsembleParticipantOverflowPopover
                                   anchor={welcomeParticipantOverflow.anchor}
@@ -1251,6 +1272,51 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   onPatch={(patch) =>
                                     patchEnsembleParticipantById(overflowParticipant.id, patch)
                                   }
+                                  isBossman={
+                                    currentChat.ensemble.bossmanParticipantId ===
+                                    overflowParticipant.id
+                                  }
+                                  autoApprovalsEnabled={
+                                    currentChat.ensemble.bossmanParticipantId ===
+                                      overflowParticipant.id &&
+                                    currentChat.ensemble.bossmanAutoApprovals?.enabled === true
+                                  }
+                                  onSetBossman={(participantId) => {
+                                    const nextBossmanParticipantId =
+                                      participantId &&
+                                      currentChat.ensemble?.participants.some(
+                                        (participant) => participant.id === participantId
+                                      )
+                                        ? participantId
+                                        : undefined
+                                    persistWelcomeEnsemblePatch({
+                                      bossmanParticipantId: nextBossmanParticipantId,
+                                      bossmanAutoApprovals:
+                                        nextBossmanParticipantId &&
+                                        nextBossmanParticipantId ===
+                                          currentChat.ensemble?.bossmanParticipantId
+                                          ? currentChat.ensemble?.bossmanAutoApprovals
+                                          : undefined
+                                    })
+                                  }}
+                                  onToggleBossmanAutoApprovals={(enabled) => {
+                                    if (!currentChat.ensemble?.bossmanParticipantId) return
+                                    if (enabled) {
+                                      const confirmed = window.confirm(
+                                        'Allow Bossman Auto Approvals for this Ensemble? Bossman can only resolve one-shot approvals within the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
+                                      )
+                                      if (!confirmed) return
+                                    }
+                                    persistWelcomeEnsemblePatch({
+                                      bossmanAutoApprovals: enabled
+                                        ? {
+                                            enabled: true,
+                                            mode: 'permission_preset_once',
+                                            confirmedAt: new Date().toISOString()
+                                          }
+                                        : undefined
+                                    })
+                                  }}
                                   locked={isCurrentEnsembleRoundRunning}
                                   onClose={() => setWelcomeParticipantOverflow(null)}
                                 />

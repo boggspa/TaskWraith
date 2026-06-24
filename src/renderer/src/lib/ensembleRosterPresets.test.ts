@@ -41,6 +41,7 @@ import {
   getEnsembleRosterPreset,
   listEnsembleRosterPresets,
   materializeParticipantsFromPreset,
+  materializeParticipantsFromPresetWithBossman,
   snapshotParticipantsForPreset,
   subscribeEnsembleRosterPresets,
   upsertEnsembleRosterPreset,
@@ -163,6 +164,29 @@ describe('ensembleRosterPresets — capture + materialize', () => {
     expect(participants.every((participant) => participant.linkedProviderSessionId === null)).toBe(
       true
     )
+  })
+
+  it('round-trips exactly one Bossman marker through snapshot materialization', () => {
+    const preset = buildEnsembleRosterPresetFromConfig(
+      'Boss panel',
+      {
+        ...sampleEnsemble(),
+        bossmanParticipantId: 'ensemble-participant-1'
+      },
+      1_700_000_000_000
+    )
+    expect(preset.participants.map((participant) => participant.isBossman === true)).toEqual([
+      false,
+      true
+    ])
+    const materialized = materializeParticipantsFromPresetWithBossman(preset.participants)
+    expect(materialized.bossmanParticipantId).toBe(materialized.participants[1].id)
+    const resnapshot = snapshotParticipantsForPreset(
+      materialized.participants,
+      materialized.bossmanParticipantId
+    )
+    expect(resnapshot.filter((participant) => participant.isBossman === true)).toHaveLength(1)
+    expect(resnapshot[1].isBossman).toBe(true)
   })
 })
 

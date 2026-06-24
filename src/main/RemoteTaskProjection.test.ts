@@ -779,4 +779,25 @@ describe('buildRemoteEnsembleState — per-participant context (roster.contextTo
     )
     expect(state?.roster?.[0].contextTokens).toBeUndefined()
   })
+
+  it('projects Bossman identity at top level and on the roster entry', () => {
+    const state = buildRemoteEnsembleState(
+      chat({
+        chatKind: 'ensemble',
+        ensemble: {
+          bossmanParticipantId: 'p2',
+          participants: [
+            { id: 'p1', provider: 'claude', role: 'Architect', enabled: true, order: 0 },
+            { id: 'p2', provider: 'codex', role: 'Bossman', enabled: true, order: 1 }
+          ]
+        },
+        runs: []
+      } as unknown as Partial<ChatRecord>)
+    )
+    expect(state?.bossmanParticipantId).toBe('p2')
+    expect(state?.roster?.map((entry) => [entry.id, entry.isBossman === true])).toEqual([
+      ['p1', false],
+      ['p2', true]
+    ])
+  })
 })

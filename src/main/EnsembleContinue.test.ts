@@ -135,6 +135,19 @@ describe('handleEnsembleContinue', () => {
       expect(chat.ensemble?.workSession?.totalRoundsUsed).toBe(1)
     })
 
+    it('lets the configured Work Session manager queue a continuation', () => {
+      chat.ensemble!.workSession = makeWorkSession({ managerParticipantId: 'codex-1' })
+      const { deps, queueFollowUpPrompt } = makeDeps(chat)
+      const result = handleEnsembleContinue(
+        'chat-1',
+        { nextPrompt: 'continue under manager', acceptanceStatus: 'inProgress' },
+        deps
+      )
+      expect(result.ok).toBe(true)
+      expect(result.queued).toBe(true)
+      expect(queueFollowUpPrompt).toHaveBeenCalledWith('chat-1', 'continue under manager')
+    })
+
     it('finalises the session when acceptanceStatus is complete', () => {
       const { deps, saveChat, queueFollowUpPrompt } = makeDeps(chat)
       const result = handleEnsembleContinue(
@@ -250,6 +263,60 @@ describe('handleEnsembleContinue', () => {
       expect(result.ok).toBe(false)
       expect(result.error).toBe('missing_next_prompt')
       expect(queueFollowUpPrompt).not.toHaveBeenCalled()
+    })
+
+    it('requires the Work Session manager to advance a managed session', () => {
+      const chat = makeChat(
+        {},
+        {
+          workSession: makeWorkSession({ managerParticipantId: 'boss-1' })
+        }
+      )
+      const { deps, queueFollowUpPrompt } = makeDeps(chat)
+      const result = handleEnsembleContinue(
+        'chat-1',
+        { acceptanceStatus: 'inProgress', nextPrompt: 'continue' },
+        deps
+      )
+      expect(result.ok).toBe(false)
+      expect(result.error).toBe('work_session_manager_required')
+      expect(queueFollowUpPrompt).not.toHaveBeenCalled()
+    })
+
+    it('requires the Work Session manager to complete a managed session', () => {
+      const chat = makeChat(
+        {},
+        {
+          workSession: makeWorkSession({ managerParticipantId: 'boss-1' })
+        }
+      )
+      const { deps } = makeDeps(chat)
+      const result = handleEnsembleContinue(
+        'chat-1',
+        { acceptanceStatus: 'complete', summary: 'done' },
+        deps
+      )
+      expect(result.ok).toBe(false)
+      expect(result.error).toBe('work_session_manager_required')
+      expect(chat.ensemble?.workSession?.status).toBe('active')
+    })
+
+    it('allows non-manager participants to pause a managed session as blocked', () => {
+      const chat = makeChat(
+        {},
+        {
+          workSession: makeWorkSession({ managerParticipantId: 'boss-1' })
+        }
+      )
+      const { deps } = makeDeps(chat)
+      const result = handleEnsembleContinue(
+        'chat-1',
+        { acceptanceStatus: 'blocked', reason: 'Need user decision.' },
+        deps
+      )
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe('paused')
+      expect(chat.ensemble?.workSession?.status).toBe('paused')
     })
 
     it('rejects when a continuation is already queued (idempotency)', () => {
