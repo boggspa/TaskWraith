@@ -469,6 +469,23 @@
   background: none !important;
   box-shadow: none !important;
 }
+/* FIRST-CHILD corner fix — mirror the live rule (03:3491-3498). The merged
+ * frame (.composer-above-bar-stack) is rounded to calc(--radius-lg * 2.45) on
+ * top, but its first child (.composer-above-bar) is flattened to radius:0 by the
+ * `> *` chrome-less rule above WHILE shard 07's ungated base rule still applies
+ * `overflow: hidden` to it — so it becomes a SQUARE clip box whose corners poke
+ * past the frame's rounded top, reading as a detached/misaligned bar. Round the
+ * first child's top corners to match the frame so the radius shows through (its
+ * own overflow-clip then rounds with it). Scoped to the default preview card —
+ * cannot reach other shells' previews or the live composer. The ensemble
+ * `::before` companion (03:3499) isn't needed: the preview renders only the
+ * single-provider above-bar, which kills its ::before tint. */
+.settings-composer-preview-card[data-composer-style="default"]
+  .composer-above-bar-stack
+  > *:first-child {
+  border-top-left-radius: calc(var(--radius-lg) * 2.45);
+  border-top-right-radius: calc(var(--radius-lg) * 2.45);
+}
 
 /* INNER module — the theme-tone inset panel inside the solid frame.
  * The real `[data-composer-style="default"] .composer-inner-module`

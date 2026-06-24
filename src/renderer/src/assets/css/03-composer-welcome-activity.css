@@ -2992,11 +2992,19 @@
   box-shadow:
     inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.58)),
     inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 12%, transparent);
-  /* own cached compositor layer, decoupled from the backdrop repaint path */
+  /* own cached paint/stacking layer, decoupled from the backdrop repaint path.
+   * NB: deliberately NO `will-change: transform` / `translateZ(0)`. Promoting
+   * the lens to its own GPU compositor layer made Chromium clip its inherited
+   * rounded top with a NON-anti-aliased composited clip, so the bright rim-light
+   * traced a rough/jagged top edge. `contain: layout paint` + `isolation:
+   * isolate` already give it an independent paint/stacking layer decoupled from
+   * backdrop repaints (it refracts only its own static content, so there is no
+   * streaming-driven invalidation to guard against), and the cinematic/epic
+   * `filter: url(#tw-glass-refract)` still establishes its own render surface —
+   * so the warp tiers are unaffected. This matches the Settings-preview lens
+   * (shard 04), which omits these and never showed the roughness. */
   contain: layout paint;
   isolation: isolate;
-  will-change: transform;
-  transform: translateZ(0);
 }
 /* Displacement warp on the sheen — gated to the stronger tiers (subtle = flat
  * sheen + rim only). Never animated → rasterized once, then cached. */
