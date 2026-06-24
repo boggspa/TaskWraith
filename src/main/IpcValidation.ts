@@ -86,6 +86,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'remove-guest-participant': ['chatId'],
   'save-chat': ['chatRecord'],
   'delete-chat': ['chatId'],
+  'reap-abandoned-chats': ['optionalObject'],
   'clear-chats': ['optionalString'],
   'record-usage': ['object'],
   'get-usage': ['optionalString', 'optionalString'],
