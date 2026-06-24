@@ -2348,6 +2348,60 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         },
         required: ['sourcePath']
       }
+    },
+    {
+      name: 'audio_extract',
+      description:
+        'Extract the audio track from a workspace VIDEO to a standalone audio file via ffmpeg. Params: ' +
+        'sourcePath, `format` (wav|m4a|mp3), `bitrateKbps` (32–320, default 192; ignored for wav). Requires ' +
+        'ffmpeg. Writes a new audio file into the workspace and returns it as a media attachment. Gated as a ' +
+        'file change.',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourcePath: { type: 'string', description: 'Workspace path to a video file.' },
+          format: { type: 'string', enum: ['wav', 'm4a', 'mp3'], description: 'Output audio format.' },
+          bitrateKbps: { type: 'number', description: '32-320, default 192.' }
+        },
+        required: ['sourcePath', 'format']
+      }
+    },
+    {
+      name: 'transcode_audio',
+      description:
+        'Transcode a workspace audio/video file’s audio to the chosen format via ffmpeg. Params: sourcePath, ' +
+        '`format` (wav|m4a|mp3), `bitrateKbps` (32–320, default 192; ignored for wav). Requires ffmpeg. Writes ' +
+        'a new audio file into the workspace and returns it as a media attachment. Gated as a file change.',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourcePath: { type: 'string', description: 'Workspace path to an audio/video file.' },
+          format: { type: 'string', enum: ['wav', 'm4a', 'mp3'], description: 'Output audio format.' },
+          bitrateKbps: { type: 'number', description: '32-320, default 192.' }
+        },
+        required: ['sourcePath', 'format']
+      }
+    },
+    {
+      name: 'transcode_video',
+      description:
+        'Transcode a workspace VIDEO to H.264/AAC MP4 (faststart) via ffmpeg. Params: sourcePath, `crf` ' +
+        '(0–51, lower=higher quality, default 23), `scaleWidth` (output width in px; height auto), `fps`. ' +
+        'Requires ffmpeg. Writes a new MP4 file into the workspace and returns it as a media attachment. ' +
+        'Gated as a file change.',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourcePath: { type: 'string', description: 'Workspace path to a video file.' },
+          crf: { type: 'number', description: '0-51, lower=higher quality, default 23.' },
+          scaleWidth: { type: 'number', description: 'Output width in px; height auto.' },
+          fps: { type: 'number', description: 'Output frames per second.' }
+        },
+        required: ['sourcePath']
+      }
     }
   ]
   return orderTaskWraithMcpToolDefinitions(definitions)

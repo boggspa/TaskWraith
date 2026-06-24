@@ -30,7 +30,8 @@ import type {
   GeminiMcpBridgeStatus,
   GeminiWorktreeLaunchOption,
   ProviderId,
-  RuntimeProfile
+  RuntimeProfile,
+  TranscriptMediaRef
 } from '../store/types'
 
 export const GEMINI_MCP_SERVER_NAME = 'TaskWraith' as const
@@ -119,6 +120,10 @@ export interface McpToolExecutionResult {
   isError?: boolean
   structuredContent?: Record<string, unknown>
   content?: McpToolContentBlock[]
+  // S1b-3: main-built AV media refs on a TRUSTED channel — injected straight into run
+  // state by the host, bypassing the image-only provider sanitizer (kind!=='image' is
+  // hard-dropped). Un-forgeable: only main-side executor code constructs this result.
+  trustedMediaRefs?: TranscriptMediaRef[]
 }
 
 export interface McpToolDefinition {

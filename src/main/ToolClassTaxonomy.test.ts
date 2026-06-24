@@ -71,6 +71,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
       [
         'apply_patch',
         'audio_analyze',
+        'audio_extract',
         'audio_render_wav',
         'browser_click',
         'browser_open',
@@ -93,6 +94,8 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'run_task',
         'svg_rasterize',
         'switch_auth_profile',
+        'transcode_audio',
+        'transcode_video',
         'video_probe',
         'video_thumbnail',
         'write_file'

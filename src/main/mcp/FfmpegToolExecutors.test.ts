@@ -38,6 +38,7 @@ function build(overrides: Partial<FfmpegToolDeps> = {}) {
     }),
     stagingPath: vi.fn((ext: string) => `/staging/out.${ext}`),
     readOutput: vi.fn(() => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('frame')])),
+    persistOutput: vi.fn((_buffer: Buffer, _mimeType: string) => ({ ok: true as const, sha256: 'f'.repeat(64) })),
     removeFile: vi.fn((p: string) => {
       removed.push(p)
     }),
@@ -52,7 +53,9 @@ describe('isFfmpegMcpToolName', () => {
   it('recognizes the ffmpeg tools only', () => {
     expect(isFfmpegMcpToolName('video_probe')).toBe(true)
     expect(isFfmpegMcpToolName('video_thumbnail')).toBe(true)
-    expect(isFfmpegMcpToolName('transcode_video')).toBe(false) // deferred to S1b-3
+    expect(isFfmpegMcpToolName('audio_extract')).toBe(true)
+    expect(isFfmpegMcpToolName('transcode_audio')).toBe(true)
+    expect(isFfmpegMcpToolName('transcode_video')).toBe(true)
     expect(isFfmpegMcpToolName('audio_analyze')).toBe(false)
   })
 })
@@ -134,5 +137,93 @@ describe('video_thumbnail', () => {
     expect(result.isError).toBe(true)
     expect(result.text).toContain('timed out')
     expect(getRemoved()).toContain('/staging/out.png')
+  })
+})
+
+// S1b-3 producers — output is audio/video, so it rides the TRUSTED media channel
+// (result.trustedMediaRefs, NOT an image block + NOT provider media_refs).
+describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', () => {
+  it('audio_extract persists the output and returns a trusted audio ref with a sha-derived id', async () => {
+    const { executors, deps, getFfmpegArgs, getRemoved } = build()
+    const result = await executors.executeFfmpegTool(
+      'audio_extract',
+      { sourcePath: 'clip.mp4', format: 'm4a', bitrateKbps: 128 },
+      { appRunId: 'run-7' }
+    )
+    expect(result.isError).toBeFalsy()
+    const args = getFfmpegArgs()!.join(' ')
+    expect(args).toContain('-i /ws/clip.mp4') // jailed input
+    expect(args).toContain('/staging/out.m4a') // staged output WE named
+    // Persisted to the asset store with the format's mime.
+    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'audio/mp4')
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].kind).toBe('audio')
+    expect(refs[0].mimeType).toBe('audio/mp4')
+    expect(refs[0].sha256).toBe('f'.repeat(64))
+    expect(refs[0].id).toContain('f'.repeat(24)) // sha-derived, non-empty
+    expect(refs[0].id).toContain('run-7')
+    expect(refs[0].name).toBe('clip.m4a')
+    // NOT an image-block result.
+    expect((result.content ?? []).some((b) => b.type === 'image')).toBe(false)
+    // Staging file cleaned up.
+    expect(getRemoved()).toContain('/staging/out.m4a')
+  })
+
+  it('transcode_audio returns a trusted audio ref (wav → audio/wav)', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeFfmpegTool('transcode_audio', { sourcePath: 'song.flac', format: 'wav' }, {})
+    expect(result.isError).toBeFalsy()
+    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'audio/wav')
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].kind).toBe('audio')
+    expect(refs[0].mimeType).toBe('audio/wav')
+    expect(refs[0].name).toBe('song.wav')
+  })
+
+  it('transcode_video returns a trusted video ref (video/mp4)', async () => {
+    const { executors, deps, getFfmpegArgs } = build()
+    const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4', crf: 28, scaleWidth: 640 }, {})
+    expect(result.isError).toBeFalsy()
+    expect(getFfmpegArgs()!.join(' ')).toContain('/staging/out.mp4')
+    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'video/mp4')
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].kind).toBe('video')
+    expect(refs[0].mimeType).toBe('video/mp4')
+    expect(refs[0].id.length).toBeGreaterThan(0)
+  })
+
+  it('rejects a producer with a missing/invalid audio format', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeFfmpegTool('audio_extract', { sourcePath: 'clip.mp4' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('format')
+    expect(deps.runFfmpeg).not.toHaveBeenCalled()
+  })
+
+  it('a persistOutput failure yields an error result with NO trusted refs (and still cleans up)', async () => {
+    const { executors, getRemoved } = build({
+      persistOutput: vi.fn(() => ({ ok: false as const, reason: 'disk_full' }))
+    })
+    const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('disk_full')
+    expect(result.trustedMediaRefs).toBeUndefined()
+    expect(getRemoved()).toContain('/staging/out.mp4')
+  })
+
+  it('fails (and cleans up) when a producer ffmpeg run throws', async () => {
+    const { executors, deps, getRemoved } = build({
+      runFfmpeg: vi.fn(async () => {
+        throw new Error('producer timed out')
+      })
+    })
+    const result = await executors.executeFfmpegTool('transcode_audio', { sourcePath: 'a.wav', format: 'mp3' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('timed out')
+    expect(deps.persistOutput).not.toHaveBeenCalled()
+    expect(getRemoved()).toContain('/staging/out.mp3')
   })
 })

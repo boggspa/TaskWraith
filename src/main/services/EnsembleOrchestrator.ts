@@ -4517,6 +4517,23 @@ export class EnsembleOrchestrator {
     this.runsByRunId.delete(run.runId)
   }
 
+  /**
+   * S1b-3 — TRUSTED media-ref injection from a MAIN-side ffmpeg producer tool
+   * (audio_extract / transcode_audio / transcode_video). Unlike the `media_refs`
+   * ingestion in handleProviderOutput, these refs are already verified (the
+   * executor wrote a content-addressed asset), so they must NOT pass through
+   * sanitizeRawProviderMediaRefs. Called in-process by index.ts's
+   * injectTrustedMediaRefs keyed on appRunId — never reachable from provider
+   * stdout, so a hostile provider cannot forge an audio/video ref through here.
+   */
+  appendTrustedMediaRefs(appRunId: string, refs: readonly TranscriptMediaRef[]): void {
+    if (!appRunId || refs.length === 0) return
+    const run = this.runsByRunId.get(appRunId)
+    if (!run) return
+    run.mediaRefs = mergeTranscriptMediaRefs(run.mediaRefs, refs)
+    this.flushRun(run)
+  }
+
   private flushRun(run: ActiveParticipantRun, final = false, reason?: string): void {
     if (run.flushTimer) {
       clearTimeout(run.flushTimer)
@@ -4615,6 +4632,7 @@ export class EnsembleOrchestrator {
     // Sourced from run.mediaRefs (not bolted onto a message object) so it
     // survives the wholesale message rebuild above on every re-flush.
     if (run.mediaRefs && run.mediaRefs.length > 0) {
+      let stamped = false
       for (let i = desiredMessages.length - 1; i >= 0; i -= 1) {
         const candidate = desiredMessages[i]
         if (candidate.role === 'assistant' && candidate.metadata?.kind === 'ensembleParticipant') {
@@ -4625,8 +4643,47 @@ export class EnsembleOrchestrator {
               run.mediaRefs
             )
           }
+          stamped = true
           break
         }
+      }
+      // No assistant content message to carry the media — this happens when a
+      // participant's terminal action is a producer tool (audio_extract /
+      // transcode_audio / transcode_video) with no surrounding prose, so the
+      // timeline holds only a `{kind:'tool'}` entry and the stamp loop above
+      // finds no candidate. Without this, the produced asset is on disk but
+      // never renders. Synthesize a minimal empty-content assistant message to
+      // carry the refs, mirroring the solo-bridge and background sub-thread
+      // paths which already do this. The id is stable beyond the real timeline
+      // entries (0..timeline.length-1) so it's idempotent across re-flushes; on
+      // a later flush where the participant DOES emit text `stamped` is true and
+      // this synthetic message is never built, so the wholesale rebuild above
+      // (which strips every `ensemble-content-${runId}-*` id and re-inserts only
+      // `desiredMessages`) drops the stale synthetic.
+      if (!stamped) {
+        const id = timelineMessageId(run.runId, timeline.length, 'content')
+        desiredIds.add(id)
+        desiredMessages.push({
+          id,
+          role: 'assistant',
+          content: '',
+          timestamp,
+          runId: run.runId,
+          metadata: {
+            kind: 'ensembleParticipant',
+            ensembleRoundId: run.roundId,
+            ensembleParticipantId: run.participant.id,
+            ...(run.laneId ? { ensembleLaneId: run.laneId } : {}),
+            ensembleProvider: run.participant.provider,
+            ensembleRole: run.participant.role,
+            ensembleOrder: run.participant.order,
+            ensembleStatus: run.status,
+            ensembleTimelineIndex: timeline.length,
+            ensembleModel: run.participant.model,
+            ...ensembleReasoningMetadata(run.participant),
+            mediaRefs: mergeTranscriptMediaRefs(undefined, run.mediaRefs)
+          }
+        })
       }
     }
 

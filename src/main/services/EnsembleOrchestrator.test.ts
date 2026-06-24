@@ -17,6 +17,7 @@ import type {
   EnsembleConfig,
   EnsembleParticipant,
   EnsembleWakeupRecord,
+  TranscriptMediaRef,
   UsageRecord,
   WorkSessionConfig
 } from '../store/types'
@@ -389,7 +390,7 @@ describe('EnsembleOrchestrator', () => {
     expect(participantContentMessage(harness)?.metadata?.mediaRefs).toHaveLength(1)
   })
 
-  it('survives media_refs arriving before any content (attaches once content exists)', async () => {
+  it('survives media_refs arriving before any content (carried immediately, migrates to prose once content exists)', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -398,20 +399,121 @@ describe('EnsembleOrchestrator', () => {
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     const runId = harness.dispatched[0].appRunId!
-    // media before any text — must not crash and must not be lost.
+    // media before any text — must not crash and must not be lost. With no
+    // prose yet, it rides a synthesized empty-content carrier so it renders
+    // immediately rather than being dropped.
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: runId, appChatId: 'ensemble-chat' },
       { type: 'media_refs', mediaRefs: [imageRef(runId)] }
     )
-    expect(participantContentMessage(harness)).toBeUndefined()
+    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    expect(participantContentMessage(harness)?.content).toBe('')
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: runId, appChatId: 'ensemble-chat' },
       { type: 'content', text: 'Here is the generated image.' }
     )
-    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    await vi.waitFor(() =>
+      expect(participantContentMessage(harness)?.content).toBe('Here is the generated image.')
+    )
+    // The ref migrated onto the real prose message; the synthetic carrier is
+    // gone (no duplicate assistant messages).
     expect(participantContentMessage(harness)?.metadata?.mediaRefs).toHaveLength(1)
+    expect(
+      harness.chat.messages.filter(
+        (m) => m.role === 'assistant' && m.metadata?.kind === 'ensembleParticipant'
+      )
+    ).toHaveLength(1)
+  })
+
+  // Producer-tool media parity: a participant whose terminal action is a
+  // producer tool (audio_extract / transcode_audio / transcode_video) with NO
+  // surrounding prose has a tool-only timeline, so the stamp loop finds no
+  // assistant content message. The trusted refs (appendTrustedMediaRefs) must
+  // still render via a synthesized empty-content carrier message rather than
+  // being silently dropped.
+  function videoRef(runId: string, sha = 'vid123'): TranscriptMediaRef {
+    return {
+      id: `${runId}:produced-video:${sha}`,
+      kind: 'video',
+      format: 'container',
+      source: 'generated',
+      name: 'produced.mp4',
+      mimeType: 'video/mp4',
+      sha256: sha,
+      status: 'available'
+    }
+  }
+
+  it('renders trusted producer media when the terminal action is a tool with no prose', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Transcode the recording.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    // Tool-only timeline: a producer tool call, no content fragment at all.
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'tool_use', tool_id: 'tool-1', tool_name: 'transcode_video' }
+    )
+    // No assistant content message exists yet — the stamp loop would have
+    // nothing to attach to.
+    expect(participantContentMessage(harness)).toBeUndefined()
+
+    // Trusted ref injected in-process (index.ts injectTrustedMediaRefs path),
+    // which merges onto run.mediaRefs and flushes.
+    harness.orchestrator.appendTrustedMediaRefs(runId, [videoRef(runId)])
+
+    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    const carrier = participantContentMessage(harness)!
+    expect(carrier.content).toBe('')
+    expect(carrier.metadata?.kind).toBe('ensembleParticipant')
+    const refs = carrier.metadata?.mediaRefs as Array<{ id: string }>
+    expect(refs).toHaveLength(1)
+    expect(refs[0].id).toBe(`${runId}:produced-video:vid123`)
+    // Exactly one assistant carrier — no duplicate synthetic messages.
+    expect(
+      harness.chat.messages.filter(
+        (m) => m.role === 'assistant' && m.metadata?.kind === 'ensembleParticipant'
+      )
+    ).toHaveLength(1)
+  })
+
+  it('does not synthesize a duplicate carrier when a real assistant message exists', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Transcode and explain.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'tool_use', tool_id: 'tool-1', tool_name: 'transcode_video' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: runId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Here is the transcoded clip.' }
+    )
+    harness.orchestrator.appendTrustedMediaRefs(runId, [videoRef(runId)])
+
+    await vi.waitFor(() => expect(participantContentMessage(harness)?.metadata?.mediaRefs).toBeTruthy())
+    const assistantMsgs = harness.chat.messages.filter(
+      (m) => m.role === 'assistant' && m.metadata?.kind === 'ensembleParticipant'
+    )
+    // The real prose message carries the ref; no empty synthetic carrier.
+    expect(assistantMsgs).toHaveLength(1)
+    expect(assistantMsgs[0].content).toBe('Here is the transcoded clip.')
+    expect(assistantMsgs[0].metadata?.mediaRefs).toHaveLength(1)
   })
 
   it('persists an active-round checkpoint and retires it when the round completes', async () => {

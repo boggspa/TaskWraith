@@ -1,6 +1,7 @@
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
-import { buildFfmpegArgs, buildFfprobeArgs, type FfmpegIntent } from '../media/FfmpegCommand'
+import { buildFfmpegArgs, buildFfprobeArgs, type AudioOutFormat, type FfmpegIntent } from '../media/FfmpegCommand'
 import { parseFfprobeJson } from '../media/FfprobeResult'
+import { buildAvMediaRef } from '../media/AvMediaRef'
 
 /**
  * ffmpeg-family MCP tool executors. Pure logic — the binary resolver, the realpath
@@ -12,14 +13,17 @@ import { parseFfprobeJson } from '../media/FfprobeResult'
  * S1b-2: `video_thumbnail` — extract one PNG frame and return it as an IMAGE block,
  *   so it rides the PROVEN image media spine (createToolResultMediaRefs → media_refs)
  *   and renders inline, no new trust lane required.
- *
- * Deferred to S1b-3 (needs a trusted non-image media_refs channel — the existing
- * media_refs sinks treat every ref as provider-controlled + image-only): the
- * audio/video PRODUCERS (audio_extract / transcode_audio / transcode_video), whose
- * output is audio/video and so cannot ride the image-block lane.
+ * S1b-3: the audio/video PRODUCERS (audio_extract / transcode_audio / transcode_video),
+ *   whose output is audio/video and so cannot ride the image-block lane. They persist
+ *   the output to the content-addressed asset store (the INJECTED `persistOutput` dep)
+ *   and return a `trustedMediaRefs` ref built by buildAvMediaRef. That ref travels a
+ *   NEW trusted channel (McpToolExecutionResult.trustedMediaRefs) the host injects
+ *   straight into run state — bypassing the image-only provider sanitizer (which hard-
+ *   drops kind!=='image'). It is un-forgeable: only this main-side executor code can
+ *   construct a McpToolExecutionResult, so provider stdout can never reach the field.
  */
 
-export const FFMPEG_MCP_TOOL_NAMES = ['video_probe', 'video_thumbnail'] as const
+export const FFMPEG_MCP_TOOL_NAMES = ['video_probe', 'video_thumbnail', 'audio_extract', 'transcode_audio', 'transcode_video'] as const
 export type FfmpegMcpToolName = (typeof FFMPEG_MCP_TOOL_NAMES)[number]
 
 export function isFfmpegMcpToolName(name: string): name is FfmpegMcpToolName {
@@ -51,8 +55,19 @@ export interface FfmpegToolDeps {
   runFfmpeg: (binaryPath: string, args: string[]) => Promise<FfmpegRunResult>
   /** An absolute staging file path (a dir WE own, never agent-supplied) for ffmpeg output. */
   stagingPath: (ext: string) => string
-  /** Read a produced staging file → bytes (throws if missing / over the size cap). */
-  readOutput: (path: string) => Buffer
+  /**
+   * Read a produced staging file → bytes (throws if missing / over the size cap).
+   * The optional mimeType selects the PER-MIME cap (audio 64MB / video 512MB) so an
+   * oversized output is rejected before it is read into the heap; omit for the video
+   * ceiling (the thumbnail PNG path).
+   */
+  readOutput: (path: string, mimeType?: string) => Buffer
+  /**
+   * Persist a produced output buffer to the content-addressed asset store and return
+   * its canonical sha256. Owns the hashing (this module introduces no hash scheme).
+   * The host (index.ts) provides the real implementation; the producers only CALL it.
+   */
+  persistOutput: (buffer: Buffer, mimeType: string) => { ok: true; sha256: string } | { ok: false; reason: string }
   removeFile: (path: string) => void
   missingMessage: (which: 'ffmpeg' | 'ffprobe') => string
 }
@@ -80,8 +95,46 @@ function fail(toolName: string, message: string): McpToolExecutionResult {
   return { text, isError: true, structuredContent: value, content: [{ type: 'text', text }] }
 }
 
+// The producers map a typed AudioOutFormat to its canonical output mime (these 3 +
+// video/mp4 are the only mimes S1b-3 emits; buildAvMediaRef re-validates them).
+const AUDIO_FORMAT_MIME: Record<AudioOutFormat, string> = {
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  mp3: 'audio/mpeg'
+}
+
+function isAudioOutFormat(value: unknown): value is AudioOutFormat {
+  return value === 'wav' || value === 'm4a' || value === 'mp3'
+}
+
+// The 3 S1b-3 PRODUCER tools (subset of FfmpegMcpToolName whose output is AV media).
+type ProducerToolName = 'audio_extract' | 'transcode_audio' | 'transcode_video'
+
+// Human verb for each producer's concise result summary (e.g. "Extracted audio → …").
+const PRODUCER_VERB: Record<ProducerToolName, string> = {
+  audio_extract: 'Extracted audio →',
+  transcode_audio: 'Transcoded audio →',
+  transcode_video: 'Transcoded video →'
+}
+
+// Last path segment of an agent-supplied sourcePath (cosmetic, for the output label
+// only — never a filesystem path). Splits on both separators so a Windows-style path
+// still yields a clean leaf; strips any extension so we can append the new one.
+function sourceBaseName(sourcePath: unknown): string {
+  const raw = typeof sourcePath === 'string' ? sourcePath.trim() : ''
+  const leaf = raw.split(/[\\/]/).filter(Boolean).pop() ?? ''
+  const stem = leaf.replace(/\.[^.]+$/, '')
+  return stem || 'output'
+}
+
+function humanBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
 export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecutors {
-  const { jailInput, resolveFfprobe, resolveFfmpeg, runFfprobe, runFfmpeg, stagingPath, readOutput, removeFile, missingMessage } = deps
+  const { jailInput, resolveFfprobe, resolveFfmpeg, runFfprobe, runFfmpeg, stagingPath, readOutput, persistOutput, removeFile, missingMessage } = deps
 
   function jail(toolName: string, args: Record<string, unknown>, ctx: FfmpegToolContext):
     | { ok: true; realPath: string; mimeType: string }
@@ -154,12 +207,129 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
     }
   }
 
+  // Shared producer tail (audio_extract / transcode_audio / transcode_video): run the
+  // already-built intent, persist the output to the asset store, and return a TRUSTED
+  // AV media ref. Mirrors executeVideoThumbnail's run/read/cleanup shape exactly — the
+  // only difference is the persist+ref step (the output is audio/video, so it cannot
+  // ride the image-block lane and instead travels McpToolExecutionResult.trustedMediaRefs).
+  async function runProducer(
+    toolName: ProducerToolName,
+    intent: FfmpegIntent,
+    outputPath: string,
+    mimeType: string,
+    outputName: string,
+    ctx: FfmpegToolContext
+  ): Promise<McpToolExecutionResult> {
+    const ffmpeg = resolveFfmpeg()
+    if (!ffmpeg) return fail(toolName, missingMessage('ffmpeg'))
+    const argv = buildFfmpegArgs(intent)
+    if (!argv.ok) return fail(toolName, argv.error)
+    try {
+      await runFfmpeg(ffmpeg, argv.args)
+      let buffer: Buffer
+      try {
+        buffer = readOutput(outputPath, mimeType)
+      } catch (error) {
+        return fail(toolName, `ffmpeg output unavailable: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (!buffer || buffer.length === 0) return fail(toolName, 'ffmpeg produced an empty output')
+      const persisted = persistOutput(buffer, mimeType)
+      if (!persisted.ok) return fail(toolName, `Failed to persist output: ${persisted.reason}`)
+      const ref = buildAvMediaRef({
+        sha256: persisted.sha256,
+        mimeType,
+        name: outputName,
+        runId: ctx?.appRunId,
+        byteLength: buffer.length
+      })
+      // buildAvMediaRef only returns null on a non-AV mime — unreachable here
+      // (mimeType is main-derived from a validated format), but fail LOUDLY rather
+      // than return silent empty-success that would strand the persisted (content-
+      // addressed) asset with no ref pointing at it.
+      if (!ref) return fail(toolName, `internal: unsupported output mime ${mimeType}`)
+      const summary = `${PRODUCER_VERB[toolName]} ${outputName} (${humanBytes(buffer.length)})`
+      return {
+        text: summary,
+        content: [{ type: 'text', text: summary }],
+        trustedMediaRefs: [ref]
+      }
+    } catch (error) {
+      return fail(toolName, error instanceof Error ? error.message : String(error))
+    } finally {
+      try {
+        removeFile(outputPath)
+      } catch {
+        // best-effort staging cleanup
+      }
+    }
+  }
+
+  async function executeAudioExtract(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
+    const j = jail('audio_extract', args, ctx)
+    if (!j.ok) return j.result
+    if (!isAudioOutFormat(args.format)) return fail('audio_extract', 'provide format: one of "wav", "m4a", "mp3"')
+    const format = args.format
+    const mimeType = AUDIO_FORMAT_MIME[format]
+    const outputPath = stagingPath(format)
+    const intent: FfmpegIntent = {
+      kind: 'extract_audio',
+      inputPath: j.realPath,
+      outputPath,
+      format,
+      bitrateKbps: numArg(args.bitrateKbps)
+    }
+    return runProducer('audio_extract', intent, outputPath, mimeType, `${sourceBaseName(args.sourcePath)}.${format}`, ctx)
+  }
+
+  async function executeTranscodeAudio(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
+    const j = jail('transcode_audio', args, ctx)
+    if (!j.ok) return j.result
+    if (!isAudioOutFormat(args.format)) return fail('transcode_audio', 'provide format: one of "wav", "m4a", "mp3"')
+    const format = args.format
+    const mimeType = AUDIO_FORMAT_MIME[format]
+    const outputPath = stagingPath(format)
+    const intent: FfmpegIntent = {
+      kind: 'transcode_audio',
+      inputPath: j.realPath,
+      outputPath,
+      format,
+      bitrateKbps: numArg(args.bitrateKbps)
+    }
+    return runProducer('transcode_audio', intent, outputPath, mimeType, `${sourceBaseName(args.sourcePath)}.${format}`, ctx)
+  }
+
+  async function executeTranscodeVideo(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
+    const j = jail('transcode_video', args, ctx)
+    if (!j.ok) return j.result
+    const outputPath = stagingPath('mp4')
+    const intent: FfmpegIntent = {
+      kind: 'transcode_video',
+      inputPath: j.realPath,
+      outputPath,
+      crf: numArg(args.crf),
+      scaleWidth: numArg(args.scaleWidth),
+      fps: numArg(args.fps)
+    }
+    return runProducer('transcode_video', intent, outputPath, 'video/mp4', `${sourceBaseName(args.sourcePath)}.mp4`, ctx)
+  }
+
   return {
     executeFfmpegTool(toolName, rawArgs, ctx) {
       const args = asRecord(rawArgs)
-      if (toolName === 'video_probe') return executeVideoProbe(args, ctx)
-      if (toolName === 'video_thumbnail') return executeVideoThumbnail(args, ctx)
-      return Promise.resolve(fail(String(toolName), `unknown ffmpeg tool "${toolName}"`))
+      switch (toolName) {
+        case 'video_probe':
+          return executeVideoProbe(args, ctx)
+        case 'video_thumbnail':
+          return executeVideoThumbnail(args, ctx)
+        case 'audio_extract':
+          return executeAudioExtract(args, ctx)
+        case 'transcode_audio':
+          return executeTranscodeAudio(args, ctx)
+        case 'transcode_video':
+          return executeTranscodeVideo(args, ctx)
+        default:
+          return Promise.resolve(fail(String(toolName), `unknown ffmpeg tool "${toolName}"`))
+      }
     }
   }
 }

@@ -420,12 +420,14 @@ import {
   validateWorkspaceImagePath,
   validateWorkspaceAudioPath,
   validateWorkspaceMediaPath,
+  sha256Base64Url,
   TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
 } from './services/TranscriptMediaService'
 import {
   TRANSCRIPT_MEDIA_ASSET_DIR,
   TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
   TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES,
+  maxTranscriptMediaBytesForMime,
   TranscriptMediaAssetStore
 } from './services/TranscriptMediaAssetStore'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
@@ -1912,10 +1914,16 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
     fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
     return join(MEDIA_STAGING_DIR, `tw-${randomUUID()}.${ext}`)
   },
-  readOutput: (filePath) => {
+  readOutput: (filePath, mimeType) => {
     const stat = fsSync.statSync(filePath)
-    if (stat.size > TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES) {
-      throw new Error(`output too large (${stat.size} bytes; max ${TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES})`)
+    // Cap at the PER-MIME limit (audio 64MB / video 512MB) BEFORE reading into
+    // the heap. An oversized audio output must be rejected here, not after a
+    // 512MB readFileSync that the store's audio cap would then reject anyway
+    // (adversarial review: read-cap memory amplification). No mime (the
+    // thumbnail PNG path) falls back to the video ceiling, as before.
+    const cap = mimeType ? maxTranscriptMediaBytesForMime(mimeType) : TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES
+    if (stat.size > cap) {
+      throw new Error(`output too large (${stat.size} bytes; max ${cap})`)
     }
     return fsSync.readFileSync(filePath)
   },
@@ -1925,6 +1933,16 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
     } catch {
       // best-effort staging cleanup
     }
+  },
+  // S1b-3 — persist a producer's output buffer into the content-addressed
+  // asset store and hand back its canonical (base64url) sha256. Uses the SAME
+  // hash helper + store the image lane uses, so the twmedia:// URL the renderer
+  // builds is byte-identical to a freshly-written asset. The executor never
+  // hashes; this dep owns it.
+  persistOutput: (buffer, mimeType) => {
+    const sha256 = sha256Base64Url(buffer)
+    const result = getTranscriptMediaAssetStore().write({ sha256, mimeType, buffer })
+    return result.ok ? { ok: true, sha256 } : { ok: false, reason: result.reason }
   },
   missingMessage: (which) => ffmpegMissingError(which)
 })
@@ -5008,6 +5026,43 @@ function appendBridgeRunMediaRefs(
   })
 }
 
+/**
+ * S1b-3 — TRUSTED media-ref injection. ffmpeg producer tools (audio_extract /
+ * transcode_audio / transcode_video) run in MAIN; their `trustedMediaRefs` are
+ * already verified (content-addressed asset written by the executor) and must
+ * NOT pass through sanitizeRawProviderMediaRefs — that sanitizer is image-only
+ * and treats every ref as provider-controlled, so it would hard-drop audio/
+ * video. We fan out IN-PROCESS (never a wire event a hostile provider could
+ * forge as `{type:'media_refs'}` on stdout) to whichever run-state owner holds
+ * this run. A given appRunId is live in exactly one of the three maps, so the
+ * first match wins and returns. Mirrors the existing media_refs flush cadence
+ * (immediate before first flush, else debounced) MINUS the sanitizer.
+ */
+function injectTrustedMediaRefs(
+  appRunId: string | undefined,
+  refs: readonly TranscriptMediaRef[]
+): void {
+  if (!appRunId || refs.length === 0) return
+
+  const bridgeState = bridgeRunTranscripts.get(appRunId)
+  if (bridgeState) {
+    appendBridgeRunMediaRefs(bridgeState, refs)
+    if (!bridgeState.flushedOnce) flushBridgeRunTranscript(appRunId)
+    else scheduleBridgeRunFlush(appRunId)
+    return
+  }
+
+  const subThreadState = backgroundSubThreadTranscripts.get(appRunId)
+  if (subThreadState) {
+    subThreadState.mediaRefs = mergeTranscriptMediaRefs(subThreadState.mediaRefs, refs)
+    if (!subThreadState.flushedOnce) flushBackgroundSubThreadTranscript(appRunId)
+    else scheduleBackgroundSubThreadFlush(appRunId)
+    return
+  }
+
+  ensembleOrchestratorRef?.appendTrustedMediaRefs(appRunId, refs)
+}
+
 /** Assemble an incoming assistant text event into the run's interleaved
  * parts, reconciling UNTAGGED cumulative snapshots (Cursor) so the whole turn
  * isn't re-appended below every tool burst. Mirrors the renderer
@@ -6460,7 +6515,14 @@ function previewForGeminiMcpTool(
   }
 
   if (isFfmpegMcpToolName(toolName)) {
-    const verb = toolName === 'video_probe' ? 'probe' : 'thumbnail'
+    const ffmpegVerbs: Record<string, string> = {
+      video_probe: 'probe',
+      video_thumbnail: 'thumbnail',
+      audio_extract: 'audio extract',
+      transcode_audio: 'transcode audio',
+      transcode_video: 'transcode video'
+    }
+    const verb = ffmpegVerbs[toolName] ?? 'thumbnail'
     return {
       title: `Approve ${providerName} media ${verb}`,
       // Gated as fileChanges: runs an external ffmpeg/ffprobe subprocess — denied
@@ -16605,6 +16667,20 @@ async function executeGeminiMcpTool(
           provider: parentProvider
         })
       }
+    }
+    // S1b-3: TRUSTED AV media refs produced by a main-side ffmpeg producer tool
+    // are injected DIRECTLY into the owning run's transcript state, bypassing the
+    // image-only provider sanitizer. Un-forgeable: a McpToolExecutionResult is
+    // only ever constructed by main-side executor code, never provider stdout.
+    // Codex builds its transcript media from its own app-server stream (the
+    // emitMcpToolTranscriptEvent above is a no-op for it), so — exactly like the
+    // image lane — codex AV is left to a follow-up rather than mis-injected here.
+    if (
+      finalRichResult?.trustedMediaRefs &&
+      finalRichResult.trustedMediaRefs.length > 0 &&
+      parentProvider !== 'codex'
+    ) {
+      injectTrustedMediaRefs(context.appRunId, finalRichResult.trustedMediaRefs)
     }
     if (finalRichResult) {
       return { ...finalRichResult, ...(toolIsError ? { isError: true } : {}) }

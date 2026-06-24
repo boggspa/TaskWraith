@@ -180,10 +180,16 @@ export const TASKWRAITH_MCP_TOOLS = [
   // external subprocess, so gated as a file change. See src/main/mcp/FfmpegToolExecutors.ts.
   'video_probe',
   // Extract one PNG frame from a workspace video (S1b-2) via ffmpeg — rides the
-  // proven image media spine and renders inline. The audio/video PRODUCERS
-  // (transcode/extract) are deferred to S1b-3 (they need a trusted non-image
-  // media_refs channel — the existing media_refs sinks are provider-controlled).
-  'video_thumbnail'
+  // proven image media spine and renders inline.
+  'video_thumbnail',
+  // Media PRODUCERS (S1b-3) — write a standalone output media file via ffmpeg
+  // over a trusted non-image media_refs channel. `audio_extract` pulls the audio
+  // track out of a video; `transcode_audio` re-encodes audio to wav/m4a/mp3;
+  // `transcode_video` re-encodes video to H.264/AAC MP4 (faststart). Run an
+  // external subprocess, so gated as a file change. See src/main/mcp/FfmpegToolExecutors.ts.
+  'audio_extract',
+  'transcode_audio',
+  'transcode_video'
 ] as const
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]

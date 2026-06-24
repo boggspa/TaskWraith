@@ -8,6 +8,11 @@ export type McpToolExecutionResult = {
   isError?: boolean
   structuredContent?: Record<string, unknown>
   content?: McpToolContentBlock[]
+  // S1b-3: main-built AV media refs that ride a TRUSTED channel — the host injects
+  // these straight into run state, bypassing the image-only provider sanitizer (which
+  // hard-drops kind!=='image'). Un-forgeable because only main-side executor code can
+  // construct a McpToolExecutionResult; provider stdout can never reach this field.
+  trustedMediaRefs?: TranscriptMediaRef[]
 }
 
 export type AttachedWindowStreamingSnapshot = {
