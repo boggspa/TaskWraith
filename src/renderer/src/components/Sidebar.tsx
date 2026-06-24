@@ -11,7 +11,7 @@ import {
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
-import { MascotGhost } from './AppChromeSymbols'
+import { MascotGhost, WorkflowGlyphIcon } from './AppChromeSymbols'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
 import { isUpdatePillVisible, UpdatePill } from './UpdatePill'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
@@ -1927,6 +1927,11 @@ export function Sidebar({
     expandSidebarSection('ensembles')
     onNewEnsemble()
   }
+  const handleNewWorkflow = () => {
+    setNewMenuOpen(false)
+    expandSidebarSection('workflows')
+    onCreateWorkflow?.()
+  }
 
   // Outside-click + Escape dismiss for the `+ New` popover. Mounts
   // global mousedown / keydown listeners only while the menu is open
@@ -2596,6 +2601,23 @@ export function Sidebar({
                   >
                     <EnsembleSymbolIcon />
                     <span className="sidebar-new-menu-item-label">New Ensemble</span>
+                  </button>
+                )}
+                {onCreateWorkflow && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="sidebar-new-menu-item"
+                    onClick={handleNewWorkflow}
+                    disabled={!currentWorkspace}
+                    title={
+                      currentWorkspace
+                        ? 'New workflow'
+                        : 'Open a workspace first — workflows run inside a workspace'
+                    }
+                  >
+                    <WorkflowGlyphIcon />
+                    <span className="sidebar-new-menu-item-label">New Workflow</span>
                   </button>
                 )}
               </div>
