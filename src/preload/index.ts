@@ -45,6 +45,13 @@ const api = {
   authorizeImagePreview: (paths: string[]) =>
     ipcRenderer.invoke('authorize-image-preview', paths),
   readImagePreview: (path: string) => ipcRenderer.invoke('read-image-preview', path),
+  imageGenerationGetStatus: () => ipcRenderer.invoke('image-generation:get-status'),
+  imageGenerationSetEnabled: (input: { enabled: boolean; provider?: 'openai' | 'xai' }) =>
+    ipcRenderer.invoke('image-generation:set-enabled', input),
+  imageGenerationSetKey: (input: { provider: 'openai' | 'xai'; key: string }) =>
+    ipcRenderer.invoke('image-generation:set-key', input),
+  imageGenerationClearKey: (input: { provider: 'openai' | 'xai' }) =>
+    ipcRenderer.invoke('image-generation:clear-key', input),
   getLastSpellcheckContext: (point: { x: number; y: number }) =>
     ipcRenderer.invoke('spellcheck:get-last-context', point),
   replaceMisspelling: (payload: { suggestion: string; point: { x: number; y: number } }) =>

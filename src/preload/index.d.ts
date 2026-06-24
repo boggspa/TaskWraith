@@ -330,6 +330,23 @@ declare global {
       saveClipboardImageAttachment: () => Promise<string[]>
       authorizeImagePreview: (paths: string[]) => Promise<void>
       readImagePreview: (path: string) => Promise<string | null>
+      imageGenerationGetStatus: () => Promise<{
+        enabled: boolean
+        defaultProvider: 'openai' | 'xai'
+        encryptionAvailable: boolean
+        configured: { openai: boolean; xai: boolean }
+      }>
+      imageGenerationSetEnabled: (input: {
+        enabled: boolean
+        provider?: 'openai' | 'xai'
+      }) => Promise<{ ok: boolean; error?: string }>
+      imageGenerationSetKey: (input: {
+        provider: 'openai' | 'xai'
+        key: string
+      }) => Promise<{ ok: boolean; error?: string }>
+      imageGenerationClearKey: (input: {
+        provider: 'openai' | 'xai'
+      }) => Promise<{ ok: boolean; error?: string }>
       getLastSpellcheckContext: (point: {
         x: number
         y: number

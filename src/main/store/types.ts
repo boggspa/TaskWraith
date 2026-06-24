@@ -1717,6 +1717,20 @@ export interface AppSettings {
      * encryption but is now reading on one without (e.g. fresh login). */
     encryptionAvailable?: boolean
   }
+  /** Image generation (text->image via a paid API). OFF by default — the
+   * image_generate MCP tool refuses unless `enabled` is true AND a key for the
+   * chosen provider is configured. Keys are safeStorage-encrypted base64
+   * ciphertext, NEVER stored or passed in plaintext/argv. */
+  imageGeneration?: {
+    enabled?: boolean
+    /** Default provider when the tool call doesn't specify one. */
+    provider?: 'openai' | 'xai'
+    /** safeStorage-encrypted (base64) API keys, per provider. */
+    encryptedKeys?: {
+      openai?: string
+      xai?: string
+    }
+  }
   /** Audit orchestration policy (durable, set once in Settings). The user's
    * standing contribution to the four-actor model — the resolver enforces
    * eligibility within this envelope and the agent assigns roles within the

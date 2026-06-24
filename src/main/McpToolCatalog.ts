@@ -2223,6 +2223,30 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         },
         required: ['svg']
       }
+    },
+    {
+      name: 'image_generate',
+      description:
+        'Generate an image from a text prompt via a configured paid API (OpenAI or xAI), returned as a PNG ' +
+        'attachment shown inline in the chat. This is OFF by default and requires the user to enable image ' +
+        'generation and add an API key in TaskWraith Settings — if it is not configured the call is refused ' +
+        '(use image_edit/svg_rasterize for local, no-network image work). The prompt and target endpoint are ' +
+        'shown to the user for approval. Gated as a file change.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: 'Text description of the image to generate.' },
+          provider: { type: 'string', enum: ['openai', 'xai'], description: 'Which configured provider to use (default: the one set in Settings).' },
+          size: { type: 'string', description: 'e.g. "1024x1024" (OpenAI).' }
+        },
+        required: ['prompt']
+      }
     }
   ]
   return orderTaskWraithMcpToolDefinitions(definitions)

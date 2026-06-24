@@ -159,6 +159,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'diagnostic'
     case 'image_edit':
     case 'svg_rasterize':
+    case 'image_generate':
       return 'edit'
     case 'mcp_tool':
     case 'dynamic_tool':

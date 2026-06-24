@@ -159,7 +159,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   // Gated as a file change (mutating/compute; denied under read-only), NEVER
   // auto-allowed. See src/main/mcp/ImageToolExecutors.ts.
   'image_edit',
-  'svg_rasterize'
+  'svg_rasterize',
+  // Text->image generation via a paid API. Default OFF (requires an enabled
+  // flag + a safeStorage-encrypted key in Settings); gated as a file change.
+  'image_generate'
 ] as const
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]

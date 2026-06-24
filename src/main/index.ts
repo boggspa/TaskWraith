@@ -626,6 +626,15 @@ import {
 } from './mcp/ImageToolExecutors'
 import { createNativeImageEngine } from './mcp/OffscreenImageRenderer'
 import {
+  createImageGenExecutor,
+  isImageGenMcpToolName,
+  parseImageGenResponse,
+  type ImageGenConfig,
+  type ImageGenProvider,
+  type ImageGenResult
+} from './mcp/ImageGenExecutor'
+import { assertFetchTargetAllowed } from './mcp/WebTools'
+import {
   createRecallToolExecutors,
   isRecallMcpToolName,
   type RecallToolContext
@@ -1676,6 +1685,101 @@ function bumpImageToolCallCount(runKey: string): number {
   imageToolCallCounts.set(runKey, next)
   return next
 }
+
+// image_generate egress. Endpoints are a FIXED allowlist (never agent-controlled),
+// the API key comes from safeStorage and rides only in the Authorization header
+// (never argv/curl), and any image URL the provider returns is SSRF-guarded
+// (public-only) + size-capped before fetch. Default OFF.
+const IMAGE_GEN_ENDPOINTS: Record<ImageGenProvider, string> = {
+  openai: 'https://api.openai.com/v1/images/generations',
+  xai: 'https://api.x.ai/v1/images/generations'
+}
+const IMAGE_GEN_MODELS: Record<ImageGenProvider, string> = {
+  openai: 'gpt-image-1',
+  xai: 'grok-2-image'
+}
+function decryptImageGenKey(provider: ImageGenProvider): string | null {
+  const encrypted = AppStore.getSettings().imageGeneration?.encryptedKeys?.[provider]
+  if (!encrypted || !safeStorage.isEncryptionAvailable()) return null
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, 'base64'))
+  } catch {
+    return null
+  }
+}
+function imageGenConfiguredProviders(): ImageGenProvider[] {
+  const keys = AppStore.getSettings().imageGeneration?.encryptedKeys
+  const out: ImageGenProvider[] = []
+  if (keys?.openai) out.push('openai')
+  if (keys?.xai) out.push('xai')
+  return out
+}
+function imageGenConfig(): ImageGenConfig {
+  const ig = AppStore.getSettings().imageGeneration
+  return {
+    enabled: Boolean(ig?.enabled),
+    defaultProvider: ig?.provider === 'xai' ? 'xai' : 'openai',
+    configuredProviders: imageGenConfiguredProviders()
+  }
+}
+async function generateImageViaApi(input: {
+  provider: ImageGenProvider
+  prompt: string
+  size?: string
+}): Promise<ImageGenResult> {
+  const key = decryptImageGenKey(input.provider)
+  if (!key) return { ok: false, reason: `no usable API key for ${input.provider}` }
+  const body: Record<string, unknown> = {
+    model: IMAGE_GEN_MODELS[input.provider],
+    prompt: input.prompt,
+    n: 1
+  }
+  if (input.provider === 'openai') {
+    body.size = input.size && /^\d{2,4}x\d{2,4}$/.test(input.size) ? input.size : '1024x1024'
+  }
+  let response: Response
+  try {
+    response = await fetch(IMAGE_GEN_ENDPOINTS[input.provider], {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+      body: JSON.stringify(body),
+      redirect: 'error'
+    })
+  } catch (error) {
+    return { ok: false, reason: `request failed: ${error instanceof Error ? error.message : String(error)}` }
+  }
+  if (!response.ok) return { ok: false, reason: `${input.provider} image API returned HTTP ${response.status}` }
+  const parsed = parseImageGenResponse(await response.json().catch(() => null))
+  if (!parsed.ok) return { ok: false, reason: parsed.reason }
+  if (parsed.b64) {
+    const buffer = Buffer.from(parsed.b64, 'base64')
+    if (buffer.length > TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES) {
+      return { ok: false, reason: 'generated image exceeds the size limit' }
+    }
+    return { ok: true, buffer, mimeType: 'image/png' }
+  }
+  // URL fallback — fetch the provider's image, public-only (SSRF guard) + capped.
+  try {
+    await assertFetchTargetAllowed(parsed.url as string)
+  } catch {
+    return { ok: false, reason: 'provider returned a non-public image URL' }
+  }
+  try {
+    const imageResponse = await fetch(parsed.url as string, { redirect: 'error' })
+    if (!imageResponse.ok) return { ok: false, reason: `image fetch HTTP ${imageResponse.status}` }
+    const buffer = Buffer.from(await imageResponse.arrayBuffer())
+    if (buffer.length > TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES) {
+      return { ok: false, reason: 'generated image exceeds the size limit' }
+    }
+    return { ok: true, buffer, mimeType: 'image/png' }
+  } catch (error) {
+    return { ok: false, reason: `image fetch failed: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+const imageGenExecutor = createImageGenExecutor({
+  getConfig: imageGenConfig,
+  generate: generateImageViaApi
+})
 // Renderer canvas-pane (live-embed) IPC: open-embedded / set-bounds / set-visible
 // / close / list. Human-initiated (un-gated); the driver still enforces SSRF.
 registerCanvasEmbedIpc(ipcMain, { controller: canvasService, embed: canvasEmbedController })
@@ -5997,16 +6101,31 @@ function previewForGeminiMcpTool(
     }
   }
 
-  if (toolName === 'image_edit' || toolName === 'svg_rasterize') {
-    const summary =
-      toolName === 'image_edit'
-        ? `op=${String(args.op || '?')} ${String(args.sourceMediaId || args.sourcePath || '')}`.trim()
-        : `${String(args.width || 1024)}x${String(args.height || 768)} SVG -> PNG`
+  if (
+    toolName === 'image_edit' ||
+    toolName === 'svg_rasterize' ||
+    toolName === 'image_generate'
+  ) {
+    let title: string
+    let summary: string
+    if (toolName === 'image_generate') {
+      const prov = String(args.provider || '')
+      // Surface WHERE the prompt is going + WHAT is being sent: a generation
+      // request is a potential prompt-injection exfil channel, so the user must
+      // see the endpoint + prompt before approving.
+      const endpoint =
+        prov === 'xai' ? 'api.x.ai' : prov === 'openai' ? 'api.openai.com' : 'the configured image provider'
+      title = `Approve ${providerName} image generation`
+      summary = `Generate via ${endpoint}\nPrompt: ${String(args.prompt || '')}`
+    } else if (toolName === 'image_edit') {
+      title = `Approve ${providerName} image edit`
+      summary = `op=${String(args.op || '?')} ${String(args.sourceMediaId || args.sourcePath || '')}`.trim()
+    } else {
+      title = `Approve ${providerName} SVG rasterize`
+      summary = `${String(args.width || 1024)}x${String(args.height || 768)} SVG -> PNG`
+    }
     return {
-      title:
-        toolName === 'image_edit'
-          ? `Approve ${providerName} image edit`
-          : `Approve ${providerName} SVG rasterize`,
+      title,
       // Gated as fileChanges: a mutating/compute tool that produces an image —
       // denied under the read-only preset, like write_file.
       body: `${intentBody}${summary}`,
@@ -14521,6 +14640,19 @@ async function executeGeminiMcpTool(
           })
         )
       }
+    } else if (isImageGenMcpToolName(toolName)) {
+      const imageRunKey = context.appRunId || context.appChatId || 'global'
+      if (bumpImageToolCallCount(imageRunKey) > MAX_IMAGE_TOOL_CALLS_PER_RUN) {
+        applyRichResult(
+          mcpStructuredJsonResult({
+            ok: false,
+            tool: toolName,
+            error: `image tool call limit reached (${MAX_IMAGE_TOOL_CALLS_PER_RUN}) for this run.`
+          })
+        )
+      } else {
+        applyRichResult(await imageGenExecutor.executeImageGen(args))
+      }
     } else if (isDesktopMcpToolName(toolName)) {
       applyRichResult(
         await desktopToolExecutors.executeDesktopTool(toolName, args, context, parentProvider)
@@ -22495,6 +22627,65 @@ if (isGeminiMcpBridgeProcess) {
       } catch {
         return null
       }
+    })
+
+    // Image generation config. Keys are safeStorage-encrypted; the plaintext key
+    // is NEVER returned to the renderer (status only reports presence).
+    ipcMain.handle('image-generation:get-status', () => {
+      const ig = AppStore.getSettings().imageGeneration
+      return {
+        enabled: Boolean(ig?.enabled),
+        defaultProvider: ig?.provider === 'xai' ? 'xai' : 'openai',
+        encryptionAvailable: safeStorage.isEncryptionAvailable(),
+        configured: {
+          openai: Boolean(ig?.encryptedKeys?.openai),
+          xai: Boolean(ig?.encryptedKeys?.xai)
+        }
+      }
+    })
+
+    ipcMain.handle('image-generation:set-enabled', (_event, input: unknown) => {
+      if (!isRecord(input)) return { ok: false, error: 'invalid input' }
+      const provider =
+        input.provider === 'xai' ? 'xai' : input.provider === 'openai' ? 'openai' : undefined
+      const current = AppStore.getSettings().imageGeneration || {}
+      AppStore.updateSettings({
+        imageGeneration: { ...current, enabled: Boolean(input.enabled), ...(provider ? { provider } : {}) }
+      })
+      return { ok: true }
+    })
+
+    ipcMain.handle('image-generation:set-key', (_event, input: unknown) => {
+      if (!isRecord(input)) return { ok: false, error: 'invalid input' }
+      const provider = input.provider === 'xai' ? 'xai' : input.provider === 'openai' ? 'openai' : null
+      const key = typeof input.key === 'string' ? input.key.trim() : ''
+      if (!provider) return { ok: false, error: 'provider must be openai or xai' }
+      if (!key) return { ok: false, error: 'key is required' }
+      if (!safeStorage.isEncryptionAvailable()) {
+        return { ok: false, error: 'OS keychain encryption is unavailable; cannot store the key.' }
+      }
+      const current = AppStore.getSettings().imageGeneration || {}
+      AppStore.updateSettings({
+        imageGeneration: {
+          ...current,
+          encryptedKeys: {
+            ...(current.encryptedKeys || {}),
+            [provider]: safeStorage.encryptString(key).toString('base64')
+          }
+        }
+      })
+      return { ok: true }
+    })
+
+    ipcMain.handle('image-generation:clear-key', (_event, input: unknown) => {
+      if (!isRecord(input)) return { ok: false, error: 'invalid input' }
+      const provider = input.provider === 'xai' ? 'xai' : input.provider === 'openai' ? 'openai' : null
+      if (!provider) return { ok: false, error: 'provider must be openai or xai' }
+      const current = AppStore.getSettings().imageGeneration || {}
+      const encryptedKeys = { ...(current.encryptedKeys || {}) }
+      delete encryptedKeys[provider]
+      AppStore.updateSettings({ imageGeneration: { ...current, encryptedKeys } })
+      return { ok: true }
     })
 
     ipcMain.handle('spellcheck:get-last-context', (event, point: unknown) => {
