@@ -100,6 +100,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'save-workflow-definition': ['object'],
   'update-workflow-definition': ['string', 'object'],
   'delete-workflow-definition': ['string'],
+  'set-workflow-unattended-elevation': ['string', 'string'],
   'run-workflow-now': ['string'],
   // Audit-run orchestration (handlers in src/main/ipc/auditHandlers.ts).
   'audit-run:start': ['object'],
@@ -214,6 +215,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'select-workspace': [],
   'select-image-files': [],
   'save-clipboard-image-attachment': [],
+  'authorize-image-preview': ['array'],
   'read-image-preview': ['string'],
   'spellcheck:get-last-context': ['object'],
   'spellcheck:replace-misspelling': ['object'],

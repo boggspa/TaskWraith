@@ -1,12 +1,94 @@
+import { lookup } from 'dns/promises'
+import { classifyCanvasHost } from '../canvas/canvasTypes'
 import type { McpToolExecutionResult } from '../index.types'
 
 export type WebMcpToolName = 'web_fetch' | 'web_search'
 
 const MAX_WEB_TEXT_CHARS = 20_000
 const WEB_TOOL_TIMEOUT_MS = 20_000
+const MAX_FETCH_REDIRECTS = 5
+
+/** Injectable IO seams so the SSRF guard + redirect-follow are unit-testable
+ * without real network/DNS. Production uses global `fetch` + `dns.lookup`. */
+export interface WebToolDeps {
+  fetchImpl?: typeof fetch
+  resolveHost?: (host: string) => Promise<string[]>
+}
+
+async function defaultResolveHost(host: string): Promise<string[]> {
+  const records = await lookup(host, { all: true })
+  return records.map((record) => record.address)
+}
+
+/** Thrown when a fetch target (or a redirect hop) is not a public internet
+ * host. The message is deliberately instructive so the agent learns the
+ * constraint instead of guessing. */
+export class WebFetchBlockedError extends Error {
+  constructor(
+    readonly url: string,
+    readonly reason: string
+  ) {
+    super(
+      `blocked ${url}: resolves to a non-public address (${reason}). ` +
+        'web_fetch/web_search may only reach public internet hosts — not localhost, ' +
+        'private LAN ranges, link-local, or cloud-metadata endpoints.'
+    )
+    this.name = 'WebFetchBlockedError'
+  }
+}
 
 export function isWebMcpToolName(toolName: string): toolName is WebMcpToolName {
   return toolName === 'web_fetch' || toolName === 'web_search'
+}
+
+/**
+ * SSRF guard for the web tools. Allows ONLY public-internet destinations.
+ * Validates in two layers: (1) classify the hostname string (catches IP
+ * literals, NAT64/IPv4-mapped, and cloud-metadata DNS names via the shared
+ * `classifyCanvasHost`); (2) resolve the hostname and classify EVERY returned
+ * address (closes DNS-rebinding to a known-internal IP). There is NO allowlist —
+ * a general web tool has no business reaching loopback or the LAN. Returns the
+ * parsed URL on success; throws WebFetchBlockedError otherwise.
+ *
+ * Residual: a TOCTOU window remains between this lookup and the socket's own
+ * resolution (true closure needs connection-pinning to the validated IP, which
+ * undici/global fetch does not cleanly expose). This still defeats every
+ * literal-IP / metadata-name / redirect-to-internal vector and rebinding to a
+ * currently-internal address.
+ */
+export async function assertFetchTargetAllowed(
+  rawUrl: string,
+  resolveHost: (host: string) => Promise<string[]> = defaultResolveHost
+): Promise<URL> {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    throw new WebFetchBlockedError(rawUrl, 'invalid_url')
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new WebFetchBlockedError(rawUrl, 'non_http_scheme')
+  }
+  const hostClass = classifyCanvasHost(parsed.hostname)
+  if (hostClass !== 'public') {
+    throw new WebFetchBlockedError(rawUrl, `host_${hostClass}`)
+  }
+  let addresses: string[]
+  try {
+    addresses = await resolveHost(parsed.hostname)
+  } catch {
+    throw new WebFetchBlockedError(rawUrl, 'dns_unresolved')
+  }
+  if (addresses.length === 0) {
+    throw new WebFetchBlockedError(rawUrl, 'dns_empty')
+  }
+  for (const address of addresses) {
+    const addrClass = classifyCanvasHost(address)
+    if (addrClass !== 'public') {
+      throw new WebFetchBlockedError(rawUrl, `resolved_${addrClass}`)
+    }
+  }
+  return parsed
 }
 
 function decodeHtmlEntities(value: string): string {
@@ -77,21 +159,43 @@ function truncateWebText(text: string): { text: string; truncated: boolean } {
   }
 }
 
-async function fetchWithTimeout(url: string, userAgent: string): Promise<Response> {
+/** Fetch with an SSRF guard on the initial URL AND on every redirect hop.
+ * `redirect: 'manual'` is mandatory: following redirects automatically would
+ * let a public URL bounce to `169.254.169.254` (or localhost) after a 302 the
+ * guard never sees. Each hop is re-validated through `assertFetchTargetAllowed`
+ * before it is fetched. */
+async function safeFetch(url: string, userAgent: string, deps: WebToolDeps): Promise<Response> {
+  const fetchImpl = deps.fetchImpl ?? fetch
+  const resolveHost = deps.resolveHost ?? defaultResolveHost
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), WEB_TOOL_TIMEOUT_MS)
   try {
-    return await fetch(url, {
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: { 'user-agent': userAgent }
-    })
+    let currentUrl = url
+    for (let hop = 0; hop <= MAX_FETCH_REDIRECTS; hop += 1) {
+      await assertFetchTargetAllowed(currentUrl, resolveHost)
+      const response = await fetchImpl(currentUrl, {
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: { 'user-agent': userAgent }
+      })
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers?.get?.('location')
+        if (!location) return response
+        currentUrl = new URL(location, currentUrl).toString()
+        continue
+      }
+      return response
+    }
+    throw new WebFetchBlockedError(url, 'too_many_redirects')
   } finally {
     clearTimeout(timer)
   }
 }
 
-async function executeWebFetch(args: Record<string, unknown>): Promise<McpToolExecutionResult> {
+async function executeWebFetch(
+  args: Record<string, unknown>,
+  deps: WebToolDeps
+): Promise<McpToolExecutionResult> {
   const url = String(args.url || args.uri || '').trim()
   if (!/^https?:\/\//i.test(url)) {
     return {
@@ -100,7 +204,7 @@ async function executeWebFetch(args: Record<string, unknown>): Promise<McpToolEx
       structuredContent: { ok: false, tool: 'web_fetch', error: 'invalid_url' }
     }
   }
-  const response = await fetchWithTimeout(url, 'TaskWraith-web_fetch/1.0')
+  const response = await safeFetch(url, 'TaskWraith-web_fetch/1.0', deps)
   const raw = await response.text()
   const contentType = String(response.headers?.get?.('content-type') || '')
   const isHtml = looksLikeHtml(contentType, raw)
@@ -162,7 +266,10 @@ function parseDuckDuckGoResults(html: string, query: string): string[] {
     : []
 }
 
-async function executeWebSearch(args: Record<string, unknown>): Promise<McpToolExecutionResult> {
+async function executeWebSearch(
+  args: Record<string, unknown>,
+  deps: WebToolDeps
+): Promise<McpToolExecutionResult> {
   const query = String(args.query || args.q || '').trim()
   if (!query) {
     return {
@@ -172,7 +279,7 @@ async function executeWebSearch(args: Record<string, unknown>): Promise<McpToolE
     }
   }
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
-  const response = await fetchWithTimeout(url, 'TaskWraith-web_search/1.0')
+  const response = await safeFetch(url, 'TaskWraith-web_search/1.0', deps)
   const html = await response.text()
   const results = parseDuckDuckGoResults(html, query)
   const text =
@@ -194,11 +301,12 @@ async function executeWebSearch(args: Record<string, unknown>): Promise<McpToolE
 
 export async function executeWebMcpTool(
   toolName: WebMcpToolName,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  deps: WebToolDeps = {}
 ): Promise<McpToolExecutionResult> {
   try {
-    if (toolName === 'web_fetch') return await executeWebFetch(args)
-    return await executeWebSearch(args)
+    if (toolName === 'web_fetch') return await executeWebFetch(args, deps)
+    return await executeWebSearch(args, deps)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return {

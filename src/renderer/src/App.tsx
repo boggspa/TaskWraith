@@ -6478,14 +6478,27 @@ function App(): React.JSX.Element {
       name: getImageName(path)
     }))
 
-  const addImageAttachmentsToChat = useCallback((chatId: string | null | undefined, paths: string[]) => {
-    if (!chatId || paths.length === 0) return
-    const parsed = imageAttachmentsFromPaths(paths)
-    setImageAttachmentsByChatId((prev) => ({
-      ...prev,
-      [chatId]: mergeImageAttachments(prev[chatId] || [], parsed)
-    }))
-  }, [])
+  const addImageAttachmentsToChat = useCallback(
+    async (chatId: string | null | undefined, paths: string[]) => {
+      if (!chatId || paths.length === 0) return
+      const parsed = imageAttachmentsFromPaths(paths)
+      // C4: authorize these exact attachment paths so the (jailed)
+      // read-image-preview IPC will serve their thumbnails. Awaited before the
+      // state update so authorization lands before the thumbnail effect fires
+      // its read — every composer attachment source funnels through here, and
+      // nothing else authorizes, so agent/transcript paths can't be previewed.
+      try {
+        await window.api.authorizeImagePreview?.(parsed.map((attachment) => attachment.path))
+      } catch {
+        // Best-effort — a failed authorize just yields a placeholder thumbnail.
+      }
+      setImageAttachmentsByChatId((prev) => ({
+        ...prev,
+        [chatId]: mergeImageAttachments(prev[chatId] || [], parsed)
+      }))
+    },
+    []
+  )
 
   const addImageAttachments = (paths: string[]) => {
     addImageAttachmentsToChat(getCurrentComposerStateChatId(), paths)

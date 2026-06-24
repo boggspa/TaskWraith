@@ -22233,6 +22233,37 @@ if (isGeminiMcpBridgeProcess) {
     // IPC Handlers
     ipcMain.handle('select-workspace', async () => workspaceService.selectWorkspace())
 
+    // C4: `read-image-preview` reads a local image and returns a data URL.
+    // Left open it is an arbitrary-image disclosure primitive — a future
+    // viewer that routes an agent-supplied `![](/Users/you/Pictures/x.jpg)`
+    // path through it would leak private images. Jail it to an allowlist of
+    // paths the USER explicitly attached. The composer authorizes every
+    // attachment (picker / drag-drop / paste) before its thumbnail renders;
+    // nothing else authorizes, so agent/transcript paths are rejected. Paths
+    // are stored realpath-resolved (symlink-safe) and bounded.
+    const authorizedImagePreviewPaths = new Set<string>()
+    const MAX_AUTHORIZED_IMAGE_PREVIEW_PATHS = 500
+    const IMAGE_PREVIEW_MAX_BYTES = 40 * 1024 * 1024
+    const authorizeImagePreviewPath = async (rawPath: unknown): Promise<void> => {
+      if (typeof rawPath !== 'string' || !rawPath) return
+      try {
+        const filePath = rawPath.startsWith('file://') ? fileURLToPath(rawPath) : rawPath
+        const real = await fs.realpath(filePath)
+        if (authorizedImagePreviewPaths.size >= MAX_AUTHORIZED_IMAGE_PREVIEW_PATHS) {
+          const oldest = authorizedImagePreviewPaths.values().next().value
+          if (oldest !== undefined) authorizedImagePreviewPaths.delete(oldest)
+        }
+        authorizedImagePreviewPaths.add(real)
+      } catch {
+        // Unresolvable path — never authorize.
+      }
+    }
+
+    ipcMain.handle('authorize-image-preview', async (_event, rawPaths: unknown) => {
+      if (!Array.isArray(rawPaths)) return
+      for (const rawPath of rawPaths) await authorizeImagePreviewPath(rawPath)
+    })
+
     ipcMain.handle('select-image-files', async () => {
       if (!mainWindow) return []
       const result = await dialog.showOpenDialog(mainWindow, {
@@ -22243,7 +22274,9 @@ if (isGeminiMcpBridgeProcess) {
       if (result.canceled) {
         return []
       }
-      return result.filePaths || []
+      const filePaths = result.filePaths || []
+      for (const filePath of filePaths) await authorizeImagePreviewPath(filePath)
+      return filePaths
     })
 
     ipcMain.handle('save-clipboard-image-attachment', async () => {
@@ -22256,6 +22289,7 @@ if (isGeminiMcpBridgeProcess) {
         `taskwraith-paste-${Date.now()}-${randomUUID().slice(0, 8)}.png`
       )
       await fs.writeFile(filePath, image.toPNG())
+      await authorizeImagePreviewPath(filePath)
       return [filePath]
     })
 
@@ -22266,7 +22300,19 @@ if (isGeminiMcpBridgeProcess) {
       try {
         if (typeof rawPath !== 'string' || !rawPath) return null
         const filePath = rawPath.startsWith('file://') ? fileURLToPath(rawPath) : rawPath
-        const img = nativeImage.createFromPath(filePath)
+        // C4 jail: only serve paths the user explicitly authorized as
+        // attachments (see authorizeImagePreviewPath). realpath both sides so a
+        // symlink can't smuggle an unauthorized target past the allowlist.
+        let real: string
+        try {
+          real = await fs.realpath(filePath)
+        } catch {
+          return null
+        }
+        if (!authorizedImagePreviewPaths.has(real)) return null
+        const stat = await fs.lstat(real)
+        if (!stat.isFile() || stat.size > IMAGE_PREVIEW_MAX_BYTES) return null
+        const img = nativeImage.createFromPath(real)
         if (img.isEmpty()) return null
         // Downscale tall images so a big screenshot isn't a multi-MB base64.
         const thumb = img.getSize().height > 320 ? img.resize({ height: 320 }) : img
