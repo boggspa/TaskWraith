@@ -21213,6 +21213,11 @@ if (isGeminiMcpBridgeProcess) {
     // 'due'/'pending' wedge held across a restart (e.g. renderer closed mid-dispatch).
     // Settle those too so the workflow unblocks at launch.
     reconcileStalledScheduledTasks()
+    // Stage 1 slice 2: close any workflow-runs ledger left open by a crash mid-run
+    // with a terminal stall_settled event. Runs AFTER both ScheduledTask recoveries
+    // so executions they already settled (via syncWorkflowFromScheduledTask) are
+    // terminal here → no-ops. Boot-only (an open ledger only arises from a crash).
+    AppStore.reconcileStaleWorkflowRunLedgers()
     // ~10-min floor sweep so a wedge self-heals even with no materialize traffic.
     stallReconcilerInterval = setInterval(
       reconcileStalledScheduledTasks,

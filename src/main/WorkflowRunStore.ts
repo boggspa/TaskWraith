@@ -29,12 +29,15 @@ export type WorkflowRunEventKind =
   | 'budget_breach'
   | 'stall_settled'
 
-/** Terminal lifecycle kinds (a fold stops advancing `status` past one of these). */
+/** Terminal lifecycle kinds (a fold stops advancing `status` past one of these).
+ * `stall_settled` IS terminal: the startup reconciler (slice 2) writes it to close
+ * an execution abandoned by a crash, and no real terminal event follows it. */
 const TERMINAL_KINDS: ReadonlySet<WorkflowRunEventKind> = new Set([
   'completed',
   'failed',
   'cancelled',
-  'skipped'
+  'skipped',
+  'stall_settled'
 ])
 
 export interface WorkflowRunBudgetBreach {
@@ -185,15 +188,17 @@ export function foldWorkflowRunSummary(
       case 'failed':
       case 'cancelled':
       case 'skipped':
+      case 'stall_settled':
         summary.completedAt = event.timestamp
         break
       default:
         break
     }
 
-    // Lifecycle status advances on lifecycle kinds; budget_breach / stall_settled
-    // are annotations (the actual terminal lifecycle event follows them).
-    if (event.kind !== 'budget_breach' && event.kind !== 'stall_settled') {
+    // Lifecycle status advances on every kind EXCEPT budget_breach, which is a
+    // pure annotation (the real terminal lifecycle event follows it). stall_settled
+    // IS terminal (the reconciler's close event; nothing follows it).
+    if (event.kind !== 'budget_breach') {
       summary.status = event.kind
       summary.isTerminal = TERMINAL_KINDS.has(event.kind)
     }
@@ -231,4 +236,39 @@ export function filterWorkflowRunEvents(
   })
 
   return filter.limit && filter.limit > 0 ? sorted.slice(-Math.floor(filter.limit)) : sorted
+}
+
+export interface StaleLedgerExecution {
+  workflowExecutionId: string
+  workflowId: string
+  /** The non-terminal lifecycle status the ledger was left in (e.g. 'running'). */
+  status: WorkflowRunSummary['status']
+}
+
+/**
+ * PURE (Stage 1 slice 2). Given each execution's folded summary, return the
+ * executions a STARTUP reconciler should close with a terminal `stall_settled`
+ * event — those left NON-terminal by a crash/quit mid-run:
+ *   - not already terminal (completed/failed/cancelled/skipped/stall_settled —
+ *     stall_settled is itself terminal, so a re-boot is idempotent), AND
+ *   - has at least one real lifecycle event (eventCount>0 / status!=='unknown'),
+ *     so a 0-event / unparseable file is never settled.
+ * Does NOT write; the store seam appends. No age/backstop: a non-terminal ledger
+ * at BOOT is by definition orphaned (the app was just down), and a deleted
+ * ScheduledTask leaves no reliable wall-clock basis to age against.
+ */
+export function reconcileStaleLedgerExecutions(
+  summaries: readonly WorkflowRunSummary[]
+): StaleLedgerExecution[] {
+  const stale: StaleLedgerExecution[] = []
+  for (const summary of summaries) {
+    if (summary.isTerminal) continue
+    if (summary.eventCount === 0 || summary.status === 'unknown') continue
+    stale.push({
+      workflowExecutionId: summary.workflowExecutionId,
+      workflowId: summary.workflowId,
+      status: summary.status
+    })
+  }
+  return stale
 }

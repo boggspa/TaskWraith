@@ -73,12 +73,16 @@ import {
 } from '../RunEventStore'
 import {
   createWorkflowRunEvent,
+  foldWorkflowRunSummary,
   nextWorkflowRunSequence,
   parseWorkflowRunEventLine,
+  reconcileStaleLedgerExecutions,
   safeWorkflowRunFileName,
   serializeWorkflowRunEvent,
+  type StaleLedgerExecution,
   type WorkflowRunEvent,
-  type WorkflowRunEventInput
+  type WorkflowRunEventInput,
+  type WorkflowRunSummary
 } from '../WorkflowRunStore'
 import {
   capApprovalLedgerRecords,
@@ -3133,6 +3137,63 @@ export class AppStore {
     return readWorkflowRunFile(workflowRunFilePath(workflowExecutionId)).sort(
       (a, b) => a.sequence - b.sequence
     )
+  }
+
+  /**
+   * Enumerate every workflow-runs ledger file → its folded summary. SYNC: called
+   * once at BOOT (before the window shows), and the ledger is low-volume (a handful
+   * of short events per occurrence, one file per execution), so a sync sweep is
+   * fine — unlike the run-events dir (see readAllRunEventFilesAsync). The execId is
+   * taken from the events (authoritative; safeWorkflowRunFileName is lossy), not the
+   * filename. Best-effort: a single unreadable file yields [] for that file only.
+   */
+  private static foldAllWorkflowRunLedgers(): WorkflowRunSummary[] {
+    try {
+      if (!fs.existsSync(workflowRunsDir)) return []
+      return fs
+        .readdirSync(workflowRunsDir)
+        .filter((file) => file.endsWith('.jsonl'))
+        .map((file) => {
+          const events = readWorkflowRunFile(path.join(workflowRunsDir, file))
+          const execId = events.find((e) => e.workflowExecutionId)?.workflowExecutionId || ''
+          return foldWorkflowRunSummary(execId, events)
+        })
+        .filter((summary) => Boolean(summary.workflowExecutionId))
+    } catch (e) {
+      console.error(`Failed to enumerate ${workflowRunsDir}`, e)
+      return []
+    }
+  }
+
+  /**
+   * Stage 1 slice 2 — at BOOT, close any workflow-runs ledger left NON-terminal by
+   * a crash/quit mid-run (last event materialized/dispatched/running, no terminal)
+   * with a terminal `stall_settled` event, so the durable ledger is never
+   * permanently open. Idempotent: stall_settled IS terminal, so an already-settled
+   * (or normally-completed) execution is skipped on every later boot. Best-effort
+   * per file. Runs AFTER the ScheduledTask recoveries, so executions they already
+   * settled (via syncWorkflowFromScheduledTask) are terminal → no-ops here. Returns
+   * the executions actually settled.
+   */
+  static reconcileStaleWorkflowRunLedgers(nowMs: number = Date.now()): StaleLedgerExecution[] {
+    const stale = reconcileStaleLedgerExecutions(this.foldAllWorkflowRunLedgers())
+    const settled: StaleLedgerExecution[] = []
+    const timestamp = new Date(nowMs).toISOString()
+    for (const execution of stale) {
+      try {
+        this.appendWorkflowRunEvent({
+          workflowExecutionId: execution.workflowExecutionId,
+          workflowId: execution.workflowId,
+          kind: 'stall_settled',
+          timestamp,
+          error: 'TaskWraith restarted before this workflow execution reached a terminal state.'
+        })
+        settled.push(execution)
+      } catch (e) {
+        console.error('Failed to settle stale workflow run ledger', execution.workflowExecutionId, e)
+      }
+    }
+    return settled
   }
 
   static appendRunEvents(inputs: RunEventInput[]): RunEventRecord[] {

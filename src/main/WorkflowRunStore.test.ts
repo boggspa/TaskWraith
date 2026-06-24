@@ -5,6 +5,7 @@ import {
   foldWorkflowRunSummary,
   nextWorkflowRunSequence,
   parseWorkflowRunEventLine,
+  reconcileStaleLedgerExecutions,
   safeWorkflowRunFileName,
   serializeWorkflowRunEvent,
   WORKFLOW_RUN_SCHEMA_VERSION,
@@ -151,6 +152,18 @@ describe('foldWorkflowRunSummary', () => {
     expect(summary.completedAt).toBeUndefined()
   })
 
+  it('treats stall_settled as a TERMINAL close (the startup reconciler writes it)', () => {
+    const summary = foldWorkflowRunSummary('exec-1', [
+      ev({ kind: 'dispatched', runId: 'run-1' }, 1, 't1'),
+      ev({ kind: 'running' }, 2, 't2'),
+      ev({ kind: 'stall_settled', error: 'restarted before terminal' }, 3, '2026-06-24T00:05:00.000Z')
+    ])
+    expect(summary.status).toBe('stall_settled')
+    expect(summary.isTerminal).toBe(true)
+    expect(summary.completedAt).toBe('2026-06-24T00:05:00.000Z')
+    expect(summary.error).toBe('restarted before terminal')
+  })
+
   it('ignores events for a different execution', () => {
     const mine = ev({ kind: 'completed' }, 1, 't1')
     const other = createWorkflowRunEvent(
@@ -186,5 +199,52 @@ describe('filterWorkflowRunEvents', () => {
       )
     ).toEqual(['b', 'c'])
     expect(filterWorkflowRunEvents(events, { limit: 1 }).map((e) => e.workflowExecutionId)).toEqual(['c'])
+  })
+})
+
+describe('reconcileStaleLedgerExecutions (slice 2 startup reconciler)', () => {
+  const summaryOf = (kinds: Partial<WorkflowRunEventInput>[], execId = 'exec-1') =>
+    foldWorkflowRunSummary(
+      execId,
+      kinds.map((o, i) =>
+        createWorkflowRunEvent(
+          { workflowExecutionId: execId, workflowId: 'wf-1', kind: 'materialized', ...o },
+          i + 1,
+          `t${i}`
+        )
+      )
+    )
+
+  it('flags non-terminal (dispatched / running tail) executions to settle', () => {
+    const dispatched = summaryOf([{ kind: 'materialized' }, { kind: 'dispatched' }], 'd')
+    const running = summaryOf([{ kind: 'dispatched' }, { kind: 'running' }], 'r')
+    const stale = reconcileStaleLedgerExecutions([dispatched, running])
+    expect(stale.map((s) => s.workflowExecutionId).sort()).toEqual(['d', 'r'])
+    expect(stale.find((s) => s.workflowExecutionId === 'r')?.status).toBe('running')
+  })
+
+  it('skips already-terminal executions (incl. stall_settled — boot-idempotent)', () => {
+    const completed = summaryOf([{ kind: 'running' }, { kind: 'completed' }], 'c')
+    const failed = summaryOf([{ kind: 'running' }, { kind: 'failed' }], 'f')
+    const cancelled = summaryOf([{ kind: 'running' }, { kind: 'cancelled' }], 'x')
+    const skipped = summaryOf([{ kind: 'skipped' }], 'k')
+    const alreadySettled = summaryOf([{ kind: 'running' }, { kind: 'stall_settled' }], 's')
+    expect(
+      reconcileStaleLedgerExecutions([completed, failed, cancelled, skipped, alreadySettled])
+    ).toEqual([])
+  })
+
+  it('skips empty / unknown executions (no parseable lifecycle event)', () => {
+    const empty = foldWorkflowRunSummary('exec-empty', [])
+    expect(empty.status).toBe('unknown')
+    expect(reconcileStaleLedgerExecutions([empty])).toEqual([])
+  })
+
+  it('settles only the stale ones in a mixed set', () => {
+    const healthy = summaryOf([{ kind: 'running' }, { kind: 'completed' }], 'ok')
+    const stale = summaryOf([{ kind: 'dispatched' }], 'bad')
+    expect(
+      reconcileStaleLedgerExecutions([healthy, stale]).map((s) => s.workflowExecutionId)
+    ).toEqual(['bad'])
   })
 })
