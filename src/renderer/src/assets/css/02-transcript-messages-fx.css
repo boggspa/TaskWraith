@@ -233,6 +233,19 @@
   line-height: 1.57;
 }
 
+/* Slice 6c — General chats read like a conversation, not a code log: a
+ * narrower reading column + looser leading, scoped to .chat-scope-global only
+ * (workspace chats keep the denser per-provider leading above). Double-class on
+ * .app-transcript.chat-scope-global beats the single-class per-provider rules
+ * without !important. */
+.app-transcript.chat-scope-global {
+  --composer-content-max-width: 760px;
+  --chat-side-gutter: clamp(32px, 6vw, 96px);
+}
+.app-transcript.chat-scope-global .message-bubble.assistant {
+  line-height: 1.68;
+}
+
 .chat-context-application-pill {
   position: absolute;
   top: 48px;
