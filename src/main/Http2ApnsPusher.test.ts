@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Http2ApnsPusher, derEcdsaToConcat } from './Http2ApnsPusher'
+import { deriveAgreementPublicRaw, sealPush } from '../shared/e2ee/pushSeal'
 
 /** Generate a fresh P-256 keypair in PKCS8 PEM (the .p8 format Apple
  * issues) for use in tests — written to a tmp file so the pusher can
@@ -630,6 +631,111 @@ describe('Http2ApnsPusher — privacy-safe alert bodies', () => {
         expect(body.deepLinkPath).toBeUndefined()
         expect(body.summary).toBeUndefined()
         expectNoForbiddenPushContent(serialized)
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serializes the encrypted twpush blob OUTSIDE aps + keeps the generic alert', () => {
+    const { dir, path } = writeTestAuthKey()
+    try {
+      const bodyWrites: string[] = []
+      const mockConnect = (_authority: string) =>
+        ({
+          closed: false,
+          destroyed: false,
+          on: () => {},
+          request: () => ({
+            on: () => {},
+            setEncoding: () => {},
+            write: (body: string) => {
+              bodyWrites.push(body)
+            },
+            end: () => {}
+          }),
+          close: () => {}
+        }) as never
+      const pusher = new Http2ApnsPusher({
+        authKeyPath: path,
+        keyId: 'KEYID00000',
+        teamId: 'TEAM00ABCD',
+        bundleId: 'com.example.app',
+        connect: mockConnect
+      })
+      const envelope = sealPush({
+        senderIdentitySeed: Buffer.alloc(32, 0x11),
+        recipientAgreePubRaw: deriveAgreementPublicRaw(Buffer.alloc(32, 0x22)),
+        pairId: 'p',
+        plaintext: Buffer.from('{"title":"Codex","preview":"done"}', 'utf8')
+      })
+      void pusher.pushRemoteAttentionToToken('a', 'production', {
+        pairID: 'p',
+        reason: 'runComplete',
+        threadId: 't',
+        runId: 'r',
+        taskId: 'task',
+        twpush: envelope
+      })
+      return Promise.resolve().then(() => {
+        const body = JSON.parse(bodyWrites[0])
+        // Blob rides OUTSIDE aps (only the NSE reads it) and is verbatim.
+        expect(body.twpush).toEqual(envelope)
+        expect(body.aps.twpush).toBeUndefined()
+        // The generic alert is untouched — it's the NSE's fallback.
+        expect(body.aps.alert).toEqual({
+          title: 'Task complete',
+          body: 'Your TaskWraith run finished.'
+        })
+        expect(body.aps['mutable-content']).toBe(1)
+        // Ciphertext only — none of the plaintext leaks.
+        expect(JSON.stringify(body)).not.toContain('Codex')
+      })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('drops an oversized twpush blob and ships the generic alert (4KB guard)', () => {
+    const { dir, path } = writeTestAuthKey()
+    try {
+      const bodyWrites: string[] = []
+      const mockConnect = (_authority: string) =>
+        ({
+          closed: false,
+          destroyed: false,
+          on: () => {},
+          request: () => ({
+            on: () => {},
+            setEncoding: () => {},
+            write: (body: string) => {
+              bodyWrites.push(body)
+            },
+            end: () => {}
+          }),
+          close: () => {}
+        }) as never
+      const pusher = new Http2ApnsPusher({
+        authKeyPath: path,
+        keyId: 'KEYID00000',
+        teamId: 'TEAM00ABCD',
+        bundleId: 'com.example.app',
+        connect: mockConnect
+      })
+      void pusher.pushRemoteAttentionToToken('a', 'production', {
+        pairID: 'p',
+        reason: 'runComplete',
+        threadId: 't',
+        twpush: { v: 1, s: 'AAAA', n: 'AAAA', ct: 'A'.repeat(4200), tag: 'AAAA' }
+      })
+      return Promise.resolve().then(() => {
+        const body = JSON.parse(bodyWrites[0])
+        expect(body.twpush).toBeUndefined() // dropped — too big
+        expect(Buffer.byteLength(bodyWrites[0], 'utf8')).toBeLessThanOrEqual(4096)
+        expect(body.aps.alert).toEqual({
+          title: 'Task complete',
+          body: 'Your TaskWraith run finished.'
+        })
       })
     } finally {
       rmSync(dir, { recursive: true, force: true })

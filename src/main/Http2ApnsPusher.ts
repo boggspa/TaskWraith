@@ -265,35 +265,45 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
   }
 
   private buildRemoteAttentionApsBody(payload: BridgeRemoteAttentionPushPayload): string {
-    return JSON.stringify(
-      stripNullish({
-        aps: {
-          // Title/body vary by reason (the reason is already in the payload, so
-          // this leaks nothing new) — a generic "needs attention" string can't
-          // tell an approval from a finished run on the lock screen.
-          alert: remoteAttentionAlert(payload.reason),
-          // Lights up the lock-screen Approve/Deny buttons for blocking reasons.
-          // undefined for non-blocking reasons → JSON.stringify omits it, so a
-          // run-complete push stays button-less.
-          category: remoteAttentionCategory(payload.reason),
-          sound: 'default',
-          'thread-id': remoteAttentionThreadId(payload),
-          'relevance-score': remoteAttentionRelevanceScore(payload.reason),
-          'mutable-content': 1
-        },
-        pairID: payload.pairID,
-        reason: payload.reason,
-        workspaceId: privacySafeWorkspaceId(payload.workspaceId),
-        threadId: payload.threadId,
-        runId: payload.runId,
-        approvalId: payload.approvalId,
-        questionId: payload.questionId,
-        wakeupId: payload.wakeupId,
-        taskId: payload.taskId,
-        projectionKind: payload.projectionKind,
-        generatedAt: payload.generatedAt
-      })
-    )
+    const base = stripNullish({
+      aps: {
+        // Title/body vary by reason (the reason is already in the payload, so
+        // this leaks nothing new) — a generic "needs attention" string can't
+        // tell an approval from a finished run on the lock screen.
+        alert: remoteAttentionAlert(payload.reason),
+        // Lights up the lock-screen Approve/Deny buttons for blocking reasons.
+        // undefined for non-blocking reasons → JSON.stringify omits it, so a
+        // run-complete push stays button-less.
+        category: remoteAttentionCategory(payload.reason),
+        sound: 'default',
+        'thread-id': remoteAttentionThreadId(payload),
+        'relevance-score': remoteAttentionRelevanceScore(payload.reason),
+        'mutable-content': 1
+      },
+      pairID: payload.pairID,
+      reason: payload.reason,
+      workspaceId: privacySafeWorkspaceId(payload.workspaceId),
+      threadId: payload.threadId,
+      runId: payload.runId,
+      approvalId: payload.approvalId,
+      questionId: payload.questionId,
+      wakeupId: payload.wakeupId,
+      taskId: payload.taskId,
+      projectionKind: payload.projectionKind,
+      generatedAt: payload.generatedAt
+    })
+    // Attach the per-device ENCRYPTED rich blob (run-complete/failed) OUTSIDE
+    // `aps`, so only the Notification Service Extension reads it. The generic
+    // `aps.alert` above is a complete, privacy-clean notification on its own, so
+    // if adding the blob would breach the 4KB APNs alert ceiling we DROP it and
+    // ship the generic body — the NSE then has nothing to decrypt and shows the
+    // fallback (strictly never worse than today). Apple/the relay see only
+    // ciphertext either way.
+    if (payload.twpush) {
+      const withBlob = JSON.stringify({ ...base, twpush: payload.twpush })
+      if (Buffer.byteLength(withBlob, 'utf8') <= APNS_ALERT_BODY_MAX_BYTES) return withBlob
+    }
+    return JSON.stringify(base)
   }
 }
 
@@ -304,6 +314,12 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
  * screen. Only blocking reasons get a category; others stay button-less. */
 const APNS_CATEGORY_APPROVAL = 'TW_APPROVAL'
 const APNS_CATEGORY_QUESTION = 'TW_QUESTION'
+
+/** Apple rejects alert pushes over 4096 bytes outright. Cap the serialized body
+ * a touch under that so a long routing id can never tip an otherwise-fine push
+ * past the limit; the encrypted rich blob is dropped (→ generic alert) before we
+ * cross it. */
+const APNS_ALERT_BODY_MAX_BYTES = 3900
 
 function remoteAttentionCategory(reason: BridgeRemoteAttentionReason): string | undefined {
   if (reason === 'approval') return APNS_CATEGORY_APPROVAL

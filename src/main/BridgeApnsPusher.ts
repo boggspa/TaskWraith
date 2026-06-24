@@ -1,4 +1,5 @@
 import { Http2ApnsPusher } from './Http2ApnsPusher'
+import type { PushEnvelope } from '../shared/e2ee/pushSeal'
 
 /**
  * BridgeApnsPusher — Phase C5 scaffold for desktop → iPhone wake-pushes via APNs.
@@ -82,6 +83,11 @@ export interface BridgeRemoteAttentionPushPayload {
   taskId?: string
   projectionKind?: string
   generatedAt?: string
+  /** Optional per-device ENCRYPTED rich content (run-complete/failed only). The
+   * NSE decrypts it for a rich banner; Apple/the relay see only ciphertext. Set
+   * per-device by RemoteAttentionApnsFanout (each device has a distinct key).
+   * Serialized OUTSIDE `aps` so only the extension reads it. */
+  twpush?: PushEnvelope
 }
 
 export interface BridgeApnsPushResult {
