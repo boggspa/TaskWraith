@@ -755,6 +755,152 @@
   white-space: nowrap;
 }
 
+/* Slice 7a-2 — loop/run history (the WorkflowRunHistory component). */
+.sidebar-workflow-history {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--sidebar-border) 28%, transparent);
+}
+
+.sidebar-workflow-history.is-muted,
+.sidebar-workflow-history.is-error {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.sidebar-workflow-history.is-error {
+  color: color-mix(in srgb, var(--danger, #f87171) 88%, var(--sidebar-text));
+}
+
+.sidebar-workflow-history-title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.sidebar-workflow-history-row {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidebar-workflow-history-row:hover {
+  background: color-mix(in srgb, var(--sidebar-text) 6%, transparent);
+}
+
+.sidebar-workflow-history-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.sidebar-workflow-history-dot.tone-ok {
+  background: color-mix(in srgb, var(--success, #34d399) 88%, var(--sidebar-text));
+}
+.sidebar-workflow-history-dot.tone-danger {
+  background: color-mix(in srgb, var(--danger, #f87171) 88%, var(--sidebar-text));
+}
+.sidebar-workflow-history-dot.tone-active {
+  background: var(--accent);
+}
+.sidebar-workflow-history-dot.tone-muted {
+  background: var(--text-muted);
+}
+
+.sidebar-workflow-history-when {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--sidebar-text) 76%, transparent);
+}
+
+.sidebar-workflow-history-iters {
+  flex: 0 0 auto;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.sidebar-workflow-history-cost {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.sidebar-workflow-history-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.sidebar-workflow-history-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 3px 4px 5px 16px;
+  font-size: 10px;
+}
+
+.sidebar-workflow-history-iter {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sidebar-workflow-history-iter-n {
+  flex: 0 0 auto;
+  min-width: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.sidebar-workflow-history-verdict {
+  flex: 0 0 auto;
+  font-weight: 650;
+}
+.sidebar-workflow-history-verdict.decision-accept {
+  color: color-mix(in srgb, var(--success, #34d399) 88%, var(--sidebar-text));
+}
+.sidebar-workflow-history-verdict.decision-reject {
+  color: color-mix(in srgb, var(--danger, #f87171) 88%, var(--sidebar-text));
+}
+.sidebar-workflow-history-verdict.decision-revise {
+  color: color-mix(in srgb, var(--warning, #fbbf24) 90%, var(--sidebar-text));
+}
+.sidebar-workflow-history-verdict.decision-none {
+  color: var(--text-muted);
+}
+
+.sidebar-workflow-history-evidence {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sidebar-workflow-icon-strip {
   display: flex;
   align-items: center;

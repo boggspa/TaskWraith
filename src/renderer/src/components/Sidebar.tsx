@@ -43,6 +43,7 @@ import {
 import { AppShellStatsToolbar } from './AppShellStatsToolbar'
 import { ModelUsageCard, type ModelUsageApiSpendOptions } from './ModelUsageCard'
 import { SidebarOverflowMenu, type SidebarOverflowMenuItem } from './SidebarOverflowMenu'
+import { WorkflowRunHistory } from './WorkflowRunHistory'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { isSubThreadChat } from '../lib/chatScope'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
@@ -2929,6 +2930,7 @@ export function Sidebar({
                                   ))}
                                 </div>
                               )}
+                              <WorkflowRunHistory key={workflow.id} workflowId={workflow.id} />
                             </div>
                           </div>
                         )}
