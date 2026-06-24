@@ -1509,6 +1509,53 @@ export function EnsembleParticipantOverflowPopover({
     setRolePresetId(resolveRolePresetId(participant.role))
   }, [participant.id, participant.role])
 
+  // Buffer the freely-typed fields (custom Role + Goal/Brief) in LOCAL state so a
+  // keystroke doesn't round-trip the whole chat through onChatChange + a saveChat
+  // IPC. That round-trip echoes a stale chat back (chat-updated → setCurrentChat)
+  // mid-typing — reverting the controlled value and DROPPING characters — and
+  // also forced a full composer re-render per key. We persist on blur + on close
+  // instead (mirrors RosterSettingsPanel's local-draft-until-blur).
+  const [roleDraft, setRoleDraft] = useState(participant.role)
+  const [instructionsDraft, setInstructionsDraft] = useState(participant.instructions)
+  // Re-sync from the COMMITTED value only when it actually changes (participant
+  // switch / external edit) — never on our own keystrokes, since the drafts are
+  // local and participant.* doesn't move while typing, so typing isn't clobbered.
+  useEffect(() => {
+    setRoleDraft(participant.role)
+  }, [participant.id, participant.role])
+  useEffect(() => {
+    setInstructionsDraft(participant.instructions)
+  }, [participant.id, participant.instructions])
+
+  // Latest-value refs so the unmount flush commits the final draft even though
+  // the popover closes via outside-click / Escape / unmount WITHOUT blurring.
+  const onPatchRef = useRef(onPatch)
+  onPatchRef.current = onPatch
+  const roleDraftRef = useRef(roleDraft)
+  roleDraftRef.current = roleDraft
+  const instructionsDraftRef = useRef(instructionsDraft)
+  instructionsDraftRef.current = instructionsDraft
+  const committedRef = useRef({ role: participant.role, instructions: participant.instructions })
+  committedRef.current = { role: participant.role, instructions: participant.instructions }
+
+  const commitDrafts = useCallback((): void => {
+    const patch: Partial<EnsembleParticipant> = {}
+    if (roleDraftRef.current !== committedRef.current.role) patch.role = roleDraftRef.current
+    if (instructionsDraftRef.current !== committedRef.current.instructions) {
+      patch.instructions = instructionsDraftRef.current
+    }
+    if (Object.keys(patch).length > 0) onPatchRef.current(patch)
+  }, [])
+
+  // Safety net: flush any unsaved draft when the popover unmounts — its close
+  // paths (capture-phase outside mousedown, Escape, programmatic unmount) don't
+  // blur the field first, so without this, closing would silently drop the text.
+  useEffect(() => {
+    return () => {
+      commitDrafts()
+    }
+  }, [commitDrafts])
+
   useEffect(() => {
     let cancelled = false
     queueMicrotask(() => {
@@ -1627,9 +1674,10 @@ export function EnsembleParticipantOverflowPopover({
         {rolePresetId === ENSEMBLE_ROLE_PRESET_CUSTOM ? (
           <input
             type="text"
-            value={participant.role}
+            value={roleDraft}
             disabled={locked}
-            onChange={(event) => onPatch({ role: event.target.value })}
+            onChange={(event) => setRoleDraft(event.target.value)}
+            onBlur={commitDrafts}
             placeholder={`${getProviderName(participant.provider)} role`}
           />
         ) : null}
@@ -1639,9 +1687,10 @@ export function EnsembleParticipantOverflowPopover({
         <textarea
           className="ensemble-above-overflow-instructions-field"
           rows={3}
-          value={participant.instructions}
+          value={instructionsDraft}
           disabled={locked}
-          onChange={(event) => onPatch({ instructions: event.target.value })}
+          onChange={(event) => setInstructionsDraft(event.target.value)}
+          onBlur={commitDrafts}
           placeholder="Optional focus for this participant's turns…"
         />
       </label>
