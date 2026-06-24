@@ -348,6 +348,23 @@ describe('AppStore workflows', () => {
     expect(() => AppStore.saveWorkflowDefinition(input)).toThrow('workspace-scoped')
   })
 
+  it('persists + clamps a workflow loop config; a workflow with no loop stays single-occurrence', () => {
+    const saved = AppStore.saveWorkflowDefinition(
+      workflowInput({
+        loop: {
+          acceptance: { maxIterations: 0, verifier: { provider: 'codex' } },
+          limits: { maxRuns: 0 }
+        }
+      })
+    )
+    // normalizeWorkflowLoopConfig clamps the fail-safe backstops (0 → defaults).
+    expect(saved.loop).toEqual({
+      acceptance: { maxIterations: 3, verifier: { provider: 'codex' } },
+      limits: { maxRuns: 6 }
+    })
+    expect(AppStore.saveWorkflowDefinition(workflowInput()).loop).toBeUndefined()
+  })
+
   it('stamps runningSince on the transition into running and does not reset it on a benign re-patch', () => {
     AppStore.saveWorkflowDefinition(workflowInput())
     const [task] = AppStore.materializeDueWorkflows(Date.parse(plannedFor))

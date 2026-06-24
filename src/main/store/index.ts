@@ -86,6 +86,7 @@ import {
   type WorkflowRunEventInput,
   type WorkflowRunSummary
 } from '../WorkflowRunStore'
+import { normalizeWorkflowLoopConfig } from '../WorkflowLoopModel'
 import {
   capApprovalLedgerRecords,
   createApprovalLedgerRecord,
@@ -335,6 +336,7 @@ function normalizeWorkflowDefinitionRecord(
       typeof input.activeExecutionId === 'string' ? input.activeExecutionId : undefined,
     history,
     unattendedElevation: normalizeUnattendedElevationAck(input.unattendedElevation),
+    loop: normalizeWorkflowLoopConfig(input.loop),
     createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
     updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : nowIso
   }

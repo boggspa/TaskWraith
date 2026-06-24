@@ -179,6 +179,41 @@ describe('foldWorkflowRunSummary', () => {
     expect(summary.error).toBe('restarted before terminal')
   })
 
+  it('folds a LOOP execution: sums per-iteration forensics, terminal on loop_settled, counts iterations', () => {
+    const summary = foldWorkflowRunSummary('exec-1', [
+      ev({ kind: 'running' }, 1, 't1'), // execution-level loop start
+      ev({ kind: 'running', iteration: 1 }, 2, 't2'),
+      ev({ kind: 'harvested', iteration: 1, tokens: 100, costUsd: 0.1, durationMs: 1000 }, 3, 't3'),
+      ev({ kind: 'running', iteration: 2 }, 4, 't4'),
+      ev({ kind: 'harvested', iteration: 2, tokens: 150, costUsd: 0.2, durationMs: 2000 }, 5, 't5'),
+      ev({ kind: 'loop_settled' }, 6, '2026-06-24T01:00:00.000Z')
+    ])
+    expect(summary.status).toBe('loop_settled')
+    expect(summary.isTerminal).toBe(true)
+    expect(summary.completedAt).toBe('2026-06-24T01:00:00.000Z')
+    expect(summary.startedAt).toBe('t1') // execution-level running, not a per-iteration one
+    expect(summary.tokens).toBe(250) // 100 + 150 summed across iterations
+    expect(summary.costUsd).toBeCloseTo(0.3)
+    expect(summary.durationMs).toBe(3000)
+    expect(summary.iterationCount).toBe(2)
+  })
+
+  it('does NOT terminalize a loop on a per-iteration completed (only an exec-level terminal does)', () => {
+    const midFlight = foldWorkflowRunSummary('exec-1', [
+      ev({ kind: 'running' }, 1, 't1'),
+      ev({ kind: 'running', iteration: 1 }, 2, 't2'),
+      ev({ kind: 'completed', iteration: 1 }, 3, 't3') // iteration 1 done; the loop continues
+    ])
+    expect(midFlight.status).toBe('running') // execution still running, NOT 'completed'
+    expect(midFlight.isTerminal).toBe(false)
+    expect(midFlight.completedAt).toBeUndefined()
+    expect(midFlight.iterationCount).toBe(1)
+  })
+
+  it('leaves iterationCount undefined for a single-occurrence (non-loop) run', () => {
+    expect(foldWorkflowRunSummary('exec-1', [ev({ kind: 'completed' }, 1, 't')]).iterationCount).toBeUndefined()
+  })
+
   it('ignores events for a different execution', () => {
     const mine = ev({ kind: 'completed' }, 1, 't1')
     const other = createWorkflowRunEvent(

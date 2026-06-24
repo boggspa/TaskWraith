@@ -2915,6 +2915,32 @@ export type WorkflowRunTemplate = Omit<
   | 'workflowOccurrenceAt'
 >
 
+/** Stage 2 — how a maker→verifier LOOP workflow decides to STOP. maxIterations is
+ * a non-optional fail-safe backstop (clamped ≥1 on save) — the loop NEVER runs
+ * unbounded regardless of the verifier. The optional verifier adds an adversarial
+ * accept/revise gate after each maker pass. See WorkflowLoopModel. */
+export interface WorkflowLoopAcceptance {
+  maxIterations: number
+  verifier?: {
+    /** Prefer a verifier provider OTHER than the maker's (cross-provider check). */
+    provider?: ProviderId
+  }
+}
+
+/** The cumulative ceiling spanning ALL iterations (the per-run WorkflowLimits bounds
+ * one run; this bounds the whole loop). */
+export interface WorkflowLoopLimits {
+  /** Max TOTAL runs (maker + verifier) across the loop. Always enforced (clamped ≥1). */
+  maxRuns: number
+  maxTokens?: number
+  maxCostUsd?: number
+}
+
+export interface WorkflowLoopConfig {
+  acceptance: WorkflowLoopAcceptance
+  limits: WorkflowLoopLimits
+}
+
 export interface WorkflowDefinition {
   id: string
   name: string
@@ -2935,6 +2961,10 @@ export interface WorkflowDefinition {
   missedRunPolicy: WorkflowMissedRunPolicy
   concurrencyPolicy: WorkflowConcurrencyPolicy
   limits: WorkflowLimits
+  /** Stage 2 — optional maker→verifier loop. Absent ⇒ the workflow runs as a single
+   * occurrence (the existing path). Validated/clamped by normalizeWorkflowLoopConfig
+   * on save (maxIterations + maxRuns are fail-safe ≥1 backstops). */
+  loop?: WorkflowLoopConfig
   nextRunAt?: string
   lastRunAt?: string
   lastCompletedAt?: string

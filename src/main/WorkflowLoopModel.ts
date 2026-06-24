@@ -12,47 +12,17 @@
 // branch, NO WorkflowDefinition plumbing, NO ledger I/O, NO AuditOrchestrator
 // refactor — those are later slices. Nothing here imports electron or AppStore.
 
-import type { ProviderId } from './store/types'
+import type {
+  ProviderId,
+  WorkflowLoopAcceptance,
+  WorkflowLoopConfig,
+  WorkflowLoopLimits
+} from './store/types'
 
-// ----------------------------------------------------------------------------
-// Config (persisted on a loop WorkflowDefinition in a later slice; defined here
-// so the model is self-contained + testable in isolation).
-// ----------------------------------------------------------------------------
-
-/**
- * How a loop workflow decides to STOP. maxIterations is a non-optional fail-safe
- * backstop — the loop NEVER runs unbounded regardless of the verifier. The
- * optional verifier adds an adversarial accept/revise gate after each maker pass.
- */
-export interface WorkflowLoopAcceptance {
-  /** Hard ceiling on MAKER iterations. Always enforced; clamped to >= 1. */
-  maxIterations: number
-  /** Optional adversarial verifier run after each maker iteration. When present,
-   * its verdict can stop the loop early (accept) or drive another pass (revise). */
-  verifier?: {
-    /** Cross-provider decorrelation: prefer a provider OTHER than the maker's
-     * (mirrors the audit skeptic's preferCrossProvider). Advisory; the engine
-     * resolves the actual provider in a later slice. */
-    provider?: ProviderId
-  }
-}
-
-/** The cumulative ceiling spanning ALL iterations. The existing per-run
- * WorkflowLimits / WorkflowBudgetRegistry bound ONE run; this bounds the whole
- * loop. Generalizes AuditBudget (agents → runs). */
-export interface WorkflowLoopLimits {
-  /** Max TOTAL runs (maker + verifier) across the loop. Always enforced. */
-  maxRuns: number
-  /** Optional cumulative token ceiling across iterations. */
-  maxTokens?: number
-  /** Optional cumulative cost ceiling (USD) across iterations. */
-  maxCostUsd?: number
-}
-
-export interface WorkflowLoopConfig {
-  acceptance: WorkflowLoopAcceptance
-  limits: WorkflowLoopLimits
-}
+// The persisted loop CONFIG types live in store/types (the home for everything on
+// WorkflowDefinition). Re-exported here so the engine + callers keep importing them
+// from the model alongside the budget/decision primitives.
+export type { WorkflowLoopAcceptance, WorkflowLoopConfig, WorkflowLoopLimits }
 
 // ----------------------------------------------------------------------------
 // Cumulative budget (live state). Generalizes AuditRunModel.makeBudget/
@@ -187,4 +157,56 @@ export function decideLoopContinuation(state: WorkflowLoopState): WorkflowLoopDe
     return { kind: 'stop', reason: 'max_iterations' }
   }
   return { kind: 'continue', reason: 'continue' }
+}
+
+// ----------------------------------------------------------------------------
+// Normalize / sanitize a persisted loop config (slice 4) — called by the store's
+// normalizeWorkflowDefinitionRecord on save/update. FAIL-SAFE: a present-but-
+// malformed config still yields a bounded maxIterations + maxRuns (never
+// unbounded); an absent / non-object config → undefined (the workflow runs as a
+// single occurrence, the existing path).
+// ----------------------------------------------------------------------------
+
+const DEFAULT_LOOP_MAX_ITERATIONS = 3
+
+function clampPositiveInt(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 1
+    ? Math.floor(value)
+    : fallback
+}
+
+function optionalPositiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+export function normalizeWorkflowLoopConfig(raw: unknown): WorkflowLoopConfig | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const r = raw as { acceptance?: unknown; limits?: unknown }
+  // A loop MUST declare acceptance (the maxIterations backstop) — without it the
+  // config is treated as absent (single-occurrence), never as an unbounded loop.
+  if (!r.acceptance || typeof r.acceptance !== 'object') return undefined
+  const acc = r.acceptance as { maxIterations?: unknown; verifier?: unknown }
+  const maxIterations = clampPositiveInt(acc.maxIterations, DEFAULT_LOOP_MAX_ITERATIONS)
+  const acceptance: WorkflowLoopAcceptance = { maxIterations }
+  if (acc.verifier && typeof acc.verifier === 'object') {
+    const provider = (acc.verifier as { provider?: unknown }).provider
+    // Keep a string provider hint; the dispatch path (slice 5) validates it's a
+    // live ProviderId. Absent → verifier with no provider preference.
+    acceptance.verifier =
+      typeof provider === 'string' && provider ? { provider: provider as ProviderId } : {}
+  }
+  const lim = (r.limits && typeof r.limits === 'object' ? r.limits : {}) as {
+    maxRuns?: unknown
+    maxTokens?: unknown
+    maxCostUsd?: unknown
+  }
+  const maxTokens = optionalPositiveNumber(lim.maxTokens)
+  const maxCostUsd = optionalPositiveNumber(lim.maxCostUsd)
+  const limits: WorkflowLoopLimits = {
+    // Default ceiling: 2 runs per iteration (one maker + one verifier).
+    maxRuns: clampPositiveInt(lim.maxRuns, maxIterations * 2),
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(maxCostUsd !== undefined ? { maxCostUsd } : {})
+  }
+  return { acceptance, limits }
 }

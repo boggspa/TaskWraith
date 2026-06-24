@@ -32,16 +32,21 @@ export type WorkflowRunEventKind =
   // durationMs of a finished run. Does NOT advance lifecycle status — it rides
   // alongside the terminal lifecycle event so the fold picks up the consumption.
   | 'harvested'
+  // Terminal close of a LOOP execution (Stage 2): the loop engine writes it when
+  // the maker/verifier loop stops. Like the lifecycle terminals it ends the
+  // execution — distinct from the per-iteration sub-run events (tagged `iteration`).
+  | 'loop_settled'
 
 /** Terminal lifecycle kinds (a fold stops advancing `status` past one of these).
- * `stall_settled` IS terminal: the startup reconciler (slice 2) writes it to close
- * an execution abandoned by a crash, and no real terminal event follows it. */
+ * `stall_settled` (the startup reconciler's crash-close) + `loop_settled` (the loop
+ * engine's terminal) are terminal: no real lifecycle event follows either. */
 const TERMINAL_KINDS: ReadonlySet<WorkflowRunEventKind> = new Set([
   'completed',
   'failed',
   'cancelled',
   'skipped',
-  'stall_settled'
+  'stall_settled',
+  'loop_settled'
 ])
 
 export interface WorkflowRunBudgetBreach {
@@ -63,6 +68,11 @@ export interface WorkflowRunEventInput {
   durationMs?: number
   breach?: WorkflowRunBudgetBreach
   error?: string
+  /** Stage 2 — the 1-based MAKER iteration this event belongs to, for a LOOP
+   * execution. Absent on a single-occurrence run AND on a loop's execution-level
+   * events (running / loop_settled). Per-iteration sub-run events set it; the fold
+   * uses it to keep them from terminalizing the whole execution + to count loops. */
+  iteration?: number
 }
 
 export interface WorkflowRunEvent extends WorkflowRunEventInput {
@@ -145,14 +155,21 @@ export interface WorkflowRunSummary {
   breach?: WorkflowRunBudgetBreach
   error?: string
   eventCount: number
+  /** Stage 2 — the highest maker iteration observed (a LOOP execution); absent for
+   * a single-occurrence run. */
+  iterationCount?: number
 }
 
 /**
  * Fold an execution's event log into its current summary (left-fold over events
- * in sequence order). `status` tracks the latest LIFECYCLE kind (budget_breach /
- * stall_settled annotate but don't replace the lifecycle status unless terminal).
- * Forensic fields (tokens/costUsd/durationMs/breach/error) take the LAST non-empty
- * value seen, so a terminal event carrying the harvested totals wins.
+ * in sequence order). `status` tracks the latest EXECUTION-LEVEL lifecycle kind
+ * (budget_breach / harvested annotate but don't replace it; stall_settled +
+ * loop_settled are terminal). Forensic totals (tokens/costUsd/durationMs) SUM across
+ * events so a LOOP's cumulative spend = the sum of its per-iteration harvests; a
+ * single occurrence carries them on one event so the sum equals that value. A loop's
+ * per-iteration sub-run events (tagged `iteration`) contribute forensics + the
+ * iteration count but do NOT terminalize the execution — only an execution-level
+ * terminal (loop_settled / stall_settled / a single-occurrence completed) does.
  */
 export function foldWorkflowRunSummary(
   workflowExecutionId: string,
@@ -175,36 +192,48 @@ export function foldWorkflowRunSummary(
     if (event.scheduledTaskId) summary.scheduledTaskId = event.scheduledTaskId
     if (event.runId) summary.runId = event.runId
     if (event.plannedFor) summary.plannedFor = event.plannedFor
-    if (typeof event.tokens === 'number') summary.tokens = event.tokens
-    if (typeof event.costUsd === 'number') summary.costUsd = event.costUsd
-    if (typeof event.durationMs === 'number') summary.durationMs = event.durationMs
+    // Forensic totals SUM across events (a loop's cumulative spend = the sum of its
+    // per-iteration harvests; a single occurrence sums one value → unchanged).
+    if (typeof event.tokens === 'number') summary.tokens = (summary.tokens ?? 0) + event.tokens
+    if (typeof event.costUsd === 'number') summary.costUsd = (summary.costUsd ?? 0) + event.costUsd
+    if (typeof event.durationMs === 'number') {
+      summary.durationMs = (summary.durationMs ?? 0) + event.durationMs
+    }
     if (event.breach) summary.breach = event.breach
     if (event.error) summary.error = event.error
-
-    switch (event.kind) {
-      case 'dispatched':
-        summary.dispatchedAt = event.timestamp
-        break
-      case 'running':
-        summary.startedAt = event.timestamp
-        break
-      case 'completed':
-      case 'failed':
-      case 'cancelled':
-      case 'skipped':
-      case 'stall_settled':
-        summary.completedAt = event.timestamp
-        break
-      default:
-        break
+    if (typeof event.iteration === 'number') {
+      summary.iterationCount = Math.max(summary.iterationCount ?? 0, event.iteration)
     }
 
-    // Lifecycle status advances on every kind EXCEPT the pure annotations
-    // (budget_breach + harvested), which only carry forensic fields. stall_settled
-    // IS terminal (the reconciler's close event; nothing follows it).
-    if (event.kind !== 'budget_breach' && event.kind !== 'harvested') {
-      summary.status = event.kind
-      summary.isTerminal = TERMINAL_KINDS.has(event.kind)
+    // Only EXECUTION-LEVEL events (no `iteration`) drive the execution lifecycle. A
+    // loop's per-iteration sub-run events (tagged `iteration`) must NOT terminalize
+    // the whole execution — else the fold would close it on iteration 1's own
+    // `completed`. They still contribute forensics + the iteration count above.
+    if (event.iteration === undefined) {
+      switch (event.kind) {
+        case 'dispatched':
+          summary.dispatchedAt = event.timestamp
+          break
+        case 'running':
+          summary.startedAt = event.timestamp
+          break
+        case 'completed':
+        case 'failed':
+        case 'cancelled':
+        case 'skipped':
+        case 'stall_settled':
+        case 'loop_settled':
+          summary.completedAt = event.timestamp
+          break
+        default:
+          break
+      }
+      // Status advances on every execution-level kind EXCEPT the pure annotations
+      // (budget_breach + harvested). stall_settled + loop_settled ARE terminal.
+      if (event.kind !== 'budget_breach' && event.kind !== 'harvested') {
+        summary.status = event.kind
+        summary.isTerminal = TERMINAL_KINDS.has(event.kind)
+      }
     }
   }
 

@@ -4,6 +4,7 @@ import {
   loopBudgetExhausted,
   makeLoopBudget,
   markLoopTruncated,
+  normalizeWorkflowLoopConfig,
   recordLoopSpend,
   type WorkflowLoopAcceptance,
   type WorkflowLoopBudget,
@@ -179,5 +180,53 @@ describe('decideLoopContinuation', () => {
         latestVerdict: null
       })
     ).toEqual({ kind: 'stop', reason: 'max_iterations' })
+  })
+})
+
+describe('normalizeWorkflowLoopConfig (slice 4)', () => {
+  it('returns undefined for absent / non-object / acceptance-less input', () => {
+    expect(normalizeWorkflowLoopConfig(undefined)).toBeUndefined()
+    expect(normalizeWorkflowLoopConfig(null)).toBeUndefined()
+    expect(normalizeWorkflowLoopConfig('loop')).toBeUndefined()
+    // A loop MUST declare acceptance (the backstop) — else treated as no-loop.
+    expect(normalizeWorkflowLoopConfig({ limits: { maxRuns: 5 } })).toBeUndefined()
+  })
+
+  it('clamps maxIterations to a fail-safe (>=1, default 3, floored)', () => {
+    expect(normalizeWorkflowLoopConfig({ acceptance: { maxIterations: 7 } })?.acceptance.maxIterations).toBe(7)
+    expect(normalizeWorkflowLoopConfig({ acceptance: { maxIterations: 0 } })?.acceptance.maxIterations).toBe(3)
+    expect(normalizeWorkflowLoopConfig({ acceptance: { maxIterations: -2 } })?.acceptance.maxIterations).toBe(3)
+    expect(normalizeWorkflowLoopConfig({ acceptance: {} })?.acceptance.maxIterations).toBe(3)
+    expect(normalizeWorkflowLoopConfig({ acceptance: { maxIterations: 2.9 } })?.acceptance.maxIterations).toBe(2)
+  })
+
+  it('keeps a verifier (with or without a provider hint); maker-only when absent', () => {
+    expect(
+      normalizeWorkflowLoopConfig({ acceptance: { maxIterations: 3, verifier: {} } })?.acceptance.verifier
+    ).toEqual({})
+    expect(
+      normalizeWorkflowLoopConfig({ acceptance: { maxIterations: 3, verifier: { provider: 'codex' } } })
+        ?.acceptance.verifier
+    ).toEqual({ provider: 'codex' })
+    expect(
+      normalizeWorkflowLoopConfig({ acceptance: { maxIterations: 3 } })?.acceptance.verifier
+    ).toBeUndefined()
+  })
+
+  it('defaults maxRuns to maxIterations*2 and keeps only positive token/cost caps', () => {
+    expect(normalizeWorkflowLoopConfig({ acceptance: { maxIterations: 4 } })?.limits.maxRuns).toBe(8)
+    expect(
+      normalizeWorkflowLoopConfig({
+        acceptance: { maxIterations: 3 },
+        limits: { maxRuns: 20, maxTokens: 50000, maxCostUsd: 2 }
+      })?.limits
+    ).toEqual({ maxRuns: 20, maxTokens: 50000, maxCostUsd: 2 })
+    const clamped = normalizeWorkflowLoopConfig({
+      acceptance: { maxIterations: 3 },
+      limits: { maxRuns: 0, maxTokens: -5, maxCostUsd: 0 }
+    })
+    expect(clamped?.limits.maxRuns).toBe(6) // 0 → default maxIterations*2
+    expect(clamped?.limits.maxTokens).toBeUndefined()
+    expect(clamped?.limits.maxCostUsd).toBeUndefined()
   })
 })
