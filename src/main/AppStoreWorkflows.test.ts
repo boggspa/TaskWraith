@@ -433,3 +433,61 @@ describe('AppStore workflows', () => {
     expect(workflow?.nextRunAt).toBeUndefined()
   })
 })
+
+describe('AppStore workflow unattended elevation (P2)', () => {
+  const wellFormedAck = {
+    level: 'full_access' as const,
+    acknowledgedAt: '2026-06-24T00:00:00.000Z',
+    acknowledgedApprovalMode: 'auto_edit',
+    signature: 'a'.repeat(64)
+  }
+
+  it('persists + normalizes a well-formed ack through setWorkflowUnattendedElevation', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    AppStore.setWorkflowUnattendedElevation(saved.id, wellFormedAck)
+    expect(AppStore.getWorkflowDefinition(saved.id)?.unattendedElevation).toEqual(wellFormedAck)
+  })
+
+  it('DROPS a malformed ack at normalize (missing signature / bad level / non-string)', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    for (const bad of [
+      { ...wellFormedAck, signature: '' },
+      { ...wellFormedAck, signature: undefined as unknown as string },
+      { ...wellFormedAck, level: 'root' as unknown as 'safe' },
+      { ...wellFormedAck, acknowledgedAt: '' },
+      { ...wellFormedAck, acknowledgedApprovalMode: 123 as unknown as string }
+    ]) {
+      AppStore.setWorkflowUnattendedElevation(saved.id, bad as never)
+      expect(AppStore.getWorkflowDefinition(saved.id)?.unattendedElevation).toBeUndefined()
+    }
+  })
+
+  it('updateWorkflowDefinition NULLS the ack when template.approvalMode changes', () => {
+    const saved = AppStore.saveWorkflowDefinition(
+      workflowInput({ template: { approvalMode: 'auto_edit' } })
+    )
+    AppStore.setWorkflowUnattendedElevation(saved.id, wellFormedAck)
+    const updated = AppStore.updateWorkflowDefinition(saved.id, {
+      template: { ...saved.template, approvalMode: 'default' }
+    })
+    expect(updated?.unattendedElevation).toBeUndefined()
+    expect(AppStore.getWorkflowDefinition(saved.id)?.unattendedElevation).toBeUndefined()
+  })
+
+  it('updateWorkflowDefinition (unrelated field) PRESERVES the ack', () => {
+    const saved = AppStore.saveWorkflowDefinition(
+      workflowInput({ template: { approvalMode: 'auto_edit' } })
+    )
+    AppStore.setWorkflowUnattendedElevation(saved.id, wellFormedAck)
+    const updated = AppStore.updateWorkflowDefinition(saved.id, { name: 'Renamed loop' })
+    expect(updated?.name).toBe('Renamed loop')
+    expect(updated?.unattendedElevation).toEqual(wellFormedAck)
+  })
+
+  it('setWorkflowUnattendedElevation(undefined) revokes', () => {
+    const saved = AppStore.saveWorkflowDefinition(workflowInput())
+    AppStore.setWorkflowUnattendedElevation(saved.id, wellFormedAck)
+    AppStore.setWorkflowUnattendedElevation(saved.id, undefined)
+    expect(AppStore.getWorkflowDefinition(saved.id)?.unattendedElevation).toBeUndefined()
+  })
+})

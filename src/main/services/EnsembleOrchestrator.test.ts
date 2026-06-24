@@ -5207,6 +5207,76 @@ Next action:
     expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('workspace_write')
     expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(false)
   })
+
+  it('P2: verified full_access lifts EVERY participant to workspace_write / auto_edit', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run the elevated scheduled occurrence.',
+      event: { sender: {} as Electron.WebContents },
+      unattended: true,
+      unattendedElevationLevel: 'full_access'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    // Even the natively read_only Claude participant is lifted to the uniform level.
+    expect(harness.dispatched[0].provider).toBe('claude')
+    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('workspace_write')
+    expect(harness.dispatched[0].effectivePermissions?.readOnly).toBe(false)
+    expect(harness.dispatched[0].effectivePermissions?.approvalMode).toBe('auto_edit')
+    // Unattended elevation force-denies network egress.
+    expect(harness.dispatched[0].effectivePermissions?.networkAccess).toBe('deny')
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.dispatched[1].effectivePermissions?.presetId).toBe('workspace_write')
+    expect(harness.dispatched[1].effectivePermissions?.readOnly).toBe(false)
+  })
+
+  it('P2: verified default → the default preset', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run default-elevated.',
+      event: { sender: {} as Electron.WebContents },
+      unattended: true,
+      unattendedElevationLevel: 'default'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('default')
+    expect(harness.dispatched[0].effectivePermissions?.readOnly).toBe(false)
+  })
+
+  it('P2: no elevation level on an unattended round → read_only (P1b regression)', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run unattended, no elevation.',
+      event: { sender: {} as Electron.WebContents },
+      unattended: true
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('read_only')
+    expect(harness.dispatched[0].approvalMode).toBe('plan')
+  })
+
+  it('P2: an elevation level WITHOUT unattended is ignored (interactive stays preset-driven)', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Interactive run.',
+      event: { sender: {} as Electron.WebContents },
+      unattendedElevationLevel: 'full_access' // no `unattended: true`
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    // Claude keeps its native read_only preset — the runtime never stashed the
+    // level because `unattended` was false.
+    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('read_only')
+  })
 })
 
 describe('parseSelfReflectivePrefix', () => {

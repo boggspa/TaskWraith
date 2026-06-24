@@ -1,5 +1,6 @@
 import type { TodoItem } from '../TodoList'
 import type { AppIconVariant } from '../../shared/iconVariants'
+import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 
 export type AppearanceMode = 'solid' | 'soft_glass' | 'native_glass'
 export type VisualEffectStyle = 'auto' | 'liquid_glass' | 'thin_material' | 'classic'
@@ -2869,6 +2870,15 @@ export type WorkflowRunTemplate = Omit<
 export interface WorkflowDefinition {
   id: string
   name: string
+  /**
+   * P2 opt-in unattended elevation. When present AND it passes HMAC
+   * verification + isUnattendedElevationAckCurrent at dispatch, an unattended
+   * (scheduled) run of this workflow may rise above the forced-'plan' clamp to
+   * Default / Full-Workspace-Access. Minted server-side only (the
+   * set-workflow-unattended-elevation IPC); the save/update sanitizers strip a
+   * renderer-supplied value. Eagerly nulled when template.approvalMode changes.
+   */
+  unattendedElevation?: UnattendedElevationAck
   workspaceId: string
   workspacePath: string
   enabled: boolean

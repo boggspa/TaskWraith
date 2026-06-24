@@ -19,14 +19,15 @@
 // prompt-or-deny). An explicit ack on the WorkflowDefinition can authorize a higher
 // mode, but the result NEVER rises above what the user actually requested.
 //
-// NOTE (P2 follow-on): the elevation ack is NOT YET created / stored / verified.
-// Until the opt-in UI + an HMAC-bound ack land, callers pass `undefined` and every
-// unattended run clamps to 'plan'. When wiring the ack, VERIFY its provenance
-// (an HMAC over {workflowId, workspacePath, level, acknowledgedApprovalMode}, the
-// way RunPermissionPosture signs postures) BEFORE trusting `ack.level` — a plain
-// JSON ack is forgeable by a local workflows.json edit and must not be a security
-// boundary on its own. This module deliberately treats the ack as a capability
-// the impure caller has already authenticated.
+// P2a (WIRED): the elevation ack is minted server-side (the
+// set-workflow-unattended-elevation IPC) and HMAC-bound via
+// UnattendedElevationSignature over {workflowId, workspacePath, level,
+// acknowledgedApprovalMode}. index.ts `resolveUnattendedElevation` RE-VERIFIES the
+// HMAC AND isUnattendedElevationAckCurrent on EVERY dispatch before honoring, so a
+// plain JSON ack hand-edited into workflows.json (no valid signature) is rejected
+// and the run falls back to 'plan'. This module treats the ack as a capability the
+// impure caller has already authenticated. (P2b — the opt-in UI — is the remaining
+// piece; until then an ack can only be minted via the IPC.)
 
 import { approvalModeRank, coerceApprovalMode } from './RunPermissionPosture'
 
@@ -87,4 +88,68 @@ export function isUnattendedElevationAckCurrent(
   // The ack's ceiling must actually authorize the template mode it claims.
   const resolved = resolveUnattendedApprovalMode(ack, templateSafe)
   return resolved === templateSafe && resolved !== UNATTENDED_SAFE_APPROVAL_MODE
+}
+
+/**
+ * DESIGN DECISION (P2): map a verified elevation LEVEL to the permission preset
+ * honored at dispatch.
+ *   - 'full_access' → 'workspace_write' — auto_edit, workspace-bounded shell/file.
+ *     Deliberately NOT the broader 'full_access' preset (no allow-all shell). NOTE:
+ *     network egress is NOT denied by the preset itself; the unattended honoring
+ *     sites (ComposerService + EnsembleOrchestrator) pass an explicit
+ *     networkAccess:'deny' override, so an unattended elevated loop never gets network.
+ *   - 'default'     → 'default'.
+ *   - 'safe' / unknown → undefined (caller falls back to read-only).
+ * One source of truth shared by both honoring sites (ComposerService + the
+ * ensemble orchestrator).
+ */
+export function unattendedElevationPresetId(
+  level: UnattendedElevationLevel | string | undefined
+): 'workspace_write' | 'default' | undefined {
+  if (level === 'full_access') return 'workspace_write'
+  if (level === 'default') return 'default'
+  return undefined
+}
+
+/**
+ * The minimal WorkflowDefinition shape buildUnattendedElevationAck needs. Kept
+ * structural (no store import) so this module stays Electron-free and its unit
+ * tests don't drag the store in.
+ */
+export interface WorkflowForElevationAck {
+  id: string
+  workspacePath: string
+  template: { approvalMode: string }
+}
+
+/**
+ * Pure ack builder (no Electron, no HMAC secret). Mints the server-side ack for
+ * a workflow at the given level:
+ *   - 'safe' / unknown → undefined (revoke — no ack stored).
+ *   - 'default' / 'full_access' → a signed ack whose `acknowledgedApprovalMode`
+ *     is SERVER-DERIVED from wf.template.approvalMode (NEVER a caller arg, so the
+ *     renderer can't influence what mode the ack authorizes). The `sign` closure
+ *     (bound to the secret + canonical workspacePath in index.ts) produces the
+ *     HMAC over the canonical tuple.
+ */
+export function buildUnattendedElevationAck(
+  wf: WorkflowForElevationAck,
+  level: string,
+  sign: (tuple: {
+    workflowId: string
+    workspacePath: string
+    level: UnattendedElevationLevel
+    acknowledgedApprovalMode: string
+  }) => string,
+  now: () => string = () => new Date().toISOString()
+): UnattendedElevationAck | undefined {
+  if (level !== 'default' && level !== 'full_access') return undefined
+  const acknowledgedApprovalMode = wf.template.approvalMode
+  const signature = sign({
+    workflowId: wf.id,
+    workspacePath: wf.workspacePath,
+    level,
+    acknowledgedApprovalMode
+  })
+  return { level, acknowledgedAt: now(), acknowledgedApprovalMode, signature }
 }

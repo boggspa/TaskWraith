@@ -516,6 +516,17 @@ import {
   type RunPermissionPostureContext
 } from './RunPermissionPosture'
 import {
+  buildUnattendedElevationAck,
+  isUnattendedElevationAckCurrent,
+  type UnattendedElevationAck,
+  type UnattendedElevationLevel,
+  type WorkflowForElevationAck
+} from './UnattendedPostureGate'
+import {
+  signUnattendedElevation,
+  verifyUnattendedElevation
+} from './UnattendedElevationSignature'
+import {
   applyRuntimeProfileToPayload as applyRuntimeProfileToPayloadViaCliRuntime,
   captureProcessOutput,
   createCliEnv,
@@ -2481,6 +2492,54 @@ function verifyRunPosture(
     signature,
     context
   )
+}
+
+// ── P2: unattended-elevation ack provenance ─────────────────────────────────
+// The ack lifts an UNATTENDED (scheduled) workflow run above the forced-'plan'
+// clamp. It is a plain JSON blob on the WorkflowDefinition (forgeable by a local
+// workflows.json edit), so it is HMAC-bound — same secret + path canonicalization
+// as the external-path-grant signer — and RE-VERIFIED here at every dispatch.
+function signWorkflowUnattendedElevation(
+  workflowId: string,
+  workspacePath: string,
+  level: UnattendedElevationLevel,
+  acknowledgedApprovalMode: string
+): string {
+  return signUnattendedElevation(externalGrantSigningSecret, {
+    workflowId,
+    workspacePath: canonicalPath(workspacePath),
+    level,
+    acknowledgedApprovalMode
+  })
+}
+
+// Resolve a VERIFIED, CURRENT elevation for a scheduled occurrence. Both gates
+// fail-closed: the HMAC must verify AND isUnattendedElevationAckCurrent must hold
+// (template.approvalMode unchanged since the ack + the level still authorizes it).
+// Returns null on any miss → the unattended run stays clamped to 'plan'. Injected
+// into ComposerService + reused by the ensemble dispatch handler.
+function resolveUnattendedElevation(
+  scheduledTaskId: string
+): { ack: UnattendedElevationAck; templateApprovalMode: string } | null {
+  const task = AppStore.getScheduledTasks().find((t) => t.id === scheduledTaskId)
+  if (!task?.workflowId) return null
+  const wf = AppStore.getWorkflowDefinition(task.workflowId)
+  if (!wf) return null
+  const ack = wf.unattendedElevation
+  if (!ack) return null
+  const verified = verifyUnattendedElevation(
+    externalGrantSigningSecret,
+    {
+      workflowId: wf.id,
+      workspacePath: canonicalPath(wf.workspacePath),
+      level: ack.level,
+      acknowledgedApprovalMode: ack.acknowledgedApprovalMode
+    },
+    ack.signature
+  )
+  if (!verified) return null
+  if (!isUnattendedElevationAckCurrent(ack, wf.template.approvalMode)) return null
+  return { ack, templateApprovalMode: wf.template.approvalMode }
 }
 
 function runPostureContextFromPayload(payload: {
@@ -20693,7 +20752,8 @@ if (isGeminiMcpBridgeProcess) {
     const composerService = new ComposerService({
       appStore: AppStore,
       getSettings: () => AppStore.getSettings(),
-      signRunPermissionPosture: signRunPosture
+      signRunPermissionPosture: signRunPosture,
+      resolveUnattendedElevation
     })
     const discordContextConfig = resolveDiscordContextConfig({
       userDataPath: app.getPath('userData'),
@@ -21876,6 +21936,30 @@ if (isGeminiMcpBridgeProcess) {
 	      }
 	      scheduleNextTaskTimer()
 	      return task
+	    })
+	    // P2 — mint (or revoke) an unattended-elevation ack for a workflow.
+	    // acknowledgedApprovalMode is SERVER-DERIVED from wf.template.approvalMode
+	    // (never renderer-supplied) and the ack is HMAC-signed here. level 'safe'
+	    // (or unknown) revokes (the builder returns undefined). The save/update
+	    // sanitizers strip a renderer-supplied ack, so this IPC is the ONLY mint path.
+	    ipcMain.handle('set-workflow-unattended-elevation', (_, id: string, level: string) => {
+	      const wf = AppStore.getWorkflowDefinition(requireNonEmptyString(id, 'Workflow id'))
+	      if (!wf) return null
+	      const ack = buildUnattendedElevationAck(
+	        wf as WorkflowForElevationAck,
+	        level,
+	        (tuple) =>
+	          signWorkflowUnattendedElevation(
+	            wf.id,
+	            wf.workspacePath,
+	            tuple.level,
+	            tuple.acknowledgedApprovalMode
+	          )
+	      )
+	      const updated = AppStore.setWorkflowUnattendedElevation(id, ack)
+	      mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+	      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+	      return updated
 	    })
 
 	    // Durable run queue. Renderer requests and observes; main owns persistence and leases.
@@ -24781,6 +24865,12 @@ if (isGeminiMcpBridgeProcess) {
         const discordContextSnapshots = Array.isArray(payload?.discordContextSnapshots)
           ? payload.discordContextSnapshots
           : []
+        // P2 — resolve a VERIFIED elevation for the scheduled occurrence (HMAC +
+        // current); null ⇒ the round stays read-only (P1b). The orchestrator
+        // applies the uniform level → preset when honoring.
+        const ensembleElevation = payload?.scheduledTaskId
+          ? resolveUnattendedElevation(payload.scheduledTaskId)
+          : null
         const ensembleStartResult = ensembleOrchestratorRef?.startRound({
           chatId,
           prompt,
@@ -24798,7 +24888,12 @@ if (isGeminiMcpBridgeProcess) {
           // P1b — a scheduled occurrence is unattended; the orchestrator
           // clamps every participant to a read-only posture so an
           // unattended round can't auto-accept edits.
-          unattended: Boolean(payload?.scheduledTaskId)
+          unattended: Boolean(payload?.scheduledTaskId),
+          // P2 — when a verified elevation exists, lift the uniform participant
+          // posture from read-only to the level's preset.
+          ...(ensembleElevation
+            ? { unattendedElevationLevel: ensembleElevation.ack.level }
+            : {})
         })
         // Scheduled ensemble: remember roundId -> scheduledTaskId so the round-settle
         // hook can mark the task terminal. Keyed by roundId so only THIS round counts.

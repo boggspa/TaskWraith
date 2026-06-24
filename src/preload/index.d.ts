@@ -1215,6 +1215,10 @@ declare global {
       ) => Promise<WorkflowDefinition | null>
       deleteWorkflowDefinition: (id: string) => Promise<void>
       runWorkflowNow: (id: string) => Promise<ScheduledTask | null>
+      setWorkflowUnattendedElevation: (
+        id: string,
+        level: string
+      ) => Promise<WorkflowDefinition | null>
       startAuditRun: (input: {
         mode?: AuditRunRecord['mode']
         chatId: string

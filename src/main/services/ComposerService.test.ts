@@ -1066,7 +1066,7 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
         externalPathGrants: [grant]
       }
     )
-    expect(interactive.externalPathGrants.length).toBeGreaterThan(0)
+    expect((interactive.externalPathGrants ?? []).length).toBeGreaterThan(0)
     // The SAME run as a scheduled occurrence is forced to plan AND its grants cleared.
     const unattended = compose(
       { provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } },
@@ -1088,5 +1088,103 @@ describe('composeRun unattended posture clamp (scheduled/workflow runs)', () => 
       { provider: 'codex', approvalMode: 'auto_edit', appRunId: 'run-1' }
     )
     expect(payload.approvalMode).toBe('auto_edit')
+  })
+})
+
+describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
+  const SECRET = Buffer.from('1234567890abcdef'.repeat(4), 'hex')
+
+  function composeUnattended(
+    elevation: { level: 'default' | 'full_access'; mode: string } | null,
+    chatOverrides: Partial<ChatRecord> = {
+      provider: 'codex',
+      providerMetadata: { approvalMode: 'auto_edit' }
+    },
+    inputOverrides: Record<string, unknown> = {}
+  ): ComposerRunPayload {
+    const chat = makeChat(chatOverrides)
+    const { deps } = makeDeps(chat)
+    const service = new ComposerService({
+      ...deps,
+      signRunPermissionPosture: (mode, perms, context) =>
+        signRunPermissionPosture(SECRET, mode, perms, context),
+      resolveUnattendedElevation: () =>
+        elevation
+          ? {
+              ack: {
+                level: elevation.level,
+                acknowledgedAt: '2026-06-24T00:00:00.000Z',
+                acknowledgedApprovalMode: elevation.mode,
+                signature: 'verified-by-the-dep'
+              },
+              templateApprovalMode: elevation.mode
+            }
+          : null
+    })
+    return service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'codex',
+      workspace: chat.workspacePath,
+      userInput: 'Run the scheduled occurrence.',
+      selectedModelType: 'gpt-5.5',
+      approvalMode: 'auto_edit',
+      appRunId: 'run-sched',
+      scheduledTaskId: 'task-1',
+      ...inputOverrides
+    })
+  }
+
+  it('verified full_access → auto_edit + workspace_write perms + grants KEPT + signed', () => {
+    const grant = makeGrant({
+      provider: 'codex',
+      access: 'write',
+      kind: 'directory',
+      path: '/outside'
+    })
+    const payload = composeUnattended({ level: 'full_access', mode: 'auto_edit' }, undefined, {
+      externalPathGrants: [grant]
+    })
+    expect(payload.approvalMode).toBe('auto_edit')
+    expect(payload.effectivePermissions?.presetId).toBe('workspace_write')
+    expect(payload.effectivePermissions?.readOnly).toBe(false)
+    // Unattended elevation force-denies network egress (no exfiltration on a loop).
+    expect(payload.effectivePermissions?.networkAccess).toBe('deny')
+    // Elevated ⇒ approvalMode !== 'plan' ⇒ the grant-clear is skipped.
+    expect((payload.externalPathGrants ?? []).length).toBeGreaterThan(0)
+    // The posture is SIGNED (honest, verifiable) — not undefined.
+    expect(payload.effectivePermissionsSignature).toBeTruthy()
+    expect(
+      verifyRunPermissionPosture(
+        SECRET,
+        payload.approvalMode,
+        payload.effectivePermissions,
+        payload.effectivePermissionsSignature,
+        {
+          provider: payload.provider,
+          scope: payload.scope,
+          appRunId: payload.appRunId,
+          appChatId: payload.appChatId,
+          prompt: payload.prompt,
+          runtimeProfileId: payload.runtimeProfileId
+        }
+      )
+    ).toBe(true)
+  })
+
+  it('verified default → default preset', () => {
+    const payload = composeUnattended(
+      { level: 'default', mode: 'default' },
+      { provider: 'codex', providerMetadata: { approvalMode: 'default' } }
+    )
+    expect(payload.approvalMode).toBe('default')
+    expect(payload.effectivePermissions?.presetId).toBe('default')
+    expect(payload.effectivePermissions?.readOnly).toBe(false)
+  })
+
+  it('no ack (resolve → null) → plan + read_only (P1 regression); tampered/stale surface here as null too', () => {
+    const payload = composeUnattended(null)
+    expect(payload.approvalMode).toBe('plan')
+    expect(payload.effectivePermissions?.presetId).toBe('read_only')
+    expect(payload.effectivePermissions?.readOnly).toBe(true)
   })
 })

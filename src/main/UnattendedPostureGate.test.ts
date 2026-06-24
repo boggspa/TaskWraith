@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  buildUnattendedElevationAck,
   isUnattendedElevationAckCurrent,
   resolveUnattendedApprovalMode,
+  unattendedElevationPresetId,
   UNATTENDED_SAFE_APPROVAL_MODE,
-  type UnattendedElevationAck
+  type UnattendedElevationAck,
+  type WorkflowForElevationAck
 } from './UnattendedPostureGate'
+import { signUnattendedElevation, verifyUnattendedElevation } from './UnattendedElevationSignature'
 
 const ack = (over: Partial<UnattendedElevationAck> = {}): UnattendedElevationAck => ({
   level: 'full_access',
@@ -89,5 +93,94 @@ describe('isUnattendedElevationAckCurrent', () => {
         'auto_edit'
       )
     ).toBe(false)
+  })
+})
+
+describe('unattendedElevationPresetId', () => {
+  it('maps full_access → workspace_write, default → default, else undefined', () => {
+    expect(unattendedElevationPresetId('full_access')).toBe('workspace_write')
+    expect(unattendedElevationPresetId('default')).toBe('default')
+    expect(unattendedElevationPresetId('safe')).toBeUndefined()
+    expect(unattendedElevationPresetId('root')).toBeUndefined()
+    expect(unattendedElevationPresetId(undefined)).toBeUndefined()
+  })
+})
+
+describe('buildUnattendedElevationAck', () => {
+  const wf: WorkflowForElevationAck = {
+    id: 'wf-1',
+    workspacePath: '/repo',
+    template: { approvalMode: 'auto_edit' }
+  }
+  const fixedNow = (): string => '2026-06-24T12:00:00.000Z'
+
+  it('returns undefined for level safe / unknown (revoke) and never signs', () => {
+    const sign = vi.fn(() => 'sig')
+    expect(buildUnattendedElevationAck(wf, 'safe', sign, fixedNow)).toBeUndefined()
+    expect(buildUnattendedElevationAck(wf, 'nonsense', sign, fixedNow)).toBeUndefined()
+    expect(sign).not.toHaveBeenCalled()
+  })
+
+  it('mints a signed ack for full_access with a SERVER-DERIVED mode', () => {
+    const sign = vi.fn((tuple) => `sig:${tuple.level}:${tuple.acknowledgedApprovalMode}`)
+    const built = buildUnattendedElevationAck(wf, 'full_access', sign, fixedNow)
+    expect(built).toEqual({
+      level: 'full_access',
+      acknowledgedAt: '2026-06-24T12:00:00.000Z',
+      acknowledgedApprovalMode: 'auto_edit', // from wf.template, not a caller arg
+      signature: 'sig:full_access:auto_edit'
+    })
+    expect(sign).toHaveBeenCalledWith({
+      workflowId: 'wf-1',
+      workspacePath: '/repo',
+      level: 'full_access',
+      acknowledgedApprovalMode: 'auto_edit'
+    })
+  })
+
+  it('takes acknowledgedApprovalMode from the workflow template, not the caller', () => {
+    const built = buildUnattendedElevationAck(
+      { ...wf, template: { approvalMode: 'default' } },
+      'default',
+      () => 'sig',
+      fixedNow
+    )
+    expect(built?.acknowledgedApprovalMode).toBe('default')
+  })
+})
+
+describe('resolveUnattendedElevation gate composition (verify AND current — both fail-closed)', () => {
+  const SECRET = Buffer.from('ab'.repeat(32), 'hex')
+  const tuple = {
+    workflowId: 'wf-1',
+    workspacePath: '/repo',
+    level: 'full_access' as const,
+    acknowledgedApprovalMode: 'auto_edit'
+  }
+  const goodAck: UnattendedElevationAck = {
+    level: 'full_access',
+    acknowledgedAt: '2026-06-24T00:00:00.000Z',
+    acknowledgedApprovalMode: 'auto_edit',
+    signature: signUnattendedElevation(SECRET, tuple)
+  }
+  // Mirror index.ts resolveUnattendedElevation: HMAC verify AND structural currency.
+  const resolve = (ackUnderTest: UnattendedElevationAck, templateMode: string): boolean =>
+    verifyUnattendedElevation(
+      SECRET,
+      { ...tuple, acknowledgedApprovalMode: ackUnderTest.acknowledgedApprovalMode },
+      ackUnderTest.signature
+    ) && isUnattendedElevationAckCurrent(ackUnderTest, templateMode)
+
+  it('passes for an authentic, current ack', () => {
+    expect(resolve(goodAck, 'auto_edit')).toBe(true)
+  })
+
+  it('FAILS on a tampered signature (HMAC verify false)', () => {
+    expect(resolve({ ...goodAck, signature: 'deadbeef'.repeat(8) }, 'auto_edit')).toBe(false)
+  })
+
+  it('FAILS when the template mode changed since acking (stale → not current)', () => {
+    // HMAC still verifies (tuple mode unchanged) but the currency check fails.
+    expect(resolve(goodAck, 'default')).toBe(false)
   })
 })

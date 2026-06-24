@@ -933,6 +933,8 @@ const api = {
   deleteWorkflowDefinition: (id: string) =>
     ipcRenderer.invoke('delete-workflow-definition', id),
   runWorkflowNow: (id: string) => ipcRenderer.invoke('run-workflow-now', id),
+  setWorkflowUnattendedElevation: (id: string, level: string) =>
+    ipcRenderer.invoke('set-workflow-unattended-elevation', id, level),
   // Audit-run orchestration. startAuditRun resolves with the terminal record;
   // live phase/finding updates arrive via onAuditRunChanged ('audit-run-changed').
   startAuditRun: (input: {

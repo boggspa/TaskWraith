@@ -1,5 +1,9 @@
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
+import {
+  unattendedElevationPresetId,
+  type UnattendedElevationLevel
+} from '../UnattendedPostureGate'
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import {
   buildEnsembleParticipantPrompt,
@@ -1077,6 +1081,12 @@ interface ActiveRoundRuntime {
    * participant postures (no unattended auto-accept of edits).
    */
   unattended?: boolean
+  /**
+   * P2 — VERIFIED elevation level for an unattended round. When set,
+   * resolveParticipantPermissions lifts the uniform posture from read-only to
+   * the level's preset instead of read_only. Only ever set alongside `unattended`.
+   */
+  unattendedElevationLevel?: UnattendedElevationLevel
   pendingWakeups?: Map<string, EnsembleWakeupRecord>
   readyWakeups?: EnsembleWakeupRecord[]
   wakeWaiter?: () => void
@@ -1155,6 +1165,13 @@ export class EnsembleOrchestrator {
      * write-capable participant preset.
      */
     unattended?: boolean
+    /**
+     * P2 — a VERIFIED unattended-elevation level (resolved + HMAC-checked
+     * main-side). On an unattended round, every participant's uniform posture
+     * rises from read-only to the level's preset (full_access → workspace_write,
+     * default → default). Absent ⇒ P1b read-only. Ignored when `unattended` is false.
+     */
+    unattendedElevationLevel?: UnattendedElevationLevel
   }): { status: 'started' | 'queued' | 'steered' | 'ignored'; roundId?: string } {
     // 1.0.4-AF — strip a leading `/discuss` (alias `/meta`) token so
     // the slash never reaches the panel verbatim. The flag flows
@@ -1183,7 +1200,8 @@ export class EnsembleOrchestrator {
           input.externalPathGrants,
           input.concurrentMode,
           input.discordContextSnapshots,
-          input.unattended
+          input.unattended,
+          input.unattendedElevationLevel
         )
         this.appendRoundStatus(
           input.chatId,
@@ -1238,7 +1256,8 @@ export class EnsembleOrchestrator {
       input.externalPathGrants,
       input.concurrentMode,
       input.discordContextSnapshots,
-      input.unattended
+      input.unattended,
+      input.unattendedElevationLevel
     )
     return { status: 'started', roundId }
   }
@@ -3077,7 +3096,8 @@ export class EnsembleOrchestrator {
     externalPathGrants: ExternalPathGrant[] = [],
     concurrentMode?: boolean,
     discordContextSnapshotsInput?: DiscordContextSnapshot[],
-    unattended?: boolean
+    unattended?: boolean,
+    unattendedElevationLevel?: UnattendedElevationLevel
   ): string {
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) throw new Error('Ensemble chat not found.')
@@ -3220,7 +3240,8 @@ export class EnsembleOrchestrator {
       maxContinuationHops,
       ...(selfReflective ? { selfReflective: true } : {}),
       ...(externalPathGrants.length > 0 ? { externalPathGrants: [...externalPathGrants] } : {}),
-      ...(unattended ? { unattended: true } : {})
+      ...(unattended ? { unattended: true } : {}),
+      ...(unattended && unattendedElevationLevel ? { unattendedElevationLevel } : {})
     }
     this.roundsByChatId.set(chatId, runtime)
     if (concurrentFallbackReason) {
@@ -4989,15 +5010,26 @@ export class EnsembleOrchestrator {
     // fan-out lane, and the read_only preset resolves to approvalMode
     // 'plan' + readOnly:true, so both signing sites sign the safe
     // posture automatically.
-    const roundUnattended = this.roundsByChatId.get(chat.appChatId)?.unattended === true
+    const round = this.roundsByChatId.get(chat.appChatId)
+    const roundUnattended = round?.unattended === true
     if (roundUnattended) {
+      // P2 — a VERIFIED elevation lifts the uniform posture from read-only to the
+      // level's preset (full_access → workspace_write, default → default). No
+      // verified elevation ⇒ P1b read-only. The level was HMAC-verified main-side
+      // before reaching the runtime, so it's a trusted capability here; the preset
+      // still flows through resolveEffectiveRunPermissions (approval gates intact).
+      const elevatedPreset = round?.unattendedElevationLevel
+        ? unattendedElevationPresetId(round.unattendedElevationLevel)
+        : undefined
       return resolveEffectiveRunPermissions({
         provider: participant.provider,
         workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
         settings: this.deps.getSettings(),
-        presetId: 'read_only',
-        overrides: null
-        // Deliberately drop explicitExternalPathGrants: an unattended
+        presetId: elevatedPreset || 'read_only',
+        // Elevated → force-deny network egress (workspace_write/default don't set
+        // it → settings default 'allow'); read_only already denies it via its preset.
+        overrides: elevatedPreset ? { networkAccess: 'deny' } : null
+        // Deliberately drop explicitExternalPathGrants either way: an unattended
         // round must not widen file access via composer-supplied grants.
       })
     }

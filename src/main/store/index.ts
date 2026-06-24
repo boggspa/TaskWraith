@@ -2,6 +2,7 @@ import { app } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
+import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import {
   AppSettings,
   WorkspaceRecord,
@@ -314,8 +315,33 @@ function normalizeWorkflowDefinitionRecord(
     activeExecutionId:
       typeof input.activeExecutionId === 'string' ? input.activeExecutionId : undefined,
     history,
+    unattendedElevation: normalizeUnattendedElevationAck(input.unattendedElevation),
     createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
     updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : nowIso
+  }
+}
+
+/**
+ * Structural decode for a persisted unattended-elevation ack. Keeps the blob
+ * only when it is shaped like a real ack — level ∈ {safe,default,full_access}
+ * and acknowledgedAt/acknowledgedApprovalMode/signature are non-empty strings.
+ * The HMAC is NOT verified here (the store has no secret); cryptographic
+ * verification happens at dispatch (resolveUnattendedElevation in index.ts). A
+ * malformed value decodes to undefined so a hand-edited workflows.json can never
+ * smuggle a partial ack past the dispatch verifier as "present".
+ */
+function normalizeUnattendedElevationAck(value: unknown): UnattendedElevationAck | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const ack = value as Partial<UnattendedElevationAck>
+  if (ack.level !== 'safe' && ack.level !== 'default' && ack.level !== 'full_access') return undefined
+  if (typeof ack.acknowledgedAt !== 'string' || !ack.acknowledgedAt) return undefined
+  if (typeof ack.acknowledgedApprovalMode !== 'string' || !ack.acknowledgedApprovalMode) return undefined
+  if (typeof ack.signature !== 'string' || !ack.signature) return undefined
+  return {
+    level: ack.level,
+    acknowledgedAt: ack.acknowledgedAt,
+    acknowledgedApprovalMode: ack.acknowledgedApprovalMode,
+    signature: ack.signature
   }
 }
 
@@ -2221,6 +2247,28 @@ export class AppStore {
     return this.getWorkflowDefinitions().find((workflow) => workflow.id === id) || null
   }
 
+  /**
+   * P2 — write (or clear) the verified unattended-elevation ack on a workflow.
+   * The ack is minted server-side (the set-workflow-unattended-elevation IPC
+   * builds + HMAC-signs it); this only persists it. Pass `undefined` to revoke.
+   * No broadcast here — the IPC fans out workflow-definitions-changed after.
+   */
+  static setWorkflowUnattendedElevation(
+    id: string,
+    ack: UnattendedElevationAck | undefined
+  ): WorkflowDefinition | null {
+    const workflows = this.getWorkflowDefinitions()
+    const index = workflows.findIndex((workflow) => workflow.id === id)
+    if (index < 0) return null
+    const next: WorkflowDefinition = { ...workflows[index] }
+    if (ack) next.unattendedElevation = ack
+    else delete next.unattendedElevation
+    next.updatedAt = new Date().toISOString()
+    workflows[index] = next
+    writeJson(workflowsPath, workflows)
+    return next
+  }
+
   private static workflowDefinitionInvalidReason(workflow: WorkflowDefinition): string | null {
     if (workflow.trigger.kind === 'cron') {
       return 'Cron workflow triggers are not supported yet.'
@@ -2293,8 +2341,20 @@ export class AppStore {
       normalized.nextRunAt = resolveNextWorkflowRunAt(normalized.trigger, nowMs, nowMs)
     }
     const index = workflows.findIndex((item) => item.id === normalized.id)
-    if (index >= 0) workflows[index] = { ...workflows[index], ...normalized, updatedAt: nowIso }
-    else workflows.push(normalized)
+    if (index >= 0) {
+      const prior = workflows[index]
+      // P2 — preserve a prior stored ack across a re-save that did NOT supply one
+      // (the save sanitizer strips a renderer-supplied ack), but ONLY while
+      // template.approvalMode is unchanged; a mode change invalidates it. Without
+      // this, a benign re-save would silently wipe a valid ack via the spread below.
+      if (!normalized.unattendedElevation && prior.unattendedElevation) {
+        normalized.unattendedElevation =
+          prior.template?.approvalMode === normalized.template?.approvalMode
+            ? prior.unattendedElevation
+            : undefined
+      }
+      workflows[index] = { ...prior, ...normalized, updatedAt: nowIso }
+    } else workflows.push(normalized)
     writeJson(workflowsPath, workflows)
     return normalized
   }
@@ -2317,6 +2377,17 @@ export class AppStore {
       trigger: partial.trigger ? normalizeWorkflowTrigger(partial.trigger, nowMs) : source.trigger,
       limits: partial.limits ? { ...source.limits, ...partial.limits } : source.limits,
       updatedAt: nowIso
+    }
+    // P2 eager invalidation: a template.approvalMode change makes any existing
+    // elevation ack stale (it was confirmed against the old mode). Drop it now so
+    // the persisted record never carries a mode-mismatched ack. Defense-in-depth:
+    // the dispatch verifier (isUnattendedElevationAckCurrent) rejects it anyway,
+    // and the HMAC binds acknowledgedApprovalMode so it can't be re-pointed.
+    if (
+      merged.unattendedElevation &&
+      merged.template?.approvalMode !== source.template?.approvalMode
+    ) {
+      delete merged.unattendedElevation
     }
     const normalized = normalizeWorkflowDefinitionRecord(merged, nowMs)
     if (!normalized) return null

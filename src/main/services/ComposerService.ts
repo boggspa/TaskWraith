@@ -20,7 +20,11 @@ import {
   coerceApprovalMode,
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
-import { resolveUnattendedApprovalMode } from '../UnattendedPostureGate'
+import {
+  resolveUnattendedApprovalMode,
+  unattendedElevationPresetId,
+  type UnattendedElevationAck
+} from '../UnattendedPostureGate'
 import { resolveProviderDispatch, type ProviderDispatchResolution } from '../ProviderRunPause'
 import { resolveActiveGoalForProvider } from '../GoalState'
 import {
@@ -131,6 +135,17 @@ export interface ComposerServiceDeps {
     effectivePermissions: EffectiveRunPermissions | null | undefined,
     context?: RunPermissionPostureContext | null
   ) => string
+  /**
+   * P2 — resolve a VERIFIED unattended-elevation grant for a scheduled
+   * occurrence. The impure caller (index.ts) finds the scheduled task, its
+   * workflow, HMAC-verifies the ack AND checks isUnattendedElevationAckCurrent,
+   * and returns the ack + the template approvalMode it was confirmed against — or
+   * null. Absent/null ⇒ the unattended run stays clamped to 'plan'. Optional so
+   * unit tests that don't exercise elevation omit it.
+   */
+  resolveUnattendedElevation?: (
+    scheduledTaskId: string
+  ) => { ack: UnattendedElevationAck; templateApprovalMode: string } | null
 }
 
 export class ComposerService {
@@ -209,8 +224,18 @@ export class ComposerService {
     // P1: no elevation ack yet → always 'plan'. (P2 wires a verified WorkflowDefinition
     // ack so a user can opt back into Default / Full-Access unattended loops.)
     const unattended = Boolean(optionalString(input.scheduledTaskId))
+    const scheduledTaskId = optionalString(input.scheduledTaskId)
+    // P2 — honor a VERIFIED elevation ack (HMAC + current) for this scheduled
+    // occurrence; fail-closed to 'plan' otherwise. The dep does both the
+    // cryptographic verify and the structural isUnattendedElevationAckCurrent
+    // check, so resolveUnattendedApprovalMode here only caps the requested mode by
+    // the (already-authenticated) level.
+    const unattendedElevation =
+      unattended && scheduledTaskId
+        ? this.deps.resolveUnattendedElevation?.(scheduledTaskId) ?? null
+        : null
     if (unattended) {
-      approvalMode = resolveUnattendedApprovalMode(undefined, approvalMode)
+      approvalMode = resolveUnattendedApprovalMode(unattendedElevation?.ack, approvalMode)
     }
     const imagePaths = normalizeImagePaths(
       effectiveInput.imageAttachments || effectiveInput.attachments || []
@@ -302,6 +327,15 @@ export class ComposerService {
     // left isReadOnlyBlockedTool() (the fall-through-mutator hard-deny) AND the YOLO
     // read-only suppression INERT for non-ensemble runs. Only populated for a
     // read-only (plan) run, so non-read-only runs are byte-for-byte unchanged.
+    // P2 — an ELEVATED unattended run (approvalMode lifted above 'plan' by a
+    // verified ack) must ALSO carry real permissions so the SIGNED posture is
+    // honest (not undefined → the normalize clamp would re-derive read-only). Map
+    // the verified level → preset: full_access → workspace_write (auto_edit,
+    // workspace-bounded, network-denied), default → default.
+    const elevatedPresetId =
+      unattended && unattendedElevation && approvalMode !== 'plan'
+        ? unattendedElevationPresetId(unattendedElevation.ack.level)
+        : undefined
     const effectiveRunPermissions =
       approvalMode === 'plan'
         ? resolveEffectiveRunPermissions({
@@ -311,7 +345,19 @@ export class ComposerService {
             settings,
             presetId: 'read_only'
           })
-        : undefined
+        : elevatedPresetId
+          ? resolveEffectiveRunPermissions({
+              provider,
+              workspacePath:
+                scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
+              settings,
+              presetId: elevatedPresetId,
+              // Unattended elevation NEVER gets network egress (exfiltration risk on
+              // an unattended loop). workspace_write/default don't set networkAccess
+              // (→ settings default 'allow'), so force-deny it here.
+              overrides: { networkAccess: 'deny' }
+            })
+          : undefined
     const runtimeProfileId = optionalString(effectiveInput.runtimeProfileId)
     const payload: ComposerRunPayload = {
       provider,
