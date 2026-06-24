@@ -100,7 +100,7 @@ export const KEY_COMMAND_DEFINITIONS: KeyCommandDefinition[] = [
     id: 'new-chat',
     group: 'Chat',
     command: 'New chat',
-    description: 'Create a new chat in the current workspace, or a global chat when no workspace is active.',
+    description: 'Create a new chat in the current workspace, or a general chat when no workspace is active.',
     defaultBinding: { key: 'N', modifiers: [PRIMARY_MODIFIER] },
     allowWhenEditable: true
   },

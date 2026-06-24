@@ -571,7 +571,7 @@ describe('Sidebar Chats section', () => {
     ])
 
     expect(html).toContain('Expand Chats')
-    expect(html).toContain('New system chat')
+    expect(html).toContain('New general chat')
     expect(html).not.toContain('Global thread')
   })
 })

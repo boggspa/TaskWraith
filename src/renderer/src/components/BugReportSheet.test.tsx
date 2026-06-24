@@ -164,7 +164,7 @@ describe('BugReportSheet', () => {
     expect(html).toContain('4 participants')
   })
 
-  it('falls back to "(global chat)" label when the workspace path is null', () => {
+  it('falls back to "(general chat)" label when the workspace path is null', () => {
     const html = renderToStaticMarkup(
       <BugReportSheet
         {...baseProps}
@@ -174,7 +174,7 @@ describe('BugReportSheet', () => {
         onSubmit={async () => {}}
       />
     )
-    expect(html).toContain('(global chat)')
+    expect(html).toContain('(general chat)')
   })
 
   it('renders the dialog header with the "Report a bug or issue" title and modal a11y attributes', () => {

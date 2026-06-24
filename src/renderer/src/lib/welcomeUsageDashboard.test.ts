@@ -1141,7 +1141,7 @@ describe('buildWelcomeUsageDashboardData EW51 workspace breakdown + cost chart',
     expect(none?.displayName).toBe('No workspace')
   })
 
-  it('humanises the __taskwraith_global_chats__ sentinel as "Global Chat"', () => {
+  it('humanises the __taskwraith_global_chats__ sentinel as "General Chat"', () => {
     // 1.0.5-EW51 follow-up. The internal sentinel workspaceId
     // for global-scope runs (used by GeminiApiProvider +
     // AppStore.recordUsage) shouldn't leak through to the
@@ -1158,7 +1158,7 @@ describe('buildWelcomeUsageDashboardData EW51 workspace breakdown + cost chart',
     const row = data.workspaceCostBreakdown.find(
       (ws) => ws.workspaceId === '__taskwraith_global_chats__'
     )
-    expect(row?.displayName).toBe('Global Chat')
+    expect(row?.displayName).toBe('General Chat')
   })
 
   it('humanises AGBench-era global chat sentinels as "Legacy Global Chats"', () => {

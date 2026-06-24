@@ -138,7 +138,7 @@ const buildScheduledWorkPrompt = (context: WelcomeCopyContext): string =>
 
 const buildGlobalPlanningPrompt = (context: WelcomeCopyContext): string =>
   [
-    'Help me plan across my coding work from this global chat.',
+    'Help me plan across my coding work from this general chat.',
     welcomeContextLine(context),
     '',
     'Ask for missing context only if necessary. Otherwise, help me choose one concrete next action, the workspace it belongs in, and the first check that would prove progress.'
