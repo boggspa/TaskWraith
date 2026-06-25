@@ -1293,6 +1293,26 @@ declare global {
         chatId: string
         messageId: string
       }) => Promise<{ chat: ChatRecord; draft: string }>
+      humanCollaborationCollaboratorJoin: (input: {
+        shareId: string
+        chatId: string
+        inviteToken: string
+        displayName: string
+        mode: 'readOnly' | 'comments'
+        relayUrl: string
+        roomId: string
+        hostIdentityPubKeyB64?: string
+      }) => Promise<{ confirmCode: string; chatId: string; mode: 'readOnly' | 'comments' }>
+      humanCollaborationCollaboratorConfirm: () => Promise<{
+        sessionId: string
+        collaboratorId: string
+        displayName: string
+      }>
+      humanCollaborationCollaboratorAppendComment: (input: {
+        content: string
+        clientMessageId?: string
+      }) => Promise<{ ok: true }>
+      humanCollaborationCollaboratorLeave: () => Promise<boolean>
       saveChat: (chat: ChatRecord) => Promise<void>
       deleteChat: (chatId: string) => Promise<void>
       reapAbandonedChats: (renderer: {
@@ -1484,6 +1504,21 @@ declare global {
       ) => () => void
       onHumanCollaborationRuntimeEncryptedFrame: (
         callback: (payload: { sessionId: string; frame: HumanCollaborationEncryptedFrame }) => void
+      ) => () => void
+      onHumanCollaborationAdmissionBegan: (
+        callback: (payload: {
+          handshakeId: string
+          chatId: string
+          shareId: string
+          displayName: string
+          confirmCode: string
+        }) => void
+      ) => () => void
+      onHumanCollaborationCollaboratorProjection: (
+        callback: (payload: { projection: HumanShareProjection }) => void
+      ) => () => void
+      onHumanCollaborationCollaboratorStatus: (
+        callback: (payload: { connected?: boolean; error?: string }) => void
       ) => () => void
       onRunTrustedMediaRefs: (
         callback: (payload: {

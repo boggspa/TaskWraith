@@ -97,6 +97,7 @@ export class HumanCollaborationCollaboratorClient {
   // compared the SAS out of band (L6-2). Keys are already derived at begin, but
   // we do NOT send the confirm — and thus never establish — until the gate fires.
   private pendingConfirm: { handshakeId: string; confirmCode: string; sigB64: string } | null = null
+  private connectWaiters: Array<() => void> = []
 
   constructor(options: HumanCollaborationCollaboratorClientOptions) {
     this.opts = options
@@ -108,6 +109,24 @@ export class HumanCollaborationCollaboratorClient {
 
   get isEstablished(): boolean {
     return Boolean(this.sessionKeys) && this.sessionId.length > 0
+  }
+
+  /** Resolve once the socket is OPEN — the real ws transport DROPS sends before
+   * open, so callers must await this before beginAdmission. */
+  whenConnected(timeoutMs = 10_000): Promise<void> {
+    if (this.connected) return Promise.resolve()
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.connectWaiters = this.connectWaiters.filter((w) => w !== onOpen)
+        reject(new Error('Collaboration connect timed out.'))
+      }, timeoutMs)
+      timer.unref?.()
+      const onOpen = (): void => {
+        clearTimeout(timer)
+        resolve()
+      }
+      this.connectWaiters.push(onOpen)
+    })
   }
 
   connect(relayUrl: string, roomId: string): void {
@@ -331,6 +350,11 @@ export class HumanCollaborationCollaboratorClient {
   private setConnected(value: boolean): void {
     if (this.connected === value) return
     this.connected = value
+    if (value) {
+      const waiters = this.connectWaiters
+      this.connectWaiters = []
+      for (const w of waiters) w()
+    }
     this.opts.onConnectionChange?.(value)
   }
 }

@@ -1004,6 +1004,25 @@ const api = {
     ipcRenderer.invoke('human-collaboration-runtime:disconnect', input),
   humanCollaborationPromoteComment: (input: { chatId: string; messageId: string }) =>
     ipcRenderer.invoke('human-collaboration:promote-comment', input),
+  // Collaborator side (this instance joining someone else's shared chat).
+  humanCollaborationCollaboratorJoin: (input: {
+    shareId: string
+    chatId: string
+    inviteToken: string
+    displayName: string
+    mode: 'readOnly' | 'comments'
+    relayUrl: string
+    roomId: string
+    hostIdentityPubKeyB64?: string
+  }) => ipcRenderer.invoke('human-collaboration-collaborator:join', input),
+  humanCollaborationCollaboratorConfirm: () =>
+    ipcRenderer.invoke('human-collaboration-collaborator:confirm'),
+  humanCollaborationCollaboratorAppendComment: (input: {
+    content: string
+    clientMessageId?: string
+  }) => ipcRenderer.invoke('human-collaboration-collaborator:append-comment', input),
+  humanCollaborationCollaboratorLeave: () =>
+    ipcRenderer.invoke('human-collaboration-collaborator:leave'),
   saveChat: (chat: any) => ipcRenderer.invoke('save-chat', chat),
   deleteChat: (chatId: string) => ipcRenderer.invoke('delete-chat', chatId),
   reapAbandonedChats: (renderer: {
@@ -1234,6 +1253,47 @@ const api = {
     return () =>
       ipcRenderer.removeListener('human-collaboration-runtime-encrypted-frame', wrapped)
   },
+  // Host side: a collaborator began admission — surface the 6-digit SAS to compare.
+  onHumanCollaborationAdmissionBegan: (
+    callback: (payload: {
+      handshakeId: string
+      chatId: string
+      shareId: string
+      displayName: string
+      confirmCode: string
+    }) => void
+  ) => {
+    const wrapped = (
+      _event: unknown,
+      payload: {
+        handshakeId: string
+        chatId: string
+        shareId: string
+        displayName: string
+        confirmCode: string
+      }
+    ): void => callback(payload)
+    ipcRenderer.on('human-collaboration-admission-began', wrapped)
+    return () => ipcRenderer.removeListener('human-collaboration-admission-began', wrapped)
+  },
+  // Collaborator side: live projection updates for the joined shared chat.
+  onHumanCollaborationCollaboratorProjection: (
+    callback: (payload: { projection: unknown }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: { projection: unknown }): void => callback(payload)
+    ipcRenderer.on('human-collaboration-collaborator-projection', wrapped)
+    return () =>
+      ipcRenderer.removeListener('human-collaboration-collaborator-projection', wrapped)
+  },
+  // Collaborator side: connection/error status for the active join.
+  onHumanCollaborationCollaboratorStatus: (
+    callback: (payload: { connected?: boolean; error?: string }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: { connected?: boolean; error?: string }): void =>
+      callback(payload)
+    ipcRenderer.on('human-collaboration-collaborator-status', wrapped)
+    return () => ipcRenderer.removeListener('human-collaboration-collaborator-status', wrapped)
+  },
   // Trusted audio/video media refs for a foreground solo run. Main constructs
   // these refs itself and pushes them on this dedicated main-only channel, so
   // the renderer attaches them WITHOUT the image-only RAW-provider sanitizer
@@ -1340,6 +1400,9 @@ const api = {
     ipcRenderer.removeAllListeners('human-collaboration-updated')
     ipcRenderer.removeAllListeners('human-collaboration-runtime-projection-update')
     ipcRenderer.removeAllListeners('human-collaboration-runtime-encrypted-frame')
+    ipcRenderer.removeAllListeners('human-collaboration-admission-began')
+    ipcRenderer.removeAllListeners('human-collaboration-collaborator-projection')
+    ipcRenderer.removeAllListeners('human-collaboration-collaborator-status')
     ipcRenderer.removeAllListeners('run-trusted-media-refs')
     ipcRenderer.removeAllListeners('app-shell-stats-changed')
     ipcRenderer.removeAllListeners('workspace-popout-refresh')

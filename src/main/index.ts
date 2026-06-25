@@ -312,6 +312,7 @@ import { HumanCollaborationStore } from './collaboration/HumanCollaborationStore
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
 import { HumanCollaborationHostTransport } from './collaboration/HumanCollaborationHostTransport'
+import { HumanCollaborationCollaboratorClient } from './collaboration/HumanCollaborationCollaboratorClient'
 import { buildHumanShareProjection } from './collaboration/HumanShareProjection'
 import type { HumanShareProjection } from './collaboration/HumanShareProjection'
 import type {
@@ -22424,6 +22425,7 @@ if (isGeminiMcpBridgeProcess) {
       workflowBudgetRegistry.disposeAll()
       iosRemoteRuntime?.dispose()
       humanCollaborationHostTransport?.dispose()
+      humanCollaborationCollaboratorClient?.dispose()
       void embeddedRelayHandle?.close()
       localServersServiceRef?.stop()
       // Opt-in (Settings → Local servers): tidy up agent-spawned servers still
@@ -23794,6 +23796,74 @@ if (isGeminiMcpBridgeProcess) {
         return result
       }
     )
+    // ── Collaborator side: this app instance JOINING someone else's shared chat ──
+    // One active join at a time (v1). The client dials the host's relay room,
+    // drives the two-phase SAS handshake, and streams the read-only projection.
+    let humanCollaborationCollaboratorClient: HumanCollaborationCollaboratorClient | null = null
+    const disposeCollaboratorClient = (): void => {
+      humanCollaborationCollaboratorClient?.dispose()
+      humanCollaborationCollaboratorClient = null
+    }
+    ipcMain.handle(
+      'human-collaboration-collaborator:join',
+      async (
+        _,
+        input: {
+          shareId: string
+          chatId: string
+          inviteToken: string
+          displayName: string
+          mode: 'readOnly' | 'comments'
+          relayUrl: string
+          roomId: string
+          hostIdentityPubKeyB64?: string
+        }
+      ) => {
+        disposeCollaboratorClient()
+        const client = new HumanCollaborationCollaboratorClient({
+          socketFactory: wsTransportSocketFactory,
+          onProjection: (projection) =>
+            mainWindow?.webContents.send('human-collaboration-collaborator-projection', { projection }),
+          onConnectionChange: (connected) =>
+            mainWindow?.webContents.send('human-collaboration-collaborator-status', { connected }),
+          onError: (err) =>
+            mainWindow?.webContents.send('human-collaboration-collaborator-status', { error: err.message }),
+          log: (line) => console.warn(line)
+        })
+        humanCollaborationCollaboratorClient = client
+        client.connect(input.relayUrl, input.roomId)
+        await client.whenConnected()
+        const { confirmCode } = await client.beginAdmission({
+          shareId: input.shareId,
+          chatId: input.chatId,
+          inviteToken: input.inviteToken,
+          displayName: input.displayName,
+          shareMode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
+          expectedHostIdentityPubKeyB64: input.hostIdentityPubKeyB64
+        })
+        return { confirmCode, chatId: input.chatId, mode: input.mode }
+      }
+    )
+    ipcMain.handle('human-collaboration-collaborator:confirm', async () => {
+      const client = humanCollaborationCollaboratorClient
+      if (!client) throw new Error('No active collaboration join to confirm.')
+      const result = await client.confirmAdmission()
+      client.subscribe()
+      return result
+    })
+    ipcMain.handle(
+      'human-collaboration-collaborator:append-comment',
+      (_, input: { content: string; clientMessageId?: string }) => {
+        const client = humanCollaborationCollaboratorClient
+        if (!client) throw new Error('No active collaboration session.')
+        client.appendComment(input.content, input.clientMessageId)
+        return { ok: true }
+      }
+    )
+    ipcMain.handle('human-collaboration-collaborator:leave', () => {
+      disposeCollaboratorClient()
+      return true
+    })
     ipcMain.handle('save-chat', (_, chat: ChatRecord) => {
       const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
       const previous = AppStore.getChat(normalized.appChatId)

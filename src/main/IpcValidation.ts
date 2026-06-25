@@ -109,6 +109,11 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'human-collaboration-runtime:append-comment': ['object'],
   'human-collaboration-runtime:receive-frame': ['object'],
   'human-collaboration-runtime:disconnect': ['object'],
+  // Collaborator side (this instance joining someone else's shared chat).
+  'human-collaboration-collaborator:join': ['object'],
+  'human-collaboration-collaborator:confirm': [],
+  'human-collaboration-collaborator:append-comment': ['object'],
+  'human-collaboration-collaborator:leave': [],
   'reap-abandoned-chats': ['optionalObject'],
   'clear-chats': ['optionalString'],
   'record-usage': ['object'],
