@@ -23,15 +23,25 @@ let package = Package(
         )
     ],
     targets: [
+        // Pure-C, framework-free offline-audio mix kernel for `audio.mixdown`.
+        // Sources live in Sources/TaskWraithAudioKernel/*.c; the public header
+        // in include/ is auto-exposed (SwiftPM synthesizes the modulemap), so
+        // the daemon does `import TaskWraithAudioKernel` to get `tw_mix`.
+        .target(name: "TaskWraithAudioKernel"),
         .executableTarget(
             name: "TaskWraithBridgeDaemon",
+            dependencies: ["TaskWraithAudioKernel"],
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]
         ),
         .testTarget(
             name: "TaskWraithBridgeDaemonTests",
-            dependencies: ["TaskWraithBridgeDaemon"]
+            // TaskWraithAudioKernel is named so the audio-mix tests can call the
+            // pure-C `tw_mix` kernel directly (it's already a transitive dep via
+            // the daemon, but the test's `import TaskWraithAudioKernel` needs it
+            // declared here).
+            dependencies: ["TaskWraithBridgeDaemon", "TaskWraithAudioKernel"]
         )
     ]
 )

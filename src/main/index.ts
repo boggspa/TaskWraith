@@ -2070,6 +2070,22 @@ const vtToolExecutors = createVtToolExecutors({
       }>('video.concatClips', params, { timeoutMs: 600_000 })
     )
   },
+  // S4 — native audio mixdown (N tracks → one WAV/M4A). Shares the mediaProcessLimiter
+  // semaphore (a multi-track mix contends for the same CPU/disk as the video encoders),
+  // and uses the same 5-min daemon timeout as encodeClip.
+  mixdown: async (params) => {
+    const daemon = bridgeDaemonRef
+    if (!daemon) throw new Error('audio bridge daemon is not running')
+    return mediaProcessLimiter.run(() =>
+      daemon.request<{
+        durationMs: number
+        sampleRate: number
+        channels: number
+        codec: string
+        trackCount: number
+      }>('audio.mixdown', params, { timeoutMs: 300_000 })
+    )
+  },
   // The output-file deps mirror the ffmpeg factory exactly (same MEDIA_STAGING_DIR,
   // per-mime cap, content-addressed store) so a daemon-produced MP4 rides the
   // identical persist→buildAvMediaRef→trustedMediaRefs lane as transcode_video.

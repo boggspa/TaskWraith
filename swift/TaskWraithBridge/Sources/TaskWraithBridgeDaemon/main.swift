@@ -980,6 +980,87 @@ dispatcher.register("video.concatClips") { params in
     }
 }
 
+// `audio.mixdown` — native offline multitrack audio mixdown (C kernel + Swift
+// AVFoundation/AudioToolbox glue): decode each WAV/M4A source to planar float32
+// → the pure-C `tw_mix` kernel (gain/pan/fade/placement/soft-limit) → write a
+// 16-bit PCM WAV (TPDF-dithered) or AAC .m4a at the TS-owned staging
+// `outputPath`. Mirrors `video.encodeClip`: decode params → runBlocking → map
+// AudioMixError to JSONRPCError → return the metadata dict (`durationMs`,
+// `sampleRate`, `channels`, `codec`, `trackCount`). We do NOT return bytes — TS
+// reads + deletes the file at outputPath. Empty tracks / a sample-rate-
+// mismatched / >2ch / unreadable source / an over-cap decode → invalidParams; a
+// kernel or writer failure → internalError.
+
+struct AudioMixTrackParams: Decodable {
+    let sourcePath: String
+    let gainDb: Double?
+    let pan: Double?
+    let offsetMs: Double?
+    let fadeInMs: Double?
+    let fadeOutMs: Double?
+}
+
+struct AudioMixParams: Decodable {
+    let outputPath: String
+    let format: String
+    let sampleRate: Int
+    let channels: Int
+    let bitrateKbps: Int?
+    let tracks: [AudioMixTrackParams]
+}
+
+dispatcher.register("audio.mixdown") { params in
+    let parsed: AudioMixParams
+    do {
+        parsed = try decodeParams(params, as: AudioMixParams.self)
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid audio.mixdown params: \(error.localizedDescription)"
+        )
+    }
+    do {
+        let result = try runBlocking { @Sendable [
+            outputPath = parsed.outputPath,
+            format = parsed.format,
+            sampleRate = parsed.sampleRate,
+            channels = parsed.channels,
+            bitrateKbps = parsed.bitrateKbps,
+            tracks = parsed.tracks.map {
+                AudioMixer.AudioMixTrack(
+                    sourcePath: $0.sourcePath,
+                    gainDb: Float($0.gainDb ?? 0),
+                    pan: Float($0.pan ?? 0),
+                    offsetMs: $0.offsetMs ?? 0,
+                    fadeInMs: $0.fadeInMs ?? 0,
+                    fadeOutMs: $0.fadeOutMs ?? 0
+                )
+            }
+        ] in
+            try await AudioMixer.mixdown(
+                outputPath: outputPath,
+                tracks: tracks,
+                format: format,
+                sampleRate: sampleRate,
+                channels: channels,
+                bitrateKbps: bitrateKbps
+            )
+        }
+        return result.toJSONObject()
+    } catch let err as AudioMixer.AudioMixError {
+        switch err {
+        case .badInput(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.invalidParams, message: message)
+        case .mixFailed(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: message)
+        }
+    } catch let err as JSONRPCError {
+        throw err
+    } catch {
+        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: error.localizedDescription)
+    }
+}
+
 // MARK: - Creative-app probe (Phase K1)
 //
 // `creative.runningApplications` — answers "is bundle id X currently running?"

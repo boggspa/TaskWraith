@@ -167,6 +167,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'video_decode_frame':
     case 'video_encode_clip':
     case 'video_concat_clips':
+    case 'audio_mix':
     case 'audio_extract':
     case 'transcode_audio':
     case 'transcode_video':

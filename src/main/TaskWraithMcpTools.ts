@@ -207,6 +207,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   // external subprocess, so gated as a file change. See src/main/mcp/FfmpegToolExecutors.ts.
   'audio_extract',
   'transcode_audio',
+  // Mix N workspace AUDIO tracks (each + optional gain/pan/offset/fade) down to one
+  // WAV/M4A file via the daemon's NATIVE audio engine (no ffmpeg required). Like the
+  // video producers the output is an audio FILE, so it rides the TRUSTED non-image
+  // media_refs channel. Each track's sourcePath is realpath-jailed before the daemon
+  // runs. Writes a new file; gated as a file change. See src/main/mcp/VtToolExecutors.ts.
+  'audio_mix',
   'transcode_video'
 ] as const
 

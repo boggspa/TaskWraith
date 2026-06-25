@@ -32,9 +32,18 @@ import { buildAvMediaRef } from '../media/AvMediaRef'
  * TRUSTED AV channel (persist + `trustedMediaRefs`). EACH segment path is realpath-
  * jailed through the VIDEO jail (`jailInput`) before the daemon ever sees it; any one
  * segment's jail failure aborts the whole concat (the daemon is never invoked).
+ *
+ * `audio_mix` mixes N workspace AUDIO tracks (each with optional gain/pan/offset/fade)
+ * down to one WAV or M4A file via the daemon's native audio engine (`audio.mixdown`;
+ * no ffmpeg). Like the video producers the output is an AUDIO FILE, so it rides the
+ * same TRUSTED AV channel (persist + `trustedMediaRefs`) — output mime is the
+ * asset-store-known `audio/wav` (wav) or `audio/mp4` (m4a). EACH track's `sourcePath`
+ * is realpath-jailed through the audio/video jail (`jailInput`) before the daemon ever
+ * sees it; any one track's jail failure aborts the whole mix (the daemon is never
+ * invoked), exactly like `video_concat_clips`.
  */
 
-export const VT_MCP_TOOL_NAMES = ['video_decode_frame', 'video_encode_clip', 'video_concat_clips'] as const
+export const VT_MCP_TOOL_NAMES = ['video_decode_frame', 'video_encode_clip', 'video_concat_clips', 'audio_mix'] as const
 export type VtMcpToolName = (typeof VT_MCP_TOOL_NAMES)[number]
 
 export function isVtMcpToolName(name: string): name is VtMcpToolName {
@@ -80,6 +89,22 @@ export interface VtToolDeps {
    */
   concatClips: (params: { outputPath: string; segments: Array<{ sourcePath: string; startSeconds?: number; durationSeconds?: number }>; scaleWidth?: number; targetBitrateKbps?: number }) =>
     Promise<{ width: number; height: number; durationMs: number; codec: string; usedHardware: boolean; segmentCount: number }>
+  /**
+   * `audio.mixdown` daemon RPC — mix N (already-jailed) source audio TRACKS, each with
+   * an optional `gainDb`/`pan`/`offsetMs`/`fadeInMs`/`fadeOutMs`, down to one `format`
+   * ('wav' | 'm4a') file written at the TS-supplied `outputPath` (a dir WE own). All
+   * sources must already match `sampleRate`. `bitrateKbps` applies to m4a (AAC) only.
+   * Resolves with the produced file's metadata (incl. `trackCount`); REJECTS on
+   * failure. TS reads + deletes `outputPath` afterwards.
+   */
+  mixdown: (params: {
+    outputPath: string
+    format: 'wav' | 'm4a'
+    sampleRate: number
+    channels: number
+    bitrateKbps?: number
+    tracks: Array<{ sourcePath: string; gainDb?: number; pan?: number; offsetMs?: number; fadeInMs?: number; fadeOutMs?: number }>
+  }) => Promise<{ durationMs: number; sampleRate: number; channels: number; codec: string; trackCount: number }>
   /** An absolute staging file path (a dir WE own, never agent-supplied) for the encoded output. */
   stagingPath: (ext: string) => string
   /** Read a produced staging file → bytes (throws if missing / over the size cap). */
@@ -134,7 +159,7 @@ function humanBytes(n: number): string {
 }
 
 export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
-  const { jailInput, jailOverlay, decodeFrame, encodeClip, concatClips, stagingPath, readOutput, persistOutput, removeFile } = deps
+  const { jailInput, jailOverlay, decodeFrame, encodeClip, concatClips, mixdown, stagingPath, readOutput, persistOutput, removeFile } = deps
 
   async function executeVideoDecodeFrame(
     args: Record<string, unknown>,
@@ -399,6 +424,122 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     }
   }
 
+  // Mix N workspace AUDIO tracks (each + optional gain/pan/offset/fade) down to one WAV
+  // or M4A via the daemon's native audio engine. Like executeVideoConcatClips the output
+  // is an AUDIO FILE, so it rides the TRUSTED AV channel (persist + trustedMediaRefs),
+  // NOT the image-block lane. EVERY track sourcePath is realpath-jailed through the
+  // audio/video jail (jailInput) BEFORE the daemon runs; any one track's jail failure
+  // aborts immediately (mixdown never called). Output mime is the asset-store-known
+  // 'audio/wav' (wav) or 'audio/mp4' (m4a) — NEVER 'audio/x-m4a'. Fails LOUDLY on a
+  // null ref.
+  async function executeAudioMix(
+    args: Record<string, unknown>,
+    ctx: VtToolContext
+  ): Promise<McpToolExecutionResult> {
+    const rawTracks = args.tracks
+    if (!Array.isArray(rawTracks) || rawTracks.length < 1) {
+      return fail('audio_mix', 'provide at least 1 track')
+    }
+    if (rawTracks.length > 24) {
+      return fail('audio_mix', 'too many tracks (max 24)')
+    }
+
+    // Validate + jail EACH track up front. The first track's sourcePath also names the
+    // cosmetic output label, so capture it. Any jail failure aborts the whole mix BEFORE
+    // the daemon is ever invoked (carries the offending track index). Optional per-track
+    // numeric knobs (gainDb/pan/offsetMs/fadeInMs/fadeOutMs) are read defensively and
+    // only forwarded when finite.
+    const realTracks: Array<{ sourcePath: string; gainDb?: number; pan?: number; offsetMs?: number; fadeInMs?: number; fadeOutMs?: number }> = []
+    let firstTrackSourcePath: unknown
+    for (let i = 0; i < rawTracks.length; i++) {
+      const track = asRecord(rawTracks[i])
+      const sourcePath = typeof track.sourcePath === 'string' ? track.sourcePath.trim() : ''
+      if (!sourcePath) {
+        return fail('audio_mix', `track ${i}: provide sourcePath (an audio file inside the workspace)`)
+      }
+      if (i === 0) firstTrackSourcePath = track.sourcePath
+      const jailed = jailInput(sourcePath, ctx)
+      if (!jailed.ok) {
+        return fail('audio_mix', `track ${i}: ${jailed.reason}`)
+      }
+      realTracks.push({
+        sourcePath: jailed.realPath,
+        gainDb: numArg(track.gainDb),
+        pan: numArg(track.pan),
+        offsetMs: numArg(track.offsetMs),
+        fadeInMs: numArg(track.fadeInMs),
+        fadeOutMs: numArg(track.fadeOutMs)
+      })
+    }
+
+    // Top-level mix knobs. format defaults 'wav' and is the ONLY field that picks the
+    // ext+mime; sampleRate (44100) / channels (2) / bitrateKbps (192, m4a/AAC only)
+    // default at the daemon. Anything outside the allowed set falls back to the default.
+    const rawFormat = typeof args.format === 'string' ? args.format.trim().toLowerCase() : ''
+    const format: 'wav' | 'm4a' = rawFormat === 'm4a' ? 'm4a' : 'wav'
+    // Round the integer-typed knobs: the daemon decodes sampleRate/bitrateKbps as
+    // Swift Int, which rejects a fractional JSON value (44100.5) with invalidParams.
+    const sampleRate = Math.round(numArg(args.sampleRate) ?? 44100)
+    const rawChannels = numArg(args.channels)
+    const channels = rawChannels === 1 ? 1 : 2
+    const bitrateKbps = Math.round(numArg(args.bitrateKbps) ?? 192)
+
+    // Output mime MUST be an asset-store-known AV mime: 'audio/wav' for wav, 'audio/mp4'
+    // for m4a. NEVER 'audio/x-m4a' — it is absent from AV_MIMES + the asset-store map and
+    // would null-ref-fail.
+    const ext = format === 'wav' ? 'wav' : 'm4a'
+    const mimeType = format === 'wav' ? 'audio/wav' : 'audio/mp4'
+
+    const outputPath = stagingPath(ext)
+    try {
+      const result = await mixdown({
+        outputPath,
+        format,
+        sampleRate,
+        channels,
+        bitrateKbps,
+        tracks: realTracks
+      })
+      let buffer: Buffer
+      try {
+        buffer = readOutput(outputPath, mimeType)
+      } catch (error) {
+        return fail('audio_mix', `mix output unavailable: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (!buffer || buffer.length === 0) return fail('audio_mix', 'audio engine produced an empty mix')
+      const persisted = persistOutput(buffer, mimeType)
+      if (!persisted.ok) return fail('audio_mix', `Failed to persist output: ${persisted.reason}`)
+      const ref = buildAvMediaRef({
+        sha256: persisted.sha256,
+        mimeType,
+        name: `${sourceBaseName(firstTrackSourcePath)}-mix.${ext}`,
+        runId: ctx?.appRunId,
+        byteLength: buffer.length,
+        durationMs: result.durationMs,
+        codecs: result.codec
+      })
+      // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType is
+      // the fixed main-derived 'audio/wav' | 'audio/mp4'), but fail LOUDLY rather than
+      // return a silent empty-success that would strand the persisted asset with no ref.
+      if (!ref) return fail('audio_mix', `internal: unsupported output mime ${mimeType}`)
+      const summary =
+        `Mixed ${realTracks.length} tracks → ${ref.name} (${humanBytes(buffer.length)})`
+      return {
+        text: summary,
+        content: [{ type: 'text', text: summary }],
+        trustedMediaRefs: [ref]
+      }
+    } catch (error) {
+      return fail('audio_mix', error instanceof Error ? error.message : String(error))
+    } finally {
+      try {
+        removeFile(outputPath)
+      } catch {
+        // best-effort staging cleanup
+      }
+    }
+  }
+
   return {
     executeVtTool(toolName, rawArgs, ctx) {
       const args = asRecord(rawArgs)
@@ -409,6 +550,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           return executeVideoEncodeClip(args, ctx)
         case 'video_concat_clips':
           return executeVideoConcatClips(args, ctx)
+        case 'audio_mix':
+          return executeAudioMix(args, ctx)
         default:
           return Promise.resolve(fail(String(toolName), `unknown VideoToolbox tool "${toolName}"`))
       }

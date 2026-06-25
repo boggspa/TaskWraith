@@ -2462,6 +2462,44 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'audio_mix',
+      description:
+        "Mix N workspace audio tracks into one file using the OS's native audio engine (no ffmpeg). " +
+        'Per-track gainDb (dB), pan (-1..1), offsetMs (timeline placement in ms), fadeInMs/fadeOutMs (ms). ' +
+        'Params: tracks (array, 1–24), `format` (wav|m4a), sampleRate (default 44100), channels (1|2, ' +
+        'default 2), bitrateKbps (AAC m4a only, 32–320, default 192). All sources must already match the ' +
+        'output sampleRate. Writes a new audio file and returns it as a media attachment. Gated as a file change.',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tracks: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 24,
+            description: 'List of 1–24 audio tracks to mix down.',
+            items: {
+              type: 'object',
+              properties: {
+                sourcePath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to an audio file.' },
+                gainDb: { type: 'number', description: 'Per-track gain in dB.' },
+                pan: { type: 'number', description: 'Per-track stereo pan, -1 (left) .. 1 (right).' },
+                offsetMs: { type: 'number', description: 'Timeline placement offset in ms.' },
+                fadeInMs: { type: 'number', description: 'Fade-in duration in ms.' },
+                fadeOutMs: { type: 'number', description: 'Fade-out duration in ms.' }
+              },
+              required: ['sourcePath']
+            }
+          },
+          format: { type: 'string', enum: ['wav', 'm4a'], description: 'Output audio format.' },
+          sampleRate: { type: 'number', description: 'Output sample rate in Hz, default 44100; sources must match.' },
+          channels: { type: 'number', enum: [1, 2], description: 'Output channel count, default 2.' },
+          bitrateKbps: { type: 'number', description: 'AAC m4a only, 32-320, default 192.' }
+        },
+        required: ['tracks', 'format']
+      }
+    },
+    {
       name: 'transcode_video',
       description:
         'Transcode a workspace VIDEO to H.264/AAC MP4 (faststart) via ffmpeg. Params: sourcePath, `crf` ' +

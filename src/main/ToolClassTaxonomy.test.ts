@@ -75,6 +75,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'apply_patch',
         'audio_analyze',
         'audio_extract',
+        'audio_mix',
         'audio_render_wav',
         'browser_click',
         'browser_open',

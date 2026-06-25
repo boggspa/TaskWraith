@@ -33,6 +33,14 @@ const CONCAT_RESULT = {
   segmentCount: 3
 }
 
+const MIX_RESULT = {
+  durationMs: 8200,
+  sampleRate: 44100,
+  channels: 2,
+  codec: 'pcm_s16le',
+  trackCount: 3
+}
+
 function build(overrides: Partial<VtToolDeps> = {}) {
   let lastDecodeParams: { inputPath: string; timestampSeconds?: number; preferHardware?: boolean } | null = null
   let lastEncodeParams: {
@@ -54,6 +62,14 @@ function build(overrides: Partial<VtToolDeps> = {}) {
     scaleWidth?: number
     targetBitrateKbps?: number
   } | null = null
+  let lastMixParams: {
+    outputPath: string
+    format: 'wav' | 'm4a'
+    sampleRate: number
+    channels: number
+    bitrateKbps?: number
+    tracks: Array<{ sourcePath: string; gainDb?: number; pan?: number; offsetMs?: number; fadeInMs?: number; fadeOutMs?: number }>
+  } | null = null
   const removed: string[] = []
   const deps: VtToolDeps = {
     jailInput: vi.fn(() => ({ ok: true as const, realPath: '/ws/clip.mp4' })),
@@ -70,6 +86,10 @@ function build(overrides: Partial<VtToolDeps> = {}) {
       lastConcatParams = params
       return { ...CONCAT_RESULT }
     }),
+    mixdown: vi.fn(async (params) => {
+      lastMixParams = params
+      return { ...MIX_RESULT }
+    }),
     stagingPath: vi.fn((ext: string) => `/staging/out.${ext}`),
     readOutput: vi.fn(() => Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42clip')])),
     persistOutput: vi.fn((_buffer: Buffer, _mimeType: string) => ({ ok: true as const, sha256: 'f'.repeat(64) })),
@@ -85,6 +105,7 @@ function build(overrides: Partial<VtToolDeps> = {}) {
     getDecodeParams: () => lastDecodeParams,
     getEncodeParams: () => lastEncodeParams,
     getConcatParams: () => lastConcatParams,
+    getMixParams: () => lastMixParams,
     getRemoved: () => removed
   }
 }
@@ -94,6 +115,7 @@ describe('isVtMcpToolName', () => {
     expect(isVtMcpToolName('video_decode_frame')).toBe(true)
     expect(isVtMcpToolName('video_encode_clip')).toBe(true)
     expect(isVtMcpToolName('video_concat_clips')).toBe(true)
+    expect(isVtMcpToolName('audio_mix')).toBe(true)
     expect(isVtMcpToolName('video_thumbnail')).toBe(false)
     expect(isVtMcpToolName('video_probe')).toBe(false)
     expect(isVtMcpToolName('something_else')).toBe(false)
@@ -558,5 +580,220 @@ describe('video_concat_clips', () => {
     )
     expect(result.isError).toBeFalsy()
     expect(result.text).toContain('software')
+  })
+})
+
+// audio_mix — mixes N audio TRACKS into one WAV/M4A. Like the video producers the output
+// is an AUDIO FILE, so it rides the TRUSTED media channel (trustedMediaRefs). Each track
+// is INDEPENDENTLY realpath-jailed via jailInput before the daemon runs. Output mime is
+// the asset-store-known 'audio/wav' | 'audio/mp4' (NEVER 'audio/x-m4a').
+describe('audio_mix', () => {
+  it('jails every track, forwards the realPaths + per-track knobs to mixdown, and returns a trusted audio ref', async () => {
+    // Per-track realPath so we can prove each agent-supplied path was jailed and the
+    // JAILED path (not the raw string) reached the daemon, preserving order.
+    let i = 0
+    const { executors, deps, getMixParams, getRemoved } = build({
+      jailInput: vi.fn(() => ({ ok: true as const, realPath: `/ws/trk-${i++}.wav` }))
+    })
+    const result = await executors.executeVtTool(
+      'audio_mix',
+      {
+        tracks: [
+          { sourcePath: 'a.wav' },
+          { sourcePath: 'b.wav', gainDb: -3, pan: 0.5, offsetMs: 250, fadeInMs: 100, fadeOutMs: 200 },
+          { sourcePath: 'c.wav' }
+        ],
+        format: 'wav',
+        sampleRate: 48000,
+        channels: 1
+      },
+      { appRunId: 'run-7' }
+    )
+    expect(result.isError).toBeFalsy()
+    // Every track path was jailed (with the ctx).
+    expect(deps.jailInput).toHaveBeenCalledTimes(3)
+    expect(deps.jailInput).toHaveBeenCalledWith('a.wav', { appRunId: 'run-7' })
+    expect(deps.jailInput).toHaveBeenCalledWith('b.wav', { appRunId: 'run-7' })
+    expect(deps.jailInput).toHaveBeenCalledWith('c.wav', { appRunId: 'run-7' })
+    // The JAILED realPaths (in order) + per-track knobs + staging path WE named reach the daemon.
+    const params = getMixParams()
+    expect(params?.outputPath).toBe('/staging/out.wav')
+    expect(params?.format).toBe('wav')
+    expect(params?.sampleRate).toBe(48000)
+    expect(params?.channels).toBe(1)
+    expect(params?.bitrateKbps).toBe(192) // defaulted
+    expect(params?.tracks.map((t) => t.sourcePath)).toEqual(['/ws/trk-0.wav', '/ws/trk-1.wav', '/ws/trk-2.wav'])
+    expect(params?.tracks[1].gainDb).toBe(-3)
+    expect(params?.tracks[1].pan).toBe(0.5)
+    expect(params?.tracks[1].offsetMs).toBe(250)
+    expect(params?.tracks[1].fadeInMs).toBe(100)
+    expect(params?.tracks[1].fadeOutMs).toBe(200)
+    expect(params?.tracks[0].gainDb).toBeUndefined()
+    // Persisted with the WAV mime; rides the TRUSTED AV channel.
+    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'audio/wav')
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].kind).toBe('audio')
+    expect(refs[0].mimeType).toBe('audio/wav')
+    expect(refs[0].sha256).toBe('f'.repeat(64))
+    expect(refs[0].id).toContain('run-7')
+    // Output label derives from the FIRST track's source.
+    expect(refs[0].name).toBe('a-mix.wav')
+    expect(refs[0].durationMs).toBe(MIX_RESULT.durationMs)
+    expect(refs[0].codecs).toBe('pcm_s16le')
+    // NOT an image-block result, but DOES carry a text summary block.
+    expect((result.content ?? []).some((b) => b.type === 'image')).toBe(false)
+    const textBlock = (result.content ?? []).find((b) => b.type === 'text') as { type: 'text'; text: string } | undefined
+    expect(textBlock?.text).toContain('Mixed 3 tracks')
+    expect(textBlock?.text).toContain('a-mix.wav')
+    // Staging file cleaned up.
+    expect(getRemoved()).toContain('/staging/out.wav')
+  })
+
+  it('accepts the minimum of 1 track and defaults format=wav / sampleRate=44100 / channels=2', async () => {
+    const { executors, getMixParams } = build()
+    const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }] }, {})
+    expect(result.isError).toBeFalsy()
+    const params = getMixParams()
+    expect(params?.tracks).toHaveLength(1)
+    expect(params?.format).toBe('wav')
+    expect(params?.sampleRate).toBe(44100)
+    expect(params?.channels).toBe(2)
+    expect(params?.bitrateKbps).toBe(192)
+    expect(result.text).toContain('Mixed 1 tracks')
+  })
+
+  it('emits an m4a/audio-mp4 ref (NEVER audio/x-m4a) for format m4a + forwards bitrateKbps', async () => {
+    const { executors, deps, getMixParams } = build()
+    const result = await executors.executeVtTool(
+      'audio_mix',
+      { tracks: [{ sourcePath: 'a.wav' }], format: 'm4a', bitrateKbps: 256 },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    expect(getMixParams()?.format).toBe('m4a')
+    expect(getMixParams()?.outputPath).toBe('/staging/out.m4a')
+    expect(getMixParams()?.bitrateKbps).toBe(256)
+    // Asset-store-known AV mime — audio/mp4, NOT audio/x-m4a.
+    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'audio/mp4')
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs[0].mimeType).toBe('audio/mp4')
+    expect(refs[0].kind).toBe('audio')
+    expect(refs[0].name).toBe('a-mix.m4a')
+  })
+
+  it('falls back to wav for an unrecognized format string', async () => {
+    const { executors, getMixParams } = build()
+    const result = await executors.executeVtTool(
+      'audio_mix',
+      { tracks: [{ sourcePath: 'a.wav' }], format: 'flac' },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    expect(getMixParams()?.format).toBe('wav')
+    expect(getMixParams()?.outputPath).toBe('/staging/out.wav')
+  })
+
+  it('rejects an empty / non-array tracks WITHOUT mixing', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeVtTool('audio_mix', { tracks: [] }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('at least 1 track')
+    expect(deps.jailInput).not.toHaveBeenCalled()
+    expect(deps.mixdown).not.toHaveBeenCalled()
+    const missing = await executors.executeVtTool('audio_mix', {}, {})
+    expect(missing.isError).toBe(true)
+    expect(missing.text).toContain('at least 1 track')
+  })
+
+  it('rejects more than 24 tracks WITHOUT mixing', async () => {
+    const { executors, deps } = build()
+    const tracks = Array.from({ length: 25 }, (_, n) => ({ sourcePath: `clip-${n}.wav` }))
+    const result = await executors.executeVtTool('audio_mix', { tracks, format: 'wav' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('too many tracks')
+    expect(deps.mixdown).not.toHaveBeenCalled()
+  })
+
+  it('rejects a track with an empty sourcePath WITHOUT mixing', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeVtTool(
+      'audio_mix',
+      { tracks: [{ sourcePath: 'a.wav' }, { sourcePath: '   ' }], format: 'wav' },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('track 1')
+    expect(result.text).toContain('sourcePath')
+    expect(deps.mixdown).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a per-track jail rejection (with its index) and ABORTS before mixdown', async () => {
+    // The 2nd track fails the jail; the whole mix must abort and never run.
+    let call = 0
+    const { executors, deps } = build({
+      jailInput: vi.fn(() => {
+        call++
+        return call === 2
+          ? ({ ok: false as const, reason: 'outside_allowed_roots' })
+          : ({ ok: true as const, realPath: '/ws/ok.wav' })
+      })
+    })
+    const result = await executors.executeVtTool(
+      'audio_mix',
+      { tracks: [{ sourcePath: 'ok.wav' }, { sourcePath: '../../etc/passwd' }, { sourcePath: 'c.wav' }], format: 'wav' },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('track 1')
+    expect(result.text).toContain('outside_allowed_roots')
+    expect(deps.mixdown).not.toHaveBeenCalled()
+  })
+
+  it('returns an error result (no throw, and still cleans up) when the daemon mixdown rejects', async () => {
+    const { executors, getRemoved } = build({
+      mixdown: vi.fn(async () => {
+        throw new Error('audio engine could not open the asset')
+      })
+    })
+    const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('audio engine could not open the asset')
+    expect(result.trustedMediaRefs).toBeUndefined()
+    expect(getRemoved()).toContain('/staging/out.wav')
+  })
+
+  it('a persistOutput failure yields an error result with NO trusted refs (and still cleans up)', async () => {
+    const { executors, getRemoved } = build({
+      persistOutput: vi.fn(() => ({ ok: false as const, reason: 'disk_full' }))
+    })
+    const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('disk_full')
+    expect(result.trustedMediaRefs).toBeUndefined()
+    expect(getRemoved()).toContain('/staging/out.wav')
+  })
+
+  it('fails (and cleans up) when the mixed output is empty', async () => {
+    const { executors, deps, getRemoved } = build({
+      readOutput: vi.fn(() => Buffer.alloc(0))
+    })
+    const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('empty')
+    expect(deps.persistOutput).not.toHaveBeenCalled()
+    expect(getRemoved()).toContain('/staging/out.wav')
+  })
+
+  it('fails LOUDLY (error result, no trusted refs) when buildAvMediaRef would return null', async () => {
+    // Force the null-ref branch by handing persistOutput back an empty sha256 (buildAvMediaRef
+    // returns null on an empty digest) — the executor must NOT return a silent empty-success.
+    const { executors, getRemoved } = build({
+      persistOutput: vi.fn(() => ({ ok: true as const, sha256: '' }))
+    })
+    const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.trustedMediaRefs).toBeUndefined()
+    expect(getRemoved()).toContain('/staging/out.wav')
   })
 })
