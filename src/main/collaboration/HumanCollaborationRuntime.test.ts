@@ -6,12 +6,18 @@ import {
   exportRawX25519PublicKey,
   generateEphemeralKeyPair,
   generateIdentityKeyPair,
+  importRawX25519PublicKey,
   signEd25519
 } from '../../shared/e2ee/keys'
 import {
   computeHumanCollaborationTranscriptHash,
+  deriveHumanCollaborationSessionKeys,
   humanCollaborationConfirmCode
 } from '../../shared/collaboration/HumanCollaborationKeySchedule'
+import {
+  openHumanCollaborationFrame,
+  sealHumanCollaborationMessage
+} from '../../shared/collaboration/HumanCollaborationCipher'
 import { hashInviteToken, HumanCollaborationStore } from './HumanCollaborationStore'
 import {
   HUMAN_COLLABORATION_METHODS,
@@ -362,5 +368,100 @@ describe('HumanCollaborationRuntime', () => {
     await expect(runtime.routeAction(HUMAN_COLLABORATION_METHODS.subscribeProjection, { sessionId: confirmed.sessionId })).rejects.toThrow(
       /session is not active/
     )
+  })
+
+  it('routes encrypted collaborator frames and seals projection updates for the peer', async () => {
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 10000 })
+    const collaborator = makeCollaborationIdentity()
+    const host = generateIdentityKeyPair()
+    const appendComment = vi.fn((input: HumanCollaborationAppendRequest) => ({
+      messageId: `msg-${input.clientMessageId}`
+    }))
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: host,
+      store,
+      buildProjection: vi.fn().mockResolvedValue({ rows: [] }),
+      appendComment,
+      now: () => 1000
+    })
+
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      displayName: 'Alex',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const context = makeTranscriptContext({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      inviteId: begin.inviteId,
+      inviteToken: share.inviteToken,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      hostCollaborator: collaborator
+    })
+    const session = await runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(collaborator.identity.privateKey, computeHumanCollaborationTranscriptHash(context))
+      )
+    })
+    const collaboratorKeys = deriveHumanCollaborationSessionKeys({
+      hostEphemeralPrivate: collaborator.ephemeral.privateKey,
+      collaboratorEphemeralPublic: importRawX25519PublicKey(b64.decode(begin.hostEphemeralPubKeyB64)),
+      hostNonce: b64.decode(begin.hostNonceB64),
+      collaboratorNonce: b64.decode(collaborator.nonceB64)
+    })
+
+    const appendFrame = sealHumanCollaborationMessage({
+      keys: collaboratorKeys,
+      direction: 'collaboratorToHost',
+      sessionId: session.sessionId,
+      seq: 1,
+      message: {
+        msgId: 1,
+        method: HUMAN_COLLABORATION_METHODS.appendComment,
+        params: {
+          clientMessageId: 'encrypted-1',
+          content: 'Encrypted collaborator comment'
+        }
+      }
+    })
+    const appendResult = await runtime.routeEncryptedAction(appendFrame)
+    expect(appendResult).toEqual({ messageId: 'msg-encrypted-1' })
+    expect(appendComment).toHaveBeenCalledOnce()
+    await expect(runtime.routeEncryptedAction(appendFrame)).rejects.toThrow(/replay/)
+
+    const projectionFrame = runtime.sealProjectionUpdate(session.sessionId, { rows: ['allowed'] })
+    const openedProjection = openHumanCollaborationFrame({
+      keys: collaboratorKeys,
+      expectedDirection: 'hostToCollaborator',
+      frame: projectionFrame
+    })
+    expect(openedProjection).toMatchObject({
+      method: HUMAN_COLLABORATION_METHODS.projectionUpdate,
+      params: { projection: { rows: ['allowed'] } }
+    })
+
+    const forbiddenFrame = sealHumanCollaborationMessage({
+      keys: collaboratorKeys,
+      direction: 'collaboratorToHost',
+      sessionId: session.sessionId,
+      seq: 2,
+      message: {
+        msgId: 2,
+        method: 'startTurn' as typeof HUMAN_COLLABORATION_METHODS.disconnect,
+        params: {}
+      }
+    })
+    await expect(runtime.routeEncryptedAction(forbiddenFrame)).rejects.toThrow(/not allowed/)
   })
 })

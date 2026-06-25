@@ -88,6 +88,7 @@ import type {
   HumanCollaborationConfirmSasInput,
   HumanCollaborationConfirmSasResult,
   HumanCollaborationDisconnectInput,
+  HumanCollaborationEncryptedFrame,
   HumanCollaborationSubscribeProjectionInput
 } from '../shared/collaboration/HumanCollaborationProtocol'
 import type {
@@ -1280,6 +1281,9 @@ declare global {
       humanCollaborationRuntimeAppendComment: (
         input: HumanCollaborationAppendCommentInput
       ) => Promise<{ chat: ChatRecord; message: ChatRecord['messages'][number]; deduped: boolean }>
+      humanCollaborationRuntimeReceiveFrame: (
+        input: HumanCollaborationEncryptedFrame
+      ) => Promise<unknown>
       humanCollaborationRuntimeDisconnect: (
         input: HumanCollaborationDisconnectInput
       ) => Promise<boolean>
@@ -1475,6 +1479,9 @@ declare global {
       onHumanCollaborationUpdated: (callback: (payload: { chatId: string }) => void) => () => void
       onHumanCollaborationRuntimeProjectionUpdate: (
         callback: (payload: { sessionId: string; projection: HumanShareProjection }) => void
+      ) => () => void
+      onHumanCollaborationRuntimeEncryptedFrame: (
+        callback: (payload: { sessionId: string; frame: HumanCollaborationEncryptedFrame }) => void
       ) => () => void
       onRunTrustedMediaRefs: (
         callback: (payload: {

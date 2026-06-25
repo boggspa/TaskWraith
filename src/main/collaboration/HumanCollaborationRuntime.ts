@@ -16,6 +16,10 @@ import {
   humanCollaborationConfirmCode
 } from '../../shared/collaboration/HumanCollaborationKeySchedule'
 import {
+  openHumanCollaborationFrame,
+  sealHumanCollaborationMessage
+} from '../../shared/collaboration/HumanCollaborationCipher'
+import {
   HUMAN_COLLABORATION_METHODS,
   type HumanCollaborationAppendCommentInput,
   type HumanCollaborationBeginHandshakeInput,
@@ -23,8 +27,10 @@ import {
   type HumanCollaborationConfirmSasInput,
   type HumanCollaborationConfirmSasResult,
   type HumanCollaborationDisconnectInput,
+  type HumanCollaborationEncryptedFrame,
   type HumanCollaborationHandshakeContext,
   type HumanCollaborationHandshakeMode,
+  type HumanCollaborationPlainMessage,
   type HumanCollaborationSubscribeProjectionInput,
   HUMAN_COLLABORATION_PROTOCOL,
   type HumanCollaborationMethod
@@ -64,6 +70,10 @@ export interface HumanCollaborationRuntimeDeps<ProjectionType, AppendType> {
   buildProjection: (input: HumanCollaborationProjectionRequest) => ProjectionType | Promise<ProjectionType>
   appendComment: (input: HumanCollaborationAppendRequest & HumanCollaborationAppendCommentInput) => AppendType | Promise<AppendType>
   publishProjection?: (sessionId: string, projection: ProjectionType) => void | Promise<void>
+  publishEncryptedProjection?: (
+    sessionId: string,
+    frame: HumanCollaborationEncryptedFrame
+  ) => void | Promise<void>
   now?: () => number
   log?: (line: string) => void
 }
@@ -99,6 +109,8 @@ interface RuntimeSession {
   shareMode: HumanCollaborationShare['mode']
   mode: HumanCollaborationHandshakeMode
   keys: HumanCollaborationSessionKeys
+  nextOutboundSeq: number
+  lastInboundSeq: number
 }
 
 export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = unknown> {
@@ -304,7 +316,9 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       establishedAt,
       shareMode: admitted.share.mode,
       mode: pending.mode,
-      keys: pending.keys
+      keys: pending.keys,
+      nextOutboundSeq: 1,
+      lastInboundSeq: 0
     }
     this.sessions.set(sessionId, session)
     this.pending.delete(input.handshakeId)
@@ -366,14 +380,81 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     return true
   }
 
+  sealForCollaborator(
+    sessionId: string,
+    message: Omit<HumanCollaborationPlainMessage, 'msgId'> & { msgId?: number }
+  ): HumanCollaborationEncryptedFrame {
+    const session = this.requireActiveSession(sessionId)
+    const seq = session.nextOutboundSeq++
+    return sealHumanCollaborationMessage({
+      keys: session.keys,
+      direction: 'hostToCollaborator',
+      sessionId,
+      seq,
+      message: {
+        msgId: message.msgId ?? seq,
+        method: message.method,
+        ...(message.params !== undefined ? { params: message.params } : {})
+      }
+    })
+  }
+
+  openFromCollaborator(frame: HumanCollaborationEncryptedFrame): HumanCollaborationPlainMessage {
+    const session = this.requireActiveSession(frame.sessionId)
+    if (frame.seq <= session.lastInboundSeq) {
+      throw new Error('Collaboration frame replay detected.')
+    }
+    const message = openHumanCollaborationFrame({
+      keys: session.keys,
+      expectedDirection: 'collaboratorToHost',
+      frame
+    })
+    session.lastInboundSeq = frame.seq
+    return message
+  }
+
+  async routeEncryptedAction(frame: HumanCollaborationEncryptedFrame): Promise<unknown> {
+    const message = this.openFromCollaborator(frame)
+    const params = message.params && typeof message.params === 'object' ? message.params : {}
+    if (message.method === HUMAN_COLLABORATION_METHODS.subscribeProjection) {
+      return this.subscribeProjection({ sessionId: frame.sessionId })
+    }
+    if (message.method === HUMAN_COLLABORATION_METHODS.appendComment) {
+      const input = params as Partial<HumanCollaborationAppendCommentInput>
+      return this.appendComment({
+        sessionId: frame.sessionId,
+        clientMessageId: requireFrameString(input.clientMessageId, 'Client message id'),
+        content: requireFrameString(input.content, 'Comment')
+      })
+    }
+    if (message.method === HUMAN_COLLABORATION_METHODS.disconnect) {
+      return this.disconnect({ sessionId: frame.sessionId })
+    }
+    throw new Error(`Unsupported encrypted human collaboration method: ${message.method}`)
+  }
+
+  sealProjectionUpdate(
+    sessionId: string,
+    projection: ProjectionType
+  ): HumanCollaborationEncryptedFrame {
+    return this.sealForCollaborator(sessionId, {
+      method: HUMAN_COLLABORATION_METHODS.projectionUpdate,
+      params: { projection }
+    })
+  }
+
   async publishProjectionUpdates(chatId?: string): Promise<void> {
-    if (!this.opts.publishProjection) return
+    if (!this.opts.publishProjection && !this.opts.publishEncryptedProjection) return
     for (const sessionId of Array.from(this.projectionSubscribers)) {
       const session = this.sessions.get(sessionId)
       if (!session || (chatId && session.chatId !== chatId)) continue
       try {
         const projection = await this.subscribeProjection({ sessionId })
-        await this.opts.publishProjection(sessionId, projection)
+        await this.opts.publishProjection?.(sessionId, projection)
+        if (this.opts.publishEncryptedProjection) {
+          const frame = this.sealProjectionUpdate(sessionId, projection)
+          await this.opts.publishEncryptedProjection(sessionId, frame)
+        }
       } catch (err) {
         this.projectionSubscribers.delete(sessionId)
         this.opts.log?.(
@@ -424,4 +505,11 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       }
     }
   }
+}
+
+function requireFrameString(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${label} is required.`)
+  }
+  return value
 }

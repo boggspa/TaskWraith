@@ -318,6 +318,7 @@ import type {
   HumanCollaborationBeginHandshakeInput,
   HumanCollaborationConfirmSasInput,
   HumanCollaborationDisconnectInput,
+  HumanCollaborationEncryptedFrame,
   HumanCollaborationSubscribeProjectionInput
 } from '../shared/collaboration/HumanCollaborationProtocol'
 import { detectConfiguredProviders } from './ProviderConfiguration'
@@ -22754,6 +22755,12 @@ if (isGeminiMcpBridgeProcess) {
             projection
           })
         },
+        publishEncryptedProjection: (sessionId, frame) => {
+          mainWindow?.webContents.send('human-collaboration-runtime-encrypted-frame', {
+            sessionId,
+            frame
+          })
+        },
         log: (line) => console.warn(line)
       })
       return humanCollaborationRuntime
@@ -23680,6 +23687,11 @@ if (isGeminiMcpBridgeProcess) {
       'human-collaboration-runtime:append-comment',
       (_, input: HumanCollaborationAppendCommentInput) =>
         getHumanCollaborationRuntime().appendComment(input)
+    )
+    ipcMain.handle(
+      'human-collaboration-runtime:receive-frame',
+      (_, input: HumanCollaborationEncryptedFrame) =>
+        getHumanCollaborationRuntime().routeEncryptedAction(input)
     )
     ipcMain.handle(
       'human-collaboration-runtime:disconnect',

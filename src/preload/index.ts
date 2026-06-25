@@ -990,6 +990,16 @@ const api = {
     clientMessageId: string
     content: string
   }) => ipcRenderer.invoke('human-collaboration-runtime:append-comment', input),
+  humanCollaborationRuntimeReceiveFrame: (input: {
+    t: 'humanCollaboration.enc'
+    protocol: string
+    sessionId: string
+    direction: 'hostToCollaborator' | 'collaboratorToHost'
+    seq: number
+    nonce: string
+    ct: string
+    tag: string
+  }) => ipcRenderer.invoke('human-collaboration-runtime:receive-frame', input),
   humanCollaborationRuntimeDisconnect: (input: { sessionId: string }) =>
     ipcRenderer.invoke('human-collaboration-runtime:disconnect', input),
   humanCollaborationPromoteComment: (input: { chatId: string; messageId: string }) =>
@@ -1215,6 +1225,15 @@ const api = {
     return () =>
       ipcRenderer.removeListener('human-collaboration-runtime-projection-update', wrapped)
   },
+  onHumanCollaborationRuntimeEncryptedFrame: (
+    callback: (payload: { sessionId: string; frame: unknown }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: { sessionId: string; frame: unknown }): void =>
+      callback(payload)
+    ipcRenderer.on('human-collaboration-runtime-encrypted-frame', wrapped)
+    return () =>
+      ipcRenderer.removeListener('human-collaboration-runtime-encrypted-frame', wrapped)
+  },
   // Trusted audio/video media refs for a foreground solo run. Main constructs
   // these refs itself and pushes them on this dedicated main-only channel, so
   // the renderer attaches them WITHOUT the image-only RAW-provider sanitizer
@@ -1320,6 +1339,7 @@ const api = {
     ipcRenderer.removeAllListeners('chat-updated')
     ipcRenderer.removeAllListeners('human-collaboration-updated')
     ipcRenderer.removeAllListeners('human-collaboration-runtime-projection-update')
+    ipcRenderer.removeAllListeners('human-collaboration-runtime-encrypted-frame')
     ipcRenderer.removeAllListeners('run-trusted-media-refs')
     ipcRenderer.removeAllListeners('app-shell-stats-changed')
     ipcRenderer.removeAllListeners('workspace-popout-refresh')

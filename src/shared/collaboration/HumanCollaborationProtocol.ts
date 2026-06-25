@@ -13,6 +13,7 @@ export type HumanCollaborationMethod =
   (typeof HUMAN_COLLABORATION_METHODS)[keyof typeof HUMAN_COLLABORATION_METHODS]
 
 export type HumanCollaborationHandshakeMode = 'admission' | 'reconnect'
+export type HumanCollaborationFrameDirection = 'hostToCollaborator' | 'collaboratorToHost'
 
 export interface HumanCollaborationHandshakeContext {
   protocol: typeof HUMAN_COLLABORATION_PROTOCOL
@@ -86,4 +87,21 @@ export interface HumanCollaborationAppendCommentInput {
 
 export interface HumanCollaborationDisconnectInput {
   sessionId: string
+}
+
+export interface HumanCollaborationPlainMessage {
+  msgId: number
+  method: HumanCollaborationMethod
+  params?: unknown
+}
+
+export interface HumanCollaborationEncryptedFrame {
+  t: 'humanCollaboration.enc'
+  protocol: typeof HUMAN_COLLABORATION_PROTOCOL
+  sessionId: string
+  direction: HumanCollaborationFrameDirection
+  seq: number
+  nonce: string
+  ct: string
+  tag: string
 }
