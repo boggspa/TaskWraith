@@ -120,6 +120,45 @@ describe('resolveNativeApprovalPreflightDecision — neverAutoAllow (canvas_eval
   })
 })
 
+describe('resolveNativeApprovalPreflightDecision — neverAutoAllow (mediaRecording capture)', () => {
+  // mediaRecording (future mic/camera capture) is a default-deny, NON-grantable scaffold whose
+  // invariant is that capture must NEVER be promoted above default-deny — not by a grant and not
+  // by session-YOLO (see store/types.ts mediaRecording docs + EffectiveRunPermissions clamps).
+  // The two gate sites set neverAutoAllow whenever the service is mediaRecording (alongside
+  // canvasEval): index.ts:5957 (resolveNativeApprovalPreflight, Codex/Kimi native path) and
+  // index.ts:6120 (requestAgenticServiceApproval, Gemini/MCP-dispatcher/Claude/Kimi path).
+  // These pin the downstream clamp so the day a capture tool classifies as mediaRecording,
+  // session-YOLO cannot silently auto-allow it.
+  it('clamps session-YOLO down to a prompt for a non-read-only run', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('ask'),
+        sessionYoloEnabled: true,
+        readOnly: false,
+        neverAutoAllow: true
+      })
+    ).toMatchObject({ kind: 'ask' })
+  })
+
+  it('clamps a grant-driven automatic allow down to a prompt', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('allow', 'ask', { sessionGrantAllowed: true }),
+        neverAutoAllow: true
+      })
+    ).toMatchObject({ kind: 'ask' })
+  })
+
+  it('still lets an explicit deny win (capture stays denied)', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('deny'),
+        neverAutoAllow: true
+      })
+    ).toMatchObject({ kind: 'deny' })
+  })
+})
+
 describe('resolveNativeApprovalPreflightDecision', () => {
   it('keeps deny as the strongest decision', () => {
     expect(
