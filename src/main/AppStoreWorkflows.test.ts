@@ -605,3 +605,40 @@ describe('AppStore workflow run ledger (Stage 1)', () => {
     ])
   })
 })
+
+describe('AppStore audit reconciler (slice 6)', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(userDataPath, { recursive: true })
+  })
+
+  const auditInput = (status: 'running' | 'planning' | 'awaitingConfirm' | 'completed') => ({
+    mode: 'quick' as const,
+    chatId: 'c1',
+    workspacePath: '/repo',
+    status,
+    dimensions: [],
+    budget: { maxAgents: 8, spentAgents: 0, spentTokens: 0, truncated: false }
+  })
+
+  it('settles an orphaned (non-terminal) audit run to failed with a restart note', () => {
+    const run = AppStore.createAuditRun(auditInput('running'))
+    const stale = AppStore.reconcileStaleAuditRuns()
+    expect(stale).toEqual([{ id: run.id, previousStatus: 'running' }])
+    const reread = AppStore.getAuditRun(run.id)
+    expect(reread?.status).toBe('failed')
+    expect(reread?.error).toContain('restart')
+    expect(reread?.endedAt).toBeTruthy()
+  })
+
+  it('leaves a terminal run untouched and is idempotent on re-boot', () => {
+    const done = AppStore.createAuditRun(auditInput('completed'))
+    expect(AppStore.reconcileStaleAuditRuns()).toEqual([])
+    expect(AppStore.getAuditRun(done.id)?.status).toBe('completed')
+    // A second pass over an already-settled (now-failed) run is a no-op.
+    AppStore.createAuditRun(auditInput('running'))
+    expect(AppStore.reconcileStaleAuditRuns()).toHaveLength(1)
+    expect(AppStore.reconcileStaleAuditRuns()).toHaveLength(0)
+  })
+})

@@ -88,6 +88,11 @@ import {
 } from '../WorkflowRunStore'
 import { normalizeWorkflowLoopConfig } from '../WorkflowLoopModel'
 import {
+  findStaleAuditRuns,
+  AUDIT_RESTART_INTERRUPTION_ERROR,
+  type StaleAuditRun
+} from '../audit/AuditReconciler'
+import {
   capApprovalLedgerRecords,
   createApprovalLedgerRecord,
   expireScopedApprovalLedgerRecords,
@@ -2635,6 +2640,24 @@ export class AppStore {
       auditRunsPath,
       this.getAuditRuns().filter((run) => run.id !== id)
     )
+  }
+
+  /**
+   * Slice 6 — settle audit runs left non-terminal by a crash/quit. Boot-only: audit
+   * is a hard singleton with no resume, so a non-terminal run at startup is orphaned
+   * by definition (its process is gone). Mirrors reconcileStaleWorkflowRunLedgers;
+   * idempotent (terminal runs are skipped). Returns the settled runs for logging.
+   */
+  static reconcileStaleAuditRuns(nowIso: string = new Date().toISOString()): StaleAuditRun[] {
+    const stale = findStaleAuditRuns(this.getAuditRuns())
+    for (const run of stale) {
+      this.updateAuditRun(run.id, {
+        status: 'failed',
+        error: AUDIT_RESTART_INTERRUPTION_ERROR,
+        endedAt: nowIso
+      })
+    }
+    return stale
   }
 
   static getNextWorkflowRunAtMs(): number | null {

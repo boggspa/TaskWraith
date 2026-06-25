@@ -21946,6 +21946,11 @@ if (isGeminiMcpBridgeProcess) {
     // so executions they already settled (via syncWorkflowFromScheduledTask) are
     // terminal here → no-ops. Boot-only (an open ledger only arises from a crash).
     AppStore.reconcileStaleWorkflowRunLedgers()
+    // Slice 6: same boot-time close-out for orphaned AUDIT runs — an audit run is a
+    // hard singleton with no resume, so any record left 'planning'/'awaitingConfirm'/
+    // 'running' at launch was orphaned by a crash and would otherwise sit non-terminal
+    // forever. Settles each to 'failed' with a restart-interruption note.
+    AppStore.reconcileStaleAuditRuns()
     // ~10-min floor sweep so a wedge self-heals even with no materialize traffic.
     stallReconcilerInterval = setInterval(
       reconcileStalledScheduledTasks,
