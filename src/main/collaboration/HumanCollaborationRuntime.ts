@@ -43,6 +43,19 @@ import {
   type HumanCollaborationShare
 } from './HumanCollaborationStore'
 
+// Append rate limit (per shareId:collaboratorId). Collaborators are untrusted;
+// each accepted append triggers a whole-chat persist + a projection reseal +
+// fanout, so an unthrottled stream can saturate the host. Honest clients never
+// hit these. Kept on the runtime so it costs nothing for non-collaborators.
+const APPEND_MIN_INTERVAL_MS = 750
+const APPEND_WINDOW_MS = 60_000
+const APPEND_MAX_PER_WINDOW = 30
+// Bound un-consumed pending handshakes (each holds live derived session keys)
+// so a holder of a valid invite token cannot accumulate key material by
+// repeatedly calling beginAdmission within the invite TTL.
+const MAX_PENDING_PER_SHARE = 4
+const MAX_PENDING_TOTAL = 32
+
 export interface HumanCollaborationProjectionRequest {
   sessionId: string
   share: HumanCollaborationShare
@@ -120,6 +133,10 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
   private readonly pending = new Map<string, RuntimePendingAdmission>()
   private readonly sessions = new Map<string, RuntimeSession>()
   private readonly projectionSubscribers = new Set<string>()
+  // Per shareId:collaboratorId append-rate state (see APPEND_* constants). Key
+  // space is tiny (≤2 collaborators/share) and intentionally NOT reset on
+  // disconnect, so a flooder cannot bypass the limit by reconnecting.
+  private readonly appendRate = new Map<string, { windowStart: number; count: number; last: number }>()
 
   constructor(options: HumanCollaborationRuntimeDeps<ProjectionType, AppendType>) {
     this.opts = options
@@ -158,6 +175,18 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     const mode: HumanCollaborationHandshakeMode = collaboratorId && !inviteToken ? 'reconnect' : 'admission'
     if (mode === 'admission' && !inviteToken) {
       throw new Error('Collaboration invite token is required.')
+    }
+    // Bound un-consumed pending handshakes (each retains live session keys) so a
+    // valid-token holder can't accumulate key material by spamming beginAdmission.
+    if (this.pending.size >= MAX_PENDING_TOTAL) {
+      throw new Error('Too many pending collaboration handshakes; try again shortly.')
+    }
+    let pendingForShare = 0
+    for (const candidate of this.pending.values()) {
+      if (candidate.shareId === shareId) pendingForShare += 1
+    }
+    if (pendingForShare >= MAX_PENDING_PER_SHARE) {
+      throw new Error('Too many pending collaboration handshakes; try again shortly.')
     }
     const verification =
       mode === 'admission'
@@ -277,6 +306,9 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       throw new Error('Collaboration invite has expired.')
     }
     if (input.confirmCode !== pending.confirmCode) {
+      // A failed admission attempt is terminal: drop the pending handshake (and
+      // its derived keys) so it can't be retried and doesn't linger until TTL.
+      this.pending.delete(input.handshakeId)
       throw new Error('Confirmation code mismatch.')
     }
     const collaboratorPublic = importRawEd25519PublicKey(b64.decode(pending.collaboratorIdentityPubKeyB64))
@@ -284,6 +316,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     const collaboratorSig = b64.decode(input.collaboratorTranscriptSigB64)
     const transcriptValid = verifyEd25519(collaboratorPublic, transcriptHash, collaboratorSig)
     if (!transcriptValid) {
+      this.pending.delete(input.handshakeId)
       throw new Error('Collaborator transcript signature invalid.')
     }
 
@@ -353,6 +386,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     input: HumanCollaborationAppendCommentInput & { sessionId: string }
   ): Promise<AppendType> {
     const session = this.requireActiveSession(input.sessionId)
+    this.enforceAppendRateLimit(session)
     this.opts.store.validateAppend({
       shareId: session.shareId,
       chatId: session.chatId,
@@ -465,6 +499,28 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
         )
       }
     }
+  }
+
+  private enforceAppendRateLimit(session: RuntimeSession): void {
+    const now = this.now()
+    const key = `${session.shareId}:${session.collaboratorId}`
+    const state = this.appendRate.get(key)
+    if (!state) {
+      this.appendRate.set(key, { windowStart: now, count: 1, last: now })
+      return
+    }
+    if (now - state.last < APPEND_MIN_INTERVAL_MS) {
+      throw new Error('Comment rate limit exceeded, slow down.')
+    }
+    if (now - state.windowStart >= APPEND_WINDOW_MS) {
+      state.windowStart = now
+      state.count = 0
+    }
+    if (state.count >= APPEND_MAX_PER_WINDOW) {
+      throw new Error('Comment rate limit exceeded, slow down.')
+    }
+    state.count += 1
+    state.last = now
   }
 
   private requireActiveSession(sessionId: string): RuntimeSession {

@@ -465,4 +465,143 @@ describe('HumanCollaborationRuntime', () => {
     })
     await expect(runtime.routeEncryptedAction(forbiddenFrame)).rejects.toThrow(/not allowed/)
   })
+
+  it('rate-limits collaborator appends per share/collaborator', async () => {
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 10000 })
+    const collaborator = makeCollaborationIdentity()
+    const host = generateIdentityKeyPair()
+    let now = 1000
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: host,
+      store,
+      buildProjection: vi.fn().mockResolvedValue({ ok: true }),
+      appendComment: vi.fn().mockResolvedValue({ ok: true }),
+      now: () => now
+    })
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      displayName: 'Alex',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const context = makeTranscriptContext({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      inviteId: begin.inviteId,
+      inviteToken: share.inviteToken,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      hostCollaborator: collaborator
+    })
+    const admitted = await runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(collaborator.identity.privateKey, computeHumanCollaborationTranscriptHash(context))
+      )
+    })
+
+    await expect(
+      runtime.appendComment({ sessionId: admitted.sessionId, clientMessageId: 'c-1', content: 'hi' })
+    ).resolves.toMatchObject({ ok: true })
+    // A second append in the same tick (< min interval) is rejected.
+    await expect(
+      runtime.appendComment({ sessionId: admitted.sessionId, clientMessageId: 'c-2', content: 'spam' })
+    ).rejects.toThrow(/rate limit/i)
+    // After the min interval it is allowed again.
+    now = 2000
+    await expect(
+      runtime.appendComment({ sessionId: admitted.sessionId, clientMessageId: 'c-3', content: 'ok now' })
+    ).resolves.toMatchObject({ ok: true })
+  })
+
+  it('drops the pending handshake on a failed SAS confirmation', async () => {
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 10000 })
+    const collaborator = makeCollaborationIdentity()
+    const host = generateIdentityKeyPair()
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: host,
+      store,
+      buildProjection: vi.fn().mockResolvedValue({ ok: true }),
+      appendComment: vi.fn().mockResolvedValue({ ok: true }),
+      now: () => 1000
+    })
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      displayName: 'Alex',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const context = makeTranscriptContext({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      inviteId: begin.inviteId,
+      inviteToken: share.inviteToken,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      hostCollaborator: collaborator
+    })
+    const goodSig = b64.encode(
+      signEd25519(collaborator.identity.privateKey, computeHumanCollaborationTranscriptHash(context))
+    )
+    // Wrong code → rejected AND the pending handshake is dropped.
+    await expect(
+      runtime.confirmSas({
+        handshakeId: begin.handshakeId,
+        confirmCode: '000000',
+        collaboratorTranscriptSigB64: goodSig
+      })
+    ).rejects.toThrow(/mismatch/i)
+    // Retrying with the correct code now fails because the handshake is gone.
+    await expect(
+      runtime.confirmSas({
+        handshakeId: begin.handshakeId,
+        confirmCode: begin.confirmCode,
+        collaboratorTranscriptSigB64: goodSig
+      })
+    ).rejects.toThrow(/not active/i)
+  })
+
+  it('bounds the number of pending handshakes per share', async () => {
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 10000 })
+    const host = generateIdentityKeyPair()
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: host,
+      store,
+      buildProjection: vi.fn().mockResolvedValue({ ok: true }),
+      appendComment: vi.fn().mockResolvedValue({ ok: true }),
+      now: () => 1000
+    })
+    const beginOnce = () => {
+      const peer = makeCollaborationIdentity()
+      return runtime.beginAdmission({
+        shareId: share.share.shareId,
+        chatId: 'chat-1',
+        displayName: 'Alex',
+        inviteToken: share.inviteToken,
+        collaboratorIdentityPubKeyB64: peer.identityPubKeyB64,
+        collaboratorEphemeralPubKeyB64: peer.ephemeralPubKeyB64,
+        collaboratorNonceB64: peer.nonceB64
+      })
+    }
+    for (let i = 0; i < 4; i++) {
+      await expect(beginOnce()).resolves.toBeTruthy()
+    }
+    await expect(beginOnce()).rejects.toThrow(/too many pending/i)
+  })
 })
