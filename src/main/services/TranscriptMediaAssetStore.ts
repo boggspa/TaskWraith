@@ -3,6 +3,15 @@ import path from 'path'
 
 export const TRANSCRIPT_MEDIA_ASSET_DIR = 'transcript-media'
 export const TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES = 8 * 1024 * 1024
+// Per-chunk RAW byte cap for the CHUNKED/RANGE variant of the `threadMediaFetch`
+// bridge action (iOS pulls a large content-addressed asset in bounded slices over
+// the E2EE bridge — the only iOS transport; there is NO HTTP path). Sized well
+// under 1 MiB because: the bytes ride ONE E2EE WebSocket frame, the relay enforces
+// a 1 MiB frame cap (`relay/src/server.ts:93` `maxFrameBytes`, closes with 1009 on
+// violation) and iOS uses the default 1 MiB `maximumMessageSize`; base64 inflates
+// the raw bytes ×4/3, plus the JSON envelope + AES-GCM overhead. 448 KiB raw →
+// ~597 KiB base64, leaving comfortable headroom under the frame cap.
+export const THREAD_MEDIA_CHUNK_MAX_BYTES = 448 * 1024
 // AV assets are far larger than images. These are WRITE caps (anti-flood) and the
 // READ-clamp ceiling. NOTE: the streaming `twmedia://` protocol (S0b) bypasses
 // read() entirely (fs.createReadStream off disk), so these caps bound ingestion +

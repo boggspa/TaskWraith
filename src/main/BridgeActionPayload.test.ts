@@ -308,6 +308,44 @@ describe('decodeBridgeActionPayload', () => {
       ).toBe('unknown')
     })
 
+    it('validates threadMediaFetch CHUNKED/RANGE offset+length (both-or-neither, integer, bounds)', () => {
+      const base = {
+        kind: 'threadMediaFetch' as const,
+        actionId: 'a-range',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        rowId: 'm7',
+        mediaId: 'media-1',
+        variant: 'full' as const
+      }
+      const decodeKind = (extra: Record<string, unknown>): string =>
+        decodeBridgeActionPayload(encode({ ...base, ...extra })).payload.kind
+
+      // Both present + valid → accepted, fields preserved.
+      const ok = decodeBridgeActionPayload(encode({ ...base, offset: 0, length: 65536 })).payload
+      expect(ok.kind).toBe('threadMediaFetch')
+      if (ok.kind === 'threadMediaFetch') {
+        expect(ok.offset).toBe(0)
+        expect(ok.length).toBe(65536)
+      }
+      expect(decodeKind({ offset: 458752, length: 1 })).toBe('threadMediaFetch')
+
+      // Neither present → whole-file mode, still valid.
+      expect(decodeKind({})).toBe('threadMediaFetch')
+
+      // Exactly one present → rejected.
+      expect(decodeKind({ offset: 0 })).toBe('unknown')
+      expect(decodeKind({ length: 1024 })).toBe('unknown')
+
+      // Out-of-bounds / non-integer → rejected.
+      expect(decodeKind({ offset: -1, length: 1024 })).toBe('unknown') // negative offset
+      expect(decodeKind({ offset: 0, length: 0 })).toBe('unknown') // length < 1
+      expect(decodeKind({ offset: 0, length: -5 })).toBe('unknown') // negative length
+      expect(decodeKind({ offset: 1.5, length: 1024 })).toBe('unknown') // non-integer offset
+      expect(decodeKind({ offset: 0, length: 1024.5 })).toBe('unknown') // non-integer length
+      expect(decodeKind({ offset: '0', length: 1024 })).toBe('unknown') // wrong type
+    })
+
     it('decodes createThread ensemble roster overrides + rejects oversized rosters', () => {
       const withRoster = decodeBridgeActionPayload(
         encode({

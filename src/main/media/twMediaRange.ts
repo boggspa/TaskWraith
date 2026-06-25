@@ -1,6 +1,9 @@
 import fs from 'fs'
 import path from 'path'
-import { transcriptMediaAssetPath } from '../services/TranscriptMediaAssetStore'
+import {
+  THREAD_MEDIA_CHUNK_MAX_BYTES,
+  transcriptMediaAssetPath
+} from '../services/TranscriptMediaAssetStore'
 import { TW_MEDIA_SCHEME, twMediaMimeForExt } from '../../shared/twMedia'
 
 /**
@@ -183,5 +186,69 @@ export function readAssetSlice(filePath: string, start: number, end: number): Bu
     return buffer
   } finally {
     fs.closeSync(fd)
+  }
+}
+
+export interface TranscriptMediaRangeSlice {
+  /** Base64 of THIS slice's bytes. */
+  dataBase64: string
+  /** This slice's raw byte length (post-clamp, pre-base64). */
+  byteLength: number
+  /** Echoed start offset of this slice. */
+  offset: number
+  /** Full asset size on disk — lets iOS know when it has pulled the last slice. */
+  totalBytes: number
+}
+
+/** Thrown when the requested `offset` is at/beyond the asset's end. The bridge
+ * handler maps this to `{ ok: false, reason }` (a 416-equivalent for the bridge). */
+export class TranscriptMediaRangeOutOfBoundsError extends Error {
+  constructor(public readonly offset: number, public readonly totalBytes: number) {
+    super(`twmedia: range offset ${offset} is out of bounds for asset of ${totalBytes} bytes`)
+    this.name = 'TranscriptMediaRangeOutOfBoundsError'
+  }
+}
+
+/**
+ * Pure, Node-testable core of the CHUNKED/RANGE `threadMediaFetch` bridge mode.
+ * Reads ONE bounded slice of a content-addressed transcript media asset for the
+ * E2EE bridge to iOS.
+ *
+ * Jail + DoS guards:
+ *  - The path is resolved ONLY via `transcriptMediaAssetPath` (which runs
+ *    `assertSafeSha256` + the mime→ext whitelist), so a hostile sha/mime can never
+ *    escape the asset dir or address an arbitrary file.
+ *  - `effLength` is HARD-clamped to `THREAD_MEDIA_CHUNK_MAX_BYTES` server-side,
+ *    regardless of the client's `requestedLength` — a client cannot pull an
+ *    arbitrarily large slice (frame-cap + memory DoS guard).
+ *  - The read window is `[offset, offset + effLength - 1]`, always inside
+ *    `[0, totalBytes)`: `offset` is validated `>= 0` by the request guard and
+ *    `< totalBytes` here; `effLength` is additionally clamped to `totalBytes - offset`.
+ *  - `readAssetSlice` throws on a short read (TOCTOU truncation) — propagated so
+ *    the handler reports a failure rather than shipping a truncated body.
+ */
+export function readTranscriptMediaRangeSlice(input: {
+  baseDir: string
+  sha256: string
+  mimeType: string
+  offset: number
+  requestedLength: number
+}): TranscriptMediaRangeSlice {
+  const { baseDir, sha256, mimeType, offset, requestedLength } = input
+  // Path jail: assertSafeSha256 + mime→ext whitelist live inside this call.
+  const filePath = transcriptMediaAssetPath(baseDir, sha256, mimeType)
+  const totalBytes = fs.statSync(filePath).size
+  if (offset >= totalBytes) {
+    throw new TranscriptMediaRangeOutOfBoundsError(offset, totalBytes)
+  }
+  // Server-side hard cap wins over the client's requested length; also clamp to the
+  // remaining tail so we never read past EOF.
+  const effLength = Math.min(requestedLength, THREAD_MEDIA_CHUNK_MAX_BYTES, totalBytes - offset)
+  const buffer = readAssetSlice(filePath, offset, offset + effLength - 1)
+  return {
+    dataBase64: buffer.toString('base64'),
+    byteLength: buffer.length,
+    offset,
+    totalBytes
   }
 }

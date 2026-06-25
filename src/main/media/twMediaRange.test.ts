@@ -3,12 +3,15 @@ import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  THREAD_MEDIA_CHUNK_MAX_BYTES,
   TranscriptMediaAssetStore,
   transcriptMediaAssetPath
 } from '../services/TranscriptMediaAssetStore'
 import {
+  TranscriptMediaRangeOutOfBoundsError,
   parseTwMediaUrl,
   readAssetSlice,
+  readTranscriptMediaRangeSlice,
   resolveMediaRange,
   resolveTwMediaAsset,
   twMediaMimeForExt
@@ -133,5 +136,128 @@ describe('readAssetSlice', () => {
     fs.writeFileSync(file, Buffer.from('012'))
     // Beyond EOF: returning 3 bytes under a Content-Length of 10 would wedge <video>.
     expect(() => readAssetSlice(file, 0, 9)).toThrow(/short read/)
+  })
+})
+
+describe('readTranscriptMediaRangeSlice (chunked bridge mode)', () => {
+  // Write a sha-sharded asset under a tmp baseDir at the store's own layout.
+  function writeAsset(baseDir: string, sha256: string, mimeType: string, buffer: Buffer): void {
+    const target = transcriptMediaAssetPath(baseDir, sha256, mimeType)
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, buffer)
+  }
+
+  it('returns the correct slice bytes for a known buffer (+ echoes offset/totalBytes)', () => {
+    const root = makeRoot()
+    const body = Buffer.from('0123456789ABCDEF') // 16 bytes
+    writeAsset(root, VALID_SHA, 'audio/wav', body)
+    const slice = readTranscriptMediaRangeSlice({
+      baseDir: root,
+      sha256: VALID_SHA,
+      mimeType: 'audio/wav',
+      offset: 4,
+      requestedLength: 5
+    })
+    expect(Buffer.from(slice.dataBase64, 'base64').toString()).toBe('45678') // indices 4..8 inclusive
+    expect(slice.byteLength).toBe(5)
+    expect(slice.offset).toBe(4)
+    expect(slice.totalBytes).toBe(16)
+  })
+
+  it('reads the whole asset when requestedLength covers it (offset 0)', () => {
+    const root = makeRoot()
+    const body = Buffer.from('0123456789')
+    writeAsset(root, VALID_SHA, 'audio/wav', body)
+    const slice = readTranscriptMediaRangeSlice({
+      baseDir: root,
+      sha256: VALID_SHA,
+      mimeType: 'audio/wav',
+      offset: 0,
+      requestedLength: 10
+    })
+    expect(Buffer.from(slice.dataBase64, 'base64').equals(body)).toBe(true)
+    expect(slice.byteLength).toBe(10)
+    expect(slice.totalBytes).toBe(10)
+  })
+
+  it('HARD-clamps effLength to THREAD_MEDIA_CHUNK_MAX_BYTES regardless of requestedLength', () => {
+    const root = makeRoot()
+    // Asset larger than the per-chunk cap so the cap (not the tail) is the binding limit.
+    const total = THREAD_MEDIA_CHUNK_MAX_BYTES + 4096
+    const body = Buffer.alloc(total, 7)
+    writeAsset(root, VALID_SHA, 'audio/wav', body)
+    const slice = readTranscriptMediaRangeSlice({
+      baseDir: root,
+      sha256: VALID_SHA,
+      mimeType: 'audio/wav',
+      offset: 0,
+      requestedLength: total // client asks for the whole thing in one slice
+    })
+    // Server refuses to ship more than the cap in a single frame.
+    expect(slice.byteLength).toBe(THREAD_MEDIA_CHUNK_MAX_BYTES)
+    expect(slice.totalBytes).toBe(total)
+    expect(slice.offset).toBe(0)
+  })
+
+  it('clamps effLength to (totalBytes - offset) at the tail', () => {
+    const root = makeRoot()
+    const body = Buffer.alloc(100, 9)
+    writeAsset(root, VALID_SHA, 'audio/wav', body)
+    const slice = readTranscriptMediaRangeSlice({
+      baseDir: root,
+      sha256: VALID_SHA,
+      mimeType: 'audio/wav',
+      offset: 90,
+      requestedLength: THREAD_MEDIA_CHUNK_MAX_BYTES // far more than remains
+    })
+    expect(slice.byteLength).toBe(10) // only 10 bytes remain after offset 90
+    expect(slice.offset).toBe(90)
+    expect(slice.totalBytes).toBe(100)
+  })
+
+  it('throws TranscriptMediaRangeOutOfBoundsError when offset >= totalBytes', () => {
+    const root = makeRoot()
+    const body = Buffer.from('0123456789') // size 10
+    writeAsset(root, VALID_SHA, 'audio/wav', body)
+    expect(() =>
+      readTranscriptMediaRangeSlice({
+        baseDir: root,
+        sha256: VALID_SHA,
+        mimeType: 'audio/wav',
+        offset: 10, // == totalBytes → out of bounds
+        requestedLength: 1
+      })
+    ).toThrow(TranscriptMediaRangeOutOfBoundsError)
+    expect(() =>
+      readTranscriptMediaRangeSlice({
+        baseDir: root,
+        sha256: VALID_SHA,
+        mimeType: 'audio/wav',
+        offset: 999,
+        requestedLength: 1
+      })
+    ).toThrow(/out of bounds/)
+  })
+
+  it('rejects a hostile sha / unsupported mime via the asset-store path jail', () => {
+    const root = makeRoot()
+    expect(() =>
+      readTranscriptMediaRangeSlice({
+        baseDir: root,
+        sha256: '../../etc/passwd',
+        mimeType: 'audio/wav',
+        offset: 0,
+        requestedLength: 1
+      })
+    ).toThrow() // assertSafeSha256 rejects
+    expect(() =>
+      readTranscriptMediaRangeSlice({
+        baseDir: root,
+        sha256: VALID_SHA,
+        mimeType: 'application/x-evil',
+        offset: 0,
+        requestedLength: 1
+      })
+    ).toThrow() // mime→ext whitelist rejects
   })
 })

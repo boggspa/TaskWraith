@@ -696,6 +696,7 @@ import {
 } from './mcp/AudioToolExecutors'
 import { createNativeAudioEngine } from './mcp/AudioRenderEngine'
 import { registerTwMediaProtocol, TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
+import { readTranscriptMediaRangeSlice } from './media/twMediaRange'
 import { createFfmpegToolExecutors, isFfmpegMcpToolName } from './mcp/FfmpegToolExecutors'
 import { createVtToolExecutors, isVtMcpToolName } from './mcp/VtToolExecutors'
 import { ffmpegMissingError, resolveFfmpegBinaries } from './media/FfmpegResolver'
@@ -20228,6 +20229,47 @@ if (isGeminiMcpBridgeProcess) {
             const { mediaRef } = sourceRef
             if (mediaRef.status && mediaRef.status !== 'available') {
               return { ok: false, reason: `Transcript media is not available: ${mediaRef.status}` }
+            }
+            // CHUNKED/RANGE mode: both offset+length present (validator enforces
+            // both-or-neither + offset≥0/length≥1). Applies ONLY to sha-addressed
+            // sources (generated | tool_result). For workspace_path or no-range,
+            // fall through to the EXISTING whole-file behavior below.
+            const rangeMode = action.offset !== undefined && action.length !== undefined
+            if (
+              rangeMode &&
+              (mediaRef.source === 'generated' || mediaRef.source === 'tool_result') &&
+              mediaRef.sha256
+            ) {
+              try {
+                const slice = readTranscriptMediaRangeSlice({
+                  baseDir: join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR),
+                  sha256: mediaRef.sha256,
+                  mimeType: mediaRef.mimeType,
+                  offset: action.offset as number,
+                  requestedLength: action.length as number
+                })
+                return {
+                  ok: true,
+                  media: {
+                    id: media.id,
+                    rowId: row.id,
+                    threadId: chat.appChatId,
+                    name: media.name,
+                    source: media.source,
+                    mimeType: mediaRef.mimeType,
+                    dataBase64: slice.dataBase64,
+                    byteLength: slice.byteLength,
+                    offset: slice.offset,
+                    totalBytes: slice.totalBytes,
+                    variant: 'full'
+                  }
+                }
+              } catch (error) {
+                return {
+                  ok: false,
+                  reason: error instanceof Error ? error.message : String(error)
+                }
+              }
             }
             const full =
               mediaRef.source === 'generated' || mediaRef.source === 'tool_result'

@@ -188,6 +188,12 @@ export interface BridgeThreadMediaFetchAction extends BridgeActionMetadata {
   mediaId: string
   variant?: 'thumbnail' | 'full'
   maxBytes?: number
+  /** RANGE MODE (sha-addressed sources only): byte offset into the asset. Both
+   * `offset` and `length` must be present together — see `isThreadMediaFetch`. */
+  offset?: number
+  /** RANGE MODE: requested byte count for this slice (server hard-clamps to
+   * `THREAD_MEDIA_CHUNK_MAX_BYTES`). */
+  length?: number
 }
 
 export interface BridgeWorkspaceFileListAction extends BridgeActionMetadata {
@@ -1320,7 +1326,29 @@ function isThreadMediaFetch(v: Record<string, unknown>): boolean {
     v.mediaId.length <= BRIDGE_THREAD_ROW_ID_MAX_CHARS * 2 &&
     (v.variant === undefined || v.variant === 'thumbnail' || v.variant === 'full') &&
     (v.maxBytes === undefined ||
-      (typeof v.maxBytes === 'number' && Number.isInteger(v.maxBytes) && v.maxBytes > 0))
+      (typeof v.maxBytes === 'number' && Number.isInteger(v.maxBytes) && v.maxBytes > 0)) &&
+    // RANGE MODE = both offset+length present. If EITHER is present, BOTH must be
+    // present and valid (offset integer ≥ 0, length integer ≥ 1); otherwise reject.
+    // Neither present → whole-file mode (unchanged).
+    isThreadMediaRangeFields(v)
+  )
+}
+
+/** Both-or-neither range fields. Returns false when exactly one is present, or
+ * when either is present but out of bounds (non-integer / offset < 0 / length < 1).
+ * Returns true when both are absent (whole-file mode). */
+function isThreadMediaRangeFields(v: Record<string, unknown>): boolean {
+  const hasOffset = v.offset !== undefined
+  const hasLength = v.length !== undefined
+  if (!hasOffset && !hasLength) return true
+  if (!hasOffset || !hasLength) return false
+  return (
+    typeof v.offset === 'number' &&
+    Number.isInteger(v.offset) &&
+    v.offset >= 0 &&
+    typeof v.length === 'number' &&
+    Number.isInteger(v.length) &&
+    v.length >= 1
   )
 }
 
