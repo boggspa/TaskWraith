@@ -430,7 +430,12 @@ export function OllamaMemorySpendBlock({ entry }: { entry: OllamaMemorySpendTota
 export function ContextLengthsView() {
   // Fully static (curated catalog × the static context-window table), so build
   // once — the sidebar card re-renders on resize/expand and settings round-trips.
-  const groups = useMemo(() => buildModelContextLengthGroups(), [])
+  // Sidebar variant: include local Ollama models, omit Gemini (kept in the
+  // fuller Settings → Model Usage table) to keep the narrow panel focused.
+  const groups = useMemo(
+    () => buildModelContextLengthGroups({ includeOllama: true, excludeProviders: ['gemini'] }),
+    []
+  )
   return (
     <div className="model-usage-list model-usage-context-list">
       {groups.map((group) => (

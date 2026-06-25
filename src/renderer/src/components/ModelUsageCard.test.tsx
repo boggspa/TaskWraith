@@ -137,6 +137,9 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('model-usage-context-list')
     // A known 1M context window should appear in the table.
     expect(html).toContain('1.0M')
+    // Sidebar variant includes local Ollama models but omits Gemini.
+    expect(html).toContain('Ollama')
+    expect(html).not.toContain('Gemini')
     // Quota meter rows are hidden while the context view is active.
     expect(html).not.toContain('200 / 200 remaining')
   })

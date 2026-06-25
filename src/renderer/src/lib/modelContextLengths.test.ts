@@ -112,6 +112,35 @@ describe('buildModelContextLengthGroups', () => {
     expect(providerIds[providerIds.length - 1]).toBe('ollama')
   })
 
+  it('ollama group carries real model windows (qwen3:4b-instruct → 262k)', () => {
+    const groups = buildModelContextLengthGroups({ includeOllama: true })
+    const ollamaGroup = groups.find((g) => g.provider === 'ollama')
+    expect(ollamaGroup).toBeDefined()
+    const row = ollamaGroup!.models.find((m) => m.modelId === 'qwen3:4b-instruct')
+    expect(row).toBeDefined()
+    expect(row!.contextWindow).toBe(262_144)
+    expect(row!.formatted).toBe('262k')
+  })
+
+  it("{ excludeProviders: ['gemini'] }: drops the gemini group, keeps the rest", () => {
+    const groups = buildModelContextLengthGroups({ excludeProviders: ['gemini'] })
+    const providerIds = groups.map((g) => g.provider)
+    expect(providerIds).not.toContain('gemini')
+    expect(providerIds).toContain('codex')
+    expect(providerIds).toContain('claude')
+  })
+
+  it('sidebar config { includeOllama: true, excludeProviders: [gemini] }: ollama present, no gemini', () => {
+    const groups = buildModelContextLengthGroups({
+      includeOllama: true,
+      excludeProviders: ['gemini']
+    })
+    const providerIds = groups.map((g) => g.provider)
+    expect(providerIds).not.toContain('gemini')
+    expect(providerIds).toContain('ollama')
+    expect(providerIds[providerIds.length - 1]).toBe('ollama')
+  })
+
   it('every row.formatted is a non-empty string and every row.contextWindow > 0', () => {
     const groups = buildModelContextLengthGroups({ includeOllama: true })
     for (const group of groups) {

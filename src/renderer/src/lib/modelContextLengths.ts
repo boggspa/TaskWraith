@@ -10,7 +10,8 @@
  * Ollama is excluded by default: its conservative UI fallbacks (e.g. 256k for
  * qwen3.5:9b) are not vendor-official context windows but rather safe
  * upper-bounds chosen for the composer context meter. Pass
- * `{ includeOllama: true }` to include them anyway.
+ * `{ includeOllama: true }` to include them anyway. `excludeProviders` drops
+ * whole providers (e.g. the sidebar variant omits Gemini for space).
  *
  * Pure module — no React, no component imports.
  */
@@ -39,12 +40,13 @@ export interface ModelContextLengthGroup {
 }
 
 export function buildModelContextLengthGroups(
-  options?: { includeOllama?: boolean }
+  options?: { includeOllama?: boolean; excludeProviders?: ProviderId[] }
 ): ModelContextLengthGroup[] {
+  const excluded = new Set<ProviderId>(options?.excludeProviders ?? [])
   const order: ProviderId[] = [
     ...MODEL_USAGE_PROVIDER_ORDER,
     ...(options?.includeOllama ? (['ollama'] as const) : [])
-  ]
+  ].filter((provider) => !excluded.has(provider))
 
   const groups: ModelContextLengthGroup[] = []
   for (const provider of order) {

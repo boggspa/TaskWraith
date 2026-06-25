@@ -540,7 +540,7 @@ export function ProviderApiRatesSettingsTable() {
 }
 
 export function ModelContextLengthsSettingsTable() {
-  const groups = buildModelContextLengthGroups()
+  const groups = buildModelContextLengthGroups({ includeOllama: true })
   return (
     <section className="model-usage-table-section" aria-label="Model context lengths">
       <div className="model-usage-table-header">
@@ -585,7 +585,8 @@ export function ModelContextLengthsSettingsTable() {
       </div>
       <p className="model-usage-table-footnote">
         Exact vendor maximums — some models support a smaller default window (e.g. Claude&apos;s 1M
-        context is an opt-in beta). Local Ollama models vary by quantization and are not shown.
+        context is an opt-in beta). Local Ollama windows are conservative defaults and vary by
+        quantization.
       </p>
     </section>
   )

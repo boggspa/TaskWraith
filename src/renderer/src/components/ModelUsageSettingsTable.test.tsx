@@ -343,4 +343,11 @@ describe('ModelContextLengthsSettingsTable (SSR — static data, no effects)', (
     expect(html).not.toContain('~')
     expect(html).not.toContain('$')
   })
+
+  it('includes both Gemini and local Ollama models', () => {
+    const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
+    // Settings variant keeps the full provider set (unlike the sidebar).
+    expect(html).toContain('Gemini')
+    expect(html).toContain('Ollama')
+  })
 })
