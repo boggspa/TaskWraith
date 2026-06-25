@@ -88,6 +88,27 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'remove-guest-participant': ['chatId'],
   'save-chat': ['chatRecord'],
   'delete-chat': ['chatId'],
+  // Human collaboration (shared chat: host + up to 2 human collaborators). These
+  // MUST be registered — installIpcValidation throws "No IPC schema registered"
+  // for any unregistered ipcMain.handle channel, so their absence bricks the whole
+  // feature at runtime AND turns the invariant test (below) red. The object-shaped
+  // channels carry collaborator-DERIVED payloads; their handlers do deep field
+  // validation downstream (requireSafeChatId / requireBoundedText(8000) /
+  // requireNonEmptyString), so the coarse 'object' spec here matches the existing
+  // 'compose-run' / 'create-sub-thread' precedent and is the IPC-boundary shape gate.
+  'human-collaboration:create-share': ['object'],
+  'human-collaboration:list-shares': ['optionalString'],
+  'human-collaboration:revoke-share': ['nonEmptyString'],
+  'human-collaboration:consume-invite': ['object'],
+  'human-collaboration:append-comment': ['object'],
+  'human-collaboration:projection': ['object'],
+  'human-collaboration:promote-comment': ['object'],
+  'human-collaboration-runtime:begin-admission': ['object'],
+  'human-collaboration-runtime:confirm-sas': ['object'],
+  'human-collaboration-runtime:subscribe-projection': ['object'],
+  'human-collaboration-runtime:append-comment': ['object'],
+  'human-collaboration-runtime:receive-frame': ['object'],
+  'human-collaboration-runtime:disconnect': ['object'],
   'reap-abandoned-chats': ['optionalObject'],
   'clear-chats': ['optionalString'],
   'record-usage': ['object'],

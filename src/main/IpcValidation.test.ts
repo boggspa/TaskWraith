@@ -46,6 +46,30 @@ describe('IpcValidation', () => {
     expect(missing).toEqual([])
   })
 
+  // Explicit pin for the human-collaboration channels: the generic scan above
+  // already catches an unregistered channel, but these 13 shipped unregistered
+  // (feature DOA + red build), so we hard-pin them so a future drop is named.
+  it('registers every human-collaboration IPC channel', () => {
+    const collabChannels = [
+      'human-collaboration:create-share',
+      'human-collaboration:list-shares',
+      'human-collaboration:revoke-share',
+      'human-collaboration:consume-invite',
+      'human-collaboration:append-comment',
+      'human-collaboration:projection',
+      'human-collaboration:promote-comment',
+      'human-collaboration-runtime:begin-admission',
+      'human-collaboration-runtime:confirm-sas',
+      'human-collaboration-runtime:subscribe-projection',
+      'human-collaboration-runtime:append-comment',
+      'human-collaboration-runtime:receive-frame',
+      'human-collaboration-runtime:disconnect'
+    ]
+    for (const channel of collabChannels) {
+      expect(channel in IPC_ARGUMENT_SCHEMAS, `${channel} must be registered`).toBe(true)
+    }
+  })
+
   it('accepts valid run-agent payloads', () => {
     expect(() =>
       validateIpcArgs('run-agent', [
