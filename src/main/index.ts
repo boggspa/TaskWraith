@@ -671,6 +671,7 @@ import {
 import { createNativeAudioEngine } from './mcp/AudioRenderEngine'
 import { registerTwMediaProtocol, TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
 import { createFfmpegToolExecutors, isFfmpegMcpToolName } from './mcp/FfmpegToolExecutors'
+import { createVtToolExecutors, isVtMcpToolName } from './mcp/VtToolExecutors'
 import { ffmpegMissingError, resolveFfmpegBinaries } from './media/FfmpegResolver'
 import { createSemaphore } from './media/Semaphore'
 import {
@@ -1858,6 +1859,7 @@ const audioToolExecutors = createAudioToolExecutors({
 })
 const audioToolCallBudget = new ImageToolCallBudget()
 const ffmpegToolCallBudget = new ImageToolCallBudget()
+const vtToolCallBudget = new ImageToolCallBudget()
 // ffmpeg/ffprobe MCP tools (S1b). Run the USER-installed binary over a realpath-
 // jailed input with a FIXED argv (intents not flags, -protocol_whitelist file).
 // The runner is execFile with maxBuffer + timeout — argv array, no shell.
@@ -1946,6 +1948,40 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
     return result.ok ? { ok: true, sha256 } : { ok: false, reason: result.reason }
   },
   missingMessage: (which) => ffmpegMissingError(which)
+})
+
+// S2 — native VideoToolbox single-frame decode in the Swift bridge daemon (NO
+// ffmpeg needed; hardware-accelerated). The realpath jail mirrors the ffmpeg one
+// (TS owns the security boundary; the daemon just opens the path it's handed).
+// decodeFrame is the `video.decodeFrame` daemon RPC; the decoded PNG rides the
+// PROVEN image-block lane (createToolResultMediaRefs), so no trusted-AV channel.
+const vtToolExecutors = createVtToolExecutors({
+  jailInput: (sourcePath, ctx) => {
+    const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
+    if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
+    const validation = validateWorkspaceMediaPath({
+      workspacePath: chat.workspacePath,
+      candidatePath: sourcePath,
+      externalPathGrants: normalizeExternalPathGrants(
+        collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+      )
+    })
+    return validation.ok
+      ? { ok: true, realPath: validation.realPath }
+      : { ok: false, reason: validation.reason }
+  },
+  decodeFrame: async (params) => {
+    const daemon = bridgeDaemonRef
+    if (!daemon) throw new Error('video bridge daemon is not running')
+    return daemon.request<{
+      pngBase64: string
+      width: number
+      height: number
+      timestampSeconds: number
+      codec: string
+      usedHardware: boolean
+    }>('video.decodeFrame', params, { timeoutMs: 30_000 })
+  }
 })
 
 // image_generate egress. Endpoints are a FIXED allowlist (never agent-controlled),
@@ -15573,6 +15609,31 @@ async function executeGeminiMcpTool(
       } else {
         applyRichResult(
           await ffmpegToolExecutors.executeFfmpegTool(toolName, args, {
+            appChatId: context.appChatId,
+            appRunId: context.appRunId,
+            workspacePath: context.workspacePath
+          })
+        )
+      }
+    } else if (isVtMcpToolName(toolName)) {
+      // Native VideoToolbox decode (daemon-backed). Per-run flood budget like the
+      // ffmpeg/audio media tools (adversarial review): an agent looping decodes at
+      // many timestamps writes distinct content-addressed PNGs AND spins concurrent
+      // VTDecompressionSessions on the daemon's concurrent queue. video_thumbnail —
+      // the same decode-to-image op via ffmpeg — is budgeted; match it, not the
+      // gesture-gated desktop capture tools.
+      const vtRunKey = context.appRunId || context.appChatId || 'global'
+      if (!vtToolCallBudget.tryConsume(vtRunKey)) {
+        applyRichResult(
+          mcpStructuredJsonResult({
+            ok: false,
+            tool: toolName,
+            error: `media tool call limit reached (${DEFAULT_MAX_IMAGE_TOOL_CALLS_PER_RUN}) for this run.`
+          })
+        )
+      } else {
+        applyRichResult(
+          await vtToolExecutors.executeVtTool(toolName, args, {
             appChatId: context.appChatId,
             appRunId: context.appRunId,
             workspacePath: context.workspacePath

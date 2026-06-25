@@ -139,6 +139,10 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'appwatch_stop',
   'appwatch_latest_frame',
   'appwatch_frames',
+  // S2 — native VideoToolbox single-frame decode: a daemon-backed capture that
+  // returns an image (like appwatch_latest_frame / canvas_screenshot), no
+  // workspace mutation and no external binary → allowed under read-only.
+  'video_decode_frame',
   // creative reads / validation — the *import* / applescript / blender / midi
   // mutators stay workspace_write (caught by the default below)
   'creative_project_snapshot',

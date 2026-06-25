@@ -1,7 +1,3 @@
-import type { ChatRecord, RunQueueJob } from '../../../main/store/types'
-import { ACTIVE_RUN_QUEUE_STATUSES } from './chatBusyState'
-import type { ActiveRunContext } from './runRequestTypes'
-
 /**
  * Pure state-machine seam for the composer's "Steer" action.
  *
@@ -62,58 +58,6 @@ export const DEFAULT_STEER_CANCEL_TIMEOUT_MS = 5_000
 
 /** Default poll cadence for `activeRunsRef.current` cleanup, in ms. */
 export const DEFAULT_STEER_POLL_INTERVAL_MS = 80
-
-export interface ResolveSteerCancelTargetRunIdInput {
-  chatId: string
-  activeContext: ActiveRunContext | null
-  activeRunId: string | null
-  activeRunChatId: string | null
-  runQueueJobs?: Iterable<Pick<RunQueueJob, 'runId' | 'chatId' | 'status'>>
-  targetChat: ChatRecord | null | undefined
-}
-
-export function resolveSteerCancelTargetRunId(
-  input: ResolveSteerCancelTargetRunIdInput
-): string | undefined {
-  if (input.activeContext?.chatId === input.chatId && input.activeContext.runId) {
-    return input.activeContext.runId
-  }
-
-  if (input.activeRunChatId === input.chatId && input.activeRunId) {
-    return input.activeRunId
-  }
-
-  for (const job of input.runQueueJobs || []) {
-    if (job.chatId !== input.chatId || !job.status) continue
-    if (!ACTIVE_RUN_QUEUE_STATUSES.has(job.status)) continue
-    return job.runId
-  }
-
-  const runs = input.targetChat?.runs
-  if (!runs || runs.length === 0) return undefined
-
-  for (let i = runs.length - 1; i >= 0; i -= 1) {
-    const run = runs[i]
-    if (!run) continue
-    if (!run.endedAt && !isTerminalRunStatus(run.status)) {
-      return run.runId
-    }
-  }
-
-  return undefined
-}
-
-function isTerminalRunStatus(status?: string): boolean {
-  switch (status) {
-    case 'failed':
-    case 'cancelled':
-    case 'success':
-    case 'success_with_warnings':
-      return true
-    default:
-      return false
-  }
-}
 
 export interface BeginSteerInput {
   chatId: string

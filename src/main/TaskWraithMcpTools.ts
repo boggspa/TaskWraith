@@ -182,6 +182,11 @@ export const TASKWRAITH_MCP_TOOLS = [
   // Extract one PNG frame from a workspace video (S1b-2) via ffmpeg — rides the
   // proven image media spine and renders inline.
   'video_thumbnail',
+  // Decode a single video frame via the daemon's native VideoToolbox (no ffmpeg
+  // required; hardware-accelerated). Like video_thumbnail the frame is a PNG, so
+  // it rides the proven image media spine and renders inline. Reads a realpath-
+  // jailed workspace path; gated as a file change. See src/main/mcp/VtToolExecutors.ts.
+  'video_decode_frame',
   // Media PRODUCERS (S1b-3) — write a standalone output media file via ffmpeg
   // over a trusted non-image media_refs channel. `audio_extract` pulls the audio
   // track out of a video; `transcode_audio` re-encodes audio to wav/m4a/mp3;

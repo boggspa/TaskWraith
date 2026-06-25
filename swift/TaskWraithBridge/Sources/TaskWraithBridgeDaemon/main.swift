@@ -780,6 +780,59 @@ dispatcher.register("appwatch.frames") { params in
     return payload
 }
 
+// MARK: - VideoToolbox RPCs
+//
+// `video.decodeFrame` — native single-frame decode via an explicit
+// VTDecompressionSession (AVAssetReader feeds compressed samples, VT decodes,
+// we PNG-encode the chosen frame). Mirrors `attachedWindow.capture`: decode
+// params → runBlocking → map VideoFrameDecodeError to JSONRPCError → return the
+// result dict (`ok`, `pngBase64`, `width`, `height`, `timestampSeconds`,
+// `codec`, `usedHardware`). Bad/missing path or no video track → invalidParams;
+// decode failure / unsupported (HDR this slice) → internalError.
+
+struct VideoDecodeFrameParams: Decodable {
+    let inputPath: String
+    let timestampSeconds: Double?
+    let preferHardware: Bool?
+}
+
+dispatcher.register("video.decodeFrame") { params in
+    let parsed: VideoDecodeFrameParams
+    do {
+        parsed = try decodeParams(params, as: VideoDecodeFrameParams.self)
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid video.decodeFrame params: \(error.localizedDescription)"
+        )
+    }
+    do {
+        let frame = try runBlocking { @Sendable [
+            inputPath = parsed.inputPath,
+            ts = parsed.timestampSeconds ?? 0,
+            hw = parsed.preferHardware ?? true
+        ] in
+            try await VideoFrameDecoder.decodeFrame(
+                inputPath: inputPath,
+                timestampSeconds: ts,
+                preferHardware: hw
+            )
+        }
+        return frame.toJSONObject()
+    } catch let err as VideoFrameDecodeError {
+        switch err {
+        case .badInput(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.invalidParams, message: message)
+        case .decodeFailed(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: message)
+        }
+    } catch let err as JSONRPCError {
+        throw err
+    } catch {
+        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: error.localizedDescription)
+    }
+}
+
 // MARK: - Creative-app probe (Phase K1)
 //
 // `creative.runningApplications` — answers "is bundle id X currently running?"

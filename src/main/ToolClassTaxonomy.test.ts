@@ -19,6 +19,9 @@ describe('classifyTool', () => {
     expect(classifyTool('ask_user_question')).toBe('ui_elicitation')
     expect(classifyTool('ensemble_yield')).toBe('orchestration')
     expect(classifyTool('provider_usage_status')).toBe('orchestration')
+    // video_decode_frame = native daemon capture (like appwatch_latest_frame /
+    // canvas_screenshot), non-mutating → orchestration, allowed under read-only.
+    expect(classifyTool('video_decode_frame')).toBe('orchestration')
   })
 
   it('defaults unknown / mutating tools to workspace_write', () => {
@@ -113,6 +116,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
       'test_result_summary',
       'read_subthread_result',
       'creative_timeline_validate',
+      'video_decode_frame',
       'ensemble_yield',
       'ask_user_question'
     ]) {

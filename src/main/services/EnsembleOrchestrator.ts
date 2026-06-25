@@ -989,7 +989,6 @@ function createDiscordContextToolMessage(
  * round dispatch.
  */
 interface QueuedRoundEntry {
-  id: string
   prompt: string
   imageAttachments: EnsembleImageAttachment[]
   imageThumbnails?: EnsembleImageThumbnail[]
@@ -1124,53 +1123,8 @@ interface ActiveRoundRuntime {
 export class EnsembleOrchestrator {
   private roundsByChatId = new Map<string, ActiveRoundRuntime>()
   private runsByRunId = new Map<string, ActiveParticipantRun>()
-  private queuedPromptIdCounter = 0
 
   constructor(private deps: EnsembleOrchestratorDeps) {}
-
-  private nextQueuedPromptId(chatId: string): string {
-    this.queuedPromptIdCounter += 1
-    return `ensemble-queued-${chatId}-${this.queuedPromptIdCounter}`
-  }
-
-  private resolveQueuedPrompt(
-    runtime: ActiveRoundRuntime,
-    input: { index: number; textPrefix?: string; queuedPromptId?: string }
-  ):
-    | { selectedIndex: number; selected: QueuedRoundEntry }
-    | { error: string } {
-    const index = Number.isFinite(input.index) ? Math.floor(input.index) : -1
-    if (input.queuedPromptId) {
-      const selectedIndex = runtime.queuedPrompts.findIndex((entry) => entry.id === input.queuedPromptId)
-      if (selectedIndex < 0) {
-        return { error: 'Queued item no longer exists' }
-      }
-      const selected = runtime.queuedPrompts[selectedIndex]
-      if (!selected) {
-        return { error: 'Queued item no longer exists' }
-      }
-      if (input.textPrefix && !selected.prompt.startsWith(input.textPrefix)) {
-        return { error: 'Queue changed underneath — refresh and retry' }
-      }
-      if (index >= 0 && selectedIndex !== index) {
-        return { error: 'Queue changed underneath — refresh and retry' }
-      }
-      return { selectedIndex, selected }
-    }
-
-    if (index < 0 || index >= runtime.queuedPrompts.length) {
-      return { error: 'Queued item no longer exists' }
-    }
-
-    const selected = runtime.queuedPrompts[index]
-    if (!selected) {
-      return { error: 'Queued item no longer exists' }
-    }
-    if (input.textPrefix && !selected.prompt.startsWith(input.textPrefix)) {
-      return { error: 'Queue changed underneath — refresh and retry' }
-    }
-    return { selectedIndex: index, selected }
-  }
 
   private saveChatWithCheckpoint(chat: ChatRecord, reason: SessionCheckpointReason): void {
     this.deps.saveChat(chat)
@@ -1296,7 +1250,6 @@ export class EnsembleOrchestrator {
       // state below maps `e => e.prompt` to keep the back-compat
       // `string[]` shape that the renderer reads.
       existing.queuedPrompts.push({
-        id: this.nextQueuedPromptId(input.chatId),
         prompt: promptWithAttachmentReferences(prompt, imageAttachments),
         imageAttachments,
         ...(imageThumbnails.length ? { imageThumbnails } : {}),
@@ -1341,20 +1294,26 @@ export class EnsembleOrchestrator {
     index: number
     event: EnsembleDispatchEvent
     textPrefix?: string
-    queuedPromptId?: string
     concurrentMode?: boolean
   }): EnsembleQueuedSteerResult {
     const runtime = this.roundsByChatId.get(input.chatId)
     if (!runtime || runtime.cancelled) {
       return { status: 'ignored', error: 'No active Ensemble round' }
     }
-    const resolved = this.resolveQueuedPrompt(runtime, input)
-    if ('error' in resolved) {
-      return { status: 'ignored', error: resolved.error }
+    const index = Number.isFinite(input.index) ? Math.floor(input.index) : -1
+    if (index < 0 || index >= runtime.queuedPrompts.length) {
+      return { status: 'ignored', error: 'Queued item no longer exists' }
     }
-    const { selected, selectedIndex } = resolved
 
-    const remainingQueue = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== selectedIndex)
+    const selected = runtime.queuedPrompts[index]
+    if (!selected) {
+      return { status: 'ignored', error: 'Queued item no longer exists' }
+    }
+    if (input.textPrefix && !selected.prompt.startsWith(input.textPrefix)) {
+      return { status: 'ignored', error: 'Queue changed underneath — refresh and retry' }
+    }
+
+    const remainingQueue = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== index)
     void this.cancelRound(input.chatId, 'steered')
     const roundId = this.beginRound(
       input.chatId,
@@ -1381,19 +1340,25 @@ export class EnsembleOrchestrator {
     chatId: string
     index: number
     textPrefix?: string
-    queuedPromptId?: string
   }): EnsembleQueuedPromptMutationResult {
     const runtime = this.roundsByChatId.get(input.chatId)
     if (!runtime || runtime.cancelled) {
       return { ok: false, error: 'No active Ensemble round' }
     }
-    const resolved = this.resolveQueuedPrompt(runtime, input)
-    if ('error' in resolved) {
-      return { ok: false, error: resolved.error }
+    const index = Number.isFinite(input.index) ? Math.floor(input.index) : -1
+    if (index < 0 || index >= runtime.queuedPrompts.length) {
+      return { ok: false, error: 'Queued item no longer exists' }
     }
-    const { selected, selectedIndex } = resolved
 
-    runtime.queuedPrompts = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== selectedIndex)
+    const selected = runtime.queuedPrompts[index]
+    if (!selected) {
+      return { ok: false, error: 'Queued item no longer exists' }
+    }
+    if (input.textPrefix && !selected.prompt.startsWith(input.textPrefix)) {
+      return { ok: false, error: 'Queue changed underneath — refresh and retry' }
+    }
+
+    runtime.queuedPrompts = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== index)
     const nextQueuedPrompts = runtime.queuedPrompts.map((entry) => entry.prompt)
     this.updateChatRound(input.chatId, (round) =>
       round?.roundId === runtime.roundId
@@ -1533,11 +1498,7 @@ export class EnsembleOrchestrator {
     // (the `ensemble_continue` MCP tool schema doesn't accept
     // them), so the entry's `imageAttachments` is always empty.
     // Persisted shape mapped to `string[]` for renderer back-compat.
-    runtime.queuedPrompts.push({
-      id: this.nextQueuedPromptId(chatId),
-      prompt: trimmed,
-      imageAttachments: []
-    })
+    runtime.queuedPrompts.push({ prompt: trimmed, imageAttachments: [] })
     const nextQueuedPrompts = runtime.queuedPrompts.map((entry) => entry.prompt)
     this.updateChatRound(chatId, (round) =>
       round ? { ...round, queuedPrompts: nextQueuedPrompts } : round
@@ -2809,7 +2770,6 @@ export class EnsembleOrchestrator {
       // text references — known limitation, acceptable for
       // 1.0.5.
       queuedPrompts: (round.queuedPrompts || []).map((prompt) => ({
-        id: this.nextQueuedPromptId(wakeup.chatId),
         prompt,
         imageAttachments: []
       })),

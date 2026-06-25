@@ -166,6 +166,7 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   audio_analyze: 'Analyzed audio',
   video_probe: 'Probed media',
   video_thumbnail: 'Captured frame',
+  video_decode_frame: 'Decoded frame',
   audio_extract: 'Extracted audio',
   transcode_audio: 'Transcoded audio',
   transcode_video: 'Transcoded video',

@@ -8,7 +8,6 @@ import {
   IDLE_STEER_STATE,
   isActiveRunCleared,
   isSteerInFlight,
-  resolveSteerCancelTargetRunId,
   markSteerFailed,
   resetSteer,
   transitionToDispatching
@@ -33,99 +32,6 @@ describe('steerState', () => {
       expect(state.phase).toBe('cancelling')
       expect(state.startedAt).toBeGreaterThanOrEqual(before)
       expect(state.startedAt).toBeLessThanOrEqual(after)
-    })
-  })
-
-  describe('resolveSteerCancelTargetRunId', () => {
-    it('uses the active context runId first', () => {
-      const result = resolveSteerCancelTargetRunId({
-        chatId: 'chat-1',
-        activeContext: { chatId: 'chat-1', runId: 'active-context' } as any,
-        activeRunId: 'active-run-id',
-        activeRunChatId: 'chat-1',
-        runQueueJobs: [
-          {
-            id: 'queued-1',
-            runId: 'queued-run',
-            provider: 'codex',
-            status: 'active',
-            chatId: 'chat-1',
-            createdAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: '2026-01-01T00:00:00.000Z'
-          } as any
-        ],
-        targetChat: {
-          appChatId: 'chat-1',
-          runs: [{ runId: 'persisted-run', status: 'running' }]
-        } as any
-      })
-      expect(result).toBe('active-context')
-    })
-
-    it('falls back to activeRunIdRef when the chat matches and no active context exists', () => {
-      const result = resolveSteerCancelTargetRunId({
-        chatId: 'chat-1',
-        activeContext: null,
-        activeRunId: 'active-run-id',
-        activeRunChatId: 'chat-1',
-        targetChat: {
-          appChatId: 'chat-1',
-          runs: []
-        } as any
-      })
-      expect(result).toBe('active-run-id')
-    })
-
-    it('falls back to a non-terminal queue job for the same chat', () => {
-      const result = resolveSteerCancelTargetRunId({
-        chatId: 'chat-1',
-        activeContext: null,
-        activeRunId: null,
-        activeRunChatId: null,
-        runQueueJobs: [
-          {
-            id: 'queued-1',
-            runId: 'queued-active-run',
-            provider: 'codex',
-            status: 'queued',
-            chatId: 'chat-1',
-            createdAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: '2026-01-01T00:00:00.000Z'
-          } as any,
-          {
-            id: 'queued-2',
-            runId: 'queued-starting-run',
-            provider: 'codex',
-            status: 'starting',
-            chatId: 'chat-1',
-            createdAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: '2026-01-01T00:00:00.000Z'
-          } as any
-        ],
-        targetChat: {
-          appChatId: 'chat-1',
-          runs: [{ runId: 'persisted-run', status: 'running' }]
-        } as any
-      })
-      expect(result).toBe('queued-starting-run')
-    })
-
-    it('falls back to the most recent unfinished persisted run when needed', () => {
-      const result = resolveSteerCancelTargetRunId({
-        chatId: 'chat-1',
-        activeContext: null,
-        activeRunId: null,
-        activeRunChatId: null,
-        runQueueJobs: [],
-        targetChat: {
-          appChatId: 'chat-1',
-          runs: [
-            { runId: 'completed-run', status: 'completed', endedAt: '2026-01-01T00:00:00.000Z' },
-            { runId: 'running-run', status: 'running' }
-          ]
-        } as any
-      })
-      expect(result).toBe('running-run')
     })
   })
 

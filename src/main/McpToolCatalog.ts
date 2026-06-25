@@ -2350,6 +2350,24 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'video_decode_frame',
+      description:
+        "Decode a single frame from a video at a precise timestamp using the OS's built-in VideoToolbox " +
+        '(hardware-accelerated; works WITHOUT ffmpeg installed). Returns the frame as an image. Params: ' +
+        'inputPath (a video file inside the workspace), `timestampSeconds` (default 0), `preferHardware` ' +
+        '(default true). Reads a realpath-jailed workspace path; native (no external process), non-mutating, and read-only-safe.',
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          inputPath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to a video file.' },
+          timestampSeconds: { type: 'number', description: 'Timestamp in seconds to grab the frame (default 0).' },
+          preferHardware: { type: 'boolean', description: 'Prefer the hardware VideoToolbox decode path (default true).' }
+        },
+        required: ['inputPath']
+      }
+    },
+    {
       name: 'audio_extract',
       description:
         'Extract the audio track from a workspace VIDEO to a standalone audio file via ffmpeg. Params: ' +
