@@ -191,4 +191,64 @@ describe('HumanCollaborationStore', () => {
     const consumed = store.getShare(created.share.shareId)
     expect(consumed?.invites[0]?.consumedAt).toBe(1200)
   })
+
+  it('hasShareForChat is a cheap existence check', () => {
+    const store = new HumanCollaborationStore()
+    expect(store.hasShareForChat('chat-1')).toBe(false)
+    store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000 })
+    expect(store.hasShareForChat('chat-1')).toBe(true)
+    expect(store.hasShareForChat('chat-2')).toBe(false)
+  })
+
+  it('bounds the idempotency map under a flood of unique clientMessageIds', () => {
+    const store = new HumanCollaborationStore()
+    const created = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000 })
+    const { participant } = store.consumeInvite({
+      shareId: created.share.shareId,
+      inviteToken: created.inviteToken,
+      displayName: 'Alex',
+      publicKeyId: 'alex-key',
+      now: 1001
+    })
+    for (let i = 0; i < 600; i++) {
+      store.recordAppend({
+        shareId: created.share.shareId,
+        chatId: 'chat-1',
+        collaboratorId: participant.collaboratorId,
+        clientMessageId: `client-${i}`,
+        messageId: `message-${i}`
+      })
+    }
+    const share = store.getShare(created.share.shareId)
+    const keys = Object.keys(share?.idempotency || {})
+    expect(keys.length).toBeLessThanOrEqual(512)
+    // The oldest entries are evicted; the most recent survive (so legitimate
+    // in-flight retries still dedupe).
+    expect(keys).not.toContain(`${participant.collaboratorId}:client-0`)
+    expect(keys).toContain(`${participant.collaboratorId}:client-599`)
+  })
+
+  it('prunes consumed invites that are long past expiry on the next createShare', () => {
+    const store = new HumanCollaborationStore()
+    const first = store.createShare({
+      chatId: 'chat-1',
+      mode: 'comments',
+      now: 1000,
+      inviteTtlMs: 1000
+    })
+    store.consumeInvite({
+      shareId: first.share.shareId,
+      inviteToken: first.inviteToken,
+      displayName: 'Alex',
+      publicKeyId: 'alex-key',
+      now: 1500
+    })
+    // Far past expiry (2000) + the 24h retention grace → the consumed invite is
+    // dead and pruned when a new invite is minted on the same share.
+    const dayMs = 24 * 60 * 60 * 1000
+    store.createShare({ chatId: 'chat-1', mode: 'comments', now: 2000 + dayMs + 1 })
+    const share = store.getShare(first.share.shareId)
+    expect(share?.invites.length).toBe(1)
+    expect(share?.invites[0]?.consumedAt).toBeUndefined()
+  })
 })

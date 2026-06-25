@@ -59,6 +59,14 @@ export interface VerifyInviteResult {
 
 const DEFAULT_INVITE_TTL_MS = 10 * 60 * 1000
 const MAX_ACTIVE_COLLABORATORS = 2
+// Cap the per-share idempotency map so a stream of unique clientMessageIds from
+// an untrusted collaborator cannot grow it without bound and make every
+// subsequent whole-snapshot persist (and resident memory) climb. 512 vastly
+// exceeds any legitimate in-flight retry window for 2 collaborators.
+const MAX_IDEMPOTENCY_ENTRIES = 512
+// Keep a consumed invite for a grace window (so an in-flight admission isn't
+// lost), then it may be pruned at the next createShare.
+const CONSUMED_INVITE_RETENTION_MS = 24 * 60 * 60 * 1000
 
 export class HumanCollaborationStore {
   private memory: HumanCollaborationSnapshot = { shares: [] }
@@ -79,6 +87,15 @@ export class HumanCollaborationStore {
     return cloneShare(
       this.memory.shares.find((share) => share.chatId === chatId && share.enabled) || null
     )
+  }
+
+  /**
+   * Cheap existence check (no clone). The hot saveChat path uses this to skip
+   * the expensive listShares() deep-clone for the common case of a chat that
+   * has no share at all — see ChatService.preserveCollaboratorComments.
+   */
+  hasShareForChat(chatId: string): boolean {
+    return this.memory.shares.some((share) => share.chatId === chatId)
   }
 
   createShare(args: {
@@ -113,7 +130,10 @@ export class HumanCollaborationStore {
       createdAt: now,
       expiresAt: now + (args.inviteTtlMs ?? DEFAULT_INVITE_TTL_MS)
     }
-    share.invites = [...share.invites, invite]
+    // Prune invites that are both consumed AND well past expiry (createShare is
+    // the only place invites accrue), so the list can't grow without bound over
+    // a long-lived share. A fresh/unconsumed/in-grace invite is always kept.
+    share.invites = [...share.invites.filter((existingInvite) => !isDeadInvite(existingInvite, now)), invite]
 
     if (!existing) this.memory.shares.push(share)
     this.persist()
@@ -355,6 +375,15 @@ export class HumanCollaborationStore {
     const sequence = share.nextSequence
     share.nextSequence += 1
     share.idempotency[idempotencyKey(args.collaboratorId, args.clientMessageId)] = args.messageId
+    // Bound the idempotency map (string keys preserve insertion order, so
+    // slice(0, excess) drops the OLDEST). Prevents unbounded growth + a
+    // quadratic per-append persist cost under a flood of unique clientMessageIds.
+    const keys = Object.keys(share.idempotency)
+    if (keys.length > MAX_IDEMPOTENCY_ENTRIES) {
+      for (const stale of keys.slice(0, keys.length - MAX_IDEMPOTENCY_ENTRIES)) {
+        delete share.idempotency[stale]
+      }
+    }
     share.updatedAt = Date.now()
     this.persist()
     return sequence
@@ -385,6 +414,14 @@ export function hashInviteToken(token: string): string {
 
 function idempotencyKey(collaboratorId: string, clientMessageId: string): string {
   return `${collaboratorId}:${clientMessageId}`
+}
+
+// An invite is "dead" (safe to prune) once it has been consumed AND its expiry
+// is more than the retention grace in the past. Unconsumed invites are kept
+// until they expire and consumed-but-recent ones are kept through the grace.
+function isDeadInvite(invite: HumanCollaborationInvite, now: number): boolean {
+  if (typeof invite.consumedAt !== 'number') return false
+  return invite.expiresAt < now - CONSUMED_INVITE_RETENTION_MS
 }
 
 function normalizeDisplayName(value: string): string {

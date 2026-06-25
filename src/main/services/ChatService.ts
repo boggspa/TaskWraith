@@ -453,6 +453,11 @@ export class ChatService {
   private preserveCollaboratorComments(chat: ChatRecord): ChatRecord {
     const store = this.deps.humanCollaborationStore
     if (!store) return chat
+    // Cheap existence check FIRST: saveChat is on the hot path (every renderer
+    // save, including streaming) for EVERY chat; listShares() deep-clones the
+    // entire share store, so gate it on a no-clone .some() so unshared chats
+    // (the overwhelming majority) pay nothing.
+    if (!store.hasShareForChat(chat.appChatId)) return chat
     const shares = store.listShares(chat.appChatId)
     if (shares.length === 0) return chat
     const shareIds = new Set(shares.map((share) => share.shareId))
