@@ -303,13 +303,24 @@ struct KeychainIdentitySeedStore: IdentitySeedStore {
         switch readSeed(group: accessGroup) {
         case .ok(let seed):
             return seed
-        case .corrupt(let size):
-            throw IdentitySeedStoreError.readFailed(
-                "corrupt shared Keychain record (\(size) bytes)")
-        case .error(let status):
-            throw IdentitySeedStoreError.readFailed("Keychain read failed (\(status))")
         case .missing:
             break
+        case .corrupt, .error:
+            // The shared access group is NOT a usable identity source, so do not
+            // let it brick the device. `.error` is typically -34018
+            // errSecMissingEntitlement: this build's signing lacks the
+            // `…companion.shared` Keychain-Sharing entitlement because that
+            // capability was never provisioned on the Apple Developer portal (the
+            // NSE / App-Group "activation"). `.corrupt` is a bad shared copy.
+            // Either way, fall back to the app's OWN default group, which is
+            // always readable and holds the pinned seed — the shared copy is only
+            // ever a convenience mirror for the Notification Service Extension,
+            // never the source of truth. (Field incident 2026-06-25: this read
+            // threw on -34018 and stranded both paired devices on the "Device
+            // identity unavailable" screen; reinstall couldn't help because
+            // Keychain items survive app deletion.) A genuinely locked device
+            // re-fails the default read below and still surfaces the recovery UI.
+            return try loadOrCreateLegacy()
         }
         // A nil group makes SecItem search ALL the app's access groups, so this
         // finds a legacy seed in the app's default group.

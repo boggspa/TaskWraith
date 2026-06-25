@@ -106,6 +106,41 @@ final class TaskWraithAppLifecycleTests: XCTestCase {
         XCTAssertNil(keychain.slots[FakeGroupKeychainSeedAccess.defaultSlot]) // not the default
         XCTAssertEqual(try store.loadOrCreateSeed(), first) // stable across reads
     }
+
+    // ── -34018 resilience (field incident 2026-06-25) ─────────────────────────
+    // When Keychain Sharing for the shared group isn't provisioned, reading it
+    // returns errSecMissingEntitlement (-34018). That must NOT brick the device
+    // identity (it stranded paired devices on "Device identity unavailable" and
+    // reinstall couldn't help — Keychain survives app deletion). The read falls
+    // back to the always-readable default group instead of throwing.
+
+    func testSharedGroupReadEntitlementErrorFallsBackToLegacySeed() throws {
+        let keychain = FakeGroupKeychainSeedAccess()
+        let group = "8CZML8FK2D.com.taskwraith.companion.shared"
+        let legacy = Data(repeating: 0xCD, count: 32)
+        keychain.slots[FakeGroupKeychainSeedAccess.defaultSlot] = legacy
+        keychain.groupErrors[group] = -34018 // errSecMissingEntitlement
+        let store = KeychainIdentitySeedStore(
+            account: "acct", accessGroup: group, keychain: keychain)
+
+        // Must NOT throw — the pinned identity is recovered from the default group.
+        XCTAssertEqual(try store.loadOrCreateSeed(), legacy)
+    }
+
+    func testSharedGroupReadEntitlementErrorWithNoLegacyMintsIntoDefault() throws {
+        let keychain = FakeGroupKeychainSeedAccess()
+        let group = "8CZML8FK2D.com.taskwraith.companion.shared"
+        keychain.groupErrors[group] = -34018
+        let store = KeychainIdentitySeedStore(
+            account: "acct", accessGroup: group, keychain: keychain)
+
+        let seed = try store.loadOrCreateSeed()
+        XCTAssertEqual(seed.count, 32)
+        // Minted into the accessible default group, never the unreadable shared one.
+        XCTAssertEqual(keychain.slots[FakeGroupKeychainSeedAccess.defaultSlot], seed)
+        XCTAssertNil(keychain.slots[group])
+        XCTAssertEqual(try store.loadOrCreateSeed(), seed) // stable across reads
+    }
 }
 
 private final class FakeKeychainSeedAccess: KeychainSeedAccessing, @unchecked Sendable {
@@ -137,12 +172,18 @@ private final class FakeKeychainSeedAccess: KeychainSeedAccessing, @unchecked Se
 private final class FakeGroupKeychainSeedAccess: KeychainSeedAccessing, @unchecked Sendable {
     static let defaultSlot = "__default__"
     var slots: [String: Data] = [:]
+    /// Per-group hard errors (e.g. -34018 errSecMissingEntitlement) returned for
+    /// queries/adds that name that access group — models a group the app's
+    /// entitlements don't authorize. A group-less query is unaffected (SecItem
+    /// only searches the groups the app IS entitled to).
+    var groupErrors: [String: OSStatus] = [:]
 
     func copyMatching(
         _ query: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?
     ) -> OSStatus {
         let q = query as NSDictionary
         if let group = q[kSecAttrAccessGroup as String] as? String {
+            if let err = groupErrors[group] { return err }
             guard let data = slots[group] else { return errSecItemNotFound }
             result?.pointee = data as CFData
             return errSecSuccess
@@ -158,6 +199,7 @@ private final class FakeGroupKeychainSeedAccess: KeychainSeedAccessing, @uncheck
         let q = query as NSDictionary
         guard let data = q[kSecValueData as String] as? Data else { return errSecParam }
         let group = (q[kSecAttrAccessGroup as String] as? String) ?? Self.defaultSlot
+        if let err = groupErrors[group] { return err }
         if slots[group] != nil { return errSecDuplicateItem }
         slots[group] = data
         return errSecSuccess
