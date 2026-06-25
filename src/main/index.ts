@@ -17130,14 +17130,25 @@ async function executeGeminiMcpTool(
     // transcript attachment. The `content` image blocks above go to the MODEL
     // only — without this `media_refs` line even canvas_screenshot is invisible
     // in the transcript. createToolResultMediaRefs magic-byte-sniffs and rejects
-    // SVG, so the visible lane stays raster-only. Codex renders transcript media
-    // from its own app-server stream (emitMcpToolTranscriptEvent is a no-op for
-    // it), so guard the same way and leave codex MCP-image visibility to a
-    // follow-up rather than double-emit down the wrong channel.
+    // SVG, so the visible lane stays raster-only.
+    //
+    // Emitted for EVERY provider, codex included. A codex MCP-tool image has NO
+    // other path to the transcript: codex's notification-stream emitter
+    // (emitCodexProviderMediaRefs) fires ONLY for `agentMessage` items, whereas
+    // its MCP tool RESULTS arrive as `mcpToolCall` items routed through
+    // codexToolResultFromItem — which never reaches that emitter and never
+    // produces a media_refs line (the image only survives there JSON-stringified
+    // into the tool_result text). So this is the keystone, not a double-emit:
+    // the two lanes are disjoint by codex item type, and even a same-bytes
+    // coincidence collapses on the renderer's sha256 dedup
+    // (mergeTranscriptMediaRefs). This mirrors the CLI notification lane, where
+    // emitCliProviderMediaRefs likewise early-returns on tool-result-like events
+    // and defers tool images to this seam. (Distinct from emitMcpToolTranscriptEvent,
+    // which IS a codex no-op — that is the tool TIMELINE, not the image attachment.)
     const resultImageBlocks = (finalRichResult?.content ?? []).filter(
       (block) => block.type === 'image'
     )
-    if (resultImageBlocks.length > 0 && context.sender && parentProvider !== 'codex') {
+    if (resultImageBlocks.length > 0 && context.sender) {
       const mediaRefs = createToolResultMediaRefs({
         messageId: context.appRunId || `${parentProvider}-mcp-${toolName}`,
         runId: context.appRunId || undefined,
