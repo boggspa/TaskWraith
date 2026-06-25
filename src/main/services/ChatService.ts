@@ -436,7 +436,17 @@ export class ChatService {
   }
 
   deleteChat(chatId: string): void {
-    this.deps.appStore.deleteChat(requireSafeChatId(chatId, 'Chat id'))
+    const id = requireSafeChatId(chatId, 'Chat id')
+    // Settle any active shares first so deleting a shared chat actually ends the
+    // share (revocation bites on the collaborator's next inbound action) instead
+    // of leaving an orphaned enabled share record pointing at a missing chat.
+    const store = this.deps.humanCollaborationStore
+    if (store && store.hasShareForChat(id)) {
+      for (const share of store.listShares(id)) {
+        if (share.enabled) store.revokeShare(share.shareId)
+      }
+    }
+    this.deps.appStore.deleteChat(id)
   }
 
   clearChats(workspaceId?: string): void {

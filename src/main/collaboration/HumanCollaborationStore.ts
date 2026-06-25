@@ -424,11 +424,38 @@ function isDeadInvite(invite: HumanCollaborationInvite, now: number): boolean {
   return invite.expiresAt < now - CONSUMED_INVITE_RETENTION_MS
 }
 
+// Names a collaborator must not present as their own — the renderer/transcript
+// host + assistant labels ("You", "Assistant", "Host") and the provider/system
+// identities. Matched after collapsing to lowercase alphanumerics so affix
+// variants ("the Host" -> "thehost", "Assistant " -> "assistant") are caught,
+// while equality-after-stripping (not substring) keeps legit names like
+// "Claudia"/"Yousef" untouched.
+const RESERVED_DISPLAY_NAMES = new Set([
+  'host',
+  'thehost',
+  'system',
+  'guest',
+  'remote',
+  'you',
+  'user',
+  'assistant',
+  'bossman',
+  'taskwraith',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'gemini'
+])
+
 function normalizeDisplayName(value: string): string {
   const trimmed = typeof value === 'string' ? value.trim() : ''
   const safe = trimmed.replace(/[\r\n\t]/g, ' ').replace(/\s+/g, ' ').slice(0, 80)
   if (!safe) return 'Collaborator'
-  if (/^(host|system|guest|remote|codex|claude|kimi|grok|cursor|ollama|gemini)$/i.test(safe)) {
+  const collapsed = safe.toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (RESERVED_DISPLAY_NAMES.has(collapsed)) {
     return `${safe} (collaborator)`
   }
   return safe

@@ -192,6 +192,27 @@ describe('HumanCollaborationStore', () => {
     expect(consumed?.invites[0]?.consumedAt).toBe(1200)
   })
 
+  it('blocks display names that impersonate the host/assistant/providers', () => {
+    const store = new HumanCollaborationStore()
+    const admit = (displayName: string, publicKeyId: string): string => {
+      const created = store.createShare({ chatId: `c-${publicKeyId}`, mode: 'comments', now: 1000 })
+      return store.consumeInvite({
+        shareId: created.share.shareId,
+        inviteToken: created.inviteToken,
+        displayName,
+        publicKeyId,
+        now: 1001
+      }).participant.displayName
+    }
+    expect(admit('You', 'k1')).toBe('You (collaborator)')
+    expect(admit('assistant', 'k2')).toBe('assistant (collaborator)')
+    expect(admit('the Host', 'k3')).toBe('the Host (collaborator)')
+    expect(admit('Claude', 'k4')).toBe('Claude (collaborator)')
+    // Legitimate names that merely contain a reserved token are untouched.
+    expect(admit('Claudia', 'k5')).toBe('Claudia')
+    expect(admit('Yousef', 'k6')).toBe('Yousef')
+  })
+
   it('hasShareForChat is a cheap existence check', () => {
     const store = new HumanCollaborationStore()
     expect(store.hasShareForChat('chat-1')).toBe(false)

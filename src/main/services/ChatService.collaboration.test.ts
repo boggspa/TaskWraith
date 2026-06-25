@@ -192,4 +192,16 @@ describe('ChatService collaborator comments', () => {
       promotedBy: 'host'
     })
   })
+
+  it('revokes active shares when the chat is deleted', () => {
+    const { service, store, collaboration } = harness()
+    const { shareId } = admitted(service)
+    expect(collaboration.getShare(shareId)?.enabled).toBe(true)
+
+    service.deleteChat('chat-1')
+
+    expect(store.deleteChat).toHaveBeenCalledWith('chat-1')
+    expect(collaboration.getShare(shareId)?.enabled).toBe(false)
+    expect(collaboration.listShares('chat-1').some((share) => share.enabled)).toBe(false)
+  })
 })
