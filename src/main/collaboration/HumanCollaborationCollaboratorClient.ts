@@ -58,6 +58,9 @@ export interface CollaboratorAdmissionInput {
   inviteToken: string
   displayName: string
   shareMode: 'readOnly' | 'comments'
+  /** Optional host identity pubkey from the invite; if set it must match the
+   * key the host presents (Crypto-F2 defense-in-depth on top of the SAS). */
+  expectedHostIdentityPubKeyB64?: string
 }
 
 export interface HumanCollaborationCollaboratorClientOptions {
@@ -90,6 +93,10 @@ export class HumanCollaborationCollaboratorClient {
   private nextOutboundSeq = 1
   private lastInboundSeq = 0
   private disposed = false
+  // Captured by beginAdmission; consumed by confirmAdmission once the human has
+  // compared the SAS out of band (L6-2). Keys are already derived at begin, but
+  // we do NOT send the confirm — and thus never establish — until the gate fires.
+  private pendingConfirm: { handshakeId: string; confirmCode: string; sigB64: string } | null = null
 
   constructor(options: HumanCollaborationCollaboratorClientOptions) {
     this.opts = options
@@ -123,8 +130,13 @@ export class HumanCollaborationCollaboratorClient {
     )
   }
 
-  /** Drive the full admission handshake: begin → SAS surface → confirm. */
-  async admit(input: CollaboratorAdmissionInput): Promise<HumanCollaborationConfirmSasResult> {
+  /**
+   * Phase 1: begin admission, reconstruct + verify the transcript, surface the
+   * locally-computed 6-digit SAS (via onSasCode), derive the session keys, and
+   * sign — then HOLD. The session is NOT established yet; the human must compare
+   * the SAS out of band and call confirmAdmission() to proceed (L6-2).
+   */
+  async beginAdmission(input: CollaboratorAdmissionInput): Promise<{ confirmCode: string }> {
     const ephemeral = generateEphemeralKeyPair()
     const nonce = randomBytes(16)
     const collaboratorIdentityPubKeyB64 = b64.encode(exportRawEd25519PublicKey(this.identity.publicKey))
@@ -141,10 +153,6 @@ export class HumanCollaborationCollaboratorClient {
       collaboratorNonceB64
     })) as HumanCollaborationBeginHandshakeResult
 
-    // Reconstruct the transcript INDEPENDENTLY from our own inputs + the host's
-    // public handshake reply. A MITM that swapped any host key/nonce/ephemeral
-    // yields a different transcript → a different 6-digit code → the humans
-    // catch it on the out-of-band compare.
     const context: HumanCollaborationHandshakeContext = {
       protocol: HUMAN_COLLABORATION_PROTOCOL,
       mode: 'admission',
@@ -163,40 +171,59 @@ export class HumanCollaborationCollaboratorClient {
       collaboratorNonceB64
     }
     const transcriptHash = computeHumanCollaborationTranscriptHash(context)
-    // Integrity: our reconstructed transcript must match the host's claimed hash.
     if (!transcriptHash.equals(b64.decode(begin.transcriptHashB64))) {
       throw new Error('Collaboration transcript mismatch — refusing to confirm.')
     }
-    // Verify the host's signature over the transcript with the host identity key
-    // it presented (the SAS compare is what binds that key to the real host).
     const hostIdentity = importRawEd25519PublicKey(b64.decode(begin.hostIdentityPubKeyB64))
     if (!verifyEd25519(hostIdentity, transcriptHash, b64.decode(begin.hostTranscriptSigB64))) {
       throw new Error('Host transcript signature invalid — refusing to confirm.')
     }
+    // Optional out-of-band host-key pin (Crypto-F2): if the invite carried the
+    // host identity key, it MUST match the one the host just presented.
+    if (input.expectedHostIdentityPubKeyB64 && input.expectedHostIdentityPubKeyB64 !== begin.hostIdentityPubKeyB64) {
+      throw new Error('Host identity does not match the invite — refusing to confirm.')
+    }
 
     const localCode = humanCollaborationConfirmCode(context)
-    this.opts.onSasCode?.(localCode)
-
-    // Derive the symmetric session keys (ECDH is symmetric; the salt concatenates
-    // both nonces in the same host-first order on both ends).
     this.sessionKeys = deriveHumanCollaborationSessionKeys({
       hostEphemeralPrivate: ephemeral.privateKey,
       collaboratorEphemeralPublic: importRawX25519PublicKey(b64.decode(begin.hostEphemeralPubKeyB64)),
       hostNonce: b64.decode(begin.hostNonceB64),
       collaboratorNonce: nonce
     })
-
-    const collaboratorTranscriptSigB64 = b64.encode(signEd25519(this.identity.privateKey, transcriptHash))
-    const confirm = (await this.request('confirm', {
+    this.pendingConfirm = {
       handshakeId: begin.handshakeId,
       confirmCode: localCode,
-      collaboratorTranscriptSigB64
-    })) as HumanCollaborationConfirmSasResult
+      sigB64: b64.encode(signEd25519(this.identity.privateKey, transcriptHash))
+    }
+    this.opts.onSasCode?.(localCode)
+    return { confirmCode: localCode }
+  }
 
+  /**
+   * Phase 2: the human compared the SAS and accepted — send the confirm and
+   * establish the session. Throws if beginAdmission hasn't run.
+   */
+  async confirmAdmission(): Promise<HumanCollaborationConfirmSasResult> {
+    const pending = this.pendingConfirm
+    if (!pending) throw new Error('No pending admission to confirm.')
+    const confirm = (await this.request('confirm', {
+      handshakeId: pending.handshakeId,
+      confirmCode: pending.confirmCode,
+      collaboratorTranscriptSigB64: pending.sigB64
+    })) as HumanCollaborationConfirmSasResult
+    this.pendingConfirm = null
     this.sessionId = confirm.sessionId
     this.opts.onEstablished?.({ sessionId: confirm.sessionId, collaboratorId: confirm.collaboratorId })
     return confirm
   }
+
+  /** Convenience: begin + immediately confirm (no human gate; used in tests). */
+  async admit(input: CollaboratorAdmissionInput): Promise<HumanCollaborationConfirmSasResult> {
+    await this.beginAdmission(input)
+    return this.confirmAdmission()
+  }
+
 
   /** Subscribe to live projection updates (host pushes sealed projection frames). */
   subscribe(): void {

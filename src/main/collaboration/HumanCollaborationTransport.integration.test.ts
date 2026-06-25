@@ -164,6 +164,55 @@ describe('human collaboration transport (loopback)', () => {
     hostTransport.dispose()
   })
 
+  it('two-phase admit holds at the SAS until confirmAdmission is called', async () => {
+    const relay = makeInMemoryRelay()
+    const chat = makeChat()
+    const store = new HumanCollaborationStore()
+    const created = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 60_000 })
+
+    const hostTransport = new HumanCollaborationHostTransport({ socketFactory: relay })
+    const runtime = new HumanCollaborationRuntime<HumanShareProjection, { ok: true }>({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      buildProjection: (req) => buildHumanShareProjection(chat, req.share),
+      appendComment: vi.fn().mockReturnValue({ ok: true }),
+      publishEncryptedProjection: (sessionId, frame) => hostTransport.deliver(sessionId, frame),
+      now: () => 1000
+    })
+    hostTransport.attachRuntime(runtime)
+    hostTransport.openRoom('ws://127.0.0.1:0', 'room-gate')
+
+    let sas = ''
+    const client = new HumanCollaborationCollaboratorClient({
+      socketFactory: relay,
+      now: () => 1000,
+      onSasCode: (code) => {
+        sas = code
+      }
+    })
+    client.connect('ws://127.0.0.1:0', 'room-gate')
+
+    const begun = await client.beginAdmission({
+      shareId: created.share.shareId,
+      chatId: 'chat-1',
+      inviteToken: created.inviteToken,
+      displayName: 'Alex',
+      shareMode: 'comments'
+    })
+    // SAS surfaced, but the session is NOT yet established (no confirm sent).
+    expect(begun.confirmCode).toMatch(/^\d{6}$/)
+    expect(sas).toBe(begun.confirmCode)
+    expect(client.isEstablished).toBe(false)
+
+    // Human compared the codes and accepted → confirm establishes the session.
+    const confirmed = await client.confirmAdmission()
+    expect(confirmed.sessionId).toBeTruthy()
+    expect(client.isEstablished).toBe(true)
+
+    client.dispose()
+    hostTransport.dispose()
+  })
+
   it('rejects a collaborator presenting a bad invite token', async () => {
     const relay = makeInMemoryRelay()
     const chat = makeChat()
