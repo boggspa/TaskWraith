@@ -2361,36 +2361,77 @@ struct ThreadRowView: View, Equatable {
 
         @ViewBuilder
         private func mediaTile(_ item: RemoteThreadSnapshot.Row.Media) -> some View {
-            let canFetch = item.status == nil || item.status == "available"
+            // TODO: real AV playback = deferred S6. Audio/video tiles render a
+            // poster + kind badge + duration but are NON-interactive (the
+            // threadMediaFetch path only yields a UIImage → "Preview unavailable"
+            // for AV). Only images are tappable/fetchable until real playback ships.
+            let isImage = item.kind == "image"
+            let statusOk = item.status == nil || item.status == "available"
+            let canFetch = isImage && statusOk
             let isFetching = fetchingMediaId == item.id
             Button {
                 startFetch(item)
             } label: {
-                ZStack(alignment: .bottomTrailing) {
-                    mediaThumbnail(item)
-                    if isFetching {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.black.opacity(0.34))
-                            ProgressView()
-                                .progressViewStyle(.circular)
-                                .tint(.white)
+                ZStack(alignment: .topLeading) {
+                    ZStack(alignment: .bottomTrailing) {
+                        mediaThumbnail(item)
+                        if isFetching {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.black.opacity(0.34))
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .tint(.white)
+                            }
+                        } else if canFetch {
+                            Image(systemName: "magnifyingglass")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(5)
+                                .background(Color.black.opacity(0.55), in: Circle())
+                                .padding(6)
+                        } else if !isImage {
+                            // AV affordance — playback is deferred, so signal it instead
+                            // of offering a magnifier that opens a broken image preview.
+                            Text("Playback coming soon")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(Color.black.opacity(0.55), in: Capsule())
+                                .padding(6)
+                        } else if let status = item.status, !status.isEmpty {
+                            Text(statusLabel(status))
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(Color.black.opacity(0.55), in: Capsule())
+                                .padding(6)
                         }
-                    } else if canFetch {
-                        Image(systemName: "magnifyingglass")
+                    }
+                    if let badge = kindBadgeSymbol(item.kind) {
+                        Image(systemName: badge)
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(.white)
                             .padding(5)
                             .background(Color.black.opacity(0.55), in: Circle())
                             .padding(6)
-                    } else if let status = item.status, !status.isEmpty {
-                        Text(statusLabel(status))
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 4)
-                            .background(Color.black.opacity(0.55), in: Capsule())
-                            .padding(6)
+                    }
+                    if let duration = durationLabel(item.durationMs) {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                Text(duration)
+                                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(Color.black.opacity(0.6), in: Capsule())
+                            }
+                        }
+                        .padding(6)
                     }
                 }
                 .frame(width: 132, height: 132)
@@ -2399,6 +2440,22 @@ struct ThreadRowView: View, Equatable {
             .buttonStyle(.plain)
             .disabled(!canFetch || fetchingMediaId != nil)
             .accessibilityLabel(item.alt ?? item.caption ?? item.name)
+        }
+
+        /// SF Symbol overlaid top-leading to mark AV tiles distinct from images.
+        private func kindBadgeSymbol(_ kind: String) -> String? {
+            switch kind {
+            case "audio": return "waveform"
+            case "video": return "film"
+            default: return nil
+            }
+        }
+
+        /// Compact mm:ss from a millisecond duration; nil when absent/non-positive.
+        private func durationLabel(_ durationMs: Int?) -> String? {
+            guard let durationMs, durationMs > 0 else { return nil }
+            let totalSeconds = durationMs / 1000
+            return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
         }
 
         @ViewBuilder
@@ -2415,7 +2472,7 @@ struct ThreadRowView: View, Equatable {
                     )
             } else {
                 VStack(spacing: 7) {
-                    Image(systemName: "photo")
+                    Image(systemName: placeholderSymbol(item.kind))
                         .font(.title2.weight(.semibold))
                     Text(item.name)
                         .font(.caption2.weight(.semibold))
@@ -2433,7 +2490,20 @@ struct ThreadRowView: View, Equatable {
             }
         }
 
+        /// Kind-appropriate placeholder glyph when no poster thumbnail is present.
+        private func placeholderSymbol(_ kind: String) -> String {
+            switch kind {
+            case "audio": return "waveform"
+            case "video": return "film"
+            default: return "photo"
+            }
+        }
+
         private func startFetch(_ item: RemoteThreadSnapshot.Row.Media) {
+            // Defensive: only images are fetchable today. AV tiles are gated
+            // non-interactive at the Button (`canFetch`), but guard here too so a
+            // stray invocation can never open the image-only "Preview unavailable".
+            guard item.kind == "image" else { return }
             guard fetchingMediaId == nil else { return }
             fetchingMediaId = item.id
             errorText = nil

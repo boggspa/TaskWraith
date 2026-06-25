@@ -465,6 +465,10 @@ export interface RemoteThreadRowMedia {
   width?: number
   height?: number
   byteLength?: number
+  /** Duration in ms for audio/video refs — projected so iOS can render an mm:ss label. */
+  durationMs?: number
+  /** Codec descriptor for AV refs, e.g. "h264,aac" (informational). */
+  codecs?: string
   status?: TranscriptMediaStatus
   thumbnail?: TranscriptMediaThumbnail
 }
@@ -1148,12 +1152,16 @@ function buildRowMedia(metadata: Record<string, unknown> | undefined): RemoteThr
     const width = positiveNumber(record.width)
     const height = positiveNumber(record.height)
     const byteLength = positiveNumber(record.byteLength)
+    const durationMs = positiveNumber(record.durationMs)
+    const codecs = typeof record.codecs === 'string' ? record.codecs.trim().slice(0, 40) : ''
     const thumbnail = validRemoteThumbnail(record.thumbnail)
     if (alt) item.alt = alt
     if (caption) item.caption = caption
     if (width !== undefined) item.width = width
     if (height !== undefined) item.height = height
     if (byteLength !== undefined) item.byteLength = byteLength
+    if (durationMs !== undefined) item.durationMs = durationMs
+    if (codecs) item.codecs = codecs
     if (thumbnail) item.thumbnail = thumbnail
     media.push(item)
   }

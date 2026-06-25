@@ -1115,6 +1115,10 @@ public struct RemoteThreadSnapshot: Codable, Sendable {
             public let width: Int?
             public let height: Int?
             public let byteLength: Int?
+            /// Duration in ms for audio/video refs — drives the mm:ss tile label.
+            public let durationMs: Int?
+            /// Codec descriptor for AV refs (informational).
+            public let codecs: String?
             public let status: String?
             public let thumbnail: ImageThumbnail?
         }
