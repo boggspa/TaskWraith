@@ -1,0 +1,175 @@
+/* Collaborator join modal + host admission banner (human collaboration L5-2/L6-2).
+   The modal shell reuses .creative-approval-backdrop / .creative-approval-modal. */
+
+.join-shared-chat-modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(82vh, 760px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.join-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.join-text-input,
+.join-invite-textarea,
+.join-comment-input {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.28));
+  background: color-mix(in srgb, var(--surface-1, #1c1f2a) 70%, transparent);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font: inherit;
+  resize: vertical;
+}
+
+.join-invite-textarea {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.join-error {
+  color: var(--danger, #e2554f);
+  font-size: 12.5px;
+  background: color-mix(in srgb, var(--danger, #e2554f) 12%, transparent);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+
+.join-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* The 6-digit SAS — big, monospace, unmistakable. */
+.join-sas-code,
+.host-admission-banner-code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  text-align: center;
+  padding: 14px 8px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+  color: var(--text-primary);
+}
+
+/* Projection viewer */
+.join-projection-rows {
+  flex: 1 1 auto;
+  min-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 2px;
+  border-top: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.2));
+  border-bottom: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.2));
+}
+
+.join-projection-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.join-projection-speaker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.join-projection-placeholder {
+  opacity: 0.62;
+  font-style: italic;
+}
+
+.join-projection-truncated {
+  opacity: 0.6;
+  font-size: 11px;
+}
+
+.join-projection-empty {
+  margin: auto;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.join-comment-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.join-comment-input {
+  flex: 1 1 auto;
+}
+
+/* Host admission banner — a fixed, dismissible strip with the SAS to compare. */
+.host-admission-banner {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 240;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-1, #1c1f2a) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.host-admission-banner-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.host-admission-banner-text {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+
+.host-admission-banner-code {
+  font-size: 22px;
+  letter-spacing: 0.22em;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.host-admission-banner-dismiss {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.host-admission-banner-dismiss:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}

@@ -199,6 +199,8 @@ import {
 } from './lib/ComposerSlashCommands'
 import { CreativeActionApprovalModal } from './components/CreativeActionApprovalModal'
 import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
+import { JoinSharedChatModal } from './components/JoinSharedChatModal'
+import { HostAdmissionBanner } from './components/HostAdmissionBanner'
 import { buildWorkflowCreatorTrigger } from './components/WorkflowCreator'
 import type { UnattendedElevationLevel } from '../../main/UnattendedPostureGate'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
@@ -1448,6 +1450,7 @@ function App(): React.JSX.Element {
   // be clobbered by — or clobber — text the user starts typing on launch.
   const [composerDraftsByChatId, setComposerDraftForChat] = usePerChatState('', readComposerDrafts)
   const [collaboratingChatIds, setCollaboratingChatIds] = useState<Set<string>>(new Set())
+  const [joinSharedChatOpen, setJoinSharedChatOpen] = useState(false)
   const refreshHumanCollaborationShares = useCallback(() => {
     if (typeof window.api.humanCollaborationListShares !== 'function') return
     void window.api
@@ -21382,6 +21385,7 @@ function App(): React.JSX.Element {
                 onRenameChat={handleRenameChat}
                 onCreateWorkflow={handleOpenWorkflowCompose}
                 onCreateSharedChat={handleStartSharedChat}
+                onJoinSharedChat={() => setJoinSharedChatOpen(true)}
                 onRunWorkflowNow={handleRunWorkflowNow}
                 onToggleWorkflowEnabled={handleToggleWorkflowEnabled}
                 onEditWorkflowInterval={handleEditWorkflowInterval}
@@ -23265,6 +23269,11 @@ function App(): React.JSX.Element {
         return the user to the chat surface.
       */}
       {IOS_REMOTE_ENABLED && <IncomingPairingPrompt />}
+      <HostAdmissionBanner />
+      <JoinSharedChatModal
+        open={joinSharedChatOpen}
+        onClose={() => setJoinSharedChatOpen(false)}
+      />
       {/* PairingSheet modal mount retired — Pairing now renders as a
           Settings tab (`activeTab === 'pairing'`) when the iOS remote
           feature flag is enabled. */}

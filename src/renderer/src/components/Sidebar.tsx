@@ -183,6 +183,8 @@ interface SidebarProps {
   onCreateWorkflow?: () => void
   /** Start a new shared chat + copy a collaborator invite (People feature). */
   onCreateSharedChat?: () => void
+  /** Join someone else's shared chat by pasting their invite (People feature). */
+  onJoinSharedChat?: () => void
   onRunWorkflowNow?: (workflowId: string) => void
   onToggleWorkflowEnabled?: (workflow: WorkflowDefinition) => void
   onEditWorkflowInterval?: (workflow: WorkflowDefinition) => void
@@ -1548,6 +1550,7 @@ export function Sidebar({
   onInspectRun,
   onCreateWorkflow,
   onCreateSharedChat,
+  onJoinSharedChat,
   onRunWorkflowNow,
   onToggleWorkflowEnabled,
   onEditWorkflowInterval,
@@ -2669,6 +2672,21 @@ export function Sidebar({
                   >
                     <PeopleSymbolIcon />
                     <span className="sidebar-new-menu-item-label">New Shared Chat</span>
+                  </button>
+                )}
+                {onJoinSharedChat && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="sidebar-new-menu-item"
+                    onClick={() => {
+                      setNewMenuOpen(false)
+                      onJoinSharedChat()
+                    }}
+                    title="Join a shared chat — paste an invite to follow along"
+                  >
+                    <PeopleSymbolIcon />
+                    <span className="sidebar-new-menu-item-label">Join Shared Chat</span>
                   </button>
                 )}
               </div>
