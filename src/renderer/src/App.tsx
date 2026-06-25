@@ -10458,9 +10458,26 @@ function App(): React.JSX.Element {
               message: redactLog(permissionRequest.message)
             })
           }
-          const exitMatch = redacted.match(/Process exited with code\s+(\d+)/i)
-          if (exitMatch) {
-            const exitCode = Number(exitMatch[1])
+          const rawEventRecord =
+            event.data && typeof event.data === 'object' && !Array.isArray(event.data)
+              ? (event.data as Record<string, unknown>)
+              : null
+          const rawEventType =
+            typeof rawEventRecord?.type === 'string' ? rawEventRecord.type.toLowerCase() : ''
+          const isExitRawEvent =
+            rawEventType === 'process_exit' ||
+            rawEventType === 'provider_exit' ||
+            rawEventType === 'exit'
+          const rawExitCode =
+            typeof rawEventRecord?.exitCode === 'number'
+              ? rawEventRecord.exitCode
+              : typeof rawEventRecord?.code === 'number'
+                ? rawEventRecord.code
+                : undefined
+          const exitMatch = isExitRawEvent ? redacted.match(/Process exited with code\s+(\d+)/i) : null
+          const exitCode =
+            rawExitCode ?? (exitMatch ? Number(exitMatch[1]) : undefined)
+          if (isExitRawEvent && Number.isFinite(exitCode)) {
             const suppressRawCompletionNotice =
               steerSuppressedSummaryRunIdsRef.current.has(currentRunId) ||
               intentionalCancelRunIdsRef.current.has(currentRunId)
