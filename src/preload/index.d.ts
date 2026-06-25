@@ -75,6 +75,22 @@ import type { GrokUsageSnapshot } from '../main/grok/GrokUsage'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
 import type { SessionCheckpointRecord } from '../main/checkpoints/SessionCheckpoint'
 import type {
+  ConsumeInviteResult,
+  CreateShareResult,
+  HumanCollaborationMode,
+  HumanCollaborationShare
+} from '../main/collaboration/HumanCollaborationStore'
+import type { HumanShareProjection } from '../main/collaboration/HumanShareProjection'
+import type {
+  HumanCollaborationAppendCommentInput,
+  HumanCollaborationBeginHandshakeInput,
+  HumanCollaborationBeginHandshakeResult,
+  HumanCollaborationConfirmSasInput,
+  HumanCollaborationConfirmSasResult,
+  HumanCollaborationDisconnectInput,
+  HumanCollaborationSubscribeProjectionInput
+} from '../shared/collaboration/HumanCollaborationProtocol'
+import type {
   MessageChannelBinding,
   MessageChannelBindingInput
 } from '../main/channels/MessageChannelTypes'
@@ -1227,6 +1243,50 @@ declare global {
       listMessageChannelAudit: (limit?: number) => Promise<MessageChannelAuditRecord[]>
       listDiscordContextTargets: () => Promise<DiscordContextTargets>
       readDiscordContext: (selection: DiscordContextSelection) => Promise<DiscordContextSnapshot>
+      humanCollaborationCreateShare: (input: {
+        chatId: string
+        mode?: HumanCollaborationMode
+        inviteTtlMs?: number
+      }) => Promise<CreateShareResult>
+      humanCollaborationListShares: (chatId?: string) => Promise<HumanCollaborationShare[]>
+      humanCollaborationRevokeShare: (shareId: string) => Promise<HumanCollaborationShare | null>
+      humanCollaborationConsumeInvite: (input: {
+        shareId: string
+        inviteToken: string
+        displayName: string
+        publicKeyId: string
+      }) => Promise<ConsumeInviteResult>
+      humanCollaborationAppendComment: (input: {
+        shareId: string
+        chatId: string
+        collaboratorId: string
+        clientMessageId: string
+        content: string
+      }) => Promise<{ chat: ChatRecord; message: ChatRecord['messages'][number]; deduped: boolean }>
+      humanCollaborationProjection: (input: {
+        shareId: string
+        chatId: string
+        collaboratorId: string
+      }) => Promise<HumanShareProjection>
+      humanCollaborationRuntimeBeginAdmission: (
+        input: HumanCollaborationBeginHandshakeInput
+      ) => Promise<HumanCollaborationBeginHandshakeResult>
+      humanCollaborationRuntimeConfirmSas: (
+        input: HumanCollaborationConfirmSasInput
+      ) => Promise<HumanCollaborationConfirmSasResult>
+      humanCollaborationRuntimeSubscribeProjection: (
+        input: HumanCollaborationSubscribeProjectionInput
+      ) => Promise<HumanShareProjection>
+      humanCollaborationRuntimeAppendComment: (
+        input: HumanCollaborationAppendCommentInput
+      ) => Promise<{ chat: ChatRecord; message: ChatRecord['messages'][number]; deduped: boolean }>
+      humanCollaborationRuntimeDisconnect: (
+        input: HumanCollaborationDisconnectInput
+      ) => Promise<boolean>
+      humanCollaborationPromoteComment: (input: {
+        chatId: string
+        messageId: string
+      }) => Promise<{ chat: ChatRecord; draft: string }>
       saveChat: (chat: ChatRecord) => Promise<void>
       deleteChat: (chatId: string) => Promise<void>
       reapAbandonedChats: (renderer: {
@@ -1412,6 +1472,10 @@ declare global {
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
       onUsageChanged: (callback: () => void) => void
       onChatUpdated: (callback: (chat: ChatRecord) => void) => () => void
+      onHumanCollaborationUpdated: (callback: (payload: { chatId: string }) => void) => () => void
+      onHumanCollaborationRuntimeProjectionUpdate: (
+        callback: (payload: { sessionId: string; projection: HumanShareProjection }) => void
+      ) => () => void
       onRunTrustedMediaRefs: (
         callback: (payload: {
           appChatId: string

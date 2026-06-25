@@ -309,7 +309,17 @@ import {
 } from './services/ApprovalService'
 import { ChatService } from './services/ChatService'
 import { HumanCollaborationStore } from './collaboration/HumanCollaborationStore'
+import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
+import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
 import { buildHumanShareProjection } from './collaboration/HumanShareProjection'
+import type { HumanShareProjection } from './collaboration/HumanShareProjection'
+import type {
+  HumanCollaborationAppendCommentInput,
+  HumanCollaborationBeginHandshakeInput,
+  HumanCollaborationConfirmSasInput,
+  HumanCollaborationDisconnectInput,
+  HumanCollaborationSubscribeProjectionInput
+} from '../shared/collaboration/HumanCollaborationProtocol'
 import { detectConfiguredProviders } from './ProviderConfiguration'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
 import { applyReroutePlanToPayload, isProviderPaused, resolveProviderDispatch } from './ProviderRunPause'
@@ -22705,6 +22715,49 @@ if (isGeminiMcpBridgeProcess) {
       sanitizeChatForSave,
       appendDurableRunEventForRoute
     })
+    let humanCollaborationRuntime:
+      | HumanCollaborationRuntime<
+          HumanShareProjection,
+          ReturnType<typeof chatService.appendCollaboratorComment>
+        >
+      | null = null
+    const getHumanCollaborationRuntime = () => {
+      if (humanCollaborationRuntime) return humanCollaborationRuntime
+      const identity = new HumanCollaborationIdentityStore(
+        join(app.getPath('userData'), 'human-collaboration-identity.json'),
+        safeStorage,
+        (line) => console.warn(line)
+      ).load()
+      humanCollaborationRuntime = new HumanCollaborationRuntime({
+        identityKeyPair: identity,
+        store: humanCollaborationStore,
+        buildProjection: ({ share }) => {
+          const chat = chatService.getChat(share.chatId)
+          if (!chat) throw new Error('Chat not found.')
+          return buildHumanShareProjection(chat, share)
+        },
+        appendComment: ({ shareId, chatId, collaboratorId, clientMessageId, content }) => {
+          const result = chatService.appendCollaboratorComment({
+            shareId,
+            chatId,
+            collaboratorId,
+            clientMessageId,
+            content
+          })
+          broadcastChatUpdated(result.chat)
+          broadcastHumanCollaborationUpdate(result.chat.appChatId)
+          return result
+        },
+        publishProjection: (sessionId, projection) => {
+          mainWindow?.webContents.send('human-collaboration-runtime-projection-update', {
+            sessionId,
+            projection
+          })
+        },
+        log: (line) => console.warn(line)
+      })
+      return humanCollaborationRuntime
+    }
     ipcMain.handle('update-snapshot', () => updateService.snapshot())
     ipcMain.handle('check-for-updates', async () => {
       await updateService.checkForUpdates()
@@ -23516,14 +23569,140 @@ if (isGeminiMcpBridgeProcess) {
       if (result.guest) broadcastThreadUpdate(result.guest.appChatId)
       return result
     })
+    const broadcastHumanCollaborationUpdate = (chatId: string): void => {
+      mainWindow?.webContents.send('human-collaboration-updated', { chatId })
+      broadcastThreadUpdate(chatId)
+      humanCollaborationRuntime?.publishProjectionUpdates(chatId).catch((err) => {
+        console.warn(
+          `[human-collaboration] projection publish failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        )
+      })
+    }
+    const resolveHumanCollaborationProjection = (input: {
+      shareId: string
+      chatId: string
+      collaboratorId: string
+    }) => {
+      const share = humanCollaborationStore.getShare(input.shareId)
+      if (!share || !share.enabled || share.chatId !== input.chatId) {
+        throw new Error('Collaboration share is not active.')
+      }
+      const participant = share.participants.find(
+        (candidate) => candidate.collaboratorId === input.collaboratorId
+      )
+      if (!participant || participant.status !== 'active') {
+        throw new Error('Collaborator is not active for this share.')
+      }
+      const chat = chatService.getChat(input.chatId)
+      if (!chat) throw new Error('Chat not found.')
+      return buildHumanShareProjection(chat, share)
+    }
+    ipcMain.handle(
+      'human-collaboration:create-share',
+      (_, input: { chatId: string; mode?: 'readOnly' | 'comments'; inviteTtlMs?: number }) => {
+        const result = chatService.createHumanCollaborationShare({
+          chatId: input.chatId,
+          mode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
+          inviteTtlMs: input.inviteTtlMs
+        })
+        broadcastHumanCollaborationUpdate(result.share.chatId)
+        return result
+      }
+    )
+    ipcMain.handle('human-collaboration:list-shares', (_, chatId?: string) =>
+      chatService.listHumanCollaborationShares(chatId)
+    )
+    ipcMain.handle('human-collaboration:revoke-share', (_, shareId: string) => {
+      const result = chatService.revokeHumanCollaborationShare(shareId)
+      if (result) broadcastHumanCollaborationUpdate(result.chatId)
+      return result
+    })
+    ipcMain.handle(
+      'human-collaboration:consume-invite',
+      (
+        _,
+        input: {
+          shareId: string
+          inviteToken: string
+          displayName: string
+          publicKeyId: string
+        }
+      ) => {
+        const result = chatService.consumeHumanCollaborationInvite(input)
+        broadcastHumanCollaborationUpdate(result.share.chatId)
+        return result
+      }
+    )
+    ipcMain.handle(
+      'human-collaboration:append-comment',
+      (
+        _,
+        input: {
+          shareId: string
+          chatId: string
+          collaboratorId: string
+          clientMessageId: string
+          content: string
+        }
+      ) => {
+        const result = chatService.appendCollaboratorComment(input)
+        broadcastChatUpdated(result.chat)
+        broadcastHumanCollaborationUpdate(result.chat.appChatId)
+        return result
+      }
+    )
+    ipcMain.handle(
+      'human-collaboration:projection',
+      (_, input: { shareId: string; chatId: string; collaboratorId: string }) =>
+        resolveHumanCollaborationProjection(input)
+    )
+    ipcMain.handle(
+      'human-collaboration-runtime:begin-admission',
+      (_, input: HumanCollaborationBeginHandshakeInput) =>
+        getHumanCollaborationRuntime().beginAdmission(input)
+    )
+    ipcMain.handle(
+      'human-collaboration-runtime:confirm-sas',
+      async (_, input: HumanCollaborationConfirmSasInput) => {
+        const result = await getHumanCollaborationRuntime().confirmSas(input)
+        broadcastHumanCollaborationUpdate(result.chatId)
+        return result
+      }
+    )
+    ipcMain.handle(
+      'human-collaboration-runtime:subscribe-projection',
+      (_, input: HumanCollaborationSubscribeProjectionInput) =>
+        getHumanCollaborationRuntime().subscribeProjection(input)
+    )
+    ipcMain.handle(
+      'human-collaboration-runtime:append-comment',
+      (_, input: HumanCollaborationAppendCommentInput) =>
+        getHumanCollaborationRuntime().appendComment(input)
+    )
+    ipcMain.handle(
+      'human-collaboration-runtime:disconnect',
+      (_, input: HumanCollaborationDisconnectInput) =>
+        getHumanCollaborationRuntime().disconnect(input)
+    )
+    ipcMain.handle(
+      'human-collaboration:promote-comment',
+      (_, input: { chatId: string; messageId: string }) => {
+        const result = chatService.promoteCollaboratorComment(input)
+        broadcastChatUpdated(result.chat)
+        broadcastHumanCollaborationUpdate(result.chat.appChatId)
+        return result
+      }
+    )
     ipcMain.handle('save-chat', (_, chat: ChatRecord) => {
       const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
       const previous = AppStore.getChat(normalized.appChatId)
-      chatService.saveChat(normalized)
-      broadcastChatUpdated(normalized)
-      maybeScheduleCodexNativeGoalSync(previous, normalized, 'renderer-save-chat')
-      broadcastThreadUpdate(normalized?.appChatId)
-      const latestRun = normalized.runs?.[normalized.runs.length - 1]
+      const saved = chatService.saveChat(normalized)
+      broadcastChatUpdated(saved)
+      maybeScheduleCodexNativeGoalSync(previous, saved, 'renderer-save-chat')
+      broadcastThreadUpdate(saved?.appChatId)
+      const latestRun = saved.runs?.[saved.runs.length - 1]
       const previousRun = previous?.runs?.find((run) => run.runId === latestRun?.runId)
       const runHasDiff = (run: ChatRun | undefined): boolean =>
         Boolean(
@@ -23532,11 +23711,11 @@ if (isGeminiMcpBridgeProcess) {
         )
       if (latestRun?.endedAt && runHasDiff(latestRun) && !runHasDiff(previousRun)) {
         const workspaceId =
-          canonicalRemoteWorkspaceId(normalized.workspaceId) ??
-          (!normalized.workspaceId || normalized.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
+          canonicalRemoteWorkspaceId(saved.workspaceId) ??
+          (!saved.workspaceId || saved.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
         if (workspaceId) {
           bridgeBroadcasterRef?.resetThrottle()
-          pushRemoteThreadSnapshot(normalized, workspaceId)
+          pushRemoteThreadSnapshot(saved, workspaceId)
         }
       }
     })

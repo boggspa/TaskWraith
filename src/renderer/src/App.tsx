@@ -1447,6 +1447,59 @@ function App(): React.JSX.Element {
   // effect) so a restored draft is present before the composer reads it and can't
   // be clobbered by — or clobber — text the user starts typing on launch.
   const [composerDraftsByChatId, setComposerDraftForChat] = usePerChatState('', readComposerDrafts)
+  const [collaboratingChatIds, setCollaboratingChatIds] = useState<Set<string>>(new Set())
+  const refreshHumanCollaborationShares = useCallback(() => {
+    if (typeof window.api.humanCollaborationListShares !== 'function') return
+    void window.api
+      .humanCollaborationListShares()
+      .then((shares) => {
+        setCollaboratingChatIds(
+          new Set(
+            (shares || [])
+              .filter((share) => share?.enabled !== false)
+              .map((share) => share.chatId)
+              .filter((chatId): chatId is string => typeof chatId === 'string')
+          )
+        )
+      })
+      .catch(() => {})
+  }, [])
+  useEffect(() => {
+    refreshHumanCollaborationShares()
+  }, [refreshHumanCollaborationShares])
+  const handleCreateHumanCollaborationShare = useCallback(() => {
+    const chatId = currentChat?.appChatId
+    if (!chatId || typeof window.api.humanCollaborationCreateShare !== 'function') return
+    void window.api
+      .humanCollaborationCreateShare({ chatId, mode: 'comments' })
+      .then(async (result) => {
+        refreshHumanCollaborationShares()
+        const invitePayload = JSON.stringify(
+          {
+            type: 'taskwraith-human-collaboration-invite',
+            v: 1,
+            protocol: 'taskwraith-human-collaboration-v1',
+            shareId: result.share.shareId,
+            chatId: result.share.chatId,
+            inviteId: result.invite.inviteId,
+            inviteToken: result.inviteToken,
+            mode: result.share.mode,
+            createdAt: result.invite.createdAt,
+            requiresOutOfBandSas: true,
+            expiresAt: result.invite.expiresAt
+          },
+          null,
+          2
+        )
+        if (!navigator.clipboard?.writeText) throw new Error('Clipboard is not available.')
+        await navigator.clipboard.writeText(invitePayload)
+        window.alert('People invite copied. Share it out of band with the collaborator.')
+      })
+      .catch((error) => {
+        console.error('[human-collaboration] create share failed', error)
+        window.alert('Could not create or copy People invite.')
+      })
+  }, [currentChat?.appChatId, refreshHumanCollaborationShares])
   const [isRunning, setIsRunning] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedRunRequest[]>([])
   // Mirror of `queuedRuns` for handlers that need synchronous
@@ -3608,6 +3661,24 @@ function App(): React.JSX.Element {
       return updated
     },
     [flushCoalescedChats, flushCoalescedChatsNow]
+  )
+
+  const handlePromoteCollaboratorComment = useCallback(
+    (chatId: string | null | undefined, messageId: string): void => {
+      if (!chatId || !messageId) return
+      void window.api
+        .humanCollaborationPromoteComment({ chatId, messageId })
+        .then((result) => {
+          if (!result?.chat || typeof result.draft !== 'string') return
+          chatByIdRef.current.set(result.chat.appChatId, result.chat)
+          setChats((prev) => mergeChatRecord(prev, result.chat))
+          setChatPromptDraft(result.chat.appChatId, result.draft)
+        })
+        .catch((error) => {
+          console.error('[human-collaboration] promote failed', error)
+        })
+    },
+    [setChatPromptDraft]
   )
 
   // Shared merge for transcript media refs onto a chat's trailing assistant
@@ -9002,6 +9073,13 @@ function App(): React.JSX.Element {
       })
     }
 
+    let humanCollaborationUnsubscribe: (() => void) | null = null
+    if (typeof window.api.onHumanCollaborationUpdated === 'function') {
+      humanCollaborationUnsubscribe = window.api.onHumanCollaborationUpdated(() => {
+        refreshHumanCollaborationShares()
+      })
+    }
+
     // Trusted audio/video media refs for a foreground solo run. Main constructs
     // these refs and pushes them on this dedicated main-only channel, so unlike
     // the forgeable provider `assistant_media_refs` lane (which sanitizes —
@@ -9117,6 +9195,7 @@ function App(): React.JSX.Element {
 
     return () => {
       window.api.removeListeners()
+      humanCollaborationUnsubscribe?.()
       trustedMediaRefsUnsubscribe?.()
       yoloUnsubscribe?.()
       agentQuestionUnsubscribe?.()
@@ -21204,6 +21283,7 @@ function App(): React.JSX.Element {
                 runningChatIds={runningChatIdsArray}
                 workflows={workflowDefinitions}
                 scheduledTasks={scheduledTasks}
+                collaboratingChatIds={collaboratingChatIds}
                 showOnboardingHint={showOnboardingHint}
                 onDismissOnboardingHint={handleDismissOnboardingHint}
                 workspaceAddPointerActive={workspaceAddPointerActive}
@@ -22190,6 +22270,25 @@ function App(): React.JSX.Element {
                 the composer above-row stack, alongside the chip
                 flyout that replaced the EnsembleSetupSheet modal.
               */}
+              {currentChat && !isWelcomeChat && (
+                <div className="human-collaboration-header">
+                  <button
+                    type="button"
+                    className="human-collaboration-people-btn"
+                    onClick={handleCreateHumanCollaborationShare}
+                    title={
+                      collaboratingChatIds.has(currentChat.appChatId)
+                        ? 'Create another collaborator invite'
+                        : 'Invite collaborators to this chat'
+                    }
+                  >
+                    People
+                    {collaboratingChatIds.has(currentChat.appChatId) && (
+                      <span className="human-collaboration-live-dot" aria-label="Shared" />
+                    )}
+                  </button>
+                </div>
+              )}
               <TranscriptPanel
                 key={isWelcomeChat ? 'welcome' : 'transcript'}
                 scrollRef={transcriptScrollRef}
@@ -22263,6 +22362,9 @@ function App(): React.JSX.Element {
                 onCopyMessage={handleCopyMessage}
                 onDeleteMessage={handleDeleteMessage}
                 onTogglePinMessage={(messageId) => togglePinMessageInChat(currentChat, messageId)}
+                onPromoteCollaboratorComment={(messageId) =>
+                  handlePromoteCollaboratorComment(currentChat?.appChatId, messageId)
+                }
                 onMessageSelectionCandidate={
                   canCreateSideChatFromCurrent ? handleMessageSelectionCandidate : undefined
                 }
@@ -22614,6 +22716,9 @@ function App(): React.JSX.Element {
               onCopyMessage={handleCopyMessage}
               onDeleteMessage={(messageId) => deleteMessageFromChat(sideChat, messageId)}
               onTogglePinMessage={(messageId) => togglePinMessageInChat(sideChat, messageId)}
+              onPromoteCollaboratorComment={(messageId) =>
+                handlePromoteCollaboratorComment(sideChat.appChatId, messageId)
+              }
               onPreviewImage={setPreviewChatMediaRef}
               jumpToMessageRequest={
                 transcriptJumpRequest?.chatId === sideChat.appChatId ? transcriptJumpRequest : null

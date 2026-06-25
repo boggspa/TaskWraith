@@ -24,6 +24,7 @@ import type { ChatMessage } from '../../../main/store/types'
 import { isGuestParticipantReplyMessage } from '../components/GuestParticipantReplyCardModel'
 import { isSubThreadDelegationMessage } from '../components/SubThreadDelegationCardModel'
 import { isSubThreadReturnMessage } from '../components/SubThreadReturnCardModel'
+import { isHumanCollaboratorComment } from '../../../main/collaboration/HumanCollaboratorMessages'
 
 /**
  * One virtual row per transcript-message-block (the unit keyed
@@ -40,6 +41,7 @@ export type VirtualRowType =
   | 'delegation'
   | 'return'
   | 'guestReply'
+  | 'collaborator'
 
 export interface VirtualRow {
   /** Stable, persisted message id. NOT guaranteed unique — historical /
@@ -95,7 +97,8 @@ export const ESTIMATED_ROW_HEIGHT_PX: Record<VirtualRowType, number> = {
   participantHealth: 132,
   delegation: 104,
   return: 148,
-  guestReply: 220
+  guestReply: 220,
+  collaborator: 132
 }
 
 /** Extra height added when a RunCard boundary renders above a block. */
@@ -146,6 +149,7 @@ export function classifyRowType(message: ChatMessage): VirtualRowType {
   if (isSubThreadDelegationMessage(message)) return 'delegation'
   if (isSubThreadReturnMessage(message)) return 'return'
   if (isGuestParticipantReplyMessage(message)) return 'guestReply'
+  if (isHumanCollaboratorComment(message)) return 'collaborator'
   if (message.role === 'tool') {
     return (message.toolActivities?.length || 0) > 0 ? 'tool' : 'system'
   }

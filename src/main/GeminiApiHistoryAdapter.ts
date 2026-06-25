@@ -40,6 +40,7 @@
 import type { ChatMessage, ChatRecord } from './store/types'
 import { wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
 import { channelInboundReplayText, isChannelInboundMessage } from './ChannelPromptReplay'
+import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
 
 function isSubThreadReturnMessage(message: ChatMessage): boolean {
   return message.metadata?.kind === 'subThreadReturn' && Boolean(message.content?.trim())
@@ -139,6 +140,7 @@ export function chatMessagesToGeminiContents(
   for (const message of messages) {
     if (!message || typeof message.content !== 'string') continue
     if (!message.content.trim()) continue
+    if (isHumanCollaboratorComment(message)) continue
     if (
       message.role === 'user' ||
       message.role === 'assistant' ||

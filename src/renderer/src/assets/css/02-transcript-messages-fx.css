@@ -3718,6 +3718,85 @@
   border-left: 2px solid color-mix(in srgb, currentColor 28%, transparent);
 }
 
+.human-collaborator-comment-message {
+  width: min(100%, 900px);
+}
+
+.human-collaborator-meta {
+  color: color-mix(in srgb, var(--accent) 72%, var(--text-primary));
+}
+
+.message-bubble.human-collaborator-comment {
+  width: min(100%, 760px);
+  border-left: 2px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
+  color: var(--text-primary);
+}
+
+.human-collaborator-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.human-collaborator-promote-btn {
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.human-collaborator-promote-btn:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.human-collaborator-status {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.human-collaboration-header {
+  position: absolute;
+  top: 12px;
+  right: 18px;
+  z-index: 4;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.human-collaboration-people-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: color-mix(in srgb, var(--surface-elevated) 88%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+
+.human-collaboration-people-btn:hover {
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--panel-border));
+}
+
+.human-collaboration-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
 /* 1.0.5-EW29 — Participant-health card. Replaces the pre-EW29
  * "System\n[participant-health]\n  Codex / Worker: ok\n  ..." text
  * block with a compact card showing a header + chip strip. Chip
@@ -4735,6 +4814,11 @@
 .sidebar-branched-badge.sidebar-branched-dim {
   background: rgb(255 255 255 / 0.04);
   color: var(--text-tertiary);
+}
+
+.sidebar-branched-badge.sidebar-shared-badge {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: color-mix(in srgb, var(--accent) 74%, var(--text-primary));
 }
 
 .sidebar-sub-thread-dot {

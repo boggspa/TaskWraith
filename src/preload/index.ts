@@ -940,6 +940,60 @@ const api = {
   listDiscordContextTargets: () => ipcRenderer.invoke('discord-context:list-targets'),
   readDiscordContext: (selection: DiscordContextSelection) =>
     ipcRenderer.invoke('discord-context:read-channel', selection),
+  humanCollaborationCreateShare: (input: {
+    chatId: string
+    mode?: 'readOnly' | 'comments'
+    inviteTtlMs?: number
+  }) => ipcRenderer.invoke('human-collaboration:create-share', input),
+  humanCollaborationListShares: (chatId?: string) =>
+    ipcRenderer.invoke('human-collaboration:list-shares', chatId),
+  humanCollaborationRevokeShare: (shareId: string) =>
+    ipcRenderer.invoke('human-collaboration:revoke-share', shareId),
+  humanCollaborationConsumeInvite: (input: {
+    shareId: string
+    inviteToken: string
+    displayName: string
+    publicKeyId: string
+  }) => ipcRenderer.invoke('human-collaboration:consume-invite', input),
+  humanCollaborationAppendComment: (input: {
+    shareId: string
+    chatId: string
+    collaboratorId: string
+    clientMessageId: string
+    content: string
+  }) => ipcRenderer.invoke('human-collaboration:append-comment', input),
+  humanCollaborationProjection: (input: {
+    shareId: string
+    chatId: string
+    collaboratorId: string
+  }) => ipcRenderer.invoke('human-collaboration:projection', input),
+  humanCollaborationRuntimeBeginAdmission: (input: {
+    shareId: string
+    chatId: string
+    displayName: string
+    inviteToken?: string
+    collaboratorId?: string
+    collaboratorIdentityPubKeyB64: string
+    collaboratorEphemeralPubKeyB64: string
+    collaboratorNonceB64: string
+  }) => ipcRenderer.invoke('human-collaboration-runtime:begin-admission', input),
+  humanCollaborationRuntimeConfirmSas: (input: {
+    handshakeId: string
+    confirmCode: string
+    collaboratorTranscriptSigB64: string
+  }) => ipcRenderer.invoke('human-collaboration-runtime:confirm-sas', input),
+  humanCollaborationRuntimeSubscribeProjection: (input: {
+    sessionId: string
+  }) => ipcRenderer.invoke('human-collaboration-runtime:subscribe-projection', input),
+  humanCollaborationRuntimeAppendComment: (input: {
+    sessionId: string
+    clientMessageId: string
+    content: string
+  }) => ipcRenderer.invoke('human-collaboration-runtime:append-comment', input),
+  humanCollaborationRuntimeDisconnect: (input: { sessionId: string }) =>
+    ipcRenderer.invoke('human-collaboration-runtime:disconnect', input),
+  humanCollaborationPromoteComment: (input: { chatId: string; messageId: string }) =>
+    ipcRenderer.invoke('human-collaboration:promote-comment', input),
   saveChat: (chat: any) => ipcRenderer.invoke('save-chat', chat),
   deleteChat: (chatId: string) => ipcRenderer.invoke('delete-chat', chatId),
   reapAbandonedChats: (renderer: {
@@ -1145,6 +1199,22 @@ const api = {
     ipcRenderer.on('chat-updated', wrapped)
     return () => ipcRenderer.removeListener('chat-updated', wrapped)
   },
+  onHumanCollaborationUpdated: (callback: (payload: { chatId: string }) => void) => {
+    const wrapped = (_event: unknown, payload: { chatId: string }): void => callback(payload)
+    ipcRenderer.on('human-collaboration-updated', wrapped)
+    return () => ipcRenderer.removeListener('human-collaboration-updated', wrapped)
+  },
+  onHumanCollaborationRuntimeProjectionUpdate: (
+    callback: (payload: { sessionId: string; projection: unknown }) => void
+  ) => {
+    const wrapped = (
+      _event: unknown,
+      payload: { sessionId: string; projection: unknown }
+    ): void => callback(payload)
+    ipcRenderer.on('human-collaboration-runtime-projection-update', wrapped)
+    return () =>
+      ipcRenderer.removeListener('human-collaboration-runtime-projection-update', wrapped)
+  },
   // Trusted audio/video media refs for a foreground solo run. Main constructs
   // these refs itself and pushes them on this dedicated main-only channel, so
   // the renderer attaches them WITHOUT the image-only RAW-provider sanitizer
@@ -1248,6 +1318,8 @@ const api = {
     ipcRenderer.removeAllListeners('audit-run-changed')
     ipcRenderer.removeAllListeners('usage-changed')
     ipcRenderer.removeAllListeners('chat-updated')
+    ipcRenderer.removeAllListeners('human-collaboration-updated')
+    ipcRenderer.removeAllListeners('human-collaboration-runtime-projection-update')
     ipcRenderer.removeAllListeners('run-trusted-media-refs')
     ipcRenderer.removeAllListeners('app-shell-stats-changed')
     ipcRenderer.removeAllListeners('workspace-popout-refresh')

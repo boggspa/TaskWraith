@@ -1,6 +1,10 @@
 import path from 'path'
 import { wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
 import type { ChatMessage, ChatRecord, ProviderId, ToolActivity, WorkspaceRecord } from './store/types'
+import {
+  humanCollaboratorMetadata,
+  isHumanCollaboratorComment
+} from './collaboration/HumanCollaboratorMessages'
 
 export interface TranscriptMarkdownExportResult {
   markdown: string
@@ -144,6 +148,10 @@ function subThreadReturnBody(content: string): string {
 
 function speakerLabel(chat: ChatRecord, message: ChatMessage): string {
   const metadata = message.metadata || {}
+  if (isHumanCollaboratorComment(message)) {
+    const collaborator = humanCollaboratorMetadata(message)
+    return `Collaborator: ${collaborator?.collaboratorDisplayName || 'Unknown'}`
+  }
   if (message.role === 'user') return 'User'
   if (message.role === 'error') return 'Error'
   if (metadata.kind === 'subThreadReturn') {

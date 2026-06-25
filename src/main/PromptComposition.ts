@@ -19,6 +19,7 @@ import type {
 import { truncateOpaqueMarkdown, wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
 import { nativeSubAgentPromptInstruction } from './NativeSubAgentPolicy'
 import { channelInboundReplayText, isChannelInboundMessage } from './ChannelPromptReplay'
+import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
 import {
   taskWraithToolNameForProvider,
   taskWraithToolNamespaceHint
@@ -400,6 +401,7 @@ export function buildConversationContextBlock(
   const relevantMessages = messages.filter(
     (message) =>
       (message.role === 'user' || message.role === 'assistant') &&
+      !isHumanCollaboratorComment(message) &&
       Boolean(message.content && message.content.trim())
   )
 

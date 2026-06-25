@@ -1,6 +1,7 @@
 import type { AgentRunRoute } from '../run/AgentRunTypes'
 import type {
   ChatListItem,
+  ChatMessage,
   ChatRecord,
   PinnedMessageGroup,
   ProviderId,
@@ -9,6 +10,20 @@ import type {
   WorkspaceRecord
 } from '../store/types'
 import { assertSafeChatId } from '../ChatPath'
+import { randomUUID } from 'crypto'
+import {
+  humanCollaboratorMetadata,
+  isHumanCollaboratorComment,
+  makeHumanCollaboratorComment,
+  promotedCollaboratorPrompt
+} from '../collaboration/HumanCollaboratorMessages'
+import type {
+  ConsumeInviteResult,
+  CreateShareResult,
+  HumanCollaborationMode,
+  HumanCollaborationShare,
+  HumanCollaborationStore
+} from '../collaboration/HumanCollaborationStore'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -68,6 +83,7 @@ export interface ChatServiceStore {
 
 export interface ChatServiceDeps {
   appStore: ChatServiceStore
+  humanCollaborationStore?: HumanCollaborationStore
   findRegisteredWorkspace: (path: string) => WorkspaceRecord | undefined
   canonicalPath: (path: string) => string
   sanitizeChatForSave: (chat: ChatRecord) => ChatRecord
@@ -291,10 +307,132 @@ export class ChatService {
     return this.deps.appStore.getSideChats(requireSafeChatId(parentChatId, 'Parent chat id'))
   }
 
-  saveChat(chat: ChatRecord): void {
-    const sanitized = this.deps.sanitizeChatForSave(chat)
+  saveChat(chat: ChatRecord): ChatRecord {
+    const sanitized = this.preserveCollaboratorComments(this.deps.sanitizeChatForSave(chat))
     assertSafeChatId(sanitized.appChatId)
     this.deps.appStore.saveChat(sanitized)
+    return sanitized
+  }
+
+  createHumanCollaborationShare(args: {
+    chatId: string
+    mode: HumanCollaborationMode
+    inviteTtlMs?: number
+  }): CreateShareResult {
+    const store = this.requireHumanCollaborationStore()
+    const chatId = requireSafeChatId(args.chatId, 'Chat id')
+    const chat = this.deps.appStore.getChat(chatId)
+    if (!chat || chat.archived) throw new Error('Chat is not available for collaboration.')
+    return store.createShare({
+      chatId,
+      mode: args.mode === 'comments' ? 'comments' : 'readOnly',
+      inviteTtlMs: args.inviteTtlMs
+    })
+  }
+
+  listHumanCollaborationShares(chatId?: string): HumanCollaborationShare[] {
+    const store = this.requireHumanCollaborationStore()
+    const normalizedChatId = chatId ? requireSafeChatId(chatId, 'Chat id') : undefined
+    return store.listShares(normalizedChatId)
+  }
+
+  revokeHumanCollaborationShare(shareId: string): HumanCollaborationShare | null {
+    return this.requireHumanCollaborationStore().revokeShare(requireNonEmptyString(shareId, 'Share id'))
+  }
+
+  consumeHumanCollaborationInvite(args: {
+    shareId: string
+    inviteToken: string
+    displayName: string
+    publicKeyId: string
+  }): ConsumeInviteResult {
+    return this.requireHumanCollaborationStore().consumeInvite({
+      shareId: requireNonEmptyString(args.shareId, 'Share id'),
+      inviteToken: requireNonEmptyString(args.inviteToken, 'Invite token'),
+      displayName: requireNonEmptyString(args.displayName, 'Display name'),
+      publicKeyId: requireNonEmptyString(args.publicKeyId, 'Collaborator identity')
+    })
+  }
+
+  appendCollaboratorComment(args: {
+    shareId: string
+    chatId: string
+    collaboratorId: string
+    clientMessageId: string
+    content: string
+  }): { chat: ChatRecord; message: ChatMessage; deduped: boolean } {
+    const store = this.requireHumanCollaborationStore()
+    const content = requireBoundedText(args.content, 'Comment', 8000)
+    const chatId = requireSafeChatId(args.chatId, 'Chat id')
+    const validation = store.validateAppend({
+      shareId: requireNonEmptyString(args.shareId, 'Share id'),
+      chatId,
+      collaboratorId: requireNonEmptyString(args.collaboratorId, 'Collaborator id'),
+      clientMessageId: requireNonEmptyString(args.clientMessageId, 'Client message id')
+    })
+
+    const current = this.deps.appStore.getChat(chatId)
+    if (!current || current.archived) throw new Error('Chat is not available for collaboration.')
+    if (validation.existingMessageId) {
+      const existing = current.messages.find((message) => message.id === validation.existingMessageId)
+      if (existing) return { chat: current, message: existing, deduped: true }
+    }
+
+    const messageId = randomUUID()
+    const sequence = store.recordAppend({
+      shareId: validation.share.shareId,
+      chatId,
+      collaboratorId: validation.participant.collaboratorId,
+      clientMessageId: args.clientMessageId,
+      messageId
+    })
+    const message = makeHumanCollaboratorComment({
+      id: messageId,
+      content,
+      timestamp: new Date().toISOString(),
+      shareId: validation.share.shareId,
+      collaboratorId: validation.participant.collaboratorId,
+      collaboratorDisplayName: validation.participant.displayName,
+      clientMessageId: args.clientMessageId,
+      sequence
+    })
+    const updated: ChatRecord = {
+      ...current,
+      messages: [...(current.messages || []), message],
+      updatedAt: Date.now()
+    }
+    this.deps.appStore.saveChat(updated)
+    return { chat: updated, message, deduped: false }
+  }
+
+  promoteCollaboratorComment(args: {
+    chatId: string
+    messageId: string
+  }): { chat: ChatRecord; draft: string } {
+    const chatId = requireSafeChatId(args.chatId, 'Chat id')
+    const messageId = requireNonEmptyString(args.messageId, 'Message id')
+    const chat = this.deps.appStore.getChat(chatId)
+    if (!chat) throw new Error('Chat not found.')
+    const message = chat.messages.find((candidate) => candidate.id === messageId)
+    if (!message || !isHumanCollaboratorComment(message)) {
+      throw new Error('Collaborator comment not found.')
+    }
+    const draft = promotedCollaboratorPrompt(message)
+    const updatedMessages = chat.messages.map((candidate) => {
+      if (candidate.id !== message.id) return candidate
+      return {
+        ...candidate,
+        metadata: {
+          ...(candidate.metadata || {}),
+          promotedAt: Date.now(),
+          promotedBy: 'host',
+          promotedDraft: draft
+        }
+      }
+    })
+    const updated: ChatRecord = { ...chat, messages: updatedMessages, updatedAt: Date.now() }
+    this.deps.appStore.saveChat(updated)
+    return { chat: updated, draft }
   }
 
   deleteChat(chatId: string): void {
@@ -304,6 +442,65 @@ export class ChatService {
   clearChats(workspaceId?: string): void {
     this.deps.appStore.clearChats(workspaceId)
   }
+
+  private requireHumanCollaborationStore(): HumanCollaborationStore {
+    if (!this.deps.humanCollaborationStore) {
+      throw new Error('Human collaboration store is not configured.')
+    }
+    return this.deps.humanCollaborationStore
+  }
+
+  private preserveCollaboratorComments(chat: ChatRecord): ChatRecord {
+    const store = this.deps.humanCollaborationStore
+    if (!store) return chat
+    const shares = store.listShares(chat.appChatId)
+    if (shares.length === 0) return chat
+    const shareIds = new Set(shares.map((share) => share.shareId))
+    const current = this.deps.appStore.getChat(chat.appChatId)
+    if (!current) return chat
+    const canonicalCollaboratorComments = (current.messages || []).filter((message) => {
+      if (!isHumanCollaboratorComment(message)) return false
+      const metadata = humanCollaboratorMetadata(message)
+      return Boolean(metadata?.shareId && shareIds.has(metadata.shareId))
+    })
+    if (canonicalCollaboratorComments.length === 0) return chat
+    const canonicalById = new Map(
+      canonicalCollaboratorComments.map((message) => [message.id, message] as const)
+    )
+    const preservedIds = new Set<string>()
+    const sanitizedMessages: ChatMessage[] = []
+    let changed = false
+    for (const message of chat.messages || []) {
+      if (!isHumanCollaboratorComment(message)) {
+        sanitizedMessages.push(message)
+        continue
+      }
+      const canonical = canonicalById.get(message.id)
+      if (!canonical) {
+        changed = true
+        continue
+      }
+      preservedIds.add(canonical.id)
+      sanitizedMessages.push(canonical)
+      if (canonical !== message) changed = true
+    }
+    const missingCollaboratorComments = canonicalCollaboratorComments.filter(
+      (message) => !preservedIds.has(message.id)
+    )
+    if (missingCollaboratorComments.length === 0 && !changed) return chat
+    const messages = [...sanitizedMessages, ...missingCollaboratorComments].sort(compareMessagesByTime)
+    return {
+      ...chat,
+      messages
+    }
+  }
+}
+
+function compareMessagesByTime(a: ChatMessage, b: ChatMessage): number {
+  const at = Date.parse(a.timestamp || '')
+  const bt = Date.parse(b.timestamp || '')
+  if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return at - bt
+  return 0
 }
 
 function assertProviderId(value: unknown): ProviderId {
@@ -329,4 +526,15 @@ function requireSafeChatId(value: unknown, label: string): string {
     throw new Error(`${label} is required.`)
   }
   return assertSafeChatId(value, label)
+}
+
+function requireBoundedText(value: unknown, label: string, maxChars: number): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${label} is required.`)
+  }
+  const trimmed = value.trim()
+  if (trimmed.length > maxChars) {
+    throw new Error(`${label} is too long.`)
+  }
+  return trimmed
 }

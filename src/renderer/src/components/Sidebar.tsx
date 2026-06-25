@@ -99,6 +99,7 @@ interface SidebarProps {
   runningChatIds?: string[]
   workflows?: WorkflowDefinition[]
   scheduledTasks?: ScheduledTask[]
+  collaboratingChatIds?: Set<string>
   /**
    * First-launch onboarding hint visibility. When true AND the
    * workspace list is empty, the sidebar renders a faint card
@@ -1484,6 +1485,7 @@ export function Sidebar({
   runningChatIds = [],
   workflows = [],
   scheduledTasks = [],
+  collaboratingChatIds = new Set<string>(),
   showOnboardingHint = false,
   onDismissOnboardingHint,
   workspaceAddPointerActive = false,
@@ -3267,6 +3269,14 @@ export function Sidebar({
                                     linked · {subThreads.length}
                                   </span>
                                 )}
+                                {collaboratingChatIds.has(chat.appChatId) && (
+                                  <span
+                                    className="sidebar-branched-badge sidebar-shared-badge"
+                                    title="Shared with collaborators"
+                                  >
+                                    People
+                                  </span>
+                                )}
                               </span>
                             </span>
                             {isRunning && (
@@ -3545,7 +3555,8 @@ export function Sidebar({
                                         (lastRunStatus &&
                                           lastRunStatus.tone !== 'success' &&
                                           lastRunStatus.tone !== 'muted') ||
-                                        subThreadCount > 0) && (
+                                        subThreadCount > 0 ||
+                                        collaboratingChatIds.has(chat.appChatId)) && (
                                         <span className="sidebar-chat-subline">
                                           {isChatRunning ? (
                                             <span className="sidebar-run-status tone-running">
@@ -3565,6 +3576,14 @@ export function Sidebar({
                                               aria-label={`linked ${subThreadCount} chat${subThreadCount === 1 ? '' : 's'}`}
                                             >
                                               linked · {subThreadCount}
+                                            </span>
+                                          )}
+                                          {collaboratingChatIds.has(chat.appChatId) && (
+                                            <span
+                                              className="sidebar-branched-badge sidebar-shared-badge"
+                                              title="Shared with collaborators"
+                                            >
+                                              People
                                             </span>
                                           )}
                                         </span>

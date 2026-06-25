@@ -64,6 +64,10 @@ import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { FileTypeIcon } from './FileTypeIcon'
 import { RunCard } from './RunCard'
 import { ThinkingIndicator } from './AppChromeSymbols'
+import {
+  humanCollaboratorMetadata,
+  isHumanCollaboratorComment
+} from '../../../main/collaboration/HumanCollaboratorMessages'
 
 export type TranscriptPanelProps = {
   scrollRef: React.RefObject<HTMLDivElement | null>
@@ -204,6 +208,7 @@ export type TranscriptPanelProps = {
   onCopyMessage: (messageId: string, content: string) => void
   onDeleteMessage: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
+  onPromoteCollaboratorComment?: (messageId: string) => void
   onMessageSelectionCandidate?: (message: ChatMessage) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   sideChatSeedMessageId?: string | null
@@ -731,6 +736,7 @@ export const TranscriptPanel = memo(
     onCopyMessage,
     onDeleteMessage,
     onTogglePinMessage,
+    onPromoteCollaboratorComment,
     onMessageSelectionCandidate,
     onOpenSideChatFromMessage,
     sideChatSeedMessageId,
@@ -1111,6 +1117,8 @@ export const TranscriptPanel = memo(
             const isDelegationCard = isSubThreadDelegationMessage(msg)
             const isReturnCard = isSubThreadReturnMessage(msg)
             const isGuestReply = isGuestParticipantReplyMessage(msg)
+            const isCollaboratorComment = isHumanCollaboratorComment(msg)
+            const collaboratorMeta = isCollaboratorComment ? humanCollaboratorMetadata(msg) : null
             const boundaryRun = displayRunBoundaryByMessageId.get(msg.id)
             const isSideChatSeedMessage = Boolean(
               sideChatSeedMessageId && msg.id === sideChatSeedMessageId
@@ -1144,6 +1152,7 @@ export const TranscriptPanel = memo(
                       isReturnCard ? 'subthread-return-message' : ''
                     } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
                       isGuestReply ? ' guest-participant-reply-message' : ''
+                    }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''
                     }`}
                     onContextMenu={
                       isReturnCard
@@ -1263,7 +1272,7 @@ export const TranscriptPanel = memo(
                       isReturnCard ? 'subthread-return-message' : ''
                     } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
                       isGuestReply ? ' guest-participant-reply-message' : ''
-                    }`}
+                    }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''}`}
                   >
                     {(() => {
                       // Provider-aware label rendering. Solo chats: the
@@ -1285,6 +1294,21 @@ export const TranscriptPanel = memo(
                       }
                       if (msg.role === 'error') {
                         return <div className="message-meta">Error</div>
+                      }
+                      if (isCollaboratorComment) {
+                        return (
+                          <div className="message-meta human-collaborator-meta">
+                            <span className="message-meta-label">
+                              {collaboratorMeta?.collaboratorDisplayName || 'Collaborator'}
+                            </span>
+                            <span
+                              className="message-meta-model-badge"
+                              title="External collaborator comment"
+                            >
+                              Collaborator
+                            </span>
+                          </div>
+                        )
                       }
                       if (msg.role === 'assistant' || isGuestReply) {
                         const { label, provider, providerClass, modelBadge } =
@@ -1490,7 +1514,11 @@ export const TranscriptPanel = memo(
                         return (
                           <div
                             className={`message-bubble ${
-                              isGuestReply ? 'assistant guest-participant-reply' : msg.role
+                              isCollaboratorComment
+                                ? 'system human-collaborator-comment'
+                                : isGuestReply
+                                  ? 'assistant guest-participant-reply'
+                                  : msg.role
                             }${ensembleRoundStatusClass(msg)}`}
                             onContextMenu={
                               (msg.role === 'assistant' || msg.role === 'system' || isGuestReply) &&
@@ -1535,6 +1563,23 @@ export const TranscriptPanel = memo(
                                 workspacePath={currentChat?.workspacePath}
                                 onPreviewImage={onPreviewImage}
                               />
+                            )}
+                            {isCollaboratorComment && onPromoteCollaboratorComment && (
+                              <div className="human-collaborator-actions">
+                                <button
+                                  type="button"
+                                  className="human-collaborator-promote-btn"
+                                  onClick={() => onPromoteCollaboratorComment(msg.id)}
+                                  title="Add this collaborator request to the composer"
+                                >
+                                  Add to Composer
+                                </button>
+                                {collaboratorMeta?.promotedAt && (
+                                  <span className="human-collaborator-status">
+                                    Added to composer
+                                  </span>
+                                )}
+                              </div>
                             )}
                             {/* 1.0.4-AQ4 — Copy + Delete on hover. Both assistant
                                 and "other" role bubbles get the chip; for system

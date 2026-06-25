@@ -43,6 +43,7 @@ import { formatBlackboardForPrompt, selectBlackboardForRound } from './blackboar
 // chains from ephemeral-reasoning providers' messages before they enter
 // future-round transcript context (Codex reasoning is retained).
 import { stripReasoningChains } from './EnsembleThinkingEphemerality'
+import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
 
 // 1.0.4-AR2 — mirror of the renderer ceiling
 // (`EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS`). Keep
@@ -778,7 +779,9 @@ function buildTaggedTranscript(
   const baseWindow = Math.max(1, contextTurns * 2)
   const windowSize =
     maxChars > MAX_TRANSCRIPT_CHARS ? Math.max(baseWindow, Math.ceil(maxChars / 600)) : baseWindow
-  const relevant = messages.filter((message) => message.role !== 'tool').slice(-windowSize)
+  const relevant = messages
+    .filter((message) => message.role !== 'tool' && !isHumanCollaboratorComment(message))
+    .slice(-windowSize)
   // Fill from the MOST RECENT message backward so the budget keeps recent
   // context and truncation drops the OLDEST, not the newest. Output stays
   // chronological (unshift). For a non-truncated window this is identical to the
