@@ -329,6 +329,7 @@ public final class RemoteSessionModel: ObservableObject {
                 deviceToken: token.hex, env: token.env, agreePub: agreePub),
             successLabel: "Notifications ready.",
             navigateOnAck: false,
+            silent: true,
             onAck: { [weak self] accepted in
                 guard let self else { return }
                 self.apnsTokenRegistrationInFlight = false
@@ -4254,6 +4255,7 @@ public final class RemoteSessionModel: ObservableObject {
         _ params: [String: Any], timeoutMs: Int = 16_000, successLabel: String = "Sent.",
         navigateToThreadId: String? = nil,
         navigateOnAck: Bool = true,
+        silent: Bool = false,
         onThreadCreated: ((String?) -> Void)? = nil,
         onAck: ((Bool) -> Void)? = nil,
         onAckResult: ((Bool, AckResult?) -> Void)? = nil
@@ -4282,19 +4284,24 @@ public final class RemoteSessionModel: ObservableObject {
                     // While still .connected, surface calm, accurate text with no
                     // "timeout"/"timed out" wording so it isn't re-mapped and the banner
                     // stays a neutral .info instead of a red "asleep" warning.
-                    if !ack.ok, ack.error == "timeout", case .connected = self.phase {
-                        self.lastActionMessage =
-                            "Your Mac is taking longer than usual to respond — it's still connected."
-                    } else {
-                        self.lastActionMessage = Self.interpretAck(
-                            ack, successLabel: successLabel)
+                    // `silent` actions (e.g. the automatic registerApnsToken) must
+                    // never raise a user-facing banner — only navigation / data
+                    // callbacks above run for them.
+                    if !silent {
+                        if !ack.ok, ack.error == "timeout", case .connected = self.phase {
+                            self.lastActionMessage =
+                                "Your Mac is taking longer than usual to respond — it's still connected."
+                        } else {
+                            self.lastActionMessage = Self.interpretAck(
+                                ack, successLabel: successLabel)
+                        }
                     }
                 }
             } catch {
                 await MainActor.run {
                     onAck?(false)
                     onAckResult?(false, nil)
-                    self.lastActionMessage = String(describing: error)
+                    if !silent { self.lastActionMessage = String(describing: error) }
                 }
             }
         }
