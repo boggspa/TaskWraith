@@ -363,6 +363,12 @@ import {
   type PromoteQueuedJobForSteerResult
 } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
+import {
+  buildRemoteComposerQueueDispatchAction,
+  classifyRemoteComposerQueueDispatchFailure,
+  classifyRemoteComposerQueueDispatchResult,
+  remoteComposerChatIsBusy as remoteComposerQueueJobIsBusy
+} from './services/RemoteComposerQueueService'
 import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
@@ -381,6 +387,7 @@ import {
   probeAllProviderRates
 } from './services/ProviderRateService'
 import { MainProcessActionExecutor } from './BridgeActionExecutor'
+import type { BridgeComposerPromptAction } from './BridgeActionPayload'
 import {
   buildAgentExitStats,
   codexUsageToStats,
@@ -3214,6 +3221,10 @@ const providerPreflightService = new ProviderPreflightService()
 let runRepository: RunRepository | null = null
 let runQueueServiceRef: RunQueueService | null = null
 let runLifecycleCoordinatorRef: RunLifecycleCoordinator | null = null
+const remoteComposerInternalDispatches = new WeakMap<
+  BridgeComposerPromptAction,
+  { appRunId: string; queueRunId: string }
+>()
 
 
 function getActiveTaskWraithThreadCount(): number {
@@ -18489,55 +18500,75 @@ if (isGeminiMcpBridgeProcess) {
       }
       const remoteComposerChatIsBusy = (chatId: string): boolean => {
         if (activeRemoteComposerSessionForChat(chatId)) return true
-        return AppStore.getRunQueueJobs({
-          chatId,
-          statuses: ['starting', 'active', 'cancelling']
-        }).some((job) => !job.request?.remoteComposer)
+        return remoteComposerQueueJobIsBusy(
+          AppStore.getRunQueueJobs({
+            chatId,
+            statuses: ['starting', 'active', 'cancelling']
+          }),
+          chatId
+        )
       }
       const dispatchRemoteComposerQueueJob = async (
         job: RunQueueJob,
-        reason: string
+        reason: string,
+        options: { alreadyLeased?: boolean } = {}
       ): Promise<boolean> => {
-        const remote = job.request?.remoteComposer
-        if (!remote) return false
-        const leased = getRunRepository().leaseQueuedRun({
-          runId: job.runId,
-          provider: job.provider,
-          statusReason: reason
-        })
+        if (!job.request?.remoteComposer) return false
+        const leased = options.alreadyLeased
+          ? job
+          : getRunRepository().leaseQueuedRun({
+              runId: job.runId,
+              provider: job.provider,
+              statusReason: reason
+            })
         if (!leased) return false
-        const result = await createBridgeActionExecutor().executeComposerPrompt({
-          kind: 'composerPrompt',
-          actionId: `remote-queue-dispatch:${job.runId}:${Date.now()}`,
-          workspaceId: remote.workspaceId,
-          threadId: remote.threadId,
-          provider: remote.provider,
-          text: remote.text,
-          approvalMode: remote.approvalMode,
-          model: remote.model,
-          reasoningEffort: remote.reasoningEffort,
-          claudeReasoningEffort: remote.claudeReasoningEffort,
-          contextTurns: remote.contextTurns,
-          extraWorkspaceIds: remote.extraWorkspaceIds
-        })
-        const appRunId =
-          result.data && typeof result.data === 'object'
-            ? (result.data as { appRunId?: unknown }).appRunId
-            : undefined
-        if (result.executed) {
-          getRunRepository().transitionRunQueueJob(job.runId, 'completed', {
-            statusReason:
-              typeof appRunId === 'string'
-                ? `Dispatched from remote queue as run ${appRunId}.`
-                : 'Dispatched from remote queue.'
-          })
-          return true
+        const dispatch = buildRemoteComposerQueueDispatchAction(leased)
+        if (!dispatch) return false
+        const action: BridgeComposerPromptAction = {
+          ...dispatch.action,
+          actionId: `remote-queue-dispatch:${job.runId}:${Date.now()}`
         }
-        getRunRepository().transitionRunQueueJob(job.runId, 'failed', {
-          statusReason: result.message || 'Remote queued prompt failed to dispatch.',
-          lastError: result.message
+        remoteComposerInternalDispatches.set(action, {
+          appRunId: dispatch.appRunId,
+          queueRunId: dispatch.queueRunId
         })
-        return false
+        try {
+          const result = await createBridgeActionExecutor().executeComposerPrompt(action)
+          const classification = classifyRemoteComposerQueueDispatchResult({
+            queueRunId: dispatch.queueRunId,
+            appRunId: dispatch.appRunId,
+            executed: result.executed,
+            message: result.message
+          })
+          if (classification.transitionStatus) {
+            getRunRepository().transitionRunQueueJob(
+              classification.queueRunId,
+              classification.transitionStatus,
+              {
+                statusReason: classification.statusReason,
+                lastError: classification.lastError
+              }
+            )
+          }
+          return result.executed
+        } catch (err) {
+          const classification = classifyRemoteComposerQueueDispatchFailure({
+            queueRunId: dispatch.queueRunId,
+            appRunId: dispatch.appRunId,
+            error: err
+          })
+          if (classification.transitionStatus) {
+            getRunRepository().transitionRunQueueJob(
+              classification.queueRunId,
+              classification.transitionStatus,
+              {
+                statusReason: classification.statusReason,
+                lastError: classification.lastError
+              }
+            )
+          }
+          return false
+        }
       }
       const pumpRemoteComposerQueue = async () => {
         remoteComposerQueuePumpScheduled = false
@@ -18577,13 +18608,40 @@ if (isGeminiMcpBridgeProcess) {
         job: RunQueueJob,
         chat: ChatRecord
       ): Promise<{ ok: boolean; reason?: string }> => {
+        if (!runLifecycleCoordinatorRef) {
+          return { ok: false, reason: 'Run lifecycle coordinator is not available' }
+        }
         const active = activeRemoteComposerSessionForChat(chat.appChatId)
-        if (active) {
-          await cancelProviderRun(active.provider, active.runId)
+        const promotion = await runLifecycleCoordinatorRef.promoteQueuedJobForSteer({
+          runId: job.runId,
+          provider: job.provider,
+          chatId: chat.appChatId,
+          queueMessageId: job.id,
+          statusReason: 'Promoted from paired device queue via Steer.',
+          cancelRunId: active?.runId,
+          cancelProvider: active?.provider
+        })
+        if (!promotion.ok) {
+          return { ok: false, reason: promotion.reason }
+        }
+        const lease = await runLifecycleCoordinatorRef.leasePromotedSteerJob({
+          runId: job.runId,
+          ownerToken: promotion.ownerToken,
+          statusReason: 'Remote queued steer was leased for dispatch.'
+        })
+        if (!lease.ok) {
+          await runLifecycleCoordinatorRef.fallbackPromotedSteerJob({
+            runId: job.runId,
+            ownerToken: promotion.ownerToken,
+            reason: lease.reason,
+            fallbackStatus: 'queued'
+          })
+          return { ok: false, reason: lease.reason }
         }
         const ok = await dispatchRemoteComposerQueueJob(
-          job,
-          'Promoted from paired device queue via Steer.'
+          lease.job,
+          'Remote queued steer was leased for dispatch.',
+          { alreadyLeased: true }
         )
         return ok ? { ok: true } : { ok: false, reason: 'Queued prompt could not be steered' }
       }
@@ -20006,6 +20064,7 @@ if (isGeminiMcpBridgeProcess) {
           return { ok: true, pr: compactGitPrForBridge(result.data) }
         },
         composerPromptFn: async (action) => {
+          const internalQueueDispatch = remoteComposerInternalDispatches.get(action)
           // T72 — global chats are conversational from the phone, but every
           // phone-origin turn runs READ-ONLY: approvalMode is forced to
           // 'plan' here regardless of what arrived (the allowlist already
@@ -20227,7 +20286,7 @@ if (isGeminiMcpBridgeProcess) {
           }
           const route = routeWithRunId(provider, {
             appChatId: chat.appChatId,
-            appRunId: undefined
+            appRunId: internalQueueDispatch?.appRunId
           } as AgentRunRoute)
           const runId = route.appRunId!
           // Tag this run as remote/phone-issued so cross-thread recall is blocked
@@ -20465,11 +20524,30 @@ if (isGeminiMcpBridgeProcess) {
           void dispatchAgentRun(payload, fakeEvent)
             .then((result) => {
               if (!result.dispatched) {
+                const reason = 'Run did not dispatch — check provider profile on your Mac.'
                 finalizeBridgeRunTranscript(
                   runId,
                   'failed',
-                  'Run did not dispatch — check provider profile on your Mac.'
+                  reason
                 )
+                if (internalQueueDispatch) {
+                  const classification = classifyRemoteComposerQueueDispatchResult({
+                    queueRunId: internalQueueDispatch.queueRunId,
+                    appRunId: internalQueueDispatch.appRunId,
+                    executed: false,
+                    message: reason
+                  })
+                  if (classification.transitionStatus) {
+                    getRunRepository().transitionRunQueueJob(
+                      classification.queueRunId,
+                      classification.transitionStatus,
+                      {
+                        statusReason: classification.statusReason,
+                        lastError: classification.lastError
+                      }
+                    )
+                  }
+                }
                 console.warn(
                   `[remote-bridge] composerPrompt run did not dispatch (thread=${action.threadId}): preflight/profile`
                 )
@@ -20481,6 +20559,23 @@ if (isGeminiMcpBridgeProcess) {
               bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
             })
             .catch((err) => {
+              if (internalQueueDispatch) {
+                const classification = classifyRemoteComposerQueueDispatchFailure({
+                  queueRunId: internalQueueDispatch.queueRunId,
+                  appRunId: internalQueueDispatch.appRunId,
+                  error: err
+                })
+                if (classification.transitionStatus) {
+                  getRunRepository().transitionRunQueueJob(
+                    classification.queueRunId,
+                    classification.transitionStatus,
+                    {
+                      statusReason: classification.statusReason,
+                      lastError: classification.lastError
+                    }
+                  )
+                }
+              }
               console.error(
                 `[remote-bridge] composerPrompt dispatch failed (thread=${action.threadId}):`,
                 err
