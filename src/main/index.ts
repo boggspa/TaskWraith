@@ -2052,6 +2052,24 @@ const vtToolExecutors = createVtToolExecutors({
       }>('video.encodeClip', params, { timeoutMs: 300_000 })
     )
   },
+  // S3-3 — native VideoToolbox concat (N segments → one MP4). Shares the
+  // mediaProcessLimiter semaphore (a concat of many segments holds a slot for up
+  // to 10 min, contending with transcode_video like the encoders do). The daemon
+  // letterboxes mismatched-dimension segments to the first segment's size.
+  concatClips: async (params) => {
+    const daemon = bridgeDaemonRef
+    if (!daemon) throw new Error('video bridge daemon is not running')
+    return mediaProcessLimiter.run(() =>
+      daemon.request<{
+        width: number
+        height: number
+        durationMs: number
+        codec: string
+        usedHardware: boolean
+        segmentCount: number
+      }>('video.concatClips', params, { timeoutMs: 600_000 })
+    )
+  },
   // The output-file deps mirror the ffmpeg factory exactly (same MEDIA_STAGING_DIR,
   // per-mime cap, content-addressed store) so a daemon-produced MP4 rides the
   // identical persist→buildAvMediaRef→trustedMediaRefs lane as transcode_video.

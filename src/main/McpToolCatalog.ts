@@ -2394,6 +2394,39 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'video_concat_clips',
+      description:
+        "Concatenate N video segments into one H.264 MP4 using the OS's built-in VideoToolbox " +
+        '(hardware-accelerated; no ffmpeg). Each segment is a workspace video with an optional trim ' +
+        '(startSeconds, durationSeconds); segments with different dimensions are letterboxed to the ' +
+        "first segment's size. Params: segments (array, 2–50), scaleWidth, targetBitrateKbps. Writes a " +
+        'new file; gated as a file change.',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          segments: {
+            type: 'array',
+            minItems: 2,
+            maxItems: 50,
+            description: 'Ordered list of 2–50 video segments to join.',
+            items: {
+              type: 'object',
+              properties: {
+                inputPath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to a video file.' },
+                startSeconds: { type: 'number', description: 'Segment start offset in seconds.' },
+                durationSeconds: { type: 'number', description: 'Segment duration in seconds.' }
+              },
+              required: ['inputPath']
+            }
+          },
+          scaleWidth: { type: 'number', description: 'Output width in px; height auto.' },
+          targetBitrateKbps: { type: 'number', description: 'Target H.264 bitrate in kbps.' }
+        },
+        required: ['segments']
+      }
+    },
+    {
       name: 'audio_extract',
       description:
         'Extract the audio track from a workspace VIDEO to a standalone audio file via ffmpeg. Params: ' +

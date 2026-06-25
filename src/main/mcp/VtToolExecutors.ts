@@ -25,9 +25,16 @@ import { buildAvMediaRef } from '../media/AvMediaRef'
  * by `buildAvMediaRef` on `McpToolExecutionResult.trustedMediaRefs`. That ref is un-
  * forgeable (only this main-side executor can construct the result) and bypasses the
  * image-only provider sanitizer (which hard-drops kind!=='image').
+ *
+ * `video_concat_clips` joins N video SEGMENTS (each a workspace video + optional trim)
+ * into one H.264 MP4 via the daemon's native VideoToolbox (hardware-accelerated; no
+ * ffmpeg). Like `video_encode_clip` the output is a VIDEO FILE, so it rides the same
+ * TRUSTED AV channel (persist + `trustedMediaRefs`). EACH segment path is realpath-
+ * jailed through the VIDEO jail (`jailInput`) before the daemon ever sees it; any one
+ * segment's jail failure aborts the whole concat (the daemon is never invoked).
  */
 
-export const VT_MCP_TOOL_NAMES = ['video_decode_frame', 'video_encode_clip'] as const
+export const VT_MCP_TOOL_NAMES = ['video_decode_frame', 'video_encode_clip', 'video_concat_clips'] as const
 export type VtMcpToolName = (typeof VT_MCP_TOOL_NAMES)[number]
 
 export function isVtMcpToolName(name: string): name is VtMcpToolName {
@@ -63,6 +70,16 @@ export interface VtToolDeps {
    */
   encodeClip: (params: { sourcePath: string; outputPath: string; scaleWidth?: number; targetBitrateKbps?: number; startSeconds?: number; durationSeconds?: number; overlayPath?: string; overlayX?: number; overlayY?: number; overlayWidth?: number; overlayOpacity?: number }) =>
     Promise<{ width: number; height: number; durationMs: number; codec: string; usedHardware: boolean }>
+  /**
+   * `video.concatClips` daemon RPC — concatenate N (already-jailed) source video
+   * SEGMENTS, each with an optional trim (`startSeconds`/`durationSeconds`), into one
+   * H.264 MP4 written at the TS-supplied `outputPath` (a dir WE own). Segments with
+   * different dimensions are letterboxed to the first segment's size. Resolves with the
+   * produced clip's metadata (incl. `segmentCount`); REJECTS on failure. TS reads +
+   * deletes `outputPath` afterwards.
+   */
+  concatClips: (params: { outputPath: string; segments: Array<{ sourcePath: string; startSeconds?: number; durationSeconds?: number }>; scaleWidth?: number; targetBitrateKbps?: number }) =>
+    Promise<{ width: number; height: number; durationMs: number; codec: string; usedHardware: boolean; segmentCount: number }>
   /** An absolute staging file path (a dir WE own, never agent-supplied) for the encoded output. */
   stagingPath: (ext: string) => string
   /** Read a produced staging file → bytes (throws if missing / over the size cap). */
@@ -117,7 +134,7 @@ function humanBytes(n: number): string {
 }
 
 export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
-  const { jailInput, jailOverlay, decodeFrame, encodeClip, stagingPath, readOutput, persistOutput, removeFile } = deps
+  const { jailInput, jailOverlay, decodeFrame, encodeClip, concatClips, stagingPath, readOutput, persistOutput, removeFile } = deps
 
   async function executeVideoDecodeFrame(
     args: Record<string, unknown>,
@@ -281,6 +298,107 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     }
   }
 
+  // Concatenate N workspace video SEGMENTS (each an input + optional trim) into one
+  // H.264 MP4 via the daemon's native VideoToolbox. Like executeVideoEncodeClip the
+  // output is a VIDEO FILE, so it rides the TRUSTED AV channel (persist +
+  // trustedMediaRefs), NOT the image-block lane. EVERY segment path is realpath-jailed
+  // through the VIDEO jail (jailInput) BEFORE the daemon runs; any one segment's jail
+  // failure aborts immediately (concatClips never called). Fails LOUDLY on a null ref.
+  async function executeVideoConcatClips(
+    args: Record<string, unknown>,
+    ctx: VtToolContext
+  ): Promise<McpToolExecutionResult> {
+    const rawSegments = args.segments
+    if (!Array.isArray(rawSegments) || rawSegments.length < 2) {
+      return fail('video_concat_clips', 'provide at least 2 segments')
+    }
+    if (rawSegments.length > 50) {
+      return fail('video_concat_clips', 'too many segments (max 50)')
+    }
+
+    // Validate + jail EACH segment up front. The first segment's inputPath also names
+    // the cosmetic output label, so capture it. Any jail failure aborts the whole
+    // concat BEFORE the daemon is ever invoked (carries the offending segment index).
+    const realSegments: Array<{ sourcePath: string; startSeconds?: number; durationSeconds?: number }> = []
+    let firstSegmentInputPath: unknown
+    for (let i = 0; i < rawSegments.length; i++) {
+      const segment = asRecord(rawSegments[i])
+      const inputPath = typeof segment.inputPath === 'string' ? segment.inputPath.trim() : ''
+      if (!inputPath) {
+        return fail('video_concat_clips', `segment ${i}: provide inputPath (a video file inside the workspace)`)
+      }
+      if (i === 0) firstSegmentInputPath = segment.inputPath
+      const startSeconds = numArg(segment.startSeconds)
+      let durationSeconds: number | undefined
+      if (segment.durationSeconds !== undefined) {
+        const d = numArg(segment.durationSeconds)
+        if (d === undefined || d <= 0) {
+          return fail('video_concat_clips', `segment ${i}: durationSeconds must be a finite number > 0`)
+        }
+        durationSeconds = d
+      }
+      const jailed = jailInput(inputPath, ctx)
+      if (!jailed.ok) {
+        return fail('video_concat_clips', `segment ${i}: ${jailed.reason}`)
+      }
+      realSegments.push({ sourcePath: jailed.realPath, startSeconds, durationSeconds })
+    }
+
+    // Optional output knobs — numeric, defaulted at the daemon.
+    const scaleWidth = numArg(args.scaleWidth)
+    const targetBitrateKbps = numArg(args.targetBitrateKbps)
+
+    const outputPath = stagingPath('mp4')
+    const mimeType = 'video/mp4'
+    try {
+      const result = await concatClips({
+        outputPath,
+        segments: realSegments,
+        scaleWidth,
+        targetBitrateKbps
+      })
+      let buffer: Buffer
+      try {
+        buffer = readOutput(outputPath, mimeType)
+      } catch (error) {
+        return fail('video_concat_clips', `concat output unavailable: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (!buffer || buffer.length === 0) return fail('video_concat_clips', 'VideoToolbox produced an empty clip')
+      const persisted = persistOutput(buffer, mimeType)
+      if (!persisted.ok) return fail('video_concat_clips', `Failed to persist output: ${persisted.reason}`)
+      const ref = buildAvMediaRef({
+        sha256: persisted.sha256,
+        mimeType,
+        name: `${sourceBaseName(firstSegmentInputPath)}-concat.mp4`,
+        runId: ctx?.appRunId,
+        byteLength: buffer.length,
+        durationMs: result.durationMs,
+        codecs: result.codec
+      })
+      // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType
+      // is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than return a
+      // silent empty-success that would strand the persisted asset with no ref.
+      if (!ref) return fail('video_concat_clips', `internal: unsupported output mime ${mimeType}`)
+      const summary =
+        `Concatenated ${result.segmentCount} clips → ${result.width}×${result.height}, ` +
+        `${(result.durationMs / 1000).toFixed(1)}s, ${result.codec} ` +
+        `(${humanBytes(buffer.length)}, ${result.usedHardware ? 'hardware' : 'software'})`
+      return {
+        text: summary,
+        content: [{ type: 'text', text: summary }],
+        trustedMediaRefs: [ref]
+      }
+    } catch (error) {
+      return fail('video_concat_clips', error instanceof Error ? error.message : String(error))
+    } finally {
+      try {
+        removeFile(outputPath)
+      } catch {
+        // best-effort staging cleanup
+      }
+    }
+  }
+
   return {
     executeVtTool(toolName, rawArgs, ctx) {
       const args = asRecord(rawArgs)
@@ -289,6 +407,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           return executeVideoDecodeFrame(args, ctx)
         case 'video_encode_clip':
           return executeVideoEncodeClip(args, ctx)
+        case 'video_concat_clips':
+          return executeVideoConcatClips(args, ctx)
         default:
           return Promise.resolve(fail(String(toolName), `unknown VideoToolbox tool "${toolName}"`))
       }

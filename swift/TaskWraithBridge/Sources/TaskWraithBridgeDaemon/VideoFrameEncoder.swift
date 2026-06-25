@@ -36,6 +36,46 @@ struct EncodedVideoClip: Sendable {
     }
 }
 
+/// `video.concatClips` result. Like `EncodedVideoClip` the TS side reads the
+/// muxed MP4 from `outputPath` itself — we return ONLY metadata. The shape is
+/// FIXED (the TS staging-read path consumes these exact keys/types):
+///   `ok`(Bool) / `width`(Int) / `height`(Int) / `durationMs`(Int, TOTAL output
+///   duration) / `codec`(String, "h264") / `usedHardware`(Bool) /
+///   `segmentCount`(Int, how many segments were concatenated).
+struct EncodedConcatClip: Sendable {
+    let width: Int
+    let height: Int
+    /// TOTAL duration of the concatenated output, in whole milliseconds.
+    let durationMs: Int
+    /// Always "h264" this slice (the only codec we emit).
+    let codec: String
+    /// Best-effort HW flag (see `EncodedVideoClip.usedHardware`).
+    let usedHardware: Bool
+    /// Number of input segments folded into the output (== `segments.count`).
+    let segmentCount: Int
+
+    func toJSONObject() -> [String: Any] {
+        return [
+            "ok": true,
+            "width": width,
+            "height": height,
+            "durationMs": durationMs,
+            "codec": codec,
+            "usedHardware": usedHardware,
+            "segmentCount": segmentCount
+        ]
+    }
+}
+
+/// One input segment for `concatClips` — a source path plus an optional trim
+/// window over THAT source. Shapes mirror the per-segment fields the TS side
+/// sends (sourcePaths are TS-jailed realPaths).
+struct VideoConcatSegment: Sendable {
+    let sourcePath: String
+    let startSeconds: Double?
+    let durationSeconds: Double?
+}
+
 /// Encode failures surfaced by `VideoFrameEncoder`. `.badInput` maps to
 /// `invalidParams` at the RPC boundary (caller-correctable — missing file, no
 /// video track, HDR source which is out-of-scope this slice); `.encodeFailed`
@@ -547,6 +587,478 @@ enum VideoFrameEncoder {
             codec: "h264",
             usedHardware: isAppleSilicon()
         )
+    }
+
+    // MARK: - Concat (N segments → one MP4)
+
+    /// Concatenate `segments` IN ORDER into one H.264 `.mp4` at `outputPath`
+    /// (a TS-owned staging path). One AVAssetWriter, N AVAssetReaders.
+    ///
+    /// The OUTPUT geometry is fixed from segment 0 (its even CODED dims, or the
+    /// even `scaleWidth`-aspect-scaled dims). Every segment is normalized into
+    /// that frame: a segment whose coded dims already match is appended VERBATIM
+    /// (fast path, no CoreImage); a segment whose dims differ is aspect-FIT
+    /// LETTERBOXED (scaled + centered over a black background via CoreImage).
+    ///
+    /// Each segment is read by its OWN reader, HDR-gated against its OWN format
+    /// description, and color-propagated from its OWN format description (the
+    /// classic concat bug is propagating segment 0's color onto every segment).
+    /// Output PTS are accumulated as rational CMTime — NEVER float-seconds — by
+    /// adding a running `cumulativeOffset` to each segment's rebased PTS, so the
+    /// boundary between segments is monotonic and gap-free.
+    ///
+    /// - Parameters:
+    ///   - outputPath: where to WRITE the muxed MP4 (TS reads + deletes it).
+    ///   - segments: ≥1 input segments, each with an optional trim window.
+    ///   - scaleWidth: optional output width (height auto from segment 0's
+    ///     aspect, even); nil = segment 0's even coded dims.
+    ///   - targetBitrateKbps: average bitrate in kbps; default by output height.
+    static func concatClips(
+        outputPath: String,
+        segments: [VideoConcatSegment],
+        scaleWidth: Int?,
+        targetBitrateKbps: Int?
+    ) async throws -> EncodedConcatClip {
+        // --- 0. Defensive arity (TS enforces ≥2, we accept ≥1) ----------------
+        guard segments.count >= 1 else {
+            throw VideoEncodeError.badInput("concat requires at least one segment")
+        }
+
+        // --- 1. Output geometry, fixed from SEGMENT 0 ------------------------
+        let seg0URL = URL(fileURLWithPath: segments[0].sourcePath)
+        guard FileManager.default.fileExists(atPath: seg0URL.path) else {
+            throw VideoEncodeError.badInput("Segment 0 file does not exist: \(segments[0].sourcePath)")
+        }
+        let seg0Asset = AVURLAsset(url: seg0URL)
+        let seg0Tracks = try await loadVideoTracks(seg0Asset)
+        guard let seg0Track = seg0Tracks.first else {
+            throw VideoEncodeError.badInput("No video track in segment 0: \(segments[0].sourcePath)")
+        }
+        let seg0Formats = try await loadFormatDescriptions(seg0Track)
+        guard let seg0FormatAny = seg0Formats.first else {
+            throw VideoEncodeError.badInput("Segment 0 has no format description: \(segments[0].sourcePath)")
+        }
+        let seg0Format = seg0FormatAny as CMVideoFormatDescription
+        if isHDR(formatDesc: seg0Format) {
+            throw VideoEncodeError.badInput("HDR not yet supported (segment 0)")
+        }
+
+        let seg0Coded = CMVideoFormatDescriptionGetDimensions(seg0Format)
+        let seg0CodedW = Int(seg0Coded.width)
+        let seg0CodedH = Int(seg0Coded.height)
+        guard seg0CodedW > 0, seg0CodedH > 0 else {
+            throw VideoEncodeError.badInput("Segment 0 has zero-sized video dimensions")
+        }
+        // Presentation drives the scaled-height aspect (display geometry after
+        // PAR / clean aperture), falling back to coded if degenerate.
+        let seg0Pres = CMVideoFormatDescriptionGetPresentationDimensions(
+            seg0Format, usePixelAspectRatio: true, useCleanAperture: true
+        )
+        let presW = Double(seg0Pres.width) > 0 ? Double(seg0Pres.width) : Double(seg0CodedW)
+        let presH = Double(seg0Pres.height) > 0 ? Double(seg0Pres.height) : Double(seg0CodedH)
+
+        let outW: Int
+        let outH: Int
+        if let scaleWidth, scaleWidth > 0, Double(scaleWidth) < presW {
+            let targetW = Double(scaleWidth)
+            let targetH = (targetW / presW) * presH
+            outW = max(2, evenDimension(targetW))
+            outH = max(2, evenDimension(targetH))
+        } else {
+            // No scale (or a declined up-scale) — segment 0's even CODED dims.
+            // (Coded dims are even for H.264 4:2:0, but round defensively.)
+            outW = max(2, evenDimension(Double(seg0CodedW)))
+            outH = max(2, evenDimension(Double(seg0CodedH)))
+        }
+        let outputRect = CGRect(x: 0, y: 0, width: outW, height: outH)
+
+        // --- 2. Writer created ONCE ------------------------------------------
+        let outputURL = URL(fileURLWithPath: outputPath)
+        try? FileManager.default.removeItem(at: outputURL) // writer refuses overwrite
+
+        let writer: AVAssetWriter
+        do {
+            writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+        } catch {
+            throw VideoEncodeError.encodeFailed("Unable to create AVAssetWriter: \(error.localizedDescription)")
+        }
+        let bitrate = resolveBitrate(targetBitrateKbps: targetBitrateKbps, outputHeight: outH)
+        let compression: [String: Any] = [
+            AVVideoAverageBitRateKey: bitrate,
+            AVVideoMaxKeyFrameIntervalKey: 60,
+            AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
+        ]
+        let writerSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: outW,
+            AVVideoHeightKey: outH,
+            AVVideoCompressionPropertiesKey: compression
+        ]
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: writerSettings)
+        input.expectsMediaDataInRealTime = false
+
+        let adaptorAttrs: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+            kCVPixelBufferWidthKey as String: outW,
+            kCVPixelBufferHeightKey as String: outH,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()
+        ]
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: adaptorAttrs
+        )
+        guard writer.canAdd(input) else {
+            throw VideoEncodeError.encodeFailed("Writer rejected the H.264 input")
+        }
+        writer.add(input)
+        guard writer.startWriting() else {
+            let msg = writer.error?.localizedDescription ?? "unknown writer error"
+            throw VideoEncodeError.encodeFailed("AVAssetWriter failed to start: \(msg)")
+        }
+        // The session starts at .zero EXACTLY ONCE for the whole concatenation;
+        // each segment's frames are offset onto this single timeline.
+        writer.startSession(atSourceTime: .zero)
+        defer {
+            if writer.status == .writing { writer.cancelWriting() }
+        }
+
+        // --- 3. CIContext created ONCE (any differing-dims segment needs it) --
+        // Concat almost always normalizes at least one segment, so build it up
+        // front; a pure-verbatim concat just never touches it.
+        let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
+        // --- 4. Per-segment drive on a SINGLE writer timeline ----------------
+        var totalFrames = 0
+        // Running offset on the output timeline; segment i's frames land at
+        // cumulativeOffset + (sourcePTS - segmentInPoint). Rational throughout.
+        var cumulativeOffset: CMTime = .zero
+        // Strictly-increasing guard across the WHOLE output (spans boundaries),
+        // so a non-monotonic / duplicate source PTS can never be appended.
+        var lastAppendedOutputPTS: CMTime = .negativeInfinity
+        var finalSegmentLastPTS: CMTime = .zero
+        var finalSegmentLastDuration: CMTime = .zero
+
+        for (i, segment) in segments.enumerated() {
+            let segURL = URL(fileURLWithPath: segment.sourcePath)
+            guard FileManager.default.fileExists(atPath: segURL.path) else {
+                throw VideoEncodeError.badInput("Segment \(i) file does not exist: \(segment.sourcePath)")
+            }
+            let segAsset = AVURLAsset(url: segURL)
+            let segTracks = try await loadVideoTracks(segAsset)
+            guard let segTrack = segTracks.first else {
+                throw VideoEncodeError.badInput("No video track in segment \(i): \(segment.sourcePath)")
+            }
+            let segFormats = try await loadFormatDescriptions(segTrack)
+            guard let segFormatAny = segFormats.first else {
+                throw VideoEncodeError.badInput("Segment \(i) has no format description: \(segment.sourcePath)")
+            }
+            // THIS segment's own format description — used for the HDR gate AND
+            // color propagation. Propagating segment 0's color here is the
+            // classic concat bug (BT.601<->709 shift on a differently-tagged
+            // segment), so we always use the segment's own descriptor.
+            let segFormat = segFormatAny as CMVideoFormatDescription
+            if isHDR(formatDesc: segFormat) {
+                throw VideoEncodeError.badInput("HDR not yet supported (segment \(i))")
+            }
+            let segCoded = CMVideoFormatDescriptionGetDimensions(segFormat)
+            let segCodedW = Int(segCoded.width)
+            let segCodedH = Int(segCoded.height)
+            // Verbatim fast-path only when the segment's coded geometry EXACTLY
+            // equals the output; any divergence → letterbox via CoreImage.
+            let needsLetterbox = (segCodedW != outW) || (segCodedH != outH)
+
+            // Reader (+ optional trim window, finite-clamped CMTime). Each
+            // segment opens its OWN reader.
+            let reader: AVAssetReader
+            do {
+                reader = try AVAssetReader(asset: segAsset)
+            } catch {
+                throw VideoEncodeError.badInput("Unable to read segment \(i): \(error.localizedDescription)")
+            }
+            let readerOutputSettings: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+            ]
+            let segOutput = AVAssetReaderTrackOutput(track: segTrack, outputSettings: readerOutputSettings)
+            segOutput.alwaysCopiesSampleData = false
+            guard reader.canAdd(segOutput) else {
+                throw VideoEncodeError.encodeFailed("Reader rejected track output (segment \(i))")
+            }
+            reader.add(segOutput)
+
+            // Trim window (mirrors encodeClip's finite-clamp + safe-start).
+            let segDurationCM = try await loadDuration(segAsset)
+            let segSourceDurationSeconds = segDurationCM.isNumeric ? CMTimeGetSeconds(segDurationCM) : 0
+            let hasStart = (segment.startSeconds != nil)
+            let rawStart = segment.startSeconds ?? 0
+            let clampedStart = rawStart.isFinite ? min(max(rawStart, 0), 86_400) : 0
+            let trimStart = CMTime(seconds: clampedStart, preferredTimescale: 600)
+            let trimming = hasStart || (segment.durationSeconds != nil)
+            if trimming {
+                let safeStart: CMTime
+                if segSourceDurationSeconds > 0 {
+                    let cappedStart = min(clampedStart, max(0, segSourceDurationSeconds - 0.001))
+                    let s = CMTime(seconds: cappedStart, preferredTimescale: 600)
+                    safeStart = s.isNumeric ? s : .zero
+                } else {
+                    safeStart = trimStart.isNumeric ? trimStart : .zero
+                }
+                let dur: CMTime
+                if let durSecs = segment.durationSeconds, durSecs.isFinite, durSecs > 0 {
+                    let capped = min(durSecs, 86_400)
+                    let d = CMTime(seconds: capped, preferredTimescale: 600)
+                    dur = d.isNumeric ? d : .positiveInfinity
+                } else {
+                    dur = .positiveInfinity
+                }
+                reader.timeRange = CMTimeRange(start: safeStart, duration: dur)
+            }
+
+            guard reader.startReading() else {
+                let msg = reader.error?.localizedDescription ?? "unknown reader error"
+                throw VideoEncodeError.encodeFailed("AVAssetReader failed to start (segment \(i)): \(msg)")
+            }
+
+            // segmentInPoint: the clamped trimStart when a start was given, else
+            // captured lazily as the FIRST kept frame's PTS (mirrors the
+            // encoder's rebaseAnchor) so a segment with a non-zero first PTS is
+            // rebased into its slot with no leading gap.
+            var segmentInPoint: CMTime = (trimming && hasStart) ? trimStart : .invalid
+            var segFirstOutputPTS: CMTime = .invalid
+            var segLastOutputPTS: CMTime = .zero
+            var segLastDuration: CMTime = .zero
+            // The PTS of the PREVIOUS appended frame, used to MEASURE the genuine
+            // inter-frame interval. CMSampleBufferGetDuration reads back INVALID
+            // for AVAssetReaderTrackOutput over many MP4s — including this daemon's
+            // OWN AVAssetWriter-muxed output — so `segLastDuration` falls to .zero
+            // and cannot be trusted to advance the offset. The measured spacing of
+            // the last two appended frames is the robust fallback (no extra async
+            // load), and is what makes the boundary gap-free.
+            var segPrevOutputPTS: CMTime = .invalid
+            var segLastFrameInterval: CMTime = .invalid
+            var segFrames = 0
+
+            while reader.status == .reading {
+                guard let sampleBuffer = segOutput.copyNextSampleBuffer() else { break }
+                guard CMSampleBufferGetNumSamples(sampleBuffer) > 0 else { continue }
+                guard let sourcePixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
+                let sourcePTS = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                guard sourcePTS.isNumeric else { continue }
+
+                // Discard back-extended frames before the cut (AVAssetReader
+                // back-extends a trim window to the preceding sync sample).
+                if trimming && hasStart {
+                    if CMTimeCompare(sourcePTS, trimStart) < 0 { continue }
+                }
+                // Lazily capture the in-point for the no-start path.
+                if !segmentInPoint.isNumeric {
+                    segmentInPoint = sourcePTS
+                }
+
+                // Propagate THIS SEGMENT's color onto its decoded buffer.
+                propagateColorAttachments(from: segFormat, to: sourcePixelBuffer)
+
+                // outputPTS = cumulativeOffset + (sourcePTS - segmentInPoint),
+                // rational CMTime (never float-seconds accumulation).
+                let rebased = CMTimeSubtract(sourcePTS, segmentInPoint)
+                let outputPTS = CMTimeAdd(cumulativeOffset, rebased)
+                // Strictly-increasing across the WHOLE output → skip a
+                // non-monotonic / duplicate source frame.
+                guard outputPTS.isNumeric,
+                      CMTimeCompare(outputPTS, lastAppendedOutputPTS) > 0 else { continue }
+
+                // Normalize to the output frame.
+                let bufferToAppend: CVPixelBuffer
+                if needsLetterbox, let pool = adaptor.pixelBufferPool {
+                    var renderOut: CVPixelBuffer?
+                    let allocStatus = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &renderOut)
+                    guard allocStatus == kCVReturnSuccess, let renderTarget = renderOut else {
+                        throw VideoEncodeError.encodeFailed("Pixel buffer pool allocation failed (status \(allocStatus))")
+                    }
+                    let composited = letterbox(
+                        source: sourcePixelBuffer,
+                        sourceW: segCodedW,
+                        sourceH: segCodedH,
+                        outputRect: outputRect
+                    )
+                    // colorSpace: nil preserves source color tags (matches the
+                    // propagateColor half).
+                    ciContext.render(
+                        composited,
+                        to: renderTarget,
+                        bounds: outputRect,
+                        colorSpace: nil
+                    )
+                    bufferToAppend = renderTarget
+                } else {
+                    // Coded dims already match the output → append verbatim.
+                    bufferToAppend = sourcePixelBuffer
+                }
+
+                // Back-pressure: never DROP a frame — wait until input drains.
+                while !input.isReadyForMoreMediaData {
+                    if writer.status == .failed { break }
+                    try await Task.sleep(nanoseconds: 1_000_000)
+                }
+                if writer.status == .failed {
+                    let msg = writer.error?.localizedDescription ?? "unknown writer error"
+                    throw VideoEncodeError.encodeFailed("Writer failed during append (segment \(i)): \(msg)")
+                }
+                if !adaptor.append(bufferToAppend, withPresentationTime: outputPTS) {
+                    let msg = writer.error?.localizedDescription ?? "append returned false"
+                    throw VideoEncodeError.encodeFailed("Failed to append frame (segment \(i)): \(msg)")
+                }
+
+                if !segFirstOutputPTS.isNumeric { segFirstOutputPTS = outputPTS }
+                segLastOutputPTS = outputPTS
+                let sampleDuration = CMSampleBufferGetDuration(sampleBuffer)
+                segLastDuration = sampleDuration.isNumeric ? sampleDuration : .zero
+                // Measure the genuine spacing between the last two appended frames
+                // (only once we have a prior numeric PTS). This is the real
+                // frame-interval fallback for the offset advance when the muxed
+                // sample duration reads back invalid.
+                if segPrevOutputPTS.isNumeric {
+                    let interval = CMTimeSubtract(outputPTS, segPrevOutputPTS)
+                    if interval.isNumeric { segLastFrameInterval = interval }
+                }
+                segPrevOutputPTS = outputPTS
+                lastAppendedOutputPTS = outputPTS
+                segFrames += 1
+                totalFrames += 1
+            }
+
+            if reader.status == .failed {
+                let msg = reader.error?.localizedDescription ?? "unknown"
+                writer.cancelWriting()
+                throw VideoEncodeError.encodeFailed("AVAssetReader failed mid-concat (segment \(i)): \(msg)")
+            }
+            if reader.status == .reading { reader.cancelReading() }
+
+            // A segment that contributed nothing (empty source or a trim past
+            // its end) is a hard failure — the concat would silently drop it.
+            guard segFrames > 0, segFirstOutputPTS.isNumeric else {
+                writer.cancelWriting()
+                throw VideoEncodeError.encodeFailed("segment \(i): no frames (empty source or trim past end)")
+            }
+
+            // Advance the offset by THIS segment's output duration:
+            //   (lastPTS - firstPTS) + lastInterval. `lastInterval` is the
+            //   genuine spacing AFTER the last frame so the NEXT segment's first
+            //   rebased frame lands at lastAppendedOutputPTS + lastInterval —
+            //   strictly GREATER, leaving a real one-frame gap (no collision with
+            //   the monotonic guard, no silent drop).
+            //
+            // Pick the FIRST numeric & positive source:
+            //   1. segLastDuration  — CMSampleBufferGetDuration of the last frame,
+            //      IF it read back valid;
+            //   2. segLastFrameInterval — the MEASURED last inter-frame interval.
+            //      This is the fix: CMSampleBufferGetDuration is INVALID for
+            //      AVAssetReaderTrackOutput over many MP4s (incl. our own muxed
+            //      output) → segLastDuration is .zero, advancing the offset short
+            //      by exactly one frame and dropping the next segment's first
+            //      frame. The measured spacing recovers the true interval;
+            //   3. CMTime(value:1, timescale:600) floor — a single-frame segment
+            //      has no measurable interval, so use a small non-zero advance.
+            let oneFrame = CMTime(value: 1, timescale: 600)
+            let lastInterval: CMTime = {
+                if segLastDuration.isNumeric && CMTimeCompare(segLastDuration, .zero) > 0 {
+                    return segLastDuration
+                }
+                if segLastFrameInterval.isNumeric && CMTimeCompare(segLastFrameInterval, .zero) > 0 {
+                    return segLastFrameInterval
+                }
+                return oneFrame
+            }()
+            let span = CMTimeSubtract(segLastOutputPTS, segFirstOutputPTS)
+            var segmentOutDur = CMTimeAdd(span, lastInterval)
+            if !segmentOutDur.isNumeric || CMTimeCompare(segmentOutDur, oneFrame) < 0 {
+                segmentOutDur = oneFrame
+            }
+            cumulativeOffset = CMTimeAdd(cumulativeOffset, segmentOutDur)
+            finalSegmentLastPTS = segLastOutputPTS
+            finalSegmentLastDuration = segLastDuration
+        }
+
+        // --- 5. Finish -------------------------------------------------------
+        guard totalFrames > 0 else {
+            writer.cancelWriting()
+            throw VideoEncodeError.encodeFailed("No frames encoded across all segments")
+        }
+        input.markAsFinished()
+        // finishWriting is ASYNC — drain it before returning (same Sendable-safe
+        // pattern as encodeClip: read status AFTER the continuation resumes).
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            writer.finishWriting {
+                continuation.resume()
+            }
+        }
+        if writer.status == .failed {
+            let msg = writer.error?.localizedDescription ?? "writer finished in failed state"
+            throw VideoEncodeError.encodeFailed("finishWriting failed: \(msg)")
+        }
+
+        // --- 6. Total output duration ----------------------------------------
+        // Prefer the running cumulativeOffset (it already sums every segment's
+        // output span + a one-frame floor); fall back to lastPTS + lastDuration.
+        var durationSecondsOut: Double = 0
+        if cumulativeOffset.isNumeric {
+            durationSecondsOut = max(0, CMTimeGetSeconds(cumulativeOffset))
+        }
+        if durationSecondsOut <= 0 {
+            let withLast = CMTimeAdd(
+                finalSegmentLastPTS.isNumeric ? finalSegmentLastPTS : .zero,
+                finalSegmentLastDuration.isNumeric ? finalSegmentLastDuration : .zero
+            )
+            if withLast.isNumeric { durationSecondsOut = max(0, CMTimeGetSeconds(withLast)) }
+        }
+        let durationMs = Int((durationSecondsOut * 1000).rounded())
+
+        return EncodedConcatClip(
+            width: outW,
+            height: outH,
+            durationMs: durationMs,
+            codec: "h264",
+            usedHardware: isAppleSilicon(),
+            segmentCount: segments.count
+        )
+    }
+
+    /// Aspect-FIT letterbox a source pixel buffer into `outputRect`: scale by
+    /// `min(outW/srcW, outH/srcH)`, center, and composite over a BLACK
+    /// background (source-over). Returns the cropped output-sized CIImage. NEVER
+    /// force-unwraps — falls back to the bare source image on any filter miss.
+    private static func letterbox(
+        source: CVPixelBuffer,
+        sourceW: Int,
+        sourceH: Int,
+        outputRect: CGRect
+    ) -> CIImage {
+        let src = CIImage(cvPixelBuffer: source)
+        guard sourceW > 0, sourceH > 0 else {
+            return src.cropped(to: outputRect)
+        }
+        let outW = Double(outputRect.width)
+        let outH = Double(outputRect.height)
+        let fitScale = min(outW / Double(sourceW), outH / Double(sourceH))
+        let scaledW = Double(sourceW) * fitScale
+        let scaledH = Double(sourceH) * fitScale
+        let offsetX = (outW - scaledW) / 2.0
+        let offsetY = (outH - scaledH) / 2.0
+        // Scale then translate to center. The source extent can have a non-zero
+        // origin; scaling about the origin then translating by the centered
+        // offset lands it correctly for a [0,0]-origin decoded buffer.
+        let scaled = src
+            .transformed(by: CGAffineTransform(scaleX: CGFloat(fitScale), y: CGFloat(fitScale)))
+            .transformed(by: CGAffineTransform(translationX: CGFloat(offsetX), y: CGFloat(offsetY)))
+        // Opaque black background spanning the whole output frame.
+        let background = CIImage(color: CIColor.black).cropped(to: outputRect)
+        guard let compositor = CIFilter(name: "CISourceOverCompositing") else {
+            // Filter unavailable — best-effort: the scaled source, cropped.
+            return scaled.cropped(to: outputRect)
+        }
+        compositor.setValue(scaled, forKey: kCIInputImageKey)
+        compositor.setValue(background, forKey: kCIInputBackgroundImageKey)
+        let composited = (compositor.outputImage ?? scaled).cropped(to: outputRect)
+        return composited
     }
 
     // MARK: - Dimension / bitrate helpers

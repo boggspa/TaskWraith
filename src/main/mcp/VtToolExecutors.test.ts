@@ -24,6 +24,15 @@ const ENCODE_RESULT = {
   usedHardware: true
 }
 
+const CONCAT_RESULT = {
+  width: 1280,
+  height: 720,
+  durationMs: 12400,
+  codec: 'h264',
+  usedHardware: true,
+  segmentCount: 3
+}
+
 function build(overrides: Partial<VtToolDeps> = {}) {
   let lastDecodeParams: { inputPath: string; timestampSeconds?: number; preferHardware?: boolean } | null = null
   let lastEncodeParams: {
@@ -39,6 +48,12 @@ function build(overrides: Partial<VtToolDeps> = {}) {
     overlayWidth?: number
     overlayOpacity?: number
   } | null = null
+  let lastConcatParams: {
+    outputPath: string
+    segments: Array<{ sourcePath: string; startSeconds?: number; durationSeconds?: number }>
+    scaleWidth?: number
+    targetBitrateKbps?: number
+  } | null = null
   const removed: string[] = []
   const deps: VtToolDeps = {
     jailInput: vi.fn(() => ({ ok: true as const, realPath: '/ws/clip.mp4' })),
@@ -50,6 +65,10 @@ function build(overrides: Partial<VtToolDeps> = {}) {
     encodeClip: vi.fn(async (params) => {
       lastEncodeParams = params
       return { ...ENCODE_RESULT }
+    }),
+    concatClips: vi.fn(async (params) => {
+      lastConcatParams = params
+      return { ...CONCAT_RESULT }
     }),
     stagingPath: vi.fn((ext: string) => `/staging/out.${ext}`),
     readOutput: vi.fn(() => Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42clip')])),
@@ -65,6 +84,7 @@ function build(overrides: Partial<VtToolDeps> = {}) {
     deps,
     getDecodeParams: () => lastDecodeParams,
     getEncodeParams: () => lastEncodeParams,
+    getConcatParams: () => lastConcatParams,
     getRemoved: () => removed
   }
 }
@@ -73,6 +93,7 @@ describe('isVtMcpToolName', () => {
   it('recognizes the VideoToolbox tools only', () => {
     expect(isVtMcpToolName('video_decode_frame')).toBe(true)
     expect(isVtMcpToolName('video_encode_clip')).toBe(true)
+    expect(isVtMcpToolName('video_concat_clips')).toBe(true)
     expect(isVtMcpToolName('video_thumbnail')).toBe(false)
     expect(isVtMcpToolName('video_probe')).toBe(false)
     expect(isVtMcpToolName('something_else')).toBe(false)
@@ -330,5 +351,212 @@ describe('video_encode_clip', () => {
     expect(getEncodeParams()?.overlayPath).toBeUndefined()
     expect(getEncodeParams()?.overlayX).toBeUndefined()
     expect(result.text).not.toContain('+ overlay')
+  })
+})
+
+// video_concat_clips — joins N video SEGMENTS into one MP4. Like video_encode_clip the
+// output is a VIDEO FILE, so it rides the TRUSTED media channel (trustedMediaRefs). Each
+// segment is INDEPENDENTLY realpath-jailed via jailInput before the daemon runs.
+describe('video_concat_clips', () => {
+  it('jails every segment, forwards the realPaths + trims to concatClips, and returns a trusted video ref', async () => {
+    // Per-segment realPath so we can prove each agent-supplied path was jailed and the
+    // JAILED path (not the raw string) reached the daemon, preserving order.
+    let i = 0
+    const { executors, deps, getConcatParams, getRemoved } = build({
+      jailInput: vi.fn(() => ({ ok: true as const, realPath: `/ws/seg-${i++}.mp4` }))
+    })
+    const result = await executors.executeVtTool(
+      'video_concat_clips',
+      {
+        segments: [
+          { inputPath: 'a.mp4' },
+          { inputPath: 'b.mp4', startSeconds: 1, durationSeconds: 4 },
+          { inputPath: 'c.mp4' }
+        ],
+        scaleWidth: 1280,
+        targetBitrateKbps: 5000
+      },
+      { appRunId: 'run-7' }
+    )
+    expect(result.isError).toBeFalsy()
+    // Every segment path was jailed (with the ctx).
+    expect(deps.jailInput).toHaveBeenCalledTimes(3)
+    expect(deps.jailInput).toHaveBeenCalledWith('a.mp4', { appRunId: 'run-7' })
+    expect(deps.jailInput).toHaveBeenCalledWith('b.mp4', { appRunId: 'run-7' })
+    expect(deps.jailInput).toHaveBeenCalledWith('c.mp4', { appRunId: 'run-7' })
+    // The JAILED realPaths (in order) + trims + staging path WE named reach the daemon.
+    const params = getConcatParams()
+    expect(params?.outputPath).toBe('/staging/out.mp4')
+    expect(params?.scaleWidth).toBe(1280)
+    expect(params?.targetBitrateKbps).toBe(5000)
+    expect(params?.segments.map((s) => s.sourcePath)).toEqual(['/ws/seg-0.mp4', '/ws/seg-1.mp4', '/ws/seg-2.mp4'])
+    expect(params?.segments[1].startSeconds).toBe(1)
+    expect(params?.segments[1].durationSeconds).toBe(4)
+    expect(params?.segments[0].startSeconds).toBeUndefined()
+    // Persisted with the fixed video mime; rides the TRUSTED AV channel.
+    expect(deps.persistOutput).toHaveBeenCalledWith(expect.any(Buffer), 'video/mp4')
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].kind).toBe('video')
+    expect(refs[0].mimeType).toBe('video/mp4')
+    expect(refs[0].sha256).toBe('f'.repeat(64))
+    expect(refs[0].id).toContain('run-7')
+    // Output label derives from the FIRST segment's input.
+    expect(refs[0].name).toBe('a-concat.mp4')
+    expect(refs[0].durationMs).toBe(CONCAT_RESULT.durationMs)
+    // NOT an image-block result, but DOES carry a text summary block.
+    expect((result.content ?? []).some((b) => b.type === 'image')).toBe(false)
+    const textBlock = (result.content ?? []).find((b) => b.type === 'text') as { type: 'text'; text: string } | undefined
+    expect(textBlock?.text).toContain('Concatenated 3 clips')
+    expect(textBlock?.text).toContain('1280×720')
+    expect(textBlock?.text).toContain('h264')
+    expect(textBlock?.text).toContain('hardware')
+    // Staging file cleaned up.
+    expect(getRemoved()).toContain('/staging/out.mp4')
+  })
+
+  it('accepts the minimum of 2 segments', async () => {
+    const { executors, getConcatParams } = build()
+    const result = await executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'a.mp4' }, { inputPath: 'b.mp4' }] },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    expect(getConcatParams()?.segments).toHaveLength(2)
+  })
+
+  it('rejects fewer than 2 segments WITHOUT jailing or concatenating', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeVtTool('video_concat_clips', { segments: [{ inputPath: 'a.mp4' }] }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('at least 2 segments')
+    expect(deps.jailInput).not.toHaveBeenCalled()
+    expect(deps.concatClips).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-array / missing segments WITHOUT concatenating', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeVtTool('video_concat_clips', {}, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('at least 2 segments')
+    expect(deps.concatClips).not.toHaveBeenCalled()
+  })
+
+  it('rejects more than 50 segments WITHOUT concatenating', async () => {
+    const { executors, deps } = build()
+    const segments = Array.from({ length: 51 }, (_, n) => ({ inputPath: `clip-${n}.mp4` }))
+    const result = await executors.executeVtTool('video_concat_clips', { segments }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('too many segments')
+    expect(deps.concatClips).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a segment jail rejection (with its index) WITHOUT calling concatClips', async () => {
+    // The 2nd segment fails the jail; the whole concat must abort and never run.
+    let call = 0
+    const { executors, deps } = build({
+      jailInput: vi.fn(() => {
+        call++
+        return call === 2
+          ? ({ ok: false as const, reason: 'outside_allowed_roots' })
+          : ({ ok: true as const, realPath: '/ws/ok.mp4' })
+      })
+    })
+    const result = await executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'ok.mp4' }, { inputPath: '../../etc/passwd' }, { inputPath: 'c.mp4' }] },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('segment 1')
+    expect(result.text).toContain('outside_allowed_roots')
+    expect(deps.concatClips).not.toHaveBeenCalled()
+  })
+
+  it('rejects a segment with an empty inputPath WITHOUT concatenating', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'a.mp4' }, { inputPath: '   ' }] },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('segment 1')
+    expect(result.text).toContain('inputPath')
+    expect(deps.concatClips).not.toHaveBeenCalled()
+  })
+
+  it('rejects a segment with a non-positive durationSeconds WITHOUT concatenating', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'a.mp4' }, { inputPath: 'b.mp4', durationSeconds: 0 }] },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('segment 1')
+    expect(result.text).toContain('durationSeconds')
+    expect(deps.concatClips).not.toHaveBeenCalled()
+  })
+
+  it('returns an error result (no throw, and still cleans up) when the daemon concat rejects', async () => {
+    const { executors, getRemoved } = build({
+      concatClips: vi.fn(async () => {
+        throw new Error('VideoToolbox could not open the asset')
+      })
+    })
+    const result = await executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'a.mp4' }, { inputPath: 'b.mp4' }] },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('VideoToolbox could not open the asset')
+    expect(result.trustedMediaRefs).toBeUndefined()
+    expect(getRemoved()).toContain('/staging/out.mp4')
+  })
+
+  it('a persistOutput failure yields an error result with NO trusted refs (and still cleans up)', async () => {
+    const { executors, getRemoved } = build({
+      persistOutput: vi.fn(() => ({ ok: false as const, reason: 'disk_full' }))
+    })
+    const result = await executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'a.mp4' }, { inputPath: 'b.mp4' }] },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('disk_full')
+    expect(result.trustedMediaRefs).toBeUndefined()
+    expect(getRemoved()).toContain('/staging/out.mp4')
+  })
+
+  it('fails (and cleans up) when the concatenated output is empty', async () => {
+    const { executors, deps, getRemoved } = build({
+      readOutput: vi.fn(() => Buffer.alloc(0))
+    })
+    const result = await executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'a.mp4' }, { inputPath: 'b.mp4' }] },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('empty')
+    expect(deps.persistOutput).not.toHaveBeenCalled()
+    expect(getRemoved()).toContain('/staging/out.mp4')
+  })
+
+  it('renders the software-encode label when usedHardware is false', async () => {
+    const { executors } = build({
+      concatClips: vi.fn(async () => ({ ...CONCAT_RESULT, usedHardware: false }))
+    })
+    const result = await executors.executeVtTool(
+      'video_concat_clips',
+      { segments: [{ inputPath: 'a.mp4' }, { inputPath: 'b.mp4' }] },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    expect(result.text).toContain('software')
   })
 })

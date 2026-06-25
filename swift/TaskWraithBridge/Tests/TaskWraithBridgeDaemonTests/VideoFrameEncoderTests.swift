@@ -656,6 +656,348 @@ final class VideoFrameEncoderTests: XCTestCase {
         )
     }
 
+    // MARK: - Concat (S3-3): N segments → one MP4
+
+    /// THE key concat test: two DIFFERENT-dimension solid-color sources
+    /// concatenated in order. Source A = 96×96 solid RED (8 frames); source B =
+    /// 64×128 PORTRAIT solid BLUE (8 frames). Concat [A, B] →
+    ///   • output exists + re-opens as a single-track MP4,
+    ///   • output dims == A's even coded dims (96×96 — fixed from segment 0),
+    ///   • total duration ≈ A.dur + B.dur,
+    ///   • a frame from the FIRST half decodes reddish (segment A is present),
+    ///   • a frame from the SECOND half decodes blue-ish AND letterboxed (B at
+    ///     64×128 fit into 96×96 → black bars left/right), proving BOTH segments
+    ///     are present, in order, and normalized into the output frame.
+    func testConcatTwoDifferentDimsRoundTrip() async throws {
+        let a = try await makeSolidColorH264(width: 96, height: 96, frames: 8, r: 220, g: 20, b: 20)
+        defer { try? FileManager.default.removeItem(at: a) }
+        let b = try await makeSolidColorH264(width: 64, height: 128, frames: 8, r: 20, g: 20, b: 220)
+        defer { try? FileManager.default.removeItem(at: b) }
+
+        let out = stagingURL()
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        let clip = try await VideoFrameEncoder.concatClips(
+            outputPath: out.path,
+            segments: [
+                VideoConcatSegment(sourcePath: a.path, startSeconds: nil, durationSeconds: nil),
+                VideoConcatSegment(sourcePath: b.path, startSeconds: nil, durationSeconds: nil)
+            ],
+            scaleWidth: nil,
+            targetBitrateKbps: nil
+        )
+
+        // --- Result dict shape (the TS side consumes these exact keys) -------
+        XCTAssertEqual(clip.width, 96, "output dims fixed from segment 0 (96×96)")
+        XCTAssertEqual(clip.height, 96)
+        XCTAssertEqual(clip.codec, "h264")
+        XCTAssertEqual(clip.segmentCount, 2)
+        XCTAssertGreaterThan(clip.durationMs, 0)
+        let dict = clip.toJSONObject()
+        XCTAssertEqual(dict["ok"] as? Bool, true)
+        XCTAssertEqual(dict["width"] as? Int, 96)
+        XCTAssertEqual(dict["height"] as? Int, 96)
+        XCTAssertEqual(dict["codec"] as? String, "h264")
+        XCTAssertEqual(dict["segmentCount"] as? Int, 2)
+        XCTAssertNotNil(dict["durationMs"] as? Int)
+        XCTAssertNotNil(dict["usedHardware"] as? Bool)
+
+        // --- File exists + non-empty -----------------------------------------
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "Output MP4 must exist")
+        let size = (try FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int) ?? 0
+        XCTAssertGreaterThan(size, 0, "Output MP4 must be non-empty")
+
+        // --- Re-open: single video track at 96×96 ----------------------------
+        let outAsset = AVURLAsset(url: out)
+        let outTracks = try await outAsset.loadTracks(withMediaType: .video)
+        XCTAssertEqual(outTracks.count, 1, "Output must have exactly one video track")
+        guard let outTrack = outTracks.first else {
+            return XCTFail("No video track in concatenated output")
+        }
+        let naturalSize = try await outTrack.load(.naturalSize)
+        XCTAssertEqual(Int(naturalSize.width.rounded()), 96)
+        XCTAssertEqual(Int(naturalSize.height.rounded()), 96)
+
+        // --- Total duration == A.dur + B.dur (TIGHT) -------------------------
+        // Each source is 8 frames @10fps = 0.8s, so the concat is EXACTLY 1.6s
+        // (16 frames, no boundary drop). The pre-fix code under-reported by one
+        // frame interval per boundary (~1.5s) AND dropped B's first frame; this
+        // asserts the true sum within one frame interval (0.1s) to keep the
+        // muxed-container rounding slack tiny while still catching the bug.
+        let outSeconds = CMTimeGetSeconds(try await outAsset.load(.duration))
+        XCTAssertEqual(outSeconds, 1.6, accuracy: 0.1, "concat duration must be the true 1.6s sum (16 frames @10fps), got \(outSeconds)s")
+        // The reported metadata duration is exact rational arithmetic — pin it.
+        XCTAssertEqual(clip.durationMs, 1600, "concat durationMs must be the true 16-frame sum, got \(clip.durationMs)ms")
+
+        // --- FIRST half decodes reddish (segment A present) ------------------
+        let firstHalf = try await VideoFrameDecoder.decodeFrame(
+            inputPath: out.path,
+            timestampSeconds: 0.2, // safely inside segment A (~0..0.8s)
+            preferHardware: true
+        )
+        XCTAssertEqual(firstHalf.width, 96)
+        XCTAssertEqual(firstHalf.height, 96)
+        XCTAssertFalse(firstHalf.pngData.isEmpty)
+        // Center pixel of segment A must be red-dominant.
+        guard let aCenter = decodedPixel(firstHalf.pngData, x: 48, y: 48) else {
+            throw XCTSkip("Could not sample decoded PNG pixels in this environment")
+        }
+        XCTAssertGreaterThan(aCenter.r, 120, "segment A center should be red (r=\(aCenter.r))")
+        XCTAssertGreaterThan(Int(aCenter.r) - Int(aCenter.b), 60, "segment A red should dominate blue")
+
+        // --- SECOND half decodes blue-ish AND letterboxed (segment B present) -
+        let secondHalf = try await VideoFrameDecoder.decodeFrame(
+            inputPath: out.path,
+            timestampSeconds: 1.0, // safely inside segment B (~0.8..1.6s)
+            preferHardware: true
+        )
+        XCTAssertEqual(secondHalf.width, 96)
+        XCTAssertEqual(secondHalf.height, 96)
+        XCTAssertFalse(secondHalf.pngData.isEmpty)
+        // B is 64×128 fit into 96×96: fitScale = min(96/64, 96/128)=0.75 → scaled
+        // 48×96, centered → blue spans x∈[24,72), black bars at x<24 and x≥72.
+        // Center is blue; a far-left column is the black letterbox bar.
+        guard let bCenter = decodedPixel(secondHalf.pngData, x: 48, y: 48),
+              let bBar = decodedPixel(secondHalf.pngData, x: 4, y: 48) else {
+            throw XCTSkip("Could not sample decoded PNG pixels in this environment")
+        }
+        XCTAssertGreaterThan(bCenter.b, 120, "segment B center should be blue (b=\(bCenter.b))")
+        XCTAssertGreaterThan(Int(bCenter.b) - Int(bCenter.r), 60, "segment B blue should dominate red")
+        // The letterbox bar must be dark (black background), NOT blue.
+        XCTAssertLessThan(Int(bBar.r), 70, "letterbox bar must be dark (r=\(bBar.r))")
+        XCTAssertLessThan(Int(bBar.g), 70, "letterbox bar must be dark (g=\(bBar.g))")
+        XCTAssertLessThan(Int(bBar.b), 70, "letterbox bar must be dark, not blue (b=\(bBar.b))")
+    }
+
+    /// REGRESSION (HIGH): concat must NOT drop a frame at a segment boundary.
+    ///
+    /// The sources here are produced the way the daemon itself produces them —
+    /// via `VideoFrameEncoder.encodeClip` (AVAssetWriter-muxed H.264). For such
+    /// MP4s `CMSampleBufferGetDuration` reads back INVALID through
+    /// `AVAssetReaderTrackOutput`, so the old offset-advance fell to
+    /// `(last - first) + .zero` = one frame interval SHORT. The next segment's
+    /// first rebased frame then landed exactly on `lastAppendedOutputPTS`, failed
+    /// the strict monotonic guard, and was silently dropped — so a concat of two
+    /// 8-frame clips yielded 15 frames, not 16, and under-reported duration by
+    /// one frame interval.
+    ///
+    /// This decodes EVERY output frame and asserts the EXACT total
+    /// (framesA + framesB, no drop) plus the true summed duration. It FAILS
+    /// pre-fix (15 frames / ~1.5s) and PASSES post-fix (16 frames / 1.6s).
+    func testConcatViaEncodeClipSourcesDropsNoBoundaryFrame() async throws {
+        let dim = 64
+        let framesA = 8
+        let framesB = 8
+        // Synthesize two raw sources, then run EACH through encodeClip so the
+        // concat inputs are AVAssetWriter-muxed (the invalid-duration case).
+        let rawA = try await makeSolidColorH264(width: dim, height: dim, frames: framesA, r: 210, g: 30, b: 30)
+        defer { try? FileManager.default.removeItem(at: rawA) }
+        let rawB = try await makeSolidColorH264(width: dim, height: dim, frames: framesB, r: 30, g: 30, b: 210)
+        defer { try? FileManager.default.removeItem(at: rawB) }
+
+        let clipA = stagingURL()
+        defer { try? FileManager.default.removeItem(at: clipA) }
+        let clipB = stagingURL()
+        defer { try? FileManager.default.removeItem(at: clipB) }
+
+        // encodeClip with no scale/trim → a clean N-frame muxed clip at the coded
+        // dims. (This is exactly the kind of MP4 concat is asked to stitch.)
+        let encA = try await VideoFrameEncoder.encodeClip(
+            sourcePath: rawA.path, outputPath: clipA.path,
+            scaleWidth: nil, targetBitrateKbps: nil, startSeconds: nil, durationSeconds: nil
+        )
+        let encB = try await VideoFrameEncoder.encodeClip(
+            sourcePath: rawB.path, outputPath: clipB.path,
+            scaleWidth: nil, targetBitrateKbps: nil, startSeconds: nil, durationSeconds: nil
+        )
+        XCTAssertEqual(encA.width, dim)
+        XCTAssertEqual(encB.width, dim)
+
+        // Sanity: confirm the encodeClip outputs really DO read back an invalid
+        // sample duration (the precondition for the bug). If they didn't, the
+        // regression wouldn't reproduce — so we assert the trap is armed.
+        let armedInvalidDuration = try await firstSampleDurationIsInvalid(clipA)
+        XCTAssertTrue(
+            armedInvalidDuration,
+            "precondition: encodeClip-muxed source must read back an INVALID sample duration (the bug trigger)"
+        )
+
+        let out = stagingURL()
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        let clip = try await VideoFrameEncoder.concatClips(
+            outputPath: out.path,
+            segments: [
+                VideoConcatSegment(sourcePath: clipA.path, startSeconds: nil, durationSeconds: nil),
+                VideoConcatSegment(sourcePath: clipB.path, startSeconds: nil, durationSeconds: nil)
+            ],
+            scaleWidth: nil,
+            targetBitrateKbps: nil
+        )
+        XCTAssertEqual(clip.segmentCount, 2)
+        XCTAssertEqual(clip.width, dim, "output dims fixed from segment 0")
+        XCTAssertEqual(clip.height, dim)
+
+        // --- Decode ALL output frames; the count must be EXACTLY the sum -------
+        let decodedCount = try await countOutputFrames(out)
+        XCTAssertEqual(
+            decodedCount, framesA + framesB,
+            "concat must keep EVERY frame across the boundary (\(framesA)+\(framesB)=\(framesA + framesB)); a short count means the boundary drop regressed (got \(decodedCount))"
+        )
+
+        // --- Duration must be the TRUE sum, within one frame interval ---------
+        // 16 frames @10fps = 1.6s exactly. Pre-fix this was ~1.5s (one interval
+        // short). Tight bound = one frame interval (0.1s).
+        let outSeconds = CMTimeGetSeconds(try await AVURLAsset(url: out).load(.duration))
+        XCTAssertEqual(outSeconds, 1.6, accuracy: 0.1, "concat duration must be the true \(framesA + framesB)-frame sum, got \(outSeconds)s")
+        XCTAssertEqual(clip.durationMs, 1600, "concat durationMs must be the true \(framesA + framesB)-frame sum, got \(clip.durationMs)ms")
+    }
+
+    /// Monotonic PTS across the segment boundary: decode ALL output frames'
+    /// presentation timestamps and assert they strictly increase end-to-end (no
+    /// dup / no regression where segment B is offset onto segment A's timeline).
+    func testConcatOutputPTSStrictlyMonotonic() async throws {
+        let a = try await makeSolidColorH264(width: 80, height: 80, frames: 6, r: 200, g: 30, b: 30)
+        defer { try? FileManager.default.removeItem(at: a) }
+        let b = try await makeSolidColorH264(width: 80, height: 80, frames: 6, r: 30, g: 30, b: 200)
+        defer { try? FileManager.default.removeItem(at: b) }
+        let out = stagingURL()
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        let clip = try await VideoFrameEncoder.concatClips(
+            outputPath: out.path,
+            segments: [
+                VideoConcatSegment(sourcePath: a.path, startSeconds: nil, durationSeconds: nil),
+                VideoConcatSegment(sourcePath: b.path, startSeconds: nil, durationSeconds: nil)
+            ],
+            scaleWidth: nil,
+            targetBitrateKbps: nil
+        )
+        XCTAssertEqual(clip.segmentCount, 2)
+
+        let outAsset = AVURLAsset(url: out)
+        let outTracks = try await outAsset.loadTracks(withMediaType: .video)
+        guard let outTrack = outTracks.first else {
+            return XCTFail("No video track in concatenated output")
+        }
+        let reader = try AVAssetReader(asset: outAsset)
+        let trackOut = AVAssetReaderTrackOutput(
+            track: outTrack,
+            outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String:
+                    Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+            ]
+        )
+        XCTAssertTrue(reader.canAdd(trackOut))
+        reader.add(trackOut)
+        XCTAssertTrue(reader.startReading())
+        defer { if reader.status == .reading { reader.cancelReading() } }
+
+        var previous: CMTime = .negativeInfinity
+        var count = 0
+        while reader.status == .reading {
+            guard let sample = trackOut.copyNextSampleBuffer() else { break }
+            let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+            XCTAssertTrue(pts.isNumeric, "every output PTS must be numeric")
+            XCTAssertEqual(
+                CMTimeCompare(pts, previous), 1,
+                "output PTS must STRICTLY increase across the boundary (prev \(CMTimeGetSeconds(previous))s, got \(CMTimeGetSeconds(pts))s)"
+            )
+            previous = pts
+            count += 1
+        }
+        // EXACTLY both segments' frames must be present — NO frame dropped at the
+        // boundary. 6 + 6 = 12. The pre-fix offset advance was short by one frame
+        // interval at the boundary, so segment B's first frame collided with the
+        // monotonic guard and was silently dropped (11/12); this asserts the
+        // exact total to catch that regression.
+        XCTAssertEqual(count, 12, "expected EXACTLY 12 frames across both segments (no boundary drop), got \(count)")
+        // The reported total duration must also be the true sum: 12 frames @10fps
+        // = 1.2s, with no under-report.
+        XCTAssertEqual(clip.durationMs, 1200, "concat durationMs must be the true 12-frame sum, got \(clip.durationMs)ms")
+    }
+
+    /// An empty segment — a segment whose trim window is entirely PAST its end —
+    /// must abort the whole concat with `.encodeFailed` and produce NO output
+    /// file (we cancelWriting before finishing).
+    func testConcatEmptySegmentThrowsEncodeFailed() async throws {
+        // Segment 0 is fine; segment 1 has a trim far past its ~0.6s end.
+        let a = try await makeSolidColorH264(width: 64, height: 64, frames: 6, r: 200, g: 30, b: 30)
+        defer { try? FileManager.default.removeItem(at: a) }
+        let b = try await makeSolidColorH264(width: 64, height: 64, frames: 6, r: 30, g: 30, b: 200)
+        defer { try? FileManager.default.removeItem(at: b) }
+        let out = stagingURL()
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        do {
+            _ = try await VideoFrameEncoder.concatClips(
+                outputPath: out.path,
+                segments: [
+                    VideoConcatSegment(sourcePath: a.path, startSeconds: nil, durationSeconds: nil),
+                    VideoConcatSegment(sourcePath: b.path, startSeconds: 100.0, durationSeconds: 1.0)
+                ],
+                scaleWidth: nil,
+                targetBitrateKbps: nil
+            )
+            XCTFail("Expected a throw for a segment trimmed entirely past its end")
+        } catch let err as VideoEncodeError {
+            guard case .encodeFailed = err else {
+                return XCTFail("Expected .encodeFailed for an empty segment, got \(err)")
+            }
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: out.path),
+            "no output should be produced when a segment contributes zero frames"
+        )
+    }
+
+    /// Defensive arity: zero segments → `.badInput` (the TS side enforces ≥2,
+    /// but the daemon guards ≥1 itself).
+    func testConcatEmptySegmentListThrowsBadInput() async throws {
+        let out = stagingURL()
+        defer { try? FileManager.default.removeItem(at: out) }
+        do {
+            _ = try await VideoFrameEncoder.concatClips(
+                outputPath: out.path,
+                segments: [],
+                scaleWidth: nil,
+                targetBitrateKbps: nil
+            )
+            XCTFail("Expected a throw for an empty segment list")
+        } catch let err as VideoEncodeError {
+            guard case .badInput = err else {
+                return XCTFail("Expected .badInput for zero segments, got \(err)")
+            }
+        }
+    }
+
+    /// Concat param contract: the RPC params (incl. nested segments) decode to
+    /// the supplied values, with optional per-segment trim fields nil when
+    /// absent. Pins the shape the TS side sends.
+    func testConcatParamsDecode() throws {
+        let json: [String: Any] = [
+            "outputPath": "/tmp/out.mp4",
+            "segments": [
+                ["sourcePath": "/tmp/a.mp4"],
+                ["sourcePath": "/tmp/b.mp4", "startSeconds": 1.5, "durationSeconds": 2.0]
+            ],
+            "scaleWidth": 720,
+            "targetBitrateKbps": 3000
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let parsed = try JSONDecoder().decode(VideoConcatClipsParams.self, from: data)
+        XCTAssertEqual(parsed.outputPath, "/tmp/out.mp4")
+        XCTAssertEqual(parsed.scaleWidth, 720)
+        XCTAssertEqual(parsed.targetBitrateKbps, 3000)
+        XCTAssertEqual(parsed.segments.count, 2)
+        XCTAssertEqual(parsed.segments[0].sourcePath, "/tmp/a.mp4")
+        XCTAssertNil(parsed.segments[0].startSeconds)
+        XCTAssertNil(parsed.segments[0].durationSeconds)
+        XCTAssertEqual(parsed.segments[1].sourcePath, "/tmp/b.mp4")
+        XCTAssertEqual(parsed.segments[1].startSeconds, 1.5)
+        XCTAssertEqual(parsed.segments[1].durationSeconds, 2.0)
+    }
+
     // MARK: - Helpers
 
     private func stagingURL() -> URL {
@@ -664,6 +1006,58 @@ final class VideoFrameEncoderTests: XCTestCase {
             .appendingPathComponent("media-staging", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("tw-\(UUID().uuidString).mp4")
+    }
+
+    /// Count EVERY video frame in an MP4 by reading it end-to-end with an
+    /// `AVAssetReaderTrackOutput` (the same way concat reads its inputs). Used by
+    /// the boundary-drop regression to assert no frame was silently dropped.
+    private func countOutputFrames(_ url: URL) async throws -> Int {
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        guard let track = tracks.first else { return 0 }
+        let reader = try AVAssetReader(asset: asset)
+        let trackOut = AVAssetReaderTrackOutput(
+            track: track,
+            outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String:
+                    Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+            ]
+        )
+        guard reader.canAdd(trackOut) else { return 0 }
+        reader.add(trackOut)
+        guard reader.startReading() else { return 0 }
+        defer { if reader.status == .reading { reader.cancelReading() } }
+        var count = 0
+        while reader.status == .reading {
+            guard let sample = trackOut.copyNextSampleBuffer() else { break }
+            if CMSampleBufferGetNumSamples(sample) > 0 { count += 1 }
+        }
+        return count
+    }
+
+    /// True iff the FIRST sample of `url`'s video track reads back a NON-numeric
+    /// (invalid) `CMSampleBufferGetDuration` through `AVAssetReaderTrackOutput` —
+    /// the exact precondition that made the concat boundary-drop bug fire. The
+    /// regression test asserts this is true for an encodeClip-muxed source so the
+    /// trap is provably armed.
+    private func firstSampleDurationIsInvalid(_ url: URL) async throws -> Bool {
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        guard let track = tracks.first else { return false }
+        let reader = try AVAssetReader(asset: asset)
+        let trackOut = AVAssetReaderTrackOutput(
+            track: track,
+            outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String:
+                    Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+            ]
+        )
+        guard reader.canAdd(trackOut) else { return false }
+        reader.add(trackOut)
+        guard reader.startReading() else { return false }
+        defer { if reader.status == .reading { reader.cancelReading() } }
+        guard let sample = trackOut.copyNextSampleBuffer() else { return false }
+        return !CMSampleBufferGetDuration(sample).isNumeric
     }
 
     /// Encode a tiny solid-color H.264 `.mp4` source and return its URL. Each
@@ -781,6 +1175,100 @@ final class VideoFrameEncoderTests: XCTestCase {
                 px[1] = g
                 px[2] = r
                 px[3] = a
+            }
+        }
+    }
+
+    /// Encode a tiny H.264 `.mp4` whose EVERY frame is the SAME solid color and
+    /// return its URL. Unlike `makeTinyH264` (which varies color per frame), this
+    /// keeps a constant hue so a decoded frame from any point in the clip can be
+    /// color-asserted — used by the concat round-trip to tell segment A (red)
+    /// from segment B (blue) and to detect the black letterbox bars. Encoding a
+    /// constant color through H.264 + decode survives the lossy round-trip with a
+    /// wide threshold (we assert dominance, not exact bytes).
+    private func makeSolidColorH264(
+        width: Int,
+        height: Int,
+        frames: Int,
+        r: UInt8, g: UInt8, b: UInt8
+    ) async throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("taskwraith-concat-synth-\(UUID().uuidString).mp4")
+        try? FileManager.default.removeItem(at: url)
+
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let settings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height
+        ]
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        input.expectsMediaDataInRealTime = false
+        let attrs: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height
+        ]
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: attrs
+        )
+        guard writer.canAdd(input) else {
+            throw XCTSkip("AVAssetWriter cannot add an H.264 input in this environment")
+        }
+        writer.add(input)
+        guard writer.startWriting() else {
+            throw XCTSkip("AVAssetWriter could not start (status \(writer.status.rawValue), \(String(describing: writer.error)))")
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        let fps: Int32 = 10
+        for i in 0..<frames {
+            var spins = 0
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(nanoseconds: 1_000_000)
+                spins += 1
+                if spins > 5_000 { break }
+            }
+            guard let pool = adaptor.pixelBufferPool else {
+                throw XCTSkip("No pixel buffer pool available")
+            }
+            var pbOut: CVPixelBuffer?
+            let allocStatus = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pbOut)
+            guard allocStatus == kCVReturnSuccess, let pb = pbOut else {
+                throw XCTSkip("Could not allocate a pixel buffer (status \(allocStatus))")
+            }
+            fillSolidColor(pb, r: r, g: g, b: b)
+            let pts = CMTime(value: CMTimeValue(i), timescale: fps)
+            if !adaptor.append(pb, withPresentationTime: pts) {
+                throw XCTSkip("Adaptor refused a frame (status \(writer.status.rawValue), \(String(describing: writer.error)))")
+            }
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw XCTSkip("AVAssetWriter did not complete (status \(writer.status.rawValue), \(String(describing: writer.error)))")
+        }
+        return url
+    }
+
+    /// Fill a BGRA pixel buffer with ONE constant color (every pixel identical).
+    private func fillSolidColor(_ pb: CVPixelBuffer, r: UInt8, g: UInt8, b: UInt8) {
+        CVPixelBufferLockBaseAddress(pb, [])
+        defer { CVPixelBufferUnlockBaseAddress(pb, []) }
+        guard let base = CVPixelBufferGetBaseAddress(pb) else { return }
+        let width = CVPixelBufferGetWidth(pb)
+        let height = CVPixelBufferGetHeight(pb)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pb)
+        let ptr = base.assumingMemoryBound(to: UInt8.self)
+        for y in 0..<height {
+            let row = ptr + y * bytesPerRow
+            for x in 0..<width {
+                let px = row + x * 4
+                px[0] = b
+                px[1] = g
+                px[2] = r
+                px[3] = 255
             }
         }
     }

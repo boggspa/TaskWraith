@@ -912,6 +912,74 @@ dispatcher.register("video.encodeClip") { params in
     }
 }
 
+// `video.concatClips` — native AVFoundation concat-to-MP4: N AVAssetReaders →
+// one AVAssetWriter. Mirrors `video.encodeClip`: decode params → runBlocking →
+// map VideoEncodeError to JSONRPCError → return the metadata dict (`ok`,
+// `width`, `height`, `durationMs` [TOTAL], `codec`, `usedHardware`,
+// `segmentCount`). We do NOT return bytes — TS reads + deletes the file at
+// outputPath. Each segment's coded dims are normalized into segment-0's output
+// frame (aspect-fit letterbox over black). <1 segment / a segment with no video
+// track / an HDR segment / a bad path → invalidParams; a zero-frame segment or
+// a writer failure → internalError.
+
+struct VideoConcatSegmentParams: Decodable {
+    let sourcePath: String
+    let startSeconds: Double?
+    let durationSeconds: Double?
+}
+
+struct VideoConcatClipsParams: Decodable {
+    let outputPath: String
+    let segments: [VideoConcatSegmentParams]
+    let scaleWidth: Int?
+    let targetBitrateKbps: Int?
+}
+
+dispatcher.register("video.concatClips") { params in
+    let parsed: VideoConcatClipsParams
+    do {
+        parsed = try decodeParams(params, as: VideoConcatClipsParams.self)
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid video.concatClips params: \(error.localizedDescription)"
+        )
+    }
+    do {
+        let clip = try runBlocking { @Sendable [
+            outputPath = parsed.outputPath,
+            segments = parsed.segments.map {
+                VideoConcatSegment(
+                    sourcePath: $0.sourcePath,
+                    startSeconds: $0.startSeconds,
+                    durationSeconds: $0.durationSeconds
+                )
+            },
+            scaleWidth = parsed.scaleWidth,
+            targetBitrateKbps = parsed.targetBitrateKbps
+        ] in
+            try await VideoFrameEncoder.concatClips(
+                outputPath: outputPath,
+                segments: segments,
+                scaleWidth: scaleWidth,
+                targetBitrateKbps: targetBitrateKbps
+            )
+        }
+        return clip.toJSONObject()
+    } catch let err as VideoEncodeError {
+        switch err {
+        case .badInput(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.invalidParams, message: message)
+        case .encodeFailed(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: message)
+        }
+    } catch let err as JSONRPCError {
+        throw err
+    } catch {
+        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: error.localizedDescription)
+    }
+}
+
 // MARK: - Creative-app probe (Phase K1)
 //
 // `creative.runningApplications` — answers "is bundle id X currently running?"

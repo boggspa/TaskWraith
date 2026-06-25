@@ -193,6 +193,13 @@ export const TASKWRAITH_MCP_TOOLS = [
   // (NOT the image lane that video_decode_frame uses). Writes a new file; gated as a
   // file change. See src/main/mcp/VtToolExecutors.ts.
   'video_encode_clip',
+  // Concatenate N video SEGMENTS (each a workspace video + optional trim) into one
+  // H.264 MP4 via the daemon's native VideoToolbox (no ffmpeg required; hardware-
+  // accelerated). Like video_encode_clip the output is a video FILE, so it rides the
+  // same TRUSTED non-image media_refs channel. Each segment path is realpath-jailed
+  // before the daemon runs. Writes a new file; gated as a file change. See
+  // src/main/mcp/VtToolExecutors.ts.
+  'video_concat_clips',
   // Media PRODUCERS (S1b-3) — write a standalone output media file via ffmpeg
   // over a trusted non-image media_refs channel. `audio_extract` pulls the audio
   // track out of a video; `transcode_audio` re-encodes audio to wav/m4a/mp3;
