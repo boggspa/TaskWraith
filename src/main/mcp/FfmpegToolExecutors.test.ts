@@ -107,6 +107,13 @@ describe('video_thumbnail', () => {
     expect(getRemoved()).toContain('/staging/out.png')
   })
 
+  it('reads the PNG output under the IMAGE byte cap (passes image/png mime to readOutput)', async () => {
+    const { executors, deps } = build()
+    await executors.executeFfmpegTool('video_thumbnail', { sourcePath: 'clip.mp4' }, {})
+    // The mimeType arg selects the 8MB image cap (not the 512MB video default).
+    expect(deps.readOutput).toHaveBeenCalledWith('/staging/out.png', 'image/png')
+  })
+
   it('returns an actionable error when ffmpeg is not installed', async () => {
     const { executors, deps } = build({ resolveFfmpeg: vi.fn(() => null) })
     const result = await executors.executeFfmpegTool('video_thumbnail', { sourcePath: 'clip.mp4' }, {})

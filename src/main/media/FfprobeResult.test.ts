@@ -111,4 +111,43 @@ describe('parseFfprobeJson', () => {
     expect(parseFfprobeJson('not json').ok).toBe(false)
     expect(parseFfprobeJson('').ok).toBe(false)
   })
+
+  it('caps a pathologically long metadata string to 256 chars', () => {
+    const r = probe({
+      streams: [{ codec_type: 'video', codec_name: 'h264', width: 100, height: 100, avg_frame_rate: '30/1', pix_fmt: 'p'.repeat(5000) }],
+      format: { format_name: 'f'.repeat(5000), duration: '1.0' }
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.info.format.formatName?.length).toBe(256)
+    expect(r.info.video?.pixFmt?.length).toBe(256)
+  })
+
+  it('drops negative/garbage magnitude numerics (duration, bit_rate, dims) but KEEPS negative rotation', () => {
+    const r = probe({
+      streams: [
+        {
+          codec_type: 'video',
+          codec_name: 'h264',
+          width: -1920, // garbage → dropped
+          height: 1080,
+          avg_frame_rate: '30/1',
+          side_data_list: [{ side_data_type: 'Display Matrix', rotation: -90 }] // negative is VALID here
+        },
+        { codec_type: 'audio', codec_name: 'aac', channels: 2, sample_rate: '48000', bit_rate: '-128000' }
+      ],
+      format: { format_name: 'mp4', duration: '-12.0', bit_rate: '-2500000' }
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    // Negative format magnitudes are dropped, not surfaced as negatives.
+    expect(r.info.format.durationMs).toBeUndefined()
+    expect(r.info.format.bitRate).toBeUndefined()
+    // Negative width dropped; positive height kept.
+    expect(r.info.video && 'width' in r.info.video).toBe(false)
+    expect(r.info.video?.height).toBe(1080)
+    expect(r.info.audio && 'bitRate' in r.info.audio).toBe(false)
+    // Rotation legitimately negative → still normalized (regression guard).
+    expect(r.info.video?.rotationDeg).toBe(270)
+  })
 })

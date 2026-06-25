@@ -43,15 +43,25 @@ export interface MediaProbeInfo {
   coverArtOnly: boolean
 }
 
+/** A pathological file can carry a multi-KB metadata tag (codec/format/profile
+ *  strings, tag values). Cap every surfaced string so one giant field can't bloat
+ *  the parsed result the model receives. 256 chars is far above any real codec /
+ *  format / pix_fmt name. */
+const MAX_PROBE_STRING = 256
+
 function asObj(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
 }
 function asStr(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined
+  if (typeof value !== 'string') return undefined
+  return value.length > MAX_PROBE_STRING ? value.slice(0, MAX_PROBE_STRING) : value
 }
-/** ffprobe numbers may be real numbers OR quoted strings — accept both. */
+/** ffprobe numbers may be real numbers OR quoted strings — accept both. NaN/Inf
+ *  is dropped. Negatives are NOT clamped here because rotation legitimately arrives
+ *  negative (e.g. -90 from a Display Matrix); the always-non-negative magnitudes
+ *  (duration, bit_rate, size, dimensions, sample_rate) go through `asNonNegNum`. */
 function asNum(value: unknown): number | undefined {
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
   if (typeof value === 'string' && value.trim() !== '') {
@@ -59,6 +69,12 @@ function asNum(value: unknown): number | undefined {
     return Number.isFinite(n) ? n : undefined
   }
   return undefined
+}
+/** Like `asNum` but drops a negative value — for fields where a negative is
+ *  meaningless/corrupt (a hostile duration/bit_rate/size or a bad dimension). */
+function asNonNegNum(value: unknown): number | undefined {
+  const n = asNum(value)
+  return n !== undefined && n >= 0 ? n : undefined
 }
 function parseRational(value: unknown): number | undefined {
   if (typeof value !== 'string') return undefined
@@ -110,11 +126,11 @@ export function parseFfprobeJson(
   const format: MediaProbeFormat = {}
   const formatName = asStr(fmt.format_name)
   if (formatName) format.formatName = formatName
-  const durSec = asNum(fmt.duration)
+  const durSec = asNonNegNum(fmt.duration)
   if (durSec !== undefined) format.durationMs = Math.round(durSec * 1000)
-  const bitRate = asNum(fmt.bit_rate)
+  const bitRate = asNonNegNum(fmt.bit_rate)
   if (bitRate !== undefined) format.bitRate = bitRate
-  const sizeBytes = asNum(fmt.size)
+  const sizeBytes = asNonNegNum(fmt.size)
   if (sizeBytes !== undefined) format.sizeBytes = sizeBytes
 
   const realVideo = streams.find((s) => isVideo(s) && !isAttachedPic(s))
@@ -126,9 +142,9 @@ export function parseFfprobeJson(
     video = {}
     const codec = asStr(realVideo.codec_name)
     if (codec) video.codec = codec
-    const w = asNum(realVideo.width)
+    const w = asNonNegNum(realVideo.width)
     if (w !== undefined) video.width = Math.round(w)
-    const h = asNum(realVideo.height)
+    const h = asNonNegNum(realVideo.height)
     if (h !== undefined) video.height = Math.round(h)
     const fps = parseRational(realVideo.avg_frame_rate)
     if (fps !== undefined && fps > 0) video.fps = Math.round(fps * 1000) / 1000
@@ -145,11 +161,11 @@ export function parseFfprobeJson(
     audio = {}
     const codec = asStr(audioStream.codec_name)
     if (codec) audio.codec = codec
-    const channels = asNum(audioStream.channels)
+    const channels = asNonNegNum(audioStream.channels)
     if (channels !== undefined) audio.channels = Math.round(channels)
-    const sampleRate = asNum(audioStream.sample_rate)
+    const sampleRate = asNonNegNum(audioStream.sample_rate)
     if (sampleRate !== undefined) audio.sampleRate = Math.round(sampleRate)
-    const abr = asNum(audioStream.bit_rate)
+    const abr = asNonNegNum(audioStream.bit_rate)
     if (abr !== undefined) audio.bitRate = abr
   }
 

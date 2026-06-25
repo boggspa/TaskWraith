@@ -354,6 +354,12 @@ const ANALYZE_SCRIPT = `window.__twAnalyze = function(b64, W, H) {
         if (a > peak) peak = a; sumsq += v * v; if (a >= 0.999) clipped++; total++;
       }
     }
+    // A corrupt decode can emit NaN/Inf samples which poison peak/sumsq and would
+    // surface as NaN in the returned meta. Treat that as a clean analysis failure
+    // rather than reporting garbage metrics.
+    if (!isFinite(peak) || !isFinite(sumsq)) {
+      throw new Error('could not analyze audio (non-finite samples in decoded stream)');
+    }
     var rms = total ? Math.sqrt(sumsq / total) : 0;
     var silentFrames = 0;
     for (var i = 0; i < frames; i++) {

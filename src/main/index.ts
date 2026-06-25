@@ -1918,18 +1918,35 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
       : { ok: false, reason: validation.reason }
   },
   resolveFfprobe: () => resolveFfmpegBinaries().ffprobePath,
+  // ffprobe is metadata-only (cheap CPU) but still spawns a subprocess; gate it on
+  // the SAME concurrency semaphore as ffmpeg so N agents can't spawn N concurrent
+  // probes. argv, no shell.
   runFfprobe: (binaryPath, args) =>
-    new Promise((resolve, reject) => {
-      execFile(
-        binaryPath,
-        args,
-        { maxBuffer: 16 * 1024 * 1024, timeout: 60_000, shell: false },
-        (err, stdout, stderr) => {
-          if (err) reject(new Error(`ffprobe failed: ${String(stderr).trim() || err.message}`))
-          else resolve({ stdout, stderr })
-        }
-      )
-    }),
+    mediaProcessLimiter.run(
+      () =>
+        new Promise((resolve, reject) => {
+          execFile(
+            binaryPath,
+            args,
+            { maxBuffer: 16 * 1024 * 1024, timeout: 60_000, shell: false },
+            (err, stdout, stderr) => {
+              if (err) {
+                // Light error clarity: distinguish the two non-obvious failure
+                // modes (timed-out vs metadata-too-large) from a real probe error
+                // so the model gets an actionable message, not a bare exit code.
+                const e = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string }
+                const detail =
+                  e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+                    ? 'metadata output exceeded 16MB (file has pathologically many streams/tags)'
+                    : e.killed || e.signal === 'SIGTERM'
+                      ? 'ffprobe timed out after 60s'
+                      : String(stderr).trim() || err.message
+                reject(new Error(`ffprobe failed: ${detail}`))
+              } else resolve({ stdout, stderr })
+            }
+          )
+        })
+    ),
   resolveFfmpeg: () => resolveFfmpegBinaries().ffmpegPath,
   // Encoders are CPU-heavy + can run minutes — longer timeout, gated by the
   // concurrency semaphore so N agents can't spawn N encoders. argv, no shell.

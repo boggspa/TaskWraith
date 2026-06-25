@@ -133,6 +133,19 @@ function humanBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
+// Defense-in-depth on the video_probe result the model receives. parseFfprobeJson
+// already emits a fixed, bounded shape (string fields capped at 256 chars, no raw
+// streams[]/tags passthrough), so today this is effectively a no-op — but if the
+// parsed shape ever grows an unbounded field, this keeps a pathological many-stream
+// file from flooding the model context. Over the cap we drop the optional codec
+// sub-objects (the heaviest) and flag the truncation, never silently corrupt.
+const MAX_PROBE_OUTPUT_BYTES = 64 * 1024
+function capProbeOutput<T extends Record<string, unknown>>(full: T): T | (Record<string, unknown> & { truncated: true }) {
+  if (JSON.stringify(full).length <= MAX_PROBE_OUTPUT_BYTES) return full
+  const { video: _video, audio: _audio, ...rest } = full
+  return { ...rest, truncated: true }
+}
+
 export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecutors {
   const { jailInput, resolveFfprobe, resolveFfmpeg, runFfprobe, runFfmpeg, stagingPath, readOutput, persistOutput, removeFile, missingMessage } = deps
 
@@ -161,7 +174,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
     }
     const parsed = parseFfprobeJson(run.stdout)
     if (!parsed.ok) return fail('video_probe', parsed.error)
-    const full = { ok: true, tool: 'video_probe', sniffedMime: j.mimeType, ...parsed.info }
+    const full = capProbeOutput({ ok: true, tool: 'video_probe', sniffedMime: j.mimeType, ...parsed.info })
     const text = JSON.stringify(full)
     return { text, structuredContent: full, content: [{ type: 'text', text }] }
   }
@@ -185,7 +198,10 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
       await runFfmpeg(ffmpeg, argv.args)
       let buffer: Buffer
       try {
-        buffer = readOutput(outputPath)
+        // The thumbnail is a PNG image — cap it at the 8MB IMAGE ceiling, not the
+        // 512MB video default, so a pathological large frame (e.g. 4096×4096) can't
+        // buffer huge in the heap before the image block is built.
+        buffer = readOutput(outputPath, 'image/png')
       } catch (error) {
         return fail('video_thumbnail', `ffmpeg output unavailable: ${error instanceof Error ? error.message : String(error)}`)
       }

@@ -96,6 +96,16 @@ export const RAW_MEDIA_MAX_REFS = 8
 
 const RAW_MEDIA_MAX_PATH_LENGTH = 4096
 
+/**
+ * Canonical content-address (base64url sha256) shape. Mirrors the `SHA_RE` /
+ * `SHA256_BASE64URL_PATTERN` the `twmedia://` protocol + asset store enforce.
+ * Kept as a local literal (not imported) so this shared, node-free module never
+ * reaches into a `main/` file. A provider-supplied `sha256` that fails this shape
+ * is dropped rather than stored — defense-in-depth that narrows the blast radius
+ * if a downstream URL builder is ever fed a RAW-lane ref directly.
+ */
+const RAW_SHA_RE = /^[A-Za-z0-9_-]{32,96}$/
+
 /** base64 alphabet (standard + url-safe `=` padding) plus whitespace. A
  *  thumbnail body containing anything else (quotes, angle brackets, `data:`
  *  prefixes…) is rejected so it can never break out of the constructed
@@ -213,7 +223,12 @@ export function sanitizeRawProviderMediaRef(raw: unknown): TranscriptMediaRef | 
   const width = positiveInt(record.width)
   const height = positiveInt(record.height)
   const byteLength = positiveInt(record.byteLength)
-  const sha256 = trimmedString(record.sha256, 256)
+  // A provider-supplied sha256 must match the canonical content-address shape, or
+  // it is dropped (not stored): a malformed sha is never a valid asset key, and
+  // letting garbage through would only widen the surface if a URL builder is ever
+  // reused on a RAW-lane ref. Dropping it just falls back to assetId/id for dedup.
+  const rawSha = trimmedString(record.sha256, 256)
+  const sha256 = rawSha && RAW_SHA_RE.test(rawSha) ? rawSha : ''
   const assetId = trimmedString(record.assetId, 256)
   if (alt) ref.alt = alt
   if (caption) ref.caption = caption

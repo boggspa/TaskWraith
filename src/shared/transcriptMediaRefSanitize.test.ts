@@ -7,6 +7,10 @@ import {
   sanitizeRawThumbnail
 } from './transcriptMediaRefSanitize'
 
+// A valid base64url sha256 (>=32 chars) — the RAW sanitizer now drops a sha that
+// doesn't match the canonical content-address shape, so fixtures use a real one.
+const VALID_SHA = 'abc123def456ghi789jkl012mno345pq'
+
 /** A legitimate raster ref as the sanitized lane would emit it over the RAW
  *  transport (raster image with a small bounded thumbnail, no path). */
 function legitRef(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -18,7 +22,7 @@ function legitRef(overrides: Record<string, unknown> = {}): Record<string, unkno
     name: 'tool image 1',
     mimeType: 'image/png',
     byteLength: 4096,
-    sha256: 'abc123',
+    sha256: VALID_SHA,
     assetId: 'run:run-1:tool-image:abc123',
     thumbnail: { dataBase64: 'iVBORw0KGgo=', mimeType: 'image/png', width: 16, height: 16 },
     status: 'available',
@@ -33,7 +37,7 @@ describe('sanitizeRawProviderMediaRef', () => {
     expect(ref?.id).toBe('run-1:tool-image:abc123')
     expect(ref?.mimeType).toBe('image/png')
     expect(ref?.thumbnail?.dataBase64).toBe('iVBORw0KGgo=')
-    expect(ref?.sha256).toBe('abc123')
+    expect(ref?.sha256).toBe(VALID_SHA)
     expect(ref?.path).toBeUndefined()
   })
 
@@ -188,6 +192,17 @@ describe('sanitizeRawProviderMediaRef', () => {
     expect(ref?.sha256).toBeUndefined()
     expect(ref?.byteLength).toBeUndefined()
   })
+
+  it('drops a sha256 that fails the canonical content-address shape (defense-in-depth)', () => {
+    // Too short, and one carrying disallowed characters — both must be dropped
+    // (the ref survives via its thumbnail), never stored as a fake asset key.
+    expect(sanitizeRawProviderMediaRef(legitRef({ sha256: 'abc123' }))?.sha256).toBeUndefined()
+    expect(
+      sanitizeRawProviderMediaRef(legitRef({ sha256: '../../etc/passwd/aaaaaaaaaaaaaaaaaaaaaaaaaaaa' }))?.sha256
+    ).toBeUndefined()
+    // A canonical base64url sha of valid length is retained.
+    expect(sanitizeRawProviderMediaRef(legitRef({ sha256: VALID_SHA }))?.sha256).toBe(VALID_SHA)
+  })
 })
 
 describe('sanitizeRawThumbnail', () => {
@@ -221,10 +236,10 @@ describe('sanitizeRawProviderMediaRefs', () => {
 
   it('drops hostile refs and keeps legit ones in a mixed batch', () => {
     const refs = sanitizeRawProviderMediaRefs([
-      legitRef({ id: 'a', sha256: 'a' }),
-      legitRef({ id: 'b', sha256: 'b', mimeType: 'image/svg+xml' }), // dropped (svg)
+      legitRef({ id: 'a', sha256: `${VALID_SHA}aa`, assetId: 'asset-a' }),
+      legitRef({ id: 'b', sha256: `${VALID_SHA}bb`, assetId: 'asset-b', mimeType: 'image/svg+xml' }), // dropped (svg)
       'file:///etc/passwd', // dropped (not object)
-      legitRef({ id: 'c', sha256: 'c', source: 'workspace_path', path: 'file:///etc/shadow' }) // kept, path stripped
+      legitRef({ id: 'c', sha256: `${VALID_SHA}cc`, assetId: 'asset-c', source: 'workspace_path', path: 'file:///etc/shadow' }) // kept, path stripped
     ])
     expect(refs.map((r) => r.id)).toEqual(['a', 'c'])
     expect(refs.every((r) => r.path === undefined)).toBe(true)
@@ -232,15 +247,17 @@ describe('sanitizeRawProviderMediaRefs', () => {
 
   it('de-dupes by content identity (sha256 → assetId → id)', () => {
     const refs = sanitizeRawProviderMediaRefs([
-      legitRef({ id: 'x1', sha256: 'same' }),
-      legitRef({ id: 'x2', sha256: 'same' })
+      legitRef({ id: 'x1', sha256: VALID_SHA }),
+      legitRef({ id: 'x2', sha256: VALID_SHA })
     ])
     expect(refs).toHaveLength(1)
   })
 
   it('caps the batch at RAW_MEDIA_MAX_REFS', () => {
     const many = Array.from({ length: RAW_MEDIA_MAX_REFS + 5 }, (_, i) =>
-      legitRef({ id: `id-${i}`, sha256: `sha-${i}` })
+      // distinct VALID shas so each is a distinct dedup key (the sanitizer now drops
+      // a malformed sha, which would otherwise collapse these onto a shared assetId).
+      legitRef({ id: `id-${i}`, sha256: `${VALID_SHA}${String(i).padStart(2, '0')}`, assetId: `asset-${i}` })
     )
     expect(sanitizeRawProviderMediaRefs(many)).toHaveLength(RAW_MEDIA_MAX_REFS)
   })
