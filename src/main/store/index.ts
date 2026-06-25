@@ -565,6 +565,8 @@ const defaultSettings: AppSettings = {
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
     crossThreadRead: 'ask',
+    mediaEditing: 'ask',
+    mediaRecording: 'deny',
     canvasEval: 'ask',
     networkAccess: 'allow'
   },

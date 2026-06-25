@@ -24,6 +24,8 @@ function readOnlyPerms(): EffectiveRunPermissions {
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      mediaEditing: 'deny',
+      mediaRecording: 'deny',
       canvasEval: 'ask'
     },
     networkAccess: 'deny',
@@ -44,6 +46,8 @@ function fullAccessPerms(): EffectiveRunPermissions {
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      mediaEditing: 'allow',
+      mediaRecording: 'deny',
       canvasEval: 'ask'
     },
     networkAccess: 'allow',
@@ -64,6 +68,8 @@ function defaultPerms(): EffectiveRunPermissions {
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      mediaEditing: 'ask',
+      mediaRecording: 'deny',
       canvasEval: 'ask'
     },
     networkAccess: 'allow',
@@ -128,6 +134,8 @@ describe('canonical posture + sign/verify', () => {
         subThreadDelegation: 'allow',
         canvasInteraction: 'ask',
         crossThreadRead: 'ask',
+        mediaEditing: 'allow',
+        mediaRecording: 'deny',
         canvasEval: 'ask',
         mcpTools: 'allow',
         fileChanges: 'allow',

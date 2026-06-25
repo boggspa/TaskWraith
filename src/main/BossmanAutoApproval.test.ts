@@ -69,7 +69,14 @@ describe('evaluateBossmanAutoApproval', () => {
     expect(evaluateBossmanAutoApproval(makeContext({ hasExternalPathDetection: true }))).toBeNull()
   })
 
-  it.each(['mcpTools', 'subThreadDelegation', 'canvasInteraction', 'crossThreadRead'] as const)(
+  it.each([
+    'mcpTools',
+    'subThreadDelegation',
+    'canvasInteraction',
+    'crossThreadRead',
+    'mediaEditing',
+    'mediaRecording'
+  ] as const)(
     'never auto-allows the %s action class (only shell/file are in scope)',
     (service) => {
       expect(evaluateBossmanAutoApproval(makeContext({ service }))).toBeNull()

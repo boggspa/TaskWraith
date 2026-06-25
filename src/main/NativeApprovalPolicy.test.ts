@@ -33,6 +33,8 @@ const effectivePermissions = (
     subThreadDelegation: 'ask',
     canvasInteraction: 'deny',
     crossThreadRead: 'deny',
+    mediaEditing: 'deny',
+    mediaRecording: 'deny',
     canvasEval: 'deny'
   }
 ): EffectiveRunPermissions => ({
@@ -226,6 +228,8 @@ describe('effectiveAgenticSettings', () => {
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      mediaEditing: 'ask',
+      mediaRecording: 'deny',
       canvasEval: 'ask'
     })
     effective.networkAccess = 'allow'

@@ -42,6 +42,7 @@ import {
   type EditorAdapter,
   type EditorId
 } from '../EditorAdapters'
+import { assertAgenticServiceId } from '../AgenticServiceMessages'
 import { redactGeminiProfileForMcp } from '../GeminiAuthRedaction'
 import { buildProviderAuthStatusV2 } from '../ProviderAuthStatus'
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
@@ -49,7 +50,6 @@ import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUs
 import { isRetiredProvider } from '../../shared/retiredProviders'
 import type { NativeCapabilitySnapshot } from '../NativeCapabilities'
 import type {
-  AgenticServiceId,
   AppSettings,
   ApprovalLedgerFilter,
   ApprovalLedgerRecord,
@@ -78,16 +78,6 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'cursor',
   'ollama'
 ])
-const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
-  'shellCommands',
-  'fileChanges',
-  'mcpTools',
-  'subThreadDelegation',
-  'canvasInteraction',
-  'crossThreadRead',
-  'canvasEval'
-])
-
 export type McpToolContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; mimeType: string; data: string }
@@ -367,13 +357,6 @@ function availableProviderIds(): ProviderId[] {
   return (['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as ProviderId[]).filter(
     (provider) => !isRetiredProvider(provider)
   )
-}
-
-function assertAgenticServiceId(value: unknown): AgenticServiceId {
-  if (typeof value === 'string' && AGENTIC_SERVICE_IDS.has(value as AgenticServiceId)) {
-    return value as AgenticServiceId
-  }
-  throw new Error('Unknown agentic service id.')
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {

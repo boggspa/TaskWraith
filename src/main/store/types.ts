@@ -240,6 +240,19 @@ export type AgenticServiceId =
   // auto-allow reading another thread/workspace's run history, and so the
   // read_only preset can deny it outright.
   | 'crossThreadRead'
+  // Media editing (transcode/encode/probe/decode/mix of workspace audio &
+  // video). A DEDICATED grant bucket — grantable like canvasInteraction, NOT
+  // signed-elevated like canvasEval — so the media tools are gated + audited at
+  // shell/file strictness instead of falling through to the generic `mcpTools`
+  // service, and so the read_only preset can deny them outright. See
+  // MEDIA_EDITING_TOOLS + taskWraithToolAgenticService.
+  | 'mediaEditing'
+  // Media recording (future mic / camera capture). DEFAULT-DENY everywhere and
+  // NON-GRANTABLE — like canvasEval, capture always re-prompts (no preset/grant/
+  // YOLO auto-allow) and is denied outright under read-only. SCAFFOLD ONLY: no
+  // capture tools classify to it yet; it reserves the grant bucket + posture so
+  // the future mic/camera tools land default-closed.
+  | 'mediaRecording'
 export type OllamaToolControlTier =
   | 'read_only'
   | 'approved_edits'
@@ -378,6 +391,12 @@ export interface AgenticServicesSettings {
   // Optional for back-compat with settings persisted before cross-thread recall;
   // defaults to 'ask' via servicesFromSettings + the sanitizer. Grantable.
   crossThreadRead?: AgenticServicePolicy
+  // Optional for back-compat with settings persisted before the media-editing
+  // service; defaults to 'ask' via servicesFromSettings + the sanitizer. Grantable.
+  mediaEditing?: AgenticServicePolicy
+  // Optional for back-compat. Defaults to 'deny' via servicesFromSettings + the
+  // sanitizer (default-closed). Non-grantable scaffold for future mic/camera capture.
+  mediaRecording?: AgenticServicePolicy
   networkAccess: AgenticNetworkPolicy
 }
 
@@ -1100,11 +1119,18 @@ export type ProviderCapabilityState =
   | 'unavailable'
 export type ProviderCapabilityWarningSeverity = 'info' | 'warning' | 'error'
 export type ProviderToolingCapabilityId =
-  // canvasInteraction / canvasEval are approval-grant buckets, not provider-
-  // capability contract rows — excluded like subThreadDelegation.
+  // canvasInteraction / canvasEval / crossThreadRead / mediaEditing /
+  // mediaRecording are approval-grant buckets, not provider-capability contract
+  // rows — excluded like subThreadDelegation. (The media tools are already
+  // advertised under the MCP/tool surface; they don't get their own contract row.)
   | Exclude<
       AgenticServiceId,
-      'subThreadDelegation' | 'canvasInteraction' | 'canvasEval' | 'crossThreadRead'
+      | 'subThreadDelegation'
+      | 'canvasInteraction'
+      | 'canvasEval'
+      | 'crossThreadRead'
+      | 'mediaEditing'
+      | 'mediaRecording'
     >
   | 'creativeApps'
   | 'networkAccess'

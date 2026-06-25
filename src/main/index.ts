@@ -833,7 +833,11 @@ import {
   codexThreadGoalSetParams,
   isCodexNativeGoalUnsupportedError
 } from './CodexNativeGoal'
-import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
+import {
+  MEDIA_EDITING_TOOLS,
+  TASKWRAITH_MCP_TOOLS,
+  type TaskWraithMcpToolName
+} from './TaskWraithMcpTools'
 import {
   applyLaneTodoWrite,
   isTodoToolName,
@@ -5932,7 +5936,8 @@ function resolveNativeApprovalPreflight(args: {
     readOnly: Boolean(effectivePermissions?.readOnly),
     // canvasEval (RCE) is signed-elevated: clamp to a prompt even under session
     // YOLO or a (non-existent, but defence-in-depth) grant on the Codex path.
-    neverAutoAllow: args.service === 'canvasEval',
+    // mediaRecording (future capture) is likewise non-grantable: never auto-allow.
+    neverAutoAllow: args.service === 'canvasEval' || args.service === 'mediaRecording',
     effectivePermissions
   })
 }
@@ -6093,7 +6098,9 @@ async function requestAgenticServiceApproval(
   // canvasEval (arbitrary eval = RCE) is signed-elevated: NEVER auto-allowed, not
   // even by session-YOLO or a grant. Every eval is individually human-approved
   // (deny above still wins). The Codex gate enforces the same via neverAutoAllow.
-  const neverAutoAllow = service === 'canvasEval'
+  // mediaRecording (future capture) shares the same non-grantable invariant: it is
+  // never promoted above its default-deny by session-YOLO/grant/preset.
+  const neverAutoAllow = service === 'canvasEval' || service === 'mediaRecording'
   if (
     sessionYoloState.enabled &&
     !effectivePermissions?.readOnly &&
@@ -6614,6 +6621,37 @@ function previewForGeminiMcpTool(
   const intent = optionalString(args.intent || args.summary || args.reason || args.description)
   const intentBody = intent ? `Intent: ${intent}\n\n` : ''
   const intentPreview = intent ? { intent } : {}
+  // Audio/video media tools route to the dedicated `mediaEditing` agentic service
+  // on the Gemini + Grok MCP path too (mirrors taskWraithToolAgenticService and the
+  // Claude classifier). Without this branch the ffmpeg/audio tools would classify
+  // `fileChanges` and the native VtTools (video_decode_frame/encode_clip/concat_clips
+  // /audio_mix) would fall through to `mcpTools` — so `mediaEditing:'deny'` would be
+  // ignored (media riding fileChanges) and decisions would be audit-tagged wrong.
+  // `toolName` is the BARE `TaskWraithMcpToolName` the set holds (the gate site passes
+  // the un-prefixed name), so no canonicalization is needed here. Must precede the
+  // ffmpeg/audio/default branches below.
+  if (MEDIA_EDITING_TOOLS.has(toolName)) {
+    const isAnalyze = toolName === 'audio_analyze'
+    const isRender = toolName === 'audio_render_wav'
+    return {
+      title: `Approve ${providerName} media ${
+        isAnalyze ? 'analysis' : isRender ? 'render' : 'edit'
+      }`,
+      // Gated as mediaEditing: an external-subprocess / native compute tool that
+      // reads or produces a media asset — denied under the read-only preset, like
+      // write_file / image_edit.
+      body: `${intentBody}${toolName} ${String(
+        args.sourcePath || args.waveform || ''
+      )}`.trim(),
+      service: 'mediaEditing' as AgenticServiceId,
+      preview: {
+        kind: 'tool',
+        toolName,
+        params: args,
+        ...intentPreview
+      }
+    }
+  }
   if (toolName === 'run_shell_command') {
     const command = String(args.command || '')
     const ollamaShellMetadata =
@@ -8982,6 +9020,14 @@ function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null 
     normalized.includes('tw_recall_read_events')
   ) {
     return 'crossThreadRead'
+  }
+  // Audio/video media tools route to the dedicated mediaEditing service on the
+  // Claude gate too (mirrors taskWraithToolAgenticService). Canonicalize first so
+  // both the bare (`transcode_audio`) and provider-wrapped (`mcp__taskwraith__
+  // transcode_audio`) forms hit the same canonical-name membership check before
+  // the generic mcp__/__ -> mcpTools fallthrough below.
+  if (MEDIA_EDITING_TOOLS.has(canonicalTaskWraithToolName(normalized))) {
+    return 'mediaEditing'
   }
   if (normalized.startsWith('mcp__') || normalized.includes('__')) {
     return 'mcpTools'

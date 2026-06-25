@@ -863,6 +863,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      mediaEditing: 'deny',
+      mediaRecording: 'deny',
       canvasEval: 'ask'
     },
     networkAccess: 'deny',
@@ -1018,6 +1020,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
             subThreadDelegation: 'allow',
             canvasInteraction: 'ask',
             crossThreadRead: 'ask',
+            mediaEditing: 'allow',
+            mediaRecording: 'deny',
             canvasEval: 'ask'
           },
           networkAccess: 'allow',

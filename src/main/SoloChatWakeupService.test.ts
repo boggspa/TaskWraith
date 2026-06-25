@@ -68,6 +68,8 @@ function makeEffectivePermissions(
       subThreadDelegation: 'deny',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      mediaEditing: 'deny',
+      mediaRecording: 'deny',
       canvasEval: 'ask'
     },
     networkAccess: 'deny',

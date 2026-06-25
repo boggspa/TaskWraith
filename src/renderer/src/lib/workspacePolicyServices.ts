@@ -29,7 +29,14 @@ export const WORKSPACE_POLICY_SERVICE_LABELS: Record<AgenticServiceId, string> =
   // crossThreadRead is granted via the approval prompt (expiring), not the
   // per-workspace WORKSPACE_POLICY_SERVICES list below, so — like canvasEval —
   // it is absent from that array; the label is kept for audit/ledger rendering.
-  crossThreadRead: 'Cross-thread read'
+  crossThreadRead: 'Cross-thread read',
+  // Media editing IS grantable per-workspace (parity with shell/file) and has a
+  // row in WORKSPACE_POLICY_SERVICES below.
+  mediaEditing: 'Media editing',
+  // mediaRecording is NON-GRANTABLE (default-deny capture scaffold), so — like
+  // canvasEval — it is ABSENT from WORKSPACE_POLICY_SERVICES below; the label is
+  // kept for audit/ledger rendering of any (future) mediaRecording rows.
+  mediaRecording: 'Media recording'
 }
 
 export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
@@ -41,7 +48,12 @@ export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
   // Non-grantable: shown for completeness only; canvas_eval always re-prompts.
   canvasEval: 'Arbitrary eval in a Canvas preview always asks (cannot be pre-authorised).',
   crossThreadRead:
-    'Read how far past runs on other threads got. Same-workspace reads are automatic; cross-workspace reads always ask.'
+    'Read how far past runs on other threads got. Same-workspace reads are automatic; cross-workspace reads always ask.',
+  mediaEditing:
+    'Transcode, encode, probe, and mix workspace audio/video without asking again.',
+  // Non-grantable: shown for completeness only; capture always re-prompts / is denied.
+  mediaRecording:
+    'Microphone / camera capture always asks (cannot be pre-authorised). Coming soon.'
 }
 
 export function getWorkspacePolicyServiceLabel(service: AgenticServiceId): string {
@@ -73,5 +85,13 @@ export const WORKSPACE_POLICY_SERVICES: WorkspacePolicyService[] = [
     id: 'canvasInteraction',
     label: WORKSPACE_POLICY_SERVICE_LABELS.canvasInteraction,
     help: WORKSPACE_POLICY_SERVICE_HELP.canvasInteraction
+  },
+  {
+    id: 'mediaEditing',
+    label: WORKSPACE_POLICY_SERVICE_LABELS.mediaEditing,
+    help: WORKSPACE_POLICY_SERVICE_HELP.mediaEditing
   }
+  // mediaRecording is DELIBERATELY absent — non-grantable (default-deny capture
+  // scaffold), like canvasEval/crossThreadRead. Its label/help exist above only
+  // for audit/ledger rendering.
 ]

@@ -219,3 +219,38 @@ export const TASKWRAITH_MCP_TOOLS = [
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]
 
 export const TASKWRAITH_MCP_TOOL_LIST = TASKWRAITH_MCP_TOOLS.join(', ')
+
+/**
+ * The audio/video media tools. ALL map to the dedicated `mediaEditing` agentic
+ * service (grant bucket + audit tag) so they're gated/audited at shell/file
+ * strictness instead of falling through to the generic `mcpTools` service.
+ *
+ * Sourced from the canonical TaskWraith tool list above (each name must be a
+ * member of TASKWRAITH_MCP_TOOLS) so this set can't drift from the real tools.
+ * Both the Codex/Gemini classifier (taskWraithToolAgenticService) and the Claude
+ * classifier (claudeAgenticServiceForTool) key off this set via MEDIA_EDITING_TOOLS.
+ *
+ * NOTE: `video_decode_frame` is included here for the agentic SERVICE (grant
+ * bucket + audit), even though it is read-only-SAFE (`orchestration`) on the
+ * separate ToolClassTaxonomy axis — its read-only safety rides that axis, not a
+ * read-tier split here (mirrors how read-only file reads share treatment without
+ * a dedicated read service).
+ */
+export const MEDIA_EDITING_TOOL_NAMES = [
+  'transcode_audio',
+  'transcode_video',
+  'audio_extract',
+  'audio_render_wav',
+  'audio_analyze',
+  'video_probe',
+  'video_thumbnail',
+  'video_decode_frame',
+  'video_encode_clip',
+  'video_concat_clips',
+  'audio_mix'
+] as const satisfies readonly TaskWraithMcpToolName[]
+
+export type MediaEditingToolName = (typeof MEDIA_EDITING_TOOL_NAMES)[number]
+
+/** Membership set for O(1) classifier lookups. */
+export const MEDIA_EDITING_TOOLS: ReadonlySet<string> = new Set(MEDIA_EDITING_TOOL_NAMES)

@@ -216,6 +216,14 @@ export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | nu
         base.agenticServices?.crossThreadRead,
         profile.agenticServices.crossThreadRead
       ),
+      mediaEditing: stricterServicePolicy(
+        base.agenticServices?.mediaEditing,
+        profile.agenticServices.mediaEditing
+      ),
+      mediaRecording: stricterServicePolicy(
+        base.agenticServices?.mediaRecording,
+        profile.agenticServices.mediaRecording
+      ),
       canvasEval: stricterServicePolicy(
         base.agenticServices?.canvasEval,
         profile.agenticServices.canvasEval

@@ -6,6 +6,8 @@ export const AGENTIC_SERVICE_LABELS: Record<AgenticServiceId, string> = {
   subThreadDelegation: 'Sub-thread delegation',
   canvasInteraction: 'Canvas interaction',
   crossThreadRead: 'Cross-thread read',
+  mediaEditing: 'Media editing',
+  mediaRecording: 'Media recording',
   canvasEval: 'Canvas eval'
 }
 
@@ -18,6 +20,8 @@ export function agenticServiceDisabledMessage(service: AgenticServiceId): string
     service === 'subThreadDelegation' ||
     service === 'canvasInteraction' ||
     service === 'crossThreadRead' ||
+    service === 'mediaEditing' ||
+    service === 'mediaRecording' ||
     service === 'canvasEval'
   ) {
     return `${AGENTIC_SERVICE_LABELS[service]} is disabled in TaskWraith settings.`
@@ -32,6 +36,8 @@ export const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'subThreadDelegation',
   'canvasInteraction',
   'crossThreadRead',
+  'mediaEditing',
+  'mediaRecording',
   'canvasEval'
 ])
 

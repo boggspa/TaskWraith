@@ -104,7 +104,11 @@ import { ProviderLogoTile } from './ProviderLogoTile'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
 import type { ModelUsageAggregate } from '../App'
-import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../../../main/TaskWraithMcpTools'
+import {
+  MEDIA_EDITING_TOOLS,
+  TASKWRAITH_MCP_TOOLS,
+  type TaskWraithMcpToolName
+} from '../../../main/TaskWraithMcpTools'
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 
@@ -838,6 +842,10 @@ function inferMcpToolGroup(tool: TaskWraithMcpToolName): McpToolGroup {
 
 function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
   if (tool === 'run_shell_command' || tool === 'run_task') return 'shellCommands'
+  // Audio/video media tools share the dedicated mediaEditing policy bucket
+  // (parity with the runtime classifier). Checked before the creative_/fileChanges
+  // branches so the per-tool Settings policy chip reflects the real gate.
+  if (MEDIA_EDITING_TOOLS.has(tool)) return 'mediaEditing'
   if (tool.startsWith('creative_')) return 'mcpTools'
   if (
     tool === 'write_file' ||
@@ -2014,6 +2022,7 @@ export function SettingsPanel({
   const networkPolicyLabel = (value: AgenticNetworkPolicy): string =>
     NETWORK_POLICY_OPTIONS.find((option) => option.value === value)?.label ?? value
   const canvasInteractionPolicy = agenticServices.canvasInteraction ?? 'ask'
+  const mediaEditingPolicy = agenticServices.mediaEditing ?? 'ask'
   const safetyPolicyRows = [
     {
       id: 'shell',
@@ -2059,6 +2068,16 @@ export function SettingsPanel({
       display: agenticPolicyLabel(canvasInteractionPolicy),
       tone: policyTone(canvasInteractionPolicy),
       description: 'Agents can click and fill preview UI when the workspace policy permits it.'
+    },
+    {
+      id: 'media',
+      label: 'Media editing',
+      scope: 'Workspace',
+      value: mediaEditingPolicy,
+      display: agenticPolicyLabel(mediaEditingPolicy),
+      tone: policyTone(mediaEditingPolicy),
+      description:
+        'Transcode, encode, probe, and mix workspace audio/video files. Denied under read-only.'
     },
     {
       id: 'network',
@@ -4168,6 +4187,44 @@ export function SettingsPanel({
                           {option.label}
                         </option>
                       ))}
+                    </select>
+                  </label>
+
+                  <label className="settings-service-row">
+                    <span>
+                      Media editing
+                      <small>
+                        Whether agents can transcode, encode, probe, decode, and mix workspace
+                        audio/video files. Default &apos;ask&apos; prompts before each operation;
+                        &apos;Always allow&apos; lets agents process media without prompting. Denied
+                        under read-only.
+                      </small>
+                    </span>
+                    <select
+                      className="settings-select"
+                      value={agenticServices.mediaEditing ?? 'ask'}
+                      onChange={(e) =>
+                        updateAgenticService('mediaEditing', e.target.value as AgenticServicePolicy)
+                      }
+                    >
+                      {AGENTIC_SERVICE_POLICY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="settings-service-row">
+                    <span>
+                      Media recording
+                      <small>
+                        Microphone / camera capture. Default-denied and cannot be pre-authorised —
+                        every capture will prompt when these tools ship. Coming soon.
+                      </small>
+                    </span>
+                    <select className="settings-select" value="deny" disabled>
+                      <option value="deny">Denied (coming soon)</option>
                     </select>
                   </label>
 

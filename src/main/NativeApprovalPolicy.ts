@@ -1,4 +1,5 @@
 import { isTaskWraithMcpToolName } from './mcp/McpResultHelpers'
+import { MEDIA_EDITING_TOOLS } from './TaskWraithMcpTools'
 import type {
   AgenticServiceId,
   AgenticServicePolicy,
@@ -61,6 +62,14 @@ export function effectiveAgenticSettings(
       // Cross-thread reads: the read_only preset's crossThreadRead:'deny' must
       // survive this key-by-key rebuild (same deny-survival as canvasInteraction).
       crossThreadRead: preserveCurrentDeny(current.crossThreadRead, effective.crossThreadRead),
+      // SECURITY-LOAD-BEARING: media now maps to mediaEditing, NOT mcpTools, so the
+      // gate's mcpTools->shellCommands read-only reroute no longer fires for it. The
+      // read_only preset's mediaEditing:'deny' MUST survive this rebuild or the
+      // write-class media tools would only PROMPT under read-only instead of being
+      // DENIED (exactly the canvasInteraction P1 leak class).
+      mediaEditing: preserveCurrentDeny(current.mediaEditing, effective.mediaEditing),
+      // Media recording (future capture) default-deny must likewise survive.
+      mediaRecording: preserveCurrentDeny(current.mediaRecording, effective.mediaRecording),
       // Same as canvasInteraction: the read_only preset's canvasEval:'deny' must
       // survive this key-by-key rebuild, or read-only eval would only prompt.
       canvasEval: preserveCurrentDeny(current.canvasEval, effective.canvasEval),
@@ -166,6 +175,10 @@ export function taskWraithToolAgenticService(toolName: string): AgenticServiceId
     toolName === 'tw_recall_read_events'
   )
     return 'crossThreadRead'
+  // Audio/video media tools route to the dedicated mediaEditing service (grant
+  // bucket + audit) so they're gated/audited at shell/file strictness instead of
+  // the generic mcpTools service. Set is sourced from the canonical tool list.
+  if (MEDIA_EDITING_TOOLS.has(toolName)) return 'mediaEditing'
   return 'mcpTools'
 }
 

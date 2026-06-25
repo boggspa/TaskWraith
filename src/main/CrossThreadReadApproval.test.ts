@@ -42,6 +42,8 @@ function effectiveServices(
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
     crossThreadRead: 'ask',
+    mediaEditing: 'ask',
+    mediaRecording: 'deny',
     canvasEval: 'ask',
     ...over
   }

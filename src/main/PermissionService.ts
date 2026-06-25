@@ -150,7 +150,11 @@ export class PermissionService {
     // eval re-prompts. This is the central half of that guarantee (both the
     // Gemini/Claude gate and the Codex native gate route through here); the YOLO
     // bypasses are blocked separately, and read-only denies it via the preset.
-    const grantable = service !== 'canvasEval'
+    // mediaRecording (future mic/camera capture) is non-grantable for the same
+    // reason: a session/workspace grant must never promote capture above its
+    // default-deny. (EffectiveRunPermissions.workspaceGrantServiceIdsFor drops its
+    // workspace grants; this is the session/resolve half.)
+    const grantable = service !== 'canvasEval' && service !== 'mediaRecording'
     const workspaceGrantAllowed =
       grantable &&
       policy !== 'deny' &&

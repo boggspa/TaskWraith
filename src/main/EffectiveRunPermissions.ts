@@ -20,6 +20,8 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'subThreadDelegation',
   'canvasInteraction',
   'crossThreadRead',
+  'mediaEditing',
+  'mediaRecording',
   'canvasEval'
 ]
 
@@ -40,6 +42,14 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // Cross-thread reads are denied under read-only — no reaching into other
       // threads'/workspaces' run history from a read-only seat.
       crossThreadRead: 'deny',
+      // Media editing (transcode/encode/probe/mix etc.) is mutating/compute; with
+      // media now on its OWN service the gate's mcpTools->shellCommands read-only
+      // reroute no longer fires for it, so the read-only DENY must come from THIS
+      // preset entry (mirrors canvasInteraction). The deny-survival line in
+      // effectiveAgenticSettings preserves it across the key-by-key rebuild.
+      mediaEditing: 'deny',
+      // Media recording (future capture) is denied under read-only too.
+      mediaRecording: 'deny',
       // Arbitrary canvas_eval is RCE — never available under read-only.
       canvasEval: 'deny'
     },
@@ -56,7 +66,11 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     approvalMode: 'auto_edit',
     agenticServices: {
       shellCommands: 'workspace',
-      fileChanges: 'workspace'
+      fileChanges: 'workspace',
+      // Media editing follows shell/file: workspace-scoped auto-allow under
+      // workspace_write. DELIBERATELY no mediaRecording here — capture is
+      // non-grantable and stays at its default-deny.
+      mediaEditing: 'workspace'
     }
   },
   full_access: {
@@ -70,11 +84,12 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       subThreadDelegation: 'allow',
       canvasInteraction: 'allow',
       // Cross-thread reads are grantable; Full access auto-allows them.
-      crossThreadRead: 'allow'
-      // DELIBERATELY no canvasEval here: even Full access must NOT auto-allow
-      // arbitrary eval (RCE). It stays at the settings default ('ask') so every
-      // eval still prompts. Do not add canvasEval: 'allow' — the non-grantable +
-      // never-YOLO guards assume eval never resolves to an automatic allow.
+      crossThreadRead: 'allow',
+      // Media editing is grantable; Full access auto-allows it (parity with
+      // shell/file). DELIBERATELY no mediaRecording here — modelled on canvasEval:
+      // even Full access must NOT auto-allow capture; it stays at its default-deny
+      // so every (future) mic/camera capture still prompts/denies.
+      mediaEditing: 'allow'
     },
     networkAccess: 'allow'
   },
@@ -165,6 +180,13 @@ function servicesFromSettings(
     subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask'),
     canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask'),
     crossThreadRead: normalizePolicy(settings?.crossThreadRead, 'ask'),
+    // Media editing defaults to 'ask' (grantable, like crossThreadRead).
+    mediaEditing: normalizePolicy(settings?.mediaEditing, 'ask'),
+    // Media recording is the default-deny, non-grantable capture scaffold. Default
+    // 'deny' (default-closed) and clamp any stored 'allow'/'workspace' down to 'ask'
+    // so a settings value / import can't promote capture above prompt — exactly like
+    // canvasEval. (Capture tools don't exist yet, but the posture is enforced now.)
+    mediaRecording: clampNonGrantablePolicy(normalizePolicy(settings?.mediaRecording, 'deny')),
     // canvasEval (RCE) is non-grantable / never-auto-allowed. Clamp the stored
     // policy so it can only ever be 'ask' or 'deny' — a settings value (or import)
     // of 'allow'/'workspace' must not be able to contradict that guarantee at the
@@ -204,7 +226,9 @@ function workspaceGrantServiceIdsFor(
     // canvasEval (RCE) is non-grantable: a stale/forged workspace grant must never
     // promote eval to an automatic allow. PermissionService enforces the same for
     // session grants; this is the workspace-grant half of that guarantee.
-    if (grant.service === 'canvasEval') continue
+    // mediaRecording (future capture) is non-grantable for the same reason — a
+    // stored/forged grant must never promote capture above its default-deny.
+    if (grant.service === 'canvasEval' || grant.service === 'mediaRecording') continue
     serviceIds.add(grant.service)
   }
   return [...serviceIds]

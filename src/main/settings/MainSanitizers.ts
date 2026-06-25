@@ -39,6 +39,8 @@ const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   subThreadDelegation: 'ask',
   canvasInteraction: 'ask',
   crossThreadRead: 'ask',
+  mediaEditing: 'ask',
+  mediaRecording: 'deny',
   canvasEval: 'ask',
   networkAccess: 'allow'
 }
@@ -688,6 +690,14 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
               input.agenticServices.crossThreadRead,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.crossThreadRead ?? 'ask'
             ),
+            mediaEditing: sanitizeAgenticServicePolicy(
+              input.agenticServices.mediaEditing,
+              DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.mediaEditing ?? 'ask'
+            ),
+            mediaRecording: sanitizeAgenticServicePolicy(
+              input.agenticServices.mediaRecording,
+              DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.mediaRecording ?? 'deny'
+            ),
             canvasEval: sanitizeAgenticServicePolicy(
               input.agenticServices.canvasEval,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.canvasEval
@@ -913,6 +923,28 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
           services.subThreadDelegation,
           current.subThreadDelegation
         ),
+        // Dedicated grant buckets carried through the settings-patch rebuild so a
+        // partial patch can't silently reset them to default. (Pre-existing gap:
+        // canvasInteraction/crossThreadRead/canvasEval were dropped here; preserve
+        // them too rather than singling out the new media services.)
+        canvasInteraction: sanitizeAgenticServicePolicy(
+          services.canvasInteraction,
+          current.canvasInteraction
+        ),
+        crossThreadRead: sanitizeAgenticServicePolicy(
+          services.crossThreadRead,
+          current.crossThreadRead ?? 'ask'
+        ),
+        mediaEditing: sanitizeAgenticServicePolicy(
+          services.mediaEditing,
+          current.mediaEditing ?? 'ask'
+        ),
+        // mediaRecording is the default-deny capture scaffold.
+        mediaRecording: sanitizeAgenticServicePolicy(
+          services.mediaRecording,
+          current.mediaRecording ?? 'deny'
+        ),
+        canvasEval: sanitizeAgenticServicePolicy(services.canvasEval, current.canvasEval),
         networkAccess: sanitizeAgenticNetworkPolicy(services.networkAccess, current.networkAccess)
       }
     }
