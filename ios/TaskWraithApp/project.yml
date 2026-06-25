@@ -79,7 +79,7 @@ targets:
         # paired-host store (each host's push-agreement key) + the identity seed
         # to decrypt rich pushes. MUST match TWPushKeyAccess in TaskWraithKit.
         com.apple.security.application-groups:
-          - group.com.taskwraith.companion
+          - group.com.TaskWraith.companion
         # List the app's own group too: once keychain-access-groups is set iOS
         # stops auto-including it, and the existing identity-seed reads use it
         # until the seed is migrated into the shared group.
@@ -93,7 +93,7 @@ targets:
         # before running on a physical device.
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 8CZML8FK2D
-        CURRENT_PROJECT_VERSION: "45"
+        CURRENT_PROJECT_VERSION: "48"
         MARKETING_VERSION: "0.1.0"
         SWIFT_VERSION: "6.0"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -133,16 +133,16 @@ targets:
       path: NotificationService/NotificationService.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.taskwraith.companion
+          - group.com.TaskWraith.companion
         keychain-access-groups:
           - $(AppIdentifierPrefix)com.taskwraith.companion.shared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.NotificationService
+        PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.nse
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 8CZML8FK2D
         # MUST track the app's version/build — App Store rejects a mismatch.
-        CURRENT_PROJECT_VERSION: "45"
+        CURRENT_PROJECT_VERSION: "48"
         MARKETING_VERSION: "0.1.0"
         SWIFT_VERSION: "6.0"
         TARGETED_DEVICE_FAMILY: "1,2"
