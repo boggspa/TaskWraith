@@ -7,6 +7,7 @@ export type SidebarHierarchySectionId =
   | 'ensembles'
   | 'workspaces'
   | 'chats'
+  | 'shared'
 
 export const SIDEBAR_HIERARCHY_SECTION_IDS: readonly SidebarHierarchySectionId[] = [
   'active-runs',
@@ -16,7 +17,8 @@ export const SIDEBAR_HIERARCHY_SECTION_IDS: readonly SidebarHierarchySectionId[]
   'recents',
   'ensembles',
   'workspaces',
-  'chats'
+  'chats',
+  'shared'
 ] as const
 
 export const DEFAULT_SIDEBAR_HIERARCHY_ORDER: readonly SidebarHierarchySectionId[] =
@@ -30,7 +32,8 @@ export const SIDEBAR_HIERARCHY_SECTION_LABELS: Record<SidebarHierarchySectionId,
   recents: 'Recents',
   ensembles: 'Ensembles',
   workspaces: 'Workspaces',
-  chats: 'Chats'
+  chats: 'Chats',
+  shared: 'Shared'
 }
 
 const STORAGE_KEY = 'taskwraith-sidebar-hierarchy-order'

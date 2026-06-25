@@ -1467,12 +1467,14 @@ function App(): React.JSX.Element {
   useEffect(() => {
     refreshHumanCollaborationShares()
   }, [refreshHumanCollaborationShares])
-  const handleCreateHumanCollaborationShare = useCallback(() => {
-    const chatId = currentChat?.appChatId
-    if (!chatId || typeof window.api.humanCollaborationCreateShare !== 'function') return
-    void window.api
-      .humanCollaborationCreateShare({ chatId, mode: 'comments' })
-      .then(async (result) => {
+  // Shared helper: create a collaboration share for `chatId` and copy the
+  // out-of-band invite payload. Used by both "Share this chat" (current chat)
+  // and "New Shared Chat" (a freshly-created chat).
+  const shareChatIdAndCopyInvite = useCallback(
+    async (chatId: string): Promise<void> => {
+      if (typeof window.api.humanCollaborationCreateShare !== 'function') return
+      try {
+        const result = await window.api.humanCollaborationCreateShare({ chatId, mode: 'comments' })
         refreshHumanCollaborationShares()
         const invitePayload = JSON.stringify(
           {
@@ -1494,12 +1496,28 @@ function App(): React.JSX.Element {
         if (!navigator.clipboard?.writeText) throw new Error('Clipboard is not available.')
         await navigator.clipboard.writeText(invitePayload)
         window.alert('People invite copied. Share it out of band with the collaborator.')
-      })
-      .catch((error) => {
+      } catch (error) {
         console.error('[human-collaboration] create share failed', error)
         window.alert('Could not create or copy People invite.')
-      })
-  }, [currentChat?.appChatId, refreshHumanCollaborationShares])
+      }
+    },
+    [refreshHumanCollaborationShares]
+  )
+  const handleCreateHumanCollaborationShare = useCallback(() => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return
+    void shareChatIdAndCopyInvite(chatId)
+  }, [currentChat?.appChatId, shareChatIdAndCopyInvite])
+  // "New Shared Chat" (+ New menu / Shared section "+"): create a fresh global
+  // chat, select it, then share it + copy the invite.
+  const handleStartSharedChat = useCallback(async () => {
+    if (typeof window.api.createGlobalChat !== 'function') return
+    const newChat = await window.api.createGlobalChat()
+    setChats((prev) => mergeChatRecord(prev, newChat))
+    await selectGlobalChat(newChat)
+    reapAbandonedChatsAfterCreate(newChat.appChatId)
+    await shareChatIdAndCopyInvite(newChat.appChatId)
+  }, [shareChatIdAndCopyInvite])
   // Host-side "Stop sharing": revoke every enabled share on the current chat
   // (audit finding L6-1 — the revoke bridge existed with no renderer caller).
   // Confirm first, then revoke each enabled share and re-derive the shared set.
@@ -21354,6 +21372,7 @@ function App(): React.JSX.Element {
                 onDeleteChat={handleDeleteChat}
                 onRenameChat={handleRenameChat}
                 onCreateWorkflow={handleOpenWorkflowCompose}
+                onCreateSharedChat={handleStartSharedChat}
                 onRunWorkflowNow={handleRunWorkflowNow}
                 onToggleWorkflowEnabled={handleToggleWorkflowEnabled}
                 onEditWorkflowInterval={handleEditWorkflowInterval}

@@ -181,6 +181,8 @@ interface SidebarProps {
    * the Run Inspector for that runId. */
   onInspectRun?: (runId: string, chatId: string | undefined) => void
   onCreateWorkflow?: () => void
+  /** Start a new shared chat + copy a collaborator invite (People feature). */
+  onCreateSharedChat?: () => void
   onRunWorkflowNow?: (workflowId: string) => void
   onToggleWorkflowEnabled?: (workflow: WorkflowDefinition) => void
   onEditWorkflowInterval?: (workflow: WorkflowDefinition) => void
@@ -302,14 +304,22 @@ const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sec
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
   'taskwraith-sidebar-collapsed-sections-default-version'
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'all-collapsed-v1'
-type SidebarSectionId = 'workflows' | 'pinned' | 'recents' | 'ensembles' | 'workspaces' | 'chats'
+type SidebarSectionId =
+  | 'workflows'
+  | 'pinned'
+  | 'recents'
+  | 'ensembles'
+  | 'workspaces'
+  | 'chats'
+  | 'shared'
 const SIDEBAR_SECTION_IDS: readonly SidebarSectionId[] = [
   'workflows',
   'pinned',
   'recents',
   'ensembles',
   'workspaces',
-  'chats'
+  'chats',
+  'shared'
 ] as const
 
 function defaultCollapsedSidebarSections(): Set<SidebarSectionId> {
@@ -1003,6 +1013,27 @@ function ChatBubbleSymbolIcon() {
   )
 }
 
+/** Two-person glyph for the "Shared" / People collaboration affordances. */
+function PeopleSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="6" cy="5.4" r="2.1" />
+        <path d="M2.4 12.4c0-1.9 1.6-3.2 3.6-3.2s3.6 1.3 3.6 3.2" />
+        <path d="M10.3 3.7a2 2 0 0 1 0 3.9" />
+        <path d="M11 9.3c1.6.2 2.9 1.4 2.9 3.1" />
+      </svg>
+    </span>
+  )
+}
+
 // Phase L6 slice 1 — exported for `ModelUsageCard` provider headers.
 export function getProviderName(provider?: ProviderId) {
   if (provider === 'codex') return 'Codex'
@@ -1516,6 +1547,7 @@ export function Sidebar({
   onRenameChat,
   onInspectRun,
   onCreateWorkflow,
+  onCreateSharedChat,
   onRunWorkflowNow,
   onToggleWorkflowEnabled,
   onEditWorkflowInterval,
@@ -2623,6 +2655,22 @@ export function Sidebar({
                     <span className="sidebar-new-menu-item-label">New Workflow</span>
                   </button>
                 )}
+                {onCreateSharedChat && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="sidebar-new-menu-item"
+                    onClick={() => {
+                      setNewMenuOpen(false)
+                      expandSidebarSection('shared')
+                      onCreateSharedChat()
+                    }}
+                    title="New shared chat — invite people to follow along"
+                  >
+                    <PeopleSymbolIcon />
+                    <span className="sidebar-new-menu-item-label">New Shared Chat</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -3715,6 +3763,70 @@ export function Sidebar({
                       <MascotGhost size={28} />
                       <strong>No chats yet</strong>
                       <span>Hit + above to start one.</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {wrapHierarchySection(
+            'shared',
+            <div className="sidebar-shared-section">
+              <div className="sidebar-section-header sidebar-shared-header">
+                <button
+                  type="button"
+                  className="sidebar-section-header-toggle"
+                  onClick={() => toggleSidebarSection('shared')}
+                  aria-expanded={!isSectionCollapsed('shared')}
+                  title={isSectionCollapsed('shared') ? 'Expand Shared' : 'Collapse Shared'}
+                >
+                  <ChevronSymbolIcon isExpanded={!isSectionCollapsed('shared')} />
+                  <h4 className="sidebar-section-title">Shared</h4>
+                </button>
+                {onCreateSharedChat && (
+                  <button
+                    type="button"
+                    className="sidebar-section-header-action sidebar-shared-create"
+                    onClick={() => {
+                      expandSidebarSection('shared')
+                      onCreateSharedChat()
+                    }}
+                    title="New shared chat — invite people to follow along"
+                    aria-label="New shared chat"
+                  >
+                    <PlusSymbolIcon />
+                  </button>
+                )}
+              </div>
+              {!isSectionCollapsed('shared') && (
+                <div className="sidebar-chat-list sidebar-shared-chat-list">
+                  {topLevelChats
+                    .filter((chat) => collaboratingChatIds.has(chat.appChatId))
+                    .map((chat) => (
+                      <button
+                        type="button"
+                        key={chat.appChatId}
+                        className={`sidebar-item sidebar-chat-item sidebar-shared-chat-item provider-${
+                          chat.provider || 'gemini'
+                        }${selectedChatId === chat.appChatId ? ' active' : ''}`}
+                        onClick={() => onSelectChat(chat)}
+                        title={chat.title || 'Shared chat'}
+                      >
+                        {renderChatProviderBadge(chat)}
+                        <span className="sidebar-chat-title-line">{chat.title || 'Shared chat'}</span>
+                        <span
+                          className="sidebar-branched-badge sidebar-shared-badge"
+                          title="Shared with collaborators"
+                        >
+                          People
+                        </span>
+                      </button>
+                    ))}
+                  {collaboratingChatIds.size === 0 && !isSidebarSearchActive && (
+                    <div className="sidebar-empty-state sidebar-empty-state--ghost">
+                      <PeopleSymbolIcon />
+                      <strong>No shared chats</strong>
+                      <span>Hit + above to invite people.</span>
                     </div>
                   )}
                 </div>

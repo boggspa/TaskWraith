@@ -1573,6 +1573,18 @@ button.sidebar-item {
   font-size: var(--sidebar-row-font-size);
 }
 
+/* Shared (People) section — lean chat rows: title flexes, People badge sits right. */
+.sidebar-shared-chat-item .sidebar-chat-title-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-shared-chat-item .sidebar-shared-badge {
+  flex: 0 0 auto;
+}
+
 .sidebar-chat-busy {
   flex: 0 0 auto;
   width: 7px;
