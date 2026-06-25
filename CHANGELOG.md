@@ -4,6 +4,53 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.6.2 - 2026-06-25
+
+### Added
+- **Refractive "liquid glass."** An optional refractive-glass material that brings a
+  subtle liquid-glass refraction to the composer, sidebars, pickers, dashboard and
+  first-launch sheet in place of the flat frosted look. Toggle it under
+  Settings → Appearance — it's independent of the other visual effects.
+- **Workflows can loop.** A workflow can now run a maker → verifier → decide loop:
+  each iteration is independently judged (accept / revise / reject), with a durable
+  run history. Desktop shows per-iteration history in the sidebar; iOS shows a
+  "N× · accepted" loop-progress badge.
+- **Audio, video & image tools for agents.** Agents can play audio and video inline
+  in the transcript, run waveform-backed audio analysis and native single-frame
+  video decode, and generate images with a bring-your-own image-API-key UI — all
+  over an un-forgeable trusted media channel.
+- **Bossman — ensemble manager.** An opt-in manager that can reorder or replace
+  ensemble participants and drive a shared goal, gated by an auto-approval policy
+  with a full audit ledger.
+
+### Changed
+- **General chats are friendlier.** "Global Chat" is now "General" across desktop and
+  iOS, with a less technical welcome and softer chrome for non-coding conversations.
+- **App-icon picker (macOS).** The Monoline and WWDC26 variants now render the correct
+  canonical artwork in the Dock, and the picker thumbnails are colour-managed
+  (8-bit sRGB).
+- **Branded macOS installer.** The DMG now uses a branded background from the brand kit.
+
+### Fixed
+- **The transcript stays where you put it.** Scrolling up is no longer overridden by an
+  auto-snap to the bottom on new activity, and the streaming tail no longer flashes;
+  the side-chat panel gained the same scroll-up release (desktop).
+- **No more dropped characters.** Several per-keystroke text fields — ensemble role and
+  goal/brief, the roster preset name, audit budgets and the guest model id — no longer
+  drop or jumble characters as you type.
+- **More reliable iOS ↔ Mac pairing.** Dev and release builds use distinct serve ports,
+  dead relay doors are dropped from the QR code, and off-LAN pairing tries the right
+  door first with clearer, actionable error copy.
+- **iOS polish.** Smoother streaming with a reliable "Show more", a fixed transcript
+  scroll crash on ensemble send, and no more false "Mac busy or asleep" banner when a
+  request times out while still connected.
+- **Empty "New Chat" tabs are tidied up.** Never-used New Chat tombstones are reaped
+  automatically (drafts, ensembles and workflow-compose are left alone).
+- **Grok remembers across turns.** Grok's default transport re-injects cross-turn
+  context instead of starting fresh each turn.
+- **Composer glass polish.** The native-glass composer renders its exact shell variant
+  (no stale replica) with a smooth top edge.
+
 ## 1.6.1 - 2026-06-23
 
 ### Added
