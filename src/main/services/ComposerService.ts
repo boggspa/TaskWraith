@@ -728,7 +728,7 @@ function getProviderLabel(provider: ProviderId): string {
   return 'Gemini'
 }
 
-function getDefaultModelForProvider(provider: ProviderId): string {
+export function getDefaultModelForProvider(provider: ProviderId): string {
   if (provider === 'codex') return 'gpt-5.5'
   if (provider === 'claude') return 'claude-sonnet-4-6'
   if (provider === 'kimi') return 'kimi-k2.7-code'

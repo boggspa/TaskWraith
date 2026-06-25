@@ -333,7 +333,11 @@ import {
 } from './WorkflowLoopEngine'
 import type { WorkflowLoopConfig } from './WorkflowLoopModel'
 import type { WorkflowRunEventInput } from './WorkflowRunStore'
-import { ComposerService, type ComposerInput } from './services/ComposerService'
+import {
+  ComposerService,
+  getDefaultModelForProvider,
+  type ComposerInput
+} from './services/ComposerService'
 import {
   DiscordContextService,
   type DiscordContextSnapshot
@@ -7207,6 +7211,34 @@ async function dispatchDueScheduledLoopHeadless(
   })
   if (!running || running.status !== 'running') return
 
+  // 7c — live loop-progress broadcast to BOTH the local Electron renderer (a window may
+  // be open) and paired phones. Reused at run-start (reset), per iteration (onState), and
+  // at completion. The Electron send is guarded for the headless case (no/destroyed
+  // window); the iOS push rebuilds RemoteWorkflow from the freshly-cached def fields.
+  const broadcastWorkflowProgress = (force = false): void => {
+    if (mainWindow && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+    }
+    // The iOS projection broadcast is throttled (~1s, leading-edge, no trailing flush).
+    // For the IMPORTANT transitions (run-start reset + completion) force it through so an
+    // unrelated snapshot <1s earlier can't gate the phone badge into staleness; the
+    // per-iteration calls stay throttled (frequent + self-correcting within one iter).
+    if (force) bridgeBroadcasterRef?.resetThrottle()
+    bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+  }
+
+  // 7c — reset the cached loop summary at the START of a new run so the live badge drops
+  // the PRIOR run's "Nx · <reason>" immediately (count 0 hides it via the >0 guard)
+  // rather than showing it stale until this run's first iteration completes.
+  if (task.workflowId) {
+    AppStore.updateWorkflowDefinition(task.workflowId, {
+      lastRunIterationCount: 0,
+      lastRunStopReason: undefined,
+      lastRunTokens: 0
+    })
+    broadcastWorkflowProgress(true)
+  }
+
   const ledger = resolveWorkflowExecutionForTask(task.id)
   // Per-iteration backstop: the workflow's configured per-run timeout if set, else a
   // generous default — so a long-but-healthy maker isn't mislabeled an infra failure.
@@ -7240,7 +7272,31 @@ async function dispatchDueScheduledLoopHeadless(
     limits: loopCfg.limits
   }
 
+  // 5c — honor a configured CROSS-PROVIDER verifier. acceptance.verifier.provider is an
+  // UNVALIDATED raw string off the WorkflowDefinition (normalizeWorkflowLoopConfig
+  // defers validation to the dispatch path), so validate it as a LIVE provider here; an
+  // invalid/retired value fails safe to undefined → the verifier runs on the maker's
+  // provider (same as before 5c) rather than crashing the loop.
+  let verifierProvider: ProviderId | undefined
+  const rawVerifierProvider = loopCfg.acceptance.verifier?.provider
+  if (rawVerifierProvider) {
+    try {
+      verifierProvider = assertLiveProviderId(rawVerifierProvider)
+    } catch {
+      verifierProvider = undefined
+    }
+  }
+
   const dispatchStep = async (input: WorkflowLoopStepInput): Promise<WorkflowLoopStepResult> => {
+    const isVerifier = input.role === 'verifier'
+    // 5c — when a validated verifier provider is configured AND differs from the maker's,
+    // the verifier judges CROSS-PROVIDER (a more independent check). Such a run composes
+    // with the verifier provider's OWN default model: the maker's customModel /
+    // selectedModelType / per-provider effort flags would misroute (e.g. a Claude model
+    // id handed to Grok), so they are dropped from the compose below.
+    const crossProviderVerifier =
+      isVerifier && verifierProvider !== undefined && verifierProvider !== task.provider
+    const composeProvider = crossProviderVerifier ? verifierProvider! : task.provider
     // Role branch (slice 5b). MAKER: continue/refine the task, threading the prior
     // attempt + the reviewer's revise feedback. VERIFIER: an independent judge run
     // over the maker's latest output (buildLoopVerifierPrompt); its final text is
@@ -7267,22 +7323,33 @@ async function dispatchDueScheduledLoopHeadless(
       composed = composer.composeRun({
         chatId: task.chatId,
         appRunId: input.runId,
-        provider: task.provider,
+        provider: composeProvider,
         workspace: task.workspacePath,
         prompt,
-        selectedModelType: task.selectedModelType,
-        customModel: task.customModel,
+        // Provider-specific model config — applied for SAME-provider runs (the maker, or
+        // a verifier on the maker's provider). For a cross-provider verifier these are
+        // dropped AND overrideModel is forced to the verifier provider's own default:
+        // dropping the inputs alone is NOT enough — resolveRequestedModel would fall
+        // through to the chat's stored (maker) model metadata and hand a foreign model
+        // id to the verifier provider (which Codex/Claude/Gemini dispatch verbatim → the
+        // run errors). overrideModel short-circuits that entire resolution chain.
+        ...(crossProviderVerifier
+          ? { overrideModel: getDefaultModelForProvider(composeProvider) }
+          : {
+              selectedModelType: task.selectedModelType,
+              customModel: task.customModel,
+              codexReasoningEffort: task.codexReasoningEffort,
+              codexServiceTier: task.codexServiceTier,
+              claudeReasoningEffort: task.claudeReasoningEffort,
+              claudeFastMode: task.claudeFastMode,
+              kimiThinkingEnabled: task.kimiThinkingEnabled,
+              runtimeProfileId: task.runtimeProfileId,
+              geminiAuthProfileId: task.geminiAuthProfileId
+            }),
         approvalMode: task.approvalMode,
         sessionTrust: task.sessionTrust,
         imageAttachments: task.imageAttachments,
         externalPathGrants: task.externalPathGrants,
-        codexReasoningEffort: task.codexReasoningEffort,
-        codexServiceTier: task.codexServiceTier,
-        claudeReasoningEffort: task.claudeReasoningEffort,
-        claudeFastMode: task.claudeFastMode,
-        kimiThinkingEnabled: task.kimiThinkingEnabled,
-        runtimeProfileId: task.runtimeProfileId,
-        geminiAuthProfileId: task.geminiAuthProfileId,
         scheduledTaskId: task.id
       }) as AgentRunPayload
     } catch (error) {
@@ -7314,11 +7381,16 @@ async function dispatchDueScheduledLoopHeadless(
     // NOTE: outcome.finalText is reliable only for providers whose output flows through
     // the auditRunTracker pump (the CLI streamers + Codex-ACP); a tracker-bypassing
     // path (e.g. Codex exec-fallback) yields empty finalText → null → inconclusive on
-    // iteration 1. Fail-safe (no streak poison) but the verifier is inert there — the
-    // verifier.provider override (5c) is what will let a workflow pin a known-good
-    // judge provider; until then the verifier is best paired with a streaming provider.
+    // iteration 1. Fail-safe (no streak poison). 5c lets a workflow pin a cross-provider
+    // judge via verifier.provider; the warn below makes a verifier on a non-streaming
+    // provider diagnosable rather than silently stalling the loop every iteration.
     const verdict =
       input.role === 'verifier' && outcome.ok ? parseLoopVerdict(outcome.finalText) : null
+    if (isVerifier && outcome.ok && !verdict) {
+      console.warn(
+        `[workflow-loop] verifier produced no parseable LOOP_VERDICT (provider=${composeProvider}, run=${input.runId}); loop will stop inconclusive`
+      )
+    }
     // Per-iteration forensics (tagged iteration:N so the fold sums them without
     // terminalizing the execution); the verifier iteration also persists its verdict
     // (slice 7) so the loop-progress UI can show WHY each iteration continued / stopped.
@@ -7358,6 +7430,18 @@ async function dispatchDueScheduledLoopHeadless(
       // suffices, since each iteration is itself bounded by stepTimeoutMs.
       if (snap.status !== 'running') return
       AppStore.updateScheduledTask(task.id, { runningSince: new Date().toISOString() })
+      // 7c — LIVE per-iteration progress: refresh the cached count/spend on the
+      // definition (the start-of-run reset already cleared the prior stopReason, so it
+      // stays absent until completion) and fire the broadcasts so the Electron row + iOS
+      // badge update live. No new IPC, no schema change (reuses the slice-7b fields).
+      // Bounded to <= maxIterations writes/loop — each iteration is a full provider run.
+      if (task.workflowId) {
+        AppStore.updateWorkflowDefinition(task.workflowId, {
+          lastRunIterationCount: snap.iterationsCompleted,
+          ...(typeof snap.budget.spentTokens === 'number' ? { lastRunTokens: snap.budget.spentTokens } : {})
+        })
+        broadcastWorkflowProgress()
+      }
     }
   })
 
@@ -7404,7 +7488,10 @@ async function dispatchDueScheduledLoopHeadless(
       ...(snap.stopReason ? { lastRunStopReason: snap.stopReason } : {}),
       ...(typeof snap.budget.spentTokens === 'number' ? { lastRunTokens: snap.budget.spentTokens } : {})
     })
-    bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+    // 7c — final state to both surfaces (was iOS-only); the Electron row now shows the
+    // terminal "Nx · <reason>" live instead of waiting for the next scheduler tick.
+    // Forced past the throttle so the phone reliably lands the terminal verdict.
+    broadcastWorkflowProgress(true)
   }
 }
 

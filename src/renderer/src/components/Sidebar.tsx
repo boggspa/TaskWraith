@@ -2816,6 +2816,18 @@ export function Sidebar({
                               ⚠
                             </span>
                           )}
+                          {typeof workflow.lastRunIterationCount === 'number' &&
+                            workflow.lastRunIterationCount > 0 && (
+                              <span
+                                className="sidebar-workflow-loop-count"
+                                title={`Loop: ${workflow.lastRunIterationCount} iteration${
+                                  workflow.lastRunIterationCount === 1 ? '' : 's'
+                                }${workflow.lastRunStopReason ? ` · ${workflow.lastRunStopReason}` : ''}`}
+                                aria-label={`${workflow.lastRunIterationCount} loop iterations`}
+                              >
+                                {workflow.lastRunIterationCount}×
+                              </span>
+                            )}
                           <span
                             className={`sidebar-workflow-status tone-${workflowStatusTone(status)}`}
                           >

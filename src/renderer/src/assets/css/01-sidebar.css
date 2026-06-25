@@ -685,6 +685,18 @@
   white-space: nowrap;
 }
 
+/* Slice 7c — live loop iteration count on the workflow row (next to the status pill). */
+.sidebar-workflow-loop-count {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
 .sidebar-workflow-status.tone-running {
   border-color: color-mix(in srgb, var(--accent) 34%, transparent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
