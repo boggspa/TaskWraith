@@ -99,6 +99,7 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'switch_auth_profile',
         'transcode_audio',
         'transcode_video',
+        'video_encode_clip',
         'video_probe',
         'video_thumbnail',
         'write_file'

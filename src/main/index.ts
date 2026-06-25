@@ -1874,6 +1874,26 @@ const vtToolCallBudget = new ImageToolCallBudget()
 // metadata-only and stays uncapped. Output stages in a dir WE own.
 const mediaProcessLimiter = createSemaphore(2)
 const MEDIA_STAGING_DIR = join(app.getPath('userData'), 'media-staging')
+// Reclaim orphaned media-staging outputs: a daemon encode that finishes AFTER its
+// RPC timed out (the late result is dropped, no cancel sent) writes its MP4 to
+// staging with no one to delete it; ffmpeg crash-orphans land here too. Sweep
+// tw-* files older than 1h at startup + periodically (adversarial review).
+function sweepMediaStagingDir(): void {
+  try {
+    const cutoff = Date.now() - 60 * 60 * 1000
+    for (const entry of fsSync.readdirSync(MEDIA_STAGING_DIR, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.startsWith('tw-')) continue
+      const filePath = join(MEDIA_STAGING_DIR, entry.name)
+      try {
+        if (fsSync.statSync(filePath).mtimeMs < cutoff) fsSync.unlinkSync(filePath)
+      } catch {
+        // best-effort — file may be mid-write or already gone
+      }
+    }
+  } catch {
+    // staging dir not created yet — nothing to sweep
+  }
+}
 const ffmpegToolExecutors = createFfmpegToolExecutors({
   jailInput: (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
@@ -1988,6 +2008,52 @@ const vtToolExecutors = createVtToolExecutors({
       codec: string
       usedHardware: boolean
     }>('video.decodeFrame', params, { timeoutMs: 30_000 })
+  },
+  // S3 — native VideoToolbox encode. The daemon writes the MP4 to the TS-owned
+  // staging path and returns metadata; TS reads + persists + removes it (the
+  // ffmpeg-producer pattern, but daemon-backed). 5-min timeout mirrors runFfmpeg.
+  encodeClip: async (params) => {
+    const daemon = bridgeDaemonRef
+    if (!daemon) throw new Error('video bridge daemon is not running')
+    // Share the ffmpeg encoders' concurrency semaphore (max 2): a native VT encode
+    // contends for the same CPU/GPU/disk as transcode_video, so an ensemble can't
+    // spawn N simultaneous multi-minute 512MB encodes (adversarial review).
+    return mediaProcessLimiter.run(() =>
+      daemon.request<{
+        width: number
+        height: number
+        durationMs: number
+        codec: string
+        usedHardware: boolean
+      }>('video.encodeClip', params, { timeoutMs: 300_000 })
+    )
+  },
+  // The output-file deps mirror the ffmpeg factory exactly (same MEDIA_STAGING_DIR,
+  // per-mime cap, content-addressed store) so a daemon-produced MP4 rides the
+  // identical persist→buildAvMediaRef→trustedMediaRefs lane as transcode_video.
+  stagingPath: (ext) => {
+    fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
+    return join(MEDIA_STAGING_DIR, `tw-${randomUUID()}.${ext}`)
+  },
+  readOutput: (filePath, mimeType) => {
+    const stat = fsSync.statSync(filePath)
+    const cap = mimeType ? maxTranscriptMediaBytesForMime(mimeType) : TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES
+    if (stat.size > cap) {
+      throw new Error(`output too large (${stat.size} bytes; max ${cap})`)
+    }
+    return fsSync.readFileSync(filePath)
+  },
+  persistOutput: (buffer, mimeType) => {
+    const sha256 = sha256Base64Url(buffer)
+    const result = getTranscriptMediaAssetStore().write({ sha256, mimeType, buffer })
+    return result.ok ? { ok: true, sha256 } : { ok: false, reason: result.reason }
+  },
+  removeFile: (filePath) => {
+    try {
+      fsSync.unlinkSync(filePath)
+    } catch {
+      // best-effort staging cleanup
+    }
   }
 })
 
@@ -17625,6 +17691,10 @@ if (isGeminiMcpBridgeProcess) {
     // HTTP Range so <video>/<audio> can stream + seek (S0b). Base dir matches the
     // lazy TranscriptMediaAssetStore (userData/transcript-media).
     registerTwMediaProtocol(join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR))
+    // Reclaim orphaned media-staging outputs (timed-out daemon encodes / ffmpeg
+    // crash-orphans) at startup + every 30 min.
+    sweepMediaStagingDir()
+    setInterval(sweepMediaStagingDir, 30 * 60 * 1000).unref?.()
     electronApp.setAppUserModelId('com.electron')
     registerProductCrashHandlers()
 

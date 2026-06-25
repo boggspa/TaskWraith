@@ -2368,6 +2368,25 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'video_encode_clip',
+      description:
+        "Re-encode a segment of a workspace video to H.264 MP4 using the OS's built-in VideoToolbox " +
+        '(hardware-accelerated; no ffmpeg required). Params: inputPath, scaleWidth (output width px, height ' +
+        'auto), targetBitrateKbps, startSeconds, durationSeconds. Writes a new file; gated as a file change.',
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          inputPath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to a video file.' },
+          scaleWidth: { type: 'number', description: 'Output width in px; height auto.' },
+          targetBitrateKbps: { type: 'number', description: 'Target H.264 bitrate in kbps.' },
+          startSeconds: { type: 'number', description: 'Clip start offset in seconds.' },
+          durationSeconds: { type: 'number', description: 'Clip duration in seconds.' }
+        },
+        required: ['inputPath']
+      }
+    },
+    {
       name: 'audio_extract',
       description:
         'Extract the audio track from a workspace VIDEO to a standalone audio file via ffmpeg. Params: ' +

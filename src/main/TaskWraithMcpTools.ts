@@ -187,6 +187,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   // it rides the proven image media spine and renders inline. Reads a realpath-
   // jailed workspace path; gated as a file change. See src/main/mcp/VtToolExecutors.ts.
   'video_decode_frame',
+  // Re-encode a SEGMENT of a workspace video to an H.264 MP4 via the daemon's native
+  // VideoToolbox (no ffmpeg required; hardware-accelerated). Output is a video FILE,
+  // so — like transcode_video — it rides the TRUSTED non-image media_refs channel
+  // (NOT the image lane that video_decode_frame uses). Writes a new file; gated as a
+  // file change. See src/main/mcp/VtToolExecutors.ts.
+  'video_encode_clip',
   // Media PRODUCERS (S1b-3) — write a standalone output media file via ffmpeg
   // over a trusted non-image media_refs channel. `audio_extract` pulls the audio
   // track out of a video; `transcode_audio` re-encodes audio to wav/m4a/mp3;

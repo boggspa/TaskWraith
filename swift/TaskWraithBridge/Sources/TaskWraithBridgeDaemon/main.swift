@@ -833,6 +833,68 @@ dispatcher.register("video.decodeFrame") { params in
     }
 }
 
+// `video.encodeClip` — native VideoToolbox encode-to-MP4 (Approach B,
+// AVAssetWriter): AVAssetReader decompresses the source → optional CoreImage
+// downscale → AVAssetWriterInput H.264 encode → .mp4 mux at the TS-owned
+// staging `outputPath`. Mirrors `video.decodeFrame`: decode params →
+// runBlocking → map VideoEncodeError to JSONRPCError → return the metadata dict
+// (`ok`, `width`, `height`, `durationMs`, `codec`, `usedHardware`). We do NOT
+// return bytes — TS reads + deletes the file at outputPath. Bad/missing path,
+// no video track, or HDR source → invalidParams; encode/writer failure or zero
+// frames → internalError.
+
+struct VideoEncodeClipParams: Decodable {
+    let sourcePath: String
+    let outputPath: String
+    let scaleWidth: Int?
+    let targetBitrateKbps: Int?
+    let startSeconds: Double?
+    let durationSeconds: Double?
+}
+
+dispatcher.register("video.encodeClip") { params in
+    let parsed: VideoEncodeClipParams
+    do {
+        parsed = try decodeParams(params, as: VideoEncodeClipParams.self)
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid video.encodeClip params: \(error.localizedDescription)"
+        )
+    }
+    do {
+        let clip = try runBlocking { @Sendable [
+            sourcePath = parsed.sourcePath,
+            outputPath = parsed.outputPath,
+            scaleWidth = parsed.scaleWidth,
+            targetBitrateKbps = parsed.targetBitrateKbps,
+            startSeconds = parsed.startSeconds,
+            durationSeconds = parsed.durationSeconds
+        ] in
+            try await VideoFrameEncoder.encodeClip(
+                sourcePath: sourcePath,
+                outputPath: outputPath,
+                scaleWidth: scaleWidth,
+                targetBitrateKbps: targetBitrateKbps,
+                startSeconds: startSeconds,
+                durationSeconds: durationSeconds
+            )
+        }
+        return clip.toJSONObject()
+    } catch let err as VideoEncodeError {
+        switch err {
+        case .badInput(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.invalidParams, message: message)
+        case .encodeFailed(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: message)
+        }
+    } catch let err as JSONRPCError {
+        throw err
+    } catch {
+        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: error.localizedDescription)
+    }
+}
+
 // MARK: - Creative-app probe (Phase K1)
 //
 // `creative.runningApplications` — answers "is bundle id X currently running?"
