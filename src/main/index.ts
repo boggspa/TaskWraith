@@ -6895,49 +6895,6 @@ function previewForGeminiMcpTool(
     }
   }
 
-  if (isFfmpegMcpToolName(toolName)) {
-    const ffmpegVerbs: Record<string, string> = {
-      video_probe: 'probe',
-      video_thumbnail: 'thumbnail',
-      audio_extract: 'audio extract',
-      transcode_audio: 'transcode audio',
-      transcode_video: 'transcode video'
-    }
-    const verb = ffmpegVerbs[toolName] ?? 'thumbnail'
-    return {
-      title: `Approve ${providerName} media ${verb}`,
-      // Gated as fileChanges: runs an external ffmpeg/ffprobe subprocess — denied
-      // under the read-only preset.
-      body: `${intentBody}${verb} ${String(args.sourcePath || '')}`.trim(),
-      service: 'fileChanges' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: args,
-        ...intentPreview
-      }
-    }
-  }
-
-  if (isAudioMcpToolName(toolName)) {
-    const isAnalyze = toolName === 'audio_analyze'
-    return {
-      title: isAnalyze ? `Approve ${providerName} audio analysis` : `Approve ${providerName} audio render`,
-      // Gated as fileChanges: a compute tool that reads/produces a waveform PNG
-      // asset — denied under the read-only preset, like image_edit / write_file.
-      body: isAnalyze
-        ? `${intentBody}analyze ${String(args.sourcePath || '')}`.trim()
-        : `${intentBody}${String(args.waveform || 'sine')} ${String(args.frequencyHz || 440)}Hz ${String(args.durationMs || 1000)}ms`,
-      service: 'fileChanges' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: args,
-        ...intentPreview
-      }
-    }
-  }
-
   if (toolName === 'write_file' || toolName === 'replace') {
     const filePath = String(args.path || args.file_path || '')
     const previewPath = filePath ? previewGeminiMcpPath(context, filePath) : filePath
