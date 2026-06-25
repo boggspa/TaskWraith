@@ -2048,8 +2048,22 @@ public final class RemoteSessionModel: ObservableObject {
                 case .error(let message):
                     await MainActor.run {
                         guard self.client === client else { return }
-                        if case .connected = self.phase { self.lastActionMessage = message }
-                        else { self.phase = .error(message) }
+                        if case .connected = self.phase {
+                            // A transport-level timeout while the session is still .connected is a
+                            // transient network blip, NOT a sleeping Mac. twFriendlyMessage re-maps
+                            // any "timed out" string to the alarming "busy or asleep" banner, so
+                            // surface accurate copy (no "timeout"/"timed out" wording) that stays a
+                            // calm .info notice. Non-timeout transport messages pass through as-is.
+                            let lower = message.lowercased()
+                            if lower.contains("timed out") || lower.contains("timeout") {
+                                self.lastActionMessage =
+                                    "Brief network interruption — your Mac is still connected."
+                            } else {
+                                self.lastActionMessage = message
+                            }
+                        } else {
+                            self.phase = .error(message)
+                        }
                     }
                 case .closed:
                     await MainActor.run {
