@@ -308,6 +308,8 @@ import {
   type PendingExternalPathDetection
 } from './services/ApprovalService'
 import { ChatService } from './services/ChatService'
+import { HumanCollaborationStore } from './collaboration/HumanCollaborationStore'
+import { buildHumanShareProjection } from './collaboration/HumanShareProjection'
 import { detectConfiguredProviders } from './ProviderConfiguration'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
 import { applyReroutePlanToPayload, isProviderPaused, resolveProviderDispatch } from './ProviderRunPause'
@@ -4575,6 +4577,30 @@ function broadcastChatUpdated(chat: ChatRecord): void {
   broadcastChatPopoutUpdate(chat)
 }
 
+/**
+ * Deliver a TRUSTED (main-constructed) run media ref to the renderer over a
+ * DEDICATED main→renderer channel. Used only for a foreground Codex SOLO run,
+ * whose transcript is persisted renderer-side and which no main-side run-state
+ * map owns (so injectTrustedMediaRefs cannot reach it). Un-forgeable: the ref is
+ * only ever built by main-side executor code (buildAvMediaRef) and pushed on
+ * this main-only `webContents.send` channel — a provider writing
+ * `{type:'media_refs'}` to stdout can only reach the sanitized `agent-output`
+ * lane (which strips AV), never this channel. `context.sender` is a WebContents,
+ * so this sends directly rather than via safeSendToWebContents (BrowserWindow).
+ */
+function sendTrustedRunMediaRefs(
+  sender: Electron.WebContents | undefined,
+  payload: { appChatId: string; appRunId: string; mediaRefs: readonly TranscriptMediaRef[] }
+): void {
+  if (!sender || sender.isDestroyed()) return
+  try {
+    sender.send('run-trusted-media-refs', payload)
+  } catch {
+    // Frame disposed between the guard and the send; the producer asset is
+    // already content-addressed on disk, so the ref can be re-surfaced later.
+  }
+}
+
 function broadcastChatPopoutUpdate(chat: ChatRecord): void {
   if (!chat?.appChatId || workspacePopoutWindows.size === 0) return
   const win = workspacePopoutWindows.get(`chat:${chat.appChatId}`)
@@ -5388,15 +5414,15 @@ function appendBridgeRunMediaRefs(
 function injectTrustedMediaRefs(
   appRunId: string | undefined,
   refs: readonly TranscriptMediaRef[]
-): void {
-  if (!appRunId || refs.length === 0) return
+): boolean {
+  if (!appRunId || refs.length === 0) return false
 
   const bridgeState = bridgeRunTranscripts.get(appRunId)
   if (bridgeState) {
     appendBridgeRunMediaRefs(bridgeState, refs)
     if (!bridgeState.flushedOnce) flushBridgeRunTranscript(appRunId)
     else scheduleBridgeRunFlush(appRunId)
-    return
+    return true
   }
 
   const subThreadState = backgroundSubThreadTranscripts.get(appRunId)
@@ -5404,10 +5430,22 @@ function injectTrustedMediaRefs(
     subThreadState.mediaRefs = mergeTranscriptMediaRefs(subThreadState.mediaRefs, refs)
     if (!subThreadState.flushedOnce) flushBackgroundSubThreadTranscript(appRunId)
     else scheduleBackgroundSubThreadFlush(appRunId)
-    return
+    return true
   }
 
-  ensembleOrchestratorRef?.appendTrustedMediaRefs(appRunId, refs)
+  // Branch 3 (ensemble). appendTrustedMediaRefs is void, so probe ownership
+  // first with the existing pure read-only predicate getParticipantIdForRun
+  // (a non-null participant id ⇒ this orchestrator holds the run). The probe
+  // has no side effects, so doing it before the inject is safe and cheap (two
+  // O(1) map lookups). A miss here means NO map owns the run — the caller's
+  // false return drives the dedicated solo-Codex IPC fallback.
+  const ownedByEnsemble =
+    ensembleOrchestratorRef?.getParticipantIdForRun(appRunId) != null
+  if (ownedByEnsemble) {
+    ensembleOrchestratorRef?.appendTrustedMediaRefs(appRunId, refs)
+    return true
+  }
+  return false
 }
 
 /** Assemble an incoming assistant text event into the run's interleaved
@@ -17121,15 +17159,33 @@ async function executeGeminiMcpTool(
     // are injected DIRECTLY into the owning run's transcript state, bypassing the
     // image-only provider sanitizer. Un-forgeable: a McpToolExecutionResult is
     // only ever constructed by main-side executor code, never provider stdout.
-    // Codex builds its transcript media from its own app-server stream (the
-    // emitMcpToolTranscriptEvent above is a no-op for it), so — exactly like the
-    // image lane — codex AV is left to a follow-up rather than mis-injected here.
-    if (
-      finalRichResult?.trustedMediaRefs &&
-      finalRichResult.trustedMediaRefs.length > 0 &&
-      parentProvider !== 'codex'
-    ) {
-      injectTrustedMediaRefs(context.appRunId, finalRichResult.trustedMediaRefs)
+    //
+    // injectTrustedMediaRefs fans to the 3 MAIN-SIDE maps (bridge / sub-thread /
+    // ensemble) and now RETURNS whether one owned the run. The fallback below is
+    // GATED on parentProvider==='codex', so it never fires for any non-codex
+    // provider — their behavior is byte-identical (injectTrustedMediaRefs does
+    // exactly what it did before, owned or not). For codex it can miss: codex
+    // ensemble/sub-thread/phone-guest runs ARE in those maps (delivered=true →
+    // trusted lane, no sanitizer), but a FOREGROUND codex SOLO run is owned by
+    // CodexRunState and is in NONE of the maps (delivered=false). That solo
+    // transcript is persisted renderer-side, so its trusted ref is delivered on
+    // a DEDICATED main-only IPC — never the sanitized/forgeable agent-output
+    // media_refs lane (which would strip AV away AND is provider-reachable).
+    if (finalRichResult?.trustedMediaRefs && finalRichResult.trustedMediaRefs.length > 0) {
+      const delivered = injectTrustedMediaRefs(context.appRunId, finalRichResult.trustedMediaRefs)
+      if (
+        !delivered &&
+        parentProvider === 'codex' &&
+        context.sender &&
+        context.appRunId &&
+        context.appChatId
+      ) {
+        sendTrustedRunMediaRefs(context.sender, {
+          appChatId: context.appChatId,
+          appRunId: context.appRunId,
+          mediaRefs: finalRichResult.trustedMediaRefs
+        })
+      }
     }
     if (finalRichResult) {
       return { ...finalRichResult, ...(toolIsError ? { isError: true } : {}) }
@@ -22627,8 +22683,12 @@ if (isGeminiMcpBridgeProcess) {
       setupConfigFilePath: discordContextConfig.suggestedConfigFilePath,
       checkedConfigFilePaths: discordContextConfig.checkedConfigFilePaths
     })
+    const humanCollaborationStore = new HumanCollaborationStore(
+      join(app.getPath('userData'), 'human-collaboration.json')
+    )
     const chatService = new ChatService({
       appStore: AppStore,
+      humanCollaborationStore,
       findRegisteredWorkspace,
       canonicalPath,
       sanitizeChatForSave,

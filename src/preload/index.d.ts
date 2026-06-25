@@ -1412,6 +1412,13 @@ declare global {
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
       onUsageChanged: (callback: () => void) => void
       onChatUpdated: (callback: (chat: ChatRecord) => void) => () => void
+      onRunTrustedMediaRefs: (
+        callback: (payload: {
+          appChatId: string
+          appRunId: string
+          mediaRefs: unknown[]
+        }) => void
+      ) => () => void
       onAppShellStatsChanged: (callback: (snapshot: AppShellStatsSnapshot) => void) => () => void
       onWorkspacePopoutRefresh: (
         callback: (payload: { workspacePath: string; reason: string }) => void

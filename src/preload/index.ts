@@ -1145,6 +1145,24 @@ const api = {
     ipcRenderer.on('chat-updated', wrapped)
     return () => ipcRenderer.removeListener('chat-updated', wrapped)
   },
+  // Trusted audio/video media refs for a foreground solo run. Main constructs
+  // these refs itself and pushes them on this dedicated main-only channel, so
+  // the renderer attaches them WITHOUT the image-only RAW-provider sanitizer
+  // (a provider's stdout cannot forge this IPC). See applyAssistantMediaRefsToChat.
+  onRunTrustedMediaRefs: (
+    callback: (payload: {
+      appChatId: string
+      appRunId: string
+      mediaRefs: unknown[]
+    }) => void
+  ) => {
+    const wrapped = (
+      _event: unknown,
+      payload: { appChatId: string; appRunId: string; mediaRefs: unknown[] }
+    ): void => callback(payload)
+    ipcRenderer.on('run-trusted-media-refs', wrapped)
+    return () => ipcRenderer.removeListener('run-trusted-media-refs', wrapped)
+  },
   onAppShellStatsChanged: (callback: (snapshot: AppShellStatsSnapshot) => void) => {
     const wrapped = (_event: unknown, snapshot: AppShellStatsSnapshot): void => callback(snapshot)
     ipcRenderer.on('app-shell-stats-changed', wrapped)
@@ -1230,6 +1248,7 @@ const api = {
     ipcRenderer.removeAllListeners('audit-run-changed')
     ipcRenderer.removeAllListeners('usage-changed')
     ipcRenderer.removeAllListeners('chat-updated')
+    ipcRenderer.removeAllListeners('run-trusted-media-refs')
     ipcRenderer.removeAllListeners('app-shell-stats-changed')
     ipcRenderer.removeAllListeners('workspace-popout-refresh')
     ipcRenderer.removeAllListeners('side-chat:dock-request')

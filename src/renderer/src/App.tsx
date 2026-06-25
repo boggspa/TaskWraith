@@ -3610,6 +3610,65 @@ function App(): React.JSX.Element {
     [flushCoalescedChats, flushCoalescedChatsNow]
   )
 
+  // Shared merge for transcript media refs onto a chat's trailing assistant
+  // message. Both lanes funnel through here so they can't drift:
+  //   1. RAW provider lane (`assistant_media_refs` event) — caller sanitizes
+  //      FIRST via sanitizeRawProviderMediaRefs (image-only), then calls this.
+  //   2. TRUSTED main-only lane (`run-trusted-media-refs` IPC) — refs are
+  //      constructed main-side on a channel a provider's stdout cannot forge,
+  //      so the caller passes them RAW (audio/video survive — the sanitizer
+  //      would hard-drop them). This helper NEVER sanitizes; that policy stays
+  //      at each call site. Do NOT route the forgeable provider lane through
+  //      here un-sanitized.
+  // Finds the trailing assistant message and merges (mergeTranscriptMediaRefs
+  // dedupes by sha256||assetId||id); if no trailing assistant exists yet it
+  // appends a new empty assistant bubble carrying the refs. Ensemble chats are
+  // skipped (their transcripts are orchestrator-canonical), preserving the
+  // existing assistant_media_refs behavior exactly.
+  const applyAssistantMediaRefsToChat = useCallback(
+    (chatId: string, refs: TranscriptMediaRef[]): void => {
+      if (!chatId || !Array.isArray(refs) || refs.length === 0) return
+      updateChatById(chatId, (source) => {
+        if (source.chatKind === 'ensemble') {
+          return source
+        }
+        const updated = { ...source }
+        const trailingIndex = updated.messages.length - 1
+        const trailing =
+          trailingIndex >= 0 && updated.messages[trailingIndex].role === 'assistant'
+            ? updated.messages[trailingIndex]
+            : null
+        if (trailing) {
+          const mediaRefs = mergeTranscriptMediaRefs(trailing.metadata?.mediaRefs, refs)
+          updated.messages = [
+            ...updated.messages.slice(0, trailingIndex),
+            {
+              ...trailing,
+              metadata: {
+                ...(trailing.metadata || {}),
+                mediaRefs
+              }
+            },
+            ...updated.messages.slice(trailingIndex + 1)
+          ]
+        } else {
+          updated.messages = [
+            ...updated.messages,
+            {
+              id: createMessageId(),
+              role: 'assistant',
+              content: '',
+              timestamp: new Date().toISOString(),
+              metadata: { mediaRefs: refs }
+            }
+          ]
+        }
+        return updated
+      })
+    },
+    [updateChatById]
+  )
+
   const updateChatByIdLocalOnly = useCallback(
     (
       chatId: string | null | undefined,
@@ -8943,6 +9002,27 @@ function App(): React.JSX.Element {
       })
     }
 
+    // Trusted audio/video media refs for a foreground solo run. Main constructs
+    // these refs and pushes them on this dedicated main-only channel, so unlike
+    // the forgeable provider `assistant_media_refs` lane (which sanitizes —
+    // image-only — above) we attach them RAW: the image-only sanitizer would
+    // hard-drop audio/video, and a provider's stdout cannot forge this IPC.
+    // Keyed by appChatId (streamed assistant messages carry no runId); the
+    // shared helper's append-new-assistant fallback covers the no-trailing-
+    // assistant case, and mergeTranscriptMediaRefs dedupes redundant deliveries.
+    let trustedMediaRefsUnsubscribe: (() => void) | null = null
+    if (typeof window.api.onRunTrustedMediaRefs === 'function') {
+      trustedMediaRefsUnsubscribe = window.api.onRunTrustedMediaRefs((payload) => {
+        if (
+          !payload?.appChatId ||
+          !Array.isArray(payload.mediaRefs) ||
+          payload.mediaRefs.length === 0
+        )
+          return
+        applyAssistantMediaRefsToChat(payload.appChatId, payload.mediaRefs as TranscriptMediaRef[])
+      })
+    }
+
     if (typeof window.api.onRunQueueChanged === 'function') {
       window.api.onRunQueueChanged((jobs) => {
         setRunQueueJobs(jobs)
@@ -9037,6 +9117,7 @@ function App(): React.JSX.Element {
 
     return () => {
       window.api.removeListeners()
+      trustedMediaRefsUnsubscribe?.()
       yoloUnsubscribe?.()
       agentQuestionUnsubscribe?.()
       agentQuestionCancelUnsubscribe?.()
@@ -10515,6 +10596,19 @@ function App(): React.JSX.Element {
           appendThreadRawLog(runChatId, { type: 'stdout', content: redactLog(event.text) })
           return
         }
+        if (event.type === 'assistant_media_refs') {
+          // RAW provider lane (GeminiAdapter → here): the provider controls
+          // every field of these refs, so SANITIZE before merging onto the
+          // transcript — drop hostile `path`s (the desktop "Open file" overlay
+          // calls api.openExternalOrPath on them), oversize/non-raster
+          // thumbnails, svg/unknown mimes, and fake sources. Shared with the
+          // main-side ensemble + bridge ingestion points so the policy can't
+          // drift (src/shared/transcriptMediaRefSanitize.ts). This is the
+          // forgeable lane — it MUST keep sanitizing; only the trusted
+          // main-only `run-trusted-media-refs` IPC bypasses the sanitizer.
+          applyAssistantMediaRefsToChat(runChatId, sanitizeRawProviderMediaRefs(event.mediaRefs))
+          return
+        }
 
         updateChatById(runChatId, (source) => {
           const updated = { ...source }
@@ -10597,54 +10691,6 @@ function App(): React.JSX.Element {
               },
               { createMessageId, now: () => new Date().toISOString() }
             )
-          } else if (event.type === 'assistant_media_refs') {
-            if (updated.chatKind === 'ensemble') {
-              return updated
-            }
-            // RAW provider lane (GeminiAdapter → here): the provider controls
-            // every field of these refs, so sanitize before merging onto the
-            // transcript — drop hostile `path`s (the desktop "Open file"
-            // overlay calls api.openExternalOrPath on them), oversize/non-raster
-            // thumbnails, svg/unknown mimes, and fake sources. Shared with the
-            // main-side ensemble + bridge ingestion points so the policy can't
-            // drift (src/shared/transcriptMediaRefSanitize.ts).
-            const incomingRefs = sanitizeRawProviderMediaRefs(event.mediaRefs)
-            if (incomingRefs.length === 0) {
-              return updated
-            }
-            const trailingIndex = updated.messages.length - 1
-            const trailing =
-              trailingIndex >= 0 && updated.messages[trailingIndex].role === 'assistant'
-                ? updated.messages[trailingIndex]
-                : null
-            if (trailing) {
-              const mediaRefs = mergeTranscriptMediaRefs(
-                trailing.metadata?.mediaRefs,
-                incomingRefs
-              )
-              updated.messages = [
-                ...updated.messages.slice(0, trailingIndex),
-                {
-                  ...trailing,
-                  metadata: {
-                    ...(trailing.metadata || {}),
-                    mediaRefs
-                  }
-                },
-                ...updated.messages.slice(trailingIndex + 1)
-              ]
-            } else {
-              updated.messages = [
-                ...updated.messages,
-                {
-                  id: createMessageId(),
-                  role: 'assistant',
-                  content: '',
-                  timestamp: new Date().toISOString(),
-                  metadata: { mediaRefs: incomingRefs }
-                }
-              ]
-            }
           } else if (event.type === 'assistant_message_complete') {
             if (isVisibleRunChat() && updated.chatKind !== 'ensemble') setIsThinking(false)
             const isPlanMode = updated.runs?.[updated.runs.length - 1]?.approvalMode === 'plan'

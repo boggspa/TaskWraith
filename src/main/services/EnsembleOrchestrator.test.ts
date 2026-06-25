@@ -533,6 +533,32 @@ describe('EnsembleOrchestrator', () => {
     expect(assistantMsgs[0].metadata?.mediaRefs).toHaveLength(1)
   })
 
+  // Branch-3 ownership predicate behind index.ts injectTrustedMediaRefs's
+  // boolean return: getParticipantIdForRun resolves a non-null participant id
+  // when this orchestrator OWNS appRunId (⇒ injectTrustedMediaRefs returns true,
+  // trusted lane), and null when no run is held (⇒ false, which drives the
+  // dedicated foreground-solo-Codex IPC fallback). For non-codex providers the
+  // run is always map-owned here, so the fallback never fires — zero change.
+  it('getParticipantIdForRun reports ensemble ownership (true) vs miss (false) for the trusted-AV boolean', async () => {
+    const harness = makeHarness()
+    // No round started yet: an arbitrary id is unowned.
+    expect(harness.orchestrator.getParticipantIdForRun('never-started-run')).toBeNull()
+    expect(harness.orchestrator.getParticipantIdForRun(undefined)).toBeNull()
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Transcode the recording.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    // Owned run ⇒ non-null participant id ⇒ injectTrustedMediaRefs branch-3 true.
+    expect(harness.orchestrator.getParticipantIdForRun(runId)).not.toBeNull()
+    // An unrelated id stays a miss ⇒ false ⇒ solo-Codex IPC fallback.
+    expect(harness.orchestrator.getParticipantIdForRun(`${runId}-other`)).toBeNull()
+  })
+
   it('persists an active-round checkpoint and retires it when the round completes', async () => {
     const persisted: Array<{ chat: ChatRecord; reason: string }> = []
     const completed: Array<{ chatId: string; roundId: string; status: string }> = []
