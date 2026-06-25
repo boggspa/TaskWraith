@@ -13,6 +13,8 @@ import SwiftUI
 import TaskWraithKit
 
 #if canImport(UIKit)
+    import AVFoundation
+    import AVKit
     import PhotosUI
     import UIKit
 #endif
@@ -2355,22 +2357,29 @@ struct ThreadRowView: View, Equatable {
             }
             .padding(.top, 2)
             .sheet(item: $preview) { preview in
-                TranscriptMediaPreviewSheet(preview: preview)
+                TranscriptMediaPreviewSheet(preview: preview, model: model)
             }
         }
 
         @ViewBuilder
         private func mediaTile(_ item: RemoteThreadSnapshot.Row.Media) -> some View {
-            // TODO: real AV playback = deferred S6. Audio/video tiles render a
-            // poster + kind badge + duration but are NON-interactive (the
-            // threadMediaFetch path only yields a UIImage → "Preview unavailable"
-            // for AV). Only images are tappable/fetchable until real playback ships.
+            // Images fetch the full blob (→ UIImage). Audio/video now STREAM on
+            // tap via the Pass-2 bridge resource loader (BridgeMediaResourceLoader
+            // feeding an AVPlayer through a `twbridge-media://` URL) — no full
+            // download, transport controls supplied by VideoPlayer. The tile is a
+            // poster + kind badge + duration with a play affordance for AV.
             let isImage = item.kind == "image"
+            let isAV = item.kind == "video" || item.kind == "audio"
             let statusOk = item.status == nil || item.status == "available"
             let canFetch = isImage && statusOk
+            let canOpen = statusOk && (isImage || isAV)
             let isFetching = fetchingMediaId == item.id
             Button {
-                startFetch(item)
+                if isImage {
+                    startFetch(item)
+                } else if isAV {
+                    openAVPreview(item)
+                }
             } label: {
                 ZStack(alignment: .topLeading) {
                     ZStack(alignment: .bottomTrailing) {
@@ -2390,15 +2399,14 @@ struct ThreadRowView: View, Equatable {
                                 .padding(5)
                                 .background(Color.black.opacity(0.55), in: Circle())
                                 .padding(6)
-                        } else if !isImage {
-                            // AV affordance — playback is deferred, so signal it instead
-                            // of offering a magnifier that opens a broken image preview.
-                            Text("Playback coming soon")
-                                .font(.system(size: 9, weight: .semibold))
+                        } else if isAV && statusOk {
+                            // AV affordance — tap streams the asset via the bridge
+                            // resource loader into an AVPlayer (no full download).
+                            Image(systemName: "play.circle.fill")
+                                .font(.title3.weight(.semibold))
                                 .foregroundStyle(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 4)
-                                .background(Color.black.opacity(0.55), in: Capsule())
+                                .padding(5)
+                                .background(Color.black.opacity(0.55), in: Circle())
                                 .padding(6)
                         } else if let status = item.status, !status.isEmpty {
                             Text(statusLabel(status))
@@ -2464,7 +2472,7 @@ struct ThreadRowView: View, Equatable {
                 .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .buttonStyle(.plain)
-            .disabled(!canFetch || fetchingMediaId != nil)
+            .disabled(!canOpen || fetchingMediaId != nil)
             .accessibilityLabel(item.alt ?? item.caption ?? item.name)
         }
 
@@ -2539,7 +2547,7 @@ struct ThreadRowView: View, Equatable {
                         threadId: threadId, rowId: rowId, mediaId: item.id,
                         variant: "full", maxBytes: 8 * 1024 * 1024)
                     await MainActor.run {
-                        self.preview = TranscriptMediaPreview(media: fetched)
+                        self.preview = TranscriptMediaPreview(payload: .image(fetched))
                         self.fetchingMediaId = nil
                     }
                 } catch {
@@ -2549,6 +2557,24 @@ struct ThreadRowView: View, Equatable {
                     }
                 }
             }
+        }
+
+        /// Opens an AV asset for streaming. Unlike `startFetch`, this does NOT
+        /// download the blob or spin `fetchingMediaId` — it hands a stream
+        /// descriptor to the sheet, where AVStreamPreview builds the bridge
+        /// resource loader and the player pulls bytes on demand.
+        private func openAVPreview(_ item: RemoteThreadSnapshot.Row.Media) {
+            guard item.kind == "video" || item.kind == "audio" else { return }
+            let descriptor = AVStreamDescriptor(
+                threadId: threadId,
+                rowId: rowId,
+                mediaId: item.id,
+                mimeType: item.mimeType ?? (item.kind == "video" ? "video/mp4" : "audio/mpeg"),
+                kind: item.kind,
+                name: item.name,
+                posterBase64: item.thumbnail?.dataBase64,
+                durationMs: item.durationMs)
+            preview = TranscriptMediaPreview(payload: .av(descriptor))
         }
 
         private func statusLabel(_ status: String) -> String {
@@ -2566,38 +2592,48 @@ struct ThreadRowView: View, Equatable {
         }
     }
 
+    /// Immutable stream descriptor for an audio/video asset: the three bridge
+    /// ids the resource loader needs, plus presentation metadata. Carries NO
+    /// bytes — AVStreamPreview pulls them on demand through the loader.
+    private struct AVStreamDescriptor {
+        let threadId: String
+        let rowId: String
+        let mediaId: String
+        let mimeType: String      // resolved with a fallback in openAVPreview
+        let kind: String          // "video" | "audio"
+        let name: String
+        let posterBase64: String? // item.thumbnail?.dataBase64 (waveform/poster)
+        let durationMs: Int?
+    }
+
     private struct TranscriptMediaPreview: Identifiable {
         let id = UUID()
-        let media: TranscriptMediaFetchResult
+        /// Either a fully-fetched image blob, or a descriptor the AV player
+        /// streams on demand.
+        enum Payload {
+            case image(TranscriptMediaFetchResult)
+            case av(AVStreamDescriptor)
+        }
+        let payload: Payload
     }
 
     private struct TranscriptMediaPreviewSheet: View {
         let preview: TranscriptMediaPreview
+        let model: RemoteSessionModel
         @Environment(\.dismiss) private var dismiss
 
         var body: some View {
             NavigationStack {
                 Group {
-                    if let image {
-                        ScrollView([.horizontal, .vertical]) {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                                .padding()
-                        }
-                    } else {
-                        VStack(spacing: 10) {
-                            Image(systemName: "photo")
-                                .font(.largeTitle.weight(.semibold))
-                            Text("Preview unavailable")
-                                .font(.headline)
-                        }
-                        .foregroundStyle(TWTheme.textSecondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    switch preview.payload {
+                    case .image(let result):
+                        imageBody(result)
+                    case .av(let descriptor):
+                        AVStreamPreview(descriptor: descriptor, model: model)
                     }
                 }
                 .background(TWTheme.appBg.ignoresSafeArea())
-                .navigationTitle(preview.media.name ?? "Image")
+                .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
@@ -2607,8 +2643,133 @@ struct ThreadRowView: View, Equatable {
             }
         }
 
-        private var image: UIImage? {
-            guard let data = Data(base64Encoded: preview.media.dataBase64) else { return nil }
+        private var title: String {
+            switch preview.payload {
+            case .image(let result): return result.name ?? "Image"
+            case .av(let descriptor): return descriptor.name
+            }
+        }
+
+        @ViewBuilder
+        private func imageBody(_ result: TranscriptMediaFetchResult) -> some View {
+            if let image = Self.decodeImage(result.dataBase64) {
+                ScrollView([.horizontal, .vertical]) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .padding()
+                }
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: "photo")
+                        .font(.largeTitle.weight(.semibold))
+                    Text("Preview unavailable")
+                        .font(.headline)
+                }
+                .foregroundStyle(TWTheme.textSecondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+
+        private static func decodeImage(_ base64: String) -> UIImage? {
+            guard let data = Data(base64Encoded: base64) else { return nil }
+            return UIImage(data: data)
+        }
+    }
+
+    /// Streams a transcript audio/video asset through the bridge resource loader
+    /// into an AVPlayer. The VIEW owns the loader: `setDelegate(_:queue:)` holds
+    /// the delegate WEAKLY, so the loader must live as long as the player or
+    /// AVFoundation's load requests silently stall.
+    private struct AVStreamPreview: View {
+        let descriptor: AVStreamDescriptor
+        let model: RemoteSessionModel
+        @State private var player: AVPlayer?
+        @State private var loader: BridgeMediaResourceLoader?
+
+        var body: some View {
+            Group {
+                if let player {
+                    if descriptor.kind == "video" {
+                        VideoPlayer(player: player)
+                            .ignoresSafeArea(.container, edges: .bottom)
+                    } else {
+                        VStack(spacing: 16) {
+                            poster
+                            VideoPlayer(player: player)
+                                .frame(height: 90)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .padding()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    }
+                } else {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .onAppear { buildPlayerIfNeeded() }
+            .onDisappear {
+                player?.pause()
+                player = nil
+                loader = nil
+            }
+        }
+
+        /// The waveform/poster for an audio asset, shown above the transport.
+        @ViewBuilder
+        private var poster: some View {
+            if let base64 = descriptor.posterBase64,
+               let image = Self.decodeImage(base64)
+            {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 52, weight: .semibold))
+                    Text(descriptor.name)
+                        .font(.subheadline.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                }
+                .foregroundStyle(TWTheme.textSecondary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 220)
+                .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+        }
+
+        /// Build the loader + player exactly once. The `@Sendable` fetch closure
+        /// captures the @MainActor model (implicitly Sendable) and the descriptor
+        /// ids; the view retains `loader` so the weakly-held delegate survives.
+        private func buildPlayerIfNeeded() {
+            guard player == nil else { return }
+            let threadId = descriptor.threadId
+            let rowId = descriptor.rowId
+            let mediaId = descriptor.mediaId
+            let fetch: @Sendable (_ offset: Int, _ length: Int) async throws -> (data: Data, totalBytes: Int) = { offset, length in
+                try await model.fetchThreadMediaChunk(
+                    threadId: threadId, rowId: rowId, mediaId: mediaId,
+                    offset: offset, length: length)
+            }
+            let l = BridgeMediaResourceLoader(mimeType: descriptor.mimeType, fetchChunk: fetch)
+            let url = BridgeMediaURL.make(threadId: threadId, rowId: rowId, mediaId: mediaId)
+            let asset = AVURLAsset(url: url)
+            asset.resourceLoader.setDelegate(l, queue: l.deliveryQueue)
+            let item = AVPlayerItem(asset: asset)
+            loader = l
+            let p = AVPlayer(playerItem: item)
+            player = p
+            p.play()
+        }
+
+        private static func decodeImage(_ base64: String) -> UIImage? {
+            guard let data = Data(base64Encoded: base64) else { return nil }
             return UIImage(data: data)
         }
     }
