@@ -1248,7 +1248,9 @@ declare global {
         chatId: string
         mode?: HumanCollaborationMode
         inviteTtlMs?: number
-      }) => Promise<CreateShareResult>
+      }) => Promise<
+        CreateShareResult & { relayUrl: string; hostIdentityPubKeyB64: string }
+      >
       humanCollaborationListShares: (chatId?: string) => Promise<HumanCollaborationShare[]>
       humanCollaborationRevokeShare: (shareId: string) => Promise<HumanCollaborationShare | null>
       humanCollaborationConsumeInvite: (input: {

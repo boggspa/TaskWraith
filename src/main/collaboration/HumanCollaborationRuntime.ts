@@ -88,6 +88,15 @@ export interface HumanCollaborationRuntimeDeps<ProjectionType, AppendType> {
     sessionId: string,
     frame: HumanCollaborationEncryptedFrame
   ) => void | Promise<void>
+  /** Fired when a collaborator begins admission, so the HOST can surface the
+   * 6-digit SAS for the out-of-band compare (L6-2). */
+  onAdmissionBegan?: (info: {
+    handshakeId: string
+    chatId: string
+    shareId: string
+    displayName: string
+    confirmCode: string
+  }) => void
   now?: () => number
   log?: (line: string) => void
 }
@@ -141,6 +150,13 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
   constructor(options: HumanCollaborationRuntimeDeps<ProjectionType, AppendType>) {
     this.opts = options
     this.now = options.now ?? Date.now
+  }
+
+  /** The host's identity public key (raw, b64) — goes in the invite so a
+   * collaborator can pin it (Crypto-F2); also the `hostIdentityPubKeyB64` in
+   * every beginAdmission result. */
+  hostIdentityPubKeyB64(): string {
+    return b64.encode(exportRawEd25519PublicKey(this.opts.identityKeyPair.publicKey))
   }
 
   async routeAction<ReturnType = unknown>(
@@ -276,6 +292,15 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
           : existingParticipant?.displayName || displayName,
       createdAt: now,
       mode
+    })
+
+    // Surface the SAS to the host so the human can compare it out of band (L6-2).
+    this.opts.onAdmissionBegan?.({
+      handshakeId,
+      chatId,
+      shareId,
+      displayName: share.mode === 'readOnly' ? displayName : existingParticipant?.displayName || displayName,
+      confirmCode
     })
 
     return {

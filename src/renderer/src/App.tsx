@@ -1488,14 +1488,23 @@ function App(): React.JSX.Element {
             mode: result.share.mode,
             createdAt: result.invite.createdAt,
             requiresOutOfBandSas: true,
-            expiresAt: result.invite.expiresAt
+            expiresAt: result.invite.expiresAt,
+            // Transport coordinates the collaborator dials, + the host identity
+            // key to pin (Crypto-F2). relayUrl is '' when remote access is off.
+            relayUrl: result.relayUrl,
+            roomId: result.roomId,
+            hostIdentityPubKeyB64: result.hostIdentityPubKeyB64
           },
           null,
           2
         )
         if (!navigator.clipboard?.writeText) throw new Error('Clipboard is not available.')
         await navigator.clipboard.writeText(invitePayload)
-        window.alert('People invite copied. Share it out of band with the collaborator.')
+        window.alert(
+          result.relayUrl
+            ? 'People invite copied. Share it out of band with the collaborator.'
+            : 'People invite copied — but remote access is OFF, so collaborators cannot connect yet. Enable remote access in Settings, then create a new invite.'
+        )
       } catch (error) {
         console.error('[human-collaboration] create share failed', error)
         window.alert('Could not create or copy People invite.')

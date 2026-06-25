@@ -311,6 +311,7 @@ import { ChatService } from './services/ChatService'
 import { HumanCollaborationStore } from './collaboration/HumanCollaborationStore'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
+import { HumanCollaborationHostTransport } from './collaboration/HumanCollaborationHostTransport'
 import { buildHumanShareProjection } from './collaboration/HumanShareProjection'
 import type { HumanShareProjection } from './collaboration/HumanShareProjection'
 import type {
@@ -22422,6 +22423,7 @@ if (isGeminiMcpBridgeProcess) {
       // mid-quit. (Timers are also .unref()'d, so this is belt-and-braces.)
       workflowBudgetRegistry.disposeAll()
       iosRemoteRuntime?.dispose()
+      humanCollaborationHostTransport?.dispose()
       void embeddedRelayHandle?.close()
       localServersServiceRef?.stop()
       // Opt-in (Settings → Local servers): tidy up agent-spawned servers still
@@ -22764,6 +22766,17 @@ if (isGeminiMcpBridgeProcess) {
           ReturnType<typeof chatService.appendCollaboratorComment>
         >
       | null = null
+    let humanCollaborationHostTransport: HumanCollaborationHostTransport | null = null
+    // The host dials its OWN relay (loopback embedded relay) to take the `mac`
+    // seat of each collaborator room; the collaborator dials the advertised
+    // (LAN/tailscale) URL. Both require the remote-bridge infra to be running.
+    const collaborationHostRelayUrl = (): string =>
+      embeddedRelayHandle ? `ws://127.0.0.1:${embeddedRelayHandle.port}` : ''
+    const collaborationInviteRelayUrl = (): string => {
+      const advertised = iosRemoteRuntime?.describeHost().relayUrls?.[0]
+      if (advertised) return advertised
+      return collaborationHostRelayUrl()
+    }
     const getHumanCollaborationRuntime = () => {
       if (humanCollaborationRuntime) return humanCollaborationRuntime
       const identity = new HumanCollaborationIdentityStore(
@@ -22771,6 +22784,13 @@ if (isGeminiMcpBridgeProcess) {
         safeStorage,
         (line) => console.warn(line)
       ).load()
+      // Construct the transport BEFORE the runtime so the runtime's
+      // publishEncryptedProjection can deliver through it; attach the runtime
+      // back afterwards (deliver() doesn't need the runtime).
+      humanCollaborationHostTransport = new HumanCollaborationHostTransport({
+        socketFactory: wsTransportSocketFactory,
+        log: (line) => console.warn(line)
+      })
       humanCollaborationRuntime = new HumanCollaborationRuntime({
         identityKeyPair: identity,
         store: humanCollaborationStore,
@@ -22798,13 +22818,16 @@ if (isGeminiMcpBridgeProcess) {
           })
         },
         publishEncryptedProjection: (sessionId, frame) => {
-          mainWindow?.webContents.send('human-collaboration-runtime-encrypted-frame', {
-            sessionId,
-            frame
-          })
+          // Deliver the sealed projection out over the transport to the
+          // collaborator's room (was a dead-end webContents.send before L5-2).
+          humanCollaborationHostTransport?.deliver(sessionId, frame)
+        },
+        onAdmissionBegan: (info) => {
+          mainWindow?.webContents.send('human-collaboration-admission-began', info)
         },
         log: (line) => console.warn(line)
       })
+      humanCollaborationHostTransport.attachRuntime(humanCollaborationRuntime)
       return humanCollaborationRuntime
     }
     ipcMain.handle('update-snapshot', () => updateService.snapshot())
@@ -23656,15 +23679,37 @@ if (isGeminiMcpBridgeProcess) {
           mode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
           inviteTtlMs: input.inviteTtlMs
         })
+        // Construct the runtime+transport (idempotent) and start LISTENING on
+        // this invite's relay room so the collaborator can dial in. The host
+        // takes the `mac` seat on its own (loopback) relay.
+        const runtime = getHumanCollaborationRuntime()
+        const hostRelay = collaborationHostRelayUrl()
+        if (hostRelay && result.roomId) {
+          humanCollaborationHostTransport?.openRoom(hostRelay, result.roomId)
+        }
         broadcastHumanCollaborationUpdate(result.share.chatId)
-        return result
+        // Augment the result with the transport coordinates the collaborator
+        // needs (and the host identity key to pin, Crypto-F2). relayUrl is empty
+        // when the remote-bridge infra isn't running — the renderer surfaces that.
+        return {
+          ...result,
+          relayUrl: collaborationInviteRelayUrl(),
+          hostIdentityPubKeyB64: runtime.hostIdentityPubKeyB64()
+        }
       }
     )
     ipcMain.handle('human-collaboration:list-shares', (_, chatId?: string) =>
       chatService.listHumanCollaborationShares(chatId)
     )
     ipcMain.handle('human-collaboration:revoke-share', (_, shareId: string) => {
+      // Close the relay rooms for this share's invites before revoking.
+      const target = chatService
+        .listHumanCollaborationShares()
+        .find((share) => share.shareId === shareId)
       const result = chatService.revokeHumanCollaborationShare(shareId)
+      for (const invite of target?.invites || []) {
+        if (invite.roomId) humanCollaborationHostTransport?.closeRoom(invite.roomId)
+      }
       if (result) broadcastHumanCollaborationUpdate(result.chatId)
       return result
     })

@@ -21,6 +21,9 @@ export interface HumanCollaborationInvite {
   expiresAt: number
   consumedAt?: number
   collaboratorId?: string
+  /** The relay room (one per invite/collaborator) the host listens on and the
+   * collaborator dials. Optional for back-compat with pre-transport invites. */
+  roomId?: string
 }
 
 export interface HumanCollaborationShare {
@@ -44,6 +47,8 @@ export interface CreateShareResult {
   share: HumanCollaborationShare
   invite: HumanCollaborationInvite
   inviteToken: string
+  /** Per-invite relay room id (the host opens this room; the collaborator dials it). */
+  roomId: string
 }
 
 export interface ConsumeInviteResult {
@@ -124,11 +129,13 @@ export class HumanCollaborationStore {
     share.mode = args.mode
     share.updatedAt = now
     const inviteToken = randomBytes(24).toString('base64url')
+    const roomId = randomUUID()
     const invite: HumanCollaborationInvite = {
       inviteId: randomUUID(),
       tokenHash: hashInviteToken(inviteToken),
       createdAt: now,
-      expiresAt: now + (args.inviteTtlMs ?? DEFAULT_INVITE_TTL_MS)
+      expiresAt: now + (args.inviteTtlMs ?? DEFAULT_INVITE_TTL_MS),
+      roomId
     }
     // Prune invites that are both consumed AND well past expiry (createShare is
     // the only place invites accrue), so the list can't grow without bound over
@@ -137,7 +144,7 @@ export class HumanCollaborationStore {
 
     if (!existing) this.memory.shares.push(share)
     this.persist()
-    return { share: cloneShare(share)!, invite: { ...invite }, inviteToken }
+    return { share: cloneShare(share)!, invite: { ...invite }, inviteToken, roomId }
   }
 
   revokeShare(shareId: string, now: number = Date.now()): HumanCollaborationShare | null {
@@ -509,7 +516,8 @@ function normalizeSnapshot(value: Partial<HumanCollaborationSnapshot>): HumanCol
                     ...(typeof invite.consumedAt === 'number' ? { consumedAt: invite.consumedAt } : {}),
                     ...(typeof invite.collaboratorId === 'string'
                       ? { collaboratorId: invite.collaboratorId }
-                      : {})
+                      : {}),
+                    ...(typeof invite.roomId === 'string' ? { roomId: invite.roomId } : {})
                   }))
               : [],
             idempotency:
