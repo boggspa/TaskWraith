@@ -213,6 +213,43 @@ describe('human collaboration transport (loopback)', () => {
     hostTransport.dispose()
   })
 
+  it('host transport reconnects a dropped room with backoff and stops on closeRoom', () => {
+    vi.useFakeTimers()
+    try {
+      let opens = 0
+      let last: TransportSocketHandlers | null = null
+      const factory: TransportSocketFactory = (_url, _headers, handlers) => {
+        opens += 1
+        last = handlers
+        return { send: () => {}, close: () => {} }
+      }
+      const transport = new HumanCollaborationHostTransport({ socketFactory: factory })
+      transport.openRoom('ws://127.0.0.1:0', 'room-r')
+      expect(opens).toBe(1)
+
+      // Unexpected drop → reconnect after the base delay (1000ms).
+      last!.onClose(1006)
+      vi.advanceTimersByTime(1000)
+      expect(opens).toBe(2)
+
+      // Second drop → backoff doubles (2000ms).
+      last!.onClose(1006)
+      vi.advanceTimersByTime(1000)
+      expect(opens).toBe(2)
+      vi.advanceTimersByTime(1000)
+      expect(opens).toBe(3)
+
+      // closeRoom (revoke) stops reconnect — a later drop does nothing.
+      transport.closeRoom('room-r')
+      last!.onClose(1006)
+      vi.advanceTimersByTime(60_000)
+      expect(opens).toBe(3)
+      transport.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects a collaborator presenting a bad invite token', async () => {
     const relay = makeInMemoryRelay()
     const chat = makeChat()

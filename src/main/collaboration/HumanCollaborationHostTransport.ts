@@ -57,6 +57,11 @@ const FLUSH_MIN_INTERVAL_MS = 200
 // rather than let it kill the room (the projection is also byte-budgeted at the
 // source — this is defense-in-depth).
 const MAX_OUTBOUND_FRAME_BYTES = 950_000
+// Reconnect a host room socket that drops unexpectedly (relay blip / restart),
+// with capped exponential backoff. Without this, a dropped room is dead until
+// the next create-share (and the relay's idle-TTL would eventually reap it).
+const RECONNECT_BASE_MS = 1_000
+const RECONNECT_MAX_MS = 30_000
 
 interface RoomState {
   roomId: string
@@ -69,6 +74,9 @@ export class HumanCollaborationHostTransport {
   private runtime: HumanCollaborationHostRuntimeLike | null = null
   private readonly rooms = new Map<string, RoomState>()
   private readonly sessionToRoom = new Map<string, string>()
+  private readonly reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly reconnectAttempts = new Map<string, number>()
+  private disposed = false
   private lastFlushAt = 0
   private flushTimer: ReturnType<typeof setTimeout> | null = null
   private trailingFlushScheduled = false
@@ -85,33 +93,68 @@ export class HumanCollaborationHostTransport {
     this.runtime = runtime
   }
 
-  /** Open (or reuse) the host's `mac`-seat listener for a collaborator room. */
+  /** Open (or reuse) the host's `mac`-seat listener for a collaborator room.
+   * Idempotent: a no-op if already open or a reconnect is pending. */
   openRoom(relayUrl: string, roomId: string): void {
+    if (this.disposed) return
     const existing = this.rooms.get(roomId)
     if (existing && existing.socket) return
+    // Clear any pending reconnect — we're opening now.
+    const pending = this.reconnectTimers.get(roomId)
+    if (pending) {
+      clearTimeout(pending)
+      this.reconnectTimers.delete(roomId)
+    }
     const state: RoomState = existing ?? { roomId, relayUrl, socket: null }
+    state.relayUrl = relayUrl
     this.rooms.set(roomId, state)
     const url = `${relayUrl.replace(/\/$/, '')}/v1/session/${roomId}`
     state.socket = this.opts.socketFactory(
       url,
       { 'x-taskwraith-role': 'mac', 'x-taskwraith-protocol': HUMAN_COLLABORATION_PROTOCOL },
       {
-        onOpen: () => this.opts.log?.(`[collab-transport] room ${roomId} open`),
+        onOpen: () => {
+          this.reconnectAttempts.delete(roomId)
+          this.opts.log?.(`[collab-transport] room ${roomId} open`)
+        },
         onMessage: (data) => void this.handleInbound(roomId, data),
         onClose: () => {
           const room = this.rooms.get(roomId)
           if (room) room.socket = null
+          // Reconnect only if the room is still WANTED (not closeRoom'd/disposed).
+          if (!this.disposed && this.rooms.has(roomId)) this.scheduleRoomReconnect(roomId)
         },
         onError: (err) => this.opts.log?.(`[collab-transport] room ${roomId} error: ${err.message}`)
       }
     )
   }
 
+  private scheduleRoomReconnect(roomId: string): void {
+    if (this.reconnectTimers.has(roomId)) return
+    const attempt = this.reconnectAttempts.get(roomId) ?? 0
+    this.reconnectAttempts.set(roomId, attempt + 1)
+    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt)
+    const timer = setTimeout(() => {
+      this.reconnectTimers.delete(roomId)
+      const room = this.rooms.get(roomId)
+      if (this.disposed || !room || room.socket) return
+      this.openRoom(room.relayUrl, roomId)
+    }, delay)
+    timer.unref?.()
+    this.reconnectTimers.set(roomId, timer)
+  }
+
   /** Tear down a collaborator room (host stopped sharing / revoked). */
   closeRoom(roomId: string): void {
+    const pending = this.reconnectTimers.get(roomId)
+    if (pending) clearTimeout(pending)
+    this.reconnectTimers.delete(roomId)
+    this.reconnectAttempts.delete(roomId)
     const room = this.rooms.get(roomId)
-    room?.socket?.close()
+    // Delete BEFORE closing so the socket's onClose sees the room is gone and
+    // does not schedule a reconnect.
     this.rooms.delete(roomId)
+    room?.socket?.close()
     for (const [sessionId, mapped] of this.sessionToRoom) {
       if (mapped !== roomId) continue
       this.sessionToRoom.delete(sessionId)
@@ -122,9 +165,13 @@ export class HumanCollaborationHostTransport {
   }
 
   dispose(): void {
+    this.disposed = true
     if (this.flushTimer) clearTimeout(this.flushTimer)
     this.flushTimer = null
     this.trailingFlushScheduled = false
+    for (const timer of this.reconnectTimers.values()) clearTimeout(timer)
+    this.reconnectTimers.clear()
+    this.reconnectAttempts.clear()
     for (const room of this.rooms.values()) room.socket?.close()
     this.rooms.clear()
     this.sessionToRoom.clear()

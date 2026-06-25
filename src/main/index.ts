@@ -22081,6 +22081,7 @@ if (isGeminiMcpBridgeProcess) {
               `[remote-bridge] embedded relay listening on :${handle.port} — advertising ${relayUrl} (${advertised?.kind ?? 'configured-local'})`
             )
             startRuntime(relayUrl)
+            reopenCollaborationRooms()
           })
           .catch((err: unknown) => {
             console.error(
@@ -22179,6 +22180,7 @@ if (isGeminiMcpBridgeProcess) {
               )
             }
             startRuntime(`ws://127.0.0.1:${handle.port}`, wssUrl, candidates)
+            reopenCollaborationRooms()
           })
           .catch(async (err: unknown) => {
             console.error(
@@ -22234,6 +22236,10 @@ if (isGeminiMcpBridgeProcess) {
             `[remote-bridge] iOS remote transport enabled — external relay ${configuredRelayUrl}`
           )
           startRuntime(configuredRelayUrl)
+          // Deferred: this branch runs synchronously inside whenReady, before
+          // the collaboration helpers below are initialized; the microtask runs
+          // after the block completes.
+          queueMicrotask(() => reopenCollaborationRooms())
         } else {
           startEmbeddedRelay(null)
         }
@@ -22771,12 +22777,42 @@ if (isGeminiMcpBridgeProcess) {
     // The host dials its OWN relay (loopback embedded relay) to take the `mac`
     // seat of each collaborator room; the collaborator dials the advertised
     // (LAN/tailscale) URL. Both require the remote-bridge infra to be running.
-    const collaborationHostRelayUrl = (): string =>
-      embeddedRelayHandle ? `ws://127.0.0.1:${embeddedRelayHandle.port}` : ''
+    const collaborationHostRelayUrl = (): string => {
+      // Embedded relay (incl. behind tailscale serve): the host dials its own
+      // loopback. External relay: the host dials the same URL the collaborator
+      // does (both connect to the external relay).
+      if (embeddedRelayHandle) return `ws://127.0.0.1:${embeddedRelayHandle.port}`
+      return iosRemoteRuntime?.describeHost().relayUrls?.[0] ?? ''
+    }
     const collaborationInviteRelayUrl = (): string => {
       const advertised = iosRemoteRuntime?.describeHost().relayUrls?.[0]
       if (advertised) return advertised
+      // Same-Mac testing fallback (loopback).
       return collaborationHostRelayUrl()
+    }
+    // Boot re-open: rooms are otherwise only opened on create-share, so after a
+    // restart the host wasn't listening on existing shares' rooms and a
+    // reconnecting collaborator's frames were dropped. Once the relay is ready,
+    // re-open the host `mac` seat for every enabled share's still-live invite.
+    const reopenCollaborationRooms = (): void => {
+      const hostRelay = collaborationHostRelayUrl()
+      if (!hostRelay) return
+      const dayMs = 24 * 60 * 60 * 1000
+      const now = Date.now()
+      const liveInvites = humanCollaborationStore
+        .listShares()
+        .filter((share) => share.enabled)
+        .flatMap((share) => share.invites)
+        .filter(
+          (invite) =>
+            typeof invite.roomId === 'string' &&
+            !(typeof invite.consumedAt === 'number' && invite.expiresAt < now - dayMs)
+        )
+      if (liveInvites.length === 0) return
+      getHumanCollaborationRuntime() // construct runtime + transport
+      for (const invite of liveInvites) {
+        if (invite.roomId) humanCollaborationHostTransport?.openRoom(hostRelay, invite.roomId)
+      }
     }
     const getHumanCollaborationRuntime = () => {
       if (humanCollaborationRuntime) return humanCollaborationRuntime
