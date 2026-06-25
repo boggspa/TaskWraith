@@ -1,7 +1,8 @@
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
 import { buildFfmpegArgs, buildFfprobeArgs, type AudioOutFormat, type FfmpegIntent } from '../media/FfmpegCommand'
 import { parseFfprobeJson } from '../media/FfprobeResult'
-import { buildAvMediaRef } from '../media/AvMediaRef'
+import { buildAvMediaRef, type GeneratePoster } from '../media/AvMediaRef'
+import type { TranscriptMediaThumbnail } from '../store/types'
 
 /**
  * ffmpeg-family MCP tool executors. Pure logic — the binary resolver, the realpath
@@ -68,6 +69,12 @@ export interface FfmpegToolDeps {
    * The host (index.ts) provides the real implementation; the producers only CALL it.
    */
   persistOutput: (buffer: Buffer, mimeType: string) => { ok: true; sha256: string } | { ok: false; reason: string }
+  /**
+   * Best-effort poster/waveform for a produced AV file (the card preview). Never
+   * throws; resolves undefined on any failure (the producer still returns its ref).
+   * Called BEFORE removeFile so the staging file still exists on disk.
+   */
+  generatePoster: GeneratePoster
   removeFile: (path: string) => void
   missingMessage: (which: 'ffmpeg' | 'ffprobe') => string
 }
@@ -147,7 +154,36 @@ function capProbeOutput<T extends Record<string, unknown>>(full: T): T | (Record
 }
 
 export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecutors {
-  const { jailInput, resolveFfprobe, resolveFfmpeg, runFfprobe, runFfmpeg, stagingPath, readOutput, persistOutput, removeFile, missingMessage } = deps
+  const { jailInput, resolveFfprobe, resolveFfmpeg, runFfprobe, runFfmpeg, stagingPath, readOutput, persistOutput, generatePoster, removeFile, missingMessage } = deps
+
+  // Part 2 — best-effort ffprobe on a PRODUCER'S OUTPUT file to fill durationMs +
+  // codecs (the badge fields the VT producers already supply but the ffmpeg ones
+  // didn't). ffprobe ships with ffmpeg so it's available for these producers.
+  // Pure best-effort: any failure (no ffprobe, bad JSON, probe error) → {} and the
+  // ref is built without the badges (they're conditional). Gated on the SAME
+  // concurrency semaphore as every other probe via the injected runFfprobe.
+  async function probeOutputMetadata(outputPath: string): Promise<{ durationMs?: number; codecs?: string }> {
+    try {
+      const ffprobe = resolveFfprobe()
+      if (!ffprobe) return {}
+      const argv = buildFfprobeArgs(outputPath)
+      if (!argv.ok) return {}
+      const run = await runFfprobe(ffprobe, argv.args)
+      const parsed = parseFfprobeJson(run.stdout)
+      if (!parsed.ok) return {}
+      const out: { durationMs?: number; codecs?: string } = {}
+      if (parsed.info.format.durationMs !== undefined) out.durationMs = parsed.info.format.durationMs
+      // Join the present stream codecs (video first, then audio): e.g. "h264,aac".
+      const codecNames = [parsed.info.video?.codec, parsed.info.audio?.codec].filter(
+        (c): c is string => typeof c === 'string' && c.length > 0
+      )
+      if (codecNames.length > 0) out.codecs = codecNames.join(',')
+      return out
+    } catch {
+      // Best-effort — badges are conditional; never fail the producer on a probe.
+      return {}
+    }
+  }
 
   function jail(toolName: string, args: Record<string, unknown>, ctx: FfmpegToolContext):
     | { ok: true; realPath: string; mimeType: string }
@@ -251,12 +287,32 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
       if (!buffer || buffer.length === 0) return fail(toolName, 'ffmpeg produced an empty output')
       const persisted = persistOutput(buffer, mimeType)
       if (!persisted.ok) return fail(toolName, `Failed to persist output: ${persisted.reason}`)
+      // Part 2 — best-effort durationMs/codecs from an ffprobe on the OUTPUT (badge
+      // consistency with the VT producers). Part 1 — best-effort poster/waveform.
+      // BOTH run BEFORE the `finally { removeFile }` (the staging file is still on
+      // disk) and BOTH are fail-tolerant: any failure → undefined/{} and the ref is
+      // built without the missing field, exactly as today.
+      const probed = await probeOutputMetadata(outputPath)
+      const kind: 'audio' | 'video' = mimeType.startsWith('audio/') ? 'audio' : 'video'
+      // Guard the injected generator at the call site too: even if a (misbehaving)
+      // generatePoster impl throws, the producer must still return its ref — the
+      // poster is decorative. The real impl is already fail-tolerant; this is
+      // defense-in-depth so the producer's contract holds for ANY injected dep.
+      let thumbnail: TranscriptMediaThumbnail | undefined
+      try {
+        thumbnail = await generatePoster(outputPath, kind, mimeType, buffer.length)
+      } catch {
+        thumbnail = undefined
+      }
       const ref = buildAvMediaRef({
         sha256: persisted.sha256,
         mimeType,
         name: outputName,
         runId: ctx?.appRunId,
-        byteLength: buffer.length
+        byteLength: buffer.length,
+        durationMs: probed.durationMs,
+        codecs: probed.codecs,
+        thumbnail
       })
       // buildAvMediaRef only returns null on a non-AV mime — unreachable here
       // (mimeType is main-derived from a validated format), but fail LOUDLY rather

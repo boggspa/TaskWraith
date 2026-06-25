@@ -76,4 +76,22 @@ describe('buildAvMediaRef', () => {
     expect(ref!.durationMs).toBeUndefined()
     expect(ref!.codecs).toBeUndefined()
   })
+
+  it('threads a provided thumbnail through (pure passthrough)', () => {
+    const thumbnail = { dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 }
+    const ref = buildAvMediaRef({ sha256: 'a'.repeat(64), mimeType: 'video/mp4', name: 'v.mp4', thumbnail })
+    expect(ref!.thumbnail).toEqual(thumbnail)
+  })
+
+  it('omits the thumbnail when not provided / empty', () => {
+    expect(buildAvMediaRef({ sha256: 'a'.repeat(64), mimeType: 'video/mp4', name: 'v.mp4' })!.thumbnail).toBeUndefined()
+    // An empty dataBase64 is dropped (never ship a useless poster).
+    const empty = buildAvMediaRef({
+      sha256: 'a'.repeat(64),
+      mimeType: 'video/mp4',
+      name: 'v.mp4',
+      thumbnail: { dataBase64: '', mimeType: 'image/jpeg' }
+    })
+    expect(empty!.thumbnail).toBeUndefined()
+  })
 })

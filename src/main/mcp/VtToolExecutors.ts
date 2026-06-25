@@ -1,5 +1,6 @@
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
-import { buildAvMediaRef } from '../media/AvMediaRef'
+import { buildAvMediaRef, type GeneratePoster } from '../media/AvMediaRef'
+import type { TranscriptMediaThumbnail } from '../store/types'
 
 /**
  * VideoToolbox MCP tool executors. Pure logic — the realpath input jail and the
@@ -114,6 +115,12 @@ export interface VtToolDeps {
    * its canonical sha256. The host (index.ts) provides the real implementation.
    */
   persistOutput: (buffer: Buffer, mimeType: string) => { ok: true; sha256: string } | { ok: false; reason: string }
+  /**
+   * Best-effort poster/waveform for a produced AV file (the card preview). Never
+   * throws; resolves undefined on any failure (the producer still returns its ref).
+   * Called BEFORE removeFile so the staging file still exists on disk.
+   */
+  generatePoster: GeneratePoster
   removeFile: (path: string) => void
 }
 
@@ -159,7 +166,23 @@ function humanBytes(n: number): string {
 }
 
 export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
-  const { jailInput, jailOverlay, decodeFrame, encodeClip, concatClips, mixdown, stagingPath, readOutput, persistOutput, removeFile } = deps
+  const { jailInput, jailOverlay, decodeFrame, encodeClip, concatClips, mixdown, stagingPath, readOutput, persistOutput, generatePoster, removeFile } = deps
+
+  // Guard the injected poster generator: even a misbehaving (throwing) impl must never
+  // fail the producer (the poster is decorative). The real impl is already fail-
+  // tolerant; this is defense-in-depth so the producer's contract holds for ANY dep.
+  async function safePoster(
+    outputPath: string,
+    kind: 'audio' | 'video',
+    mimeType: string,
+    byteLength: number
+  ): Promise<TranscriptMediaThumbnail | undefined> {
+    try {
+      return await generatePoster(outputPath, kind, mimeType, byteLength)
+    } catch {
+      return undefined
+    }
+  }
 
   async function executeVideoDecodeFrame(
     args: Record<string, unknown>,
@@ -289,6 +312,10 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       if (!buffer || buffer.length === 0) return fail('video_encode_clip', 'VideoToolbox produced an empty clip')
       const persisted = persistOutput(buffer, mimeType)
       if (!persisted.ok) return fail('video_encode_clip', `Failed to persist output: ${persisted.reason}`)
+      // Best-effort poster (fail-tolerant: undefined on any error) BEFORE the
+      // finally { removeFile } — the staging MP4 must still be on disk. Guarded so a
+      // misbehaving generator can never fail the producer (the poster is decorative).
+      const thumbnail = await safePoster(outputPath, 'video', mimeType, buffer.length)
       const ref = buildAvMediaRef({
         sha256: persisted.sha256,
         mimeType,
@@ -296,7 +323,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         runId: ctx?.appRunId,
         byteLength: buffer.length,
         durationMs: result.durationMs,
-        codecs: result.codec
+        codecs: result.codec,
+        thumbnail
       })
       // buildAvMediaRef only returns null on a non-AV mime — unreachable here
       // (mimeType is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than
@@ -391,6 +419,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       if (!buffer || buffer.length === 0) return fail('video_concat_clips', 'VideoToolbox produced an empty clip')
       const persisted = persistOutput(buffer, mimeType)
       if (!persisted.ok) return fail('video_concat_clips', `Failed to persist output: ${persisted.reason}`)
+      // Best-effort poster (fail-tolerant) BEFORE the finally { removeFile }.
+      const thumbnail = await safePoster(outputPath, 'video', mimeType, buffer.length)
       const ref = buildAvMediaRef({
         sha256: persisted.sha256,
         mimeType,
@@ -398,7 +428,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         runId: ctx?.appRunId,
         byteLength: buffer.length,
         durationMs: result.durationMs,
-        codecs: result.codec
+        codecs: result.codec,
+        thumbnail
       })
       // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType
       // is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than return a
@@ -509,6 +540,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       if (!buffer || buffer.length === 0) return fail('audio_mix', 'audio engine produced an empty mix')
       const persisted = persistOutput(buffer, mimeType)
       if (!persisted.ok) return fail('audio_mix', `Failed to persist output: ${persisted.reason}`)
+      // Best-effort waveform poster (fail-tolerant) BEFORE the finally { removeFile }.
+      const thumbnail = await safePoster(outputPath, 'audio', mimeType, buffer.length)
       const ref = buildAvMediaRef({
         sha256: persisted.sha256,
         mimeType,
@@ -516,7 +549,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         runId: ctx?.appRunId,
         byteLength: buffer.length,
         durationMs: result.durationMs,
-        codecs: result.codec
+        codecs: result.codec,
+        thumbnail
       })
       // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType is
       // the fixed main-derived 'audio/wav' | 'audio/mp4'), but fail LOUDLY rather than

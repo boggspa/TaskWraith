@@ -1,4 +1,4 @@
-import type { TranscriptMediaRef } from '../store/types'
+import type { TranscriptMediaRef, TranscriptMediaThumbnail } from '../store/types'
 
 /**
  * PURE (zero-IO, Electron-free) builder for an audio/video TranscriptMediaRef — the
@@ -28,6 +28,21 @@ const AV_MIMES = new Set<string>([
   'video/webm'
 ])
 
+/**
+ * Best-effort poster/waveform generator for an already-written AV staging file.
+ * INJECTED into the producers (the real impl lives in index.ts: VideoToolbox frame
+ * decode for video, the offscreen audio engine's waveform for audio, both downscaled
+ * to a small size-capped JPEG). MUST be fail-tolerant — it never throws and resolves
+ * to `undefined` on any error/timeout/empty result, so a producer always returns its
+ * ref (just with no poster). Called BEFORE the staging file is removed.
+ */
+export type GeneratePoster = (
+  outputPath: string,
+  kind: 'audio' | 'video',
+  mimeType: string,
+  byteLength: number
+) => Promise<TranscriptMediaThumbnail | undefined>
+
 export interface BuildAvMediaRefInput {
   sha256: string
   mimeType: string
@@ -36,6 +51,13 @@ export interface BuildAvMediaRefInput {
   byteLength?: number
   durationMs?: number
   codecs?: string
+  /**
+   * Optional small poster/waveform preview (JPEG, ~320px, size-capped) so the
+   * card isn't blank before playback. PURE passthrough — this builder does zero
+   * IO; the caller (the producer) generates it via the injected `generatePoster`
+   * dep and hands it in, or omits it on any failure (fail-tolerant).
+   */
+  thumbnail?: TranscriptMediaThumbnail
 }
 
 export function buildAvMediaRef(input: BuildAvMediaRefInput): TranscriptMediaRef | null {
@@ -64,5 +86,8 @@ export function buildAvMediaRef(input: BuildAvMediaRefInput): TranscriptMediaRef
   if (typeof input.byteLength === 'number' && Number.isFinite(input.byteLength)) ref.byteLength = input.byteLength
   if (typeof input.durationMs === 'number' && Number.isFinite(input.durationMs)) ref.durationMs = input.durationMs
   if (typeof input.codecs === 'string' && input.codecs.length > 0) ref.codecs = input.codecs
+  if (input.thumbnail && typeof input.thumbnail.dataBase64 === 'string' && input.thumbnail.dataBase64.length > 0) {
+    ref.thumbnail = input.thumbnail
+  }
   return ref
 }

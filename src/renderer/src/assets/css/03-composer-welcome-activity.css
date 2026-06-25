@@ -5318,6 +5318,109 @@
   gap: 6px;
 }
 
+/* Media-card header: name (clickable to expand on transcript AV cards) + the
+   expand affordance and overflow action menu, pinned to the right. */
+.message-attachment-av-head,
+.chat-media-av-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.message-attachment-av-head .message-attachment-name,
+.message-attachment-av-name-btn,
+.chat-media-av-head .chat-media-av-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-attachment-av-name-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.message-attachment-av-name-btn:hover {
+  text-decoration: underline;
+}
+.message-attachment-av-controls {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.message-attachment-expand,
+.media-action-trigger {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.message-attachment-expand:hover,
+.media-action-trigger:hover {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
+}
+.media-action-menu {
+  display: inline-flex;
+}
+
+/* Duration / size / codec chips under an AV card. */
+.media-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.media-card-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+/* Overlay AV body — sized like the image preview pane. */
+.chat-media-preview-av {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+.chat-media-preview-av video {
+  max-width: 100%;
+  max-height: 62vh;
+  border-radius: 12px;
+  background: #000;
+  box-shadow: 0 12px 42px rgba(0, 0, 0, 0.32);
+}
+.chat-media-preview-av audio {
+  width: min(540px, 90%);
+}
+.chat-media-preview-action-menu {
+  margin-right: auto;
+}
+
 .message-attachment-icon {
   display: inline-flex;
   align-items: center;

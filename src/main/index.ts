@@ -440,6 +440,7 @@ import {
   TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
   TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES,
   maxTranscriptMediaBytesForMime,
+  transcriptMediaAssetPath,
   TranscriptMediaAssetStore
 } from './services/TranscriptMediaAssetStore'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
@@ -506,7 +507,8 @@ import {
   EnsembleWakeupRecord,
   RunEventKind,
   WorkflowDefinition,
-  TranscriptMediaRef
+  TranscriptMediaRef,
+  TranscriptMediaThumbnail
 } from './store/types'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
 import {
@@ -1999,6 +2001,9 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
     const result = getTranscriptMediaAssetStore().write({ sha256, mimeType, buffer })
     return result.ok ? { ok: true, sha256 } : { ok: false, reason: result.reason }
   },
+  // Quick-win — a small poster/waveform so the AV card isn't blank. Fail-tolerant
+  // (undefined on any error); see generateAvPoster.
+  generatePoster: generateAvPoster,
   missingMessage: (which) => ffmpegMissingError(which)
 })
 
@@ -2127,6 +2132,9 @@ const vtToolExecutors = createVtToolExecutors({
     const result = getTranscriptMediaAssetStore().write({ sha256, mimeType, buffer })
     return result.ok ? { ok: true, sha256 } : { ok: false, reason: result.reason }
   },
+  // Quick-win — a small poster/waveform so the AV card isn't blank. Fail-tolerant
+  // (undefined on any error); see generateAvPoster.
+  generatePoster: generateAvPoster,
   removeFile: (filePath) => {
     try {
       fsSync.unlinkSync(filePath)
@@ -2763,6 +2771,152 @@ function buildBridgeImageThumbnails(
     }
   }
   return thumbs
+}
+
+// Shared audio engine for poster/waveform generation (offscreen Web Audio render).
+// Lazy so the BrowserWindow machinery is touched only when a producer first needs a
+// waveform. Distinct from the audio-tool engine instance but the same class.
+let posterAudioEngine: ReturnType<typeof createNativeAudioEngine> | null = null
+function getPosterAudioEngine(): ReturnType<typeof createNativeAudioEngine> {
+  if (!posterAudioEngine) posterAudioEngine = createNativeAudioEngine()
+  return posterAudioEngine
+}
+
+// Race a promise against a timer; resolve to `fallback` (never reject) on timeout.
+// Used to bound poster generation so a hung decode/analyze can't stall a producer.
+function withPosterTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      resolve(fallback)
+    }, ms)
+    promise.then(
+      (value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(value)
+      },
+      () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(fallback)
+      }
+    )
+  })
+}
+
+// Downscale a decoded PNG/raster buffer to a small, size-capped JPEG poster. Mirrors
+// buildBridgeImageThumbnails: ~320px longest edge, quality-reduction loop until the
+// JPEG is under ~120KB (the 180KB iOS projection cap demands the poster stay small).
+// Returns undefined on an undecodable/empty buffer — never throws.
+const POSTER_MAX_EDGE = 320
+const POSTER_MAX_BYTES = 120_000
+function downscalePosterJpeg(buffer: Buffer): TranscriptMediaThumbnail | undefined {
+  try {
+    const img = nativeImage.createFromBuffer(buffer)
+    if (img.isEmpty()) return undefined
+    const { width, height } = img.getSize()
+    if (!width || !height) return undefined
+    const longest = Math.max(width, height)
+    const scale = longest > POSTER_MAX_EDGE ? POSTER_MAX_EDGE / longest : 1
+    const tw = Math.max(1, Math.round(width * scale))
+    const th = Math.max(1, Math.round(height * scale))
+    const resized = scale < 1 ? img.resize({ width: tw, height: th, quality: 'good' }) : img
+    let quality = 70
+    let jpeg = resized.toJPEG(quality)
+    while (jpeg.length > POSTER_MAX_BYTES && quality > 30) {
+      quality -= 15
+      jpeg = resized.toJPEG(quality)
+    }
+    // If even q30 can't fit the cap, drop the poster rather than ship an oversized
+    // blob that would blow the iOS projection budget.
+    if (jpeg.length > POSTER_MAX_BYTES) return undefined
+    return {
+      dataBase64: jpeg.toString('base64'),
+      mimeType: 'image/jpeg',
+      width: tw,
+      height: th
+    }
+  } catch {
+    return undefined
+  }
+}
+
+// Audio outputs above this are skipped: analyzeAudio base64s the WHOLE file into an
+// offscreen page, so a big WAV would spike the heap. Posters are decorative — a card
+// for a 40MB mix simply renders without a waveform.
+const POSTER_AUDIO_MAX_BYTES = 24 * 1024 * 1024
+// Outer guard so a single poster can never hang a producer for long.
+const POSTER_TIMEOUT_MS = 12_000
+
+// Best-effort poster/waveform for an already-written AV staging file. INJECTED into
+// both the ffmpeg + VideoToolbox producers (the `generatePoster` dep). MUST be fully
+// fail-tolerant: it NEVER throws and resolves to undefined on any error/timeout/empty
+// result, so a producer always returns its ref (just with no poster), exactly as
+// before this feature. Called BEFORE the producer removes the staging file.
+//   - VIDEO: native VideoToolbox `video.decodeFrame` at t=0 (under mediaProcessLimiter,
+//     the same encoder semaphore) → base64 PNG → downscaled, size-capped JPEG.
+//   - AUDIO: the offscreen audio engine's analyzeAudio → waveform PNG → same downscale.
+//     Skipped above POSTER_AUDIO_MAX_BYTES to avoid a heap spike.
+async function generateAvPoster(
+  outputPath: string,
+  kind: 'audio' | 'video',
+  mimeType: string,
+  byteLength: number
+): Promise<TranscriptMediaThumbnail | undefined> {
+  try {
+    return await withPosterTimeout(
+      (async (): Promise<TranscriptMediaThumbnail | undefined> => {
+        if (kind === 'video') {
+          const daemon = bridgeDaemonRef
+          if (!daemon) return undefined
+          // Decode the first frame natively. Share the encoder semaphore so poster
+          // decodes can't pile on top of N concurrent encodes.
+          const decoded = await mediaProcessLimiter.run(() =>
+            daemon.request<{
+              pngBase64: string
+              width: number
+              height: number
+              timestampSeconds: number
+              codec: string
+              usedHardware: boolean
+            }>('video.decodeFrame', { inputPath: outputPath, timestampSeconds: 0 }, { timeoutMs: 30_000 })
+          )
+          if (!decoded?.pngBase64) return undefined
+          const png = Buffer.from(decoded.pngBase64, 'base64')
+          if (png.length === 0) return undefined
+          return downscalePosterJpeg(png)
+        }
+        // AUDIO — render a waveform from the file's samples. Skip big files (heap).
+        if (byteLength > POSTER_AUDIO_MAX_BYTES) return undefined
+        let audioBuffer: Buffer
+        try {
+          audioBuffer = fsSync.readFileSync(outputPath)
+        } catch {
+          return undefined
+        }
+        if (audioBuffer.length === 0) return undefined
+        const { png } = await getPosterAudioEngine().analyzeAudio({
+          dataBase64: audioBuffer.toString('base64'),
+          mimeType,
+          width: POSTER_MAX_EDGE,
+          height: 80
+        })
+        if (!png || png.length === 0) return undefined
+        return downscalePosterJpeg(png)
+      })(),
+      POSTER_TIMEOUT_MS,
+      undefined
+    )
+  } catch {
+    // Defense-in-depth — withPosterTimeout already swallows rejections, but a sync
+    // throw before the race (e.g. mediaProcessLimiter.run wiring) is caught here too.
+    return undefined
+  }
 }
 
 function prepareIosComposerPromptChat(args: {
@@ -24175,6 +24329,76 @@ if (isGeminiMcpBridgeProcess) {
         return null
       }
     })
+
+    // Content-addressed AV media-asset path resolution. Generated AV refs carry only
+    // a sha256 + mimeType (NO filesystem path); the renderer must NOT resolve paths
+    // itself, so these three channels resolve the absolute path main-side. The
+    // resolver below re-validates the sha256 + jails the path to the asset dir via
+    // transcriptMediaAssetPath (which calls assertSafeSha256 + mediaExtension), then
+    // confirms the file exists before any handler acts. `null` on any rejection.
+    const resolveMediaAssetPath = (input: unknown): string | null => {
+      if (!isRecord(input)) return null
+      const sha256 = typeof input.sha256 === 'string' ? input.sha256.trim() : ''
+      const mimeType = typeof input.mimeType === 'string' ? input.mimeType.trim() : ''
+      if (!sha256 || !mimeType) return null
+      const baseDir = join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR)
+      let assetPath: string
+      try {
+        // Throws on an unsafe sha256 (assertSafeSha256) or unsupported mime — the
+        // path can never escape the asset dir.
+        assetPath = transcriptMediaAssetPath(baseDir, sha256, mimeType)
+      } catch {
+        return null
+      }
+      try {
+        if (!fsSync.statSync(assetPath).isFile()) return null
+      } catch {
+        return null
+      }
+      return assetPath
+    }
+
+    ipcMain.handle('media-asset:reveal', async (_event, input: unknown): Promise<{ ok: boolean }> => {
+      const assetPath = resolveMediaAssetPath(input)
+      if (!assetPath) return { ok: false }
+      try {
+        shell.showItemInFolder(assetPath)
+        return { ok: true }
+      } catch {
+        return { ok: false }
+      }
+    })
+
+    ipcMain.handle('media-asset:get-path', async (_event, input: unknown): Promise<string | null> => {
+      return resolveMediaAssetPath(input)
+    })
+
+    ipcMain.handle(
+      'media-asset:save-as',
+      async (_event, input: unknown): Promise<{ ok: boolean; canceled: boolean }> => {
+        const assetPath = resolveMediaAssetPath(input)
+        if (!assetPath) return { ok: false, canceled: false }
+        if (!mainWindow) return { ok: false, canceled: false }
+        const suggestedName =
+          isRecord(input) && typeof input.suggestedName === 'string' && input.suggestedName.trim()
+            ? input.suggestedName.trim()
+            : basename(assetPath)
+        let chosen: string | undefined
+        try {
+          const result = await dialog.showSaveDialog(mainWindow, { defaultPath: suggestedName })
+          if (result.canceled || !result.filePath) return { ok: false, canceled: true }
+          chosen = result.filePath
+        } catch {
+          return { ok: false, canceled: false }
+        }
+        try {
+          await fs.copyFile(assetPath, chosen)
+          return { ok: true, canceled: false }
+        } catch {
+          return { ok: false, canceled: false }
+        }
+      }
+    )
 
     // Image generation config. Keys are safeStorage-encrypted; the plaintext key
     // is NEVER returned to the renderer (status only reports presence).

@@ -1,4 +1,15 @@
-import { useEffect, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode
+} from 'react'
+import { createPortal } from 'react-dom'
 import type {
   ChatRecord,
   ChatMessage,
@@ -11,6 +22,7 @@ import { collectExternalPathGrantsFromMetadata } from '../../../main/store/Exter
 import { XSymbolIcon } from './AppChromeSymbols'
 import { FileTypeIcon } from './FileTypeIcon'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
+import { formatBytes } from '../lib/formatBytes'
 import { twMediaUrl } from '../../../shared/twMedia'
 
 export type ChatMediaSource = TranscriptMediaRef['source'] | 'external_path'
@@ -28,6 +40,12 @@ export interface ChatMediaRef {
   mimeType?: string
   /** Content hash — builds the twmedia:// streaming URL for audio/video playback. */
   sha256?: string
+  /** Duration in ms for audio/video refs — rendered as an "m:ss" badge. */
+  durationMs?: number
+  /** Codec descriptor for AV refs, e.g. "h264,aac" — rendered as-is in a badge. */
+  codecs?: string
+  /** Byte size for AV refs — rendered via formatBytes as a badge. */
+  byteLength?: number
   thumbnail?: TranscriptMediaThumbnail
   status?: TranscriptMediaStatus
   alt?: string
@@ -88,6 +106,288 @@ export function isAvMediaKind(kind: ChatMediaKind): boolean {
  * (missing content hash / unmappable mime → caller falls back to a file card). */
 export function chatMediaTwUrl(ref: ChatMediaRef): string {
   return twMediaUrl(ref.sha256, ref.mimeType) || ''
+}
+
+/**
+ * Humanise an AV duration (ms) to "m:ss" for the media-card badge — distinct
+ * from the HH:MM:SS wall-clock `formatDuration` copies elsewhere (those format
+ * elapsed run time, not a clip length). Returns '' for missing/invalid input.
+ */
+export function formatMediaDuration(durationMs?: number): string {
+  if (durationMs === undefined || !Number.isFinite(durationMs) || durationMs < 0) return ''
+  const totalSeconds = Math.round(durationMs / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+/**
+ * Generic action item for the media-card overflow menu. Forked from
+ * `SidebarOverflowMenuItem` but without the sidebar group/danger lattice —
+ * media cards have a flat list (Open in Finder / Copy path / Save as).
+ */
+export interface MediaActionMenuItem {
+  id: string
+  label: string
+  icon?: ReactNode
+  onSelect: () => void
+  disabled?: boolean
+}
+
+/**
+ * Portal popover action menu for a media card. Forked from
+ * `SidebarOverflowMenu`: same `createPortal`-into-body + fixed-position +
+ * ESC/click-outside/arrow-key machinery, but drops the sidebar-coupled
+ * right-click-on-`.sidebar-item` context-menu wiring (media cards aren't tile
+ * rows). The trigger is a real `<button>` since AV/image cards are `<div>`s,
+ * not buttons, so nesting is valid here.
+ */
+function MediaActionMenu({
+  items,
+  triggerLabel = 'Media actions',
+  className
+}: {
+  items: MediaActionMenuItem[]
+  triggerLabel?: string
+  className?: string
+}): ReactNode {
+  const [open, setOpen] = useState(false)
+  const [focusedIndex, setFocusedIndex] = useState(-1)
+  const [position, setPosition] = useState<{ top: number; right: number } | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const menuId = useId()
+
+  const updatePosition = useCallback(() => {
+    const trigger = triggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const right = Math.max(8, window.innerWidth - rect.right)
+    const top = rect.bottom + 4
+    setPosition({ top, right })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    updatePosition()
+  }, [open, updatePosition])
+
+  useEffect(() => {
+    if (!open) return
+    const handleDocumentMouseDown = (event: globalThis.MouseEvent): void => {
+      const target = event.target as Node
+      if (menuRef.current?.contains(target)) return
+      if (triggerRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const handleKey = (event: globalThis.KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
+    }
+    document.addEventListener('mousedown', handleDocumentMouseDown)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentMouseDown)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const handleScroll = (): void => setOpen(false)
+    const handleResize = (): void => updatePosition()
+    window.addEventListener('scroll', handleScroll, true)
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('scroll', handleScroll, true)
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [open, updatePosition])
+
+  useEffect(() => {
+    if (open) return
+    const frame = window.requestAnimationFrame(() => setFocusedIndex(-1))
+    return () => window.cancelAnimationFrame(frame)
+  }, [open])
+
+  const handleItemSelect = (item: MediaActionMenuItem): void => {
+    if (item.disabled) return
+    setOpen(false)
+    queueMicrotask(item.onSelect)
+  }
+
+  const handleTriggerClick = (event: ReactMouseEvent<HTMLButtonElement>): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    setOpen((current) => !current)
+  }
+
+  const handleTriggerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      event.stopPropagation()
+      setOpen(true)
+      setFocusedIndex(0)
+    }
+  }
+
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setFocusedIndex((index) => Math.min(items.length - 1, index + 1))
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setFocusedIndex((index) => Math.max(0, index - 1))
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      const target = items[focusedIndex]
+      if (target) handleItemSelect(target)
+    }
+  }
+
+  const popover =
+    open && position
+      ? createPortal(
+          <div
+            ref={menuRef}
+            id={menuId}
+            role="menu"
+            className="media-action-menu-popover sidebar-overflow-menu-popover"
+            style={{ position: 'fixed', top: position.top, right: position.right, zIndex: 80 }}
+            onKeyDown={handleMenuKeyDown}
+          >
+            {items.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                role="menuitem"
+                disabled={item.disabled}
+                className={`sidebar-overflow-menu-item ${focusedIndex === index ? 'is-focused' : ''}`}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  handleItemSelect(item)
+                }}
+                onMouseEnter={() => setFocusedIndex(index)}
+              >
+                {item.icon && (
+                  <span className="sidebar-overflow-menu-item-icon" aria-hidden>
+                    {item.icon}
+                  </span>
+                )}
+                <span className="sidebar-overflow-menu-item-label">{item.label}</span>
+              </button>
+            ))}
+          </div>,
+          document.body
+        )
+      : null
+
+  return (
+    <span className={`media-action-menu ${open ? 'is-open' : ''}`}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`media-action-trigger ${className || ''}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={menuId}
+        aria-label={triggerLabel}
+        title={triggerLabel}
+        onClick={handleTriggerClick}
+        onKeyDown={handleTriggerKeyDown}
+      >
+        <span className="sf-symbol-icon" aria-hidden>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" role="img">
+            <circle cx="3.2" cy="8" r="1.4" />
+            <circle cx="8" cy="8" r="1.4" />
+            <circle cx="12.8" cy="8" r="1.4" />
+          </svg>
+        </span>
+      </button>
+      {popover}
+    </span>
+  )
+}
+
+/**
+ * Build the standard media-card action menu (Open in Finder / Copy path /
+ * Save as) backed by the sha-based `media-asset:*` preload bindings. Generated
+ * AV refs are sha-only (no on-disk `path`), so these go through the new
+ * channels rather than the path-based `revealPathInFinder`.
+ *
+ * NOT a hook (no React state) despite acting on a `copy` callback — kept a
+ * plain builder so it can be called after an early return in the overlay.
+ */
+function buildMediaCardActions(
+  mediaRef: ChatMediaRef,
+  copy: (id: string, text: string) => void
+): MediaActionMenuItem[] {
+  const sha256 = mediaRef.sha256
+  const mimeType = mediaRef.mimeType
+  const canUseAssetChannels = Boolean(sha256 && mimeType)
+
+  return [
+    {
+      id: 'reveal',
+      label: 'Open in Finder',
+      disabled: !canUseAssetChannels && !mediaRef.path,
+      onSelect: () => {
+        if (typeof window === 'undefined') return
+        const api = window.api
+        if (canUseAssetChannels && sha256 && mimeType) {
+          void api?.revealMediaAsset?.(sha256, mimeType)
+        } else if (mediaRef.path) {
+          void api?.revealPathInFinder?.(mediaRef.path)
+        }
+      }
+    },
+    {
+      id: 'copy-path',
+      label: 'Copy path',
+      disabled: !canUseAssetChannels && !mediaRef.path,
+      onSelect: () => {
+        if (typeof window === 'undefined') return
+        const api = window.api
+        if (canUseAssetChannels && sha256 && mimeType) {
+          void (async () => {
+            const path = await api?.getMediaAssetPath?.(sha256, mimeType)
+            if (path) copy(`media-copy:${mediaRef.id}`, path)
+          })()
+        } else if (mediaRef.path) {
+          copy(`media-copy:${mediaRef.id}`, mediaRef.path)
+        }
+      }
+    },
+    {
+      id: 'save-as',
+      label: 'Save as',
+      disabled: !canUseAssetChannels,
+      onSelect: () => {
+        if (typeof window === 'undefined' || !sha256 || !mimeType) return
+        void window.api?.saveMediaAssetAs?.(sha256, mimeType, mediaRef.name)
+      }
+    }
+  ]
+}
+
+/** Small muted chips under an AV card: duration / size / codec (each skipped
+ * when its source field is absent). Returns null when nothing to show. */
+function MediaCardBadges({ mediaRef }: { mediaRef: ChatMediaRef }): ReactNode {
+  const duration = formatMediaDuration(mediaRef.durationMs)
+  const size = formatBytes(mediaRef.byteLength)
+  const codecs = mediaRef.codecs?.trim() || ''
+  if (!duration && !size && !codecs) return null
+  return (
+    <div className="media-card-badges" aria-label="Media details">
+      {duration && <span className="media-card-badge">{duration}</span>}
+      {size && <span className="media-card-badge">{size}</span>}
+      {codecs && <span className="media-card-badge">{codecs}</span>}
+    </div>
+  )
 }
 
 export function formatChatMediaLocation(path: string, workspacePath?: string): string {
@@ -152,6 +452,9 @@ export function collectChatMediaRefs(
         : {}),
       mimeType: mediaRef.mimeType,
       ...(mediaRef.sha256 ? { sha256: mediaRef.sha256 } : {}),
+      ...(typeof mediaRef.durationMs === 'number' ? { durationMs: mediaRef.durationMs } : {}),
+      ...(mediaRef.codecs ? { codecs: mediaRef.codecs } : {}),
+      ...(typeof mediaRef.byteLength === 'number' ? { byteLength: mediaRef.byteLength } : {}),
       thumbnail: mediaRef.thumbnail,
       status: mediaRef.status,
       alt: mediaRef.alt,
@@ -345,6 +648,9 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
         : {}),
       mimeType: mediaRef.mimeType,
       ...(mediaRef.sha256 ? { sha256: mediaRef.sha256 } : {}),
+      ...(typeof mediaRef.durationMs === 'number' ? { durationMs: mediaRef.durationMs } : {}),
+      ...(mediaRef.codecs ? { codecs: mediaRef.codecs } : {}),
+      ...(typeof mediaRef.byteLength === 'number' ? { byteLength: mediaRef.byteLength } : {}),
       thumbnail: mediaRef.thumbnail,
       status: mediaRef.status,
       alt: mediaRef.alt,
@@ -512,11 +818,60 @@ function ChatMessageImageAttachment({
   )
 }
 
-function ChatMessageAvAttachment({ mediaRef, src }: { mediaRef: ChatMediaRef; src: string }) {
+function ChatMessageAvAttachment({
+  mediaRef,
+  src,
+  onPreviewImage
+}: {
+  mediaRef: ChatMediaRef
+  src: string
+  onPreviewImage?: (ref: ChatMediaRef) => void
+}) {
+  const { copy } = useCopyFeedback()
+  const actions = buildMediaCardActions(mediaRef, copy)
+  const expand = onPreviewImage ? () => onPreviewImage(mediaRef) : undefined
+
+  const header = (
+    <div className="message-attachment-av-head">
+      {expand ? (
+        <button
+          type="button"
+          className="message-attachment-av-name-btn"
+          onClick={expand}
+          title={`Expand ${mediaRef.name}`}
+          aria-label={`Expand ${mediaRef.name}`}
+        >
+          {mediaRef.name}
+        </button>
+      ) : (
+        <span className="message-attachment-name">{mediaRef.name}</span>
+      )}
+      <span className="message-attachment-av-controls">
+        {expand && (
+          <button
+            type="button"
+            className="message-attachment-expand"
+            onClick={expand}
+            title={`Expand ${mediaRef.name}`}
+            aria-label={`Expand ${mediaRef.name}`}
+          >
+            <span className="sf-symbol-icon" aria-hidden>
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" role="img">
+                <path d="M6 2H2v4M10 14h4v-4M2 10v4h4M14 6V2h-4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </button>
+        )}
+        <MediaActionMenu items={actions} triggerLabel={`Actions for ${mediaRef.name}`} />
+      </span>
+    </div>
+  )
+
   if (mediaRef.kind === 'audio') {
     return (
       <div className="message-attachment-card message-attachment-av is-audio" title={mediaRef.name}>
-        <span className="message-attachment-name">{mediaRef.name}</span>
+        {header}
+        <MediaCardBadges mediaRef={mediaRef} />
         <audio controls preload="metadata" src={src} />
       </div>
     )
@@ -524,7 +879,9 @@ function ChatMessageAvAttachment({ mediaRef, src }: { mediaRef: ChatMediaRef; sr
   const poster = chatMediaPreviewSrc(mediaRef)
   return (
     <div className="message-attachment-card message-attachment-av is-video" title={mediaRef.name}>
+      {header}
       <video controls preload="metadata" {...(poster ? { poster } : {})} src={src} />
+      <MediaCardBadges mediaRef={mediaRef} />
     </div>
   )
 }
@@ -561,7 +918,14 @@ export function ChatMessageMediaStrip({
         if (isAvMediaKind(ref.kind)) {
           const avSrc = chatMediaTwUrl(ref)
           if (avSrc) {
-            return <ChatMessageAvAttachment key={ref.id} mediaRef={ref} src={avSrc} />
+            return (
+              <ChatMessageAvAttachment
+                key={ref.id}
+                mediaRef={ref}
+                src={avSrc}
+                onPreviewImage={onPreviewImage}
+              />
+            )
           }
         }
         return (
@@ -606,7 +970,10 @@ export function ChatMediaPreviewOverlay({
 
   if (!mediaRef) return null
 
+  const isAv = isAvMediaKind(mediaRef.kind)
+  const avSrc = isAv ? chatMediaTwUrl(mediaRef) : ''
   const previewSrc = mediaRef.kind === 'image' ? chatMediaPreviewSrc(mediaRef) : ''
+  const poster = mediaRef.kind === 'video' ? chatMediaPreviewSrc(mediaRef) : ''
   const copyId = `preview:${mediaRef.id}`
   const isCopied = copiedId === copyId
   const location = formatChatMediaLocation(mediaRef.path, workspacePath)
@@ -616,6 +983,11 @@ export function ChatMediaPreviewOverlay({
     const api = typeof window !== 'undefined' ? window.api : undefined
     void api?.openExternalOrPath?.(mediaRef.path)
   }
+
+  // Sha-based asset actions (Open in Finder / Copy path / Save as) — the only
+  // way to act on a generated, path-less AV ref from inside the lightbox.
+  const assetActions = buildMediaCardActions(mediaRef, copy)
+  const hasAssetChannels = Boolean(mediaRef.sha256 && mediaRef.mimeType)
 
   return (
     <div
@@ -642,7 +1014,16 @@ export function ChatMediaPreviewOverlay({
         </header>
 
         <div className="chat-media-preview-body">
-          {previewSrc && !previewFailed ? (
+          {isAv && avSrc ? (
+            <div className="chat-media-preview-av">
+              {mediaRef.kind === 'audio' ? (
+                <audio controls autoPlay preload="metadata" src={avSrc} />
+              ) : (
+                <video controls autoPlay preload="metadata" {...(poster ? { poster } : {})} src={avSrc} />
+              )}
+              <MediaCardBadges mediaRef={mediaRef} />
+            </div>
+          ) : previewSrc && !previewFailed ? (
             <img
               src={previewSrc}
               alt={mediaRef.name}
@@ -659,6 +1040,13 @@ export function ChatMediaPreviewOverlay({
         </div>
 
         <footer className="chat-media-preview-actions">
+          {hasAssetChannels && (
+            <MediaActionMenu
+              items={assetActions}
+              triggerLabel={`Actions for ${mediaRef.name}`}
+              className="chat-media-preview-action-menu"
+            />
+          )}
           {mediaRef.path && (
             <button type="button" className="btn btn-sm" onClick={() => copy(copyId, mediaRef.path)}>
               {isCopied ? 'Copied' : 'Copy path'}
@@ -756,9 +1144,13 @@ export function ChatMediaFloatingPanel({
                 {avRefs.map((ref) => {
                   const src = chatMediaTwUrl(ref)
                   const poster = ref.kind === 'video' ? chatMediaPreviewSrc(ref) : ''
+                  const actions = buildMediaCardActions(ref, copy)
                   return (
                     <div key={ref.id} className={`chat-media-av-item is-${ref.kind}`}>
-                      <div className="chat-media-av-name">{ref.name}</div>
+                      <div className="chat-media-av-head">
+                        <div className="chat-media-av-name">{ref.name}</div>
+                        <MediaActionMenu items={actions} triggerLabel={`Actions for ${ref.name}`} />
+                      </div>
                       {src ? (
                         ref.kind === 'audio' ? (
                           <audio controls preload="metadata" src={src} />
@@ -770,6 +1162,7 @@ export function ChatMediaFloatingPanel({
                           <FileTypeIcon path={ref.path} size={22} workspacePath={workspacePath} />
                         </span>
                       )}
+                      <MediaCardBadges mediaRef={ref} />
                     </div>
                   )
                 })}

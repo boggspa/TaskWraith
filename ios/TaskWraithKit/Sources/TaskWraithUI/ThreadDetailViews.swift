@@ -2410,14 +2410,25 @@ struct ThreadRowView: View, Equatable {
                                 .padding(6)
                         }
                     }
-                    if let badge = kindBadgeSymbol(item.kind) {
-                        Image(systemName: badge)
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.white)
-                            .padding(5)
-                            .background(Color.black.opacity(0.55), in: Circle())
-                            .padding(6)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let badge = kindBadgeSymbol(item.kind) {
+                            Image(systemName: badge)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(5)
+                                .background(Color.black.opacity(0.55), in: Circle())
+                        }
+                        if let codecs = item.codecs, !codecs.isEmpty {
+                            Text(codecs)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.black.opacity(0.55), in: Capsule())
+                        }
                     }
+                    .padding(6)
                     if let duration = durationLabel(item.durationMs) {
                         VStack {
                             Spacer()
@@ -2429,6 +2440,21 @@ struct ThreadRowView: View, Equatable {
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 2)
                                     .background(Color.black.opacity(0.6), in: Capsule())
+                            }
+                        }
+                        .padding(6)
+                    }
+                    if let bytes = item.byteLength, bytes > 0 {
+                        VStack {
+                            Spacer()
+                            HStack {
+                                Text(MobileFileEditorState.formatBytes(bytes))
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(Color.black.opacity(0.6), in: Capsule())
+                                Spacer()
                             }
                         }
                         .padding(6)

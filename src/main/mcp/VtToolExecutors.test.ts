@@ -93,6 +93,9 @@ function build(overrides: Partial<VtToolDeps> = {}) {
     stagingPath: vi.fn((ext: string) => `/staging/out.${ext}`),
     readOutput: vi.fn(() => Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42clip')])),
     persistOutput: vi.fn((_buffer: Buffer, _mimeType: string) => ({ ok: true as const, sha256: 'f'.repeat(64) })),
+    // Default: no poster. Specific tests override to assert the thumbnail is threaded
+    // onto the ref, and that a throwing generator still yields a ref WITHOUT one.
+    generatePoster: vi.fn(async () => undefined),
     removeFile: vi.fn((p: string) => {
       removed.push(p)
     }),
@@ -373,6 +376,40 @@ describe('video_encode_clip', () => {
     expect(getEncodeParams()?.overlayPath).toBeUndefined()
     expect(getEncodeParams()?.overlayX).toBeUndefined()
     expect(result.text).not.toContain('+ overlay')
+  })
+
+  // Part 1 — poster threading + fail-tolerance (mirrors the ffmpeg producer behavior).
+  it('threads the generated poster onto the trusted ref (called with the staging path, BEFORE cleanup)', async () => {
+    const order: string[] = []
+    const { executors, deps } = build({
+      generatePoster: vi.fn(async () => {
+        order.push('poster')
+        return { dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 }
+      }),
+      removeFile: vi.fn(() => {
+        order.push('remove')
+      })
+    })
+    const result = await executors.executeVtTool('video_encode_clip', { inputPath: 'clip.mp4' }, {})
+    expect(result.isError).toBeFalsy()
+    expect(deps.generatePoster).toHaveBeenCalledWith('/staging/out.mp4', 'video', 'video/mp4', expect.any(Number))
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].thumbnail).toEqual({ dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 })
+    expect(order).toEqual(['poster', 'remove'])
+  })
+
+  it('still returns the ref WITHOUT a thumbnail when the poster generator throws', async () => {
+    const { executors } = build({
+      generatePoster: vi.fn(async () => {
+        throw new Error('decode exploded')
+      })
+    })
+    const result = await executors.executeVtTool('video_encode_clip', { inputPath: 'clip.mp4' }, {})
+    expect(result.isError).toBeFalsy()
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].thumbnail).toBeUndefined()
   })
 })
 
@@ -795,5 +832,31 @@ describe('audio_mix', () => {
     expect(result.isError).toBe(true)
     expect(result.trustedMediaRefs).toBeUndefined()
     expect(getRemoved()).toContain('/staging/out.wav')
+  })
+
+  // Part 1 — audio_mix asks for an AUDIO-kind waveform poster, threaded onto the ref.
+  it('threads an audio-kind waveform poster onto the mixed ref', async () => {
+    const { executors, deps } = build({
+      generatePoster: vi.fn(async () => ({ dataBase64: 'V0FWRQ==', mimeType: 'image/jpeg', width: 320, height: 80 }))
+    })
+    const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
+    expect(result.isError).toBeFalsy()
+    expect(deps.generatePoster).toHaveBeenCalledWith('/staging/out.wav', 'audio', 'audio/wav', expect.any(Number))
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].thumbnail).toEqual({ dataBase64: 'V0FWRQ==', mimeType: 'image/jpeg', width: 320, height: 80 })
+  })
+
+  it('still returns the mixed ref WITHOUT a thumbnail when the poster generator throws', async () => {
+    const { executors } = build({
+      generatePoster: vi.fn(async () => {
+        throw new Error('analyze exploded')
+      })
+    })
+    const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
+    expect(result.isError).toBeFalsy()
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].thumbnail).toBeUndefined()
   })
 })

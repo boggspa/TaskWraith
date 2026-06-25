@@ -461,6 +461,19 @@ const api = {
     ipcRenderer.invoke('shell:open-link', href) as Promise<{ ok: boolean; error?: string }>,
   revealPathInFinder: (path: string) =>
     ipcRenderer.invoke('shell:reveal-in-finder', path) as Promise<{ ok: boolean; error?: string }>,
+  // Sha-addressed media-asset actions for generated (path-less) AV/image refs.
+  // Main resolves the asset by content hash + mime into a real on-disk file,
+  // then reveals / returns / save-as-copies it. Channels are LOCKED — a
+  // parallel agent owns the main-side handlers.
+  revealMediaAsset: (sha256: string, mimeType: string) =>
+    ipcRenderer.invoke('media-asset:reveal', { sha256, mimeType }) as Promise<{ ok: boolean }>,
+  getMediaAssetPath: (sha256: string, mimeType: string) =>
+    ipcRenderer.invoke('media-asset:get-path', { sha256, mimeType }) as Promise<string | null>,
+  saveMediaAssetAs: (sha256: string, mimeType: string, suggestedName: string) =>
+    ipcRenderer.invoke('media-asset:save-as', { sha256, mimeType, suggestedName }) as Promise<{
+      ok: boolean
+      canceled: boolean
+    }>,
   getFaviconForUrl: (url: string) =>
     ipcRenderer.invoke('favicon:getForUrl', url) as Promise<
       | {

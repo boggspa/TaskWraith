@@ -324,6 +324,13 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'trust-workspace': ['workspacePath'],
   'shell:open-link': ['nonEmptyString'],
   'shell:reveal-in-finder': ['nonEmptyString'],
+  // Content-addressed AV media-asset path resolution for renderer reveal/copy/save.
+  // Each takes a single `{ sha256, mimeType, ... }` object; the handler re-validates
+  // the sha256 + jails the resolved path via transcriptMediaAssetPath (the renderer
+  // never resolves filesystem paths itself).
+  'media-asset:reveal': ['object'],
+  'media-asset:get-path': ['object'],
+  'media-asset:save-as': ['object'],
   'favicon:getForUrl': ['nonEmptyString'],
   'start-pty': ['workspacePath', 'optionalString'],
   'stop-pty': ['optionalString'],

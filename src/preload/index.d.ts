@@ -689,6 +689,13 @@ declare global {
 	      }) => Promise<{ ok: boolean; error?: string }>
       openExternalOrPath: (href: string) => Promise<{ ok: boolean; error?: string }>
       revealPathInFinder: (path: string) => Promise<{ ok: boolean; error?: string }>
+      revealMediaAsset: (sha256: string, mimeType: string) => Promise<{ ok: boolean }>
+      getMediaAssetPath: (sha256: string, mimeType: string) => Promise<string | null>
+      saveMediaAssetAs: (
+        sha256: string,
+        mimeType: string,
+        suggestedName: string
+      ) => Promise<{ ok: boolean; canceled: boolean }>
       getFaviconForUrl: (url: string) => Promise<
         | {
             ok: true

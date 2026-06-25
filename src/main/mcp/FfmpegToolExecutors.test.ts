@@ -39,6 +39,10 @@ function build(overrides: Partial<FfmpegToolDeps> = {}) {
     stagingPath: vi.fn((ext: string) => `/staging/out.${ext}`),
     readOutput: vi.fn(() => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('frame')])),
     persistOutput: vi.fn((_buffer: Buffer, _mimeType: string) => ({ ok: true as const, sha256: 'f'.repeat(64) })),
+    // Default: no poster (mirrors a generator that can't produce one). Specific
+    // tests override this to assert the thumbnail is threaded onto the ref, and
+    // that a throwing generator still yields a ref WITHOUT a thumbnail.
+    generatePoster: vi.fn(async () => undefined),
     removeFile: vi.fn((p: string) => {
       removed.push(p)
     }),
@@ -232,5 +236,85 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     expect(result.text).toContain('timed out')
     expect(deps.persistOutput).not.toHaveBeenCalled()
     expect(getRemoved()).toContain('/staging/out.mp3')
+  })
+
+  // Part 1 — poster/waveform threading + fail-tolerance.
+  it('threads the generated poster onto the trusted ref (called with the staging path, BEFORE cleanup)', async () => {
+    const order: string[] = []
+    const { executors, deps } = build({
+      generatePoster: vi.fn(async () => {
+        order.push('poster')
+        return { dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 }
+      }),
+      removeFile: vi.fn(() => {
+        order.push('remove')
+      })
+    })
+    const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4' }, {})
+    expect(result.isError).toBeFalsy()
+    // Poster dep called with (outputPath, kind, mime, byteLength) on the staging file.
+    expect(deps.generatePoster).toHaveBeenCalledWith('/staging/out.mp4', 'video', 'video/mp4', expect.any(Number))
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].thumbnail).toEqual({ dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 })
+    // The poster ran BEFORE the staging file was removed (file must still exist).
+    expect(order).toEqual(['poster', 'remove'])
+  })
+
+  it('audio producers ask for an audio-kind poster', async () => {
+    const { executors, deps } = build()
+    await executors.executeFfmpegTool('transcode_audio', { sourcePath: 'song.flac', format: 'wav' }, {})
+    expect(deps.generatePoster).toHaveBeenCalledWith('/staging/out.wav', 'audio', 'audio/wav', expect.any(Number))
+  })
+
+  it('still returns the ref WITHOUT a thumbnail when the poster generator throws (fail-tolerant)', async () => {
+    const { executors } = build({
+      generatePoster: vi.fn(async () => {
+        throw new Error('decode exploded')
+      })
+    })
+    const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4' }, {})
+    // The producer must not fail just because the decorative poster failed.
+    expect(result.isError).toBeFalsy()
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].thumbnail).toBeUndefined()
+  })
+
+  // Part 2 — best-effort durationMs/codecs from an ffprobe on the OUTPUT.
+  it('fills durationMs + codecs from a best-effort ffprobe on the output', async () => {
+    const { executors } = build()
+    const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4' }, {})
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    // PROBE_JSON: format.duration "10.0" → 10000ms; streams h264 + aac → "h264,aac".
+    expect(refs[0].durationMs).toBe(10000)
+    expect(refs[0].codecs).toBe('h264,aac')
+  })
+
+  it('omits durationMs/codecs (badges conditional) when the output ffprobe fails', async () => {
+    const { executors } = build({
+      // First probe (none here) — but the producer's OUTPUT probe throws.
+      runFfprobe: vi.fn(async () => {
+        throw new Error('ffprobe failed')
+      })
+    })
+    const result = await executors.executeFfmpegTool('transcode_audio', { sourcePath: 'a.wav', format: 'mp3' }, {})
+    // The producer still succeeds; the metadata is simply absent.
+    expect(result.isError).toBeFalsy()
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].durationMs).toBeUndefined()
+    expect(refs[0].codecs).toBeUndefined()
+  })
+
+  it('omits durationMs/codecs when ffprobe is not installed', async () => {
+    const { executors } = build({ resolveFfprobe: vi.fn(() => null) })
+    const result = await executors.executeFfmpegTool('transcode_video', { sourcePath: 'clip.mp4' }, {})
+    expect(result.isError).toBeFalsy()
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].durationMs).toBeUndefined()
+    expect(refs[0].codecs).toBeUndefined()
   })
 })
