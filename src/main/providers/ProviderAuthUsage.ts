@@ -1104,10 +1104,10 @@ export async function readGeminiOAuthCredentials(): Promise<{
 }
 
 export async function getGeminiAccessToken(): Promise<string | null> {
-  // No token refresh: Gemini is retired and the maintainer OAuth client secret
-  // the refresh required is no longer bundled. Return the user's own stored
-  // access token; an expired one just yields a 401 the caller already handles
-  // via the persisted-usage fallback.
+  // No token refresh: Gemini is retired and TaskWraith no longer carries the
+  // public Gemini CLI OAuth client metadata used by the old refresh path. Return
+  // the user's own stored access token; an expired one just yields a 401 the
+  // caller already handles via the persisted-usage fallback.
   const credentials = await readGeminiOAuthCredentials()
   return credentials?.accessToken ?? null
 }

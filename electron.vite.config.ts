@@ -16,9 +16,9 @@ export default defineConfig(({ mode }) => {
   const channelGatewayEnabled =
     process.env.IOS_CHANNELS_TRUE === '1' || env.IOS_CHANNELS_TRUE === '1'
   return {
-    // No build-time secret baking. (Gemini's retired Google-login refresh used
-    // to bake the maintainer's OAuth client secret here — removed; a personal
-    // credential must never ship inside a distributed build.)
+    // No build-time credential baking. Earlier Gemini login plumbing carried
+    // public CLI OAuth client metadata via build-time defines; even non-secret
+    // provider metadata does not belong in distributed bundles.
     main: {},
     preload: {},
     renderer: {

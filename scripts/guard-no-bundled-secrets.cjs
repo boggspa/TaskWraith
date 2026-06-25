@@ -22,9 +22,11 @@
  *      bare "BEGIN PRIVATE KEY" marker that the Tier-1 PEM validators
  *      legitimately contain) and for any known secret fingerprint.
  *
- * Why this exists: the same failure class already shipped once — the 1.4.9
- * Gemini OAuth secret baked into app.asar (see electron.vite.config.ts). See
- * docs/ios-push-gateway-design.md §4.4.
+ * Why this exists: a 1.4.9 packaging review found Gemini public CLI OAuth
+ * metadata in app.asar. That was not a private OAuth secret, but it showed how
+ * build-time credential-looking material can drift into shipped bundles. The
+ * APNs .p8 / configured fingerprints are real secrets, so this guard makes the
+ * boundary explicit. See docs/ios-push-gateway-design.md §4.4.
  *
  * Fingerprints (optional) come from TASKWRAITH_SECRET_FINGERPRINTS (comma-
  * separated); the gateway key id is added there once Tier-2 ships.
