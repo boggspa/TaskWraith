@@ -5318,6 +5318,18 @@ public struct AppSettingsSheet: View {
                 UsagePanel(model: model, threadId: nil)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Model Context Lengths", systemImage: "ruler")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                Text("Official maximum context window per model.")
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.textSecondary)
+                // Gemini is retired on iOS (TWTheme.retiredProviderIds) and never
+                // selectable here, so it is excluded; local Ollama is included.
+                ContextLengthsView(includeOllama: true, excludeProviders: ["gemini"])
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
