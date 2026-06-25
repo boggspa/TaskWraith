@@ -9,6 +9,13 @@
  */
 
 import { resolveFindingVerdictState } from '../mcp/AuditToolExecutors'
+import {
+  makeLoopBudget,
+  recordLoopSpend,
+  loopBudgetExhausted,
+  markLoopTruncated,
+  type WorkflowLoopBudget
+} from '../WorkflowLoopModel'
 import type {
   AuditBudget,
   AuditCoverage,
@@ -96,22 +103,41 @@ export function skepticCountForSeverity(severity: AuditFindingSeverity): number 
 }
 
 // ── budget ──────────────────────────────────────────────────────────────────
+// Slice 6 — the audit budget IS the shared WorkflowLoopModel budget (which was
+// itself GENERALIZED from these functions). Audit "agents" == loop "runs"; the
+// thin mappers below carry AuditBudget's persisted domain field names
+// (maxAgents/spentAgents, written to audit-runs.json) onto the one shared
+// implementation, so there is a single budget codepath and audit inherits its
+// NaN-defensive spend accounting. Behavior-preserving (audit's maxTokens is always
+// absent or > 0, so the loop's `> 0` ceiling check is equivalent to the old
+// `!== undefined` one); audit carries no cost ceiling, so spentCostUsd stays 0.
+
+const auditToLoop = (b: AuditBudget): WorkflowLoopBudget => ({
+  maxRuns: b.maxAgents,
+  ...(b.maxTokens !== undefined ? { maxTokens: b.maxTokens } : {}),
+  spentRuns: b.spentAgents,
+  spentTokens: b.spentTokens,
+  spentCostUsd: 0,
+  truncated: b.truncated
+})
+
+const loopToAudit = (b: WorkflowLoopBudget): AuditBudget => ({
+  maxAgents: b.maxRuns,
+  ...(b.maxTokens !== undefined ? { maxTokens: b.maxTokens } : {}),
+  spentAgents: b.spentRuns,
+  spentTokens: b.spentTokens,
+  truncated: b.truncated
+})
 
 export function makeBudget(maxAgents: number, maxTokens?: number): AuditBudget {
-  return {
-    maxAgents: Math.max(1, Math.trunc(maxAgents)),
-    ...(maxTokens && maxTokens > 0 ? { maxTokens } : {}),
-    spentAgents: 0,
-    spentTokens: 0,
-    truncated: false
-  }
+  return loopToAudit(
+    makeLoopBudget({ maxRuns: maxAgents, ...(maxTokens && maxTokens > 0 ? { maxTokens } : {}) })
+  )
 }
 
 /** True when spawning one more agent would breach a ceiling. */
 export function budgetExhausted(budget: AuditBudget): boolean {
-  if (budget.spentAgents >= budget.maxAgents) return true
-  if (budget.maxTokens !== undefined && budget.spentTokens >= budget.maxTokens) return true
-  return false
+  return loopBudgetExhausted(auditToLoop(budget))
 }
 
 /** Record a spawned agent + its token spend, returning a NEW budget. */
@@ -119,15 +145,11 @@ export function recordSpend(
   budget: AuditBudget,
   spend: { agents?: number; tokens?: number }
 ): AuditBudget {
-  return {
-    ...budget,
-    spentAgents: budget.spentAgents + (spend.agents ?? 0),
-    spentTokens: budget.spentTokens + (spend.tokens ?? 0)
-  }
+  return loopToAudit(recordLoopSpend(auditToLoop(budget), { runs: spend.agents, tokens: spend.tokens }))
 }
 
 export function markTruncated(budget: AuditBudget): AuditBudget {
-  return budget.truncated ? budget : { ...budget, truncated: true }
+  return budget.truncated ? budget : loopToAudit(markLoopTruncated(auditToLoop(budget)))
 }
 
 // ── coverage ──────────────────────────────────────────────────────────────
