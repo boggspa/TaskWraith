@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   RunLifecycleCoordinator,
+  type ClaimNextLifecycleJobInput,
   type RunLifecycleCoordinatorDeps
 } from './RunLifecycleCoordinator'
 import type { RunQueueJob, RunQueueRequestSnapshot } from '../store/types'
@@ -39,6 +40,83 @@ function makeJob(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
 }
 
 describe('RunLifecycleCoordinator', () => {
+  it('claims the next queued job and returns a sanitized legacy dispatch ticket', async () => {
+    let job = makeJob({
+      request: makeRequest({
+        prompt: 'Clean this up.',
+        selectedModelType: '',
+        approvalMode: '',
+        customModel: '',
+        imageAttachments: [
+          { path: '/tmp/a.png', id: 'img-1', name: 'a.png' } as RunQueueRequestSnapshot['imageAttachments'][number]
+        ],
+        displayPrompt: '   Clean this up.   '
+      })
+    })
+    const leaseQueuedJob = vi.fn(() => job)
+    const queue: RunLifecycleCoordinatorDeps['queue'] = {
+      getRunQueueJob: () => job,
+      leaseQueuedJob
+    }
+    const cancelProviderRun = vi.fn(() => true)
+    const coordinator = new RunLifecycleCoordinator({ queue, cancelProviderRun })
+    const input: ClaimNextLifecycleJobInput = {
+      provider: 'codex',
+      chatId: 'chat-1',
+      ownerToken: 'owner-1',
+      statusReason: 'Renderer requested next queued run'
+    }
+
+    const ticket = await coordinator.claimNextLifecycleJob(input)
+
+    expect(ticket).toMatchObject({
+      kind: 'lifecycle-dispatch-ticket',
+      dispatchMode: 'renderer-legacy',
+      runId: 'queued-run',
+      jobId: 'queue-1',
+      provider: 'codex',
+      chatId: 'chat-1',
+      source: 'manual',
+      ownerToken: 'owner-1',
+      request: {
+        scope: 'workspace',
+        prompt: 'Clean this up.',
+        selectedModelType: 'cli-default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: [{ id: 'img-1', path: '/tmp/a.png', name: 'a.png' }],
+        displayPrompt: '   Clean this up.   '
+      }
+    })
+    expect(leaseQueuedJob).toHaveBeenCalledWith({
+      provider: 'codex',
+      chatId: 'chat-1',
+      ownerToken: 'owner-1',
+      statusReason: 'Renderer requested next queued run'
+    })
+  })
+
+  it('returns null when no queued lifecycle job can be claimed for renderer', async () => {
+    const leaseQueuedJob = vi.fn(() => null)
+    const queue: RunLifecycleCoordinatorDeps['queue'] = {
+      getRunQueueJob: () => makeJob(),
+      leaseQueuedJob
+    }
+    const cancelProviderRun = vi.fn(() => true)
+    const coordinator = new RunLifecycleCoordinator({ queue, cancelProviderRun })
+
+    const ticket = await coordinator.claimNextLifecycleJob({ provider: 'codex', chatId: 'chat-1' })
+
+    expect(ticket).toBeNull()
+    expect(leaseQueuedJob).toHaveBeenCalledWith({
+      provider: 'codex',
+      chatId: 'chat-1',
+      ownerToken: expect.any(String),
+      statusReason: 'Queued run leased from main lifecycle coordinator.'
+    })
+  })
+
   it('reserves a queued steer promotion before cancelling the active provider run', async () => {
     let job = makeJob()
     const events: string[] = []
@@ -137,9 +215,11 @@ describe('RunLifecycleCoordinator', () => {
   it('does not use generic queue transitions for steer ownership paths', async () => {
     let job = makeJob()
     const transitionJob = vi.fn(() => makeJob({ status: 'steer_promoting' }))
+    const leaseQueuedJob = vi.fn(() => job)
     const cancelProviderRun = vi.fn(() => true)
     const queue: RunLifecycleCoordinatorDeps['queue'] = {
       getRunQueueJob: () => job,
+      leaseQueuedJob,
       transitionJob
     }
     const coordinator = new RunLifecycleCoordinator({ queue, cancelProviderRun })
@@ -161,6 +241,11 @@ describe('RunLifecycleCoordinator', () => {
       cancelRequested: false
     })
     expect(cancelProviderRun).not.toHaveBeenCalled()
+    expect(transitionJob).not.toHaveBeenCalled()
+
+    const claim = await coordinator.claimNextLifecycleJob({ provider: 'codex', chatId: 'chat-1' })
+    expect(claim?.provider).toBe('codex')
+    expect(claim?.jobId).toBe('queue-1')
     expect(transitionJob).not.toHaveBeenCalled()
 
     job = makeJob({ status: 'steer_promoting', promotionOwnerToken: 'owner-1' })

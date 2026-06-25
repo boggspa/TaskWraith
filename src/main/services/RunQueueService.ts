@@ -141,6 +141,36 @@ export class RunQueueService {
     })
   }
 
+  leaseQueuedJob(
+    request: { runId?: string; provider?: ProviderId; chatId?: string; statusReason?: string } = {}
+  ): RunQueueJob | null {
+    const provider = request?.provider ? assertProviderId(request.provider) : undefined
+    const chatId = optionalString(request?.chatId)
+    const runId = optionalString(request?.runId)
+    const candidate = runId
+      ? this.deps.appStore.getRunQueueJob(runId)
+      : this.deps.appStore
+          .getRunQueueJobs({ provider, chatId, statuses: ['queued'] })
+          .find((job) => this.deps.canLeaseJob(job))
+    if (!candidate || candidate.status !== 'queued') {
+      return null
+    }
+    if (provider && candidate.provider !== provider) {
+      return null
+    }
+    if (chatId && candidate.chatId !== chatId) {
+      return null
+    }
+    if (runId && !this.deps.canLeaseJob(candidate)) {
+      return null
+    }
+    return this.deps.getRunRepository().leaseQueuedRun({
+      runId: candidate.runId,
+      provider: candidate.provider,
+      statusReason: optionalString(request?.statusReason) || 'Leased by TaskWraith main scheduler.'
+    })
+  }
+
   promoteQueuedJobForSteer(input: {
     runId?: string
     jobId?: string

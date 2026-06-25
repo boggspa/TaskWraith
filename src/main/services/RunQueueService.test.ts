@@ -380,6 +380,57 @@ describe('RunQueueService', () => {
     })
   })
 
+  it('leases queued jobs with optional chat + provider filters for lifecycle dispatch', () => {
+    const busyJob = makeJob({
+      id: 'run-busy',
+      runId: 'run-busy',
+      provider: 'codex',
+      chatId: 'chat-busy'
+    })
+    const idleJob = makeJob({
+      id: 'run-idle',
+      runId: 'run-idle',
+      provider: 'codex',
+      chatId: 'chat-idle'
+    })
+    const store = makeStore({
+      getRunQueueJobs: vi.fn(() => [busyJob, idleJob])
+    })
+    const canLeaseJob = vi.fn((job: RunQueueJob) => job.chatId !== 'chat-busy')
+    const { deps, repository } = makeDeps({ appStore: store, canLeaseJob })
+    const service = new RunQueueService(deps)
+    expect(service.leaseQueuedJob({ provider: 'codex', chatId: 'chat-idle' })).toEqual(
+      makeJob({
+        runId: 'run-idle',
+        provider: 'codex',
+        status: 'starting',
+        statusReason: 'Leased by TaskWraith main scheduler.'
+      })
+    )
+    expect(store.getRunQueueJobs).toHaveBeenCalledWith({
+      provider: 'codex',
+      chatId: 'chat-idle',
+      statuses: ['queued']
+    })
+    expect(repository.leaseQueuedRun).toHaveBeenCalledWith({
+      runId: 'run-idle',
+      provider: 'codex',
+      statusReason: 'Leased by TaskWraith main scheduler.'
+    })
+    expect(canLeaseJob).toHaveBeenCalledWith(busyJob)
+    expect(canLeaseJob).toHaveBeenCalledWith(idleJob)
+  })
+
+  it('returns null when a queued job candidate is not in the queued status', () => {
+    const store = makeStore({
+      getRunQueueJobs: vi.fn(() => [makeJob({ status: 'steer_promoting' })])
+    })
+    const { deps, repository } = makeDeps({ appStore: store })
+    const service = new RunQueueService(deps)
+    expect(service.leaseQueuedJob({ provider: 'gemini' })).toBeNull()
+    expect(repository.leaseQueuedRun).not.toHaveBeenCalled()
+  })
+
   it('skips busy same-provider chats when leasing the next queued job', () => {
     const busyJob = makeJob({
       id: 'run-busy',

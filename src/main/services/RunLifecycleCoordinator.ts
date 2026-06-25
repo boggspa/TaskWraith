@@ -17,6 +17,14 @@ interface LeasePromotedSteerJobRequest {
   statusReason?: string
 }
 
+interface LeaseQueuedLifecycleJobRequest {
+  runId?: string
+  provider?: ProviderId
+  chatId?: string
+  ownerToken?: string
+  statusReason?: string
+}
+
 interface FallbackPromotedSteerJobRequest {
   runId: string
   ownerToken: string
@@ -34,6 +42,8 @@ interface QueuePort {
   getRunQueueJob: (runIdOrId: string) => RunQueueJob | null
   promoteQueuedJobForSteer?: (input: PromoteQueuedJobForSteerRequest) => AsyncOrSync<RunQueueJob | null>
   leasePromotedSteerJob?: (input: LeasePromotedSteerJobRequest) => AsyncOrSync<RunQueueJob | null>
+  leaseQueuedJob?: (input: LeaseQueuedLifecycleJobRequest) => AsyncOrSync<RunQueueJob | null>
+  leaseJob?: (input: LeaseQueuedLifecycleJobRequest) => AsyncOrSync<RunQueueJob | null>
   fallbackPromotedSteerJob?: (
     input: FallbackPromotedSteerJobRequest
   ) => AsyncOrSync<RunQueueJob | null>
@@ -80,6 +90,25 @@ export interface FallbackPromotedSteerInput {
   reason?: string
   /** If present, force this fallback status instead of the default `queued`. */
   fallbackStatus?: 'queued' | 'cancelled' | 'failed'
+}
+
+export interface ClaimNextLifecycleJobInput {
+  provider?: ProviderId
+  chatId?: string
+  ownerToken?: string
+  statusReason?: string
+}
+
+export interface LifecycleDispatchTicket {
+  kind: 'lifecycle-dispatch-ticket'
+  dispatchMode: 'renderer-legacy'
+  runId: string
+  jobId: string
+  provider: ProviderId
+  chatId?: string
+  source: RunQueueJob['source']
+  ownerToken: string
+  request: RunQueueRequestSnapshot
 }
 
 export interface RunLifecyclePromoteDispatchPermission {
@@ -153,6 +182,36 @@ export type FallbackPromotedSteerJobResult = FallbackPromotedSteerResult | Fallb
 
 export class RunLifecycleCoordinator {
   constructor(private readonly deps: RunLifecycleCoordinatorDeps) {}
+
+  async claimNextLifecycleJob(
+    input: ClaimNextLifecycleJobInput = {}
+  ): Promise<LifecycleDispatchTicket | null> {
+    const ownerToken = (input.ownerToken && input.ownerToken.trim()) || this.createOwnerToken()
+    const leased = await this.tryLeaseQueued({
+      provider: input.provider,
+      chatId: input.chatId,
+      ownerToken,
+      statusReason: this.statusReason(
+        input.statusReason,
+        'Queued run leased from main lifecycle coordinator.'
+      )
+    })
+    if (!leased) {
+      return null
+    }
+
+    return {
+      kind: 'lifecycle-dispatch-ticket',
+      dispatchMode: 'renderer-legacy',
+      runId: leased.runId,
+      jobId: leased.id,
+      provider: leased.provider,
+      ...(leased.chatId ? { chatId: leased.chatId } : {}),
+      source: leased.source,
+      ownerToken,
+      request: this.sanitizeRequestSnapshot(leased.request)
+    }
+  }
 
   async promoteQueuedJobForSteer(input: PromoteQueuedJobForSteerInput): Promise<PromoteQueuedJobForSteerResult> {
     const runId = input.runId
@@ -397,6 +456,18 @@ export class RunLifecycleCoordinator {
       return null
     }
 
+    return null
+  }
+
+  private async tryLeaseQueued(
+    input: Omit<LeaseQueuedLifecycleJobRequest, 'runId'>
+  ): Promise<RunQueueJob | null> {
+    if (this.deps.queue.leaseQueuedJob) {
+      return Promise.resolve(this.deps.queue.leaseQueuedJob(input))
+    }
+    if (this.deps.queue.leaseJob) {
+      return Promise.resolve(this.deps.queue.leaseJob(input))
+    }
     return null
   }
 
