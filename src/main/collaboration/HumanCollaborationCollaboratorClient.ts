@@ -97,7 +97,11 @@ export class HumanCollaborationCollaboratorClient {
   // compared the SAS out of band (L6-2). Keys are already derived at begin, but
   // we do NOT send the confirm — and thus never establish — until the gate fires.
   private pendingConfirm: { handshakeId: string; confirmCode: string; sigB64: string } | null = null
-  private connectWaiters: Array<() => void> = []
+  private connectWaiters: Array<{
+    resolve: () => void
+    reject: (err: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  }> = []
 
   constructor(options: HumanCollaborationCollaboratorClientOptions) {
     this.opts = options
@@ -117,16 +121,22 @@ export class HumanCollaborationCollaboratorClient {
     if (this.connected) return Promise.resolve()
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.connectWaiters = this.connectWaiters.filter((w) => w !== onOpen)
+        this.connectWaiters = this.connectWaiters.filter((w) => w.timer !== timer)
         reject(new Error('Collaboration connect timed out.'))
       }, timeoutMs)
       timer.unref?.()
-      const onOpen = (): void => {
-        clearTimeout(timer)
-        resolve()
-      }
-      this.connectWaiters.push(onOpen)
+      this.connectWaiters.push({ resolve, reject, timer })
     })
+  }
+
+  private settleConnectWaiters(err: Error | null): void {
+    const waiters = this.connectWaiters
+    this.connectWaiters = []
+    for (const w of waiters) {
+      clearTimeout(w.timer)
+      if (err) w.reject(err)
+      else w.resolve()
+    }
   }
 
   connect(relayUrl: string, roomId: string): void {
@@ -141,8 +151,11 @@ export class HumanCollaborationCollaboratorClient {
         onClose: () => {
           this.setConnected(false)
           // Fail fast: a drop mid-handshake should reject pending begin/confirm
-          // immediately instead of hanging on their 30s timeout.
-          this.rejectPending(new Error('Collaboration transport disconnected.'))
+          // AND any whenConnected() waiter immediately, instead of hanging on
+          // their timeouts (a dead/unlistened room otherwise stalls the join).
+          const err = new Error('Collaboration transport disconnected.')
+          this.settleConnectWaiters(err)
+          this.rejectPending(err)
         },
         onError: (err) => this.opts.onError?.(err)
       }
@@ -259,6 +272,7 @@ export class HumanCollaborationCollaboratorClient {
 
   dispose(): void {
     this.disposed = true
+    const socket = this.socket
     if (this.isEstablished) {
       try {
         this.sendSealed(HUMAN_COLLABORATION_METHODS.disconnect, { sessionId: this.sessionId })
@@ -266,9 +280,13 @@ export class HumanCollaborationCollaboratorClient {
         // best-effort
       }
     }
-    this.rejectPending(new Error('Collaboration client disposed.'))
-    this.socket?.close()
+    const err = new Error('Collaboration client disposed.')
+    this.settleConnectWaiters(err)
+    this.rejectPending(err)
     this.socket = null
+    // Defer the close a tick so the best-effort disconnect frame egresses
+    // before the socket teardown (so the host drops the session promptly).
+    setTimeout(() => socket?.close(), 0)
     this.setConnected(false)
   }
 
@@ -350,11 +368,7 @@ export class HumanCollaborationCollaboratorClient {
   private setConnected(value: boolean): void {
     if (this.connected === value) return
     this.connected = value
-    if (value) {
-      const waiters = this.connectWaiters
-      this.connectWaiters = []
-      for (const w of waiters) w()
-    }
+    if (value) this.settleConnectWaiters(null)
     this.opts.onConnectionChange?.(value)
   }
 }

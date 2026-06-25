@@ -119,13 +119,20 @@
   flex: 1 1 auto;
 }
 
-/* Host admission banner — a fixed, dismissible strip with the SAS to compare. */
-.host-admission-banner {
+/* Host admission banners — a fixed, top-centred stack of dismissible strips,
+   one per in-flight collaborator admission, each showing the SAS to compare. */
+.host-admission-banner-stack {
   position: fixed;
   top: 14px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 240;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.host-admission-banner {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -137,6 +144,29 @@
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+}
+
+.host-admission-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.host-admission-banner-reject {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--danger, #e2554f) 50%, transparent);
+  background: color-mix(in srgb, var(--danger, #e2554f) 14%, transparent);
+  color: color-mix(in srgb, var(--danger, #e2554f) 90%, var(--text-primary));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.host-admission-banner-reject:hover {
+  background: color-mix(in srgb, var(--danger, #e2554f) 22%, transparent);
 }
 
 .host-admission-banner-body {

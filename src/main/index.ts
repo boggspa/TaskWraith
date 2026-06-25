@@ -17180,31 +17180,30 @@ async function executeGeminiMcpTool(
         })
       }
     }
-    // S1b-3: TRUSTED AV media refs produced by a main-side ffmpeg producer tool
-    // are injected DIRECTLY into the owning run's transcript state, bypassing the
-    // image-only provider sanitizer. Un-forgeable: a McpToolExecutionResult is
-    // only ever constructed by main-side executor code, never provider stdout.
+    // S1b-3: TRUSTED AV media refs produced by a main-side ffmpeg/VideoToolbox
+    // producer tool are delivered DIRECTLY into the owning run's transcript,
+    // bypassing the image-only provider sanitizer (which would hard-drop AV).
+    // Un-forgeable: a McpToolExecutionResult is only ever constructed by main-side
+    // executor code, never provider stdout.
     //
     // injectTrustedMediaRefs fans to the 3 MAIN-SIDE maps (bridge / sub-thread /
-    // ensemble) and now RETURNS whether one owned the run. The fallback below is
-    // GATED on parentProvider==='codex', so it never fires for any non-codex
-    // provider — their behavior is byte-identical (injectTrustedMediaRefs does
-    // exactly what it did before, owned or not). For codex it can miss: codex
-    // ensemble/sub-thread/phone-guest runs ARE in those maps (delivered=true →
-    // trusted lane, no sanitizer), but a FOREGROUND codex SOLO run is owned by
-    // CodexRunState and is in NONE of the maps (delivered=false). That solo
-    // transcript is persisted renderer-side, so its trusted ref is delivered on
-    // a DEDICATED main-only IPC — never the sanitized/forgeable agent-output
-    // media_refs lane (which would strip AV away AND is provider-reachable).
+    // ensemble) and RETURNS whether one owned the run — those cover the phone,
+    // background, and ensemble runs (all persist raw to AppStore, no sanitizer).
+    // A FOREGROUND SOLO run — of ANY provider — is owned by the provider's own
+    // run state and is in NONE of the maps (delivered=false): codex by
+    // CodexRunState, the CLI/API providers (claude/gemini/cursor/grok/kimi/ollama)
+    // by their registerRunSession entry. So the fallback fires for EVERY provider
+    // whenever no map owned the run, delivering the trusted refs on a DEDICATED
+    // main-only IPC keyed by appChatId — never the sanitized/forgeable
+    // agent-output media_refs lane (which strips AV AND is provider-reachable).
+    // It is exclusive with the map paths (fires only on !delivered → no
+    // double-emit), and the sender/appRunId/appChatId guards fail it closed for
+    // the headless/windowless dispatch case (sender = null-object headlessRunSender;
+    // that case is map-owned anyway). Renderer-side it applies RAW + persists via
+    // saveChat, so the inline Electron transcript shows it and it syncs to iOS.
     if (finalRichResult?.trustedMediaRefs && finalRichResult.trustedMediaRefs.length > 0) {
       const delivered = injectTrustedMediaRefs(context.appRunId, finalRichResult.trustedMediaRefs)
-      if (
-        !delivered &&
-        parentProvider === 'codex' &&
-        context.sender &&
-        context.appRunId &&
-        context.appChatId
-      ) {
+      if (!delivered && context.sender && context.appRunId && context.appChatId) {
         sendTrustedRunMediaRefs(context.sender, {
           appChatId: context.appChatId,
           appRunId: context.appRunId,
@@ -23831,17 +23830,24 @@ if (isGeminiMcpBridgeProcess) {
           log: (line) => console.warn(line)
         })
         humanCollaborationCollaboratorClient = client
-        client.connect(input.relayUrl, input.roomId)
-        await client.whenConnected()
-        const { confirmCode } = await client.beginAdmission({
-          shareId: input.shareId,
-          chatId: input.chatId,
-          inviteToken: input.inviteToken,
-          displayName: input.displayName,
-          shareMode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
-          expectedHostIdentityPubKeyB64: input.hostIdentityPubKeyB64
-        })
-        return { confirmCode, chatId: input.chatId, mode: input.mode }
+        try {
+          client.connect(input.relayUrl, input.roomId)
+          await client.whenConnected()
+          const { confirmCode } = await client.beginAdmission({
+            shareId: input.shareId,
+            chatId: input.chatId,
+            inviteToken: input.inviteToken,
+            displayName: input.displayName,
+            shareMode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
+            expectedHostIdentityPubKeyB64: input.hostIdentityPubKeyB64
+          })
+          return { confirmCode, chatId: input.chatId, mode: input.mode }
+        } catch (err) {
+          // Don't leak a half-dead client/socket on a failed join.
+          if (humanCollaborationCollaboratorClient === client) disposeCollaboratorClient()
+          else client.dispose()
+          throw err
+        }
       }
     )
     ipcMain.handle('human-collaboration-collaborator:confirm', async () => {
