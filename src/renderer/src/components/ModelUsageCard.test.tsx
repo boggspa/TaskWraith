@@ -97,15 +97,16 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('aria-label="API spend"')
   })
 
-  it('renders both toggle glyphs (no text labels) when apiSpend is wired', () => {
+  it('renders three toggle glyphs (no text labels) when apiSpend is wired', () => {
     const apiSpend: ModelUsageApiSpendOptions = { providerRates: {}, view: 'plan' }
     const html = renderToStaticMarkup(
       <ModelUsageCard usageSummary={[quotaEntry()]} variant="sidebar" apiSpend={apiSpend} />
     )
-    // Toggle group + both accessible labels present (icons, not text).
+    // Toggle group + all three accessible labels present (icons, not text).
     expect(html).toContain('model-usage-view-toggle')
     expect(html).toContain('aria-label="Plan limits"')
     expect(html).toContain('aria-label="API spend"')
+    expect(html).toContain('aria-label="Context lengths"')
     // Plan view is active by default; the quota meters still render.
     expect(html).toContain('Kimi')
     expect(html).toContain('200 / 200 remaining')
@@ -125,20 +126,37 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('200 / 200 remaining')
   })
 
-  it('forces the spend view and hides the toggle when there are no quota meters but apiSpend is wired', () => {
+  it('renders the context-lengths table when view=context (static data, no IPC)', () => {
+    const apiSpend: ModelUsageApiSpendOptions = { providerRates: {}, view: 'context' }
+    const html = renderToStaticMarkup(
+      <ModelUsageCard usageSummary={[quotaEntry()]} variant="sidebar" apiSpend={apiSpend} />
+    )
+    // Context radio is active.
+    expect(html).toContain('aria-checked="true"')
+    // Context table container.
+    expect(html).toContain('model-usage-context-list')
+    // A known 1M context window should appear in the table.
+    expect(html).toContain('1.0M')
+    // Quota meter rows are hidden while the context view is active.
+    expect(html).not.toContain('200 / 200 remaining')
+  })
+
+  it('shows a spend/context toggle (no Plan tab) when there are no quota meters but apiSpend is wired', () => {
     const rates: RendererProviderRates = {
       codex: [{ modelId: 'gpt-5.5', inputUsdPerMillion: 1, outputUsdPerMillion: 10 }]
     }
     const apiSpend: ModelUsageApiSpendOptions = { providerRates: rates, view: 'plan' }
-    // No quota entries at all → previously the card returned null. Now the
-    // spend view keeps the card mounted so an API-key user can see spend.
-    // With no plan-side meter there is nothing to toggle, so the toggle is
-    // hidden and the spend view is forced (no dead "Plan limits" click).
+    // No quota entries at all → spend + context views are available in the sidebar.
+    // The toggle shows spend ⇄ context, but no Plan tab (no quota meters).
     const html = renderToStaticMarkup(
       <ModelUsageCard usageSummary={[]} variant="sidebar" apiSpend={apiSpend} />
     )
     expect(html).toContain('Model Usage')
-    expect(html).not.toContain('model-usage-view-toggle')
+    expect(html).toContain('model-usage-view-toggle')
+    expect(html).toContain('aria-label="API spend"')
+    expect(html).toContain('aria-label="Context lengths"')
+    expect(html).not.toContain('aria-label="Plan limits"')
+    // spend is the active view by default (plan unavailable, spend is first fallback)
     expect(html).toContain('No API spend tracked in the last 30 days')
   })
 })

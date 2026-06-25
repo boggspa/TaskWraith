@@ -135,6 +135,16 @@
   width: 1%;
 }
 
+/* Context-lengths mini-table (2 columns): let the model name take the slack so
+ * the right-aligned window figure hugs the edge instead of floating with a gap. */
+.model-usage-table.model-usage-table--context col.model-usage-table-name-col {
+  width: auto;
+}
+
+.model-usage-table--context .model-usage-table-model-cell {
+  max-width: none;
+}
+
 .model-usage-table thead th {
   position: sticky;
   top: 0;

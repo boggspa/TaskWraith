@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
+  ModelContextLengthsSettingsTable,
   ModelUsageOllamaTableBlock,
   ModelUsageProviderTableBlock,
   ModelUsageSettingsTable,
@@ -312,5 +313,34 @@ describe('ProviderApiRatesTableBlock (populated render)', () => {
     expect(html).toContain('Gemini')
     expect(html).toContain('historic provider')
     expect(html).toContain('source')
+  })
+})
+
+describe('ModelContextLengthsSettingsTable (SSR — static data, no effects)', () => {
+  it('renders the heading and subtitle', () => {
+    const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
+    expect(html).toContain('Model Context Lengths')
+    expect(html).toContain('Official maximum context window per model')
+  })
+
+  it('contains a Claude provider name', () => {
+    const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
+    expect(html).toContain('Claude')
+  })
+
+  it('contains a model cell with Opus 4.8 substring', () => {
+    const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
+    expect(html).toContain('Opus 4.8')
+  })
+
+  it('contains the formatted window 1.0M for claude-opus-4-8-1m', () => {
+    const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
+    expect(html).toContain('1.0M')
+  })
+
+  it('is currency-free — does not contain ~ cost badge or $ symbol', () => {
+    const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
+    expect(html).not.toContain('~')
+    expect(html).not.toContain('$')
   })
 })

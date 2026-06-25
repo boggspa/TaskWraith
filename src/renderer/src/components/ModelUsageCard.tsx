@@ -49,6 +49,8 @@ import { computeQuotaPace } from '../lib/QuotaPace'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import { formatResetShort } from '../lib/UsageFormat'
 import { formatTokenCount } from '../lib/UsageHeatmap'
+import { buildModelContextLengthGroups } from '../lib/modelContextLengths'
+import { humaniseModelIdCompact } from '../lib/modelDisplayName'
 import { getProviderName } from './Sidebar'
 import { GrokCreditsMeter } from './GrokCreditsMeter'
 import { ProviderLogoTile } from './ProviderLogoTile'
@@ -56,8 +58,8 @@ import { QuotaProgressBar } from './QuotaProgressBar'
 import { UsageHeatmap } from './UsageHeatmap'
 import './ModelUsageCard.css'
 
-/** The two views the card's top toggle switches between. */
-export type ModelUsagePanelView = 'plan' | 'spend'
+/** The three views the card's top toggle switches between: plan limits, API spend, and context lengths. */
+export type ModelUsagePanelView = 'plan' | 'spend' | 'context'
 
 /**
  * View-B ("API spend") inputs. Threaded from App.tsx → Sidebar so the
@@ -297,6 +299,25 @@ function ApiSpendGlyph() {
   )
 }
 
+/** "Context length" glyph — a bracketed window / span, reading as "context window". */
+function ContextLengthGlyph() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.25"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M4.5 3.5 2 8l2.5 4.5" />
+      <path d="M11.5 3.5 14 8l-2.5 4.5" />
+      <path d="M6 8h4" />
+    </svg>
+  )
+}
+
 const API_SPEND_WINDOW_LABEL: Record<ApiSpendWindowKey, string> = {
   day: 'Day',
   week: '7d',
@@ -402,6 +423,35 @@ export function OllamaMemorySpendBlock({ entry }: { entry: OllamaMemorySpendTota
           <OllamaMemorySpendRow key={windowKey} windowKey={windowKey} totals={entry[windowKey]} />
         ))}
       </div>
+    </div>
+  )
+}
+
+export function ContextLengthsView() {
+  // Fully static (curated catalog × the static context-window table), so build
+  // once — the sidebar card re-renders on resize/expand and settings round-trips.
+  const groups = useMemo(() => buildModelContextLengthGroups(), [])
+  return (
+    <div className="model-usage-list model-usage-context-list">
+      {groups.map((group) => (
+        <div key={group.provider} className={`model-usage-item provider-${group.provider} context-only`}>
+          <div className="model-usage-provider-heading">
+            <span className={`sidebar-provider-label provider-${group.provider}`}>
+              <ProviderLogoTile provider={group.provider} />
+              <span className="model-usage-provider-name">{getProviderName(group.provider)}</span>
+              <span className="model-usage-tier-badge">{group.models.length} model{group.models.length === 1 ? '' : 's'}</span>
+            </span>
+          </div>
+          <div className="model-usage-context-rows">
+            {group.models.map((m) => (
+              <div key={m.modelId} className="model-usage-context-row">
+                <span className="model-usage-context-model" title={m.modelId}>{humaniseModelIdCompact(group.provider, m.modelId) || m.label}</span>
+                <span className="model-usage-context-window" title={`${m.contextWindow.toLocaleString()} tokens`}>{m.formatted}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }
@@ -560,15 +610,25 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
   // A plan-side meter exists when there are quota entries or the gated Grok
   // credit meter. Only then is the Plan ⇄ Spend choice meaningful.
   const planViewAvailable = quotaEntries.length > 0 || grokAvailable
+  const isSidebarVariant = variant === 'sidebar'
   // Render when there's a plan-side meter OR the API-spend view is available (so
   // a user on API keys with no plan meters can still reach their spend).
+  // The context-lengths tab is a static reference; offer it in the sidebar overlay
+  // (where the view toggle lives — i.e. whenever apiSpend is wired).
+  const contextViewAvailable = isSidebarVariant && apiSpendEnabled
   if (!planViewAvailable && !apiSpendEnabled) return null
-  // With no plan-side meter, force the spend view AND hide the toggle below —
-  // a lone "Plan limits" button would be a dead click.
-  const showViewToggle = apiSpendEnabled && planViewAvailable
-  const effectiveView: ModelUsagePanelView = planViewAvailable ? view : 'spend'
-
-  const isSidebarVariant = variant === 'sidebar'
+  const availableViewCount =
+    Number(planViewAvailable) + Number(apiSpendEnabled) + Number(contextViewAvailable)
+  const showViewToggle = availableViewCount >= 2
+  const viewIsAvailable = (candidate: ModelUsagePanelView): boolean =>
+    candidate === 'plan' ? planViewAvailable : candidate === 'spend' ? apiSpendEnabled : contextViewAvailable
+  const effectiveView: ModelUsagePanelView = viewIsAvailable(view)
+    ? view
+    : planViewAvailable
+      ? 'plan'
+      : apiSpendEnabled
+        ? 'spend'
+        : 'context'
   const showQuotaEntries = !isSidebarVariant || sidebarExpanded
   const title = sidebarExpanded ? 'Collapse provider usage' : 'Expand provider usage'
   const ariaHeight = Math.round(sidebarHeightPx ?? SIDEBAR_USAGE_DEFAULT_HEIGHT)
@@ -687,28 +747,45 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
         <div className="run-summary-title">Model Usage</div>
         {showViewToggle && (
           <div className="model-usage-view-toggle" role="radiogroup" aria-label="Model usage view">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={effectiveView === 'plan'}
-              className={`model-usage-view-toggle-btn ${effectiveView === 'plan' ? 'is-active' : ''}`}
-              onClick={() => selectView('plan')}
-              aria-label="Plan limits"
-              title="Plan limits"
-            >
-              <PlanLimitsGlyph />
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={effectiveView === 'spend'}
-              className={`model-usage-view-toggle-btn ${effectiveView === 'spend' ? 'is-active' : ''}`}
-              onClick={() => selectView('spend')}
-              aria-label="API spend"
-              title="API spend"
-            >
-              <ApiSpendGlyph />
-            </button>
+            {planViewAvailable && (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={effectiveView === 'plan'}
+                className={`model-usage-view-toggle-btn ${effectiveView === 'plan' ? 'is-active' : ''}`}
+                onClick={() => selectView('plan')}
+                aria-label="Plan limits"
+                title="Plan limits"
+              >
+                <PlanLimitsGlyph />
+              </button>
+            )}
+            {apiSpendEnabled && (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={effectiveView === 'spend'}
+                className={`model-usage-view-toggle-btn ${effectiveView === 'spend' ? 'is-active' : ''}`}
+                onClick={() => selectView('spend')}
+                aria-label="API spend"
+                title="API spend"
+              >
+                <ApiSpendGlyph />
+              </button>
+            )}
+            {contextViewAvailable && (
+              <button
+                type="button"
+                role="radio"
+                aria-checked={effectiveView === 'context'}
+                className={`model-usage-view-toggle-btn ${effectiveView === 'context' ? 'is-active' : ''}`}
+                onClick={() => selectView('context')}
+                aria-label="Context lengths"
+                title="Context lengths"
+              >
+                <ContextLengthGlyph />
+              </button>
+            )}
           </div>
         )}
         {isSidebarVariant && (
@@ -729,6 +806,8 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
         <div className="model-usage-collapsible-inner">
           {effectiveView === 'spend' ? (
             <ApiSpendView options={apiSpend} />
+          ) : effectiveView === 'context' ? (
+            <ContextLengthsView />
           ) : (
             <div className="model-usage-list">
               {quotaEntries.map((entry) => (

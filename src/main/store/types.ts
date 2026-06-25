@@ -1528,7 +1528,7 @@ export interface AppSettings {
    * lightweight UI pref so the chosen view survives reload. Optional so
    * older settings files / fixtures default to the quota view.
    */
-  modelUsagePanelView?: 'plan' | 'spend'
+  modelUsagePanelView?: 'plan' | 'spend' | 'context'
   /**
    * Settings → Model usage table "External Usage" toggle. When `true`, the
    * per-provider / per-model usage table folds in provider activity tracked

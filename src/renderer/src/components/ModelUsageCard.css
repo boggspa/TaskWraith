@@ -341,6 +341,37 @@
   color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 58%, transparent);
 }
 
+/* ── Context-lengths view rows ──────────────────────────────────── */
+.model-usage-item.context-only .model-usage-context-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+}
+
+.model-usage-context-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.model-usage-context-model {
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 88%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-usage-context-window {
+  color: var(--sidebar-text, var(--text-primary));
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 [data-reduce-motion='true'] .model-usage-view-toggle-btn {
   transition: none;
 }

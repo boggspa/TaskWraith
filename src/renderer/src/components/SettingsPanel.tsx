@@ -93,7 +93,7 @@ import { RosterSettingsPanel } from './RosterSettingsPanel'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { UpdateStatusPane } from './UpdateStatusPane'
 import { ModelUsageCard } from './ModelUsageCard'
-import { ModelUsageSettingsTable, ProviderApiRatesSettingsTable } from './ModelUsageSettingsTable'
+import { ModelUsageSettingsTable, ProviderApiRatesSettingsTable, ModelContextLengthsSettingsTable } from './ModelUsageSettingsTable'
 import { TokenUsageChart } from './TokenUsageChart'
 import { UsageHeatmap } from './UsageHeatmap'
 import { WorkspaceActivityHeatmap } from './WorkspaceActivityHeatmap'
@@ -6122,6 +6122,7 @@ export function SettingsPanel({
                 </section>
 
                 <ProviderApiRatesSettingsTable />
+                <ModelContextLengthsSettingsTable />
               </div>
             )
           })()}

@@ -966,7 +966,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('modelUsagePanelView' in sanitized) {
       const value = sanitized.modelUsagePanelView
-      if (value !== 'plan' && value !== 'spend') delete sanitized.modelUsagePanelView
+      if (value !== 'plan' && value !== 'spend' && value !== 'context') delete sanitized.modelUsagePanelView
     }
     if ('appIconVariant' in sanitized) {
       // Drop invalid ids, and refuse a NEW wwdc26 selection once the limited-time

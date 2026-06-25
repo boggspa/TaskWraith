@@ -62,6 +62,7 @@ import {
 } from '../lib/ollamaMemoryAggregation'
 import { getProviderName } from './Sidebar'
 import { ProviderLogoTile } from './ProviderLogoTile'
+import { buildModelContextLengthGroups } from '../lib/modelContextLengths'
 import './ModelUsageSettingsTable.css'
 
 export interface ModelUsageSettingsTableProps {
@@ -534,6 +535,58 @@ export function ProviderApiRatesSettingsTable() {
           <span>Cost estimates will stay hidden until the rate table loads.</span>
         </div>
       )}
+    </section>
+  )
+}
+
+export function ModelContextLengthsSettingsTable() {
+  const groups = buildModelContextLengthGroups()
+  return (
+    <section className="model-usage-table-section" aria-label="Model context lengths">
+      <div className="model-usage-table-header">
+        <div className="model-usage-table-heading">
+          <span className="model-usage-table-title">Model Context Lengths</span>
+          <span className="model-usage-table-subtitle">Official maximum context window per model</span>
+        </div>
+      </div>
+      <div className="model-usage-table-scroll">
+        <table className="model-usage-table model-usage-table--context">
+          <colgroup>
+            <col className="model-usage-table-name-col" />
+            <col className="model-usage-table-rate-col" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col" className="model-usage-table-corner">Model</th>
+              <th scope="col" className="model-usage-table-tokens">Context length</th>
+            </tr>
+          </thead>
+          {groups.map((group) => (
+            <tbody key={group.provider} className={`model-usage-table-provider provider-${group.provider}`}>
+              <tr className="model-usage-table-provider-row">
+                <th scope="rowgroup" className="model-usage-table-provider-cell">
+                  <span className={`model-usage-table-provider-label provider-${group.provider}`}>
+                    <ProviderLogoTile provider={group.provider} />
+                    <span className="model-usage-table-provider-name">{getProviderName(group.provider)}</span>
+                    <span className="model-usage-table-model-count" title={`${group.models.length} model${group.models.length === 1 ? '' : 's'}`}>{group.models.length}</span>
+                  </span>
+                </th>
+                <td className="model-usage-table-tokens" aria-hidden />
+              </tr>
+              {group.models.map((m) => (
+                <tr key={`${group.provider}-${m.modelId}`} className="model-usage-table-model-row">
+                  <td className="model-usage-table-model-cell" title={m.label}>{humaniseModelIdTableCell(group.provider, m.modelId)}</td>
+                  <td className="model-usage-table-tokens" title={`${m.contextWindow.toLocaleString()} tokens`}>{m.formatted}</td>
+                </tr>
+              ))}
+            </tbody>
+          ))}
+        </table>
+      </div>
+      <p className="model-usage-table-footnote">
+        Exact vendor maximums — some models support a smaller default window (e.g. Claude&apos;s 1M
+        context is an opt-in beta). Local Ollama models vary by quantization and are not shown.
+      </p>
     </section>
   )
 }

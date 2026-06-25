@@ -201,6 +201,7 @@ describe('MainSanitizers settings patches', () => {
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
     expect(sanitizeSettingsPatch({ modelUsagePanelView: 'spend' }).modelUsagePanelView).toBe('spend')
     expect(sanitizeSettingsPatch({ modelUsagePanelView: 'plan' }).modelUsagePanelView).toBe('plan')
+    expect(sanitizeSettingsPatch({ modelUsagePanelView: 'context' }).modelUsagePanelView).toBe('context')
     // Anything outside the enum is stripped so a malformed value can't persist.
     expect(
       'modelUsagePanelView' in
