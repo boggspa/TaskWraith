@@ -8,7 +8,7 @@ import Security
 
 public enum TWPushKeyAccess {
     /// App Group container shared between the app + the NSE.
-    public static let appGroup = "group.com.taskwraith.companion"
+    public static let appGroup = "group.com.TaskWraith.companion"
     /// Fully-qualified keychain access group (<TeamID>.<group>) shared likewise.
     /// The `kSecAttrAccessGroup` value passed to SecItem* must be fully qualified
     /// (the `$(AppIdentifierPrefix)` substitution only happens in the .entitlements).
