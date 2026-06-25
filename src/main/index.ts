@@ -322,6 +322,7 @@ import { hasAnyBudget } from './WorkflowBudgetGuard'
 import { WorkflowBudgetRegistry } from './WorkflowBudgetRegistry'
 import { decideCancelInterrupt, shouldFlushPendingInterrupt } from './CodexPendingInterrupt'
 import { routeDueScheduledTask } from './HeadlessScheduledDispatch'
+import { getNextScheduledTaskRunAtMs } from './ScheduledTaskTimer'
 import {
   WorkflowLoopEngine,
   mapLoopSnapshotToScheduledOutcome,
@@ -7488,21 +7489,16 @@ function reconcileStalledScheduledTasks(): void {
 
 function scheduleNextTaskTimer() {
   clearScheduledTaskTimer()
-  const nextTaskMs =
-    AppStore.getScheduledTasks()
-      .filter((task) => task.status === 'pending')
-      .map((task) => new Date(task.runAt).getTime())
-      .filter((value) => Number.isFinite(value))
-      .sort((a, b) => a - b)[0] ?? Number.NaN
-  const nextWorkflowMs = AppStore.getNextWorkflowRunAtMs()
-  const candidates = [nextTaskMs, nextWorkflowMs].filter(
-    (value): value is number => typeof value === 'number' && Number.isFinite(value)
-  )
-  if (candidates.length === 0) {
+  const nowMs = Date.now()
+  const nextRunAtMs = getNextScheduledTaskRunAtMs({
+    tasks: AppStore.getScheduledTasks(),
+    nextWorkflowRunAtMs: AppStore.getNextWorkflowRunAtMs(),
+    nowMs
+  })
+  if (nextRunAtMs === null) {
     return
   }
-  const runAtMs = Math.min(...candidates)
-  const delay = Math.max(0, Math.min(MAX_SCHEDULE_TIMER_DELAY_MS, runAtMs - Date.now()))
+  const delay = Math.max(0, Math.min(MAX_SCHEDULE_TIMER_DELAY_MS, nextRunAtMs - nowMs))
   scheduledTaskTimer = setTimeout(emitDueScheduledTasks, delay)
 }
 
