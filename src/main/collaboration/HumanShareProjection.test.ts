@@ -1,3 +1,4 @@
+import os from 'os'
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord } from '../store/types'
 import { makeHumanCollaboratorComment } from './HumanCollaboratorMessages'
@@ -118,5 +119,77 @@ describe('buildHumanShareProjection', () => {
         preview: 'Can you explain this part?'
       })
     ])
+  })
+
+  it('collapses non-workspace absolute paths (Volumes/private/tmp) to [path]', () => {
+    const projection = buildHumanShareProjection(
+      chat({
+        messages: [
+          {
+            id: 'a-1',
+            role: 'assistant',
+            content:
+              'See /Volumes/ClientSSD/acquisition/financials.xlsx and /private/var/folders/zz/build and /tmp/scratch.log',
+            timestamp: '2026-06-25T00:00:00.000Z'
+          }
+        ]
+      }),
+      share,
+      { generatedAt: '2026-06-25T00:00:03.000Z' }
+    )
+    const blob = JSON.stringify(projection)
+    expect(blob).not.toContain('ClientSSD')
+    expect(blob).not.toContain('acquisition')
+    expect(blob).not.toContain('var/folders')
+    expect(blob).not.toContain('scratch.log')
+    expect(projection.rows[0].preview).toBe('See [path] and [path] and [path]')
+  })
+
+  it('collapses the host home dir and its tail to [host-home]', () => {
+    const home = os.homedir()
+    const projection = buildHumanShareProjection(
+      chat({
+        workspacePath: undefined,
+        messages: [
+          {
+            id: 'a-2',
+            role: 'assistant',
+            content: `wrote ${home}/other-client-codename/db.ts`,
+            timestamp: '2026-06-25T00:00:00.000Z'
+          }
+        ]
+      }),
+      share,
+      { generatedAt: '2026-06-25T00:00:03.000Z' }
+    )
+    expect(JSON.stringify(projection)).not.toContain('other-client-codename')
+    expect(projection.rows[0].preview).toBe('wrote [host-home]')
+  })
+
+  it('scrubs credentials echoed into host/assistant content and the title', () => {
+    const key = 'sk' + '-ABCDEF0123456789abcdef'
+    const projection = buildHumanShareProjection(
+      chat({
+        title: `Debug ${key}`,
+        workspacePath: undefined,
+        messages: [
+          {
+            id: 'a-3',
+            role: 'assistant',
+            content: `the env has AWS_SECRET_ACCESS_KEY=abc/def+ghiJKL and key ${key}`,
+            timestamp: '2026-06-25T00:00:00.000Z'
+          }
+        ]
+      }),
+      share,
+      { generatedAt: '2026-06-25T00:00:03.000Z' }
+    )
+    const blob = JSON.stringify(projection)
+    expect(blob).not.toContain(key)
+    expect(blob).not.toContain('abc/def+ghiJKL')
+    expect(projection.title).toBe('Debug sk-[redacted]')
+    expect(projection.rows[0].preview).toBe(
+      'the env has AWS_SECRET_ACCESS_KEY=[redacted] and key sk-[redacted]'
+    )
   })
 })

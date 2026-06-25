@@ -1,5 +1,6 @@
 import os from 'os'
 import type { ChatMessage, ChatRecord } from '../store/types'
+import { redactSecrets } from '../../shared/secretRedaction'
 import {
   humanCollaboratorMetadata,
   isHumanCollaboratorComment
@@ -121,7 +122,11 @@ function preview(
   content: string,
   opts: { maxPreviewChars: number; workspacePath?: string }
 ): { preview: string; truncated: boolean } {
-  const sanitized = redactSensitivePaths(content || '', opts.workspacePath)
+  // Scrub credentials BEFORE collapsing paths: model/tool output (and the
+  // host's own prompts) can echo keys/tokens verbatim, and this is shown to an
+  // external_untrusted collaborator. Paths are collapsed second so neither the
+  // filesystem layout nor any secret survives into the projection.
+  const sanitized = redactSensitivePaths(redactSecrets(content || ''), opts.workspacePath)
     .replace(/\u0000/g, '')
     .trim()
   const truncated = sanitized.length > opts.maxPreviewChars
@@ -137,12 +142,32 @@ function placeholderFor(message: ChatMessage): string {
   return '[Internal TaskWraith message hidden from collaborators]'
 }
 
+// Absolute-path roots whose contents reveal the host filesystem layout. A path
+// under any of these (and its WHOLE tail) is collapsed to a single marker so an
+// external_untrusted collaborator learns neither the root nor the project
+// sub-structure. Anchored to a leading `/<root>` word boundary so ordinary
+// prose ("and/or", "TCP/IP", "https://…") is never mangled.
+const SENSITIVE_PATH_ROOTS =
+  'Users|Volumes|private|var|tmp|opt|etc|Library|Applications|System|Network|home|usr|srv|mnt|data|cores'
+const SENSITIVE_PATH_RE = new RegExp(
+  `/(?:${SENSITIVE_PATH_ROOTS})\\b(?:/[^\\s'"\`)\\]]*)?`,
+  'gi'
+)
+
 function redactSensitivePaths(value: string, workspacePath?: string): string {
   let next = value
-  const home = os.homedir()
-  if (home) next = replaceAll(next, home, '[host-home]')
+  // 1) Shared workspace: strip the absolute prefix but KEEP the in-scope
+  //    relative tail — the collaborator is working on this repo, so
+  //    `[workspace]/src/main.ts` is useful context, not a leak.
   if (workspacePath) next = replaceAll(next, workspacePath, '[workspace]')
-  next = next.replace(/\/Users\/[^/\s]+/g, '[host-home]')
+  // 2) Host home: collapse the WHOLE path (tail included) — the home tail can
+  //    reveal sibling projects/clients outside the shared workspace (the old
+  //    code collapsed only `/Users/<name>` and leaked the remainder).
+  next = collapsePrefixPath(next, os.homedir(), '[host-home]')
+  // 3) Any remaining absolute path under a known filesystem root, tail included
+  //    — fixes /Volumes, /private, /var/folders, /tmp, /opt, /etc, /Library, …
+  //    which the old `/Users/<name>` regex missed entirely.
+  next = next.replace(SENSITIVE_PATH_RE, '[path]')
   return next
 }
 
@@ -151,8 +176,15 @@ function replaceAll(value: string, search: string, replacement: string): string 
   return value.split(search).join(replacement)
 }
 
+// Replace `<prefix>` and `<prefix>/any/sub/path` with `marker` (tail included).
+function collapsePrefixPath(value: string, prefix: string | undefined, marker: string): string {
+  if (!prefix) return value
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return value.replace(new RegExp(`${escaped}(?:/[^\\s'"\`)\\]]*)?`, 'g'), marker)
+}
+
 function sanitizeTitle(title: string, workspacePath?: string): string {
-  return redactSensitivePaths(title, workspacePath)
+  return redactSensitivePaths(redactSecrets(title), workspacePath)
     .replace(/[\r\n\t]/g, ' ')
     .replace(/\s+/g, ' ')
     .slice(0, 120)
