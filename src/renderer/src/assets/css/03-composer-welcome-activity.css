@@ -2992,28 +2992,23 @@
   box-shadow:
     inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.58)),
     inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 12%, transparent);
-  /* own cached paint/stacking layer, decoupled from the backdrop repaint path.
-   * NB: deliberately NO `will-change: transform` / `translateZ(0)`. Promoting
-   * the lens to its own GPU compositor layer made Chromium clip its inherited
-   * rounded top with a NON-anti-aliased composited clip, so the bright rim-light
-   * traced a rough/jagged top edge. `contain: layout paint` + `isolation:
-   * isolate` already give it an independent paint/stacking layer decoupled from
-   * backdrop repaints (it refracts only its own static content, so there is no
-   * streaming-driven invalidation to guard against), and the cinematic/epic
-   * `filter: url(#tw-glass-refract)` still establishes its own render surface —
-   * so the warp tiers are unaffected. This matches the Settings-preview lens
-   * (shard 04), which omits these and never showed the roughness. */
+  /* Own cached paint/stacking layer for the static sheen + rim. The lens never
+   * animates and (see the warp-removal note below) no longer carries a filter, so
+   * `contain: layout paint` + `isolation: isolate` are all it needs — no
+   * `will-change: transform` / `translateZ(0)`. Promoting a static lens to its own
+   * GPU layer bought nothing and matches neither the picker lens nor the preview. */
   contain: layout paint;
   isolation: isolate;
 }
-/* Displacement warp on the sheen — gated to the stronger tiers (subtle = flat
- * sheen + rim only). Never animated → rasterized once, then cached. */
-:root[data-advanced-fx-refraction="true"][data-composer-style="default"][data-advanced-fx-intensity="cinematic"]
-  .composer-refraction-lens,
-:root[data-advanced-fx-refraction="true"][data-composer-style="default"][data-advanced-fx-intensity="epic"]
-  .composer-refraction-lens {
-  filter: url(#tw-glass-refract);
-}
+/* NO displacement warp on the COMPOSER lens. The `feDisplacementMap` (scale 16)
+ * displaced the lens's bright sheen + rim around the surface's rounded TOP
+ * corners, so the top edge read rough/notched (verified over a textured backdrop:
+ * warp on → rough corner, warp off → clean rim wrapping the corner; at ANY scale
+ * the high-curvature corner shows it). The composer keeps the static sheen + rim,
+ * which carry the glass identity; only the corner-roughening warp is dropped. The
+ * picker popovers keep their own warp (`.composer-combined-picker-popover`, shard
+ * 08) — small flat rects with no high-curvature top corner against the backdrop.
+ * This also makes the live composer match the (already warp-free) Settings preview. */
 /* Light themes: screen-blend the sheen so the bright surface never blows out. */
 :root[data-advanced-fx-refraction="true"][data-composer-style="default"]
   :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])

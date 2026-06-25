@@ -430,6 +430,49 @@
  * of rules covers light + dark (no per-theme variants needed). Stack = rounded
  * TOP of the frame; each above-row is flush + chrome-less inside it; the surface
  * is pulled flush as the rounded BOTTOM with a hairline seam. */
+/* The --native-instrument-* frame vars are defined on
+ * `[data-composer-style="default"] .app-transcript` (shard 03) — an ancestor the
+ * static preview card does NOT have, so without re-declaring them here the merge
+ * rules below resolved `var(--native-instrument-glass-bg / -border / -outer-shadow)`
+ * to NOTHING and the whole frame rendered invisible (transparent stack + surface),
+ * leaving the above-bar floating over a detached inner panel. Re-declare them on
+ * the card — it carries its own data-theme, so --surface-2 / --text-primary adapt. */
+.settings-composer-preview-card[data-composer-style="default"] {
+  --native-instrument-outer-rim: color-mix(in srgb, var(--text-primary) 22%, rgba(255, 255, 255, 0.1));
+  --native-instrument-outer-rim-glow: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --native-instrument-glass-bg: color-mix(in srgb, var(--surface-2) 46%, transparent);
+  --native-instrument-glass-border: color-mix(in srgb, var(--text-primary) 11%, transparent);
+  --native-instrument-outer-shadow:
+    inset 0 0 0 1px var(--native-instrument-outer-rim),
+    inset 0 0 14px var(--native-instrument-outer-rim-glow),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent),
+    0 18px 46px color-mix(in srgb, #000000 20%, transparent);
+}
+:is(
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
+  )
+  .settings-composer-preview-card[data-composer-style="default"],
+.settings-composer-preview-card[data-composer-style="default"]:is(
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
+  ) {
+  --native-instrument-outer-rim: color-mix(in srgb, var(--text-primary) 18%, rgba(255, 255, 255, 0.12));
+  --native-instrument-outer-rim-glow: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  --native-instrument-glass-bg: color-mix(in srgb, var(--surface-2) 58%, transparent);
+  --native-instrument-glass-border: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  --native-instrument-outer-shadow:
+    inset 0 0 0 1px var(--native-instrument-outer-rim),
+    inset 0 0 14px var(--native-instrument-outer-rim-glow),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent),
+    0 18px 46px color-mix(in srgb, #000000 14%, transparent);
+}
 .settings-composer-preview-card[data-composer-style="default"] .composer-above-bar-stack {
   gap: 0;
   background: var(--native-instrument-glass-bg);
@@ -487,23 +530,24 @@
   border-top-right-radius: calc(var(--radius-lg) * 2.45);
 }
 
-/* INNER module — the theme-tone inset panel inside the solid frame.
- * The real `[data-composer-style="default"] .composer-inner-module`
- * rule (shard 03) reaches the preview and would make it FULL-BLEED
- * (width calc(100% + 28px) + negative margins) to bleed across the
- * surface's frame padding; in the cramped preview that overflows, so
- * pin it to the surface (width:100%; max-width:none; margin:0) with a
- * rounded inset look. The flex column + gap are restated so the layout
- * holds regardless of cascade order. */
+/* INNER module — the theme-tone typing panel. Mirror the live
+ * `[data-composer-style="default"] .composer-inner-module` (shard 03:3562):
+ * full-bleed across the surface's 14px frame padding + square corners, so it
+ * reads as the instrument's edge-to-edge bottom rather than a rounded inset card
+ * floating inside the frame. The surface keeps `overflow: hidden`, so the bleed
+ * clips cleanly to the frame's rounded outer corners (the earlier note here
+ * claimed full-bleed overflowed the cramped preview — it does not; verified
+ * against the live composer in an Electron screenshot harness). The flex column +
+ * gap are restated so the layout holds regardless of cascade order. */
 .settings-composer-preview-card[data-composer-style="default"] .composer-inner-module {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  width: 100%;
+  width: calc(100% + 28px);
   max-width: none;
-  margin: 0;
-  padding: 8px;
-  border-radius: var(--radius-sm);
+  margin: 0 -14px;
+  padding: 10px 10px 6px;
+  border-radius: 0;
   background: #141418;
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 24%, rgba(255, 255, 255, 0.1)),
