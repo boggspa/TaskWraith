@@ -406,7 +406,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.taskwraith.companion.NotificationService;
+				PRODUCT_BUNDLE_IDENTIFIER = com.taskwraith.companion.nse;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -452,7 +452,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.taskwraith.companion.NotificationService;
+				PRODUCT_BUNDLE_IDENTIFIER = com.taskwraith.companion.nse;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
