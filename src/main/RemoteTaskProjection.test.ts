@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRecord, ChatRun, DiffFileSummary, ExternalPathGrant } from './store/types'
+import type { ChatRecord, ChatRun, DiffFileSummary, ExternalPathGrant, RunQueueJob } from './store/types'
 import {
   buildMobileDiffSummary,
   buildMobileQuestionCard,
   buildRemoteCanvasPreviews,
   combinedQueuedPrompts,
   buildRemoteEnsembleState,
+  buildRemoteQueuedComposerPrompts,
   buildRemoteProjectionEnvelope,
   buildRemoteShellAppearance,
   buildRemoteTaskCard,
@@ -75,6 +76,54 @@ function externalGrant(overrides: Partial<ExternalPathGrant> = {}): ExternalPath
     duration: 'thisThread',
     createdAt: ISO,
     ...overrides
+  }
+}
+
+type QueueRequestSnapshot = NonNullable<RunQueueJob['request']>
+
+function queueRequest(overrides: Partial<QueueRequestSnapshot> = {}): QueueRequestSnapshot {
+  const { remoteComposer: overrideRemoteComposer, ...requestCore } = overrides
+  return {
+    prompt: 'Queue request prompt',
+    selectedModelType: 'default',
+    customModel: '',
+    approvalMode: 'manual',
+    sessionTrust: false,
+    imageAttachments: [],
+    ...requestCore,
+    remoteComposer: {
+      workspaceId: 'ws-1',
+      threadId: 'thread-1',
+      provider: 'codex',
+      text: 'Seed text for queued remote composer',
+      approvalMode: 'manual',
+      model: 'gpt-5.5',
+      reasoningEffort: 'high',
+      claudeReasoningEffort: 'off',
+      ...(overrideRemoteComposer ?? {})
+    }
+  }
+}
+
+function queueJob(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
+  const base: RunQueueJob = {
+    id: 'job-queued',
+    runId: 'run-queued',
+    provider: 'codex',
+    source: 'remote',
+    status: 'queued',
+    priority: 1,
+    attempt: 0,
+    request: queueRequest(),
+    createdAt: ISO,
+    updatedAt: ISO
+  }
+  return {
+    ...base,
+    ...overrides,
+    request: overrides.request
+      ? { ...queueRequest(), ...overrides.request, remoteComposer: overrides.request.remoteComposer }
+      : queueRequest()
   }
 }
 
@@ -683,6 +732,101 @@ describe('RemoteTaskProjection', () => {
     ])
     // No todo activities → field omitted entirely (keeps the wire lean).
     expect(buildRemoteTaskCard(chat()).todoLanes).toBeUndefined()
+  })
+
+  it('includes only queued remote composer jobs in projection', () => {
+    const queued = queueJob({
+      id: 'queued-1',
+      runId: 'run-queued-1',
+      createdAt: '2026-05-30T11:00:00.000Z',
+      enqueuedAt: '2026-05-30T11:00:01.000Z',
+      request: queueRequest({
+        remoteComposer: {
+          workspaceId: 'thread-ws',
+          threadId: 'thread-1',
+          provider: 'codex',
+          text: 'Queued prompt'
+        },
+        prompt: 'Queued request prompt'
+      })
+    })
+    const active = queueJob({
+      id: 'active-1',
+      runId: 'run-active-1',
+      status: 'active',
+      request: queueRequest({
+        remoteComposer: {
+          workspaceId: 'thread-ws',
+          threadId: 'thread-2',
+          provider: 'codex',
+          text: 'Running prompt'
+        },
+        prompt: 'Running request prompt'
+      })
+    })
+
+    const out = buildRemoteQueuedComposerPrompts([active, queued])
+
+    expect(out).toHaveLength(1)
+    expect(out[0]).toEqual({
+      id: 'queued-1',
+      runId: 'run-queued-1',
+      provider: 'codex',
+      text: 'Queued prompt',
+      index: 0,
+      threadId: 'thread-1',
+      workspaceId: 'thread-ws',
+      model: 'gpt-5.5',
+      approvalMode: 'manual',
+      reasoningEffort: 'high',
+      claudeReasoningEffort: 'off',
+      createdAt: '2026-05-30T11:00:00.000Z',
+      enqueuedAt: '2026-05-30T11:00:01.000Z'
+    })
+  })
+
+  it('excludes queued-prompt projection for all non-queued remote composer statuses', () => {
+    const remoteComposerStatuses = [
+      'steer_promoting',
+      'starting',
+      'active',
+      'cancelling',
+      'completed',
+      'failed',
+      'cancelled'
+    ] as const
+
+    const jobs: RunQueueJob[] = remoteComposerStatuses.map((status) =>
+      queueJob({ id: `job-${status}`, runId: `run-${status}`, status })
+    )
+    const queued = queueJob({
+      id: 'job-queued',
+      runId: 'run-queued',
+      status: 'queued',
+      request: queueRequest({
+        remoteComposer: {
+          workspaceId: 'thread-ws',
+          threadId: 'thread-stay',
+          provider: 'codex',
+          text: 'Queued only'
+        }
+      })
+    })
+    jobs.unshift(queued)
+    const nonRemoteQueued = queueJob({
+      id: 'no-remote',
+      runId: 'run-no-remote',
+      status: 'queued',
+      request: { ...queueRequest(), remoteComposer: undefined }
+    })
+    jobs.push(nonRemoteQueued)
+
+    const out = buildRemoteQueuedComposerPrompts(jobs)
+
+    expect(out).toHaveLength(1)
+    expect(out[0]?.id).toBe('job-queued')
+    expect(out[0]?.text).toBe('Queued only')
+    expect(out[0]?.index).toBe(0)
   })
 })
 

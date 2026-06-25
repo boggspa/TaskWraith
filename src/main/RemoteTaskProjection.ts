@@ -250,6 +250,12 @@ export interface RemoteQueuedComposerPrompt {
   index: number
   createdAt?: string
   enqueuedAt?: string
+  threadId?: string
+  workspaceId?: string
+  model?: string
+  approvalMode?: string
+  reasoningEffort?: string | null
+  claudeReasoningEffort?: string | null
 }
 
 export interface RemoteTaskCapabilities {
@@ -923,6 +929,14 @@ export function buildRemoteQueuedComposerPrompts(
         provider: job.provider,
         text: sanitizeText(remote.text || job.promptPreview, 4000).preview,
         index,
+        ...(typeof remote.threadId === 'string' ? { threadId: remote.threadId } : {}),
+        ...(typeof remote.workspaceId === 'string' ? { workspaceId: remote.workspaceId } : {}),
+        ...(typeof remote.model === 'string' ? { model: remote.model } : {}),
+        ...(typeof remote.approvalMode === 'string' ? { approvalMode: remote.approvalMode } : {}),
+        ...(remote.reasoningEffort !== undefined ? { reasoningEffort: remote.reasoningEffort } : {}),
+        ...(remote.claudeReasoningEffort !== undefined
+          ? { claudeReasoningEffort: remote.claudeReasoningEffort }
+          : {}),
         ...(job.createdAt ? { createdAt: job.createdAt } : {}),
         ...(job.enqueuedAt ? { enqueuedAt: job.enqueuedAt } : {})
       }
