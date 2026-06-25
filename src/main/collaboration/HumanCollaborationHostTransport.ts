@@ -38,12 +38,25 @@ export interface HumanCollaborationHostRuntimeLike {
   confirmSas(input: HumanCollaborationConfirmSasInput): Promise<HumanCollaborationConfirmSasResult>
   routeEncryptedAction(frame: HumanCollaborationEncryptedFrame): Promise<unknown>
   publishProjectionUpdates(chatId?: string): Promise<void>
+  disconnect(input: { sessionId: string }): Promise<boolean>
 }
 
 export interface HumanCollaborationHostTransportOptions {
   socketFactory: TransportSocketFactory
   log?: (line: string) => void
 }
+
+// Coalesce projection flushes: an admitted collaborator can stream inbound
+// frames (subscribe is not itself rate-limited), each of which would otherwise
+// force a full projection rebuild + reseal + send. A leading-edge flush with a
+// trailing coalesce caps that work to ~once per interval regardless of inbound
+// rate, while still delivering the first subscribe promptly.
+const FLUSH_MIN_INTERVAL_MS = 200
+// Hard ceiling on a single outbound frame. The dumb relay closes the CONNECTION
+// (ws 1009) on a frame over its 1 MiB cap, so we skip + log an oversized frame
+// rather than let it kill the room (the projection is also byte-budgeted at the
+// source — this is defense-in-depth).
+const MAX_OUTBOUND_FRAME_BYTES = 950_000
 
 interface RoomState {
   roomId: string
@@ -56,10 +69,15 @@ export class HumanCollaborationHostTransport {
   private runtime: HumanCollaborationHostRuntimeLike | null = null
   private readonly rooms = new Map<string, RoomState>()
   private readonly sessionToRoom = new Map<string, string>()
+  private lastFlushAt = 0
+  private flushTimer: ReturnType<typeof setTimeout> | null = null
+  private trailingFlushScheduled = false
 
   constructor(options: HumanCollaborationHostTransportOptions) {
     this.opts = options
   }
+
+  private readonly now: () => number = () => Date.now()
 
   /** Wire the runtime AFTER construction (the runtime is built with this
    * transport's `deliver` as its publishEncryptedProjection sink). */
@@ -95,11 +113,18 @@ export class HumanCollaborationHostTransport {
     room?.socket?.close()
     this.rooms.delete(roomId)
     for (const [sessionId, mapped] of this.sessionToRoom) {
-      if (mapped === roomId) this.sessionToRoom.delete(sessionId)
+      if (mapped !== roomId) continue
+      this.sessionToRoom.delete(sessionId)
+      // Explicitly drop the runtime session/subscriber so it doesn't linger
+      // until the next access self-heals it.
+      void this.runtime?.disconnect({ sessionId }).catch(() => {})
     }
   }
 
   dispose(): void {
+    if (this.flushTimer) clearTimeout(this.flushTimer)
+    this.flushTimer = null
+    this.trailingFlushScheduled = false
     for (const room of this.rooms.values()) room.socket?.close()
     this.rooms.clear()
     this.sessionToRoom.clear()
@@ -110,8 +135,38 @@ export class HumanCollaborationHostTransport {
   deliver(sessionId: string, frame: HumanCollaborationEncryptedFrame): void {
     const roomId = this.sessionToRoom.get(sessionId)
     const socket = roomId ? this.rooms.get(roomId)?.socket : null
-    if (!socket) return
-    socket.send(JSON.stringify(frame))
+    if (!socket) {
+      // No live room for this session — the host believes it published, so
+      // surface the drop rather than failing silently.
+      this.opts.log?.(`[collab-transport] dropped frame for session ${sessionId}: no live room`)
+      return
+    }
+    const data = JSON.stringify(frame)
+    if (data.length > MAX_OUTBOUND_FRAME_BYTES) {
+      // Skip rather than let the relay 1009-close the whole room (the projection
+      // is byte-budgeted at the source, so this should not normally fire).
+      this.opts.log?.(`[collab-transport] dropped oversized frame (${data.length}B) for ${sessionId}`)
+      return
+    }
+    socket.send(data)
+  }
+
+  /** Leading-edge + trailing coalesced projection flush (see FLUSH_MIN_INTERVAL_MS). */
+  private scheduleFlush(): void {
+    const since = this.now() - this.lastFlushAt
+    if (since >= FLUSH_MIN_INTERVAL_MS) {
+      this.lastFlushAt = this.now()
+      void this.runtime?.publishProjectionUpdates().catch(() => {})
+      return
+    }
+    if (this.trailingFlushScheduled) return
+    this.trailingFlushScheduled = true
+    this.flushTimer = setTimeout(() => {
+      this.trailingFlushScheduled = false
+      this.lastFlushAt = this.now()
+      void this.runtime?.publishProjectionUpdates().catch(() => {})
+    }, FLUSH_MIN_INTERVAL_MS - since)
+    this.flushTimer.unref?.()
   }
 
   private async handleInbound(roomId: string, data: string): Promise<void> {
@@ -129,9 +184,11 @@ export class HumanCollaborationHostTransport {
     if (message.t === 'humanCollaboration.enc') {
       try {
         await runtime.routeEncryptedAction(message)
-        // Flush projection updates to subscribers (the runtime's
+        // Coalesced flush of projection updates to subscribers (the runtime's
         // publishEncryptedProjection sink routes each sealed frame to its room).
-        await runtime.publishProjectionUpdates()
+        // Throttled so inbound-frame (e.g. subscribe) spam can't force unbounded
+        // rebuild+reseal+send.
+        this.scheduleFlush()
       } catch (err) {
         this.opts.log?.(
           `[collab-transport] route failed on room ${roomId}: ${

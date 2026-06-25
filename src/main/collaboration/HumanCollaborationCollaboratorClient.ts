@@ -112,7 +112,12 @@ export class HumanCollaborationCollaboratorClient {
       {
         onOpen: () => this.setConnected(true),
         onMessage: (data) => this.handleInbound(data),
-        onClose: () => this.setConnected(false),
+        onClose: () => {
+          this.setConnected(false)
+          // Fail fast: a drop mid-handshake should reject pending begin/confirm
+          // immediately instead of hanging on their 30s timeout.
+          this.rejectPending(new Error('Collaboration transport disconnected.'))
+        },
         onError: (err) => this.opts.onError?.(err)
       }
     )
@@ -215,14 +220,18 @@ export class HumanCollaborationCollaboratorClient {
         // best-effort
       }
     }
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer)
-      pending.reject(new Error('Collaboration client disposed.'))
-    }
-    this.pending.clear()
+    this.rejectPending(new Error('Collaboration client disposed.'))
     this.socket?.close()
     this.socket = null
     this.setConnected(false)
+  }
+
+  private rejectPending(err: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(err)
+    }
+    this.pending.clear()
   }
 
   private request(method: 'begin' | 'confirm', params: unknown): Promise<unknown> {

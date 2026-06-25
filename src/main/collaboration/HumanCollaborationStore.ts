@@ -177,12 +177,16 @@ export class HumanCollaborationStore {
     inviteToken: string
     displayName: string
     publicKeyId: string
+    chatId?: string
     now?: number
   }): ConsumeInviteResult {
     const now = args.now ?? Date.now()
     const state = this.findInvite({
       shareId: args.shareId,
       inviteToken: args.inviteToken,
+      // Re-bind the chat at consume time too (begin already checked it), so the
+      // terminal admission step never relies solely on pending-handshake integrity.
+      chatId: args.chatId,
       publicKeyId: args.publicKeyId,
       displayName: args.displayName,
       now

@@ -327,6 +327,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
             inviteToken: pending.inviteToken,
             displayName: pending.displayName,
             publicKeyId: pending.publicKeyId,
+            chatId: pending.chatId,
             now
           })
         : this.opts.store.validateParticipantSession({

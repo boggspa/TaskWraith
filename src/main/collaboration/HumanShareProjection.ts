@@ -36,12 +36,21 @@ export interface HumanShareProjection {
 export interface HumanShareProjectionOptions {
   maxRows?: number
   maxPreviewChars?: number
+  /** Hard byte budget for the serialized projection (relay frame-cap safety). */
+  maxBytes?: number
   generatedAt?: string
   hostLabel?: string
 }
 
 const DEFAULT_MAX_ROWS = 120
 const DEFAULT_MAX_PREVIEW_CHARS = 1200
+// Byte budget for the serialized projection. The transport seals it and the
+// dumb relay CLOSES the whole connection (ws 1009) on a frame over 1 MiB, so the
+// plaintext projection must stay well under that even after base64 (+~33%) +
+// envelope overhead. Multibyte content (emoji/CJK) inflates bytes ~3-4× per
+// char, so the row/char caps alone are not enough — we trim oldest rows until
+// the serialized projection fits.
+const DEFAULT_MAX_BYTES = 600_000
 
 export function buildHumanShareProjection(
   chat: ChatRecord,
@@ -50,6 +59,7 @@ export function buildHumanShareProjection(
 ): HumanShareProjection {
   const maxRows = clamp(opts.maxRows ?? DEFAULT_MAX_ROWS, 1, 300)
   const maxPreviewChars = clamp(opts.maxPreviewChars ?? DEFAULT_MAX_PREVIEW_CHARS, 120, 4000)
+  const maxBytes = clamp(opts.maxBytes ?? DEFAULT_MAX_BYTES, 8_000, 900_000)
   const projectable = (chat.messages || []).filter((message) => Boolean(message?.id))
   const rows = projectable.slice(Math.max(0, projectable.length - maxRows)).map((message) =>
     projectRow(message, {
@@ -58,7 +68,7 @@ export function buildHumanShareProjection(
       workspacePath: chat.workspacePath
     })
   )
-  return {
+  const projection: HumanShareProjection = {
     schemaVersion: 1,
     shareId: share.shareId,
     chatId: chat.appChatId,
@@ -73,6 +83,17 @@ export function buildHumanShareProjection(
     rows,
     totalRows: projectable.length
   }
+  // Byte-budget trim: drop OLDEST rows (keep the most recent context) until the
+  // serialized projection fits, so a long/multibyte transcript can never produce
+  // a frame the relay will reject.
+  while (projection.rows.length > 1 && byteLength(projection) > maxBytes) {
+    projection.rows.shift()
+  }
+  return projection
+}
+
+function byteLength(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8')
 }
 
 function projectRow(

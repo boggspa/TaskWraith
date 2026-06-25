@@ -166,6 +166,27 @@ describe('buildHumanShareProjection', () => {
     expect(projection.rows[0].preview).toBe('wrote [host-home]')
   })
 
+  it('byte-budget trims oldest rows so a long transcript fits the frame cap', () => {
+    const big = 'x'.repeat(2000)
+    const messages = Array.from({ length: 60 }, (_, i) => ({
+      id: `m-${i}`,
+      role: 'assistant' as const,
+      content: `row${i}-${big}`,
+      timestamp: '2026-06-25T00:00:00.000Z'
+    }))
+    const projection = buildHumanShareProjection(
+      chat({ messages, workspacePath: undefined }),
+      share,
+      { maxBytes: 20_000, generatedAt: '2026-06-25T00:00:03.000Z' }
+    )
+    // Fits the budget (with a small slop for the trim granularity of one row).
+    expect(Buffer.byteLength(JSON.stringify(projection), 'utf8')).toBeLessThanOrEqual(22_000)
+    // It dropped the OLDEST rows but kept the most recent context.
+    expect(projection.rows.length).toBeLessThan(60)
+    expect(projection.rows[projection.rows.length - 1].preview).toContain('row59')
+    expect(projection.totalRows).toBe(60)
+  })
+
   it('scrubs credentials echoed into host/assistant content and the title', () => {
     const key = 'sk' + '-ABCDEF0123456789abcdef'
     const projection = buildHumanShareProjection(
