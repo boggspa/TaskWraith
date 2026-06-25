@@ -1500,6 +1500,38 @@ function App(): React.JSX.Element {
         window.alert('Could not create or copy People invite.')
       })
   }, [currentChat?.appChatId, refreshHumanCollaborationShares])
+  // Host-side "Stop sharing": revoke every enabled share on the current chat
+  // (audit finding L6-1 — the revoke bridge existed with no renderer caller).
+  // Confirm first, then revoke each enabled share and re-derive the shared set.
+  const handleStopHumanCollaborationSharing = useCallback(() => {
+    const chatId = currentChat?.appChatId
+    if (
+      !chatId ||
+      typeof window.api.humanCollaborationListShares !== 'function' ||
+      typeof window.api.humanCollaborationRevokeShare !== 'function'
+    )
+      return
+    if (
+      !window.confirm(
+        'Stop sharing this chat? Collaborators will lose access immediately.'
+      )
+    )
+      return
+    void window.api
+      .humanCollaborationListShares(chatId)
+      .then(async (shares) => {
+        for (const share of shares || []) {
+          if (typeof share?.shareId !== 'string' || share?.enabled === false) continue
+          await window.api.humanCollaborationRevokeShare(share.shareId)
+        }
+        refreshHumanCollaborationShares()
+      })
+      .catch((error) => {
+        console.error('[human-collaboration] stop sharing failed', error)
+        window.alert('Could not stop sharing this chat.')
+        refreshHumanCollaborationShares()
+      })
+  }, [currentChat?.appChatId, refreshHumanCollaborationShares])
   const [isRunning, setIsRunning] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedRunRequest[]>([])
   // Mirror of `queuedRuns` for handlers that need synchronous
@@ -22287,6 +22319,22 @@ function App(): React.JSX.Element {
                       <span className="human-collaboration-live-dot" aria-label="Shared" />
                     )}
                   </button>
+                  {collaboratingChatIds.has(currentChat.appChatId) && (
+                    <button
+                      type="button"
+                      className="human-collaboration-people-btn human-collaboration-stop-btn"
+                      onClick={handleStopHumanCollaborationSharing}
+                      title="Stop sharing this chat and revoke all collaborators"
+                      style={{
+                        marginInlineStart: 6,
+                        borderColor:
+                          'color-mix(in srgb, var(--danger, #e54d4d) 44%, var(--panel-border))',
+                        color: 'color-mix(in srgb, var(--danger, #e54d4d) 88%, var(--text-primary))'
+                      }}
+                    >
+                      Stop sharing
+                    </button>
+                  )}
                 </div>
               )}
               <TranscriptPanel
