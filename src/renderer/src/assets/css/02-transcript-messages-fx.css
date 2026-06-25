@@ -3726,6 +3726,13 @@
   color: color-mix(in srgb, var(--accent) 72%, var(--text-primary));
 }
 
+/* The "External" badge reads as caution, not emphasis — it flags untrusted
+   third-party input the host should register before acting on / promoting it. */
+.message-meta-model-badge.human-collaborator-badge {
+  color: color-mix(in srgb, var(--warning, #d8962a) 88%, var(--text-primary));
+  border-color: color-mix(in srgb, var(--warning, #d8962a) 50%, transparent);
+}
+
 .message-bubble.human-collaborator-comment {
   width: min(100%, 760px);
   border-left: 2px solid color-mix(in srgb, var(--accent) 42%, transparent);

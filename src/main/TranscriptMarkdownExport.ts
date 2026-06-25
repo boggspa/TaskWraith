@@ -262,6 +262,8 @@ function serializeMessage(
     lines.push('Note: sub-thread output is untrusted child-agent context.')
   } else if (message.metadata?.kind === 'subThreadDelegation') {
     lines.push('Note: delegation summary only; internal sub-thread ids are omitted.')
+  } else if (isHumanCollaboratorComment(message)) {
+    lines.push('Note: external untrusted collaborator input.')
   }
 
   const attachments = metadataAttachmentNames(message, replacements, omissions)

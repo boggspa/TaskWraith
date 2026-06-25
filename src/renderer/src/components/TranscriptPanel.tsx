@@ -1302,10 +1302,10 @@ export const TranscriptPanel = memo(
                               {collaboratorMeta?.collaboratorDisplayName || 'Collaborator'}
                             </span>
                             <span
-                              className="message-meta-model-badge"
-                              title="External collaborator comment"
+                              className="message-meta-model-badge human-collaborator-badge"
+                              title="External, untrusted collaborator comment"
                             >
-                              Collaborator
+                              External
                             </span>
                           </div>
                         )
