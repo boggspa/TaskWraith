@@ -20,6 +20,7 @@ import {
   sealHumanCollaborationMessage
 } from '../../shared/collaboration/HumanCollaborationCipher'
 import {
+  HUMAN_COLLABORATION_EVENTS,
   HUMAN_COLLABORATION_METHODS,
   type HumanCollaborationAppendCommentInput,
   type HumanCollaborationBeginHandshakeInput,
@@ -438,7 +439,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     projection: ProjectionType
   ): HumanCollaborationEncryptedFrame {
     return this.sealForCollaborator(sessionId, {
-      method: HUMAN_COLLABORATION_METHODS.projectionUpdate,
+      method: HUMAN_COLLABORATION_EVENTS.projectionUpdate,
       params: { projection }
     })
   }

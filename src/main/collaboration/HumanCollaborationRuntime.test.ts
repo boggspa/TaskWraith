@@ -20,6 +20,7 @@ import {
 } from '../../shared/collaboration/HumanCollaborationCipher'
 import { hashInviteToken, HumanCollaborationStore } from './HumanCollaborationStore'
 import {
+  HUMAN_COLLABORATION_EVENTS,
   HUMAN_COLLABORATION_METHODS,
   HUMAN_COLLABORATION_PROTOCOL,
   type HumanCollaborationBeginHandshakeInput,
@@ -447,7 +448,7 @@ describe('HumanCollaborationRuntime', () => {
       frame: projectionFrame
     })
     expect(openedProjection).toMatchObject({
-      method: HUMAN_COLLABORATION_METHODS.projectionUpdate,
+      method: HUMAN_COLLABORATION_EVENTS.projectionUpdate,
       params: { projection: { rows: ['allowed'] } }
     })
 

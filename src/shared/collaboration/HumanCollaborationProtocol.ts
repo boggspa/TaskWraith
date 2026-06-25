@@ -4,13 +4,19 @@ export const HUMAN_COLLABORATION_METHODS = {
   beginHandshake: 'humanCollaboration.handshake.begin',
   confirmSas: 'humanCollaboration.handshake.confirmSas',
   subscribeProjection: 'humanCollaboration.projection.subscribe',
-  projectionUpdate: 'humanCollaboration.projection.update',
   appendComment: 'humanCollaboration.comment.append',
   disconnect: 'humanCollaboration.disconnect'
 } as const
 
+export const HUMAN_COLLABORATION_EVENTS = {
+  projectionUpdate: 'humanCollaboration.projection.update'
+} as const
+
 export type HumanCollaborationMethod =
   (typeof HUMAN_COLLABORATION_METHODS)[keyof typeof HUMAN_COLLABORATION_METHODS]
+export type HumanCollaborationEvent =
+  (typeof HUMAN_COLLABORATION_EVENTS)[keyof typeof HUMAN_COLLABORATION_EVENTS]
+export type HumanCollaborationWireName = HumanCollaborationMethod | HumanCollaborationEvent
 
 export type HumanCollaborationHandshakeMode = 'admission' | 'reconnect'
 export type HumanCollaborationFrameDirection = 'hostToCollaborator' | 'collaboratorToHost'
@@ -91,7 +97,7 @@ export interface HumanCollaborationDisconnectInput {
 
 export interface HumanCollaborationPlainMessage {
   msgId: number
-  method: HumanCollaborationMethod
+  method: HumanCollaborationWireName
   params?: unknown
 }
 

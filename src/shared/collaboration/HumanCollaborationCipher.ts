@@ -3,15 +3,18 @@ import { b64 } from '../e2ee/keys'
 import type { Direction } from '../e2ee/protocol'
 import type { HumanCollaborationSessionKeys } from './HumanCollaborationKeySchedule'
 import {
+  HUMAN_COLLABORATION_EVENTS,
   HUMAN_COLLABORATION_METHODS,
   HUMAN_COLLABORATION_PROTOCOL,
   type HumanCollaborationEncryptedFrame,
   type HumanCollaborationFrameDirection,
-  type HumanCollaborationMethod,
   type HumanCollaborationPlainMessage
 } from './HumanCollaborationProtocol'
 
-const METHODS = new Set<string>(Object.values(HUMAN_COLLABORATION_METHODS))
+const WIRE_NAMES = new Set<string>([
+  ...Object.values(HUMAN_COLLABORATION_METHODS),
+  ...Object.values(HUMAN_COLLABORATION_EVENTS)
+])
 
 export function sealHumanCollaborationMessage(args: {
   keys: HumanCollaborationSessionKeys
@@ -84,12 +87,12 @@ function parsePlainMessage(plaintext: Buffer): HumanCollaborationPlainMessage {
   ) {
     throw new Error('Collaboration frame message id is invalid.')
   }
-  if (typeof candidate.method !== 'string' || !METHODS.has(candidate.method)) {
+  if (typeof candidate.method !== 'string' || !WIRE_NAMES.has(candidate.method)) {
     throw new Error('Collaboration frame method is not allowed.')
   }
   return {
     msgId: candidate.msgId,
-    method: candidate.method as HumanCollaborationMethod,
+    method: candidate.method as HumanCollaborationPlainMessage['method'],
     ...(candidate.params !== undefined ? { params: candidate.params } : {})
   }
 }
