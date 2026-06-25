@@ -2883,7 +2883,17 @@ public final class RemoteSessionModel: ObservableObject {
             return media
         } catch {
             await MainActor.run {
-                self.lastActionMessage = String(describing: error)
+                // Same phase guard as send() and requestThreadSnapshot: a media-fetch ack can
+                // time out on a slow Mac while the socket is healthy. Calm copy when connected;
+                // alarming banner preserved for genuinely disconnected/asleep Mac.
+                // Re-throw is unconditional so the caller (media loading UI) still receives the error.
+                let errorText = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                if case .connected = self.phase, errorText == "timeout" {
+                    self.lastActionMessage =
+                        "Your Mac is taking longer than usual to respond — it's still connected."
+                } else {
+                    self.lastActionMessage = String(describing: error)
+                }
             }
             throw error
         }
@@ -3505,7 +3515,18 @@ public final class RemoteSessionModel: ObservableObject {
                     self.mergeThreadSnapshot(thread, key: thread.taskId ?? thread.threadId ?? threadId)
                 }
             } catch {
-                self.lastActionMessage = String(describing: error)
+                // Mirror the send() guard (line ~4241): a background snapshot ack can time out
+                // even while the socket is healthy (slow Mac, heavy op right after connect).
+                // Emit calm copy when connected so the alarming "may be busy or asleep" banner
+                // (driven by twFriendlyMessage/"timeout" keyword match) is not shown falsely.
+                // When phase is NOT .connected the else branch fires the alarming banner normally.
+                let errorText = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                if case .connected = self.phase, errorText == "timeout" {
+                    self.lastActionMessage =
+                        "Your Mac is taking longer than usual to respond — it's still connected."
+                } else {
+                    self.lastActionMessage = String(describing: error)
+                }
             }
         }
     }
@@ -3526,7 +3547,16 @@ public final class RemoteSessionModel: ObservableObject {
                     self.mergeThreadSnapshot(thread, key: thread.taskId ?? thread.threadId ?? threadId)
                 }
             } catch {
-                self.lastActionMessage = String(describing: error)
+                // Same phase guard as requestThreadSnapshot and send(): a "load older messages"
+                // ack can time out on a slow-but-connected Mac without the Mac being asleep.
+                // Calm copy while connected; alarming banner preserved for genuinely disconnected.
+                let errorText = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                if case .connected = self.phase, errorText == "timeout" {
+                    self.lastActionMessage =
+                        "Your Mac is taking longer than usual to respond — it's still connected."
+                } else {
+                    self.lastActionMessage = String(describing: error)
+                }
             }
             self.loadingPreviousThreadRows.remove(threadId)
         }
