@@ -3537,13 +3537,15 @@
 .app-sidebar .sidebar-recents-section .sidebar-section-header,
 .app-sidebar .sidebar-pinned-section .sidebar-section-header,
 .app-sidebar .sidebar-ensembles-section .sidebar-section-header,
+.app-sidebar .sidebar-shared-section .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workspace-scroll .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-chats-section .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-active-runs-section .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-local-servers-section .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-workflows-section .sidebar-section-header,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-pinned-section .sidebar-section-header,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-ensembles-section .sidebar-section-header {
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-ensembles-section .sidebar-section-header,
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-shared-section .sidebar-section-header {
   background: transparent !important;
   border-bottom: 0 !important;
   box-shadow: none !important;
@@ -3559,7 +3561,8 @@
 .app-sidebar .sidebar-chats-header .sidebar-section-title,
 .app-sidebar .sidebar-recents-section .sidebar-section-title,
 .app-sidebar .sidebar-pinned-section .sidebar-section-title,
-.app-sidebar .sidebar-ensembles-section .sidebar-section-title {
+.app-sidebar .sidebar-ensembles-section .sidebar-section-title,
+.app-sidebar .sidebar-shared-section .sidebar-section-title {
   /* Sidebar chrome stays on the OS UI face: SF Pro on macOS, Segoe on Windows. */
   font-family:
     "SF Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
@@ -3613,7 +3616,8 @@
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-chats-header .sidebar-section-title,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-recents-section .sidebar-section-title,
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-pinned-section .sidebar-section-title,
-[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-ensembles-section .sidebar-section-title {
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-ensembles-section .sidebar-section-title,
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar .sidebar-shared-section .sidebar-section-title {
   background:
     linear-gradient(
       180deg,
