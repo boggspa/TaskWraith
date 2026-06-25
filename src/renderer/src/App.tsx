@@ -385,6 +385,7 @@ import {
   getSteerIndicatorMessage,
   isSteerInFlight,
   markSteerFailed,
+  resolveSteerCancelTargetRunId,
   resetSteer,
   transitionToDispatching,
   type SteerState
@@ -12231,16 +12232,21 @@ function App(): React.JSX.Element {
 
     // Find the active run context (used for the cancel-target runId
     // and the post-cancel poll predicate).
-    let activeContext: ActiveRunContext | null = null
-    for (const ctx of activeRunsRef.current.values()) {
-      if (ctx.chatId === targetChatId) {
-        activeContext = ctx
-        break
-      }
-    }
+    const activeContext = resolveActiveRunContextForChat(targetChatId)
+    const targetChatRecord = targetChat?.appChatId
+      ? chatByIdRef.current.get(targetChat.appChatId) || targetChat
+      : null
+
+    const cancelTargetRunId = resolveSteerCancelTargetRunId({
+      chatId: targetChatId,
+      activeContext,
+      activeRunId: activeRunIdRef.current,
+      activeRunChatId: activeRunChatIdRef.current,
+      runQueueJobs: runQueueJobsRef.current,
+      targetChat: targetChatRecord
+    })
 
     const providerLabel = getProviderLabel(request.provider)
-    const cancelTargetRunId = activeContext?.runId
 
     // Enter `cancelling` phase + clear composer state up-front so the
     // user can't double-submit. The transcript gets a dispatch
