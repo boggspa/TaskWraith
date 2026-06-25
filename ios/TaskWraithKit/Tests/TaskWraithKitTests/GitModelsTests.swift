@@ -249,4 +249,86 @@ struct GitModelsTests {
         #expect(fullPayload["variant"] as? String == "full")
         #expect(fullPayload["maxBytes"] as? Int == 8 * 1024 * 1024)
     }
+
+    @Test("threadMediaFetch range mode emits offset/length; unranged omits them")
+    func threadMediaFetchRangeEncodes() throws {
+        func decode(_ params: [String: Any]) throws -> [String: Any] {
+            let payloadBase64 = try #require(params["payloadBase64"] as? String)
+            let payloadData = try #require(Data(base64Encoded: payloadBase64))
+            return try #require(
+                try JSONSerialization.jsonObject(with: payloadData) as? [String: Any])
+        }
+
+        // Range mode: BOTH offset + length present → both keys emitted.
+        let ranged = BridgeAction.threadMediaFetch(
+            workspaceId: "ws-1", threadId: "t-1", rowId: "m7", mediaId: "media-1",
+            variant: "full", maxBytes: 448 * 1024, offset: 1024, length: 448 * 1024)
+        let rangedPayload = try decode(ranged)
+        #expect(rangedPayload["offset"] as? Int == 1024)
+        #expect(rangedPayload["length"] as? Int == 448 * 1024)
+        #expect(rangedPayload["variant"] as? String == "full")
+
+        // Unranged (default call, no offset/length) → keys MUST be absent so the
+        // payload encodes byte-identically to the pre-range helper.
+        let unranged = BridgeAction.threadMediaFetch(
+            workspaceId: "ws-1", threadId: "t-1", rowId: "m7", mediaId: "media-1",
+            variant: "thumbnail", maxBytes: 128_000)
+        let unrangedPayload = try decode(unranged)
+        #expect(unrangedPayload["offset"] == nil)
+        #expect(unrangedPayload["length"] == nil)
+
+        // Only one of the pair supplied → still omitted (both-or-nothing).
+        let halfOffset = BridgeAction.threadMediaFetch(
+            workspaceId: "ws-1", threadId: "t-1", rowId: "m7", mediaId: "media-1",
+            offset: 1024)
+        #expect(try decode(halfOffset)["offset"] == nil)
+        let halfLength = BridgeAction.threadMediaFetch(
+            workspaceId: "ws-1", threadId: "t-1", rowId: "m7", mediaId: "media-1",
+            length: 4096)
+        #expect(try decode(halfLength)["length"] == nil)
+    }
+
+    @Test("TranscriptMediaFetchResult decodes range fields and stays backward-compatible")
+    func decodeRangeMediaFetchAck() throws {
+        // Range-mode ack: totalBytes + offset present alongside the slice bytes.
+        let rangeJson = """
+            {
+              "accepted": true, "executed": true, "message": "Fetched media slice.",
+              "data": {
+                "mediaId": "media-1",
+                "media": {
+                  "id": "media-1",
+                  "mimeType": "video/mp4",
+                  "dataBase64": "AAECAwQF",
+                  "byteLength": 6,
+                  "offset": 1024,
+                  "totalBytes": 1048576,
+                  "variant": "full"
+                }
+              }
+            }
+            """
+        let rangeAck = try JSONDecoder().decode(BridgeActionAck.self, from: Data(rangeJson.utf8))
+        let rangeMedia = try #require(rangeAck.data?.media)
+        #expect(rangeMedia.totalBytes == 1_048_576)
+        #expect(rangeMedia.offset == 1024)
+        #expect(rangeMedia.byteLength == 6)
+        #expect(rangeMedia.mimeType == "video/mp4")
+
+        // A legacy (no-range) media payload still decodes; the new optionals → nil.
+        let legacyJson = """
+            {
+              "id": "media-2",
+              "mimeType": "image/png",
+              "dataBase64": "iVBORw0KGgo=",
+              "byteLength": 8,
+              "variant": "thumbnail"
+            }
+            """
+        let legacy = try JSONDecoder().decode(
+            TranscriptMediaFetchResult.self, from: Data(legacyJson.utf8))
+        #expect(legacy.totalBytes == nil)
+        #expect(legacy.offset == nil)
+        #expect(legacy.byteLength == 8)
+    }
 }

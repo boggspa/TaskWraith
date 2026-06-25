@@ -2914,6 +2914,49 @@ public final class RemoteSessionModel: ObservableObject {
         }
     }
 
+    /// Fetch ONE byte slice of a transcript media asset in range mode, for the
+    /// AVAssetResourceLoaderDelegate that streams large AV to AVPlayer. Mirrors
+    /// `fetchThreadMedia` exactly (same gating + connected-phase timeout remap),
+    /// but requests `variant: "full"` with `offset`/`length` and returns the raw
+    /// bytes plus the asset's total size. The Mac hard-clamps each slice to
+    /// 448 KiB, so the returned data may be shorter than `length` — the caller
+    /// advances by `data.count`, never by the requested length.
+    public func fetchThreadMediaChunk(
+        threadId: String, rowId: String, mediaId: String,
+        offset: Int, length: Int
+    ) async throws -> (data: Data, totalBytes: Int) {
+        guard !isDemo else { throw RemoteFileActionError.denied("Demo mode has no Mac media store.") }
+        guard let workspaceId = remoteScopeForThread(threadId)
+        else { throw RemoteFileActionError.denied("Thread is not in an allowlisted workspace.") }
+        let params = BridgeAction.threadMediaFetch(
+            workspaceId: workspaceId, threadId: threadId, rowId: rowId, mediaId: mediaId,
+            variant: "full", maxBytes: max(length, 1), offset: offset, length: length)
+        do {
+            let ack = try await requestFileAction(params, timeoutMs: 30_000)
+            guard let media = ack.data?.media else { throw RemoteFileActionError.malformedAck }
+            guard let data = Data(base64Encoded: media.dataBase64) else {
+                throw RemoteFileActionError.malformedAck
+            }
+            return (data, media.totalBytes ?? media.byteLength ?? data.count)
+        } catch {
+            await MainActor.run {
+                // Same phase guard as fetchThreadMedia: a slice ack can time out
+                // on a slow Mac while the socket is healthy. Calm copy when
+                // connected; alarming banner preserved for a genuinely
+                // disconnected/asleep Mac. Re-throw is unconditional so the
+                // resource loader still surfaces the error to AVFoundation.
+                let errorText = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                if case .connected = self.phase, errorText == "timeout" {
+                    self.lastActionMessage =
+                        "Your Mac is taking longer than usual to respond — it's still connected."
+                } else {
+                    self.lastActionMessage = String(describing: error)
+                }
+            }
+            throw error
+        }
+    }
+
     /// Display name for a workspace id (telemetry rail / headers).
     public func workspaceName(for workspaceId: String?) -> String? {
         guard let workspaceId else { return nil }

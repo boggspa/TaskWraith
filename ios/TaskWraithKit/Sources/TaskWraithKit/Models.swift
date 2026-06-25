@@ -750,6 +750,14 @@ public struct TranscriptMediaFetchResult: Codable, Sendable, Hashable {
     public let height: Int?
     public let byteLength: Int?
     public let variant: String?
+    /// Range mode only (`threadMediaFetch` with `offset`/`length`): the full
+    /// asset size, so the resource loader can fill AVFoundation's content-info
+    /// and stop at the end. Absent for thumbnail/whole-asset fetches → nil
+    /// (synthesized Codable stays backward-compatible).
+    public let totalBytes: Int?
+    /// Range mode only: the absolute byte offset of THIS slice within the asset
+    /// (echoes the requested `offset`, server-clamped).
+    public let offset: Int?
 }
 
 /// A discoverable TaskWraith host the phone can offer to pair with — the PUBLIC
@@ -1750,16 +1758,29 @@ public enum BridgeAction {
 
     /// Fetch bounded bytes for one transcript media item. The Mac validates the
     /// media id against the requested thread + row before returning bytes.
+    ///
+    /// `offset`/`length` opt into range mode: when BOTH are supplied the Mac
+    /// returns a byte slice `{ dataBase64, byteLength, offset, totalBytes }`
+    /// (each slice hard-clamped to 448 KiB server-side) so AVFoundation can pull
+    /// a large asset in chunks via an AVAssetResourceLoaderDelegate. The keys
+    /// are emitted only when both are present so an unranged fetch encodes
+    /// byte-identically to before.
     public static func threadMediaFetch(
         workspaceId: String, threadId: String, rowId: String, mediaId: String,
         variant: String = "thumbnail", maxBytes: Int = 512000,
-        actionId: String = UUID().uuidString
+        actionId: String = UUID().uuidString,
+        offset: Int? = nil, length: Int? = nil
     ) -> [String: Any] {
-        encode([
+        var payload: [String: Any] = [
             "kind": "threadMediaFetch", "actionId": actionId,
             "workspaceId": workspaceId, "threadId": threadId, "rowId": rowId,
             "mediaId": mediaId, "variant": variant, "maxBytes": maxBytes,
-        ])
+        ]
+        if let offset, let length {
+            payload["offset"] = offset
+            payload["length"] = length
+        }
+        return encode(payload)
     }
 
     /// Request a bounded transcript window for one thread. Read-only
