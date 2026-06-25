@@ -2372,7 +2372,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       description:
         "Re-encode a segment of a workspace video to H.264 MP4 using the OS's built-in VideoToolbox " +
         '(hardware-accelerated; no ffmpeg required). Params: inputPath, scaleWidth (output width px, height ' +
-        'auto), targetBitrateKbps, startSeconds, durationSeconds. Writes a new file; gated as a file change.',
+        'auto), targetBitrateKbps, startSeconds, durationSeconds. Optionally composites a workspace image ' +
+        '(PNG/JPEG/WebP) watermark/logo over every frame via overlayPath (+ overlayX/overlayY/overlayWidth/' +
+        'overlayOpacity). Writes a new file; gated as a file change.',
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: {
         type: 'object',
@@ -2381,7 +2383,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           scaleWidth: { type: 'number', description: 'Output width in px; height auto.' },
           targetBitrateKbps: { type: 'number', description: 'Target H.264 bitrate in kbps.' },
           startSeconds: { type: 'number', description: 'Clip start offset in seconds.' },
-          durationSeconds: { type: 'number', description: 'Clip duration in seconds.' }
+          durationSeconds: { type: 'number', description: 'Clip duration in seconds.' },
+          overlayPath: { type: 'string', description: 'Workspace path to a PNG/JPEG/WebP image composited over every frame.' },
+          overlayX: { type: 'number', description: 'Overlay top-left X in output px, default 0.' },
+          overlayY: { type: 'number', description: 'Overlay top-left Y in output px (top-left origin), default 0.' },
+          overlayWidth: { type: 'number', description: 'Scale overlay to this width in px, aspect preserved.' },
+          overlayOpacity: { type: 'number', description: 'Overlay opacity 0.0–1.0, default 1.0.' }
         },
         required: ['inputPath']
       }

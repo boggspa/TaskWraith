@@ -42,15 +42,26 @@ export interface VtToolContext {
 
 export interface VtToolDeps {
   jailInput: (sourcePath: string, ctx: VtToolContext) => { ok: true; realPath: string } | { ok: false; reason: string }
+  /**
+   * Realpath-jail a workspace IMAGE path for the optional encode overlay. DISTINCT
+   * from `jailInput`: the overlay is a PNG/JPEG/WebP composited over every frame, so
+   * this jails via `validateWorkspaceImagePath` (accepts PNG/JPEG/WebP, REJECTS SVG,
+   * size-capped). It must NOT reuse `jailInput`, whose `validateWorkspaceMediaPath`
+   * sniffs AUDIO/VIDEO mime and would reject a PNG as `unsupported`.
+   */
+  jailOverlay: (overlayPath: string, ctx: VtToolContext) => { ok: true; realPath: string } | { ok: false; reason: string }
   decodeFrame: (params: { inputPath: string; timestampSeconds?: number; preferHardware?: boolean }) =>
     Promise<{ pngBase64: string; width: number; height: number; timestampSeconds: number; codec: string; usedHardware: boolean }>
   /**
    * `video.encodeClip` daemon RPC — re-encode a segment of the (already-jailed)
    * source video to an H.264 MP4 written at the TS-supplied `outputPath` (a dir WE
    * own). Resolves with the produced clip's metadata; REJECTS on failure. TS reads +
-   * deletes `outputPath` afterwards.
+   * deletes `outputPath` afterwards. `overlayPath` (when present) is the JAILED
+   * realPath of an image composited over every frame at (`overlayX`,`overlayY`),
+   * optionally scaled to `overlayWidth` (aspect preserved) at `overlayOpacity` (the
+   * daemon clamps to 0..1).
    */
-  encodeClip: (params: { sourcePath: string; outputPath: string; scaleWidth?: number; targetBitrateKbps?: number; startSeconds?: number; durationSeconds?: number }) =>
+  encodeClip: (params: { sourcePath: string; outputPath: string; scaleWidth?: number; targetBitrateKbps?: number; startSeconds?: number; durationSeconds?: number; overlayPath?: string; overlayX?: number; overlayY?: number; overlayWidth?: number; overlayOpacity?: number }) =>
     Promise<{ width: number; height: number; durationMs: number; codec: string; usedHardware: boolean }>
   /** An absolute staging file path (a dir WE own, never agent-supplied) for the encoded output. */
   stagingPath: (ext: string) => string
@@ -106,7 +117,7 @@ function humanBytes(n: number): string {
 }
 
 export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
-  const { jailInput, decodeFrame, encodeClip, stagingPath, readOutput, persistOutput, removeFile } = deps
+  const { jailInput, jailOverlay, decodeFrame, encodeClip, stagingPath, readOutput, persistOutput, removeFile } = deps
 
   async function executeVideoDecodeFrame(
     args: Record<string, unknown>,
@@ -188,6 +199,29 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       return fail('video_encode_clip', `could not read video: ${jailed.reason}`)
     }
 
+    // Optional CoreImage overlay — an IMAGE (PNG/JPEG/WebP) composited over every
+    // frame. Jailed through the SEPARATE image jail (validateWorkspaceImagePath),
+    // NOT jailInput (whose video/audio mime-sniff rejects a PNG as `unsupported`).
+    // Position/scale/opacity are plain numbers the daemon clamps; only forwarded
+    // when an overlay is actually supplied.
+    let overlayRealPath: string | undefined
+    let overlayX: number | undefined
+    let overlayY: number | undefined
+    let overlayWidth: number | undefined
+    let overlayOpacity: number | undefined
+    const overlayPath = typeof args.overlayPath === 'string' ? args.overlayPath.trim() : ''
+    if (overlayPath) {
+      const jailedOverlay = jailOverlay(overlayPath, ctx)
+      if (!jailedOverlay.ok) {
+        return fail('video_encode_clip', `could not read overlay image: ${jailedOverlay.reason}`)
+      }
+      overlayRealPath = jailedOverlay.realPath
+      overlayX = numArg(args.overlayX)
+      overlayY = numArg(args.overlayY)
+      overlayWidth = numArg(args.overlayWidth)
+      overlayOpacity = numArg(args.overlayOpacity)
+    }
+
     const outputPath = stagingPath('mp4')
     const mimeType = 'video/mp4'
     try {
@@ -197,7 +231,12 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         scaleWidth,
         targetBitrateKbps,
         startSeconds,
-        durationSeconds
+        durationSeconds,
+        overlayPath: overlayRealPath,
+        overlayX,
+        overlayY,
+        overlayWidth,
+        overlayOpacity
       })
       let buffer: Buffer
       try {
@@ -224,7 +263,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       if (!ref) return fail('video_encode_clip', `internal: unsupported output mime ${mimeType}`)
       const summary =
         `Encoded clip → ${result.width}×${result.height}, ${(result.durationMs / 1000).toFixed(1)}s, ` +
-        `${result.codec} (${humanBytes(buffer.length)}, ${result.usedHardware ? 'hardware' : 'software'})`
+        `${result.codec} (${humanBytes(buffer.length)}, ${result.usedHardware ? 'hardware' : 'software'})` +
+        (overlayRealPath ? ' + overlay' : '')
       return {
         text: summary,
         content: [{ type: 'text', text: summary }],

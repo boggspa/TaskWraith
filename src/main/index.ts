@@ -2001,6 +2001,26 @@ const vtToolExecutors = createVtToolExecutors({
       ? { ok: true, realPath: validation.realPath }
       : { ok: false, reason: validation.reason }
   },
+  // S3-2 — jail an OVERLAY image (PNG/JPEG/WebP). MUST use the IMAGE validator
+  // (validateWorkspaceImagePath sniffs raster mime, rejects SVG, size-caps), NOT
+  // the video jailInput above (validateWorkspaceMediaPath rejects a PNG as
+  // 'unsupported' since it only sniffs audio/video).
+  jailOverlay: (overlayPath, ctx) => {
+    const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
+    if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve overlayPath' }
+    const validation = validateWorkspaceImagePath({
+      workspaceId: chat.workspaceId,
+      workspacePath: chat.workspacePath,
+      candidatePath: overlayPath,
+      externalPathGrants: normalizeExternalPathGrants(
+        collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+      ),
+      maxBytes: TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
+    })
+    return validation.ok
+      ? { ok: true, realPath: validation.realPath }
+      : { ok: false, reason: validation.reason }
+  },
   decodeFrame: async (params) => {
     const daemon = bridgeDaemonRef
     if (!daemon) throw new Error('video bridge daemon is not running')

@@ -3,6 +3,7 @@ import AVFoundation
 import CoreMedia
 import CoreVideo
 import CoreGraphics
+import ImageIO
 @testable import TaskWraithBridgeDaemon
 
 /// Tests for the native VideoToolbox encode-to-MP4 path
@@ -434,6 +435,227 @@ final class VideoFrameEncoderTests: XCTestCase {
         XCTAssertFalse(frame0.pngData.isEmpty)
     }
 
+    // MARK: - Overlay composite (S3-2)
+
+    /// Param contract: the five overlay fields decode (defaults nil when absent).
+    func testOverlayParamsDecode() throws {
+        // Absent overlay fields → nil.
+        let bare: [String: Any] = ["sourcePath": "/tmp/in.mp4", "outputPath": "/tmp/out.mp4"]
+        let bareData = try JSONSerialization.data(withJSONObject: bare)
+        let bareParsed = try JSONDecoder().decode(VideoEncodeClipParams.self, from: bareData)
+        XCTAssertNil(bareParsed.overlayPath)
+        XCTAssertNil(bareParsed.overlayX)
+        XCTAssertNil(bareParsed.overlayY)
+        XCTAssertNil(bareParsed.overlayWidth)
+        XCTAssertNil(bareParsed.overlayOpacity)
+
+        // Fully populated overlay fields decode to the supplied values.
+        let full: [String: Any] = [
+            "sourcePath": "/tmp/in.mp4",
+            "outputPath": "/tmp/out.mp4",
+            "overlayPath": "/tmp/badge.png",
+            "overlayX": 12,
+            "overlayY": 24,
+            "overlayWidth": 48,
+            "overlayOpacity": 0.5
+        ]
+        let fullData = try JSONSerialization.data(withJSONObject: full)
+        let fullParsed = try JSONDecoder().decode(VideoEncodeClipParams.self, from: fullData)
+        XCTAssertEqual(fullParsed.overlayPath, "/tmp/badge.png")
+        XCTAssertEqual(fullParsed.overlayX, 12)
+        XCTAssertEqual(fullParsed.overlayY, 24)
+        XCTAssertEqual(fullParsed.overlayWidth, 48)
+        XCTAssertEqual(fullParsed.overlayOpacity, 0.5)
+    }
+
+    /// Overlay happy path: composite a small bright (red) overlay over a solid
+    /// dark source at a top-left position, then prove (a) the output is a valid
+    /// playable MP4 that re-decodes, and (b) the decoded pixel UNDER the overlay
+    /// is reddish while a pixel OUTSIDE it is not — proving the overlay landed at
+    /// the requested top-left coordinate (i.e. the bottom-left Y flip is correct).
+    func testOverlayCompositesAtTopLeftPosition() async throws {
+        let dim = 128
+        // A solid DARK source (every frame ~black-ish), so the bright overlay is
+        // unambiguous against it. makeTinyH264 already varies color per frame,
+        // but the source stays far from saturated red, so the contrast holds.
+        let srcURL = try await makeTinyH264(width: dim, height: dim, frames: 8)
+        defer { try? FileManager.default.removeItem(at: srcURL) }
+
+        // A 32×32 solid-red overlay PNG written to a temp file.
+        let overlayURL = try writeSolidPNG(width: 32, height: 32, r: 255, g: 0, b: 0, a: 255)
+        defer { try? FileManager.default.removeItem(at: overlayURL) }
+
+        let out = stagingURL()
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        // Position the overlay top-left at (10,10) → it covers output pixels
+        // x∈[10,42), y∈[10,42) (top-left origin). No scale → output == 128².
+        let clip = try await VideoFrameEncoder.encodeClip(
+            sourcePath: srcURL.path,
+            outputPath: out.path,
+            scaleWidth: nil,
+            targetBitrateKbps: nil,
+            startSeconds: nil,
+            durationSeconds: nil,
+            overlayPath: overlayURL.path,
+            overlayX: 10,
+            overlayY: 10,
+            overlayWidth: nil,
+            overlayOpacity: nil
+        )
+        XCTAssertEqual(clip.width, dim, "overlay-without-scale output keeps coded source width")
+        XCTAssertEqual(clip.height, dim)
+
+        // Valid, playable MP4: re-open + one video track at the right dims.
+        let outAsset = AVURLAsset(url: out)
+        let outTracks = try await outAsset.loadTracks(withMediaType: .video)
+        XCTAssertEqual(outTracks.count, 1, "overlay output must be a real single-track MP4")
+
+        // Decode frame 0 and prove the overlay composited at the TOP-LEFT spot.
+        let frame0 = try await VideoFrameDecoder.decodeFrame(
+            inputPath: out.path,
+            timestampSeconds: 0,
+            preferHardware: true
+        )
+        XCTAssertEqual(frame0.width, dim)
+        XCTAssertEqual(frame0.height, dim)
+        XCTAssertFalse(frame0.pngData.isEmpty)
+
+        // Sample the decoded PNG: a pixel INSIDE the overlay box (top-left
+        // ~(20,20)) must be reddish; a pixel well OUTSIDE it (~(100,100)) must
+        // not be. This is what verifies the bottom-left coordinate flip — a
+        // missing flip would place the red at the BOTTOM-left instead.
+        guard let inside = decodedPixel(frame0.pngData, x: 20, y: 20),
+              let outside = decodedPixel(frame0.pngData, x: 100, y: 100) else {
+            // Pixel sampling is best-effort; if the PNG can't be sampled in this
+            // environment we still proved a valid playable MP4 of the right dims
+            // above. The coordinate flip is covered by construction (ciY =
+            // evenH - overlayY - overlayHeight).
+            throw XCTSkip("Could not sample decoded PNG pixels in this environment")
+        }
+        XCTAssertGreaterThan(inside.r, 150, "pixel under the overlay should be strongly red (r=\(inside.r))")
+        XCTAssertGreaterThan(Int(inside.r) - Int(inside.g), 80, "overlay pixel red should dominate green")
+        XCTAssertGreaterThan(Int(inside.r) - Int(inside.b), 80, "overlay pixel red should dominate blue")
+        // Outside the overlay we must NOT see that saturated red (the source is
+        // dark / non-red there).
+        XCTAssertLessThan(outside.r, 150, "pixel outside the overlay must not be saturated red (r=\(outside.r))")
+    }
+
+    /// Overlay + scale together: downscale the frame AND composite a scaled
+    /// overlay → a valid playable MP4 at the scaled dims. Exercises the
+    /// `needsCoreImage = scaling || overlay` path where BOTH transforms run.
+    func testOverlayWithScaleProducesValidMP4() async throws {
+        let srcDim = 128
+        let srcURL = try await makeTinyH264(width: srcDim, height: srcDim, frames: 6)
+        defer { try? FileManager.default.removeItem(at: srcURL) }
+        let overlayURL = try writeSolidPNG(width: 40, height: 40, r: 0, g: 255, b: 0, a: 255)
+        defer { try? FileManager.default.removeItem(at: overlayURL) }
+        let out = stagingURL()
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        let clip = try await VideoFrameEncoder.encodeClip(
+            sourcePath: srcURL.path,
+            outputPath: out.path,
+            scaleWidth: 64, // downscale 128 → 64
+            targetBitrateKbps: nil,
+            startSeconds: nil,
+            durationSeconds: nil,
+            overlayPath: overlayURL.path,
+            overlayX: 4,
+            overlayY: 4,
+            overlayWidth: 24, // scale the overlay too
+            overlayOpacity: 0.8
+        )
+        XCTAssertEqual(clip.width, 64, "scaled output width")
+        XCTAssertEqual(clip.height, 64, "square source → square scaled output")
+
+        let outAsset = AVURLAsset(url: out)
+        let outTracks = try await outAsset.loadTracks(withMediaType: .video)
+        XCTAssertEqual(outTracks.count, 1)
+        let naturalSize = try await outTracks[0].load(.naturalSize)
+        XCTAssertEqual(Int(naturalSize.width.rounded()), 64)
+        XCTAssertEqual(Int(naturalSize.height.rounded()), 64)
+
+        // Genuinely decodes (overlay+scale composite is intact).
+        let frame0 = try await VideoFrameDecoder.decodeFrame(
+            inputPath: out.path,
+            timestampSeconds: 0,
+            preferHardware: true
+        )
+        XCTAssertEqual(frame0.width, 64)
+        XCTAssertFalse(frame0.pngData.isEmpty)
+    }
+
+    /// A missing / non-image overlay path → `.badInput`, and NO output file is
+    /// produced (we throw before writing anything we can observe).
+    func testMissingOverlayThrowsBadInput() async throws {
+        let dim = 64
+        let srcURL = try await makeTinyH264(width: dim, height: dim, frames: 4)
+        defer { try? FileManager.default.removeItem(at: srcURL) }
+        let out = stagingURL()
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        // Case A: a path that does not exist.
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("taskwraith-overlay-missing-\(UUID().uuidString).png")
+        do {
+            _ = try await VideoFrameEncoder.encodeClip(
+                sourcePath: srcURL.path,
+                outputPath: out.path,
+                scaleWidth: nil,
+                targetBitrateKbps: nil,
+                startSeconds: nil,
+                durationSeconds: nil,
+                overlayPath: missing.path,
+                overlayX: 0,
+                overlayY: 0,
+                overlayWidth: nil,
+                overlayOpacity: nil
+            )
+            XCTFail("Expected a throw for a missing overlay image")
+        } catch let err as VideoEncodeError {
+            guard case .badInput = err else {
+                return XCTFail("Expected .badInput for a missing overlay, got \(err)")
+            }
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: out.path),
+            "no output should be produced when the overlay fails to load"
+        )
+
+        // Case B: a path that exists but is NOT an image (CIImage returns nil).
+        let notImage = FileManager.default.temporaryDirectory
+            .appendingPathComponent("taskwraith-overlay-not-image-\(UUID().uuidString).png")
+        try Data("definitely not a PNG".utf8).write(to: notImage)
+        defer { try? FileManager.default.removeItem(at: notImage) }
+        let out2 = stagingURL()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        do {
+            _ = try await VideoFrameEncoder.encodeClip(
+                sourcePath: srcURL.path,
+                outputPath: out2.path,
+                scaleWidth: nil,
+                targetBitrateKbps: nil,
+                startSeconds: nil,
+                durationSeconds: nil,
+                overlayPath: notImage.path,
+                overlayX: 0,
+                overlayY: 0,
+                overlayWidth: nil,
+                overlayOpacity: nil
+            )
+            XCTFail("Expected a throw for a non-image overlay file")
+        } catch let err as VideoEncodeError {
+            guard case .badInput = err else {
+                return XCTFail("Expected .badInput for a non-image overlay, got \(err)")
+            }
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: out2.path),
+            "no output should be produced when the overlay is not an image"
+        )
+    }
+
     // MARK: - Helpers
 
     private func stagingURL() -> URL {
@@ -561,5 +783,97 @@ final class VideoFrameEncoderTests: XCTestCase {
                 px[3] = a
             }
         }
+    }
+
+    /// Write a solid-color RGBA PNG of the given size to a temp file and return
+    /// its URL. Used to synthesize the static overlay image the encoder loads.
+    private func writeSolidPNG(
+        width: Int,
+        height: Int,
+        r: UInt8, g: UInt8, b: UInt8, a: UInt8
+    ) throws -> URL {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            throw XCTSkip("Could not create a CGContext for the overlay PNG")
+        }
+        // Premultiplied-last (RGBA). For a fully-opaque solid the premultiply is
+        // a no-op; we keep `a` general but the tests use a=255.
+        ctx.setFillColor(
+            red: CGFloat(r) / 255.0,
+            green: CGFloat(g) / 255.0,
+            blue: CGFloat(b) / 255.0,
+            alpha: CGFloat(a) / 255.0
+        )
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let cgImage = ctx.makeImage() else {
+            throw XCTSkip("Could not render the overlay CGImage")
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("taskwraith-overlay-\(UUID().uuidString).png")
+        // PNG UTI without importing UniformTypeIdentifiers (broad availability).
+        guard let dest = CGImageDestinationCreateWithURL(
+            url as CFURL,
+            "public.png" as CFString,
+            1,
+            nil
+        ) else {
+            throw XCTSkip("Could not create a PNG image destination")
+        }
+        CGImageDestinationAddImage(dest, cgImage, nil)
+        guard CGImageDestinationFinalize(dest) else {
+            throw XCTSkip("Could not finalize the overlay PNG")
+        }
+        return url
+    }
+
+    /// Decode a PNG (the decoder's `pngData`) and sample one pixel's RGB at
+    /// (x,y) with a TOP-LEFT origin. Returns nil if the bytes can't be sampled.
+    private func decodedPixel(_ pngData: Data, x: Int, y: Int) -> (r: UInt8, g: UInt8, b: UInt8)? {
+        guard let provider = CGDataProvider(data: pngData as CFData),
+              let cgImage = CGImage(
+                pngDataProviderSource: provider,
+                decode: nil,
+                shouldInterpolate: false,
+                intent: .defaultIntent
+              ) else {
+            return nil
+        }
+        let width = cgImage.width
+        let height = cgImage.height
+        guard x >= 0, y >= 0, x < width, y < height else { return nil }
+        // Re-render into a known RGBA8 (premultiplied-last) buffer so the byte
+        // layout is deterministic regardless of the source PNG's format.
+        var buffer = [UInt8](repeating: 0, count: width * height * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        let sampled: (UInt8, UInt8, UInt8)? = buffer.withUnsafeMutableBytes { raw -> (UInt8, UInt8, UInt8)? in
+            guard let base = raw.baseAddress,
+                  let ctx = CGContext(
+                    data: base,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: width * 4,
+                    space: colorSpace,
+                    bitmapInfo: bitmapInfo
+                  ) else {
+                return nil
+            }
+            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let ptr = base.assumingMemoryBound(to: UInt8.self)
+            let offset = (y * width + x) * 4
+            return (ptr[offset], ptr[offset + 1], ptr[offset + 2]) // R, G, B
+        }
+        guard let s = sampled else { return nil }
+        return (s.0, s.1, s.2)
     }
 }

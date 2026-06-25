@@ -33,10 +33,16 @@ function build(overrides: Partial<VtToolDeps> = {}) {
     targetBitrateKbps?: number
     startSeconds?: number
     durationSeconds?: number
+    overlayPath?: string
+    overlayX?: number
+    overlayY?: number
+    overlayWidth?: number
+    overlayOpacity?: number
   } | null = null
   const removed: string[] = []
   const deps: VtToolDeps = {
     jailInput: vi.fn(() => ({ ok: true as const, realPath: '/ws/clip.mp4' })),
+    jailOverlay: vi.fn(() => ({ ok: true as const, realPath: '/ws/logo.png' })),
     decodeFrame: vi.fn(async (params) => {
       lastDecodeParams = params
       return { ...DECODE_RESULT }
@@ -272,5 +278,57 @@ describe('video_encode_clip', () => {
     const result = await executors.executeVtTool('video_encode_clip', { inputPath: 'clip.mp4' }, {})
     expect(result.isError).toBeFalsy()
     expect(result.text).toContain('software')
+  })
+
+  // Optional CoreImage overlay — jailed via the SEPARATE image jail (jailOverlay),
+  // NOT jailInput (whose video/audio mime-sniff would reject a PNG).
+  it('jails the overlay via jailOverlay and forwards the jailed realPath + position/opacity to encodeClip', async () => {
+    const { executors, deps, getEncodeParams } = build()
+    const result = await executors.executeVtTool(
+      'video_encode_clip',
+      { inputPath: 'clip.mp4', overlayPath: 'logo.png', overlayX: 12, overlayY: 24, overlayWidth: 96, overlayOpacity: 0.6 },
+      { appRunId: 'run-9' }
+    )
+    expect(result.isError).toBeFalsy()
+    // Overlay jailed through the image jail (NOT jailInput).
+    expect(deps.jailOverlay).toHaveBeenCalledWith('logo.png', { appRunId: 'run-9' })
+    // The JAILED overlay realPath + position/opacity are forwarded to the daemon.
+    expect(getEncodeParams()?.overlayPath).toBe('/ws/logo.png')
+    expect(getEncodeParams()?.overlayX).toBe(12)
+    expect(getEncodeParams()?.overlayY).toBe(24)
+    expect(getEncodeParams()?.overlayWidth).toBe(96)
+    expect(getEncodeParams()?.overlayOpacity).toBe(0.6)
+    // Still a trusted video ref; summary notes the overlay.
+    const refs = result.trustedMediaRefs ?? []
+    expect(refs).toHaveLength(1)
+    expect(refs[0].kind).toBe('video')
+    expect(result.text).toContain('+ overlay')
+  })
+
+  it('surfaces an overlay jail rejection WITHOUT calling encodeClip', async () => {
+    const { executors, deps } = build({
+      jailOverlay: vi.fn(() => ({ ok: false as const, reason: 'unsupported' }))
+    })
+    const result = await executors.executeVtTool(
+      'video_encode_clip',
+      { inputPath: 'clip.mp4', overlayPath: '../../etc/evil.svg' },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('could not read overlay image')
+    expect(result.text).toContain('unsupported')
+    // The input still got jailed, but the encode never ran.
+    expect(deps.jailInput).toHaveBeenCalled()
+    expect(deps.encodeClip).not.toHaveBeenCalled()
+  })
+
+  it('does NOT call jailOverlay when no overlayPath is supplied (unchanged path)', async () => {
+    const { executors, deps, getEncodeParams } = build()
+    const result = await executors.executeVtTool('video_encode_clip', { inputPath: 'clip.mp4' }, {})
+    expect(result.isError).toBeFalsy()
+    expect(deps.jailOverlay).not.toHaveBeenCalled()
+    expect(getEncodeParams()?.overlayPath).toBeUndefined()
+    expect(getEncodeParams()?.overlayX).toBeUndefined()
+    expect(result.text).not.toContain('+ overlay')
   })
 })

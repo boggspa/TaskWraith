@@ -850,6 +850,13 @@ struct VideoEncodeClipParams: Decodable {
     let targetBitrateKbps: Int?
     let startSeconds: Double?
     let durationSeconds: Double?
+    // Optional static-image overlay composited over every output frame. The TS
+    // side JAILS overlayPath to a realpath inside the allowed media roots.
+    let overlayPath: String?
+    let overlayX: Int?
+    let overlayY: Int?
+    let overlayWidth: Int?
+    let overlayOpacity: Double?
 }
 
 dispatcher.register("video.encodeClip") { params in
@@ -869,7 +876,12 @@ dispatcher.register("video.encodeClip") { params in
             scaleWidth = parsed.scaleWidth,
             targetBitrateKbps = parsed.targetBitrateKbps,
             startSeconds = parsed.startSeconds,
-            durationSeconds = parsed.durationSeconds
+            durationSeconds = parsed.durationSeconds,
+            overlayPath = parsed.overlayPath,
+            overlayX = parsed.overlayX,
+            overlayY = parsed.overlayY,
+            overlayWidth = parsed.overlayWidth,
+            overlayOpacity = parsed.overlayOpacity
         ] in
             try await VideoFrameEncoder.encodeClip(
                 sourcePath: sourcePath,
@@ -877,7 +889,12 @@ dispatcher.register("video.encodeClip") { params in
                 scaleWidth: scaleWidth,
                 targetBitrateKbps: targetBitrateKbps,
                 startSeconds: startSeconds,
-                durationSeconds: durationSeconds
+                durationSeconds: durationSeconds,
+                overlayPath: overlayPath,
+                overlayX: overlayX,
+                overlayY: overlayY,
+                overlayWidth: overlayWidth,
+                overlayOpacity: overlayOpacity
             )
         }
         return clip.toJSONObject()

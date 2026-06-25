@@ -81,13 +81,26 @@ enum VideoFrameEncoder {
     ///     preserved); both output dims are rounded to EVEN (H.264 requires it).
     ///   - targetBitrateKbps: average bitrate in kbps; defaults by output height.
     ///   - startSeconds / durationSeconds: optional trim window over the source.
+    ///   - overlayPath: optional path to a PNG/JPEG/WebP image to composite over
+    ///     EVERY output frame (the TS side jails this realpath; we just load it).
+    ///   - overlayX / overlayY: TOP-LEFT origin of the overlay in OUTPUT pixels
+    ///     (default 0,0). CoreImage's origin is BOTTOM-left, so we flip Y to honor
+    ///     a top-left convention.
+    ///   - overlayWidth: scale the overlay to this width (aspect preserved); nil =
+    ///     native overlay size.
+    ///   - overlayOpacity: overlay alpha multiplier, clamped to 0...1 (default 1).
     static func encodeClip(
         sourcePath: String,
         outputPath: String,
         scaleWidth: Int?,
         targetBitrateKbps: Int?,
         startSeconds: Double?,
-        durationSeconds: Double?
+        durationSeconds: Double?,
+        overlayPath: String? = nil,
+        overlayX: Int? = nil,
+        overlayY: Int? = nil,
+        overlayWidth: Int? = nil,
+        overlayOpacity: Double? = nil
     ) async throws -> EncodedVideoClip {
         // --- 1. Open the asset + resolve the first video track ----------------
         let sourceURL = URL(fileURLWithPath: sourcePath)
@@ -293,9 +306,63 @@ enum VideoFrameEncoder {
             if writer.status == .writing { writer.cancelWriting() }
         }
 
-        // --- 7. CoreImage context (only when scaling) ------------------------
+        // --- 7. Overlay (loaded + prepared ONCE — it's static) ---------------
+        // Load the overlay image a SINGLE time before the drive loop (CIImage
+        // construction + decode is per-image expensive; the overlay never
+        // changes frame-to-frame). The TS side has already JAILED overlayPath to
+        // a realpath inside the allowed media roots — we only load it.
+        var preparedOverlay: CIImage? = nil
+        if let overlayPath, !overlayPath.isEmpty {
+            let overlayURL = URL(fileURLWithPath: overlayPath)
+            guard let overlayCI = CIImage(contentsOf: overlayURL) else {
+                throw VideoEncodeError.badInput(
+                    "overlay image could not be loaded: \(overlayPath)"
+                )
+            }
+            // 7a. Scale the overlay to `overlayWidth` (aspect preserved). The
+            // native extent can have a non-zero origin; we operate on its size.
+            var overlay = overlayCI
+            let nativeExtent = overlay.extent
+            if let overlayWidth, overlayWidth > 0,
+               nativeExtent.width > 0, nativeExtent.height > 0 {
+                let factor = CGFloat(overlayWidth) / nativeExtent.width
+                overlay = overlay.transformed(
+                    by: CGAffineTransform(scaleX: factor, y: factor)
+                )
+            }
+            // 7b. Opacity — scale ONLY the alpha channel via CIColorMatrix's
+            // alpha vector (w = opacity), so we never double-darken the RGB.
+            let clampedOpacity = max(0.0, min(1.0, overlayOpacity ?? 1.0))
+            if clampedOpacity < 1.0 {
+                if let matrix = CIFilter(name: "CIColorMatrix") {
+                    matrix.setValue(overlay, forKey: kCIInputImageKey)
+                    matrix.setValue(
+                        CIVector(x: 0, y: 0, z: 0, w: CGFloat(clampedOpacity)),
+                        forKey: "inputAVector"
+                    )
+                    // Fall back to the un-faded overlay if the filter yields no
+                    // image (never force-unwrap — crash-safety contract).
+                    overlay = matrix.outputImage ?? overlay
+                }
+            }
+            // 7c. Position with the BOTTOM-LEFT COORDINATE FLIP. CoreImage's
+            // y=0 is the BOTTOM of the frame, but overlayY is a TOP-LEFT origin
+            // in OUTPUT pixels — so convert: ciY = frameHeight - overlayY -
+            // overlayHeight. evenH is the OUTPUT (post-scale) frame height.
+            let ox = CGFloat(overlayX ?? 0)
+            let oy = CGFloat(overlayY ?? 0)
+            let ciY = CGFloat(evenH) - oy - overlay.extent.height
+            preparedOverlay = overlay.transformed(
+                by: CGAffineTransform(translationX: ox, y: ciY)
+            )
+        }
+
+        // --- 7d. CoreImage context (when scaling OR compositing an overlay) ---
         // Created ONCE before the loop — CIContext construction is expensive.
-        let ciContext: CIContext? = scaling
+        // Widen the condition: an overlay-only encode (no scale) still needs the
+        // CoreImage render path to composite.
+        let needsCoreImage = scaling || (preparedOverlay != nil)
+        let ciContext: CIContext? = needsCoreImage
             ? CIContext(options: [.useSoftwareRenderer: false])
             : nil
         // Resample from the CODED source buffer geometry (what the reader yields,
@@ -349,25 +416,50 @@ enum VideoFrameEncoder {
 
             // Choose the buffer we hand to the adaptor.
             let bufferToAppend: CVPixelBuffer
-            if scaling, let ciContext, let pool = adaptor.pixelBufferPool {
-                var scaledOut: CVPixelBuffer?
-                let allocStatus = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &scaledOut)
-                guard allocStatus == kCVReturnSuccess, let scaled = scaledOut else {
+            if needsCoreImage, let ciContext, let pool = adaptor.pixelBufferPool {
+                var renderOut: CVPixelBuffer?
+                let allocStatus = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &renderOut)
+                guard allocStatus == kCVReturnSuccess, let renderTarget = renderOut else {
                     throw VideoEncodeError.encodeFailed("Pixel buffer pool allocation failed (status \(allocStatus))")
                 }
+                let frameExtent = CGRect(x: 0, y: 0, width: evenW, height: evenH)
                 let source = CIImage(cvPixelBuffer: sourcePixelBuffer)
-                let transformed = source.transformed(
-                    by: CGAffineTransform(scaleX: CGFloat(scaleX), y: CGFloat(scaleY))
-                )
+                // The frame background: the SCALED source when scaling, else the
+                // raw source verbatim (overlay-without-scale case — evenW/evenH
+                // are the CODED dims here, so no resample is wanted).
+                let transformed: CIImage = scaling
+                    ? source.transformed(
+                        by: CGAffineTransform(scaleX: CGFloat(scaleX), y: CGFloat(scaleY))
+                      )
+                    : source
+                // Composite the static overlay over the frame (source-over), if
+                // one is set. CISourceOverCompositing handles the sRGB-overlay →
+                // YCbCr-frame conversion; cropping to frameExtent discards any
+                // overlay pixels that spill past the frame bounds.
+                let imageToRender: CIImage
+                if let preparedOverlay {
+                    if let compositor = CIFilter(name: "CISourceOverCompositing") {
+                        compositor.setValue(preparedOverlay, forKey: kCIInputImageKey)
+                        compositor.setValue(transformed, forKey: kCIInputBackgroundImageKey)
+                        // Never force-unwrap: fall back to the un-composited frame
+                        // if the filter yields no image (crash-safety contract).
+                        imageToRender = (compositor.outputImage ?? transformed)
+                            .cropped(to: frameExtent)
+                    } else {
+                        imageToRender = transformed
+                    }
+                } else {
+                    imageToRender = transformed
+                }
                 // colorSpace: nil preserves the source color tags (no conversion
                 // to a working space) — the matching half of propagateColor.
                 ciContext.render(
-                    transformed,
-                    to: scaled,
-                    bounds: CGRect(x: 0, y: 0, width: evenW, height: evenH),
+                    imageToRender,
+                    to: renderTarget,
+                    bounds: frameExtent,
                     colorSpace: nil
                 )
-                bufferToAppend = scaled
+                bufferToAppend = renderTarget
             } else {
                 bufferToAppend = sourcePixelBuffer
             }
