@@ -278,8 +278,9 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
   // exactly like video_decode_frame — they ride the proven SANITIZED image media spine
   // (createToolResultMediaRefs), with per-frame timestamp captions + a `video_frames`
   // group hint (mediaRefHints) so the renderer can lay them out as an NLE filmstrip.
-  // HARD-CAPPED to 8 frames = TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE (the image lane drops
-  // the overflow anyway). EOF-robust: a decode that fails (e.g. everyNSeconds walking off
+  // HARD-CAPPED to INSPECT_VIDEO_FRAMES_MAX (24) frames; the emission raises the per-call
+  // maxRefs hint to match (the global TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE default stays 8).
+  // EOF-robust: a decode that fails (e.g. everyNSeconds walking off
   // the end of the clip) STOPS the loop and we return the frames gathered so far; only a
   // ZERO-frame result is an error.
   async function executeInspectVideoFrames(
