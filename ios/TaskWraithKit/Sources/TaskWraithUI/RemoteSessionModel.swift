@@ -131,6 +131,13 @@ public final class RemoteSessionModel: ObservableObject {
     /// taps would otherwise flash the resolved card straight back.
     private var repliedApprovalToolCallIds: Set<String> = []
     private var repliedQuestionIds: Set<String> = []
+    private static let threadTitleMaxCharacters = 160
+    private static let pendingThreadTitleRenameTTL: TimeInterval = 10
+    private struct PendingThreadTitleRename {
+        let title: String
+        let startedAt: Date
+    }
+    private var pendingThreadTitleRenames: [String: PendingThreadTitleRename] = [:]
     /// Plan messageIds the user just acted on (approve/respond/dismiss), keyed on
     /// the transcript row id (a proposed plan parks NO tool-call, so this can't
     /// reuse repliedApprovalToolCallIds). Unlike approvals/questions — which
@@ -1528,6 +1535,35 @@ public final class RemoteSessionModel: ObservableObject {
         return decoded
     }
 
+    private static func normalizedThreadTitle(_ title: String, fallback: String = "") -> String {
+        let collapsed = title
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = collapsed.isEmpty ? fallback : collapsed
+        let bounded = String(source.prefix(threadTitleMaxCharacters))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return bounded
+    }
+
+    private static func titleKey(for card: RemoteTaskCard) -> String {
+        card.threadId ?? card.id
+    }
+
+    private func cardResolvingPendingThreadTitle(_ card: RemoteTaskCard) -> RemoteTaskCard {
+        let key = Self.titleKey(for: card)
+        guard let pending = pendingThreadTitleRenames[key] else { return card }
+        let incoming = Self.normalizedThreadTitle(card.title ?? "")
+        if incoming == pending.title {
+            pendingThreadTitleRenames.removeValue(forKey: key)
+            return card
+        }
+        if Date().timeIntervalSince(pending.startedAt) > Self.pendingThreadTitleRenameTTL {
+            pendingThreadTitleRenames.removeValue(forKey: key)
+            return card
+        }
+        return Self.retitledCard(card, title: pending.title)
+    }
+
     private func applyLocalThreadTitle(_ card: RemoteTaskCard, title: String) {
         guard let thread = card.threadId else { return }
         taskCards = taskCards.map { current in
@@ -2382,6 +2418,7 @@ public final class RemoteSessionModel: ObservableObject {
             }
         case "taskCard":
             if let card = envelope.decodePayload(RemoteTaskCard.self) {
+                let card = cardResolvingPendingThreadTitle(card)
                 if let index = taskCards.firstIndex(where: { $0.id == card.id }) {
                     taskCards[index] = card
                 } else {
@@ -3526,13 +3563,13 @@ public final class RemoteSessionModel: ObservableObject {
     /// Rename a chat on the Mac; the phone updates optimistically and rolls back
     /// if policy or ownership checks reject the action.
     public func renameThread(_ card: RemoteTaskCard, title: String) {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = Self.normalizedThreadTitle(title)
         guard !trimmed.isEmpty else {
             lastActionMessage = "Name can't be empty."
             return
         }
         guard let thread = card.threadId else { return }
-        if (card.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == trimmed {
+        if Self.normalizedThreadTitle(card.title ?? "") == trimmed {
             return
         }
         if isDemo {
@@ -3542,6 +3579,7 @@ public final class RemoteSessionModel: ObservableObject {
         }
         let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
         let previousTitle = card.title ?? ""
+        pendingThreadTitleRenames[thread] = PendingThreadTitleRename(title: trimmed, startedAt: Date())
         applyLocalThreadTitle(card, title: trimmed)
         send(
             BridgeAction.setThreadTitle(workspaceId: ws, threadId: thread, title: trimmed),
@@ -3551,6 +3589,7 @@ public final class RemoteSessionModel: ObservableObject {
                 if accepted {
                     self.scheduleThreadRefresh(thread)
                 } else {
+                    self.pendingThreadTitleRenames.removeValue(forKey: thread)
                     self.applyLocalThreadTitle(card, title: previousTitle)
                 }
             })
@@ -3696,7 +3735,9 @@ public final class RemoteSessionModel: ObservableObject {
         for envelope in snapshot.projections {
             switch envelope.kind {
             case "taskCard":
-                if let card = envelope.decodePayload(RemoteTaskCard.self) { tasks.append(card) }
+                if let card = envelope.decodePayload(RemoteTaskCard.self) {
+                    tasks.append(cardResolvingPendingThreadTitle(card))
+                }
             case "workflows":
                 if let workflow = envelope.decodePayload(RemoteWorkflow.self) {
                     workflowCards.append(workflow)
@@ -4163,11 +4204,11 @@ public final class RemoteSessionModel: ObservableObject {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasAttachments = imageAttachments?.isEmpty == false
         guard !trimmed.isEmpty || hasAttachments else { return }
-        let title = String(trimmed.prefix(72))
+        let title = Self.normalizedThreadTitle(trimmed, fallback: "New Chat")
         send(
             BridgeAction.createThread(
                 workspaceId: workspaceId, variant: "workspace", provider: provider,
-                title: title.isEmpty ? "New Chat" : title),
+                title: title),
             timeoutMs: 12_000,
             successLabel: "Chat created.",
             navigateOnAck: false
@@ -4194,16 +4235,17 @@ public final class RemoteSessionModel: ObservableObject {
         workspaceId: String, variant: String = "workspace", provider: String? = nil,
         threadId: String? = nil, title: String = "New Chat", onCreated: ((String?) -> Void)? = nil
     ) {
+        let normalizedTitle = Self.normalizedThreadTitle(title, fallback: "New Chat")
         if isDemo {
             createDemoThread(
-                workspaceId: workspaceId, variant: variant, provider: provider, title: title,
+                workspaceId: workspaceId, variant: variant, provider: provider, title: normalizedTitle,
                 onCreated: onCreated)
             return
         }
         send(
             BridgeAction.createThread(
                 workspaceId: workspaceId, variant: variant, threadId: threadId, provider: provider,
-                title: title),
+                title: normalizedTitle),
             timeoutMs: 12_000,
             successLabel: "Chat created.",
             navigateOnAck: true,

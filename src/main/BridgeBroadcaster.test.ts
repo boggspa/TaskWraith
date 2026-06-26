@@ -215,6 +215,12 @@ describe('chatRecordToSummary', () => {
     expect(chatRecordToSummary(chat).title).toBe('Untitled chat')
   })
 
+  it('bounds summary titles without storing UI ellipses', () => {
+    const summary = chatRecordToSummary(makeChat({ title: `Plan ${'rename '.repeat(40)}` }))
+    expect(summary.title).toHaveLength(160)
+    expect(summary.title.endsWith('...')).toBe(false)
+  })
+
   it('preserves each provider id verbatim', () => {
     for (const provider of ['gemini', 'codex', 'claude', 'kimi'] as const) {
       const summary = chatRecordToSummary(makeChat({ provider }))

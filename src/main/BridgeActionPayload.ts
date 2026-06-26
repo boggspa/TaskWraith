@@ -40,6 +40,8 @@
  * `registerApnsToken` are pair-scoped instead.
  */
 
+import { THREAD_TITLE_MAX_CHARS } from '../shared/threadTitles'
+
 export type BridgeApprovalDecision =
   | 'accept'
   | 'acceptForSession'
@@ -64,8 +66,6 @@ const BRIDGE_WORKSPACE_FILE_PATH_MAX_CHARS = 4096
 const BRIDGE_WORKSPACE_FILE_WRITE_MAX_CHARS = 1_600_000
 const BRIDGE_GOAL_OBJECTIVE_MAX_CHARS = 4000
 const BRIDGE_GOAL_REASON_MAX_CHARS = 800
-const BRIDGE_THREAD_TITLE_MAX_CHARS = 160
-
 export interface BridgeApprovalReplyAction extends BridgeActionMetadata {
   kind: 'approvalReply'
   workspaceId: string
@@ -1558,7 +1558,7 @@ function isSetThreadTitle(v: Record<string, unknown>): boolean {
     isWorkspaceThreadAction(v) &&
     typeof v.title === 'string' &&
     v.title.trim().length > 0 &&
-    v.title.length <= BRIDGE_THREAD_TITLE_MAX_CHARS
+    v.title.length <= THREAD_TITLE_MAX_CHARS
   )
 }
 

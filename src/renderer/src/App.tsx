@@ -19,6 +19,7 @@ import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
 import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../shared/retiredProviders'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
+import { normalizeThreadTitle } from '../../shared/threadTitles'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { formatCost, setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
@@ -6286,7 +6287,7 @@ function App(): React.JSX.Element {
    * IPC saveChat call.
    */
   const handleRenameChat = (chatId: string, nextTitle: string) => {
-    const trimmed = nextTitle.trim()
+    const trimmed = normalizeThreadTitle(nextTitle, '')
     if (!trimmed) return
     updateChatById(chatId, (source) => {
       if (source.title === trimmed) return source
@@ -10410,10 +10411,7 @@ function App(): React.JSX.Element {
       }
 
       if (chatToUpdate.messages.length === 0) {
-        chatToUpdate.title =
-          displayFinalPrompt.length > 30
-            ? displayFinalPrompt.substring(0, 30) + '...'
-            : displayFinalPrompt
+        chatToUpdate.title = normalizeThreadTitle(displayFinalPrompt, 'New Chat')
       }
 
       let runStartedAt = new Date().toISOString()
@@ -11410,7 +11408,7 @@ function App(): React.JSX.Element {
         updatedAt: Date.now()
       }
       if (next.messages.length === 1) {
-        next.title = content.length > 30 ? `${content.substring(0, 30)}...` : content
+        next.title = normalizeThreadTitle(content, 'New Chat')
       }
       return next
     })

@@ -43,6 +43,7 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import icon from '../../resources/icon.png?asset'
 import { startAppIconManager, applyAppIcon } from './AppIconManager'
 import trayGhostMonoline from '../../resources/tray-ghost-monoline.png?asset'
+import { normalizeThreadTitle } from '../shared/threadTitles'
 import {
   contentPartsToText,
   extractProviderSessionId,
@@ -3154,11 +3155,13 @@ function validateChatWorkspaceIdentity(
 }
 
 function sanitizeChatForSave(chat: ChatRecord): ChatRecord {
+  const normalizedTitle = normalizeThreadTitle(chat.title, 'Untitled chat')
   const scope = chatScope(chat)
   if (scope === 'global') {
     const { workspaceId: _workspaceId, workspacePath: _workspacePath, ...rest } = chat
     return {
       ...rest,
+      title: normalizedTitle,
       scope: 'global'
     }
   }
@@ -3171,6 +3174,7 @@ function sanitizeChatForSave(chat: ChatRecord): ChatRecord {
   }
   return {
     ...chat,
+    title: normalizedTitle,
     scope: 'workspace',
     workspaceId: workspace.id,
     workspacePath: canonicalPath(workspace.path)
@@ -19654,7 +19658,7 @@ if (isGeminiMcpBridgeProcess) {
         setThreadTitleFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat) return { ok: false, error: 'Thread not found' }
-          const title = action.title.trim()
+          const title = normalizeThreadTitle(action.title, '')
           if (!title) return { ok: false, error: 'Thread title is required' }
           const canonicalActionWs =
             action.workspaceId === 'global'
@@ -19679,8 +19683,7 @@ if (isGeminiMcpBridgeProcess) {
           broadcastChatUpdated(updated)
           broadcastThreadUpdate(updated.appChatId)
           broadcastThreadList()
-          const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
-          if (canonical) pushRemoteThreadSnapshot(updated, canonical)
+          pushRemoteTaskCardDelta(updated.appChatId)
           bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
           return { ok: true, title }
         },
@@ -20164,6 +20167,9 @@ if (isGeminiMcpBridgeProcess) {
               reason: `Thread "${requestedThreadId}" already exists and is not an unstarted mobile draft.`
             }
           }
+          const requestedTitle = normalizeThreadTitle(action.title, 'New Chat')
+          const requestedEnsembleTitle =
+            requestedTitle && requestedTitle !== 'New Chat' ? requestedTitle : 'New Ensemble'
           const createOrReuseRemoteDraft = (target: RemoteDraftTarget): ChatRecord => {
             const reusable =
               requestedChat ||
@@ -20185,7 +20191,7 @@ if (isGeminiMcpBridgeProcess) {
             const chat = createOrReuseRemoteDraft({
               variant: 'global',
               provider,
-              title: action.title?.trim() || 'New Chat'
+              title: requestedTitle
             })
             finishRemoteDraft(chat, action.workspaceId)
             return { ok: true, threadId: chat.appChatId, chatKind: chat.chatKind }
@@ -20211,10 +20217,7 @@ if (isGeminiMcpBridgeProcess) {
                 {
                   variant: 'ensemble',
                   provider,
-                  title:
-                    action.title?.trim() && action.title.trim() !== 'New Chat'
-                      ? action.title.trim()
-                      : 'New Ensemble',
+                  title: requestedEnsembleTitle,
                   workspaceId: workspaceRecord.id,
                   workspacePath: workspaceRecord.path
                 },
@@ -20225,10 +20228,7 @@ if (isGeminiMcpBridgeProcess) {
               target: {
                 variant: 'ensemble',
                 provider,
-                title:
-                  action.title?.trim() && action.title.trim() !== 'New Chat'
-                    ? action.title.trim()
-                    : 'New Ensemble',
+                title: requestedEnsembleTitle,
                 workspaceId: workspaceRecord.id,
                 workspacePath: workspaceRecord.path,
                 ensemble:
@@ -20289,7 +20289,7 @@ if (isGeminiMcpBridgeProcess) {
           const chat = createOrReuseRemoteDraft({
             variant: normalizeRemoteDraftVariant(action.variant),
             provider,
-            title: action.title?.trim() || 'New Chat',
+            title: requestedTitle,
             workspaceId: workspaceRecord.id,
             workspacePath: workspaceRecord.path
           })
@@ -24107,6 +24107,9 @@ if (isGeminiMcpBridgeProcess) {
       broadcastChatUpdated(saved)
       maybeScheduleCodexNativeGoalSync(previous, saved, 'renderer-save-chat')
       broadcastThreadUpdate(saved?.appChatId)
+      if (previous?.title !== saved.title) {
+        pushRemoteTaskCardDelta(saved.appChatId)
+      }
       const latestRun = saved.runs?.[saved.runs.length - 1]
       const previousRun = previous?.runs?.find((run) => run.runId === latestRun?.runId)
       const runHasDiff = (run: ChatRun | undefined): boolean =>

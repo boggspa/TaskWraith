@@ -19,6 +19,7 @@ import type {
   ToolActivity,
   VisualEffectStyle
 } from './store/types'
+import { normalizeThreadTitle } from '../shared/threadTitles'
 import { collectExternalPathGrantsFromMetadata } from './store/ExternalPathGrants'
 import { isContentlessRemoteDraftChat } from './remote/RemoteDraftChats'
 import { computeMergedTodosByLane, TODO_SOLO_LANE, type TodoStatus } from './TodoList'
@@ -857,7 +858,7 @@ export function buildRemoteTaskCard(
     ...(chat.archived ? { archived: true } : {}),
     workspaceId: chat.workspaceId && chat.workspaceId.length > 0 ? chat.workspaceId : null,
     provider: chat.provider ?? 'gemini',
-    title: chat.title || 'Untitled chat',
+    title: normalizeThreadTitle(chat.title, 'Untitled chat'),
     status: deriveTaskStatus(latestRun, pendingApprovalCount, pendingQuestionCount, {
       ensembleRound: chat.ensemble?.activeRound
     }),

@@ -252,6 +252,13 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('projects bounded full task-card titles without UI ellipses', () => {
+    const card = buildRemoteTaskCard(chat({ title: `Plan ${'rename '.repeat(40)}` }))
+    expect(card.title).toHaveLength(160)
+    expect(card.title.endsWith('...')).toBe(false)
+    expect(card.title.startsWith('Plan rename rename')).toBe(true)
+  })
+
   it('projects provider model metadata for remote composer seeding', () => {
     const card = buildRemoteTaskCard(
       chat({

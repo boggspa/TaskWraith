@@ -1,4 +1,5 @@
 import type { ChatRecord, ProviderId, WorkspaceRecord } from './store/types'
+import { normalizeThreadTitle } from '../shared/threadTitles'
 import type { AllowlistDecision, PrepareStartTurnEvaluation } from './RemoteWorkspaceAllowlist'
 import {
   capabilitiesForRemoteWorkspaceEntry,
@@ -193,7 +194,7 @@ export function chatRecordToSummary(chat: ChatRecord): ThreadSummary {
   const workspaceId = chat.workspaceId && chat.workspaceId.length > 0 ? chat.workspaceId : null
   const summary: ThreadSummary = {
     chatId: chat.appChatId,
-    title: chat.title || 'Untitled chat',
+    title: normalizeThreadTitle(chat.title, 'Untitled chat'),
     workspaceId,
     provider,
     status,
