@@ -910,6 +910,7 @@ import {
 import { tryRunGeminiApi } from './GeminiApiProvider'
 import { handleEnsembleContinue } from './EnsembleContinue'
 import { evaluateBossmanAutoApproval } from './BossmanAutoApproval'
+import { resolveRosterUpdateBossmanAssignment } from './EnsembleRosterUpdate'
 import { handleScoutBrief, type ScoutBriefConfidence } from './ScoutBrief'
 import { makeBlackboardEntry, upsertBlackboardEntry } from './blackboard/Blackboard'
 import { WorkspaceWriteIntentRegistry, type WriteIntentToken } from './WorkspaceWriteIntentRegistry'
@@ -19972,32 +19973,27 @@ if (isGeminiMcpBridgeProcess) {
           if (next.filter((participant) => participant.enabled).length === 0) {
             return { ok: false, error: 'At least one participant must stay enabled' }
           }
-          const bossmanMarkedIndexes = action.participants
-            .map((entry, index) => (entry.isBossman === true ? index : -1))
-            .filter((index) => index >= 0)
-          if (bossmanMarkedIndexes.length > 1) {
-            return { ok: false, error: 'Only one participant may be marked as Bossman.' }
+          const bossmanResolution = resolveRosterUpdateBossmanAssignment(
+            action.participants,
+            next,
+            {
+              bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+              bossmanAutoApprovals: chat.ensemble.bossmanAutoApprovals
+            }
+          )
+          if (!bossmanResolution.ok) {
+            return { ok: false, error: bossmanResolution.error }
           }
-          const markedBossmanParticipantId =
-            bossmanMarkedIndexes.length === 1 ? next[bossmanMarkedIndexes[0]]?.id : undefined
-          const preservedBossmanParticipantId =
-            bossmanMarkedIndexes.length === 0 &&
-            chat.ensemble.bossmanParticipantId &&
-            next.some((participant) => participant.id === chat.ensemble?.bossmanParticipantId)
-              ? chat.ensemble.bossmanParticipantId
-              : undefined
-          const bossmanParticipantId = markedBossmanParticipantId ?? preservedBossmanParticipantId
-          const bossmanAutoApprovals =
-            bossmanParticipantId && bossmanParticipantId === chat.ensemble.bossmanParticipantId
-              ? chat.ensemble.bossmanAutoApprovals
-              : undefined
           const updated: ChatRecord = {
             ...chat,
             ensemble: {
               ...chat.ensemble,
               participants: next,
-              ...(bossmanParticipantId
-                ? { bossmanParticipantId, bossmanAutoApprovals }
+              ...(bossmanResolution.bossmanParticipantId
+                ? {
+                    bossmanParticipantId: bossmanResolution.bossmanParticipantId,
+                    bossmanAutoApprovals: bossmanResolution.bossmanAutoApprovals
+                  }
                 : { bossmanParticipantId: undefined, bossmanAutoApprovals: undefined })
             },
             updatedAt: Date.now()
