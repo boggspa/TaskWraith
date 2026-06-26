@@ -34,10 +34,30 @@ describe('MarkdownMessage', () => {
     )
 
     expect(html).toContain('<table>')
+    expect(html).toContain('class="markdown-table-scroll"')
+    expect(html).toContain('aria-label="Markdown table"')
     expect(html).toContain('type="checkbox"')
     expect(html).toContain('<code>ready</code>')
     expect(html).toContain('message-code-shell')
     expect(html).toContain('ts')
+  })
+
+  it('wraps tables in a scroll region while preserving GFM cell alignment', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={[
+          '| Item | Count | Expr |',
+          '| :--- | ---: | --- |',
+          '| a \\| b | 42 | `x\\|y` |'
+        ].join('\n')}
+      />
+    )
+
+    expect(html).toContain('class="markdown-table-scroll"')
+    expect(html).toContain('tabindex="0"')
+    expect(html).toContain('style="text-align:right"')
+    expect(html).toContain('a | b')
+    expect(html).toContain('<code>x|y</code>')
   })
 
   it('escapes raw html instead of rendering it', () => {

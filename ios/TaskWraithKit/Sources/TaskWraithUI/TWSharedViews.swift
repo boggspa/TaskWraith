@@ -2263,7 +2263,7 @@ public struct MarkdownLite: View {
         case bullet(items: [String])
         case numbered(items: [String])
         case code(lines: [String])
-        case table(rows: [String])
+        case table(MarkdownTable)
         case quote(text: String)
         case paragraph(text: String)
         case divider
@@ -2294,7 +2294,11 @@ public struct MarkdownLite: View {
                 numbers = []
             }
             if !tableRows.isEmpty {
-                out.append(.table(rows: tableRows))
+                if let table = MarkdownTable.parse(lines: tableRows) {
+                    out.append(.table(table))
+                } else {
+                    out.append(.paragraph(text: tableRows.joined(separator: "\n")))
+                }
                 tableRows = []
             }
         }
@@ -2333,14 +2337,9 @@ public struct MarkdownLite: View {
                 out.append(.divider)
                 continue
             }
-            if trimmed.hasPrefix("|") {
+            if MarkdownTable.isPotentialRow(trimmed) {
                 flushParagraph()
-                // Skip pure separator rows (|---|---|).
-                let bare = trimmed.replacingOccurrences(of: "|", with: "")
-                    .replacingOccurrences(of: "-", with: "")
-                    .replacingOccurrences(of: ":", with: "")
-                    .trimmingCharacters(in: .whitespaces)
-                if !bare.isEmpty { tableRows.append(trimmed) }
+                tableRows.append(trimmed)
                 continue
             }
             if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
@@ -2458,18 +2457,8 @@ public struct MarkdownLite: View {
             }
             .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
-        case .table(let rows):
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                    Text(tableLine(row))
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(index == 0 ? TWTheme.textPrimary : TWTheme.textSecondary)
-                        .lineLimit(2)
-                }
-            }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 8))
+        case .table(let table):
+            tableView(table)
         case .quote(let text):
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1).fill(TWTheme.chroma1).frame(width: 3)
@@ -2490,11 +2479,105 @@ public struct MarkdownLite: View {
         }
     }
 
-    /// Compact a `| a | b |` table row for the monospaced grid.
-    private func tableLine(_ row: String) -> String {
-        row.split(separator: "|", omittingEmptySubsequences: true)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .joined(separator: "  ·  ")
+    private func tableView(_ table: MarkdownTable) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return ScrollView(.horizontal, showsIndicators: true) {
+            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(0..<table.columnCount, id: \.self) { column in
+                        tableCell(
+                            table.headers[column],
+                            header: true,
+                            alignment: table.alignments[column],
+                            rowIndex: 0,
+                            columnIndex: column
+                        )
+                    }
+                }
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
+                    GridRow {
+                        ForEach(0..<table.columnCount, id: \.self) { column in
+                            tableCell(
+                                column < row.count ? row[column] : "",
+                                header: false,
+                                alignment: table.alignments[column],
+                                rowIndex: rowIndex + 1,
+                                columnIndex: column
+                            )
+                        }
+                    }
+                }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .background(TWTheme.surface2.opacity(0.86), in: shape)
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(TWTheme.border, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Markdown table")
+    }
+
+    private func tableCell(
+        _ raw: String,
+        header: Bool,
+        alignment: MarkdownTableAlignment,
+        rowIndex: Int,
+        columnIndex: Int
+    ) -> some View {
+        inlineText(raw.isEmpty ? " " : raw)
+            .font(header ? TWFont.transcript(13, weight: .semibold) : TWFont.transcript(13))
+            .foregroundStyle(header ? TWTheme.textPrimary : TWTheme.textSecondary)
+            .multilineTextAlignment(textAlignment(for: alignment))
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(
+                minWidth: 72,
+                maxWidth: 220,
+                alignment: frameAlignment(for: alignment)
+            )
+            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+            .background(tableCellBackground(header: header, rowIndex: rowIndex))
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(TWTheme.border.opacity(0.72)).frame(width: 1)
+            }
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(TWTheme.border.opacity(0.72)).frame(height: 1)
+            }
+            .accessibilityLabel(tableAccessibilityLabel(raw, rowIndex: rowIndex, columnIndex: columnIndex))
+    }
+
+    private func tableCellBackground(header: Bool, rowIndex: Int) -> Color {
+        if header { return TWTheme.chroma1.opacity(0.14) }
+        return rowIndex.isMultiple(of: 2) ? Color.clear : TWTheme.surface3.opacity(0.26)
+    }
+
+    private func textAlignment(for alignment: MarkdownTableAlignment) -> TextAlignment {
+        switch alignment {
+        case .leading: return .leading
+        case .center: return .center
+        case .trailing: return .trailing
+        }
+    }
+
+    private func frameAlignment(for alignment: MarkdownTableAlignment) -> Alignment {
+        switch alignment {
+        case .leading: return .leading
+        case .center: return .center
+        case .trailing: return .trailing
+        }
+    }
+
+    private func tableAccessibilityLabel(
+        _ raw: String,
+        rowIndex: Int,
+        columnIndex: Int
+    ) -> String {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = value.isEmpty ? "empty" : value
+        if rowIndex == 0 {
+            return "Header column \(columnIndex + 1), \(fallback)"
+        }
+        return "Row \(rowIndex), column \(columnIndex + 1), \(fallback)"
     }
 
     /// Inline markdown (bold/italic/code/links) + provider-tinted mentions.

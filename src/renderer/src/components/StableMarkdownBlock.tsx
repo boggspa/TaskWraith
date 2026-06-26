@@ -370,6 +370,18 @@ const MARKDOWN_COMPONENTS: Components = {
   pre({ children }) {
     return <>{children}</>
   },
+  table({ children }) {
+    return (
+      <div
+        className="markdown-table-scroll"
+        role="region"
+        aria-label="Markdown table"
+        tabIndex={0}
+      >
+        <table>{children}</table>
+      </div>
+    )
+  },
   code({ className, children }) {
     const rawContent = String(children ?? '').replace(/\n$/, '')
     const languageMatch = /language-([\w-]+)/.exec(className || '')
@@ -393,11 +405,11 @@ const MARKDOWN_COMPONENTS: Components = {
   li({ children }) {
     return <li>{processChildren(children)}</li>
   },
-  td({ children }) {
-    return <td>{processChildren(children)}</td>
+  td({ children, node: _node, ...props }) {
+    return <td {...props}>{processChildren(children)}</td>
   },
-  th({ children }) {
-    return <th>{processChildren(children)}</th>
+  th({ children, node: _node, ...props }) {
+    return <th {...props}>{processChildren(children)}</th>
   },
   // Headings tokenise `@Role` / `@user` too, so a mention in a
   // heading gets the same chip as body text (1.0.72 markdown-audit gap-fix —
