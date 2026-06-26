@@ -4,23 +4,65 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
-## Unreleased
+## 1.6.3 - 2026-06-26
 
 ### Added
-- **Trust and safety guide.** Added a top-level user-facing trust guide with a
-  safe-first-run path, capability matrix, local storage/reset notes, provider
-  data boundaries, release verification commands, and known limits for cautious
-  evaluators.
-- **Composer variant gallery.** Added a dedicated composer-shell gallery covering
-  the Electron variants in dark/light mode plus representative iOS companion
-  references.
-- **README screenshot refresh.** Replaced the first README gallery row with
-  current local screenshots for first launch, the general app layout, and a live
-  ensemble run.
-- **Cursor/Grok bridge clarity.** Write-capable Cursor and Grok runs now describe
-  and use TaskWraith's scoped MCP broker without asking users to manually install
-  provider-side MCP config; the shared bridge copy no longer names retired Gemini
-  as an active setup target.
+- **Shared chats.** You can now invite other people into a chat. Sharing runs over
+  the same end-to-end-encrypted relay as the iOS companion: invitees join by
+  confirming a short verification code, see a live projection of the conversation,
+  and you stay in control from a People header with per-participant revoke and a
+  one-click "Stop sharing." A new Shared section in the sidebar, a "New Shared
+  Chat" entry in the + New menu, and a dedicated Shares settings tab manage the
+  whole lifecycle; collaborator comments are clearly marked as external/untrusted.
+- **A bigger media toolkit for agents.** Agents can now mix multitrack audio and
+  encode, overlay and concatenate video natively (VideoToolbox, no ffmpeg),
+  transcribe audio on-device, and inspect audio segments and video frames with an
+  interactive scrubber, an NLE-style filmstrip and a DAW-style waveform player —
+  all over the un-forgeable trusted-media channel. Producer outputs gain automatic
+  posters, badges, an expand-to-view viewer and Finder/copy/save actions, and any
+  player can be torn off into its own resizable pane.
+- **Audio & video playback on iOS.** The companion streams and plays audio and
+  video inline in the transcript over the encrypted link — chunked so it seeks and
+  plays without downloading the whole asset first — with posters and metadata.
+- **Model context lengths.** A new Context lengths view (in the sidebar Model Usage
+  overlay and a Settings table, on both desktop and iOS) shows each model's
+  official context window, and the composer context meter is now a clickable
+  popover with per-participant detail.
+- **Sidebar control cluster.** A traffic-light footer — Approvals, Shares and
+  Devices — with at-a-glance popovers for pending approvals, active shares, and
+  paired devices with a live-connected indicator.
+- **Composer plan popover.** A plan control in the composer for setting a run's
+  plan inline.
+- **Trust guide & setup docs.** A top-level trust-and-safety guide (safe first-run
+  path, capability matrix, local storage/reset notes, provider data boundaries,
+  release-verification commands and known limits), an advanced optional-setup
+  guide, a composer-variant gallery and refreshed README screenshots.
+
+### Changed
+- **Codex surfaces media.** Codex runs now show their generated images and trusted
+  audio/video in the transcript, at parity with the other providers.
+- **Looping workflows show live progress.** A looping workflow reports per-iteration
+  progress as it runs, and its verifier can run on a different provider than the
+  maker.
+- **Media tools are gated like shell and file access.** Media editing is now its
+  own audited, approvable capability with read-only presets, rather than riding
+  along with general tool access.
+- **Cursor/Grok bridge clarity.** Write-capable Cursor and Grok runs use
+  TaskWraith's scoped MCP broker without manual provider-side config, and the
+  shared bridge copy no longer names retired Gemini as an active setup target.
+
+### Fixed
+- **No more repeated notification banner (iOS).** The companion no longer raises a
+  banner every time it registers for push notifications.
+- **iOS recovers instead of bricking.** A keychain identity error (-34018) now
+  recovers the device identity instead of leaving remote unusable, plus sidebar
+  polish — single-line chat rows and the workspace utility icons unified into one
+  glass pill.
+- **Collaboration hardening.** Shared projections scrub secrets and collapse
+  sensitive paths, appends are rate-limited, display-name impersonation is
+  tightened, and shares are revoked when their chat is deleted.
+- **Composer plan control.** Stays visible and renders its participant plan lanes
+  correctly, and the side-chat composer gained the same parity controls.
 
 ## 1.6.2 - 2026-06-25
 

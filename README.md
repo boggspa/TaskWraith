@@ -132,8 +132,8 @@ baseline.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
-Current development version: **v1.6.2**. Latest public release:
-**v1.6.2** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+Current development version: **v1.6.3**. Latest public release:
+**v1.6.3** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 If the GitHub Releases page shows an older version, treat newer source changes as
 unreleased development work until a matching tag and release artifacts are
 published.
