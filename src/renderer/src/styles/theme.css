@@ -691,14 +691,14 @@
     0 1px 0 rgba(0, 0, 0, 0.4);
 }
 
-/* 1.0.5-EW55 — Force the transcript fully opaque on Obsidian
+/* 1.0.5-EW55 — Keep the transcript theme-owned on Obsidian
  * regardless of which appearance mode the user picked
  * (solid / soft_glass / native_glass). The default
  * `native_glass` rule in main.css dials `--content-bg` back to
  * a translucent value to let macOS vibrancy show through; we
- * override that here because the brief wants the transcript
- * surface itself to read as a solid black slab — only the
- * sidebar should be glassy on this theme.
+ * override that here so the theme starts from its solid black
+ * slab. The user Main pane opacity slider still multiplies this
+ * fill, matching the rest of the theme system.
  *
  * `!important` is unfortunate but necessary: the
  * `[data-appearance="native_glass"][data-reduce-transparency="false"]
@@ -947,10 +947,10 @@
     0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
-/* Force the transcript fully opaque on Alabaster regardless of
+/* Keep the transcript theme-owned on Alabaster regardless of
  * appearance mode — mirrors the obsidian transcript-opacity
- * rule. The reading surface stays a calm cream slab; the
- * sidebar is where the glass happens.
+ * rule. The reading surface starts as a calm cream slab; the
+ * user Main pane opacity slider still multiplies this fill.
  *
  * 1.0.5-EW62 — Also covers `.app-settings-pane` (mirror of the
  * obsidian fix above). Without this, the dark slate chroma trio

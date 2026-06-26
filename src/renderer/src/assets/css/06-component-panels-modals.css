@@ -794,13 +794,13 @@
   gap: 8px;
 }
 
-/* Chat area: theme-colour solid backing at 60% opacity, behind weather/ghost/FX layers. */
+/* Chat area: theme-colour backing controlled directly by the Main pane opacity slider. */
 .app-transcript {
-  background: color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-60), transparent);
+  background: color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-100), transparent);
 }
 
 [data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript {
-  background: color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-60), transparent);
+  background: color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-100), transparent);
 }
 
 .audit-run-card {

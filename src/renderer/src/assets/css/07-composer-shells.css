@@ -3110,7 +3110,7 @@
       color-mix(in srgb, color-mix(in srgb, var(--content-bg) 68%, transparent) var(--main-pane-opacity-100), transparent),
       color-mix(in srgb, color-mix(in srgb, #0d0d0d 72%, transparent) var(--main-pane-opacity-100), transparent)
     ),
-    color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-60), transparent);
+    color-mix(in srgb, var(--content-bg) var(--main-pane-opacity-100), transparent);
 }
 
 /* Parity: transcript inherits the composer's max-width across themed shells
