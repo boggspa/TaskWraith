@@ -4108,12 +4108,7 @@ public struct EditableRosterStrip: View {
         let status = roundStatus(for: entry.id)
         let isActive = !retired && (status == "running" || state?.activeParticipantId == entry.id)
         let live = entry.enabled && !retired
-        let fillOpacity: Double = live ? 0.12 : 0.04
-        let strokeColor: Color =
-            isActive ? accent : accent.opacity(live ? 0.35 : 0.15)
-        let strokeWidth: CGFloat = isActive ? 1.5 : 1
         let labelColor: Color = live ? accent : TWTheme.textMuted
-        let dotColor: Color = live ? accent : TWTheme.textMuted
         let title =
             entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
         return Button {
@@ -4128,12 +4123,11 @@ public struct EditableRosterStrip: View {
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(TWTheme.textMuted)
                 } else {
-                    Circle()
-                        .fill(dotColor)
-                        .frame(width: 6, height: 6)
+                    ProviderGlyphIcon(provider: entry.provider, size: 12)
+                        .opacity(live ? 1 : 0.45)
                 }
                 Text(title)
-                    .font(.caption2.weight(.semibold))
+                    .font(.caption2.weight(isActive ? .bold : .semibold))
                     .foregroundStyle(labelColor)
                     .lineLimit(1)
                     .strikethrough(retired, color: TWTheme.textMuted)
@@ -4153,10 +4147,9 @@ public struct EditableRosterStrip: View {
                         .foregroundStyle(TWTheme.textMuted)
                 }
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(accent.opacity(fillOpacity), in: Capsule())
-            .overlay(Capsule().strokeBorder(strokeColor, lineWidth: strokeWidth))
+            .padding(.horizontal, 2)
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
             .opacity(draggingId == entry.id ? 0.4 : 1)
         }
         .buttonStyle(.plain)
