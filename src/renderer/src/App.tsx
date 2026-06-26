@@ -19121,7 +19121,7 @@ function App(): React.JSX.Element {
     handleAttachWindowCommand: (ctx: SlashCommandRunContext) => void | Promise<void>
     handleDetachWindowCommand: (ctx: SlashCommandRunContext) => void | Promise<void>
     openWorkspacePopoutCommand: (kind: 'file-editor' | 'diff-studio') => void
-    openSideChatCommand: (sideCommand: SideSlashCommand) => void
+    openSideChatCommand: (sideCommand: SideSlashCommand) => boolean | void
     handleGoalCommand: (ctx: SlashCommandRunContext) => void
     focusPaneForFocusedFlow?: () => void
   }): ComposerSlashCommand[] => [
@@ -19666,10 +19666,14 @@ function App(): React.JSX.Element {
           )
           return
         }
-        openSideChatCommand({
+        const shouldKeepDraft = openSideChatCommand({
           presentation: 'split',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
-        })
+        }) === false
+        if (shouldKeepDraft) {
+          ctx.setDraft(ctx.rawPrompt)
+          ctx.focusComposer(ctx.rawPrompt.length)
+        }
       }
     },
     {
@@ -19688,10 +19692,14 @@ function App(): React.JSX.Element {
           )
           return
         }
-        openSideChatCommand({
+        const shouldKeepDraft = openSideChatCommand({
           presentation: 'drawer',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
-        })
+        }) === false
+        if (shouldKeepDraft) {
+          ctx.setDraft(ctx.rawPrompt)
+          ctx.focusComposer(ctx.rawPrompt.length)
+        }
       }
     },
     {
@@ -19710,10 +19718,14 @@ function App(): React.JSX.Element {
           )
           return
         }
-        openSideChatCommand({
+        const shouldKeepDraft = openSideChatCommand({
           presentation: 'popout',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
-        })
+        }) === false
+        if (shouldKeepDraft) {
+          ctx.setDraft(ctx.rawPrompt)
+          ctx.focusComposer(ctx.rawPrompt.length)
+        }
       }
     },
     {
@@ -19732,10 +19744,14 @@ function App(): React.JSX.Element {
           )
           return
         }
-        openSideChatCommand({
+        const shouldKeepDraft = openSideChatCommand({
           presentation: 'main',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
-        })
+        }) === false
+        if (shouldKeepDraft) {
+          ctx.setDraft(ctx.rawPrompt)
+          ctx.focusComposer(ctx.rawPrompt.length)
+        }
       }
     },
     {
@@ -20244,14 +20260,14 @@ function App(): React.JSX.Element {
       provider: ProviderId,
       workspace: WorkspaceRecord | null,
       item: CommandPaletteItem
-    ): void => {
+    ): boolean | void => {
       const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
       if (item.action) {
         focusPane()
         window.alert(
           'This Gemini session control opens from the focused pane. The pane is now focused.'
         )
-        return
+        return false
       }
       if (provider === 'codex') {
         if (item.command === '/status' || item.command === '/permissions') {
@@ -20333,6 +20349,7 @@ function App(): React.JSX.Element {
       }
       focusPane()
       window.alert('Gemini PTY slash commands run from the focused pane. The pane is now focused.')
+      return false
     },
     [
       codexModels,
@@ -20344,6 +20361,12 @@ function App(): React.JSX.Element {
       updateChatById
     ]
   )
+  const resolvePaneSlashParticipant = (chat: ChatRecord): EnsembleParticipant | null =>
+    resolveSlashParticipantForChat(chat)
+  const resolvePaneSlashProvider = (chat: ChatRecord, provider: ProviderId): ProviderId => {
+    const slashParticipant = resolvePaneSlashParticipant(chat)
+    return chat.chatKind === 'ensemble' && slashParticipant ? slashParticipant.provider : provider
+  }
   const buildPaneComposerSlashCommands = useCallback(
     (
       paneIndex: number,
@@ -20351,9 +20374,8 @@ function App(): React.JSX.Element {
       provider: ProviderId,
       workspace: WorkspaceRecord | null
     ) => {
-      const slashParticipant = resolveSlashParticipantForChat(chat)
-      const slashProvider =
-        chat.chatKind === 'ensemble' && slashParticipant ? slashParticipant.provider : provider
+      const slashParticipant = resolvePaneSlashParticipant(chat)
+      const slashProvider = resolvePaneSlashProvider(chat, provider)
       const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
       const preserveForFocusedFlow = (ctx: SlashCommandRunContext, message: string): void =>
         preserveSlashDraftForFocusedFlow(ctx, focusPane, message)
@@ -20996,6 +21018,52 @@ function App(): React.JSX.Element {
     // display fields below (selectedModelType/codexReasoningEffort/etc.), so the
     // UI still reflects the persisted selection on the next render.
     const paneNoopSetter = (): void => {}
+    const paneSlashParticipant = resolvePaneSlashParticipant(viewerChat)
+    const paneSlashProvider = resolvePaneSlashProvider(viewerChat, viewerProvider)
+    const paneSelectParticipant = (participantId: string): void => {
+      updateChatById(viewerChatId, (source) => ({
+        ...source,
+        providerMetadata: {
+          ...(source.providerMetadata || {}),
+          [SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]: participantId
+        },
+        updatedAt: Date.now()
+      }))
+    }
+    const paneUpdateSelectedParticipant = (patch: Partial<EnsembleParticipant>): void => {
+      if (!paneSlashParticipant) return
+      updateChatById(viewerChatId, (source) => ({
+        ...source,
+        ensemble: source.ensemble
+          ? {
+              ...source.ensemble,
+              participants: source.ensemble.participants.map((participant) =>
+                participant.id === paneSlashParticipant.id ? { ...participant, ...patch } : participant
+              ),
+              updatedAt: new Date().toISOString()
+            }
+          : source.ensemble,
+        updatedAt: Date.now()
+      }))
+    }
+    const panePatchParticipantById = (
+      participantId: string,
+      patch: Partial<EnsembleParticipant>
+    ): void => {
+      updateChatById(viewerChatId, (source) => ({
+        ...source,
+        ensemble: source.ensemble
+          ? {
+              ...source.ensemble,
+              participants: source.ensemble.participants.map((participant) =>
+                participant.id === participantId ? { ...participant, ...patch } : participant
+              ),
+              updatedAt: new Date().toISOString()
+            }
+          : source.ensemble,
+        updatedAt: Date.now()
+      }))
+    }
     const paneComposerCtx: ComposerProps = {
       // Slice H: spread the MEMOISED stable base (chat-independent props + bagged
       // handlers) instead of the focused `composerCtx`. The base is referentially
@@ -21031,6 +21099,11 @@ function App(): React.JSX.Element {
       currentProvider: viewerProvider,
       currentProviderLabel: viewerProviderLabel,
       currentProviderModelOptions: getProviderModelOptions(viewerProvider),
+      selectedParticipant: paneSlashParticipant,
+      effectiveSelectedParticipantId: paneSlashParticipant?.id || null,
+      handleSelectParticipant: paneSelectParticipant,
+      updateSelectedParticipant: paneUpdateSelectedParticipant,
+      patchEnsembleParticipantById: panePatchParticipantById,
       composerSlashCommands: buildPaneComposerSlashCommands(
         viewerPaneIndex,
         viewerChat,
@@ -21038,7 +21111,7 @@ function App(): React.JSX.Element {
         viewerWorkspace
       ),
       handlePaletteCommand: (item: CommandPaletteItem) =>
-        handlePanePaletteCommand(viewerPaneIndex, viewerChat, viewerProvider, viewerWorkspace, item),
+        handlePanePaletteCommand(viewerPaneIndex, viewerChat, paneSlashProvider, viewerWorkspace, item),
       openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => {
         handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
         setChatPromptDraft(viewerChatId, sideSlashCommandDraft(sideCommand))
@@ -21985,6 +22058,54 @@ function App(): React.JSX.Element {
       // display fields below (selectedModelType/codexReasoningEffort/etc.), so the
       // UI still reflects the persisted selection on the next render.
       const paneNoopSetter = (): void => {}
+      const paneSlashParticipant = resolvePaneSlashParticipant(viewerChat)
+      const paneSlashProvider = resolvePaneSlashProvider(viewerChat, viewerProvider)
+      const paneSelectParticipant = (participantId: string): void => {
+        updateChatById(viewerChatId, (source) => ({
+          ...source,
+          providerMetadata: {
+            ...(source.providerMetadata || {}),
+            [SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]: participantId
+          },
+          updatedAt: Date.now()
+        }))
+      }
+      const paneUpdateSelectedParticipant = (patch: Partial<EnsembleParticipant>): void => {
+        if (!paneSlashParticipant) return
+        updateChatById(viewerChatId, (source) => ({
+          ...source,
+          ensemble: source.ensemble
+            ? {
+                ...source.ensemble,
+                participants: source.ensemble.participants.map((participant) =>
+                  participant.id === paneSlashParticipant.id
+                    ? { ...participant, ...patch }
+                    : participant
+                ),
+                updatedAt: new Date().toISOString()
+              }
+            : source.ensemble,
+          updatedAt: Date.now()
+        }))
+      }
+      const panePatchParticipantById = (
+        participantId: string,
+        patch: Partial<EnsembleParticipant>
+      ): void => {
+        updateChatById(viewerChatId, (source) => ({
+          ...source,
+          ensemble: source.ensemble
+            ? {
+                ...source.ensemble,
+                participants: source.ensemble.participants.map((participant) =>
+                  participant.id === participantId ? { ...participant, ...patch } : participant
+                ),
+                updatedAt: new Date().toISOString()
+              }
+            : source.ensemble,
+          updatedAt: Date.now()
+        }))
+      }
       // Per-pane context meter — the donut + its popover must reflect THIS pane's
       // chat, not the focused chat's (which composerStableBase carries). Mirrors
       // the focused computation; panes use the static window table (no live limits).
@@ -22062,6 +22183,11 @@ function App(): React.JSX.Element {
         currentProvider: viewerProvider,
         currentProviderLabel: viewerProviderLabel,
         currentProviderModelOptions: paneCtxHelpers.getProviderModelOptions(viewerProvider),
+        selectedParticipant: paneSlashParticipant,
+        effectiveSelectedParticipantId: paneSlashParticipant?.id || null,
+        handleSelectParticipant: paneSelectParticipant,
+        updateSelectedParticipant: paneUpdateSelectedParticipant,
+        patchEnsembleParticipantById: panePatchParticipantById,
         composerSlashCommands: buildPaneComposerSlashCommands(
           viewerPaneIndex,
           viewerChat,
@@ -22072,7 +22198,7 @@ function App(): React.JSX.Element {
           handlePanePaletteCommand(
             viewerPaneIndex,
             viewerChat,
-            viewerProvider,
+            paneSlashProvider,
             viewerWorkspace,
             item
           ),

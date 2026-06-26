@@ -492,8 +492,26 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function leadingCommandPattern(command: string): RegExp | null {
+function isCommandPlaceholderToken(token: string): boolean {
+  return (
+    /^<[^>\s]+>$/.test(token) ||
+    /^\[[^\]\s]+\]$/.test(token) ||
+    /^\{[^}\s]+\}$/.test(token)
+  )
+}
+
+export function hasSlashCommandPlaceholders(command: string): boolean {
+  return command.trim().split(/\s+/).some(isCommandPlaceholderToken)
+}
+
+export function slashCommandDispatchPrefix(command: string): string {
   const tokens = command.trim().split(/\s+/).filter(Boolean)
+  const placeholderIndex = tokens.findIndex(isCommandPlaceholderToken)
+  return (placeholderIndex >= 0 ? tokens.slice(0, placeholderIndex) : tokens).join(' ')
+}
+
+function leadingCommandPattern(command: string): RegExp | null {
+  const tokens = slashCommandDispatchPrefix(command).split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return null
   return new RegExp(`^${tokens.map(escapeRegExp).join('\\s+')}(?=\\s|$)`, 'i')
 }

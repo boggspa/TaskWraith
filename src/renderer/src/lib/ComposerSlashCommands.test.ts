@@ -6,9 +6,11 @@ import {
   COMPOSER_SLASH_GROUP_ORDER,
   buildComposerSlashCommandRegistry,
   filterComposerSlashCommands,
+  hasSlashCommandPlaceholders,
   matchLeadingActionCommand,
   matchLeadingSlashCommand,
   paletteCoreForProvider,
+  slashCommandDispatchPrefix,
   wrapPaletteItemAsSlashCommand,
   type ComposerSlashCommand
 } from './ComposerSlashCommands'
@@ -339,6 +341,29 @@ describe('ComposerSlashCommands', () => {
         remainder: 'this function'
       })
       expect(matchLeadingSlashCommand('/meta discuss the harness', registry)).toBeNull()
+    })
+
+    it('matches discovered command placeholders as arguments instead of literal tokens', () => {
+      const customPaletteItem = {
+        id: 'custom-review-path',
+        command: '/project:review <path>',
+        label: 'Review path',
+        description: 'Review a path',
+        group: 'Custom' as const,
+        source: 'workspace' as const
+      }
+      const registry = buildComposerSlashCommandRegistry({
+        provider: 'gemini',
+        paletteItems: [customPaletteItem]
+      })
+
+      expect(hasSlashCommandPlaceholders(customPaletteItem.command)).toBe(true)
+      expect(slashCommandDispatchPrefix(customPaletteItem.command)).toBe('/project:review')
+      expect(matchLeadingSlashCommand('/project:review src/App.tsx', registry)).toMatchObject({
+        command: expect.objectContaining({ command: '/project:review <path>' }),
+        matchedText: '/project:review',
+        remainder: 'src/App.tsx'
+      })
     })
   })
 

@@ -49,6 +49,8 @@ import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
 import { extractFirstEnsembleDmTarget, formatComposerPathMention, parseComposerMentionTrigger } from '../lib/ComposerMentionTrigger'
 import {
   GEMINI_PALETTE_CORE as COMMAND_PALETTE_CORE,
+  hasSlashCommandPlaceholders,
+  slashCommandDispatchPrefix,
   matchLeadingSlashCommand
 } from '../lib/ComposerSlashCommands'
 import type {
@@ -1023,7 +1025,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     const dispatch = () => {
       switch (command.kind) {
         case 'palette-passthrough':
-          handlePaletteCommand(command.paletteItem)
+          if (
+            command.paletteItem.source !== 'core' &&
+            hasSlashCommandPlaceholders(command.command)
+          ) {
+            const prefix = slashCommandDispatchPrefix(command.command)
+            const next = prefix ? `${prefix} ` : command.command
+            setChatPromptDraft(currentComposerChatId, next)
+            focusComposerTextarea(next.length)
+            return
+          }
+          if (handlePaletteCommand(command.paletteItem) === false) {
+            setChatPromptDraft(currentComposerChatId, prompt)
+            focusComposerTextarea(prompt.length)
+          }
           return
         case 'gemini-pty':
           // PTY pass-through — only viable on Gemini (Codex/Claude/Kimi
@@ -1119,15 +1134,23 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       return true
     }
     if (command.kind === 'palette-passthrough') {
+      const dispatchCommand =
+        command.paletteItem.source !== 'core'
+          ? slashCommandDispatchPrefix(command.command) || command.command
+          : command.command
       const paletteItem =
         match.remainder && command.paletteItem.source !== 'core'
           ? {
               ...command.paletteItem,
-              command: `${command.command} ${match.remainder}`
+              command: `${dispatchCommand} ${match.remainder}`
             }
-          : command.paletteItem
-      handlePaletteCommand(paletteItem)
-      setChatPromptDraft(currentComposerChatId, '')
+          : dispatchCommand !== command.paletteItem.command
+            ? { ...command.paletteItem, command: dispatchCommand }
+            : command.paletteItem
+      const shouldClearDraft = handlePaletteCommand(paletteItem) !== false
+      if (shouldClearDraft) {
+        setChatPromptDraft(currentComposerChatId, '')
+      }
       return true
     }
     if (command.kind === 'gemini-pty') {
