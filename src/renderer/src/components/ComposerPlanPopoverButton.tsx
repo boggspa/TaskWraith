@@ -156,7 +156,7 @@ export function ComposerPlanPopoverButton({
     }
   }, [closePopover, open, updatePosition])
 
-  if (lanes.length === 0) return null
+  if (!chat) return null
 
   const stateClass = stats.hasInProgress ? 'active' : stats.allComplete ? 'completed' : 'pending'
   const title =
@@ -186,28 +186,35 @@ export function ComposerPlanPopoverButton({
                 </span>
               )}
             </div>
-            <div className="composer-plan-lanes">
-              {lanes.map((lane) => {
-                const summary = summarizeTodoProgress(lane.todos)
-                const laneActive = summary.total - summary.cancelled
-                return (
-                  <section className="composer-plan-lane" key={lane.lane}>
-                    {showLaneHeaders && lane.lane !== TODO_SOLO_LANE && (
-                      <div className="composer-plan-lane-header" style={laneColorStyle(lane.lane)}>
-                        <span className="composer-plan-lane-dot" aria-hidden />
-                        <span className="composer-plan-lane-label">{laneLabel(lane.lane)}</span>
-                        {laneActive > 0 && (
-                          <span className="composer-plan-lane-count">
-                            {summary.completed}/{laneActive}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    <TodoChecklistCard todos={lane.todos} variant="full" />
-                  </section>
-                )
-              })}
-            </div>
+            {lanes.length > 0 ? (
+              <div className="composer-plan-lanes">
+                {lanes.map((lane) => {
+                  const summary = summarizeTodoProgress(lane.todos)
+                  const laneActive = summary.total - summary.cancelled
+                  return (
+                    <section className="composer-plan-lane" key={lane.lane}>
+                      {showLaneHeaders && lane.lane !== TODO_SOLO_LANE && (
+                        <div
+                          className="composer-plan-lane-header"
+                          style={laneColorStyle(lane.lane)}
+                        >
+                          <span className="composer-plan-lane-dot" aria-hidden />
+                          <span className="composer-plan-lane-label">{laneLabel(lane.lane)}</span>
+                          {laneActive > 0 && (
+                            <span className="composer-plan-lane-count">
+                              {summary.completed}/{laneActive}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <TodoChecklistCard todos={lane.todos} variant="full" />
+                    </section>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="composer-plan-empty">No plan steps published yet.</p>
+            )}
           </div>,
           document.body
         )

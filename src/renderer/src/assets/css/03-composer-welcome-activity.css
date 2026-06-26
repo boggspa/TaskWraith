@@ -4887,6 +4887,14 @@
   font-weight: 600;
 }
 
+.composer-plan-empty {
+  margin: 0;
+  padding: 4px 2px 1px;
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
 .composer-plan-popover .todo-checklist-card {
   margin: 0;
   gap: 6px;
