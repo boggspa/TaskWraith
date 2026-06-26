@@ -82,6 +82,7 @@ import {
   updateActiveGoalLifecycle
 } from '../../main/GoalState'
 import type { NativeCapabilitySnapshot } from '../../main/NativeCapabilities'
+import type { HumanCollaborationShare } from '../../main/collaboration/HumanCollaborationStore'
 import {
   canonicalizeExternalPathGrantMetadata,
   collectExternalPathGrantsFromMetadata,
@@ -1450,16 +1451,22 @@ function App(): React.JSX.Element {
   // be clobbered by — or clobber — text the user starts typing on launch.
   const [composerDraftsByChatId, setComposerDraftForChat] = usePerChatState('', readComposerDrafts)
   const [collaboratingChatIds, setCollaboratingChatIds] = useState<Set<string>>(new Set())
+  // Full enabled-share list (for the Shares footer popover). Mirrors the Set
+  // above but keeps the participant/mode detail the popover renders.
+  const [humanCollaborationShares, setHumanCollaborationShares] = useState<
+    HumanCollaborationShare[]
+  >([])
   const [joinSharedChatOpen, setJoinSharedChatOpen] = useState(false)
   const refreshHumanCollaborationShares = useCallback(() => {
     if (typeof window.api.humanCollaborationListShares !== 'function') return
     void window.api
       .humanCollaborationListShares()
       .then((shares) => {
+        const enabled = (shares || []).filter((share) => share?.enabled !== false)
+        setHumanCollaborationShares(enabled)
         setCollaboratingChatIds(
           new Set(
-            (shares || [])
-              .filter((share) => share?.enabled !== false)
+            enabled
               .map((share) => share.chatId)
               .filter((chatId): chatId is string => typeof chatId === 'string')
           )
@@ -1467,6 +1474,25 @@ function App(): React.JSX.Element {
       })
       .catch(() => {})
   }, [])
+  // Share-scoped "Stop sharing" for the Shares footer popover — revokes one
+  // share by id (confirm first), then re-derives the shared set. Distinct from
+  // handleStopHumanCollaborationSharing, which revokes every share on a chat.
+  const handleRevokeHumanShare = useCallback(
+    (shareId: string) => {
+      if (typeof window.api.humanCollaborationRevokeShare !== 'function') return
+      if (!window.confirm('Stop sharing this chat? Collaborators will lose access immediately.'))
+        return
+      void window.api
+        .humanCollaborationRevokeShare(shareId)
+        .then(() => refreshHumanCollaborationShares())
+        .catch((error) => {
+          console.error('[human-collaboration] revoke share failed', error)
+          window.alert('Could not stop sharing.')
+          refreshHumanCollaborationShares()
+        })
+    },
+    [refreshHumanCollaborationShares]
+  )
   useEffect(() => {
     refreshHumanCollaborationShares()
   }, [refreshHumanCollaborationShares])
@@ -21413,6 +21439,8 @@ function App(): React.JSX.Element {
                 }}
                 pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
                 pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+                collaborationShares={humanCollaborationShares}
+                onRevokeShare={handleRevokeHumanShare}
               />
             )}
             <div

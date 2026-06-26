@@ -50,6 +50,7 @@ import { isSubThreadChat } from '../lib/chatScope'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 
 const ageTickListeners = new Set<() => void>()
 if (typeof window !== 'undefined') {
@@ -209,6 +210,11 @@ interface SidebarProps {
    * Folded into the Approvals popover's pending list so the count is honest
    * under parallel fan-out. */
   pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
+  /** Enabled human-collaboration shares — populates the Shares footer popover
+   * (chat + mode + active-collaborator count). */
+  collaborationShares?: HumanCollaborationShare[]
+  /** Revoke (stop) a single share by id, from the Shares popover. */
+  onRevokeShare?: (shareId: string) => void
   /**
    * Model Usage card View-B ("API spend") inputs, forwarded to
    * `ModelUsageCard`. Bundles the rate table + display-currency settings
@@ -1703,12 +1709,23 @@ export function ApprovalsFooterPopover({
   )
 }
 
-// Shares popover — active shared chats with per-share participants / mode /
-// status and a revoke affordance, then a deep-link to Settings → Shares. Body
-// fleshed out in a later slice.
-function SharesFooterPopover({
+// Shares popover — each active shared chat with its mode + active-collaborator
+// count, a click-to-open affordance, and a per-share "Stop" (revoke), then a
+// deep-link to Settings → Shares.
+function shareModeLabel(mode: HumanCollaborationShare['mode']): string {
+  return mode === 'readOnly' ? 'Read-only' : 'Comments'
+}
+export function SharesFooterPopover({
+  shares,
+  resolveChatTitle,
+  onJumpToChat,
+  onRevokeShare,
   onOpenSettings
 }: {
+  shares: HumanCollaborationShare[]
+  resolveChatTitle?: (chatId: string) => string | undefined
+  onJumpToChat?: (chatId: string) => void
+  onRevokeShare?: (shareId: string) => void
   onOpenSettings: () => void
 }) {
   return (
@@ -1718,7 +1735,43 @@ function SharesFooterPopover({
       navLabel="Manage shares"
       onNav={onOpenSettings}
     >
-      <div className="sidebar-footer-popover-empty">No active shares</div>
+      {shares.length === 0 ? (
+        <div className="sidebar-footer-popover-empty">No active shares</div>
+      ) : (
+        shares.map((share) => {
+          const title = resolveChatTitle?.(share.chatId) || 'Shared chat'
+          const active = share.participants.filter(
+            (participant) => participant.status === 'active'
+          ).length
+          return (
+            <div className="sidebar-footer-share-row" key={share.shareId}>
+              <button
+                type="button"
+                className={`sidebar-footer-share-main${onJumpToChat ? ' is-clickable' : ''}`}
+                onClick={onJumpToChat ? () => onJumpToChat(share.chatId) : undefined}
+                title={title}
+              >
+                <span className="sidebar-footer-share-title">{title}</span>
+                <span className="sidebar-footer-share-sub">
+                  {shareModeLabel(share.mode)} ·{' '}
+                  {active > 0 ? `${active} active` : 'Awaiting collaborator'}
+                </span>
+              </button>
+              {onRevokeShare && (
+                <button
+                  type="button"
+                  className="sidebar-footer-share-revoke"
+                  onClick={() => onRevokeShare(share.shareId)}
+                  title="Stop sharing"
+                  aria-label={`Stop sharing ${title}`}
+                >
+                  Stop
+                </button>
+              )}
+            </div>
+          )
+        })
+      )}
     </SidebarFooterPopover>
   )
 }
@@ -1824,6 +1877,8 @@ export function Sidebar({
   onOpenSettingsTab,
   pendingAgentApprovalByChatId = {},
   pendingApprovalQueueByChatId = {},
+  collaborationShares = [],
+  onRevokeShare,
   modelUsageApiSpend
 }: SidebarProps) {
   const [hoveredWorkspace, setHoveredWorkspace] = useState<string | null>(null)
@@ -4340,6 +4395,16 @@ export function Sidebar({
             )}
             {sharesPopoverOpen && (
               <SharesFooterPopover
+                shares={collaborationShares}
+                resolveChatTitle={(chatId) =>
+                  chats.find((candidate) => candidate.appChatId === chatId)?.title
+                }
+                onJumpToChat={(chatId) => {
+                  setSharesPopoverOpen(false)
+                  const chat = chats.find((candidate) => candidate.appChatId === chatId)
+                  if (chat) onSelectChat(chat)
+                }}
+                onRevokeShare={onRevokeShare}
                 onOpenSettings={() => {
                   setSharesPopoverOpen(false)
                   openSettingsTab('shares')

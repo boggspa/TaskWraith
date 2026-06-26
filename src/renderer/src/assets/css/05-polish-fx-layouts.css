@@ -2834,6 +2834,75 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     0 0 8px color-mix(in srgb, var(--danger, #e2554f) 55%, transparent);
 }
 
+/* Shares popover rows — chat title + mode/active sub-line, with a per-share
+   Stop (revoke) button. */
+.sidebar-footer-share-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 9px;
+}
+
+.sidebar-footer-share-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  padding: 6px 8px;
+}
+
+.sidebar-footer-share-main.is-clickable {
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.sidebar-footer-share-main.is-clickable:hover,
+.sidebar-footer-share-main.is-clickable:focus-visible {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: none;
+}
+
+.sidebar-footer-share-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm, 13px);
+}
+
+.sidebar-footer-share-sub {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+}
+
+.sidebar-footer-share-revoke {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--danger, #e2554f) 45%, transparent);
+  background: color-mix(in srgb, var(--danger, #e2554f) 12%, transparent);
+  color: color-mix(in srgb, var(--danger, #e2554f) 92%, var(--text-primary));
+  font: inherit;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 4px 9px;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.sidebar-footer-share-revoke:hover,
+.sidebar-footer-share-revoke:focus-visible {
+  background: color-mix(in srgb, var(--danger, #e2554f) 20%, transparent);
+  outline: none;
+}
+
 .app-shell-stats-toolbar {
   --app-shell-stat-cpu: #4f8cff;
   --app-shell-stat-ram: #36b76a;

@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatRecord, WorkflowDefinition, WorkspaceRecord } from '../../../main/store/types'
-import { Sidebar, DevicesFooterPopover, ApprovalsFooterPopover } from './Sidebar'
+import {
+  Sidebar,
+  DevicesFooterPopover,
+  ApprovalsFooterPopover,
+  SharesFooterPopover
+} from './Sidebar'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 
@@ -741,5 +746,80 @@ describe('ApprovalsFooterPopover', () => {
     expect(html).toContain('Approval 5')
     expect(html).not.toContain('Approval 6')
     expect(html).toContain('+2 more pending')
+  })
+})
+
+function makeShare(overrides: Record<string, unknown> = {}) {
+  return {
+    shareId: 'share-1',
+    chatId: 'parent-1',
+    mode: 'comments' as const,
+    enabled: true,
+    createdAt: 1,
+    updatedAt: 1,
+    nextSequence: 1,
+    participants: [
+      {
+        collaboratorId: 'c-1',
+        displayName: 'Alex',
+        publicKeyId: 'ed25519:alex',
+        status: 'active' as const,
+        joinedAt: 2
+      }
+    ],
+    invites: [],
+    idempotency: {},
+    ...overrides
+  }
+}
+
+describe('SharesFooterPopover', () => {
+  it('shows an empty state with no active shares', () => {
+    const html = renderToStaticMarkup(
+      <SharesFooterPopover shares={[]} onOpenSettings={() => {}} />
+    )
+    expect(html).toContain('No active shares')
+    expect(html).toContain('Manage shares')
+  })
+
+  it('renders a share with its resolved title, mode and active count', () => {
+    const html = renderToStaticMarkup(
+      <SharesFooterPopover
+        shares={[makeShare()]}
+        resolveChatTitle={() => 'Design review'}
+        onJumpToChat={() => {}}
+        onRevokeShare={() => {}}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).toContain('Design review')
+    expect(html).toContain('Comments')
+    expect(html).toContain('1 active')
+    expect(html).toContain('Stop')
+    expect(html).toContain('is-clickable')
+  })
+
+  it('labels a read-only share and shows awaiting state with no active members', () => {
+    const html = renderToStaticMarkup(
+      <SharesFooterPopover
+        shares={[makeShare({ mode: 'readOnly', participants: [] })]}
+        resolveChatTitle={() => 'Spec'}
+        onJumpToChat={() => {}}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).toContain('Read-only')
+    expect(html).toContain('Awaiting collaborator')
+  })
+
+  it('omits the Stop button when no revoke handler is supplied', () => {
+    const html = renderToStaticMarkup(
+      <SharesFooterPopover
+        shares={[makeShare()]}
+        resolveChatTitle={() => 'Design review'}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).not.toContain('sidebar-footer-share-revoke')
   })
 })
