@@ -65,6 +65,14 @@ export const GEMINI_PALETTE_CORE: CommandPaletteItem[] = [
     source: 'core'
   },
   {
+    id: 'core-gemini-help',
+    command: '/gemini-help',
+    label: 'Gemini CLI help',
+    description: 'Send /help to the Gemini CLI without colliding with TaskWraith Help.',
+    group: 'Core',
+    source: 'core'
+  },
+  {
     id: 'core-stats',
     command: '/stats',
     label: 'Stats',

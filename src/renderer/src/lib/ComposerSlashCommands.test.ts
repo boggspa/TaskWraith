@@ -415,6 +415,7 @@ describe('ComposerSlashCommands', () => {
       const ids = GEMINI_PALETTE_CORE.map((entry) => entry.id)
       expect(ids).toEqual([
         'core-help',
+        'core-gemini-help',
         'core-stats',
         'core-commands-list',
         'core-commands-reload',

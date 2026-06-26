@@ -13728,6 +13728,16 @@ function App(): React.JSX.Element {
       }
       return
     }
+    if (slashTargetProvider === 'gemini') {
+      const bridgeCommand = item.command === '/gemini-help' ? '/help' : item.command
+      void handleBridgeCommand(bridgeCommand)
+      if (item.command === '/commands reload') {
+        void refreshCommandDiscovery()
+      } else if (item.command === '/memory refresh') {
+        void refreshGeminiMemory()
+      }
+      return
+    }
     void handleBridgeCommand(item.command)
   }
 
@@ -14112,7 +14122,7 @@ function App(): React.JSX.Element {
     }
   }
 
-  const openSideChatFromSlashCommand = (sideCommand: SideSlashCommand): void => {
+  const openSideChatFromSlashCommand = (sideCommand: SideSlashCommand): false => {
     if (currentChat && currentChatIsLinkedChild) {
       void openCurrentSideChatPresentation(
         sideCommand.presentation,
@@ -14120,7 +14130,7 @@ function App(): React.JSX.Element {
         null,
         sideCommand.seedPrompt
       )
-      return
+      return false
     }
     void ensureSideChatForCurrentChat(
       sideCommand.seedPrompt,
@@ -14137,6 +14147,7 @@ function App(): React.JSX.Element {
         void handleSelectChat(linkedChat)
       }
     })
+    return false
   }
 
   // tryHandleSideSlashSubmit / handleComposerSlash moved INTO <Composer>
