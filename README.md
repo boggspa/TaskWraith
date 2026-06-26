@@ -54,8 +54,10 @@ the app has earned trust through several low-risk sessions.
 
 Read [TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md) for the safe-first-run guide,
 capability matrix, storage locations, provider data boundaries, release
-verification steps, and known limits. [SAFETY.md](SAFETY.md) and
-[SECURITY.md](SECURITY.md) contain the engineering guardrails and release
+verification steps, and known limits. Optional features that require outside
+accounts, local services, or macOS permissions are covered in
+[ADVANCED_OPTIONAL_SETUP.md](ADVANCED_OPTIONAL_SETUP.md). [SAFETY.md](SAFETY.md)
+and [SECURITY.md](SECURITY.md) contain the engineering guardrails and release
 baseline.
 
 <table>
@@ -219,5 +221,5 @@ Swift toolchain and is not part of the cross-platform `npm run ci`.
 - `scripts`: Build, security, validation, signing, and packaging utilities.
 
 See `CHANGELOG.md` for release history, and `TRUST_AND_SAFETY.md`,
-`COMPOSER_VARIANTS.md`, `ARCHITECTURE.md`, `SAFETY.md`, `SECURITY.md`, and
-`TERMS_NOTES.md` for more detail.
+`ADVANCED_OPTIONAL_SETUP.md`, `COMPOSER_VARIANTS.md`, `ARCHITECTURE.md`,
+`SAFETY.md`, `SECURITY.md`, and `TERMS_NOTES.md` for more detail.

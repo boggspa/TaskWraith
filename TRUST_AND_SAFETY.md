@@ -77,6 +77,11 @@ Leave these disabled during first-run testing:
 - External message-channel bridges.
 - Full-workspace or unattended workflow grants.
 
+When you are ready to enable optional surfaces, see
+[ADVANCED_OPTIONAL_SETUP.md](ADVANCED_OPTIONAL_SETUP.md) for the external steps
+around Ollama models, API keys, iOS/Tailscale pairing, Screen Watch, message
+bridges, creative apps, and custom MCP servers.
+
 ## Capability Matrix
 
 | Surface | Default posture | What it can access | What may leave your Mac | Approval and audit |
