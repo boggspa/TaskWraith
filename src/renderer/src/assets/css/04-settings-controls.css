@@ -3198,6 +3198,10 @@
   border-color: color-mix(in srgb, var(--accent) 28%, var(--panel-border) 58%);
 }
 
+.settings-user-mcp-importer {
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--panel-border) 62%);
+}
+
 .settings-user-mcp-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3237,6 +3241,10 @@
   font-size: 11px;
   line-height: 1.45;
   resize: vertical;
+}
+
+.settings-user-mcp-import-textarea {
+  min-height: 180px;
 }
 
 .settings-user-mcp-footer {

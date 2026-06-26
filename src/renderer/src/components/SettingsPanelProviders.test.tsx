@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
-import { SettingsPanel } from './SettingsPanel'
+import { SettingsPanel, parseUserMcpServersImportJson } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
 import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
 
@@ -238,6 +238,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('filesystem')
     expect(html).toContain('2 args')
     expect(html).toContain('1 env var')
+    expect(html).toContain('Import JSON')
     expect(html).toContain('Audit JSON')
     expect(html).toContain('&quot;command&quot;: &quot;npx&quot;')
     expect(html).toContain('&quot;PROJECT_ROOT&quot;: &quot;[stored in TaskWraith settings]&quot;')
@@ -266,5 +267,79 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toMatch(
       /<label class="settings-service-row"><span>Enable Auto-Update<\/span><input type="checkbox"\/?>/
     )
+  })
+})
+
+describe('parseUserMcpServersImportJson', () => {
+  it('imports Claude/Cursor-style stdio MCP server definitions', () => {
+    const result = parseUserMcpServersImportJson(
+      JSON.stringify({
+        mcpServers: {
+          filesystem: {
+            command: 'npx',
+            args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+            env: {
+              PROJECT_ROOT: '/repo',
+              'bad-key': 'dropped'
+            }
+          }
+        }
+      })
+    )
+
+    expect(result.error).toBeUndefined()
+    expect(result.skipped).toBe(0)
+    expect(result.servers).toHaveLength(1)
+    expect(result.servers[0]).toMatchObject({
+      name: 'filesystem',
+      enabled: true,
+      transport: 'stdio',
+      command: 'npx',
+      args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+      env: { PROJECT_ROOT: '/repo' }
+    })
+    expect(result.servers[0].env).not.toHaveProperty('bad-key')
+  })
+
+  it('imports remote MCP servers and de-duplicates names against existing records', () => {
+    const result = parseUserMcpServersImportJson(
+      JSON.stringify({
+        mcpServers: {
+          docs: {
+            type: 'streamableHttp',
+            url: 'https://example.test/mcp',
+            disabled: true
+          }
+        }
+      }),
+      [
+        {
+          id: 'existing-docs',
+          name: 'docs',
+          enabled: true,
+          transport: 'stdio',
+          command: 'node'
+        }
+      ]
+    )
+
+    expect(result.error).toBeUndefined()
+    expect(result.servers).toHaveLength(1)
+    expect(result.servers[0]).toMatchObject({
+      name: 'docs 2',
+      enabled: false,
+      transport: 'http',
+      url: 'https://example.test/mcp'
+    })
+  })
+
+  it('reports an error when no supported MCP server entries are present', () => {
+    const result = parseUserMcpServersImportJson(
+      JSON.stringify({ mcpServers: { empty: { args: ['missing-command'] } } })
+    )
+
+    expect(result.servers).toEqual([])
+    expect(result.skipped).toBe(1)
+    expect(result.error).toContain('No supported MCP servers found')
   })
 })

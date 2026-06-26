@@ -633,6 +633,10 @@ const USER_MCP_TRANSPORT_OPTIONS: Array<{ value: UserMcpServerTransport; label: 
   { value: 'sse', label: 'SSE' }
 ]
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
 function emptyUserMcpServerForm(): UserMcpServerFormState {
   return {
     name: '',
@@ -713,6 +717,18 @@ function makeUserMcpServerId(name: string): string {
   return `user-mcp-${slug}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 }
 
+function uniqueImportedUserMcpName(name: string, usedNames: Set<string>): string {
+  const base = name.trim() || 'Imported MCP server'
+  let candidate = base
+  let suffix = 2
+  while (usedNames.has(candidate.toLowerCase())) {
+    candidate = `${base} ${suffix}`
+    suffix += 1
+  }
+  usedNames.add(candidate.toLowerCase())
+  return candidate
+}
+
 function buildUserMcpServerFromForm(
   form: UserMcpServerFormState,
   existing?: UserMcpServerConfig
@@ -756,6 +772,109 @@ function buildUserMcpServerFromForm(
   if (url) server.url = url
   if (Object.keys(parsedEnv.env).length > 0) server.env = parsedEnv.env
   return { server }
+}
+
+function normalizeImportedUserMcpEnv(value: unknown): Record<string, string> | undefined {
+  if (!isPlainRecord(value)) return undefined
+  const env: Record<string, string> = {}
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof rawValue !== 'string') continue
+    env[key] = rawValue
+  }
+  return Object.keys(env).length > 0 ? env : undefined
+}
+
+function normalizeImportedUserMcpArgs(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const args = value
+    .map((arg) => (typeof arg === 'string' ? arg.trim() : String(arg).trim()))
+    .filter(Boolean)
+    .slice(0, 64)
+  return args.length > 0 ? args : undefined
+}
+
+function normalizeImportedUserMcpTransport(entry: Record<string, unknown>): UserMcpServerTransport {
+  const raw = String(entry.type || entry.transport || '').trim().toLowerCase()
+  if (raw === 'sse') return 'sse'
+  if (
+    raw === 'http' ||
+    raw === 'streamable_http' ||
+    raw === 'streamable-http' ||
+    raw === 'streamablehttp'
+  ) {
+    return 'http'
+  }
+  return typeof entry.url === 'string' && entry.url.trim() ? 'http' : 'stdio'
+}
+
+function buildImportedUserMcpServer(
+  name: string,
+  value: unknown,
+  usedNames: Set<string>
+): UserMcpServerConfig | null {
+  if (!isPlainRecord(value)) return null
+  const transport = normalizeImportedUserMcpTransport(value)
+  const command = typeof value.command === 'string' ? value.command.trim() : ''
+  const url = typeof value.url === 'string' ? value.url.trim() : ''
+  if (transport === 'stdio' && !command) return null
+  if (transport !== 'stdio' && !url) return null
+  const serverName = uniqueImportedUserMcpName(name, usedNames)
+  const now = new Date().toISOString()
+  const server: UserMcpServerConfig = {
+    id: makeUserMcpServerId(serverName),
+    name: serverName,
+    enabled:
+      typeof value.enabled === 'boolean'
+        ? value.enabled
+        : typeof value.disabled === 'boolean'
+          ? !value.disabled
+          : true,
+    transport,
+    createdAt: now,
+    updatedAt: now
+  }
+  if (typeof value.description === 'string' && value.description.trim()) {
+    server.description = value.description.trim()
+  }
+  if (command) server.command = command
+  if (url) server.url = url
+  const args = normalizeImportedUserMcpArgs(value.args)
+  if (args) server.args = args
+  const env = normalizeImportedUserMcpEnv(value.env)
+  if (env) server.env = env
+  return server
+}
+
+export function parseUserMcpServersImportJson(
+  text: string,
+  existingServers: readonly UserMcpServerConfig[] = []
+): { servers: UserMcpServerConfig[]; skipped: number; error?: string } {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return { servers: [], skipped: 0, error: 'Paste valid JSON before importing.' }
+  }
+  if (!isPlainRecord(parsed)) {
+    return { servers: [], skipped: 0, error: 'MCP import JSON must be an object.' }
+  }
+  const rawServers = isPlainRecord(parsed.mcpServers) ? parsed.mcpServers : parsed
+  const usedNames = new Set(existingServers.map((server) => server.name.trim().toLowerCase()))
+  const servers: UserMcpServerConfig[] = []
+  let skipped = 0
+  for (const [name, value] of Object.entries(rawServers)) {
+    const server = buildImportedUserMcpServer(name, value, usedNames)
+    if (server) servers.push(server)
+    else skipped += 1
+  }
+  if (servers.length === 0) {
+    return {
+      servers,
+      skipped,
+      error: 'No supported MCP servers found. Import entries need either command or url.'
+    }
+  }
+  return { servers, skipped }
 }
 
 function userMcpServerAuditKey(server: UserMcpServerConfig): string {
@@ -1882,6 +2001,9 @@ export function SettingsPanel({
     emptyUserMcpServerForm
   )
   const [mcpServerFormError, setMcpServerFormError] = useState('')
+  const [mcpImportOpen, setMcpImportOpen] = useState(false)
+  const [mcpImportText, setMcpImportText] = useState('')
+  const [mcpImportError, setMcpImportError] = useState('')
   const [keyCommandQuery, setKeyCommandQuery] = useState('')
   const [recordingKeyCommandId, setRecordingKeyCommandId] = useState<KeyCommandId | null>(null)
   const [keyCommandRecordError, setKeyCommandRecordError] = useState('')
@@ -1963,6 +2085,17 @@ export function SettingsPanel({
     setMcpServerFormError('')
   }
 
+  const startImportMcpServers = (): void => {
+    setMcpImportOpen(true)
+    setMcpImportError('')
+  }
+
+  const cancelImportMcpServers = (): void => {
+    setMcpImportOpen(false)
+    setMcpImportText('')
+    setMcpImportError('')
+  }
+
   const startEditMcpServer = (server: UserMcpServerConfig): void => {
     setMcpServerFormMode('edit')
     setEditingMcpServerId(server.id)
@@ -1992,6 +2125,18 @@ export function SettingsPanel({
         : [...userMcpServers, result.server]
     persistUserMcpServers(next)
     resetMcpServerForm()
+  }
+
+  const importMcpServersFromJson = (): void => {
+    const result = parseUserMcpServersImportJson(mcpImportText, userMcpServers)
+    if (result.error) {
+      setMcpImportError(result.error)
+      return
+    }
+    persistUserMcpServers([...userMcpServers, ...result.servers])
+    setMcpImportOpen(false)
+    setMcpImportText('')
+    setMcpImportError('')
   }
 
   const toggleUserMcpServer = (server: UserMcpServerConfig, enabled: boolean): void => {
@@ -5532,6 +5677,13 @@ export function SettingsPanel({
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={startImportMcpServers}
+                  >
+                    Import JSON
+                  </button>
                   <button type="button" className="btn btn-sm" onClick={startCreateMcpServer}>
                     Add server
                   </button>
@@ -5561,6 +5713,50 @@ export function SettingsPanel({
                 </article>
               </div>
             </div>
+
+            {mcpImportOpen && (
+              <div className="settings-group span-all settings-user-mcp-importer">
+                <div className="settings-mcp-section-title">
+                  <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                    Import MCP JSON
+                  </h4>
+                  <p className="settings-hint">
+                    Paste a Claude or Cursor style JSON object with a top-level mcpServers map.
+                    Imported servers are stored as TaskWraith-owned definitions.
+                  </p>
+                </div>
+                <textarea
+                  className="settings-user-mcp-textarea settings-user-mcp-import-textarea"
+                  value={mcpImportText}
+                  onChange={(event) => {
+                    setMcpImportText(event.target.value)
+                    setMcpImportError('')
+                  }}
+                  rows={8}
+                  placeholder={`{\n  "mcpServers": {\n    "filesystem": {\n      "command": "npx",\n      "args": ["@modelcontextprotocol/server-filesystem", "/repo"]\n    }\n  }\n}`}
+                />
+                <div className="settings-user-mcp-footer">
+                  <span className="settings-hint">
+                    Existing definitions are kept; imported names are de-duplicated.
+                  </span>
+                  <div className="settings-mcp-header-actions">
+                    {mcpImportError && (
+                      <span className="settings-user-mcp-error">{mcpImportError}</span>
+                    )}
+                    <button type="button" className="btn btn-sm" onClick={importMcpServersFromJson}>
+                      Import
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={cancelImportMcpServers}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="settings-group span-all">
               <div className="settings-mcp-section-title">
