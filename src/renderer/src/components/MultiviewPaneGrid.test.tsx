@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MultiviewPaneGrid } from './MultiviewPaneGrid'
-import type { MultiviewPaneRecord } from '../../../shared/multiviewLayouts'
+import type {
+  MultiviewPaneMediaRef,
+  MultiviewPaneRecord
+} from '../../../shared/multiviewLayouts'
 
 const focused = () => <div id="focused-cell" />
 const viewer = (chatId: string) => <div className="viewer-cell">{chatId}</div>
@@ -64,6 +67,56 @@ describe('MultiviewPaneGrid', () => {
     expect(out).toContain('cv1')
     expect(canvas).toHaveBeenCalledWith('cv1', 1)
     expect(viewerFn).not.toHaveBeenCalled() // canvas pane does not fall through to chat
+  })
+
+  it('renders a media cell for a pane with a mediaRef (not the chat viewer)', () => {
+    const m: MultiviewPaneMediaRef = { id: 'm1', kind: 'video', name: 'clip.mp4' }
+    const media = vi.fn((mediaRef: MultiviewPaneMediaRef) => (
+      <div className="media-cell">{mediaRef.name}</div>
+    ))
+    const viewerFn = vi.fn(viewer)
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        panes={[
+          { id: 'p0', chatId: 'a' },
+          { id: 'p1', chatId: null, mediaRef: m }
+        ]}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewerFn}
+        renderMediaCell={media}
+      />
+    )
+    expect(out).toContain('media-cell')
+    expect(out).toContain('clip.mp4')
+    expect(media).toHaveBeenCalledWith(m, 1)
+    expect(viewerFn).not.toHaveBeenCalled() // media pane does not fall through to chat
+  })
+
+  it('media takes precedence over canvas when both renderers are supplied', () => {
+    // Defense-in-depth: even if a record somehow carried both, the media branch
+    // (checked first) wins and the canvas renderer is never invoked.
+    const m: MultiviewPaneMediaRef = { id: 'm1', kind: 'audio', name: 'voice.wav' }
+    const media = vi.fn(() => <div className="media-cell" />)
+    const canvas = vi.fn(() => <div className="canvas-cell" />)
+    const out = renderToStaticMarkup(
+      <MultiviewPaneGrid
+        layout="vertical-2"
+        panes={[
+          { id: 'p0', chatId: 'a' },
+          { id: 'p1', chatId: null, canvasId: 'cv1', mediaRef: m }
+        ]}
+        focusedPaneIndex={0}
+        renderFocusedCell={focused}
+        renderViewerCell={viewer}
+        renderCanvasCell={canvas}
+        renderMediaCell={media}
+      />
+    )
+    expect(out).toContain('media-cell')
+    expect(media).toHaveBeenCalledWith(m, 1)
+    expect(canvas).not.toHaveBeenCalled()
   })
 
   it('renders no shared ambient backdrop in a split layout (per-pane inline FX)', () => {

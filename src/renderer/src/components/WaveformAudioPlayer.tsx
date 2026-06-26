@@ -42,6 +42,13 @@ export interface WaveformAudioPlayerProps {
   posterSrc?: string
   durationMs?: number
   name?: string
+  /**
+   * When flipped to `true`, the headless `<audio>` is paused (e.g. the hosting
+   * media pane scrolled off-screen). Optional + defaults to "never paused" so the
+   * existing inline transcript player is byte-identical. Pausing only — the user
+   * can always hit play again; it never auto-resumes.
+   */
+  pausedSignal?: boolean
 }
 
 const FALLBACK_PLAYED = '#4c8dff'
@@ -119,7 +126,8 @@ export function WaveformAudioPlayer({
   peaks,
   posterSrc,
   durationMs,
-  name
+  name,
+  pausedSignal
 }: WaveformAudioPlayerProps): ReactNode {
   const hasPeaks = Array.isArray(peaks) && peaks.length > 0
   const usePoster = !hasPeaks && !!posterSrc
@@ -127,12 +135,10 @@ export function WaveformAudioPlayer({
   // No waveform AND no poster → the always-playable plain control. (Variant C tail.)
   if (!hasPeaks && !usePoster) {
     return (
-      <audio
-        className="tw-wave-audio-plain"
-        controls
-        preload="metadata"
+      <PlainAudioFallback
         src={src}
-        aria-label={name ? `Audio: ${name}` : 'Audio'}
+        name={name}
+        pausedSignal={pausedSignal}
       />
     )
   }
@@ -144,6 +150,34 @@ export function WaveformAudioPlayer({
       posterSrc={usePoster ? posterSrc : undefined}
       durationMs={durationMs}
       name={name}
+      pausedSignal={pausedSignal}
+    />
+  )
+}
+
+/** The Variant-C plain `<audio controls>` tail, with `pausedSignal` honoured so an
+ *  off-screen media pane stops it too (the canvas/poster paths do the same). */
+function PlainAudioFallback({
+  src,
+  name,
+  pausedSignal
+}: {
+  src: string
+  name?: string
+  pausedSignal?: boolean
+}): ReactNode {
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  useEffect(() => {
+    if (pausedSignal) audioRef.current?.pause()
+  }, [pausedSignal])
+  return (
+    <audio
+      ref={audioRef}
+      className="tw-wave-audio-plain"
+      controls
+      preload="metadata"
+      src={src}
+      aria-label={name ? `Audio: ${name}` : 'Audio'}
     />
   )
 }
@@ -153,7 +187,8 @@ function WaveformAudioPlayerCore({
   peaks,
   posterSrc,
   durationMs,
-  name
+  name,
+  pausedSignal
 }: WaveformAudioPlayerProps): ReactNode {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -244,6 +279,13 @@ function WaveformAudioPlayerCore({
 
   const onPlay = useCallback(() => setIsPlaying(true), [])
   const onPause = useCallback(() => setIsPlaying(false), [])
+
+  // Pause-on-hide parity with the <video> path: when the hosting media pane
+  // scrolls off-screen it raises `pausedSignal`, and we pause the headless audio.
+  // Pause only (the `pause` event flips isPlaying via onPause) — never auto-resume.
+  useEffect(() => {
+    if (pausedSignal) audioRef.current?.pause()
+  }, [pausedSignal])
 
   const togglePlay = useCallback(() => {
     const el = audioRef.current

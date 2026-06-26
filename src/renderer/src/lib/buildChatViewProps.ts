@@ -49,6 +49,7 @@ export interface BuildChatViewPropsInput {
   onOpenSideChatFromMessage?: TranscriptPanelProps['onOpenSideChatFromMessage']
   onMessageSelectionCandidate?: TranscriptPanelProps['onMessageSelectionCandidate']
   onPreviewImage: TranscriptPanelProps['onPreviewImage']
+  onDetachToPane?: TranscriptPanelProps['onDetachToPane']
   // Optional pass-throughs — supplied when available, omitted otherwise.
   currentRun?: TranscriptPanelProps['currentRun']
   currentWorkspacePath?: string
@@ -129,6 +130,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     onOpenSideChatFromMessage: input.onOpenSideChatFromMessage,
     onMessageSelectionCandidate: input.onMessageSelectionCandidate,
     onPreviewImage: input.onPreviewImage,
+    onDetachToPane: input.onDetachToPane,
     copiedId: input.copiedId,
     copy: input.copy,
     currency: input.currency,

@@ -478,6 +478,7 @@ import { AuditRunCard } from './components/AuditRunCard'
 import { AuditRunNotice } from './components/AuditRunNotice'
 import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
 import { MultiviewPaneGrid } from './components/MultiviewPaneGrid'
+import { MediaPane } from './components/MediaPane'
 import { CanvasPane } from './components/CanvasPane'
 import { CanvasPaneLauncher } from './components/CanvasPaneLauncher'
 import { Composer, type ComposerProps } from './components/Composer'
@@ -2393,6 +2394,29 @@ function App(): React.JSX.Element {
   // Multiview: split the central pane into 1-4 panes. Inert until a layout is
   // chosen — single layout renders byte-identically to before Multiview.
   const multiview = useMultiviewState()
+  // Detach a transcript A/V player into its own Multiview pane (the docked media
+  // player). `ChatMediaRef` is a structural superset of the pane's
+  // `MultiviewPaneMediaRef`; we narrow to the node-free subset (and clamp `kind`
+  // to 'audio'|'video' — the detach affordance only fires for AV refs). Keeps
+  // focus on the current transcript pane so the user can keep typing.
+  const openMediaPane = useCallback(
+    (ref: ChatMediaRef) => {
+      const kind = ref.kind === 'audio' ? 'audio' : 'video'
+      multiview.openMediaInNewPane({
+        id: ref.id,
+        kind,
+        name: ref.name,
+        sha256: ref.sha256,
+        mimeType: ref.mimeType,
+        durationMs: ref.durationMs,
+        codecs: ref.codecs,
+        byteLength: ref.byteLength,
+        peaks: ref.peaks,
+        thumbnail: ref.thumbnail
+      })
+    },
+    [multiview]
+  )
   // True when the central pane is split (>1 multiview cell). Welcome-state
   // dashboard/heatmaps/starter cards are suppressed when split — a short cell
   // can't fit them and they overlap/clip the composer.
@@ -20231,6 +20255,7 @@ function App(): React.JSX.Element {
         onDeleteMessage={handleMultiviewPaneDeleteMessage}
         onTogglePinMessage={handleMultiviewPaneTogglePinMessage}
         onPreviewImage={setPreviewChatMediaRef}
+        onDetachToPane={openMediaPane}
         currency={displayCurrency}
         currencyOverestimatePercent={overestimatePercent}
         providerRates={providerRates}
@@ -21725,6 +21750,12 @@ function App(): React.JSX.Element {
                   }}
                 />
               )}
+              renderMediaCell={(mediaRef, paneIndex) => (
+                <MediaPane
+                  mediaRef={mediaRef}
+                  onClose={() => multiview.setPaneMedia(paneIndex, null)}
+                />
+              )}
               renderViewerCell={renderMultiviewPaneCell}
               renderFocusedCell={() => (
             <div
@@ -22287,6 +22318,7 @@ function App(): React.JSX.Element {
             mediaRef={previewChatMediaRef}
             workspacePath={currentWorkspace?.path}
             onClose={() => setPreviewChatMediaRef(null)}
+            onDetachToPane={openMediaPane}
           />
 
           {/* AMBIENT FX (sky weather + living workspace) — rendered INLINE in the
@@ -22475,6 +22507,7 @@ function App(): React.JSX.Element {
                   canCreateSideChatFromCurrent ? handleMessageSelectionCandidate : undefined
                 }
                 onPreviewImage={setPreviewChatMediaRef}
+                onDetachToPane={openMediaPane}
                 onOpenSideChatFromMessage={
                   canCreateSideChatFromCurrent ? handleOpenSideChatFromMessage : undefined
                 }
@@ -22826,6 +22859,7 @@ function App(): React.JSX.Element {
                 handlePromoteCollaboratorComment(sideChat.appChatId, messageId)
               }
               onPreviewImage={setPreviewChatMediaRef}
+              onDetachToPane={openMediaPane}
               jumpToMessageRequest={
                 transcriptJumpRequest?.chatId === sideChat.appChatId ? transcriptJumpRequest : null
               }

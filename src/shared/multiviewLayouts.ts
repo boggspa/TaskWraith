@@ -31,6 +31,31 @@ export type MultiviewLayout = (typeof MULTIVIEW_LAYOUT_IDS)[number]
  * Lives in this node-free contract module so the renderer (useMultiviewState,
  * the pane grid) and any future persistence/validation share one shape.
  */
+/**
+ * A node-free descriptor for an audio/video asset detached into its OWN Multiview
+ * pane (the docked media player). A STRUCTURAL SUBSET of the renderer's
+ * `ChatMediaRef` (ChatMediaPanel.tsx) — every field here exists there with the
+ * same shape — so `openMediaPane(ref: ChatMediaRef)` narrows to this cleanly and
+ * the descriptor stays importable from this shared (main+renderer) contract. The
+ * pane reuses the EXISTING `WaveformAudioPlayer` (audio) / `<video>` (video)
+ * sourced from `twmedia://` via `sha256` + `mimeType`; the optional fields drive
+ * the same badges/poster/waveform the inline transcript player shows.
+ */
+export interface MultiviewPaneMediaRef {
+  id: string
+  kind: 'audio' | 'video'
+  name: string
+  sha256?: string
+  mimeType?: string
+  durationMs?: number
+  codecs?: string
+  byteLength?: number
+  /** Compact waveform envelope for AUDIO (N integer buckets, each 0–255). */
+  peaks?: number[]
+  /** Video poster still — rendered as a `data:` URL on the `<video poster>`. */
+  thumbnail?: { dataBase64: string; mimeType: string; width?: number; height?: number }
+}
+
 export interface MultiviewPaneRecord {
   id: string
   chatId: string | null
@@ -40,6 +65,13 @@ export interface MultiviewPaneRecord {
    * Mutually exclusive with chatId; absent on every ordinary chat pane.
    */
   canvasId?: string | null
+  /**
+   * When set, this pane hosts a detached audio/video player (the docked media
+   * player) instead of a chat or canvas — `chatId` is null and `canvasId` is
+   * absent. Mutually exclusive with BOTH chatId and canvasId; absent on every
+   * ordinary chat/canvas pane. `null` and absent are equivalent (no media).
+   */
+  mediaRef?: MultiviewPaneMediaRef | null
 }
 
 export interface MultiviewLayoutSpec {

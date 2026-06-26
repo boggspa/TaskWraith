@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import type { MultiviewPaneRecord } from '../../../shared/multiviewLayouts'
+import type {
+  MultiviewPaneMediaRef,
+  MultiviewPaneRecord
+} from '../../../shared/multiviewLayouts'
 import {
   applyAssignToNextPane,
   applyClosePane,
   applyFocusPane,
   applyOpenInNewPane,
+  applyOpenMediaInNewPane,
   applyResetTrackSizes,
   applyResizeTrack,
   applySetFocusedPane,
@@ -12,12 +16,22 @@ import {
   applySetPaneCanvas,
   applySetPaneChat,
   applySetPaneFxFlag,
+  applySetPaneMedia,
   createInitialMultiviewState,
   getLayoutTracks,
   MULTIVIEW_MIN_PANE_PX,
   normalizeMultiviewCoreState,
   type MultiviewCoreState
 } from './useMultiviewState'
+
+/** A minimal media descriptor for the docked-player pane tests. */
+const mediaRef = (id = 'm1'): MultiviewPaneMediaRef => ({
+  id,
+  kind: 'video',
+  name: `${id}.mp4`,
+  sha256: `sha-${id}`,
+  mimeType: 'video/mp4'
+})
 
 /** Build pane records with deterministic seeded ids `t0`, `t1`, … from chatIds. */
 const panesOf = (chatIds: (string | null)[]): MultiviewPaneRecord[] =>
@@ -164,6 +178,117 @@ describe('applySetPaneCanvas', () => {
     const s = state({ panes: panesOf(['a']) })
     expect(applySetPaneCanvas(s, 9, 'cv1')).toBe(s)
     expect(applySetPaneCanvas(s, 0, null)).toBe(s) // already canvas-less
+  })
+
+  it('setting a canvas also clears any detached media (mutual exclusion)', () => {
+    const m = mediaRef()
+    let s = applySetPaneMedia(state({ layout: 'vertical-2', panes: panesOf([null, null]) }), 0, m)
+    expect(s.panes[0].mediaRef).toBe(m)
+    s = applySetPaneCanvas(s, 0, 'cv1')
+    expect(s.panes[0]).toEqual({ id: 't0', chatId: null, canvasId: 'cv1', mediaRef: null })
+  })
+})
+
+describe('applySetPaneMedia', () => {
+  const m = mediaRef()
+
+  it('puts a media player in a pane and clears its chat (mutually exclusive)', () => {
+    const next = applySetPaneMedia(
+      state({ layout: 'vertical-2', panes: panesOf(['a', 'b']) }),
+      1,
+      m
+    )
+    expect(next.panes[1]).toEqual({ id: 't1', chatId: null, canvasId: null, mediaRef: m })
+    expect(next.panes[0]).toEqual({ id: 't0', chatId: 'a' }) // untouched chat pane keeps old shape
+  })
+
+  it('assigning a chat to a media pane clears the media', () => {
+    let s = applySetPaneMedia(state({ layout: 'vertical-2', panes: panesOf([null, null]) }), 0, m)
+    expect(s.panes[0].mediaRef).toBe(m)
+    s = applySetPaneChat(s, 0, 'chat-x')
+    expect(s.panes[0]).toEqual({ id: 't0', chatId: 'chat-x', canvasId: null, mediaRef: null })
+  })
+
+  it('setting media clears an existing canvas (mutual exclusion both ways)', () => {
+    let s = applySetPaneCanvas(state({ layout: 'vertical-2', panes: panesOf([null, null]) }), 0, 'cv1')
+    expect(s.panes[0].canvasId).toBe('cv1')
+    s = applySetPaneMedia(s, 0, m)
+    expect(s.panes[0]).toEqual({ id: 't0', chatId: null, canvasId: null, mediaRef: m })
+  })
+
+  it('clearing media restores an empty (chat-null) pane and is a no-op when already media-less', () => {
+    let s = applySetPaneMedia(state({ layout: 'vertical-2', panes: panesOf([null, null]) }), 1, m)
+    s = applySetPaneMedia(s, 1, null)
+    // Mirrors applySetPaneCanvas: clearing leaves the now-null sibling keys the SET
+    // branch introduced (canvasId:null). The pane is empty (no chat, no media).
+    expect(s.panes[1].chatId).toBeNull()
+    expect(s.panes[1].mediaRef).toBeNull()
+    expect(s.panes[1].canvasId ?? null).toBeNull()
+    const plain = state({ panes: panesOf(['a']) })
+    expect(applySetPaneMedia(plain, 0, null)).toBe(plain) // already media-less
+  })
+
+  it('ignores out-of-range indices', () => {
+    const s = state({ panes: panesOf(['a']) })
+    expect(applySetPaneMedia(s, 9, m)).toBe(s)
+  })
+})
+
+describe('applyOpenMediaInNewPane', () => {
+  const m = mediaRef()
+
+  it('grows single -> vertical-2, places the media, and KEEPS focus on the transcript', () => {
+    const next = applyOpenMediaInNewPane(
+      state({ layout: 'single', panes: panesOf(['a']), focusedPaneIndex: 0 }),
+      m
+    )
+    expect(next.layout).toBe('vertical-2')
+    expect(next.focusedPaneIndex).toBe(0) // focus stays on the transcript pane
+    expect(next.panes[0]).toEqual({ id: 't0', chatId: 'a' }) // transcript untouched
+    expect(next.panes[1].mediaRef).toBe(m)
+    expect(next.panes[1].chatId).toBeNull()
+    expect(next.panes[1].id).toBe('pane-100') // the new pane gets a fresh id
+  })
+
+  it('uses an existing non-focused empty cell without growing', () => {
+    const next = applyOpenMediaInNewPane(
+      state({ layout: 'vertical-2', panes: panesOf(['a', null]), focusedPaneIndex: 0 }),
+      m
+    )
+    expect(next.layout).toBe('vertical-2')
+    expect(next.panes[1].mediaRef).toBe(m)
+    expect(next.panes[1].id).toBe('t1') // reused the existing empty pane
+  })
+
+  it('never targets the focused pane and never moves focus', () => {
+    const next = applyOpenMediaInNewPane(
+      state({ layout: 'vertical-2', panes: panesOf([null, null]), focusedPaneIndex: 0 }),
+      m
+    )
+    expect(next.panes[0].mediaRef).toBeFalsy() // focused pane left empty
+    expect(next.panes[1].mediaRef).toBe(m)
+    expect(next.focusedPaneIndex).toBe(0)
+  })
+
+  it('does not clobber an already-detached media pane while a spare exists (grows)', () => {
+    // pane 1 already hosts media; the only other non-focused cell is also taken,
+    // so there is no empty spare → it grows rather than overwriting pane 1.
+    const existing = mediaRef('existing')
+    const next = applyOpenMediaInNewPane(
+      state({
+        layout: 'two-top-one-bottom',
+        panes: [
+          { id: 't0', chatId: 'a' },
+          { id: 't1', chatId: null, mediaRef: existing },
+          { id: 't2', chatId: 'c' }
+        ],
+        focusedPaneIndex: 0
+      }),
+      m
+    )
+    expect(next.layout).toBe('quad') // grew (no empty non-focused spare)
+    expect(next.panes[1].mediaRef).toBe(existing) // untouched
+    expect(next.panes[3].mediaRef).toBe(m) // landed in the fresh cell
   })
 })
 
@@ -627,5 +752,18 @@ describe('normalizeMultiviewCoreState (backward-compat / hydration bridge)', () 
     expect(chatIds(next)).toEqual(['a', 'b'])
     expect(next.panes[0].id).toBe('pane-1') // minted
     expect(next.panes[1].id).toBe('pane-2')
+  })
+
+  it('carries a detached mediaRef through normalization', () => {
+    const m = mediaRef()
+    const next = normalizeMultiviewCoreState({
+      layout: 'vertical-2',
+      panes: [
+        { id: 'pane-1', chatId: null, mediaRef: m },
+        { id: 'pane-2', chatId: 'b' }
+      ]
+    })
+    expect(next.panes[0]).toEqual({ id: 'pane-1', chatId: null, mediaRef: m })
+    expect(next.panes[1]).toEqual({ id: 'pane-2', chatId: 'b' }) // no mediaRef key
   })
 })

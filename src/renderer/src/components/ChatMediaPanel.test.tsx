@@ -96,6 +96,33 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(html).not.toContain('message-attachment-icon')
   })
 
+  it('shows a "pop out to pane" affordance on AV cards ONLY when onDetachToPane is wired', () => {
+    const refs: ChatMediaRef[] = [
+      {
+        id: 'vid-1',
+        kind: 'video',
+        source: 'tool_result',
+        name: 'clip.mp4',
+        path: '',
+        mimeType: 'video/mp4',
+        sha256: 'abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ'
+      }
+    ]
+    const withDetach = renderToStaticMarkup(
+      <ChatMessageMediaStrip refs={refs} workspacePath="/repo" onDetachToPane={() => {}} />
+    )
+    expect(withDetach).toContain('message-attachment-detach')
+    expect(withDetach).toContain('Pop clip.mp4 out to a pane')
+    // (The "Detach to pane" action-menu item lives in a portal that is closed by
+    // default, so it isn't in the static markup — its presence is unit-covered by
+    // the buildMediaCardActions assertions below.)
+
+    const withoutDetach = renderToStaticMarkup(
+      <ChatMessageMediaStrip refs={refs} workspacePath="/repo" />
+    )
+    expect(withoutDetach).not.toContain('message-attachment-detach')
+  })
+
   it('renders the DAW waveform canvas (+ a headless <audio>) for an audio ref WITH peaks', () => {
     const refs: ChatMediaRef[] = [
       {
@@ -474,6 +501,38 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(html).toContain('Copy path')
     expect(html).toContain('Open file')
     expect(html).toContain('Close')
+  })
+
+  it('overlay shows a "Detach to pane" footer button for an AV ref ONLY when wired', () => {
+    const avRef: ChatMediaRef = {
+      id: 'aud-1',
+      kind: 'audio',
+      source: 'tool_result',
+      name: 'render.wav',
+      path: '',
+      mimeType: 'audio/wav',
+      sha256: 'wavHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000'
+    }
+    const wired = renderToStaticMarkup(
+      <ChatMediaPreviewOverlay mediaRef={avRef} onClose={() => {}} onDetachToPane={() => {}} />
+    )
+    expect(wired).toContain('Detach to pane')
+
+    const unwired = renderToStaticMarkup(
+      <ChatMediaPreviewOverlay mediaRef={avRef} onClose={() => {}} />
+    )
+    expect(unwired).not.toContain('Detach to pane')
+
+    // An IMAGE ref never gets the detach button even when the callback is wired
+    // (detaching only makes sense for a playable A/V player).
+    const imageWired = renderToStaticMarkup(
+      <ChatMediaPreviewOverlay
+        mediaRef={{ id: 'img-1', kind: 'image', source: 'upload', name: 'p.png', path: '/p.png' }}
+        onClose={() => {}}
+        onDetachToPane={() => {}}
+      />
+    )
+    expect(imageWired).not.toContain('Detach to pane')
   })
 
   it('carries groupKind through collectMessageMediaRefs (no field-drop)', () => {

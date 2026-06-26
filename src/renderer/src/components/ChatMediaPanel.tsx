@@ -334,13 +334,26 @@ function MediaActionMenu({
  */
 function buildMediaCardActions(
   mediaRef: ChatMediaRef,
-  copy: (id: string, text: string) => void
+  copy: (id: string, text: string) => void,
+  onDetachToPane?: (ref: ChatMediaRef) => void
 ): MediaActionMenuItem[] {
   const sha256 = mediaRef.sha256
   const mimeType = mediaRef.mimeType
   const canUseAssetChannels = Boolean(sha256 && mimeType)
+  // "Detach to pane" only makes sense for a playable A/V ref (it pops out a
+  // player) AND only when the host wired the callback (Multiview is available).
+  const canDetach = Boolean(onDetachToPane && isAvMediaKind(mediaRef.kind))
 
   return [
+    ...(canDetach
+      ? [
+          {
+            id: 'detach-to-pane',
+            label: 'Detach to pane',
+            onSelect: () => onDetachToPane?.(mediaRef)
+          } as MediaActionMenuItem
+        ]
+      : []),
     {
       id: 'reveal',
       label: 'Open in Finder',
@@ -835,15 +848,18 @@ function ChatMessageImageAttachment({
 function ChatMessageAvAttachment({
   mediaRef,
   src,
-  onPreviewImage
+  onPreviewImage,
+  onDetachToPane
 }: {
   mediaRef: ChatMediaRef
   src: string
   onPreviewImage?: (ref: ChatMediaRef) => void
+  onDetachToPane?: (ref: ChatMediaRef) => void
 }) {
   const { copy } = useCopyFeedback()
-  const actions = buildMediaCardActions(mediaRef, copy)
+  const actions = buildMediaCardActions(mediaRef, copy, onDetachToPane)
   const expand = onPreviewImage ? () => onPreviewImage(mediaRef) : undefined
+  const detach = onDetachToPane ? () => onDetachToPane(mediaRef) : undefined
 
   const header = (
     <div className="message-attachment-av-head">
@@ -861,6 +877,24 @@ function ChatMessageAvAttachment({
         <span className="message-attachment-name">{mediaRef.name}</span>
       )}
       <span className="message-attachment-av-controls">
+        {detach && (
+          <button
+            type="button"
+            className="message-attachment-expand message-attachment-detach"
+            onClick={detach}
+            title={`Pop ${mediaRef.name} out to a pane`}
+            aria-label={`Pop ${mediaRef.name} out to a pane`}
+          >
+            <span className="sf-symbol-icon" aria-hidden>
+              {/* PiP / pop-out: a frame with an inset child rectangle + an arrow out. */}
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" role="img">
+                <path d="M2 3.5h12v9H2z" strokeLinejoin="round" />
+                <path d="M8 8.5h5v3H8z" fill="currentColor" stroke="none" />
+                <path d="M6.5 6 10 6 10 9.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </button>
+        )}
         {expand && (
           <button
             type="button"
@@ -994,11 +1028,14 @@ function partitionFilmstripRuns(
 export function ChatMessageMediaStrip({
   refs,
   workspacePath,
-  onPreviewImage
+  onPreviewImage,
+  onDetachToPane
 }: {
   refs: ChatMediaRef[]
   workspacePath?: string
   onPreviewImage?: (ref: ChatMediaRef) => void
+  /** Pop an A/V ref out into its own Multiview pane (the docked media player). */
+  onDetachToPane?: (ref: ChatMediaRef) => void
 }) {
   const { copiedId, copy } = useCopyFeedback()
   if (refs.length === 0) return null
@@ -1041,6 +1078,7 @@ export function ChatMessageMediaStrip({
                 mediaRef={ref}
                 src={avSrc}
                 onPreviewImage={onPreviewImage}
+                onDetachToPane={onDetachToPane}
               />
             )
           }
@@ -1063,11 +1101,14 @@ export function ChatMessageMediaStrip({
 export function ChatMediaPreviewOverlay({
   mediaRef,
   workspacePath,
-  onClose
+  onClose,
+  onDetachToPane
 }: {
   mediaRef: ChatMediaRef | null
   workspacePath?: string
   onClose: () => void
+  /** Pop the A/V ref out into its own Multiview pane (closes the lightbox). */
+  onDetachToPane?: (ref: ChatMediaRef) => void
 }) {
   const { copiedId, copy } = useCopyFeedback()
   const [previewFailed, setPreviewFailed] = useState(false)
@@ -1103,8 +1144,9 @@ export function ChatMediaPreviewOverlay({
 
   // Sha-based asset actions (Open in Finder / Copy path / Save as) — the only
   // way to act on a generated, path-less AV ref from inside the lightbox.
-  const assetActions = buildMediaCardActions(mediaRef, copy)
+  const assetActions = buildMediaCardActions(mediaRef, copy, onDetachToPane)
   const hasAssetChannels = Boolean(mediaRef.sha256 && mediaRef.mimeType)
+  const canDetach = Boolean(onDetachToPane && isAv)
 
   return (
     <div
@@ -1163,6 +1205,18 @@ export function ChatMediaPreviewOverlay({
         </div>
 
         <footer className="chat-media-preview-actions">
+          {canDetach && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                onDetachToPane?.(mediaRef)
+                onClose()
+              }}
+            >
+              Detach to pane
+            </button>
+          )}
           {hasAssetChannels && (
             <MediaActionMenu
               items={assetActions}

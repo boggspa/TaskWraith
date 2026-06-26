@@ -214,6 +214,9 @@ export type TranscriptPanelProps = {
   sideChatSeedMessageId?: string | null
   jumpToMessageRequest?: { messageId: string; requestId: number } | null
   onPreviewImage: (ref: ChatMediaRef) => void
+  /** Pop an A/V attachment out into its own Multiview pane (the docked media
+   *  player). Optional — omitted when Multiview isn't available to the host. */
+  onDetachToPane?: (ref: ChatMediaRef) => void
   /**
    * 1.0.8 — shared copy-to-clipboard feedback (see {@link useCopyFeedback}).
    * `copiedId` is the id currently showing its "Copied" confirmation;
@@ -742,6 +745,7 @@ export const TranscriptPanel = memo(
     sideChatSeedMessageId,
     jumpToMessageRequest,
     onPreviewImage,
+    onDetachToPane,
     copiedId,
     copy,
     virtualize,
@@ -1462,6 +1466,7 @@ export const TranscriptPanel = memo(
                                 refs={stripRefs}
                                 workspacePath={currentChat?.workspacePath}
                                 onPreviewImage={onPreviewImage}
+                                onDetachToPane={onDetachToPane}
                               />
                             )}
                             {collapsible && (
@@ -1562,6 +1567,7 @@ export const TranscriptPanel = memo(
                                 refs={stripRefs}
                                 workspacePath={currentChat?.workspacePath}
                                 onPreviewImage={onPreviewImage}
+                                onDetachToPane={onDetachToPane}
                               />
                             )}
                             {isCollaboratorComment && onPromoteCollaboratorComment && (
@@ -1982,6 +1988,7 @@ export const TranscriptPanel = memo(
     previous.onOpenSideChatFromMessage === next.onOpenSideChatFromMessage &&
     previous.sideChatSeedMessageId === next.sideChatSeedMessageId &&
     previous.onPreviewImage === next.onPreviewImage &&
+    previous.onDetachToPane === next.onDetachToPane &&
     previous.copiedId === next.copiedId &&
     previous.copy === next.copy &&
     previous.virtualize === next.virtualize &&

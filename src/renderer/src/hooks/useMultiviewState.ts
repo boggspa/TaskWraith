@@ -10,6 +10,7 @@ import {
   paneCountForLayout,
   type MultiviewGutterOrientation,
   type MultiviewLayout,
+  type MultiviewPaneMediaRef,
   type MultiviewPaneRecord
 } from '../../../shared/multiviewLayouts'
 
@@ -190,16 +191,24 @@ function withChatAt(
 ): MultiviewPaneRecord[] {
   if (index < 0 || index >= panes.length) return panes
   const pane = panes[index]
-  // Assigning a chat clears any canvas (the two are mutually exclusive). No-op for
-  // an ordinary canvas-less pane already on this chatId. Canvas-less panes keep the
-  // exact old shape (no canvasId key) so existing records are byte-identical.
-  if (pane.chatId === chatId && !pane.canvasId) return panes
+  // Assigning a chat clears any canvas OR detached media (all three are mutually
+  // exclusive). No-op for an ordinary canvas-less / media-less pane already on this
+  // chatId. Each cleared field is stamped ONLY when it was present, so a plain chat
+  // pane (and a canvas-only pane) keep their exact old shape — existing records stay
+  // byte-identical and only the relevant exclusion key is nulled.
+  if (pane.chatId === chatId && !pane.canvasId && !pane.mediaRef) return panes
   const next = panes.slice()
-  next[index] = pane.canvasId ? { ...pane, chatId, canvasId: null } : { ...pane, chatId }
+  next[index] = {
+    ...pane,
+    chatId,
+    ...(pane.canvasId ? { canvasId: null } : {}),
+    ...(pane.mediaRef ? { mediaRef: null } : {})
+  }
   return next
 }
 
-/** Put a live-embedded canvas in a pane (clears its chat). `null` clears the canvas. */
+/** Put a live-embedded canvas in a pane (clears its chat + any detached media).
+ * `null` clears the canvas. */
 export function applySetPaneCanvas(
   state: MultiviewCoreState,
   index: number,
@@ -207,11 +216,47 @@ export function applySetPaneCanvas(
 ): MultiviewCoreState {
   if (index < 0 || index >= state.panes.length) return state
   const pane = state.panes[index]
-  if ((pane.canvasId ?? null) === canvasId && (canvasId === null || pane.chatId === null)) {
+  if (
+    (pane.canvasId ?? null) === canvasId &&
+    (canvasId === null || (pane.chatId === null && !pane.mediaRef))
+  ) {
     return state
   }
   const next = state.panes.slice()
-  next[index] = { ...pane, canvasId, chatId: canvasId ? null : pane.chatId }
+  // When setting a canvas, clear chat + any detached media. `mediaRef: null` is
+  // stamped ONLY when one was present, so a canvas-only pane keeps its exact old
+  // shape (no `mediaRef` key) and existing records stay byte-identical.
+  next[index] = canvasId
+    ? { ...pane, canvasId, chatId: null, ...(pane.mediaRef ? { mediaRef: null } : {}) }
+    : { ...pane, canvasId }
+  return { ...state, panes: next }
+}
+
+/** Put a detached audio/video player in a pane (clears its chat + any canvas).
+ * `null` clears the media. Mirrors applySetPaneCanvas exactly so the mutual
+ * exclusion (chat / canvas / media) is symmetric. */
+export function applySetPaneMedia(
+  state: MultiviewCoreState,
+  index: number,
+  mediaRef: MultiviewPaneMediaRef | null
+): MultiviewCoreState {
+  if (index < 0 || index >= state.panes.length) return state
+  const pane = state.panes[index]
+  // No-op when clearing an already-media-less pane, or setting the very same ref
+  // onto an already-cleaned (chat-null + canvas-absent) media pane.
+  if (mediaRef === null && !pane.mediaRef) return state
+  if (
+    mediaRef !== null &&
+    pane.mediaRef === mediaRef &&
+    pane.chatId === null &&
+    !pane.canvasId
+  ) {
+    return state
+  }
+  const next = state.panes.slice()
+  next[index] = mediaRef
+    ? { ...pane, mediaRef, chatId: null, canvasId: null }
+    : { ...pane, mediaRef: null }
   return { ...state, panes: next }
 }
 
@@ -407,6 +452,34 @@ export function applyOpenInNewPane(
 }
 
 /**
+ * Detach an audio/video player into a NON-focused pane WITHOUT moving focus — the
+ * transcript "pop out to pane" action. The user pops the player out of the message
+ * flow but KEEPS TYPING in the current (transcript) pane, so focus is preserved.
+ * Clones applyOpenInNewPane: grows the layout by one pane (UPGRADE_LAYOUT) when no
+ * spare non-focused EMPTY cell exists; once at quad, overwrites a non-focused cell.
+ * "Empty" here means truly empty — no chat, no canvas, no existing media — so an
+ * already-detached player or a canvas is never clobbered while a spare exists.
+ */
+export function applyOpenMediaInNewPane(
+  state: MultiviewCoreState,
+  mediaRef: MultiviewPaneMediaRef
+): MultiviewCoreState {
+  const isEmpty = (pane: MultiviewPaneRecord): boolean =>
+    pane.chatId == null && !pane.canvasId && !pane.mediaRef
+  let next = state
+  const hasSpare = next.panes.some((pane, i) => i !== next.focusedPaneIndex && isEmpty(pane))
+  if (!hasSpare) {
+    const grown = UPGRADE_LAYOUT[next.layout]
+    if (grown !== next.layout) next = applySetLayout(next, grown)
+  }
+  let target = next.panes.findIndex((pane, i) => i !== next.focusedPaneIndex && isEmpty(pane))
+  if (target < 0) target = next.panes.findIndex((_, i) => i !== next.focusedPaneIndex)
+  if (target < 0) target = next.focusedPaneIndex
+  // Focus is deliberately NOT moved (unlike assignToNextPane) — keep typing in place.
+  return applySetPaneMedia(next, target, mediaRef)
+}
+
+/**
  * Set a pane's FX override flag, keyed by STABLE pane id. A missing entry/field
  * means "follow the app-global flag", so callers pass the next EFFECTIVE value
  * (e.g. `!effectiveSky`) so the first toggle visibly flips regardless of where
@@ -540,10 +613,16 @@ export function normalizeMultiviewCoreState(raw: unknown): MultiviewCoreState {
     sourcePanes = record.panes.map((entry) => {
       const pane = (entry ?? {}) as Record<string, unknown>
       const chatId = typeof pane.chatId === 'string' ? pane.chatId : null
-      if (typeof pane.id === 'string' && pane.id) return { id: pane.id, chatId }
+      // Carry a detached media descriptor through normalization (so a future
+      // persisted layout restores its media pane). A live canvasId is a transient
+      // WebContentsView handle that can't survive a reload, so it is intentionally
+      // dropped; mediaRef is pure data and is preserved when present.
+      const media = (pane.mediaRef ?? null) as MultiviewPaneMediaRef | null
+      const mediaPart = media ? { mediaRef: media } : {}
+      if (typeof pane.id === 'string' && pane.id) return { id: pane.id, chatId, ...mediaPart }
       const minted = mintPaneId(seq)
       seq += 1
-      return { id: minted, chatId }
+      return { id: minted, chatId, ...mediaPart }
     })
   } else if (Array.isArray(record.paneChatIds)) {
     sourcePanes = record.paneChatIds.map((entry) => {
@@ -603,6 +682,8 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   setLayout: (next: MultiviewLayout, seedChatId?: string | null) => void
   setPaneChat: (index: number, chatId: string | null) => void
   setPaneCanvas: (index: number, canvasId: string | null) => void
+  /** Put a detached audio/video player in a pane; `null` clears it. */
+  setPaneMedia: (index: number, mediaRef: MultiviewPaneMediaRef | null) => void
   setFocusedPane: (index: number) => void
   focusPane: (index: number, outgoingFocusedChatId?: string | null) => void
   closePane: (index: number) => void
@@ -610,6 +691,8 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   assignToNextPane: (chatId: string) => number
   /** Open a chat in a non-focused pane (grows the layout if needed); keeps focus. */
   openInNewPane: (chatId: string, outgoingFocusedChatId?: string | null) => void
+  /** Detach an A/V player into a non-focused pane (grows if needed); keeps focus. */
+  openMediaInNewPane: (mediaRef: MultiviewPaneMediaRef) => void
   /** Drag a gutter: move `deltaPx` between two adjacent tracks (clamped at min). */
   resizeTrack: (args: ApplyResizeTrackArgs) => void
   /** Double-click a gutter: reset a layout's fractions to the spec defaults. */
@@ -666,6 +749,11 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
       setState((s) => applySetPaneCanvas(s, index, canvasId)),
     []
   )
+  const setPaneMedia = useCallback(
+    (index: number, mediaRef: MultiviewPaneMediaRef | null) =>
+      setState((s) => applySetPaneMedia(s, index, mediaRef)),
+    []
+  )
   const setFocusedPane = useCallback(
     (index: number) => setState((s) => applySetFocusedPane(s, index)),
     []
@@ -686,6 +774,9 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     },
     []
   )
+  const openMediaInNewPane = useCallback((mediaRef: MultiviewPaneMediaRef) => {
+    setState((s) => applyOpenMediaInNewPane(s, mediaRef))
+  }, [])
   const resizeTrack = useCallback((args: ApplyResizeTrackArgs) => {
     setState((s) => applyResizeTrack(s, args))
   }, [])
@@ -735,11 +826,13 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     setLayout,
     setPaneChat,
     setPaneCanvas,
+    setPaneMedia,
     setFocusedPane,
     focusPane,
     closePane,
     assignToNextPane,
     openInNewPane,
+    openMediaInNewPane,
     resizeTrack,
     resetTrackSizes,
     paneFx,
