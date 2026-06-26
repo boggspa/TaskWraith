@@ -2662,10 +2662,15 @@
   right: 0;
   bottom: calc(100% + 8px);
   z-index: 90;
-  width: min(264px, calc(var(--sidebar-width, 280px) - 24px));
+  /* The sidebar inflates its font scale 1.17x; reset it locally so popover
+     rows read at a normal size and more of each title fits. Use the full
+     sidebar width too (the panel is clipped to the sidebar box). */
+  --font-size-sm: 12.5px;
+  --font-size-xs: 11px;
+  width: calc(var(--sidebar-width, 260px) - 16px);
   max-height: min(70vh, 480px);
   overflow: auto;
-  padding: 8px;
+  padding: 7px;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -2781,7 +2786,7 @@
    resolved (informational). Shares the LED + name/meta layout with devices. */
 .sidebar-footer-approval-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   width: 100%;
   padding: 6px 8px;
@@ -2792,6 +2797,11 @@
   font: inherit;
   font-size: var(--font-size-sm, 13px);
   text-align: left;
+}
+
+/* The LED + meta sit on the first line; the title may wrap to two. */
+.sidebar-footer-approval-row .sidebar-footer-led {
+  margin-top: 4px;
 }
 
 button.sidebar-footer-approval-row.is-clickable {
@@ -2808,13 +2818,17 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
 .sidebar-footer-approval-title {
   flex: 1;
   min-width: 0;
+  /* Wrap to at most two lines so the full approval activity is visible. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
 }
 
 .sidebar-footer-approval-meta {
   flex: 0 0 auto;
+  margin-top: 1px;
   font-size: var(--font-size-xs, 11px);
   color: var(--text-secondary);
   text-transform: capitalize;
