@@ -6752,6 +6752,31 @@ private struct ComposerGitAttachedRowContent: View {
 
     private func gitRow(showsAction: Bool) -> some View {
         HStack(spacing: 7) {
+            Button(action: action) {
+                gitRowContent(showsAction: showsAction)
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .accessibilityLabel(accessibilitySummary)
+            .accessibilityHint("Open changed files")
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(TWTheme.textTertiary)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove workspace")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private func gitRowContent(showsAction: Bool) -> some View {
+        HStack(spacing: 7) {
             HStack(spacing: 5) {
                 Image(systemName: "arrow.triangle.branch")
                     .font(.caption2)
@@ -6793,7 +6818,7 @@ private struct ComposerGitAttachedRowContent: View {
             }
             Spacer(minLength: 8)
             if showsAction {
-                actionButton
+                actionBadge
             }
             if let canWrite {
                 Image(systemName: canWrite ? "pencil" : "lock")
@@ -6802,34 +6827,34 @@ private struct ComposerGitAttachedRowContent: View {
                     .frame(width: 18, height: 18)
                     .accessibilityLabel(canWrite ? "Write access" : "Read-only access")
             }
-            if let onRemove {
-                Button(action: onRemove) {
-                    Image(systemName: "xmark")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(TWTheme.textTertiary)
-                        .frame(width: 18, height: 18)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Remove workspace")
-            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
-    private var actionButton: some View {
-        Button(action: action) {
-            Text(actionLabel)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(TWTheme.textSecondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(TWTheme.surface3, in: Capsule())
+    private var actionBadge: some View {
+        Text(actionLabel)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(TWTheme.textSecondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(TWTheme.surface3, in: Capsule())
+            .layoutPriority(2)
+    }
+
+    private var accessibilitySummary: String {
+        var parts = [displayName]
+        if let branchName, !branchName.isEmpty {
+            parts.append(branchName)
         }
-        .buttonStyle(.plain)
-        .layoutPriority(2)
+        parts.append("\(filesChanged) file\(filesChanged == 1 ? "" : "s") changed")
+        if additions > 0 {
+            parts.append("\(additions) added")
+        }
+        if deletions > 0 {
+            parts.append("\(deletions) removed")
+        }
+        return parts.joined(separator: ", ")
     }
 
     @ViewBuilder

@@ -19,6 +19,8 @@ final class MobileDiffStudioState: ObservableObject {
     @Published var status = ""
     @Published var isLoading = false
 
+    private var reloadGeneration = 0
+
     var files: [WorkspaceDiffFile] { diff?.files ?? [] }
 
     var selectedFile: WorkspaceDiffFile? {
@@ -72,10 +74,21 @@ final class MobileDiffStudioState: ObservableObject {
 
     func reload(model: RemoteSessionModel) async {
         guard let workspaceId = selectedWorkspaceId else { return }
+        reloadGeneration += 1
+        let generation = reloadGeneration
         isLoading = true
         status = "Computing diff..."
+        func isCurrentRequest() -> Bool {
+            selectedWorkspaceId == workspaceId && reloadGeneration == generation
+        }
+        defer {
+            if isCurrentRequest() {
+                isLoading = false
+            }
+        }
         do {
             let result = try await model.fetchWorkspaceDiff(workspaceId: workspaceId)
+            guard isCurrentRequest() else { return }
             diff = result
             // The previously open file may have left the change set.
             if let selectedPath, !result.files.contains(where: { $0.path == selectedPath }) {
@@ -86,9 +99,9 @@ final class MobileDiffStudioState: ObservableObject {
                 ? "No changes."
                 : "\(count) changed file\(count == 1 ? "" : "s")"
         } catch {
+            guard isCurrentRequest() else { return }
             status = error.localizedDescription
         }
-        isLoading = false
     }
 }
 
@@ -120,7 +133,20 @@ struct DiffStudioSplitView: View {
 struct DiffStudioCompactView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject var state: MobileDiffStudioState
+    let onExpand: (() -> Void)?
     let onClose: () -> Void
+
+    init(
+        model: RemoteSessionModel,
+        state: MobileDiffStudioState,
+        onExpand: (() -> Void)? = nil,
+        onClose: @escaping () -> Void
+    ) {
+        self.model = model
+        self.state = state
+        self.onExpand = onExpand
+        self.onClose = onClose
+    }
 
     var body: some View {
         Group {
@@ -131,7 +157,14 @@ struct DiffStudioCompactView: View {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Close") { onClose() }
                         }
-                        ToolbarItem(placement: .primaryAction) {
+                        ToolbarItemGroup(placement: .primaryAction) {
+                            if let onExpand {
+                                Button(action: onExpand) {
+                                    Label(
+                                        "Open full Diff Studio",
+                                        systemImage: "arrow.up.left.and.arrow.down.right")
+                                }
+                            }
                             Button { Task { await state.reload(model: model) } } label: {
                                 Label("Refresh", systemImage: "arrow.clockwise")
                             }
@@ -139,7 +172,12 @@ struct DiffStudioCompactView: View {
                         }
                     }
             } else {
-                DiffViewerPane(model: model, state: state, onBack: onClose, compact: true)
+                DiffViewerPane(
+                    model: model,
+                    state: state,
+                    onBack: onClose,
+                    onExpand: onExpand,
+                    compact: true)
             }
         }
     }
@@ -279,6 +317,7 @@ private struct DiffViewerPane: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject var state: MobileDiffStudioState
     let onBack: () -> Void
+    var onExpand: (() -> Void)? = nil
     let compact: Bool
 
     var body: some View {
@@ -351,6 +390,13 @@ private struct DiffViewerPane: View {
                     .lineLimit(1)
             }
             Spacer()
+            if let onExpand {
+                Button(action: onExpand) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Open full Diff Studio")
+            }
             if let file = state.selectedFile {
                 DiffStatChips(additions: file.additions, deletions: file.deletions)
             }

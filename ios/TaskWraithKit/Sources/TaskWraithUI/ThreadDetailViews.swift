@@ -137,6 +137,8 @@ struct ThreadDetailView: View {
     /// composer is idle — i.e. the compact one-line composer.
     @State private var composerFocused = false
     @State private var renameSheetPresented = false
+    @StateObject private var composerDiffSheetState = MobileDiffStudioState()
+    @State private var composerDiffSheetPresented = false
     /// Follow the transcript tail as content streams in. Driven by the bottom
     /// sentinel's visibility (on screen ⇒ follow); the jump-to-latest pill and
     /// thread-open also re-arm it.
@@ -1302,7 +1304,7 @@ struct ThreadDetailView: View {
                             fallbackDeletions: pillDeletions,
                             fallbackCommitsAhead: pillCommitsAhead,
                             reduceMotion: reduceMotion,
-                            onTap: { openComposerDiff(workspaceId: primaryWorkspaceId) }
+                            onTap: { openComposerDiffSheet(workspaceId: primaryWorkspaceId) }
                         )
                     }
                     VStack(spacing: tuckedTab ? -10 : (detached ? 6 : 0)) {
@@ -1332,7 +1334,7 @@ struct ThreadDetailView: View {
                                     canWrite: model.workspaceCanEditFiles(workspaceId),
                                     onRemove: workspaceId == secondaryWorkspaceId
                                         ? { secondaryWorkspaceBinding.wrappedValue = nil } : nil
-                                ) { openComposerDiff(workspaceId: workspaceId) }
+                                ) { openComposerDiffSheet(workspaceId: workspaceId) }
                                 .composerShellIf(detached, resolved)
                                 if !detached {
                                     Rectangle().fill(TWTheme.border).frame(height: 1)
@@ -1343,7 +1345,7 @@ struct ThreadDetailView: View {
                                 diff: diff,
                                 workspaceName: model.workspaceName(for: primaryWorkspaceId),
                                 gitSnapshot: primaryGitSnapshot
-                            ) { openComposerDiff(workspaceId: primaryWorkspaceId) }
+                            ) { openComposerDiffSheet(workspaceId: primaryWorkspaceId) }
                             .composerShellIf(detached, resolved)
                             if !detached {
                                 Rectangle().fill(TWTheme.border).frame(height: 1)
@@ -1356,7 +1358,7 @@ struct ThreadDetailView: View {
                                 gitSnapshot: row.workspaceId.flatMap { model.gitSnapshots[$0] },
                                 canWrite: row.showsWriteAccess,
                                 onRemove: nil
-                            ) { openComposerDiff(workspaceId: row.workspaceId) }
+                            ) { openComposerDiffSheet(workspaceId: row.workspaceId) }
                             .composerShellIf(detached, resolved)
                             if !detached {
                                 Rectangle().fill(TWTheme.border).frame(height: 1)
@@ -1369,7 +1371,7 @@ struct ThreadDetailView: View {
                                 gitSnapshot: secondaryGitSnapshot,
                                 canWrite: model.workspaceCanEditFiles(secondaryWorkspaceId),
                                 onRemove: { secondaryWorkspaceBinding.wrappedValue = nil }
-                            ) { openComposerDiff(workspaceId: secondaryWorkspaceId) }
+                            ) { openComposerDiffSheet(workspaceId: secondaryWorkspaceId) }
                             .composerShellIf(detached, resolved)
                             if !detached {
                                 Rectangle().fill(TWTheme.border).frame(height: 1)
@@ -1555,6 +1557,19 @@ struct ThreadDetailView: View {
                 Rectangle().fill(TWTheme.border).frame(height: 1)
             }
         }
+    }
+
+    private func openComposerDiffSheet(workspaceId: String?) {
+        let resolvedWorkspaceId = workspaceId ?? model.diffReviewableWorkspaces.first?.id
+        guard model.workspaceCanReviewDiffs(resolvedWorkspaceId) else {
+            model.inspectorPresented = true
+            return
+        }
+        #if canImport(UIKit)
+            dismissKeyboard()
+        #endif
+        composerDiffSheetState.activate(model: model, preferredWorkspaceId: resolvedWorkspaceId)
+        composerDiffSheetPresented = true
     }
 
     private func openComposerDiff(workspaceId: String?) {
@@ -1781,6 +1796,24 @@ struct ThreadDetailView: View {
                     model.renameThread(card, title: title)
                 }
             }
+        }
+        .sheet(isPresented: $composerDiffSheetPresented) {
+            NavigationStack {
+                DiffStudioCompactView(
+                    model: model,
+                    state: composerDiffSheetState,
+                    onExpand: {
+                        let workspaceId = composerDiffSheetState.selectedWorkspaceId
+                        composerDiffSheetPresented = false
+                        DispatchQueue.main.async {
+                            model.requestDiffMode(workspaceId: workspaceId)
+                        }
+                    }
+                ) {
+                    composerDiffSheetPresented = false
+                }
+            }
+            .composerDiffSheetChrome()
         }
 
     }
@@ -2139,6 +2172,19 @@ private struct AgentTranscriptRimModifier: ViewModifier {
 private extension View {
     func agentTranscriptRim(_ identity: ThreadAgentIdentity?, enabled: Bool = true) -> some View {
         modifier(AgentTranscriptRimModifier(identity: identity, enabled: enabled))
+    }
+
+    @ViewBuilder
+    func composerDiffSheetChrome() -> some View {
+        #if os(iOS)
+            self
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(.ultraThinMaterial)
+                .presentationCornerRadius(32)
+        #else
+            self.frame(minWidth: 520, minHeight: 520)
+        #endif
     }
 }
 
