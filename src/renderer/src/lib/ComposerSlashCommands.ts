@@ -469,13 +469,55 @@ export function matchLeadingActionCommand(
   prompt: string,
   commands: ComposerSlashCommand[]
 ): ActionCommand | null {
+  const match = matchLeadingSlashCommand(prompt, commands)
+  const command = match?.command
+  return command && command.kind === 'action' ? command : null
+}
+
+export interface LeadingSlashCommandMatch {
+  command: ComposerSlashCommand
+  matchedText: string
+  remainder: string
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function leadingCommandPattern(command: string): RegExp | null {
+  const tokens = command.trim().split(/\s+/).filter(Boolean)
+  if (tokens.length === 0) return null
+  return new RegExp(`^${tokens.map(escapeRegExp).join('\\s+')}(?=\\s|$)`, 'i')
+}
+
+/**
+ * Match a registered slash command at the start of a submitted draft. Unlike
+ * {@link matchLeadingActionCommand}, this handles multi-word commands such as
+ * `/commands reload` and returns the remaining text so the submit path can
+ * decide whether trailing args are meaningful for that command kind.
+ */
+export function matchLeadingSlashCommand(
+  prompt: string,
+  commands: ComposerSlashCommand[]
+): LeadingSlashCommandMatch | null {
   const trimmed = prompt.trim()
   if (!trimmed.startsWith('/')) return null
-  const token = trimmed.split(/\s+/)[0].toLowerCase()
-  const command = commands.find(
-    (entry) => entry.kind === 'action' && entry.command.toLowerCase() === token
-  )
-  return command && command.kind === 'action' ? command : null
+  let best: LeadingSlashCommandMatch | null = null
+  for (const command of commands) {
+    if (command.kind === 'insert') continue
+    const pattern = leadingCommandPattern(command.command)
+    if (!pattern) continue
+    const match = trimmed.match(pattern)
+    if (!match) continue
+    const matchedText = match[0]
+    if (best && matchedText.length <= best.matchedText.length) continue
+    best = {
+      command,
+      matchedText,
+      remainder: trimmed.slice(matchedText.length).trim()
+    }
+  }
+  return best
 }
 
 /** Group sort key. Cmd-K palette enforces this order today; mirror it

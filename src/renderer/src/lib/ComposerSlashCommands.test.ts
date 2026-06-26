@@ -7,6 +7,7 @@ import {
   buildComposerSlashCommandRegistry,
   filterComposerSlashCommands,
   matchLeadingActionCommand,
+  matchLeadingSlashCommand,
   paletteCoreForProvider,
   wrapPaletteItemAsSlashCommand,
   type ComposerSlashCommand
@@ -284,6 +285,60 @@ describe('ComposerSlashCommands', () => {
 
     it('does not match action command prefixes as full commands', () => {
       expect(matchLeadingActionCommand('/audit-trail quick', registry)).toBeNull()
+    })
+  })
+
+  describe('matchLeadingSlashCommand', () => {
+    it('matches the longest registered command, including multi-word commands', () => {
+      const registry = buildComposerSlashCommandRegistry({
+        provider: 'gemini',
+        paletteItems: GEMINI_PALETTE_CORE
+      })
+
+      const match = matchLeadingSlashCommand('/commands reload now', registry)
+      expect(match?.command.command).toBe('/commands reload')
+      expect(match?.remainder).toBe('now')
+    })
+
+    it('does not collapse incomplete multi-word commands to a sibling prefix', () => {
+      const registry = buildComposerSlashCommandRegistry({
+        provider: 'gemini',
+        paletteItems: GEMINI_PALETTE_CORE
+      })
+
+      expect(matchLeadingSlashCommand('/commands', registry)).toBeNull()
+    })
+
+    it('matches prompt templates but excludes insert-only commands from submit dispatch', () => {
+      const templateCommand = {
+        kind: 'prompt-template',
+        id: 'template-explain',
+        command: '/explain',
+        label: 'Explain',
+        description: 'Explain template',
+        group: 'Custom',
+        template: 'Explain:\n\n'
+      } satisfies ComposerSlashCommand
+      const insertCommand = {
+        kind: 'insert',
+        id: 'insert-meta',
+        command: '/meta',
+        label: 'Meta',
+        description: 'Insert meta prefix',
+        group: 'Custom',
+        insertText: '/meta '
+      } satisfies ComposerSlashCommand
+      const registry = buildComposerSlashCommandRegistry({
+        provider: 'codex',
+        paletteItems: [],
+        extraCommands: [templateCommand, insertCommand]
+      })
+
+      expect(matchLeadingSlashCommand('/explain this function', registry)).toMatchObject({
+        command: templateCommand,
+        remainder: 'this function'
+      })
+      expect(matchLeadingSlashCommand('/meta discuss the harness', registry)).toBeNull()
     })
   })
 

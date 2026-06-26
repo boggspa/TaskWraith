@@ -49,7 +49,7 @@ import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
 import { extractFirstEnsembleDmTarget, formatComposerPathMention, parseComposerMentionTrigger } from '../lib/ComposerMentionTrigger'
 import {
   GEMINI_PALETTE_CORE as COMMAND_PALETTE_CORE,
-  matchLeadingActionCommand
+  matchLeadingSlashCommand
 } from '../lib/ComposerSlashCommands'
 import type {
   ComposerSlashCommand,
@@ -1088,35 +1088,69 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   }
 
   /**
-   * Submit-time dispatch for ACTION slash commands (e.g. /audit, /clear). The
-   * slash MENU fires command.run() on selection, but typing the full command +
-   * a space (e.g. "/audit quick") CLOSES the menu, so Enter would otherwise send
-   * the literal "/audit quick" to the provider. Mirror tryHandleSideSlashSubmit:
-   * if the prompt LEADS with a registered action command's token, run it and
-   * clear the prompt instead of sending. Case-insensitive; trailing args (parsed
-   * by the command's own run()) are allowed.
+   * Submit-time dispatch for registered slash commands. The slash MENU fires a
+   * command on selection, but typing the full command and pressing Enter closes
+   * the menu first. Without this, `/status`, `/audit quick`, or `/explain`
+   * would go to the provider as normal chat text instead of invoking the
+   * registered slash behavior.
    */
   const tryHandleActionSlashSubmit = (): boolean => {
-    const command = matchLeadingActionCommand(prompt, composerSlashCommands)
-    if (!command) return false
+    const match = matchLeadingSlashCommand(prompt, composerSlashCommands)
+    if (!match) return false
+    const command = match.command
     setSlashMenuOpen(false)
     setSlashQuery('')
     slashAnchorIndexRef.current = null
-    let actionWroteDraft = false
-    // run() reads the current prompt through SlashCommandRunContext. Clear the
-    // literal slash command after dispatch unless the action deliberately wrote
-    // a replacement draft (for example /import-plan or /compact scaffolds).
-    void command.run(
-      buildSlashRunContext({
-        onSetDraft: () => {
-          actionWroteDraft = true
-        }
-      })
-    )
-    if (!actionWroteDraft) {
-      setChatPromptDraft(currentComposerChatId, '')
+    if (command.kind === 'action') {
+      let actionWroteDraft = false
+      // run() reads the current prompt through SlashCommandRunContext. Clear the
+      // literal slash command after dispatch unless the action deliberately wrote
+      // a replacement draft (for example /import-plan or /compact scaffolds).
+      void command.run(
+        buildSlashRunContext({
+          onSetDraft: () => {
+            actionWroteDraft = true
+          }
+        })
+      )
+      if (!actionWroteDraft) {
+        setChatPromptDraft(currentComposerChatId, '')
+      }
+      return true
     }
-    return true
+    if (command.kind === 'palette-passthrough') {
+      const paletteItem =
+        match.remainder && command.paletteItem.source !== 'core'
+          ? {
+              ...command.paletteItem,
+              command: `${command.command} ${match.remainder}`
+            }
+          : command.paletteItem
+      handlePaletteCommand(paletteItem)
+      setChatPromptDraft(currentComposerChatId, '')
+      return true
+    }
+    if (command.kind === 'gemini-pty') {
+      const commandText = match.remainder
+        ? `${command.command} ${match.remainder}`
+        : command.command
+      void handleBridgeCommand(commandText)
+      setChatPromptDraft(currentComposerChatId, '')
+      return true
+    }
+    if (command.kind === 'prompt-template') {
+      const next = match.remainder ? `${command.template}${match.remainder}` : command.template
+      setChatPromptDraft(currentComposerChatId, next)
+      const caretBase = command.cursorOffset ?? command.template.length
+      requestAnimationFrame(() => {
+        const ta = composerTextareaRef.current
+        if (!ta) return
+        ta.focus()
+        ta.setSelectionRange(caretBase, caretBase)
+      })
+      return true
+    }
+    return false
   }
 
   return (
