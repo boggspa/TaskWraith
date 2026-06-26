@@ -1460,57 +1460,53 @@ struct ThreadDetailView: View {
     private func toolbarChrome(_ base: AnyView) -> some View {
         base
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                ToolbarIconPillGroup {
-                    if let workspaceId = filesToolbarWorkspaceId {
-                        Button {
-                            model.requestFilesMode(workspaceId: workspaceId)
-                        } label: {
-                            ToolbarIconSegmentLabel("Files", systemImage: "folder")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if let workspaceId = diffsToolbarWorkspaceId {
-                        Button {
-                            model.requestDiffMode(workspaceId: workspaceId)
-                        } label: {
-                            ToolbarIconSegmentLabel(
-                                "Diffs",
-                                systemImage: "plus.forwardslash.minus",
-                                leadingDivider: filesToolbarWorkspaceId != nil
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    // Roster — dedicated ensemble-only page (supersedes the cramped
-                    // per-chip editor). Only meaningful for ensemble chats.
-                    if showsRosterToolbarButton {
-                        Button {
-                            model.rosterPresented = true
-                        } label: {
-                            ToolbarIconSegmentLabel(
-                                "Roster",
-                                systemImage: "person.3.fill",
-                                leadingDivider: filesToolbarWorkspaceId != nil
-                                    || diffsToolbarWorkspaceId != nil
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
+            // Individual circular pills (matching the workspaces sidebar), NOT a
+            // shared ToolbarIconPillGroup capsule — one consistent toolbar look
+            // app-wide, and individual ToolbarItems overflow gracefully where a
+            // rigid group would clip (see HomeListViews).
+            if let workspaceId = filesToolbarWorkspaceId {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
-                        model.inspectorPresented.toggle()
+                        model.requestFilesMode(workspaceId: workspaceId)
                     } label: {
-                        ToolbarIconSegmentLabel(
-                            "Inspector",
-                            systemImage: "sidebar.right",
-                            isActive: model.inspectorPresented,
-                            leadingDivider: filesToolbarWorkspaceId != nil
-                                || diffsToolbarWorkspaceId != nil
-                                || showsRosterToolbarButton
-                        )
+                        ToolbarIconPillLabel("Files", systemImage: "folder")
                     }
                     .buttonStyle(.plain)
                 }
+            }
+            if let workspaceId = diffsToolbarWorkspaceId {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        model.requestDiffMode(workspaceId: workspaceId)
+                    } label: {
+                        ToolbarIconPillLabel("Diffs", systemImage: "plus.forwardslash.minus")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            // Roster — dedicated ensemble-only page (supersedes the cramped
+            // per-chip editor). Only meaningful for ensemble chats.
+            if showsRosterToolbarButton {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        model.rosterPresented = true
+                    } label: {
+                        ToolbarIconPillLabel("Roster", systemImage: "person.3.fill")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    model.inspectorPresented.toggle()
+                } label: {
+                    ToolbarIconPillLabel(
+                        "Inspector",
+                        systemImage: "sidebar.right",
+                        isActive: model.inspectorPresented
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
         .sheet(isPresented: $model.rosterPresented) {
