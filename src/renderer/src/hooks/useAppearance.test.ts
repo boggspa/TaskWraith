@@ -8,6 +8,7 @@ import type {
   UserBubbleColor,
   VisualEffectStyle
 } from '../../../main/store/types'
+import { resolvePaneOpacityFactor } from './useAppearance'
 
 describe('Appearance settings validation', () => {
   it('valid appearance modes are accepted by the type system', () => {
@@ -47,5 +48,12 @@ describe('Appearance settings validation', () => {
     expect(mode).not.toBe('claude_glass')
     // Just verifying we use generic naming
     expect(['solid', 'soft_glass', 'native_glass']).toContain(mode)
+  })
+
+  it('forces effective pane opacity to opaque when transparency is reduced', () => {
+    expect(resolvePaneOpacityFactor(42, false)).toBe(0.42)
+    expect(resolvePaneOpacityFactor(42, true)).toBe(1)
+    expect(resolvePaneOpacityFactor(140, false)).toBe(1)
+    expect(resolvePaneOpacityFactor(-10, false)).toBe(0)
   })
 })

@@ -89,6 +89,11 @@ const normalizeAppearanceDimension = (
 const normalizePaneOpacity = (value: unknown, fallback = DEFAULT_PANE_OPACITY): number =>
   normalizeAppearanceDimension(value, fallback, MIN_PANE_OPACITY, MAX_PANE_OPACITY)
 
+export const resolvePaneOpacityFactor = (
+  value: unknown,
+  reduceTransparency: boolean
+): number => (reduceTransparency ? 1 : normalizePaneOpacity(value) / 100)
+
 const hostPlatform = (): string =>
   typeof window !== 'undefined' && typeof window.api?.hostPlatform === 'string'
     ? window.api.hostPlatform
@@ -287,8 +292,14 @@ export function useAppearance() {
     root.setAttribute('data-reduce-motion', String(next.reduceMotion))
     root.setAttribute('data-fx-enabled', String(next.funFxEnabled))
     root.setAttribute('data-fx-mode', next.funFxMode)
-    const sidebarOpacityFactor = next.sidebarOpacity / 100
-    const mainPaneOpacityFactor = next.mainPaneOpacity / 100
+    const sidebarOpacityFactor = resolvePaneOpacityFactor(
+      next.sidebarOpacity,
+      next.reduceTransparency
+    )
+    const mainPaneOpacityFactor = resolvePaneOpacityFactor(
+      next.mainPaneOpacity,
+      next.reduceTransparency
+    )
     root.setAttribute(
       'data-sidebar-opacity-override',
       String(next.sidebarOpacityOverride || next.sidebarOpacity !== DEFAULT_PANE_OPACITY)
