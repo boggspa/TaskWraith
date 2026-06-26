@@ -133,6 +133,7 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     onDetachToPane: input.onDetachToPane,
     copiedId: input.copiedId,
     copy: input.copy,
+    userMessageGutterEnabled: false,
     currency: input.currency,
     currencyOverestimatePercent: input.currencyOverestimatePercent,
     providerRates: input.providerRates

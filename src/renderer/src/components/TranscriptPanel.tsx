@@ -35,6 +35,7 @@ import {
   type VirtualRow,
   type VirtualWindow
 } from '../lib/TranscriptVirtualWindow'
+import { buildTranscriptUserGutterMarkers } from '../lib/TranscriptUserMessageGutter'
 import type { PlanChoiceState } from '../lib/planModeChoice'
 import type { DisplayCurrency } from '../lib/formatCost'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
@@ -68,6 +69,7 @@ import {
   humanCollaboratorMetadata,
   isHumanCollaboratorComment
 } from '../../../main/collaboration/HumanCollaboratorMessages'
+import { TranscriptUserMessageGutter } from './TranscriptUserMessageGutter'
 
 export type TranscriptPanelProps = {
   scrollRef: React.RefObject<HTMLDivElement | null>
@@ -252,6 +254,11 @@ export type TranscriptPanelProps = {
   currencyOverestimatePercent?: number
   showRunCompleteSummary?: boolean
   /**
+   * Body-portaled user-message rail. Keep this on the focused/main transcript
+   * only so secondary panes do not draw rails outside their pane bounds.
+   */
+  userMessageGutterEnabled?: boolean
+  /**
    * 1.0.7 — per-provider rate table (USD per 1M tokens) from the
    * `providerRates:get` IPC. Used ONLY to project a clearly-badged
    * API-equivalent cost for subscription/credit seats that emit no
@@ -266,6 +273,22 @@ const EMPTY_TRANSCRIPT_HEIGHTS: number[] = []
 const EMPTY_VIRTUAL_ROWS: VirtualRow[] = []
 /** Stable empty expansion set so unopened tool rows share one reference. */
 const EMPTY_ACTIVITY_EXPANSION: Set<string> = new Set()
+
+function escapeDomSelectorValue(value: string): string {
+  return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(value)
+    : value.replace(/["\\]/g, '\\$&')
+}
+
+function shouldUseReducedMotion(): boolean {
+  if (typeof document !== 'undefined' && document.documentElement.dataset.reduceMotion === 'true') {
+    return true
+  }
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  }
+  return false
+}
 
 /**
  * 1.0.6-TV1 — In-house transcript windowing glue (renderer side).
@@ -329,6 +352,7 @@ function useTranscriptVirtualization(params: {
   window: VirtualWindow
   blockRef: (el: HTMLDivElement | null) => void
   spacerBottomRef: React.RefObject<HTMLDivElement | null>
+  heights: readonly number[]
 } {
   const { enabled, rows, scrollRef, contentRef, autoFollowRef, compactDensity, expandedRowIds } =
     params
@@ -349,7 +373,7 @@ function useTranscriptVirtualization(params: {
   // above were still hydrating — the scroll-up-bumps-down / scroll-down-jumps-up
   // fight. An absolute target lands the viewport exactly where the anchor row
   // stays fixed, whether rows above resolved taller or shorter than estimate.
-  const anchorRef = useRef<{ rowId: string; aboveHeight: number; offsetWithin: number } | null>(
+  const anchorRef = useRef<{ rowKey: string; aboveHeight: number; offsetWithin: number } | null>(
     null
   )
   const blockElsRef = useRef<Map<string, HTMLDivElement>>(new Map())
@@ -509,7 +533,7 @@ function useTranscriptVirtualization(params: {
         const anchorRow = rowsRef.current[a.index]
         anchorRef.current = anchorRow
           ? {
-              rowId: anchorRow.id,
+              rowKey: anchorRow.rowKey,
               aboveHeight: sumHeights(heightsRef.current, 0, a.index),
               offsetWithin: a.offsetWithin
             }
@@ -595,7 +619,7 @@ function useTranscriptVirtualization(params: {
     const atBottom = distanceFromBottom <= 24
     if (measureConvergedRef.current && !atBottom && anchorRef.current) {
       const anchor = anchorRef.current
-      const idx = rowsRef.current.findIndex((r) => r.id === anchor.rowId)
+      const idx = rowsRef.current.findIndex((r) => r.rowKey === anchor.rowKey)
       if (idx >= 0) {
         const aboveHeight = sumHeights(heightsRef.current, 0, idx)
         const target = Math.max(0, aboveHeight + anchor.offsetWithin)
@@ -686,7 +710,7 @@ function useTranscriptVirtualization(params: {
     observerRef.current?.observe(el)
   }, [])
 
-  return { window: virtualWindow, blockRef, spacerBottomRef }
+  return { window: virtualWindow, blockRef, spacerBottomRef, heights }
 }
 /* eslint-enable react-hooks/refs */
 
@@ -753,6 +777,7 @@ export const TranscriptPanel = memo(
     currency,
     currencyOverestimatePercent,
     showRunCompleteSummary,
+    userMessageGutterEnabled,
     isGlobal,
     providerRates
   }: TranscriptPanelProps) {
@@ -987,17 +1012,20 @@ export const TranscriptPanel = memo(
       return map
     }, [displayMessages, runBoundaryByMessageId])
 
-    const virtualRows = useMemo(
-      () =>
-        virtualizeEnabled
-          ? projectRows(displayMessages, new Set(displayRunBoundaryByMessageId.keys()))
-          : EMPTY_VIRTUAL_ROWS,
-      [virtualizeEnabled, displayMessages, displayRunBoundaryByMessageId]
+    const displayRunBoundaryIds = useMemo(
+      () => new Set(displayRunBoundaryByMessageId.keys()),
+      [displayRunBoundaryByMessageId]
     )
+    const projectedRows = useMemo(
+      () => projectRows(displayMessages, displayRunBoundaryIds),
+      [displayMessages, displayRunBoundaryIds]
+    )
+    const virtualRows = virtualizeEnabled ? projectedRows : EMPTY_VIRTUAL_ROWS
     const {
       window: virtualWindow,
       blockRef: virtualBlockRef,
-      spacerBottomRef
+      spacerBottomRef,
+      heights: virtualHeights
     } = useTranscriptVirtualization({
       enabled: virtualizeEnabled,
       rows: virtualRows,
@@ -1007,7 +1035,23 @@ export const TranscriptPanel = memo(
       compactDensity,
       expandedRowIds
     })
-    const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null)
+    const userGutterMarkers = useMemo(
+      () =>
+        buildTranscriptUserGutterMarkers(
+          displayMessages,
+          projectedRows,
+          virtualizeEnabled ? virtualHeights : undefined
+        ),
+      [displayMessages, projectedRows, virtualHeights, virtualizeEnabled]
+    )
+    const [highlightedMessageTarget, setHighlightedMessageTarget] = useState<{
+      messageId: string
+      rowKey?: string
+    } | null>(null)
+    const [pendingFocusTarget, setPendingFocusTarget] = useState<{
+      messageId: string
+      rowKey?: string
+    } | null>(null)
     const highlightTimerRef = useRef<number | null>(null)
     const chatId = currentChat?.appChatId ?? null
     const previousChatIdRef = useRef<string | null>(chatId)
@@ -1018,62 +1062,76 @@ export const TranscriptPanel = memo(
       setExpandedUserMessages(new Set())
       setActivityExpansionByRow(new Map())
       setExpandedSubThreadResults(new Set())
-      setHighlightedMessageId(null)
+      setHighlightedMessageTarget(null)
+      setPendingFocusTarget(null)
       if (highlightTimerRef.current !== null) {
         window.clearTimeout(highlightTimerRef.current)
         highlightTimerRef.current = null
       }
     }, [chatId])
     const focusMessageBlock = useCallback(
-      (messageId: string): boolean => {
+      (messageId: string, rowKey?: string): boolean => {
         const scroller = scrollRef.current
         if (!scroller) return false
-        const escaped =
-          typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
-            ? CSS.escape(messageId)
-            : messageId.replace(/["\\]/g, '\\$&')
-        const target = scroller.querySelector<HTMLElement>(`[data-message-id="${escaped}"]`)
+        const target = rowKey
+          ? scroller.querySelector<HTMLElement>(
+              `[data-vrow-id="${escapeDomSelectorValue(rowKey)}"]`
+            )
+          : scroller.querySelector<HTMLElement>(
+              `[data-message-id="${escapeDomSelectorValue(messageId)}"]`
+            )
         if (!target) return false
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        setHighlightedMessageId(messageId)
+        target.scrollIntoView({
+          behavior: shouldUseReducedMotion() ? 'auto' : 'smooth',
+          block: 'center'
+        })
+        setHighlightedMessageTarget({ messageId, rowKey })
+        setPendingFocusTarget((current) =>
+          current?.messageId === messageId && current?.rowKey === rowKey ? null : current
+        )
         if (highlightTimerRef.current !== null) {
           window.clearTimeout(highlightTimerRef.current)
         }
         highlightTimerRef.current = window.setTimeout(() => {
           highlightTimerRef.current = null
-          setHighlightedMessageId((current) => (current === messageId ? null : current))
+          setHighlightedMessageTarget((current) =>
+            current?.messageId === messageId && current?.rowKey === rowKey ? null : current
+          )
         }, 1800)
         return true
       },
       [scrollRef]
     )
 
+    const scrollToMessage = useCallback(
+      (messageId: string, rowKey?: string): void => {
+        if (focusMessageBlock(messageId, rowKey)) return
+
+        const scroller = scrollRef.current
+        if (!scroller) return
+        const row =
+          (rowKey ? projectedRows.find((candidate) => candidate.rowKey === rowKey) : undefined) ||
+          projectedRows.find((candidate) => candidate.id === messageId)
+        if (!row) return
+        setPendingFocusTarget({ messageId, rowKey })
+        const rowHeights =
+          virtualizeEnabled && virtualHeights.length === projectedRows.length
+            ? virtualHeights
+            : projectedRows.map((candidate) => candidate.estimatedHeight)
+        const estimatedTop = sumHeights([...rowHeights], 0, row.index)
+        scroller.scrollTop = Math.max(0, estimatedTop - Math.round(scroller.clientHeight * 0.35))
+      },
+      [focusMessageBlock, projectedRows, scrollRef, virtualHeights, virtualizeEnabled]
+    )
+
     useEffect(() => {
       const request = jumpToMessageRequest
       if (!request?.messageId) return
-      if (focusMessageBlock(request.messageId)) return
-
-      const scroller = scrollRef.current
-      if (!scroller || !virtualizeEnabled) return
-      const row = virtualRows.find((candidate) => candidate.id === request.messageId)
-      if (!row) return
-      const estimatedTop = sumHeights(
-        virtualRows.map((candidate) => candidate.estimatedHeight),
-        0,
-        row.index
-      )
-      scroller.scrollTop = Math.max(0, estimatedTop - Math.round(scroller.clientHeight * 0.35))
-      const frame = window.requestAnimationFrame(() => {
-        focusMessageBlock(request.messageId)
-      })
-      return () => window.cancelAnimationFrame(frame)
+      scrollToMessage(request.messageId)
     }, [
       jumpToMessageRequest?.requestId,
       jumpToMessageRequest?.messageId,
-      focusMessageBlock,
-      scrollRef,
-      virtualRows,
-      virtualizeEnabled
+      scrollToMessage
     ])
 
     useEffect(() => {
@@ -1100,12 +1158,26 @@ export const TranscriptPanel = memo(
           .filter((r): r is { msg: ChatMessage; rowKey: string } => Boolean(r))
       : displayMessages.map((msg, index) => ({ msg, rowKey: `${msg.id}#${index}` }))
 
+    useLayoutEffect(() => {
+      if (!pendingFocusTarget) return
+      focusMessageBlock(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
+    }, [focusMessageBlock, pendingFocusTarget, renderedRows])
+
     return (
       <div
         className={`transcript-scroll${isGlobal ? ' is-global' : ''}`}
         data-scope={isGlobal ? 'global' : 'workspace'}
         ref={scrollRef}
       >
+        {userMessageGutterEnabled !== false && (
+          <TranscriptUserMessageGutter
+            markers={userGutterMarkers}
+            scrollRef={scrollRef}
+            contentRef={contentRef}
+            currentChat={currentChat}
+            onJumpToMessage={scrollToMessage}
+          />
+        )}
         <div
           className={`transcript-inner${virtualizeEnabled ? ' transcript-virtualized' : ''}`}
           ref={contentRef}
@@ -1128,7 +1200,11 @@ export const TranscriptPanel = memo(
               sideChatSeedMessageId && msg.id === sideChatSeedMessageId
             )
             const isPinned = typeof msg.metadata?.pinnedAt === 'number'
-            const isPinnedMessageTarget = highlightedMessageId === msg.id
+            const isPinnedMessageTarget = highlightedMessageTarget
+              ? highlightedMessageTarget.rowKey
+                ? highlightedMessageTarget.rowKey === rowKey
+                : highlightedMessageTarget.messageId === msg.id
+              : false
             return (
               <div
                 key={`message-block-${rowKey}`}
@@ -1992,5 +2068,6 @@ export const TranscriptPanel = memo(
     previous.copiedId === next.copiedId &&
     previous.copy === next.copy &&
     previous.virtualize === next.virtualize &&
-    previous.autoFollowRef === next.autoFollowRef
+    previous.autoFollowRef === next.autoFollowRef &&
+    previous.userMessageGutterEnabled === next.userMessageGutterEnabled
 )

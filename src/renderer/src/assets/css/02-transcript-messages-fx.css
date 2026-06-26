@@ -1828,6 +1828,177 @@
   overflow-anchor: none;
 }
 
+.transcript-user-gutter {
+  position: fixed;
+  width: 36px;
+  z-index: 10030;
+  pointer-events: none;
+}
+
+.transcript-user-gutter.is-unmeasured {
+  display: none;
+}
+
+.transcript-user-gutter-track {
+  position: absolute;
+  left: 11px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  opacity: 0.42;
+}
+
+.transcript-user-gutter-marker {
+  appearance: none;
+  position: absolute;
+  left: -4px;
+  width: 36px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  transform: translateY(-50%);
+}
+
+.transcript-user-gutter-line {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 48%, transparent);
+  opacity: 0.62;
+  transform: translateY(-50%);
+  transition:
+    width 120ms ease,
+    background 120ms ease,
+    opacity 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.transcript-user-gutter-marker:hover .transcript-user-gutter-line,
+.transcript-user-gutter-marker:focus-visible .transcript-user-gutter-line,
+.transcript-user-gutter-marker.is-active .transcript-user-gutter-line {
+  width: 22px;
+  background: color-mix(in srgb, var(--text-primary) 84%, var(--accent) 16%);
+  opacity: 0.96;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+.transcript-user-gutter-marker:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
+.transcript-user-gutter-preview {
+  position: fixed;
+  width: min(360px, calc(100vw - 20px));
+  min-height: 120px;
+  max-height: min(240px, calc(100vh - 20px));
+  overflow: hidden;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 78%, var(--text-primary) 10%);
+  border-radius: 12px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--app-bg-elevated) 92%, var(--text-primary) 8%),
+      color-mix(in srgb, var(--app-bg-elevated) 84%, transparent)
+    );
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 color-mix(in srgb, white 16%, transparent);
+  color: var(--text-primary);
+  backdrop-filter: blur(24px) saturate(1.18);
+  -webkit-backdrop-filter: blur(24px) saturate(1.18);
+  pointer-events: none;
+}
+
+.transcript-user-gutter-preview-title {
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-user-gutter-preview-body {
+  display: -webkit-box;
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.42;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.transcript-user-gutter-preview-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.transcript-user-gutter-preview-attachment {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 142px;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-bg-elevated) 84%, var(--text-primary) 6%);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+}
+
+.transcript-user-gutter-preview-attachment > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-user-gutter-preview-attachment.is-overflow {
+  max-width: none;
+  color: var(--text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-user-gutter-line {
+    transition: none;
+  }
+}
+
+:root[data-reduce-motion="true"] .transcript-user-gutter-line {
+  transition: none;
+}
+
+:root[data-reduce-transparency="true"] .transcript-user-gutter-preview {
+  background: var(--panel-bg-solid, var(--app-bg-elevated));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@media (max-width: 900px) {
+  .transcript-user-gutter {
+    display: none;
+  }
+}
+
 .model-usage-window-list {
   display: flex;
   flex-direction: column;

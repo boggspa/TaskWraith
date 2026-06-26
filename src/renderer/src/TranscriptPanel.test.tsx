@@ -82,6 +82,10 @@ function countBlocks(html: string): number {
   return (html.match(/data-vrow-id="/g) || []).length
 }
 
+function countUserGutterMarkers(html: string): number {
+  return (html.match(/class="transcript-user-gutter-marker/g) || []).length
+}
+
 function providerLabel(provider: ProviderId): string {
   return provider.charAt(0).toUpperCase() + provider.slice(1)
 }
@@ -170,6 +174,47 @@ function spacerHeight(html: string, cls: string): number {
 }
 
 describe('TranscriptPanel virtualisation wiring (TV1)', () => {
+  it('renders a user-message gutter from the full display row set', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ virtualize: true, autoFollowRef: { current: false } })} />
+    )
+    expect(html).toContain('role="navigation"')
+    expect(html).toContain('aria-label="User messages"')
+    expect(countUserGutterMarkers(html)).toBe(60)
+    expect(html).toContain('data-row-key="m0#0"')
+    expect(html).toContain('Jump to user message 1: UNIQUEMARK_0 sample transcript line')
+    expect(html).toContain('Jump to user message 60: UNIQUEMARK_118 sample transcript line')
+  })
+
+  it('does not render the user-message gutter for welcome or single-prompt chats', () => {
+    const welcomeHtml = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ isWelcomeChat: true, virtualize: false })} />
+    )
+    const singlePromptHtml = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          messages: [msg(0), { ...msg(1), role: 'assistant' }],
+          virtualize: false
+        })}
+      />
+    )
+
+    expect(countUserGutterMarkers(welcomeHtml)).toBe(0)
+    expect(countUserGutterMarkers(singlePromptHtml)).toBe(0)
+  })
+
+  it('allows secondary transcript panes to opt out of the body-portaled gutter', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          userMessageGutterEnabled: false
+        })}
+      />
+    )
+    expect(countUserGutterMarkers(html)).toBe(0)
+  })
+
   it('non-virtualised (default): mounts every block, renders no spacers', () => {
     const html = renderToStaticMarkup(<TranscriptPanel {...makeProps({ virtualize: false })} />)
     expect(countBlocks(html)).toBe(MESSAGES.length)
@@ -207,8 +252,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(blocks).toBeGreaterThan(0)
     expect(blocks).toBeLessThan(40)
     // Bottom of the list is mounted; the far top is collapsed.
-    expect(html).toContain('UNIQUEMARK_119 ')
-    expect(html).not.toContain('UNIQUEMARK_0 ')
+    expect(html).toContain('data-vrow-id="m119#119"')
+    expect(html).not.toContain('data-vrow-id="m0#0"')
     // The window reaches the end → bottom spacer collapses to 0, the
     // existing `scrollTop = scrollHeight` snap still hits the true bottom.
     expect(spacerHeight(html, 'vlist-spacer-bottom')).toBe(0)
@@ -225,10 +270,10 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     const bottom = renderToStaticMarkup(
       <TranscriptPanel {...makeProps({ virtualize: true, autoFollowRef: { current: true } })} />
     )
-    expect(top.includes('UNIQUEMARK_0 ')).toBe(true)
-    expect(bottom.includes('UNIQUEMARK_0 ')).toBe(false)
-    expect(top.includes('UNIQUEMARK_119 ')).toBe(false)
-    expect(bottom.includes('UNIQUEMARK_119 ')).toBe(true)
+    expect(top.includes('data-vrow-id="m0#0"')).toBe(true)
+    expect(bottom.includes('data-vrow-id="m0#0"')).toBe(false)
+    expect(top.includes('data-vrow-id="m119#119"')).toBe(false)
+    expect(bottom.includes('data-vrow-id="m119#119"')).toBe(true)
   })
 
   it('1.0.7 — KEEPS virtualisation ON for ensemble chats (oscillation fixed at source)', () => {
