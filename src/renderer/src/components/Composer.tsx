@@ -284,7 +284,7 @@ export interface ComposerProps {
   openGoalPopover: any
   openInspectorTab: any
   openPlanImportReview: any
-  openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => void
+  openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => boolean | void
   overestimatePercent: any
   patchEnsembleParticipantById: any
   pendingAgentApproval: any
@@ -1000,7 +1000,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const tryHandleSideSlashSubmit = (): boolean => {
     const sideCommand = parseSideSlashCommand(prompt)
     if (!sideCommand) return false
-    openSideChatFromSlashCommand(sideCommand)
+    const shouldClearDraft = openSideChatFromSlashCommand(sideCommand) !== false
+    if (shouldClearDraft) {
+      setChatPromptDraft(currentComposerChatId, '')
+    }
     setSlashMenuOpen(false)
     setSlashQuery('')
     slashAnchorIndexRef.current = null

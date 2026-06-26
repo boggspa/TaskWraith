@@ -200,6 +200,7 @@ import {
   buildComposerSlashCommandRegistry,
   paletteCoreForProvider
 } from './lib/ComposerSlashCommands'
+import { parsePositiveIntArg, parseSlashToggleArg } from './lib/ensembleSlashCommandArgs'
 import { CreativeActionApprovalModal } from './components/CreativeActionApprovalModal'
 import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
 import { JoinSharedChatModal } from './components/JoinSharedChatModal'
@@ -18971,6 +18972,113 @@ function App(): React.JSX.Element {
     ctx.focusComposer(ctx.rawPrompt.length)
     window.alert(message)
   }
+  const rejectSlashCommandWithDraft = (ctx: SlashCommandRunContext, message: string): void => {
+    ctx.setDraft(ctx.rawPrompt)
+    ctx.focusComposer(ctx.rawPrompt.length)
+    window.alert(message)
+  }
+  const sideSlashCommandDraft = (sideCommand: SideSlashCommand): string => {
+    const command =
+      sideCommand.presentation === 'drawer'
+        ? '/side-drawer'
+        : sideCommand.presentation === 'popout'
+          ? '/side-popout'
+          : sideCommand.presentation === 'main'
+            ? '/side-main'
+            : '/side'
+    return sideCommand.seedPrompt ? `${command} ${sideCommand.seedPrompt}` : command
+  }
+  const firstSlashArgToken = (arg: string): string => arg.trim().split(/\s+/)[0]?.toLowerCase() || ''
+  const parseScopedToggleSlashArg = (
+    ctx: SlashCommandRunContext,
+    arg: string,
+    current: boolean,
+    usage: string
+  ): boolean | null => {
+    const token = firstSlashArgToken(arg)
+    if (token && token !== 'on' && token !== 'off' && token !== 'toggle') {
+      rejectSlashCommandWithDraft(ctx, usage)
+      return null
+    }
+    return parseSlashToggleArg(arg, current)
+  }
+  const parseScopedPositiveIntSlashArg = (
+    ctx: SlashCommandRunContext,
+    arg: string,
+    options: { min: number; max: number; fallback: number; usage: string }
+  ): number | null => {
+    const token = firstSlashArgToken(arg)
+    if (!token) {
+      rejectSlashCommandWithDraft(ctx, options.usage)
+      return null
+    }
+    const parsed = parsePositiveIntArg(arg, options)
+    if (!/^\d+$/.test(token) || Number.parseInt(token, 10) <= 0) {
+      rejectSlashCommandWithDraft(ctx, options.usage)
+      return null
+    }
+    return parsed
+  }
+  const patchScopedEnsembleConfig = (
+    chat: ChatRecord,
+    patcher: (
+      ensemble: NonNullable<ChatRecord['ensemble']>
+    ) => NonNullable<ChatRecord['ensemble']>
+  ): void => {
+    updateChatById(chat.appChatId, (source) => {
+      if (source.chatKind !== 'ensemble' || !source.ensemble) return source
+      const patched: ChatRecord = {
+        ...source,
+        ensemble: {
+          ...patcher(source.ensemble),
+          updatedAt: new Date().toISOString()
+        }
+      }
+      return withSessionActivityLedger(source, patched)
+    })
+  }
+  const runScopedEnsembleRoundFromSlash = (
+    chat: ChatRecord,
+    promptText: string,
+    displayPrompt: string
+  ): void => {
+    if (chat.chatKind !== 'ensemble' || !chat.ensemble) return
+    const attachments = imageAttachmentsByChatIdRef.current[chat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
+    void window.api
+      .runEnsembleRound({
+        chatId: chat.appChatId,
+        prompt: promptText,
+        mode: chat.ensemble.activeRound?.status === 'running' ? 'steer' : 'normal',
+        concurrentMode: Boolean(chat.ensemble.concurrentModeEnabled),
+        imageAttachments: attachments.map((attachment) => ({
+          id: attachment.id,
+          path: attachment.path,
+          name: attachment.name
+        }))
+      })
+      .then(() => {
+        if (attachments.length > 0) {
+          setImageAttachmentsByChatId((prev) => ({ ...prev, [chat.appChatId]: [] }))
+        }
+        setChatPromptDraft(chat.appChatId, '')
+        setIsThinking(true)
+        void refreshSingleChat(chat.appChatId)
+      })
+      .catch((error) => {
+        setRawLogs((prev) => [
+          ...prev,
+          {
+            type: 'info',
+            content: `${displayPrompt} failed: ${redactLog(String(error))}`
+          }
+        ])
+      })
+  }
+  const stopScopedWorkSessionFromSlash = (chat: ChatRecord): void => {
+    if (chat.chatKind !== 'ensemble' || !chat.ensemble?.workSession) return
+    void window.api.cancelEnsembleRound(chat.appChatId).catch(() => {})
+    updateChatById(chat.appChatId, (source) => cancelWorkSessionOnChat(source))
+  }
   const buildScopedComposerSlashExtraCommands = ({
     chat,
     provider,
@@ -19022,11 +19130,14 @@ function App(): React.JSX.Element {
         'Run a multi-agent strengths/weaknesses audit of this workspace. Optional mode: quick (default), deep, release.',
       group: 'Custom',
       run: (ctx) => {
-        if (!chat) return
+        if (!chat) {
+          rejectSlashCommandWithDraft(ctx, 'Open a workspace chat to run an audit.')
+          return
+        }
         const workspacePath = chat.workspacePath || workspace?.path
         if (!workspacePath) {
           // v1: audits are workspace-scoped — a global chat has no repo to audit.
-          window.alert('Open a workspace chat to run an audit.')
+          rejectSlashCommandWithDraft(ctx, 'Open a workspace chat to run an audit.')
           return
         }
         // Parse an optional mode token from the composer text ("/audit deep").
@@ -19098,8 +19209,10 @@ function App(): React.JSX.Element {
           .replace(/^\s*\/import-plan\b/i, '')
           .trim()
         if (!candidate) {
-          ctx.consumeSlashToken()
-          window.alert('Paste or type a plan in the composer, then run /import-plan.')
+          rejectSlashCommandWithDraft(
+            ctx,
+            'Paste or type a plan in the composer, then run /import-plan.'
+          )
           return
         }
         openPlanImportReview(candidate)
@@ -19115,14 +19228,21 @@ function App(): React.JSX.Element {
       description: 'Wipe this chat’s transcript + draft. Keeps the provider session id.',
       group: 'Custom',
       run: (ctx) => {
-        if (!chat) return
+        if (!chat) {
+          rejectSlashCommandWithDraft(ctx, 'Open a chat to use /clear.')
+          return
+        }
         const confirmed = window.confirm(
           `Clear the conversation in "${chat.title}"?\n\n` +
             'This wipes the chat transcript and your composer draft. ' +
             'The chat record and provider session id stay intact so the ' +
             'next prompt continues with the same provider context.'
         )
-        if (!confirmed) return
+        if (!confirmed) {
+          ctx.setDraft(ctx.rawPrompt)
+          ctx.focusComposer(ctx.rawPrompt.length)
+          return
+        }
         ctx.setDraft('')
         // Optimistic local clear, then persist via the IPC. We refresh
         // the chat list right after so the new (empty) transcript is the
@@ -19168,6 +19288,246 @@ function App(): React.JSX.Element {
       group: 'Custom',
       insertText: '/meta '
     },
+    ...(isEnsembleChat
+      ? [
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-ensemble-turn',
+            command: '/ensemble-turn',
+            label: 'Ensemble turn mode',
+            description: 'Switch this ensemble to one-pass turn-bound orchestration.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-turn.')
+                return
+              }
+              patchScopedEnsembleConfig(chat, (ensemble) => ({
+                ...ensemble,
+                orchestrationMode: 'turn_bound',
+                maxContinuationHops: ensemble.maxContinuationHops || 6
+              }))
+            }
+          },
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-ensemble-continuous',
+            command: '/ensemble-continuous',
+            label: 'Ensemble continuous mode',
+            description: 'Switch this ensemble to continuous handoff orchestration.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+                rejectSlashCommandWithDraft(
+                  ctx,
+                  'Open an ensemble chat to use /ensemble-continuous.'
+                )
+                return
+              }
+              patchScopedEnsembleConfig(chat, (ensemble) => ({
+                ...ensemble,
+                orchestrationMode: 'continuous',
+                maxContinuationHops: ensemble.maxContinuationHops || 6
+              }))
+            }
+          },
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-ensemble-fanout',
+            command: '/ensemble-fanout',
+            label: 'Toggle ensemble fanout',
+            description: 'Toggle or set concurrent fanout. Usage: /ensemble-fanout on|off|toggle.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-fanout.')
+                return
+              }
+              const arg = slashActionRemainder(ctx, /^\/ensemble-fanout\b/i)
+              const next = parseScopedToggleSlashArg(
+                ctx,
+                arg,
+                Boolean(chat.ensemble.concurrentModeEnabled),
+                'Usage: /ensemble-fanout on|off|toggle.'
+              )
+              if (next === null) return
+              patchScopedEnsembleConfig(chat, (ensemble) => ({
+                ...ensemble,
+                concurrentModeEnabled: next
+              }))
+            }
+          },
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-ensemble-context',
+            command: '/ensemble-context',
+            label: 'Set ensemble context budget',
+            description: 'Set shared transcript budget in characters. Usage: /ensemble-context 120000.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-context.')
+                return
+              }
+              const arg = slashActionRemainder(ctx, /^\/ensemble-context\b/i)
+              const next = parseScopedPositiveIntSlashArg(ctx, arg, {
+                min: 5_000,
+                max: 500_000,
+                fallback: chat.ensemble.ensembleContextChars || 120_000,
+                usage: 'Usage: /ensemble-context 120000. Valid range: 5000-500000.'
+              })
+              if (next === null) return
+              patchScopedEnsembleConfig(chat, (ensemble) => ({
+                ...ensemble,
+                ensembleContextChars: next
+              }))
+            }
+          },
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-ensemble-hops',
+            command: '/ensemble-hops',
+            label: 'Set continuous handoff limit',
+            description: 'Set maximum continuation hops for continuous rounds. Usage: /ensemble-hops 12.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-hops.')
+                return
+              }
+              const arg = slashActionRemainder(ctx, /^\/ensemble-hops\b/i)
+              const next = parseScopedPositiveIntSlashArg(ctx, arg, {
+                min: 1,
+                max: 500,
+                fallback: chat.ensemble.maxContinuationHops || 6,
+                usage: 'Usage: /ensemble-hops 12. Valid range: 1-500.'
+              })
+              if (next === null) return
+              patchScopedEnsembleConfig(chat, (ensemble) => ({
+                ...ensemble,
+                maxContinuationHops: next,
+                ...(ensemble.activeRound
+                  ? {
+                      activeRound: {
+                        ...ensemble.activeRound,
+                        maxContinuationHops: next
+                      }
+                    }
+                  : {})
+              }))
+            }
+          },
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-ensemble-reflect',
+            command: '/ensemble-reflect',
+            label: 'Toggle self-reflective mode',
+            description: 'Toggle or set self-reflective ensemble context. Usage: /ensemble-reflect on|off|toggle.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-reflect.')
+                return
+              }
+              const arg = slashActionRemainder(ctx, /^\/ensemble-reflect\b/i)
+              const next = parseScopedToggleSlashArg(
+                ctx,
+                arg,
+                Boolean(chat.ensemble.selfReflective),
+                'Usage: /ensemble-reflect on|off|toggle.'
+              )
+              if (next === null) return
+              patchScopedEnsembleConfig(chat, (ensemble) => ({
+                ...ensemble,
+                selfReflective: next
+              }))
+            }
+          },
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-ensemble-skip',
+            command: '/ensemble-skip',
+            label: 'Skip active participant',
+            description: 'Skip the currently speaking ensemble participant.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-skip.')
+                return
+              }
+              void window.api.skipEnsembleParticipant(chat.appChatId).catch((error) => {
+                rejectSlashCommandWithDraft(
+                  ctx,
+                  `Could not skip the active participant: ${redactLog(String(error))}`
+                )
+              })
+            }
+          },
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-ensemble-steer',
+            command: '/ensemble-steer',
+            label: 'Steer ensemble round',
+            description: 'Start or steer the ensemble with the provided prompt. Usage: /ensemble-steer <prompt>.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-steer.')
+                return
+              }
+              const steerPrompt = slashActionRemainder(ctx, /^\/ensemble-steer\b/i)
+              if (!steerPrompt) {
+                rejectSlashCommandWithDraft(ctx, 'Usage: /ensemble-steer <prompt>.')
+                return
+              }
+              runScopedEnsembleRoundFromSlash(chat, steerPrompt, '/ensemble-steer')
+            }
+          },
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-ensemble-work-session',
+            command: '/ensemble-work-session',
+            label: 'Manage ensemble work session',
+            description: 'Open Work Session setup, or stop the active session with /ensemble-work-session stop.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) => {
+              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
+                rejectSlashCommandWithDraft(
+                  ctx,
+                  'Open an ensemble chat to use /ensemble-work-session.'
+                )
+                return
+              }
+              const arg = slashActionRemainder(ctx, /^\/ensemble-work-session\b/i)
+              const token = firstSlashArgToken(arg)
+              if (token === 'stop') {
+                if (!chat.ensemble.workSession) {
+                  rejectSlashCommandWithDraft(ctx, 'No active ensemble work session to stop.')
+                  return
+                }
+                stopScopedWorkSessionFromSlash(chat)
+                return
+              }
+              if (token) {
+                rejectSlashCommandWithDraft(
+                  ctx,
+                  'Usage: /ensemble-work-session or /ensemble-work-session stop.'
+                )
+                return
+              }
+              if (focusPaneForFocusedFlow) {
+                preserveSlashDraftForFocusedFlow(
+                  ctx,
+                  focusPaneForFocusedFlow,
+                  'Work Session setup opens in the focused pane. This pane is now focused; run /ensemble-work-session again.'
+                )
+                return
+              }
+              setShowWorkSessionSheet(true)
+            }
+          }
+        ]
+      : []),
     {
       kind: 'action',
       id: 'taskwraith-stop',
@@ -19256,7 +19616,11 @@ function App(): React.JSX.Element {
       label: 'Open File Editor',
       description: 'Open the workspace File Editor popout.',
       group: 'Custom',
-      run: () => {
+      run: (ctx) => {
+        if (!workspace?.path) {
+          rejectSlashCommandWithDraft(ctx, 'Open a workspace chat to use /editor.')
+          return
+        }
         openWorkspacePopoutCommand('file-editor')
       }
     },
@@ -19267,7 +19631,11 @@ function App(): React.JSX.Element {
       label: 'Open Diff Studio window',
       description: 'Open Diff Studio in a workspace popout window.',
       group: 'Custom',
-      run: () => {
+      run: (ctx) => {
+        if (!workspace?.path) {
+          rejectSlashCommandWithDraft(ctx, 'Open a workspace chat to use /diff-window.')
+          return
+        }
         openWorkspacePopoutCommand('diff-studio')
       }
     },
@@ -19279,6 +19647,14 @@ function App(): React.JSX.Element {
       description: 'Open an isolated sidecar with a copied parent snapshot.',
       group: 'Custom',
       run: (ctx) => {
+        if (focusPaneForFocusedFlow) {
+          preserveSlashDraftForFocusedFlow(
+            ctx,
+            focusPaneForFocusedFlow,
+            'Side-chat commands open from the focused pane. This pane is now focused; run /side again.'
+          )
+          return
+        }
         openSideChatCommand({
           presentation: 'split',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
@@ -19293,6 +19669,14 @@ function App(): React.JSX.Element {
       description: 'Open the isolated sidecar as the right drawer presentation.',
       group: 'Custom',
       run: (ctx) => {
+        if (focusPaneForFocusedFlow) {
+          preserveSlashDraftForFocusedFlow(
+            ctx,
+            focusPaneForFocusedFlow,
+            'Side-chat commands open from the focused pane. This pane is now focused; run /side-drawer again.'
+          )
+          return
+        }
         openSideChatCommand({
           presentation: 'drawer',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
@@ -19307,6 +19691,14 @@ function App(): React.JSX.Element {
       description: 'Open the linked chat in a separate chat window.',
       group: 'Custom',
       run: (ctx) => {
+        if (focusPaneForFocusedFlow) {
+          preserveSlashDraftForFocusedFlow(
+            ctx,
+            focusPaneForFocusedFlow,
+            'Side-chat commands open from the focused pane. This pane is now focused; run /side-popout again.'
+          )
+          return
+        }
         openSideChatCommand({
           presentation: 'popout',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
@@ -19321,6 +19713,14 @@ function App(): React.JSX.Element {
       description: 'Navigate the main pane to the linked chat.',
       group: 'Custom',
       run: (ctx) => {
+        if (focusPaneForFocusedFlow) {
+          preserveSlashDraftForFocusedFlow(
+            ctx,
+            focusPaneForFocusedFlow,
+            'Side-chat commands open from the focused pane. This pane is now focused; run /side-main again.'
+          )
+          return
+        }
         openSideChatCommand({
           presentation: 'main',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
@@ -19334,9 +19734,9 @@ function App(): React.JSX.Element {
       label: 'Open Help',
       description: 'Open the Settings panel — docs, shortcuts, and policy info.',
       group: 'Custom',
-      run: () => {
+      run: (ctx) => {
         if (isChatPopoutWindow) {
-          window.alert('Settings open in the main TaskWraith window.')
+          rejectSlashCommandWithDraft(ctx, 'Settings open in the main TaskWraith window.')
           return
         }
         setSettingsActiveTab('key-commands')
@@ -19350,9 +19750,9 @@ function App(): React.JSX.Element {
       label: 'Send feedback',
       description: 'Open the bug report and feedback sheet.',
       group: 'Custom',
-      run: () => {
+      run: (ctx) => {
         if (isChatPopoutWindow) {
-          window.alert('Feedback opens in the main TaskWraith window.')
+          rejectSlashCommandWithDraft(ctx, 'Feedback opens in the main TaskWraith window.')
           return
         }
         setShowBugReportSheet(true)
@@ -19367,7 +19767,7 @@ function App(): React.JSX.Element {
       group: 'Custom',
       run: (ctx) => {
         if (isChatPopoutWindow) {
-          window.alert('Settings open in the main TaskWraith window.')
+          rejectSlashCommandWithDraft(ctx, 'Settings open in the main TaskWraith window.')
           return
         }
         const arg = slashActionRemainder(ctx, /^\/settings\b/i)
@@ -20628,6 +21028,12 @@ function App(): React.JSX.Element {
       ),
       handlePaletteCommand: (item: CommandPaletteItem) =>
         handlePanePaletteCommand(viewerPaneIndex, viewerChat, viewerProvider, viewerWorkspace, item),
+      openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => {
+        handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+        setChatPromptDraft(viewerChatId, sideSlashCommandDraft(sideCommand))
+        window.alert('Side-chat commands open from the focused pane. This pane is now focused; run the command again.')
+        return false
+      },
       currentWorkspace: viewerWorkspace,
       currentWorkspacePath: viewerWorkspace?.path,
       // Per-pane git diff stats: read THIS pane's own workspace snapshot so the
@@ -21659,6 +22065,12 @@ function App(): React.JSX.Element {
             viewerWorkspace,
             item
           ),
+        openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => {
+          handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+          setChatPromptDraft(viewerChatId, sideSlashCommandDraft(sideCommand))
+          window.alert('Side-chat commands open from the focused pane. This pane is now focused; run the command again.')
+          return false
+        },
         currentWorkspace: viewerWorkspace,
         currentWorkspacePath: viewerWorkspace?.path,
         // Per-pane git diff stats: read THIS pane's own workspace snapshot so the
