@@ -14,6 +14,9 @@ history, and workspace state stay on your machine throughout.
 - **Composer variant gallery.** Added a dedicated composer-shell gallery covering
   the Electron variants in dark/light mode plus representative iOS companion
   references.
+- **README screenshot refresh.** Replaced the first README gallery row with
+  current local screenshots for first launch, the general app layout, and a live
+  ensemble run.
 
 ## 1.6.2 - 2026-06-25
 

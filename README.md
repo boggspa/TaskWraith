@@ -61,15 +61,15 @@ baseline.
 <table>
   <tr>
     <td align="center" valign="top" width="33%">
-      <img width="100%" alt="Welcome and provider setup" src="https://github.com/user-attachments/assets/9a3036ec-3761-4a64-98d9-bec13d44c996" /><br />
+      <img width="100%" alt="Welcome and provider setup" src="design-assets/readme-screenshots/welcome-provider-setup.png" /><br />
       <sub><b>Welcome &amp; provider setup</b></sub>
     </td>
     <td align="center" valign="top" width="33%">
-      <img width="100%" alt="Ensemble Mode" src="https://github.com/user-attachments/assets/1523ff12-b8c2-41e8-a966-d735ee545e38" /><br />
-      <sub><b>Ensemble Mode</b></sub>
+      <img width="100%" alt="General App Layout" src="design-assets/readme-screenshots/general-app-layout.png" /><br />
+      <sub><b>General App Layout</b></sub>
     </td>
     <td align="center" valign="top" width="33%">
-      <img width="100%" alt="A live ensemble run" src="https://github.com/user-attachments/assets/95eb5142-7c41-4f2e-82e5-14e22e4ab911" /><br />
+      <img width="100%" alt="A live Ensemble run" src="design-assets/readme-screenshots/live-ensemble-run.png" /><br />
       <sub><b>A live Ensemble run</b></sub>
     </td>
   </tr>
