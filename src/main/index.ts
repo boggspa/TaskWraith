@@ -150,6 +150,7 @@ import {
   isCodexAppServerThreadId,
   isCodexConfigParseError
 } from './CodexAppServerClient'
+import { buildUserMcpStdioLaunchServers } from './UserMcpServers'
 import {
   codexCommandFileEditMetadata,
   codexCommandText,
@@ -11341,16 +11342,22 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   // app-server start. We don't restart the running app-server when
   // the toggle flips (that would tear down in-flight threads); the
   // user reopens Codex (or relaunches TaskWraith) to pick up the new
-  // setting. The Codex MCP integration mirrors the existing Gemini
-  // gate (geminiMcpBridgeEnabled) — one user toggle, both providers.
+  // setting. The TaskWraith bridge mirrors the existing Gemini gate
+  // (geminiMcpBridgeEnabled); user-managed stdio servers can attach
+  // independently through the MCP Servers settings page.
   const settings = AppStore.getSettings()
   const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
-  if (settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available) {
+  const userMcpServers = buildUserMcpStdioLaunchServers(settings.userMcpServers)
+  const taskWraithBridgeEnabled = Boolean(
+    settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available
+  )
+  if (taskWraithBridgeEnabled || userMcpServers.length > 0) {
     codexClient.setMcpConfig({
-      enabled: true,
+      enabled: taskWraithBridgeEnabled,
       bridgeBinaryPath: bridgeCommandStatus.command,
       bridgeArgs: taskwraithMcpBridgeArgs(),
-      parentProvider: 'codex'
+      parentProvider: 'codex',
+      userMcpServers
     })
   } else {
     codexClient.setMcpConfig(null)

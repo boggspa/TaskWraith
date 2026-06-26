@@ -150,6 +150,72 @@ describe('buildCodexTaskWraithMcpArgs', () => {
     const args = buildCodexTaskWraithMcpArgs(makeConfig())
     expect(args[5]).toContain('TASKWRAITH_PARENT_PROVIDER = "codex"')
   })
+
+  it('appends enabled user MCP stdio servers after the TaskWraith bridge', () => {
+    const args = buildCodexTaskWraithMcpArgs(
+      makeConfig({
+        userMcpServers: [
+          {
+            serverName: 'user_filesystem',
+            command: 'npx',
+            args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+            env: { PROJECT_ROOT: '/repo' }
+          }
+        ]
+      })
+    )
+
+    expect(args).toContain('mcp_servers.user_filesystem.command="npx"')
+    expect(args).toContain(
+      'mcp_servers.user_filesystem.args=["@modelcontextprotocol/server-filesystem", "/repo"]'
+    )
+    expect(args).toContain('mcp_servers.user_filesystem.env={ PROJECT_ROOT = "/repo" }')
+  })
+
+  it('can emit user MCP servers when the TaskWraith bridge is disabled', () => {
+    const args = buildCodexTaskWraithMcpArgs({
+      ...makeConfig({ enabled: false }),
+      userMcpServers: [
+        {
+          serverName: 'user_docs',
+          command: '/usr/local/bin/docs-mcp',
+          args: []
+        }
+      ]
+    })
+
+    expect(args).toEqual([
+      '-c',
+      'mcp_servers.user_docs.command="/usr/local/bin/docs-mcp"',
+      '-c',
+      'mcp_servers.user_docs.args=[]'
+    ])
+  })
+
+  it('skips user MCP servers with malformed TOML key names', () => {
+    const args = buildCodexTaskWraithMcpArgs({
+      ...makeConfig({ enabled: false }),
+      userMcpServers: [
+        {
+          serverName: 'user.docs',
+          command: '/usr/local/bin/docs-mcp',
+          args: []
+        },
+        {
+          serverName: 'user_docs',
+          command: '/usr/local/bin/docs-mcp',
+          args: []
+        }
+      ]
+    })
+
+    expect(args).toEqual([
+      '-c',
+      'mcp_servers.user_docs.command="/usr/local/bin/docs-mcp"',
+      '-c',
+      'mcp_servers.user_docs.args=[]'
+    ])
+  })
 })
 
 describe('buildCodexFastServiceTierCompatibilityArgs', () => {

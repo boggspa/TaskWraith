@@ -6,6 +6,7 @@ import {
   resolveCliProviderBinary
 } from './providers/CliProviderRuntime'
 import type { RuntimeProfile } from './store/types'
+import type { UserMcpStdioLaunchServer } from './UserMcpServers'
 
 /**
  * Codex's app-server only accepts UUID thread ids (optionally `urn:uuid:`-
@@ -247,6 +248,7 @@ export interface CodexMcpTaskWraithConfig {
   bridgeBinaryPath: string
   bridgeArgs: string[]
   parentProvider: 'codex'
+  userMcpServers?: UserMcpStdioLaunchServer[]
 }
 
 export function codexRuntimeProfileKey(profile: RuntimeProfile | null | undefined): string {
@@ -272,6 +274,10 @@ function tomlEscapeString(value: string): string {
     .replace(/\t/g, '\\t')
 }
 
+function isTomlBareKeyComponent(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
+}
+
 /**
  * Build the `-c mcp_servers.TaskWraith.*` CLI argument list for Codex
  * CLI. Exported so the I2 tests can pin the exact shape of the
@@ -284,18 +290,38 @@ function tomlEscapeString(value: string): string {
  * between the spawned bridge subprocess and main.
  */
 export function buildCodexTaskWraithMcpArgs(config: CodexMcpTaskWraithConfig): string[] {
-  if (!config.enabled) return []
-  const command = tomlEscapeString(config.bridgeBinaryPath)
-  const args = config.bridgeArgs.map((arg) => `"${tomlEscapeString(arg)}"`).join(', ')
-  const parentProvider = tomlEscapeString(config.parentProvider)
-  return [
-    '-c',
-    `mcp_servers.TaskWraith.command="${command}"`,
-    '-c',
-    `mcp_servers.TaskWraith.args=[${args}]`,
-    '-c',
-    `mcp_servers.TaskWraith.env={ TASKWRAITH_PARENT_PROVIDER = "${parentProvider}" }`
-  ]
+  const configArgs: string[] = []
+  if (config.enabled) {
+    const command = tomlEscapeString(config.bridgeBinaryPath)
+    const args = config.bridgeArgs.map((arg) => `"${tomlEscapeString(arg)}"`).join(', ')
+    const parentProvider = tomlEscapeString(config.parentProvider)
+    configArgs.push(
+      '-c',
+      `mcp_servers.TaskWraith.command="${command}"`,
+      '-c',
+      `mcp_servers.TaskWraith.args=[${args}]`,
+      '-c',
+      `mcp_servers.TaskWraith.env={ TASKWRAITH_PARENT_PROVIDER = "${parentProvider}" }`
+    )
+  }
+  for (const server of config.userMcpServers ?? []) {
+    if (!isTomlBareKeyComponent(server.serverName)) continue
+    const command = tomlEscapeString(server.command)
+    const args = server.args.map((arg) => `"${tomlEscapeString(arg)}"`).join(', ')
+    configArgs.push(
+      '-c',
+      `mcp_servers.${server.serverName}.command="${command}"`,
+      '-c',
+      `mcp_servers.${server.serverName}.args=[${args}]`
+    )
+    if (server.env && Object.keys(server.env).length > 0) {
+      const env = Object.entries(server.env)
+        .map(([key, value]) => `${key} = "${tomlEscapeString(value)}"`)
+        .join(', ')
+      configArgs.push('-c', `mcp_servers.${server.serverName}.env={ ${env} }`)
+    }
+  }
+  return configArgs
 }
 
 export class CodexAppServerClient {

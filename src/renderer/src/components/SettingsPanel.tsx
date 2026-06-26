@@ -5484,8 +5484,9 @@ export function SettingsPanel({
                     <span className="settings-editable-pill">Editable</span>
                   </div>
                   <p className="settings-hint">
-                    Manage external MCP server definitions TaskWraith owns. Provider launch wiring
-                    can consume these records without mutating Claude, Codex, or Cursor config files.
+                    Manage external MCP server definitions TaskWraith owns. Enabled stdio servers
+                    can be attached to supported provider launches without mutating provider config
+                    files.
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
@@ -5504,7 +5505,7 @@ export function SettingsPanel({
                 <article className="settings-mcp-summary-card">
                   <span>Enabled</span>
                   <strong>{enabledUserMcpServerCount}</strong>
-                  <small>ready for provider launch wiring</small>
+                  <small>active definitions</small>
                 </article>
                 <article className="settings-mcp-summary-card">
                   <span>Transports</span>
@@ -5525,8 +5526,8 @@ export function SettingsPanel({
                   User MCP servers
                 </h4>
                 <p className="settings-hint">
-                  These records are stored by TaskWraith and can be audited here before being
-                  attached to provider runtime profiles.
+                  These records are stored by TaskWraith. Stdio servers are available to supported
+                  provider launch paths; HTTP and SSE stay saved for transport-specific wiring.
                 </p>
               </div>
 
