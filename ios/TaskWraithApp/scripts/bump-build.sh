@@ -19,7 +19,7 @@ if [[ ! "$next" =~ ^[0-9]+$ || "$next" -le "$current" ]]; then
   exit 1
 fi
 
-perl -0pi -e "s/CURRENT_PROJECT_VERSION: \"$current\"/CURRENT_PROJECT_VERSION: \"$next\"/" "$project_yml"
+perl -0pi -e "s/CURRENT_PROJECT_VERSION: \"$current\"/CURRENT_PROJECT_VERSION: \"$next\"/g" "$project_yml"
 
 if command -v xcodegen >/dev/null 2>&1; then
   (cd "$app_dir" && xcodegen generate)
