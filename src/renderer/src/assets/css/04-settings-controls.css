@@ -3149,6 +3149,35 @@
   white-space: nowrap;
 }
 
+.settings-user-mcp-config {
+  margin-top: 2px;
+  min-width: 0;
+}
+
+.settings-user-mcp-config summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+
+.settings-user-mcp-config pre {
+  overflow: auto;
+  max-width: 100%;
+  max-height: 180px;
+  margin: 8px 0 0;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 56%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-bg) 72%, transparent);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
 .settings-user-mcp-actions,
 .settings-user-mcp-footer {
   display: flex;

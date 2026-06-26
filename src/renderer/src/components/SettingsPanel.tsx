@@ -758,6 +758,48 @@ function buildUserMcpServerFromForm(
   return { server }
 }
 
+function userMcpServerAuditKey(server: UserMcpServerConfig): string {
+  return server.name.trim() || server.id
+}
+
+function formatUserMcpServerAuditJson(server: UserMcpServerConfig): string {
+  const env =
+    server.env && Object.keys(server.env).length > 0
+      ? Object.fromEntries(
+          Object.keys(server.env)
+            .sort()
+            .map((key) => [key, '[stored in TaskWraith settings]'])
+        )
+      : undefined
+  const entry =
+    server.transport === 'stdio'
+      ? {
+          type: 'stdio',
+          command: server.command || '',
+          ...(server.args && server.args.length > 0 ? { args: server.args } : {}),
+          ...(env ? { env } : {})
+        }
+      : {
+          type: server.transport,
+          url: server.url || '',
+          ...(env ? { env } : {})
+        }
+
+  return JSON.stringify(
+    {
+      mcpServers: {
+        [userMcpServerAuditKey(server)]: entry
+      },
+      taskwraith: {
+        id: server.id,
+        enabled: server.enabled
+      }
+    },
+    null,
+    2
+  )
+}
+
 const AUDIT_ARTIFACT_PROVIDER_OPTIONS: Array<{
   value: ProviderId
   label: string
@@ -5561,6 +5603,12 @@ export function SettingsPanel({
                               <span>{pluralizeCount(Object.keys(server.env).length, 'env var')}</span>
                             )}
                           </div>
+                          <details className="settings-user-mcp-config">
+                            <summary>Audit JSON</summary>
+                            <pre>
+                              <code>{formatUserMcpServerAuditJson(server)}</code>
+                            </pre>
+                          </details>
                         </div>
                         <div className="settings-user-mcp-actions">
                           <label className="settings-user-mcp-toggle">

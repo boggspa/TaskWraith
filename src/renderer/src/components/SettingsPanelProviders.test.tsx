@@ -238,6 +238,10 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('filesystem')
     expect(html).toContain('2 args')
     expect(html).toContain('1 env var')
+    expect(html).toContain('Audit JSON')
+    expect(html).toContain('&quot;command&quot;: &quot;npx&quot;')
+    expect(html).toContain('&quot;PROJECT_ROOT&quot;: &quot;[stored in TaskWraith settings]&quot;')
+    expect(html).not.toContain('&quot;PROJECT_ROOT&quot;: &quot;/Users/chris/project&quot;')
     expect(html).toContain('Add server')
   })
 
