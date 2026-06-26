@@ -24,6 +24,28 @@ workspace state on the user's machine.
 > credentials on the Mac (see
 > `ios/TaskWraithApp/README.md`).
 
+## Ensemble Threads
+
+TaskWraith's most experimental surface is **Ensemble Threads**: shared work
+sessions where multiple AI agents participate in the same conversation instead
+of living in separate tabs. A thread can include up to twelve named participants
+across Codex, Claude, Kimi, Grok, Cursor, and local Ollama, each with its own
+model, role, order, and permission posture.
+
+This is not just provider switching. Ensemble participants see the same
+transcript, can build on each other's work, hand off deliberately, run
+turn-bound or continuous rounds, fan out in parallel, and use TaskWraith's
+workspace tools under the same local approval and audit model. In practice, a
+single thread can hold a planner, implementer, adversarial reviewer, docs writer,
+and local-model scout without losing the workspace timeline or review trail.
+
+Ensembles are designed for work that benefits from disagreement and role
+separation: code review, architecture critique, bug hunts, migration planning,
+release checks, and "one agent implements while another watches the diff" flows.
+They pair with Multiview, Workflows, slash commands, MCP tools, and the activity
+viewport so multi-agent work remains inspectable rather than becoming a hidden
+background process.
+
 ## Trust, Safety, and First Runs
 
 <table>
@@ -112,9 +134,10 @@ baseline.
 - **Composer Shells**: Provider-aware and task-oriented composer variants give
   each working mode its own affordances without changing the safety model. See
   [COMPOSER_VARIANTS.md](COMPOSER_VARIANTS.md) for the Electron shell gallery.
-- **Ensemble Mode**: Multi-provider single-thread chats with up to twelve named
-  participants, turn-bound or continuous orchestration, optional parallel fan-out,
-  and TaskWraith MCP tools shared across providers.
+- **Ensemble Threads**: Multi-agent shared work sessions with named provider
+  participants, role/order control, turn-bound or continuous orchestration,
+  optional parallel fan-out, cross-provider handoffs, and TaskWraith MCP tools
+  shared under one auditable workspace policy.
 - **Audit Runs**: `/audit` can coordinate provider-backed review passes with
   live progress, structured findings, verdicts, and dismissible run banners.
 - **Local Ollama**: Tiered workspace tools (read-only through provider parity),
@@ -132,8 +155,8 @@ baseline.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
-Current development version: **v1.6.3**. Latest public release:
-**v1.6.3** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+Current development version: **v1.6.4**. Latest public release:
+**v1.6.4** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
 If the GitHub Releases page shows an older version, treat newer source changes as
 unreleased development work until a matching tag and release artifacts are
 published.
