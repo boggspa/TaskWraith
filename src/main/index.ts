@@ -9283,17 +9283,18 @@ async function loadOptionalClaudeSdk(): Promise<any | null> {
 /**
  * Phase I3 (Claude initiator): assemble the input the TaskWraith MCP
  * helpers need — current `geminiMcpBridgeEnabled` toggle + the same
- * bridge argv Gemini/Codex use. Centralised so SDK and CLI paths build
- * identical config (the bridge binary path, socket path, and broker
- * token are all module-scoped already).
+ * bridge argv Gemini/Codex use, plus user-managed stdio MCP servers.
+ * Centralised so SDK and CLI paths build identical config.
  */
 function claudeTaskWraithMcpInput(route?: AgentRunRoute | null): ClaudeTaskWraithMcpInput {
   const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
-  const enabled = Boolean(AppStore.getSettings().geminiMcpBridgeEnabled && bridgeCommandStatus.available)
+  const settings = AppStore.getSettings()
+  const enabled = Boolean(settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available)
   return {
     enabled,
     bridgeBinaryPath: bridgeCommandStatus.command,
     bridgeArgs: taskwraithMcpBridgeArgs(),
+    userMcpServers: buildUserMcpStdioLaunchServers(settings.userMcpServers),
     ...(route?.appRunId ? { appRunId: route.appRunId } : {}),
     ...(route?.appChatId ? { appChatId: route.appChatId } : {})
   }
@@ -9707,8 +9708,9 @@ async function tryRunClaudeSdk(
       : null
   // Phase I3 (Claude initiator): register the TaskWraith MCP server so
   // the Claude agent sees delegate_to_subthread etc. in its tool list.
-  // Gated on the same `geminiMcpBridgeEnabled` toggle Gemini/Codex use
-  // so the user can disable cross-provider MCP from one place.
+  // The TaskWraith bridge is gated on the same `geminiMcpBridgeEnabled`
+  // toggle Gemini/Codex use; user-managed stdio MCP servers attach from
+  // the dedicated MCP Servers settings page.
   //
   // Phase J3: ALSO pass `allowedTools` here. Previously only the CLI
   // fallback got the pre-approved list via `--allowedTools <names>`;
@@ -9718,9 +9720,12 @@ async function tryRunClaudeSdk(
   // Claude-parented bridge subprocesses had spawned and zero of them
   // had ever logged a `tools/call` (vs. Gemini-parented bridges which
   // accounted for every tool call in the log). Mirroring the CLI's
-  // pre-approval list closes the gap.
-  const claudeSdkMcpServers = buildClaudeTaskWraithMcpServers(claudeTaskWraithMcpInput(route))
-  const claudeSdkAllowedTools = claudeSdkMcpServers ? buildClaudeTaskWraithAllowedToolNames() : null
+  // pre-approval list closes the gap. Only TaskWraith's own bridge
+  // tools are pre-approved; arbitrary user MCP server tools still flow
+  // through Claude's normal tool-permission path.
+  const claudeMcpInput = claudeTaskWraithMcpInput(route)
+  const claudeSdkMcpServers = buildClaudeTaskWraithMcpServers(claudeMcpInput)
+  const claudeSdkAllowedTools = claudeMcpInput.enabled ? buildClaudeTaskWraithAllowedToolNames() : null
   const claudeSdkSettings =
     typeof payload.claudeFastMode === 'boolean' ? { fastMode: payload.claudeFastMode } : undefined
   // Belt-and-braces env stamp on the SDK process: in addition to the
@@ -9742,7 +9747,7 @@ async function tryRunClaudeSdk(
   // subprocess connects to a dead socket and Claude reports "MCP socket is
   // down", then silently degrades to its native read tools. startGeminiMcpBroker
   // is idempotent (no-op once listening), so this is cheap on every run.
-  if (claudeSdkMcpServers) {
+  if (claudeMcpInput.enabled) {
     await startGeminiMcpBroker().catch((error) => {
       console.error('[mcp-bridge] broker ensure failed before Claude run', error)
     })
@@ -9881,38 +9886,37 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // SDK's `mcpServers` object directly — it expects `--mcp-config
   // <path>` pointing at a JSON file. Write a per-run config under the
   // OS temp dir, extend the argv with `--mcp-config` + `--allowedTools`,
-  // and clean up the temp file when the run exits.
+  // and clean up the temp file when the run exits. User-managed stdio
+  // servers share the same config file but do not get added to
+  // --allowedTools.
   const mcpInput = claudeTaskWraithMcpInput(route)
   let mcpConfigPath: string | null = null
   let args = baseArgs
-  if (mcpInput.enabled) {
-    const configJson = buildClaudeTaskWraithMcpConfigJson(mcpInput)
-    if (configJson) {
-      mcpConfigPath = claudeTaskWraithMcpConfigPathForRun(route.appRunId || 'unknown')
-      try {
-        await fs.writeFile(mcpConfigPath, JSON.stringify(configJson), {
-          encoding: 'utf8',
-          mode: 0o600
-        })
-        args = extendClaudeCliArgsWithTaskWraithMcp(baseArgs, {
-          ...mcpInput,
-          configFilePath: mcpConfigPath
-        })
-      } catch (error) {
-        // Failing to write the temp file is not fatal: log + carry on
-        // without the MCP server registered (the Claude agent will then
-        // simply not see delegate_to_subthread). We surface a warning
-        // so the user can see why cross-provider delegation isn't
-        // wired up.
-        sendAgentCompatError(
-          event.sender,
-          'claude',
-          `Failed to write Claude MCP config (${mcpConfigPath}); cross-provider delegation tools will not be available for this run. Reason: ${error instanceof Error ? error.message : String(error)}`,
-          route
-        )
-        mcpConfigPath = null
-        args = baseArgs
-      }
+  const configJson = buildClaudeTaskWraithMcpConfigJson(mcpInput)
+  if (configJson) {
+    mcpConfigPath = claudeTaskWraithMcpConfigPathForRun(route.appRunId || 'unknown')
+    try {
+      await fs.writeFile(mcpConfigPath, JSON.stringify(configJson), {
+        encoding: 'utf8',
+        mode: 0o600
+      })
+      args = extendClaudeCliArgsWithTaskWraithMcp(baseArgs, {
+        ...mcpInput,
+        configFilePath: mcpConfigPath
+      })
+    } catch (error) {
+      // Failing to write the temp file is not fatal: log + carry on
+      // without MCP servers registered. We surface a warning so the
+      // user can see why the Claude run does not have the expected MCP
+      // tools.
+      sendAgentCompatError(
+        event.sender,
+        'claude',
+        `Failed to write Claude MCP config (${mcpConfigPath}); MCP servers will not be available for this run. Reason: ${error instanceof Error ? error.message : String(error)}`,
+        route
+      )
+      mcpConfigPath = null
+      args = baseArgs
     }
   }
   const claudeKey = getStoredClaudeApiKey()

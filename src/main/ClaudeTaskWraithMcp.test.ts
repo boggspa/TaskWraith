@@ -76,6 +76,72 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     args.push('--mutated-after-build')
     expect(servers.TaskWraith.args).not.toContain('--mutated-after-build')
   })
+
+  it('adds user-managed stdio servers beside the TaskWraith bridge', () => {
+    const servers = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      userMcpServers: [
+        {
+          serverName: 'user_filesystem',
+          command: 'npx',
+          args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+          env: { PROJECT_ROOT: '/repo' }
+        }
+      ]
+    })
+
+    expect(servers?.TaskWraith.alwaysLoad).toBe(true)
+    expect(servers?.user_filesystem).toEqual({
+      type: 'stdio',
+      command: 'npx',
+      args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+      env: { PROJECT_ROOT: '/repo' }
+    })
+  })
+
+  it('can emit user-managed stdio servers when the TaskWraith bridge is disabled', () => {
+    const servers = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      enabled: false,
+      userMcpServers: [
+        {
+          serverName: 'user_docs',
+          command: '/usr/local/bin/docs-mcp',
+          args: []
+        }
+      ]
+    })
+
+    expect(servers).toEqual({
+      user_docs: {
+        type: 'stdio',
+        command: '/usr/local/bin/docs-mcp',
+        args: [],
+        env: {}
+      }
+    })
+  })
+
+  it('skips user-managed servers with malformed provider-facing names', () => {
+    const servers = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      enabled: false,
+      userMcpServers: [
+        {
+          serverName: 'user.docs',
+          command: '/usr/local/bin/docs-mcp',
+          args: []
+        },
+        {
+          serverName: 'user_docs',
+          command: '/usr/local/bin/docs-mcp',
+          args: []
+        }
+      ]
+    })
+
+    expect(Object.keys(servers ?? {})).toEqual(['user_docs'])
+  })
 })
 
 describe('buildClaudeTaskWraithMcpConfigJson', () => {
@@ -180,6 +246,23 @@ describe('extendClaudeCliArgsWithTaskWraithMcp', () => {
     expect(allowedIndex).toBeGreaterThan(-1)
     const allowedValue = out[allowedIndex + 1]
     expect(allowedValue.split(',')).toEqual(buildClaudeTaskWraithAllowedToolNames())
+  })
+
+  it('appends --mcp-config without pre-approving unknown user MCP tools', () => {
+    const out = extendClaudeCliArgsWithTaskWraithMcp(baseArgs, {
+      ...fixture,
+      enabled: false,
+      userMcpServers: [
+        {
+          serverName: 'user_docs',
+          command: '/usr/local/bin/docs-mcp',
+          args: []
+        }
+      ]
+    })
+
+    expect(out).toContain('--mcp-config')
+    expect(out).not.toContain('--allowedTools')
   })
 
   it('does not mutate the supplied base args array (pure function contract)', () => {

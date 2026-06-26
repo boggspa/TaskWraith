@@ -13,12 +13,14 @@
 //    which accepts JSON file paths whose `mcpServers` map matches the
 //    SDK shape. We write the file under `os.tmpdir()` (or app temp) per
 //    run and pass `--mcp-config <path>` + `--allowedTools <names>` so
-//    the agent sees the tools pre-approved.
+//    TaskWraith's own MCP tools are pre-approved. User-managed MCP
+//    servers are attached without being added to the pre-approval list.
 //
 // Kept free of Electron / fs / IPC imports so it can be unit-tested
 // directly against fixed inputs.
 
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
+import type { UserMcpStdioLaunchServer } from './UserMcpServers'
 
 /**
  * TaskWraith MCP tool name list. Re-exported under the Claude-specific name
@@ -46,6 +48,8 @@ export interface ClaudeTaskWraithMcpInput {
   bridgeBinaryPath: string
   /** argv passed to the bridge subprocess (already includes flag literals). */
   bridgeArgs: string[]
+  /** User-managed stdio MCP servers to attach alongside the TaskWraith bridge. */
+  userMcpServers?: UserMcpStdioLaunchServer[]
   /** Optional TaskWraith route stamps for per-run MCP subprocesses. */
   appRunId?: string
   appChatId?: string
@@ -82,10 +86,15 @@ export interface ClaudeTaskWraithMcpServers {
   [serverName: string]: ClaudeMcpStdioServerEntry
 }
 
+function isClaudeUserMcpServerName(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
+}
+
 /**
  * Build the `mcpServers` map passed to `query({ options: { mcpServers } })`
  * (SDK path) or written into the `--mcp-config` JSON file (CLI path).
- * Returns null when disabled so the caller can omit the option entirely.
+ * Returns null only when both the TaskWraith bridge and user-managed
+ * stdio servers are absent, so the caller can omit the option entirely.
  *
  * The env stamp lives on the MCP server entry's `env` block: the bridge
  * subprocess inherits provider plus run/chat metadata and the broker uses
@@ -99,9 +108,9 @@ export interface ClaudeTaskWraithMcpServers {
 export function buildClaudeTaskWraithMcpServers(
   input: ClaudeTaskWraithMcpInput
 ): ClaudeTaskWraithMcpServers | null {
-  if (!input.enabled) return null
-  return {
-    [CLAUDE_TASKWRAITH_SERVER_NAME]: {
+  const servers: ClaudeTaskWraithMcpServers = {}
+  if (input.enabled) {
+    servers[CLAUDE_TASKWRAITH_SERVER_NAME] = {
       type: 'stdio',
       command: input.bridgeBinaryPath,
       args: [...input.bridgeArgs],
@@ -109,6 +118,16 @@ export function buildClaudeTaskWraithMcpServers(
       alwaysLoad: true
     }
   }
+  for (const server of input.userMcpServers ?? []) {
+    if (!isClaudeUserMcpServerName(server.serverName)) continue
+    servers[server.serverName] = {
+      type: 'stdio',
+      command: server.command,
+      args: [...server.args],
+      env: { ...(server.env ?? {}) }
+    }
+  }
+  return Object.keys(servers).length > 0 ? servers : null
 }
 
 function buildClaudeTaskWraithMcpEnv(input: ClaudeTaskWraithMcpInput): Record<string, string> {
@@ -159,7 +178,7 @@ export interface ClaudeTaskWraithCliArgsInput extends ClaudeTaskWraithMcpInput {
 /**
  * Append `--mcp-config <path>` + `--allowedTools <...names>` to the
  * existing Claude CLI argv. Returns the existing args unchanged when
- * disabled so the toggle gates the entire feature cleanly.
+ * both the TaskWraith bridge and user-managed stdio servers are absent.
  *
  * The temp file is written separately by the caller — this helper is
  * pure for test determinism.
@@ -168,9 +187,9 @@ export function extendClaudeCliArgsWithTaskWraithMcp(
   baseArgs: string[],
   input: ClaudeTaskWraithCliArgsInput
 ): string[] {
-  if (!input.enabled) return [...baseArgs]
+  if (!input.enabled && (input.userMcpServers?.length ?? 0) === 0) return [...baseArgs]
   const extended = [...baseArgs, '--mcp-config', input.configFilePath]
-  const allowed = buildClaudeTaskWraithAllowedToolNames()
+  const allowed = input.enabled ? buildClaudeTaskWraithAllowedToolNames() : []
   if (allowed.length > 0) {
     extended.push('--allowedTools', allowed.join(','))
   }
