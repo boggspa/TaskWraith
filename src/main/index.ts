@@ -2130,6 +2130,23 @@ const vtToolExecutors = createVtToolExecutors({
       }>('audio.mixdown', params, { timeoutMs: 300_000 })
     )
   },
+  // transcribe_audio — native on-device speech-to-text (Speech framework). Heavy
+  // (the recognizer chews CPU on a long file), so gate it on the SAME
+  // mediaProcessLimiter (max 2) the encoders/mixdown use, with a 2-min timeout. The
+  // daemon recognizes ON-DEVICE ONLY; a denied OS permission rejects with the
+  // actionable "enable it in System Settings" message which surfaces to the model.
+  transcribe: async (params) => {
+    const daemon = bridgeDaemonRef
+    if (!daemon) throw new Error('audio bridge daemon is not running')
+    return mediaProcessLimiter.run(() =>
+      daemon.request<{
+        text: string
+        segments: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+        localeIdentifier: string
+        onDevice: boolean
+      }>('audio.transcribe', params, { timeoutMs: 120_000 })
+    )
+  },
   // The output-file deps mirror the ffmpeg factory exactly (same MEDIA_STAGING_DIR,
   // per-mime cap, content-addressed store) so a daemon-produced MP4 rides the
   // identical persist→buildAvMediaRef→trustedMediaRefs lane as transcode_video.

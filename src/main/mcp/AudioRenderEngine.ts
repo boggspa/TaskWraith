@@ -336,16 +336,34 @@ async function renderWaveformPng(
  * URL. decodeAudioData resamples to the context rate (44100), so the reported
  * sample rate is the ANALYSIS rate.
  */
-const ANALYZE_SCRIPT = `window.__twAnalyze = function(b64, W, H) {
+const ANALYZE_SCRIPT = `window.__twAnalyze = function(b64, W, H, startMs, endMs) {
   var bin = atob(b64), len = bin.length, bytes = new Uint8Array(len);
   for (var i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
   var OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   if (!OAC) return Promise.reject(new Error('OfflineAudioContext unavailable'));
   var dctx = new OAC(1, 1, 44100);
   return dctx.decodeAudioData(bytes.buffer).then(function(buf) {
-    var ch = buf.numberOfChannels, sr = buf.sampleRate, frames = buf.length;
+    var ch = buf.numberOfChannels, sr = buf.sampleRate, fullFrames = buf.length;
+    // Optional [startMs,endMs] WINDOW (inspect_audio_segment). Computed against the
+    // DECODED rate (sr, ~44100), since decodeAudioData resampled. frameStart =
+    // floor(startMs*sr/1000) clamped to [0,fullFrames]; frameEnd likewise, forced
+    // strictly past frameStart so a degenerate window still yields >=1 frame. When
+    // startMs/endMs are undefined we analyze the WHOLE file (frameStart=0,
+    // frameEnd=fullFrames) — byte-identical to the pre-window behaviour.
+    var frameStart = 0, frameEnd = fullFrames;
+    if (typeof startMs === 'number' && typeof endMs === 'number') {
+      var fs = Math.floor(startMs * sr / 1000);
+      var fe = Math.floor(endMs * sr / 1000);
+      if (fs < 0) fs = 0; if (fs > fullFrames) fs = fullFrames;
+      if (fe < 0) fe = 0; if (fe > fullFrames) fe = fullFrames;
+      if (fe <= fs) fe = Math.min(fs + 1, fullFrames);
+      frameStart = fs; frameEnd = fe;
+    }
+    var frames = frameEnd - frameStart;
+    // Window each channel to [frameStart,frameEnd) ONCE; every metric/paint/peak loop
+    // below runs over these windowed views (subarray is a zero-copy view).
     var chans = [];
-    for (var c = 0; c < ch; c++) chans.push(buf.getChannelData(c));
+    for (var c = 0; c < ch; c++) chans.push(buf.getChannelData(c).subarray(frameStart, frameEnd));
     var peak = 0, sumsq = 0, clipped = 0, total = 0;
     for (var c = 0; c < ch; c++) {
       var d = chans[c];
@@ -515,8 +533,15 @@ async function analyzeAudio(
     await withTimeout(loadPageReady(wc, dataUrl), timeoutMs, 'audio analyze load timed out')
     // The audio bytes ride in as an executeJavaScript argument (out-of-band from
     // the page HTML) so a large file never inflates the data: URL. executeJavaScript
-    // resolves with the function's returned promise value (the meta).
-    const expr = `window.__twAnalyze(${JSON.stringify(input.dataBase64)},${input.width},${input.height})`
+    // resolves with the function's returned promise value (the meta). The optional
+    // [startMs,endMs] window is forwarded as the 4th/5th args; both are present-or-
+    // both-absent (the executor validates), and `undefined` serializes to the JS
+    // literal `undefined` → the in-page script falls back to the whole-file window.
+    const windowArgs =
+      input.startMs !== undefined && input.endMs !== undefined
+        ? `,${input.startMs},${input.endMs}`
+        : ''
+    const expr = `window.__twAnalyze(${JSON.stringify(input.dataBase64)},${input.width},${input.height}${windowArgs})`
     const metaRaw = await withTimeout(wc.executeJavaScript(expr), timeoutMs, 'audio analyze timed out')
     const meta = asAnalysisMeta(metaRaw)
     const captured = await wc.capturePage()

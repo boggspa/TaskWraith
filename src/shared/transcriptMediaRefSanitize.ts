@@ -49,7 +49,7 @@ const RAW_MEDIA_SOURCES = new Set<TranscriptMediaSource>([
  * group kinds must be added here explicitly. House security posture: allowlist, not
  * length-cap.
  */
-const SAFE_GROUP_KINDS = new Set<string>(['video_frames'])
+const SAFE_GROUP_KINDS = new Set<string>(['video_frames', 'audio_segment'])
 
 /**
  * Sources for which a provider-supplied `path` is retained. Everything else

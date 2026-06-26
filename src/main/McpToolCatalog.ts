@@ -2309,6 +2309,28 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'inspect_audio_segment',
+      description:
+        'Analyze a TIME WINDOW of a workspace audio file: render that sub-range as an inline waveform PNG ' +
+        'plus its measured peak / RMS (and dBFS) and silence percent. Like audio_analyze but scoped to ' +
+        '[startMs, endMs] — use it to zoom into one part of a clip ("how loud is the chorus at 1:05–1:20", ' +
+        '"is the intro silent"). Source the file with `sourcePath` (a path inside the workspace); `startMs` ' +
+        'and `endMs` bound the window in milliseconds (0 <= startMs < endMs). Decoding is in-process (no ' +
+        'network); non-mutating and read-only-safe (no file is written).',
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourcePath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to an audio file.' },
+          startMs: { type: 'number', description: 'Window start in milliseconds (>= 0).' },
+          endMs: { type: 'number', description: 'Window end in milliseconds (must be > startMs).' },
+          width: { type: 'number', description: 'Waveform image width in px (default 1024).' },
+          height: { type: 'number', description: 'Waveform image height in px (default 256).' }
+        },
+        required: ['sourcePath', 'startMs', 'endMs']
+      }
+    },
+    {
       name: 'video_probe',
       description:
         'Analyze a media file (video or audio) in the workspace with ffprobe and return its structure as JSON: ' +
@@ -2525,6 +2547,27 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           bitrateKbps: { type: 'number', description: 'AAC m4a only, 32-320, default 192.' }
         },
         required: ['tracks', 'format']
+      }
+    },
+    {
+      name: 'transcribe_audio',
+      description:
+        'Transcribe a workspace audio file to text ON-DEVICE using the Mac’s built-in Speech ' +
+        'recognition (no audio ever leaves the machine; no network). Returns the recognized text plus ' +
+        'per-segment timings (startMs/endMs) and confidence. Use it to read back what was said in a ' +
+        'recording, voice memo, or extracted audio track. Params: sourcePath (an audio file inside the ' +
+        'workspace), `localeIdentifier` (BCP-47, e.g. "en-US", default "en-US"). Requires the macOS ' +
+        'Speech Recognition permission; if it is not granted (or an on-device model for the locale is ' +
+        'unavailable) the call returns an actionable error telling you how to enable it. Reads a realpath-' +
+        'jailed workspace path; non-mutating and read-only-safe.',
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourcePath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to an audio file.' },
+          localeIdentifier: { type: 'string', description: 'BCP-47 locale for recognition (e.g. "en-US"), default "en-US".' }
+        },
+        required: ['sourcePath']
       }
     },
     {

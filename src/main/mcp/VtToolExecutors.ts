@@ -41,9 +41,18 @@ import { buildAvMediaRef, type AvPosterResult, type GeneratePoster } from '../me
  * is realpath-jailed through the audio/video jail (`jailInput`) before the daemon ever
  * sees it; any one track's jail failure aborts the whole mix (the daemon is never
  * invoked), exactly like `video_concat_clips`.
+ *
+ * `transcribe_audio` runs ON-DEVICE speech-to-text on a workspace AUDIO file via the
+ * daemon's native Speech framework (`audio.transcribe`; SFSpeechRecognizer, on-device
+ * ONLY — no network fallback, the privacy invariant). UNLIKE the producers it writes
+ * NO file and emits NO media ref: it returns the transcript as STRUCTURED TEXT (the
+ * formatted string + a JSON per-segment array). READ-ONLY (orchestration). The
+ * `sourcePath` is realpath-jailed through `jailInput` before the daemon runs; a daemon
+ * error (incl. an OS permission denial) is surfaced verbatim via `fail(...)` so the
+ * model gets the actionable "enable it in System Settings" message.
  */
 
-export const VT_MCP_TOOL_NAMES = ['video_decode_frame', 'inspect_video_frames', 'video_encode_clip', 'video_concat_clips', 'audio_mix'] as const
+export const VT_MCP_TOOL_NAMES = ['video_decode_frame', 'inspect_video_frames', 'video_encode_clip', 'video_concat_clips', 'audio_mix', 'transcribe_audio'] as const
 export type VtMcpToolName = (typeof VT_MCP_TOOL_NAMES)[number]
 
 export function isVtMcpToolName(name: string): name is VtMcpToolName {
@@ -105,6 +114,20 @@ export interface VtToolDeps {
     bitrateKbps?: number
     tracks: Array<{ sourcePath: string; gainDb?: number; pan?: number; offsetMs?: number; fadeInMs?: number; fadeOutMs?: number }>
   }) => Promise<{ durationMs: number; sampleRate: number; channels: number; codec: string; trackCount: number }>
+  /**
+   * `audio.transcribe` daemon RPC — ON-DEVICE speech-to-text of an (already-jailed)
+   * source audio file via SFSpeechRecognizer. On-device ONLY (no network fallback).
+   * Resolves with the transcript (`text` + per-segment timings/confidence + the locale
+   * used + `onDevice`); REJECTS on failure (incl. an OS permission denial, whose
+   * rejection message is the actionable "enable it in System Settings" string). Writes
+   * no file — there is nothing to read or clean up.
+   */
+  transcribe: (params: { sourcePath: string; localeIdentifier?: string }) => Promise<{
+    text: string
+    segments: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+    localeIdentifier: string
+    onDevice: boolean
+  }>
   /** An absolute staging file path (a dir WE own, never agent-supplied) for the encoded output. */
   stagingPath: (ext: string) => string
   /** Read a produced staging file → bytes (throws if missing / over the size cap). */
@@ -180,7 +203,7 @@ function formatTimestampLabel(seconds: number): string {
 }
 
 export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
-  const { jailInput, jailOverlay, decodeFrame, encodeClip, concatClips, mixdown, stagingPath, readOutput, persistOutput, generatePoster, removeFile } = deps
+  const { jailInput, jailOverlay, decodeFrame, encodeClip, concatClips, mixdown, transcribe, stagingPath, readOutput, persistOutput, generatePoster, removeFile } = deps
 
   // Guard the injected poster generator: even a misbehaving (throwing) impl must never
   // fail the producer (the poster is decorative). The real impl is already fail-
@@ -698,6 +721,73 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     }
   }
 
+  // ON-DEVICE speech-to-text of a workspace AUDIO file via the daemon's native Speech
+  // framework (audio.transcribe). UNLIKE the producers it writes NO file and emits NO
+  // media ref — it returns the transcript as STRUCTURED TEXT (the formatted string + a
+  // JSON per-segment array). READ-ONLY. The sourcePath is realpath-jailed through
+  // jailInput BEFORE the daemon runs. On ANY daemon error (incl. an OS permission
+  // denial, whose rejection carries the actionable "enable it in System Settings"
+  // message) we return fail(...) with that message verbatim, so the model is told the
+  // exact fix rather than getting a bare crash. Transcription itself runs on-device
+  // ONLY (the daemon never falls back to the network — the privacy invariant).
+  async function executeTranscribeAudio(
+    args: Record<string, unknown>,
+    ctx: VtToolContext
+  ): Promise<McpToolExecutionResult> {
+    const sourcePath = typeof args.sourcePath === 'string' ? args.sourcePath.trim() : ''
+    if (!sourcePath) {
+      return fail('transcribe_audio', 'provide sourcePath (an audio file inside the workspace)')
+    }
+
+    // Optional locale — a non-empty string only; otherwise the daemon defaults to en-US.
+    const localeIdentifier =
+      typeof args.localeIdentifier === 'string' && args.localeIdentifier.trim()
+        ? args.localeIdentifier.trim()
+        : undefined
+
+    const jailed = jailInput(sourcePath, ctx)
+    if (!jailed.ok) {
+      return fail('transcribe_audio', `could not read audio: ${jailed.reason}`)
+    }
+
+    try {
+      const result = await transcribe({ sourcePath: jailed.realPath, localeIdentifier })
+      // Structured TEXT result: a human transcript line + a machine-readable per-segment
+      // array (text + ms timings + confidence). No media ref — speech is read-only text.
+      const segmentsJson = JSON.stringify(
+        result.segments.map((s) => ({
+          text: s.text,
+          startMs: s.startMs,
+          endMs: s.endMs,
+          confidence: s.confidence
+        }))
+      )
+      const trimmed = result.text.trim()
+      const header =
+        `Transcript (${result.localeIdentifier}, on-device): ` +
+        (trimmed ? trimmed : '(no speech detected)')
+      const text = `${header}\n\nsegments: ${segmentsJson}`
+      const structured = {
+        ok: true,
+        tool: 'transcribe_audio',
+        text: result.text,
+        localeIdentifier: result.localeIdentifier,
+        onDevice: result.onDevice,
+        segments: result.segments
+      }
+      return {
+        text,
+        structuredContent: structured,
+        content: [{ type: 'text', text }]
+      }
+    } catch (error) {
+      // The daemon's actionable message (auth-denied / unsupported locale / on-device
+      // unavailable / recognizer error) rides through verbatim — graceful fail, never a
+      // crash. This is also the path the EXPECTED runtime permission denial takes.
+      return fail('transcribe_audio', error instanceof Error ? error.message : String(error))
+    }
+  }
+
   return {
     executeVtTool(toolName, rawArgs, ctx) {
       const args = asRecord(rawArgs)
@@ -712,6 +802,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           return executeVideoConcatClips(args, ctx)
         case 'audio_mix':
           return executeAudioMix(args, ctx)
+        case 'transcribe_audio':
+          return executeTranscribeAudio(args, ctx)
         default:
           return Promise.resolve(fail(String(toolName), `unknown VideoToolbox tool "${toolName}"`))
       }

@@ -49,6 +49,14 @@ describe('sanitizeRawProviderMediaRef', () => {
     expect(ref?.caption).toBe('0:03')
   })
 
+  it('keeps the whitelisted audio_segment groupKind (inspect_audio_segment window)', () => {
+    const ref = sanitizeRawProviderMediaRef(
+      legitRef({ groupKind: 'audio_segment', caption: '1:05–1:20' })
+    )
+    expect(ref?.groupKind).toBe('audio_segment')
+    expect(ref?.caption).toBe('1:05–1:20')
+  })
+
   it('DROPS an unknown groupKind (forgery boundary) but keeps the ref ungrouped', () => {
     const ref = sanitizeRawProviderMediaRef(
       legitRef({ groupKind: 'evil_arbitrary_group', caption: '0:03' })

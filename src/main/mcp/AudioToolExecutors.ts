@@ -31,7 +31,7 @@ import { TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES } from '../services/TranscriptMed
  * output.
  */
 
-export const AUDIO_MCP_TOOL_NAMES = ['audio_render_wav', 'audio_analyze'] as const
+export const AUDIO_MCP_TOOL_NAMES = ['audio_render_wav', 'audio_analyze', 'inspect_audio_segment'] as const
 export type AudioMcpToolName = (typeof AUDIO_MCP_TOOL_NAMES)[number]
 
 export function isAudioMcpToolName(name: string): name is AudioMcpToolName {
@@ -153,12 +153,21 @@ export interface AudioAnalysisMeta {
 
 /** Decoder input: the audio bytes (base64) + the sniffed container + the canvas
  * dims for the waveform. Bytes are passed to the page out-of-band (not embedded
- * in the page HTML) to dodge the data:-URL size ceiling. */
+ * in the page HTML) to dodge the data:-URL size ceiling.
+ *
+ * OPTIONAL WINDOW (inspect_audio_segment): when `startMs`/`endMs` are present the
+ * in-page script renders + analyzes ONLY the `[startMs,endMs]` frame slice of the
+ * decoded stream (`frameStart = floor(startMs*sr/1000)`, clamped to `[0,length]`,
+ * `frameEnd = floor(endMs*sr/1000)` clamped + forced > frameStart). When ABSENT the
+ * behaviour is byte-identical to the whole-file analyze. Computed against the DECODED
+ * sample rate (sr, ~44100), since decodeAudioData resamples. */
 export interface AudioAnalysisInput {
   dataBase64: string
   mimeType: string
   width: number
   height: number
+  startMs?: number
+  endMs?: number
 }
 
 export interface AudioEngine {
@@ -206,6 +215,17 @@ function numArg(value: unknown): number | null {
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
+}
+
+/** Format a millisecond offset as a compact `<m:ss>` scrub label, e.g. 3200 → "0:03",
+ * 75400 → "1:15". Sub-second precision is dropped (the window caption is a marker, not
+ * a code). Mirrors VtToolExecutors.formatTimestampLabel but takes ms. */
+function formatMsLabel(ms: number): string {
+  const safe = Number.isFinite(ms) && ms > 0 ? ms : 0
+  const totalSeconds = Math.floor(safe / 1000)
+  const mins = Math.floor(totalSeconds / 60)
+  const secs = totalSeconds % 60
+  return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
 function snapSampleRate(value: number | null): number {
@@ -368,11 +388,83 @@ export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioTool
     }
   }
 
+  // inspect_audio_segment — audio_analyze restricted to a [startMs,endMs] WINDOW: a
+  // DAW-style waveform strip + levels of a sub-range. Same jail + offscreen engine +
+  // image-block lane as executeAnalyze, but the in-page script renders + measures ONLY
+  // the windowed frame slice (analyzeAudio passes startMs/endMs through). Read-only: no
+  // file output, no trustedMediaRefs. The single windowed waveform PNG rides the proven
+  // SANITIZED image media spine; a `audio_segment` group hint + the `<m:ss>–<m:ss>`
+  // window label caption the ref.
+  async function executeInspectAudioSegment(
+    args: Record<string, unknown>,
+    ctx: AudioToolContext
+  ): Promise<McpToolExecutionResult> {
+    const dims = resolveDims(args)
+    if ('error' in dims) return fail('inspect_audio_segment', dims.error)
+
+    // Validate the window BEFORE any decode: both bounds finite, 0 <= startMs < endMs.
+    const startMs = numArg(args.startMs)
+    const endMs = numArg(args.endMs)
+    if (startMs === null || endMs === null) {
+      return fail('inspect_audio_segment', 'provide startMs and endMs (finite numbers, ms)')
+    }
+    if (startMs < 0 || endMs <= startMs) {
+      return fail('inspect_audio_segment', 'window must satisfy 0 <= startMs < endMs')
+    }
+
+    const source = await resolveAudioSource(args, ctx)
+    if (!source.ok) return fail('inspect_audio_segment', `could not read audio: ${source.reason}`)
+    try {
+      const { png, meta } = await engine.analyzeAudio({
+        dataBase64: source.dataBase64,
+        mimeType: source.mimeType,
+        width: dims.width,
+        height: dims.height,
+        startMs,
+        endMs
+      })
+      const windowLabel = `${formatMsLabel(startMs)}–${formatMsLabel(endMs)}`
+      const result = imageBlockResult(
+        'inspect_audio_segment',
+        {
+          ...meta,
+          windowStartMs: startMs,
+          windowEndMs: endMs,
+          windowLabel,
+          sourceMimeType: source.mimeType,
+          sourceBytes: source.byteLength
+        },
+        png
+      )
+      // A C2-sniff failure / oversize already returned an error result (no image block);
+      // only decorate a genuine success (the image block carries the windowed waveform).
+      if (result.isError) return result
+      // Replace the bare JSON text with a human window summary (range + peak/RMS dBFS +
+      // silence%) so the model gets a readable answer, then attach the group hint + the
+      // window-range caption for the SANITIZED image lane.
+      const summary =
+        `Audio ${windowLabel}: peak ${meta.peakDbfs} dBFS, RMS ${meta.rmsDbfs} dBFS, ` +
+        `${meta.silencePercent}% silent`
+      const textBlocks = (result.content ?? []).map((block) =>
+        block.type === 'text' ? { type: 'text' as const, text: summary } : block
+      )
+      return {
+        ...result,
+        text: summary,
+        content: textBlocks,
+        mediaRefHints: { groupKind: 'audio_segment', labels: [windowLabel] }
+      }
+    } catch (error) {
+      return fail('inspect_audio_segment', error instanceof Error ? error.message : String(error))
+    }
+  }
+
   return {
     executeAudioTool(toolName, rawArgs, ctx) {
       const args = asRecord(rawArgs)
       if (toolName === 'audio_render_wav') return executeRenderWav(args, ctx)
       if (toolName === 'audio_analyze') return executeAnalyze(args, ctx)
+      if (toolName === 'inspect_audio_segment') return executeInspectAudioSegment(args, ctx)
       return Promise.resolve(fail(String(toolName), `unknown audio tool "${toolName}"`))
     }
   }

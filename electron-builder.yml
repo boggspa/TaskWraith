@@ -86,6 +86,7 @@ mac:
   extendInfo:
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    NSSpeechRecognitionUsageDescription: TaskWraith transcribes audio files you point it at entirely on-device (no audio leaves your Mac) so agents can read back what was said.
     NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
     NSLocalNetworkUsageDescription: TaskWraith discovers and connects to your paired iPhone or iPad on your local network to stream live run events, approval requests, and tool outputs.

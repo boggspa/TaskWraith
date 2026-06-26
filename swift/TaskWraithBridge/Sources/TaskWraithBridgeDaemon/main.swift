@@ -1061,6 +1061,55 @@ dispatcher.register("audio.mixdown") { params in
     }
 }
 
+// `audio.transcribe` — native on-device speech-to-text (Speech framework's
+// SFSpeechRecognizer): authorize → on-device-only recognize the (TS-jailed)
+// audio file → return the transcript (`text`, per-segment `segments`,
+// `localeIdentifier`, `onDevice`). Mirrors `audio.mixdown`: decode params →
+// runBlocking → map AudioTranscriber.TranscribeError to JSONRPCError. PRIVACY:
+// recognition is on-device ONLY (no network fallback). A denied permission or
+// an unsupported/undownloaded locale surfaces as `invalidParams` with an
+// actionable message (`.badInput`); a recognizer error → `internalError`.
+
+struct AudioTranscribeParams: Decodable {
+    let sourcePath: String
+    let localeIdentifier: String?
+}
+
+dispatcher.register("audio.transcribe") { params in
+    let parsed: AudioTranscribeParams
+    do {
+        parsed = try decodeParams(params, as: AudioTranscribeParams.self)
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid audio.transcribe params: \(error.localizedDescription)"
+        )
+    }
+    do {
+        let result = try runBlocking { @Sendable [
+            sourcePath = parsed.sourcePath,
+            localeIdentifier = parsed.localeIdentifier
+        ] in
+            try await AudioTranscriber.transcribe(
+                sourcePath: sourcePath,
+                localeIdentifier: localeIdentifier
+            )
+        }
+        return result.toJSONObject()
+    } catch let err as AudioTranscriber.TranscribeError {
+        switch err {
+        case .badInput(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.invalidParams, message: message)
+        case .recognitionFailed(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: message)
+        }
+    } catch let err as JSONRPCError {
+        throw err
+    } catch {
+        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: error.localizedDescription)
+    }
+}
+
 // MARK: - Creative-app probe (Phase K1)
 //
 // `creative.runningApplications` — answers "is bundle id X currently running?"

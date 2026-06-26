@@ -174,6 +174,11 @@ export const TASKWRAITH_MCP_TOOLS = [
   // drive-the-real-app path can't give. Reads a path-jailed workspace file;
   // gated as a file change (writes a waveform asset).
   'audio_analyze',
+  // audio_analyze restricted to a [startMs,endMs] WINDOW — a DAW-style waveform strip
+  // + levels of a sub-range. Same offscreen Web Audio engine + path-jailed read as
+  // audio_analyze, but renders/measures only the windowed slice. Non-mutating, no file
+  // output, read-only-safe (orchestration). See src/main/mcp/AudioToolExecutors.ts.
+  'inspect_audio_segment',
   // Analyze a workspace media file with the user-installed ffprobe (S1b): codec,
   // dimensions, fps, duration, rotation, HDR, channels — over a realpath-jailed
   // path with a FIXED argv (intents not flags; -protocol_whitelist file). Runs an
@@ -219,6 +224,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   // media_refs channel. Each track's sourcePath is realpath-jailed before the daemon
   // runs. Writes a new file; gated as a file change. See src/main/mcp/VtToolExecutors.ts.
   'audio_mix',
+  // ON-DEVICE speech-to-text of a workspace audio file via the daemon's native Speech
+  // framework (SFSpeechRecognizer; on-device ONLY, no network). Writes NO file and emits
+  // NO media ref — returns the transcript as structured text. The sourcePath is realpath-
+  // jailed before the daemon runs. Non-mutating, read-only-safe (orchestration). See
+  // src/main/mcp/VtToolExecutors.ts.
+  'transcribe_audio',
   'transcode_video'
 ] as const
 
@@ -248,13 +259,15 @@ export const MEDIA_EDITING_TOOL_NAMES = [
   'audio_extract',
   'audio_render_wav',
   'audio_analyze',
+  'inspect_audio_segment',
   'video_probe',
   'video_thumbnail',
   'video_decode_frame',
   'inspect_video_frames',
   'video_encode_clip',
   'video_concat_clips',
-  'audio_mix'
+  'audio_mix',
+  'transcribe_audio'
 ] as const satisfies readonly TaskWraithMcpToolName[]
 
 export type MediaEditingToolName = (typeof MEDIA_EDITING_TOOL_NAMES)[number]

@@ -57,6 +57,22 @@ const FAKE_ANALYSIS_META: AudioAnalysisMeta = {
   silencePercent: 4.2
 }
 
+// Distinct metrics for a WINDOWED analyze (shorter duration/frames, different levels)
+// so a test can prove a window measures the slice, not the whole file.
+const FAKE_WINDOWED_META: AudioAnalysisMeta = {
+  durationMs: 500,
+  analysisSampleRate: 44100,
+  channels: 2,
+  frames: 22050,
+  peak: 0.5,
+  peakDbfs: -6.02,
+  rms: 0.12,
+  rmsDbfs: -18.42,
+  clippedSamples: 0,
+  clippedPercent: 0,
+  silencePercent: 0
+}
+
 function build(overrides: { engine?: Partial<AudioEngine>; source?: ResolvedAudioSource } = {}) {
   let lastSpec: AudioRenderSpec | null = null
   let lastAnalyzeInput: AudioAnalysisInput | null = null
@@ -67,6 +83,12 @@ function build(overrides: { engine?: Partial<AudioEngine>; source?: ResolvedAudi
     }),
     analyzeAudio: vi.fn(async (input: AudioAnalysisInput) => {
       lastAnalyzeInput = input
+      // The real offscreen engine measures only the windowed slice when a window is
+      // present, so a windowed call yields DIFFERENT metrics than the whole file. The
+      // fake mirrors that observable contract: a window → a distinct windowed meta.
+      if (input.startMs !== undefined && input.endMs !== undefined) {
+        return { png: FAKE_PNG, meta: FAKE_WINDOWED_META }
+      }
       return { png: FAKE_PNG, meta: FAKE_ANALYSIS_META }
     }),
     ...overrides.engine
@@ -89,6 +111,7 @@ describe('isAudioMcpToolName', () => {
   it('recognizes the audio tools only', () => {
     expect(isAudioMcpToolName('audio_render_wav')).toBe(true)
     expect(isAudioMcpToolName('audio_analyze')).toBe(true)
+    expect(isAudioMcpToolName('inspect_audio_segment')).toBe(true)
     expect(isAudioMcpToolName('image_edit')).toBe(false)
     expect(isAudioMcpToolName('canvas_screenshot')).toBe(false)
   })
@@ -292,5 +315,140 @@ describe('normalizeHarvestedPeaks (waveform peaks shape contract)', () => {
     expect(full).toHaveLength(256)
     const bytes = JSON.stringify(full).length
     expect(bytes).toBeLessThan(1500)
+  })
+})
+
+describe('inspect_audio_segment', () => {
+  it('threads the [startMs,endMs] window into the engine and returns an image block + group hint + window levels', async () => {
+    const { executors, resolveAudioSource, getAnalyzeInput } = build()
+    const result = await executors.executeAudioTool(
+      'inspect_audio_segment',
+      { sourcePath: 'clip.wav', startMs: 65000, endMs: 80000 },
+      { appChatId: 'c1' }
+    )
+    expect(result.isError).toBeFalsy()
+    expect(resolveAudioSource).toHaveBeenCalled()
+    // The WINDOW reaches the engine (the math is enforced in-page; here we assert it's
+    // forwarded, plus the clamped canvas dims + resolved bytes).
+    expect(getAnalyzeInput()).toEqual({
+      dataBase64: 'QUJD',
+      mimeType: 'audio/wav',
+      width: 1024,
+      height: 256,
+      startMs: 65000,
+      endMs: 80000
+    })
+    // Rides the proven SANITIZED image media spine — a single waveform PNG block.
+    const img = imageContent(result)
+    expect(img?.mimeType).toBe('image/png')
+    // The audio_segment group hint + the <m:ss>–<m:ss> window-range caption.
+    expect(result.mediaRefHints?.groupKind).toBe('audio_segment')
+    expect(result.mediaRefHints?.labels).toEqual(['1:05–1:20'])
+    // The text summary is the WINDOW range + the WINDOWED levels (peak/RMS dBFS + silence%).
+    expect(result.text).toContain('1:05–1:20')
+    expect(result.text).toContain('-6.02 dBFS')
+    expect(result.text).toContain('0% silent')
+    // structuredContent carries the windowed meta + the window bounds/label.
+    const sc = result.structuredContent as Record<string, unknown>
+    expect(sc.windowStartMs).toBe(65000)
+    expect(sc.windowEndMs).toBe(80000)
+    expect(sc.windowLabel).toBe('1:05–1:20')
+    expect(sc.durationMs).toBe(500)
+    expect(sc.peakDbfs).toBe(-6.02)
+    // Read-only: no produced file / no trusted AV channel.
+    expect(result.trustedMediaRefs).toBeUndefined()
+  })
+
+  it('measures a DIFFERENT result for a window than the whole file (windowing is observable)', async () => {
+    const { executors } = build()
+    const whole = await executors.executeAudioTool('audio_analyze', { sourcePath: 'clip.wav' }, {})
+    const windowed = await executors.executeAudioTool(
+      'inspect_audio_segment',
+      { sourcePath: 'clip.wav', startMs: 0, endMs: 500 },
+      {}
+    )
+    const wholePayload = JSON.parse(whole.text) as Record<string, unknown>
+    const windowedSc = windowed.structuredContent as Record<string, unknown>
+    // Whole-file peakDbfs (-0.92) vs windowed (-6.02) — the slice is measured, not the file.
+    expect(wholePayload.peakDbfs).toBe(-0.92)
+    expect(windowedSc.peakDbfs).toBe(-6.02)
+    expect(windowedSc.durationMs).not.toBe(wholePayload.durationMs)
+  })
+
+  it('rejects a missing window (no startMs/endMs) before reading the source', async () => {
+    const { executors, resolveAudioSource, engine } = build()
+    const result = await executors.executeAudioTool('inspect_audio_segment', { sourcePath: 'clip.wav' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('provide startMs and endMs')
+    expect(resolveAudioSource).not.toHaveBeenCalled()
+    expect(engine.analyzeAudio).not.toHaveBeenCalled()
+  })
+
+  it('rejects an inverted / non-positive window (endMs <= startMs, negative startMs)', async () => {
+    const { executors, engine } = build()
+    for (const win of [
+      { startMs: 5000, endMs: 5000 },
+      { startMs: 8000, endMs: 2000 },
+      { startMs: -1, endMs: 1000 }
+    ]) {
+      const result = await executors.executeAudioTool('inspect_audio_segment', { sourcePath: 'clip.wav', ...win }, {})
+      expect(result.isError).toBe(true)
+      expect(result.text).toContain('0 <= startMs < endMs')
+    }
+    expect(engine.analyzeAudio).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-finite window value (NaN/Infinity) as a missing window', async () => {
+    const { executors, engine } = build()
+    const result = await executors.executeAudioTool(
+      'inspect_audio_segment',
+      { sourcePath: 'clip.wav', startMs: 0, endMs: Infinity },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('provide startMs and endMs')
+    expect(engine.analyzeAudio).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a source-resolution (jail) failure as a tool error, never reaching the engine', async () => {
+    const { executors, engine } = build({ source: { ok: false, reason: 'outside_allowed_roots' } })
+    const result = await executors.executeAudioTool(
+      'inspect_audio_segment',
+      { sourcePath: '../etc/x.wav', startMs: 0, endMs: 1000 },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('could not read audio')
+    expect(result.text).toContain('outside_allowed_roots')
+    expect(engine.analyzeAudio).not.toHaveBeenCalled()
+  })
+
+  it('fails before reading the source when the canvas is oversized', async () => {
+    const { executors, resolveAudioSource } = build()
+    const result = await executors.executeAudioTool(
+      'inspect_audio_segment',
+      { sourcePath: 'clip.wav', startMs: 0, endMs: 1000, width: 8192, height: 8192 },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('waveform too large')
+    expect(resolveAudioSource).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a decode failure as a graceful tool error', async () => {
+    const { executors } = build({
+      engine: {
+        analyzeAudio: vi.fn(async () => {
+          throw new Error('Unable to decode audio data')
+        })
+      }
+    })
+    const result = await executors.executeAudioTool(
+      'inspect_audio_segment',
+      { sourcePath: 'clip.wav', startMs: 0, endMs: 1000 },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('Unable to decode audio data')
   })
 })

@@ -41,6 +41,16 @@ const MIX_RESULT = {
   trackCount: 3
 }
 
+const TRANSCRIBE_RESULT = {
+  text: 'hello world',
+  segments: [
+    { text: 'hello', startMs: 0, endMs: 480, confidence: 0.97 },
+    { text: 'world', startMs: 500, endMs: 1020, confidence: 0.93 }
+  ],
+  localeIdentifier: 'en-US',
+  onDevice: true
+}
+
 function build(overrides: Partial<VtToolDeps> = {}) {
   let lastDecodeParams: { inputPath: string; timestampSeconds?: number; preferHardware?: boolean } | null = null
   let lastEncodeParams: {
@@ -70,6 +80,7 @@ function build(overrides: Partial<VtToolDeps> = {}) {
     bitrateKbps?: number
     tracks: Array<{ sourcePath: string; gainDb?: number; pan?: number; offsetMs?: number; fadeInMs?: number; fadeOutMs?: number }>
   } | null = null
+  let lastTranscribeParams: { sourcePath: string; localeIdentifier?: string } | null = null
   const removed: string[] = []
   const deps: VtToolDeps = {
     jailInput: vi.fn(() => ({ ok: true as const, realPath: '/ws/clip.mp4' })),
@@ -90,6 +101,10 @@ function build(overrides: Partial<VtToolDeps> = {}) {
       lastMixParams = params
       return { ...MIX_RESULT }
     }),
+    transcribe: vi.fn(async (params) => {
+      lastTranscribeParams = params
+      return { ...TRANSCRIBE_RESULT, segments: [...TRANSCRIBE_RESULT.segments] }
+    }),
     stagingPath: vi.fn((ext: string) => `/staging/out.${ext}`),
     readOutput: vi.fn(() => Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42clip')])),
     persistOutput: vi.fn((_buffer: Buffer, _mimeType: string) => ({ ok: true as const, sha256: 'f'.repeat(64) })),
@@ -109,6 +124,7 @@ function build(overrides: Partial<VtToolDeps> = {}) {
     getEncodeParams: () => lastEncodeParams,
     getConcatParams: () => lastConcatParams,
     getMixParams: () => lastMixParams,
+    getTranscribeParams: () => lastTranscribeParams,
     getRemoved: () => removed
   }
 }
@@ -120,6 +136,7 @@ describe('isVtMcpToolName', () => {
     expect(isVtMcpToolName('video_encode_clip')).toBe(true)
     expect(isVtMcpToolName('video_concat_clips')).toBe(true)
     expect(isVtMcpToolName('audio_mix')).toBe(true)
+    expect(isVtMcpToolName('transcribe_audio')).toBe(true)
     expect(isVtMcpToolName('video_thumbnail')).toBe(false)
     expect(isVtMcpToolName('video_probe')).toBe(false)
     expect(isVtMcpToolName('something_else')).toBe(false)
@@ -1036,5 +1053,97 @@ describe('audio_mix', () => {
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     expect(refs[0].thumbnail).toBeUndefined()
+  })
+})
+
+describe('transcribe_audio', () => {
+  it('jails the input, transcribes over the REAL path, and returns STRUCTURED TEXT (no media ref)', async () => {
+    const { executors, deps, getTranscribeParams } = build()
+    const result = await executors.executeVtTool(
+      'transcribe_audio',
+      { sourcePath: 'memo.m4a', localeIdentifier: 'en-US' },
+      { appChatId: 'c1', appRunId: 'r1' }
+    )
+    expect(result.isError).toBeFalsy()
+    expect(deps.jailInput).toHaveBeenCalledWith('memo.m4a', { appChatId: 'c1', appRunId: 'r1' })
+    // Transcribe runs over the JAILED real path, not the agent-supplied string.
+    expect(getTranscribeParams()?.sourcePath).toBe('/ws/clip.mp4')
+    expect(getTranscribeParams()?.localeIdentifier).toBe('en-US')
+    // Structured text: the human header carries the transcript, structuredContent carries
+    // the typed transcript + per-segment array. There is NO media ref (read-only text).
+    expect(result.text).toContain('hello world')
+    expect(result.text).toContain('on-device')
+    expect(result.text).toContain('"startMs":0')
+    expect(result.trustedMediaRefs).toBeUndefined()
+    expect((result.content ?? []).some((b) => b.type === 'image')).toBe(false)
+    const sc = result.structuredContent as { ok: boolean; text: string; onDevice: boolean; segments: unknown[] }
+    expect(sc.ok).toBe(true)
+    expect(sc.text).toBe('hello world')
+    expect(sc.onDevice).toBe(true)
+    expect(sc.segments).toHaveLength(2)
+  })
+
+  it('passes undefined locale (daemon default) when none / blank supplied', async () => {
+    const { executors, getTranscribeParams } = build()
+    await executors.executeVtTool('transcribe_audio', { sourcePath: 'memo.m4a' }, {})
+    expect(getTranscribeParams()?.localeIdentifier).toBeUndefined()
+    await executors.executeVtTool('transcribe_audio', { sourcePath: 'memo.m4a', localeIdentifier: '  ' }, {})
+    expect(getTranscribeParams()?.localeIdentifier).toBeUndefined()
+  })
+
+  it('rejects a missing sourcePath before jailing or transcribing', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeVtTool('transcribe_audio', {}, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('provide sourcePath')
+    expect(deps.jailInput).not.toHaveBeenCalled()
+    expect(deps.transcribe).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a jail rejection WITHOUT calling transcribe', async () => {
+    const { executors, deps } = build({
+      jailInput: vi.fn(() => ({ ok: false as const, reason: 'outside_allowed_roots' }))
+    })
+    const result = await executors.executeVtTool('transcribe_audio', { sourcePath: '../../etc/passwd' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('outside_allowed_roots')
+    expect(deps.transcribe).not.toHaveBeenCalled()
+  })
+
+  it('gracefully fails (does NOT throw) on the auth-denied daemon error, surfacing the actionable message', async () => {
+    const { executors } = build({
+      transcribe: vi.fn(async () => {
+        throw new Error(
+          'Speech Recognition permission not granted — enable it in System Settings › Privacy & Security › Speech Recognition'
+        )
+      })
+    })
+    const result = await executors.executeVtTool('transcribe_audio', { sourcePath: 'memo.m4a' }, {})
+    expect(result.isError).toBe(true)
+    // The daemon's actionable permission message rides through verbatim.
+    expect(result.text).toContain('System Settings')
+    expect(result.text).toContain('Speech Recognition')
+    expect(result.trustedMediaRefs).toBeUndefined()
+  })
+
+  it('gracefully fails on a generic recognizer error (no crash, no ref)', async () => {
+    const { executors } = build({
+      transcribe: vi.fn(async () => {
+        throw new Error('speech recognition failed: kAFAssistantErrorDomain 1101')
+      })
+    })
+    const result = await executors.executeVtTool('transcribe_audio', { sourcePath: 'memo.m4a' }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('1101')
+  })
+
+  it('renders an empty transcript as a "(no speech detected)" placeholder, still ok', async () => {
+    const { executors } = build({
+      transcribe: vi.fn(async () => ({ text: '', segments: [], localeIdentifier: 'en-US', onDevice: true }))
+    })
+    const result = await executors.executeVtTool('transcribe_audio', { sourcePath: 'silence.wav' }, {})
+    expect(result.isError).toBeFalsy()
+    expect(result.text).toContain('(no speech detected)')
+    expect(result.text).toContain('segments: []')
   })
 })

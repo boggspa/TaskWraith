@@ -147,6 +147,14 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   // return up to 8 frames at once. No workspace mutation, no external binary →
   // allowed under read-only, exactly like video_decode_frame.
   'inspect_video_frames',
+  // Windowed audio analysis: audio_analyze over a [startMs,endMs] slice (offscreen
+  // Web Audio decode → waveform PNG + levels). No workspace mutation, no external
+  // binary, no file output → allowed under read-only, like audio reads.
+  'inspect_audio_segment',
+  // On-device speech-to-text (native Speech framework). No workspace mutation, no
+  // external binary, no file output, no network (on-device ONLY) → allowed under
+  // read-only. The OS permission grant is enforced at runtime by the daemon.
+  'transcribe_audio',
   // creative reads / validation — the *import* / applescript / blender / midi
   // mutators stay workspace_write (caught by the default below)
   'creative_project_snapshot',
