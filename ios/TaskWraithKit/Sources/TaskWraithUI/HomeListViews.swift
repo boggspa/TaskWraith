@@ -809,21 +809,8 @@ struct TaskRow: View {
         return "arrow.turn.down.right"
     }
 
-    private var relationLabel: String? {
-        if card.isGuestSideChat { return "Guest" }
-        if card.isIsolatedSideChat { return "Side chat" }
-        if nested || card.isSubThread { return "Sub-thread" }
-        if card.isEnsemble { return "Ensemble" }
-        return nil
-    }
-
     private var pendingAttentionCount: Int {
         model.pendingAttentionCount(for: card)
-    }
-
-    private var displayStatus: String? {
-        guard let status = card.status else { return nil }
-        return status == "awaitingApproval" && pendingAttentionCount == 0 ? "running" : status
     }
 
     var body: some View {
@@ -857,45 +844,20 @@ struct TaskRow: View {
                         .lineLimit(1)
                 }
                 Text(card.title ?? card.id)
-                    .font(nested ? .subheadline : .body)
+                    // Tidier sidebar: just the provider/ensemble glyph + title.
+                    // The metadata chip row (provider · type · status) is dropped,
+                    // and the title is one Dynamic Type step smaller (still a text
+                    // style, so it keeps scaling for accessibility).
+                    .font(nested ? .footnote : .callout)
                     .foregroundStyle(TWTheme.textPrimary)
                     .lineLimit(2)
-                HStack(spacing: 6) {
-                    if card.isEnsemble {
-                        Text("Ensemble")
-                            .font(.caption2.weight(.medium))
-                            .padding(.horizontal, 7).padding(.vertical, 2)
-                            .background(TWTheme.chroma2.opacity(0.16), in: Capsule())
-                            .foregroundStyle(TWTheme.chroma2)
-                    } else if let provider = card.provider {
-                        Text(TWTheme.providerLabel(provider))
-                            .font(.caption2.weight(.medium))
-                            .padding(.horizontal, 7).padding(.vertical, 2)
-                            .background(
-                                TWTheme.providerAccent(provider).opacity(0.14), in: Capsule()
-                            )
-                            .foregroundStyle(TWTheme.providerAccent(provider))
-                    }
-                    if let relationLabel {
-                        Text(relationLabel)
-                            .font(.caption2)
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(TWTheme.surface3, in: Capsule())
-                            .foregroundStyle(TWTheme.textTertiary)
-                    }
-                    if let status = displayStatus {
-                        HStack(spacing: 4) {
-                            Circle().fill(TWTheme.statusColor(status)).frame(width: 6, height: 6)
-                            Text(status).font(.caption)
-                                .foregroundStyle(TWTheme.statusColor(status))
-                        }
-                    }
-                    if pendingAttentionCount > 0 {
-                        Image(systemName: "exclamationmark.bubble.fill")
-                            .font(.caption)
-                            .foregroundStyle(TWTheme.statusAttention)
-                    }
-                    Spacer()
+                // Pending-attention is an actionable "needs you" signal, not one of
+                // the removed status chips — keep it, but only render it when there
+                // is something to flag so ordinary rows stay clean.
+                if pendingAttentionCount > 0 {
+                    Image(systemName: "exclamationmark.bubble.fill")
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.statusAttention)
                 }
             }
         }
