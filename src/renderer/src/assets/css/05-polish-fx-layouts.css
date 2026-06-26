@@ -2767,6 +2767,73 @@
   opacity: 0.8;
 }
 
+.sidebar-footer-popover-subhead {
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  padding: 6px 6px 2px;
+  opacity: 0.85;
+}
+
+/* Approvals popover rows — pending (clickable, jumps to the thread) + recent
+   resolved (informational). Shares the LED + name/meta layout with devices. */
+.sidebar-footer-approval-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  text-align: left;
+}
+
+button.sidebar-footer-approval-row.is-clickable {
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+button.sidebar-footer-approval-row.is-clickable:hover,
+button.sidebar-footer-approval-row.is-clickable:focus-visible {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: none;
+}
+
+.sidebar-footer-approval-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-footer-approval-meta {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+  text-transform: capitalize;
+}
+
+.sidebar-footer-led.is-pending {
+  background: var(--warning, #f5b14c);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--warning, #f5b14c) 40%, transparent),
+    0 0 8px color-mix(in srgb, var(--warning, #f5b14c) 55%, transparent);
+}
+
+.sidebar-footer-led.is-denied {
+  background: var(--danger, #e2554f);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--danger, #e2554f) 40%, transparent),
+    0 0 8px color-mix(in srgb, var(--danger, #e2554f) 55%, transparent);
+}
+
 .app-shell-stats-toolbar {
   --app-shell-stat-cpu: #4f8cff;
   --app-shell-stat-ram: #36b76a;

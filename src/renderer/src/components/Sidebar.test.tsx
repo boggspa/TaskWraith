@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatRecord, WorkflowDefinition, WorkspaceRecord } from '../../../main/store/types'
-import { Sidebar, DevicesFooterPopover } from './Sidebar'
+import { Sidebar, DevicesFooterPopover, ApprovalsFooterPopover } from './Sidebar'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 
@@ -684,5 +684,62 @@ describe('DevicesFooterPopover', () => {
     expect(html).toContain('Device 4')
     expect(html).not.toContain('Device 5')
     expect(html).toContain('+2 more')
+  })
+})
+
+describe('ApprovalsFooterPopover', () => {
+  // Note: the recent-resolved list is fetched in an effect, which does not run
+  // under renderToStaticMarkup (no jsdom in this suite), so these cover the
+  // synchronous pending-list rendering only.
+  it('shows an empty state with no pending approvals', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalsFooterPopover pendingApprovals={[]} onOpenSettings={() => {}} />
+    )
+    expect(html).toContain('No pending approvals')
+    expect(html).toContain('Approvals &amp; Grants')
+  })
+
+  it('lists pending approvals with a pending LED, title and provider', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalsFooterPopover
+        pendingApprovals={[
+          makeApproval({ title: 'Write a file', provider: 'codex', appChatId: 'parent-1' })
+        ]}
+        onJumpToChat={() => {}}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).toContain('Write a file')
+    expect(html).toContain('sidebar-footer-led is-pending')
+    expect(html).toContain('codex')
+    // appChatId + onJumpToChat present → the row is a clickable button.
+    expect(html).toContain('sidebar-footer-approval-row is-clickable')
+  })
+
+  it('renders a non-clickable row when there is no chat to jump to', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalsFooterPopover
+        pendingApprovals={[makeApproval({ appChatId: undefined })]}
+        onJumpToChat={() => {}}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).not.toContain('is-clickable')
+  })
+
+  it('caps the pending list at six and surfaces the overflow count', () => {
+    const approvals = Array.from({ length: 8 }, (_, index) =>
+      makeApproval({ id: `a-${index}`, title: `Approval ${index}`, appChatId: 'parent-1' })
+    )
+    const html = renderToStaticMarkup(
+      <ApprovalsFooterPopover
+        pendingApprovals={approvals}
+        onJumpToChat={() => {}}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).toContain('Approval 5')
+    expect(html).not.toContain('Approval 6')
+    expect(html).toContain('+2 more pending')
   })
 })

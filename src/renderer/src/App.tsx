@@ -21412,6 +21412,7 @@ function App(): React.JSX.Element {
                   setShowSettings(true)
                 }}
                 pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
+                pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
               />
             )}
             <div

@@ -25,7 +25,8 @@ import type {
   ComposerStyle,
   ThemeAccentStyle,
   ThemeAppearance,
-  ToolIconAccent
+  ToolIconAccent,
+  ApprovalLedgerRecord
 } from '../../../main/store/types'
 import { selectRecentChats } from '../lib/recentChatsList'
 import { isContentlessRemoteDraftChat } from '../../../main/remote/RemoteDraftChats'
@@ -204,6 +205,10 @@ interface SidebarProps {
    * button's red glow and the pending list inside its popover. Sparse — only
    * chats with a live approval appear (see usePerChatState). */
   pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
+  /** Per-chat approval queue tails (extra approvals waiting behind the head).
+   * Folded into the Approvals popover's pending list so the count is honest
+   * under parallel fan-out. */
+  pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
   /**
    * Model Usage card View-B ("API spend") inputs, forwarded to
    * `ModelUsageCard`. Bundles the rate table + display-currency settings
@@ -1604,17 +1609,41 @@ function SidebarFooterPopover({
   )
 }
 
-// Approvals popover — pending agent approvals stacked newest-first, then the
-// most recent resolved decisions, then a deep-link to Settings → Approvals &
-// Grants. Body fleshed out in a later slice; the scaffold proves open/close +
-// nav. `onJumpToChat` navigates the host to the thread holding an approval.
-function ApprovalsFooterPopover({
-  onOpenSettings
+// Approvals popover — pending agent approvals at the top (each a deep-link into
+// the thread that's waiting), then the most recent resolved decisions, then a
+// deep-link to Settings → Approvals & Grants. `loadRecent` is injected so the
+// pure rendering is testable without the IPC bridge.
+const APPROVALS_POPOVER_PENDING_LIMIT = 6
+export function ApprovalsFooterPopover({
+  pendingApprovals,
+  onJumpToChat,
+  onOpenSettings,
+  loadRecent
 }: {
-  pendingApprovals?: AgentApprovalRequest[]
+  pendingApprovals: AgentApprovalRequest[]
   onJumpToChat?: (chatId: string) => void
   onOpenSettings: () => void
+  loadRecent?: () => Promise<ApprovalLedgerRecord[]>
 }) {
+  const [recent, setRecent] = useState<ApprovalLedgerRecord[]>([])
+  useEffect(() => {
+    if (!loadRecent) return
+    let cancelled = false
+    loadRecent()
+      .then((records) => {
+        if (!cancelled) setRecent(records.slice(0, 3))
+      })
+      .catch(() => {
+        if (!cancelled) setRecent([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [loadRecent])
+
+  const pendingShown = pendingApprovals.slice(0, APPROVALS_POPOVER_PENDING_LIMIT)
+  const pendingOverflow = pendingApprovals.length - pendingShown.length
+
   return (
     <SidebarFooterPopover
       title="Approvals"
@@ -1622,7 +1651,54 @@ function ApprovalsFooterPopover({
       navLabel="Approvals & Grants"
       onNav={onOpenSettings}
     >
-      <div className="sidebar-footer-popover-empty">No pending approvals</div>
+      {pendingShown.length === 0 ? (
+        <div className="sidebar-footer-popover-empty">No pending approvals</div>
+      ) : (
+        <>
+          {pendingShown.map((approval) =>
+            approval.appChatId && onJumpToChat ? (
+              <button
+                key={approval.id}
+                type="button"
+                className="sidebar-footer-approval-row is-clickable"
+                onClick={() => onJumpToChat(approval.appChatId as string)}
+                title={approval.title}
+              >
+                <span className="sidebar-footer-led is-pending" aria-hidden />
+                <span className="sidebar-footer-approval-title">{approval.title}</span>
+                <span className="sidebar-footer-approval-meta">{approval.provider}</span>
+              </button>
+            ) : (
+              <div className="sidebar-footer-approval-row" key={approval.id} title={approval.title}>
+                <span className="sidebar-footer-led is-pending" aria-hidden />
+                <span className="sidebar-footer-approval-title">{approval.title}</span>
+                <span className="sidebar-footer-approval-meta">{approval.provider}</span>
+              </div>
+            )
+          )}
+          {pendingOverflow > 0 && (
+            <div className="sidebar-footer-popover-more">+{pendingOverflow} more pending</div>
+          )}
+        </>
+      )}
+
+      {recent.length > 0 && (
+        <>
+          <div className="sidebar-footer-popover-subhead">Recent</div>
+          {recent.map((record) => (
+            <div className="sidebar-footer-approval-row" key={record.id} title={record.title}>
+              <span
+                className={`sidebar-footer-led ${
+                  record.status === 'approved' ? 'is-on' : 'is-denied'
+                }`}
+                aria-hidden
+              />
+              <span className="sidebar-footer-approval-title">{record.title}</span>
+              <span className="sidebar-footer-approval-meta">{record.status}</span>
+            </div>
+          ))}
+        </>
+      )}
     </SidebarFooterPopover>
   )
 }
@@ -1747,6 +1823,7 @@ export function Sidebar({
   onSetWorkflowUnattended,
   onOpenSettingsTab,
   pendingAgentApprovalByChatId = {},
+  pendingApprovalQueueByChatId = {},
   modelUsageApiSpend
 }: SidebarProps) {
   const [hoveredWorkspace, setHoveredWorkspace] = useState<string | null>(null)
@@ -1768,6 +1845,24 @@ export function Sidebar({
       else onOpenSettings()
     },
     [onOpenSettingsTab, onOpenSettings]
+  )
+  // Flatten the per-chat approval head + queue tails into one pending list for
+  // the Approvals popover. Heads first so the currently-blocking approval for
+  // each chat leads.
+  const pendingApprovalsFlat = useMemo(() => {
+    const out: AgentApprovalRequest[] = []
+    for (const [chatId, head] of Object.entries(pendingAgentApprovalByChatId)) {
+      if (head) out.push(head)
+      const tail = pendingApprovalQueueByChatId[chatId]
+      if (tail) out.push(...tail)
+    }
+    return out
+  }, [pendingAgentApprovalByChatId, pendingApprovalQueueByChatId])
+  // Stable so the Approvals popover doesn't re-fetch the ledger on every
+  // unrelated Sidebar re-render (e.g. the 5s device poll) while it's open.
+  const loadRecentApprovals = useCallback(
+    () => window.api.getApprovalLedger({ statuses: ['approved', 'denied'], limit: 3 }),
+    []
   )
   /*
    * 1.0.5-SB5 — Drag-and-drop pinning state. `draggedChatId`
@@ -4230,6 +4325,13 @@ export function Sidebar({
 
             {approvalsPopoverOpen && (
               <ApprovalsFooterPopover
+                pendingApprovals={pendingApprovalsFlat}
+                onJumpToChat={(chatId) => {
+                  setApprovalsPopoverOpen(false)
+                  const chat = chats.find((candidate) => candidate.appChatId === chatId)
+                  if (chat) onSelectChat(chat)
+                }}
+                loadRecent={loadRecentApprovals}
                 onOpenSettings={() => {
                   setApprovalsPopoverOpen(false)
                   openSettingsTab('approval-ledger')
