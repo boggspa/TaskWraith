@@ -4,6 +4,33 @@ TaskWraith is a local Electron app that can run coding agents and CLIs against
 user workspaces. Treat dependency updates, IPC bridges, shell execution, and
 release signing as security-sensitive changes.
 
+For the user-facing trust model, safe-first-run guide, capability matrix, local
+storage locations, and artifact verification commands, see
+[TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md). This file focuses on development and
+release hygiene.
+
+## Supported Security Posture
+
+- Public builds should be traceable to a tag, changelog entry, and release
+  artifact set. If source is ahead of the latest GitHub release, treat that
+  source as unreleased development work.
+- macOS release artifacts should be Developer ID signed, notarized, stapled, and
+  validated before upload.
+- Windows and Linux artifacts must be labelled according to their signing state.
+  Unsigned artifacts should not be presented as equivalent to signed platform
+  releases.
+- Checksums, release notes, and build/test status should be visible enough that
+  cautious users can verify what they downloaded.
+
+## Reporting Security Issues
+
+Until a dedicated private intake is published, avoid posting exploit details,
+private keys, or sensitive workspace data in public issues. Open a minimal public
+issue requesting a maintainer contact path, or use the repository owner's GitHub
+profile contact route if available. Include affected version, platform, whether
+the build was source-built or downloaded, and a minimal reproduction that avoids
+secrets.
+
 ## Dependency Installs
 
 - Use `npm ci` for clean installs. Avoid casual `npm install` or broad

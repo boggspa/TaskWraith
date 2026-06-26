@@ -4,6 +4,14 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## Unreleased
+
+### Added
+- **Trust and safety guide.** Added a top-level user-facing trust guide with a
+  safe-first-run path, capability matrix, local storage/reset notes, provider
+  data boundaries, release verification commands, and known limits for cautious
+  evaluators.
+
 ## 1.6.2 - 2026-06-25
 
 ### Added

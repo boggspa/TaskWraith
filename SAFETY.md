@@ -4,6 +4,25 @@ TaskWraith runs AI coding agents and provider CLIs against local developer
 workspaces. Treat every feature that can read files, write files, execute shell
 commands, automate apps, or answer approvals as security-sensitive.
 
+For the user-facing trust model, safe-first-run path, capability matrix, local
+storage notes, and release verification steps, see
+[TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md). This file is the shorter engineering
+checklist for changes that add or widen app authority.
+
+## Default User Posture
+
+- Prefer read-only or planning mode for first-run and unfamiliar workspaces.
+- Make broad grants explicit and visible: full-workspace, yolo, unattended
+  workflow, remote allowlist, and provider-parity local-model modes should never
+  be implied by a UI shortcut.
+- Treat optional surfaces such as iOS remote access, human collaboration, Screen
+  Watch, Canvas/browser tooling, creative-app AppleScript, Discord context, and
+  message-channel bridges as advanced features. They should stay off until the
+  user intentionally configures them.
+- Keep "what can leave the Mac" understandable. Provider-visible prompts, file
+  snippets, command output, screenshots, media-derived context, and diagnostics
+  exports should be described plainly where the feature is exposed.
+
 ## Implemented Guardrails
 
 - **Workspace Confinement**: Workspace operations are scoped to the explicitly
@@ -34,6 +53,18 @@ commands, automate apps, or answer approvals as security-sensitive.
   This is best-effort redaction for display and preview surfaces only; local
   transcripts, raw events, artifacts, provider output, and exported diagnostics
   should still be treated as sensitive.
+
+## Known Safety Limits
+
+- TaskWraith is not a universal OS sandbox. Network denial, filesystem
+  confinement, approval enforcement, and MCP mediation depend on the selected
+  provider adapter and transport.
+- Provider CLIs, SDKs, browser automations, native app bridges, and external
+  APIs can expose user data outside TaskWraith's process.
+- Approval prompts and audit logs help users see and control actions, but they do
+  not make arbitrary third-party tools or untrusted provider output safe.
+- Redaction is best effort for display surfaces. Raw local history, run events,
+  provider output, media, and diagnostics should be handled as sensitive.
 
 ## Runtime Boundaries
 

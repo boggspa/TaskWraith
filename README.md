@@ -1,5 +1,9 @@
 # TaskWraith
 
+[![CI](https://github.com/boggspa/TaskWraith/actions/workflows/ci.yml/badge.svg)](https://github.com/boggspa/TaskWraith/actions/workflows/ci.yml)
+![Latest GitHub release](https://img.shields.io/github/v/release/boggspa/TaskWraith)
+![License](https://img.shields.io/github/license/boggspa/TaskWraith)
+
 TaskWraith is a local-first desktop workbench for running and reviewing AI coding
 agents against developer workspaces. It provides a macOS-focused Electron UI for
 provider CLIs and SDK-backed workflows while keeping execution, history, and
@@ -15,6 +19,26 @@ workspace state on the user's machine.
 > Developer team. Push notifications are opt-in after pairing and require APNs
 > credentials on the Mac (see
 > `ios/TaskWraithApp/README.md`).
+
+## Trust, Safety, and First Runs
+
+TaskWraith has a broad optional permissions surface: provider CLIs, local models,
+workspace file tools, shell/git actions, iOS remote control, collaborator
+sharing, Screen Watch, Canvas/browser-like tools, media tools, and creative-app
+automation. The default expectation is explicit user control: select a workspace,
+choose a run posture, review approvals, inspect activity, and check diffs before
+committing generated work.
+
+New users should start with a scratch repository in read-only or planning mode.
+Do not enable remote pairing, Screen Watch, Canvas/browser automation, creative
+app bridges, unattended workflow grants, or full-workspace/yolo permissions until
+the app has earned trust through several low-risk sessions.
+
+Read [TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md) for the safe-first-run guide,
+capability matrix, storage locations, provider data boundaries, release
+verification steps, and known limits. [SAFETY.md](SAFETY.md) and
+[SECURITY.md](SECURITY.md) contain the engineering guardrails and release
+baseline.
 
 <table>
   <tr>
@@ -87,6 +111,9 @@ workspace state on the user's machine.
 
 Current development version: **v1.6.2**. Latest public release:
 **v1.6.2** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
+If the GitHub Releases page shows an older version, treat newer source changes as
+unreleased development work until a matching tag and release artifacts are
+published.
 
 ## Public Source Boundary
 
@@ -104,7 +131,10 @@ quotas, rate limits, approval flows, or terms of service.
 TaskWraith is developed the way it is meant to be used — with AI coding agents in
 the loop. Day-to-day work pairs **OpenAI Codex** and **Anthropic Claude**:
 planning, implementation, multi-agent review passes, and large refactors run
-through the agents and are reviewed and merged by a human. Commits carry
+through the agents. Agent output is reviewed by a human before merge, and release
+work is gated by dependency checks, typecheck, tests, native bridge tests on
+macOS, packaged-app smoke tests, signing/notarization validation where
+credentials are available, and secret-bundle guards. Commits carry
 `Co-Authored-By` trailers for the agents that contributed.
 
 ## Development Setup
@@ -167,5 +197,6 @@ Swift toolchain and is not part of the cross-platform `npm run ci`.
 - `swift`: macOS bridge daemon sources used by local release builds.
 - `scripts`: Build, security, validation, signing, and packaging utilities.
 
-See `CHANGELOG.md` for release history, and `ARCHITECTURE.md`, `SAFETY.md`,
-`SECURITY.md`, and `TERMS_NOTES.md` for more detail.
+See `CHANGELOG.md` for release history, and `TRUST_AND_SAFETY.md`,
+`ARCHITECTURE.md`, `SAFETY.md`, `SECURITY.md`, and `TERMS_NOTES.md` for more
+detail.
