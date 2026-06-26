@@ -5288,6 +5288,16 @@
   max-width: 360px;
   cursor: default;
 }
+/* Audio clips stretch to the composer / message-column width so the waveform gets
+   generous room regardless of clip length (video keeps its aspect-capped 360px sizing).
+   `.tw-wave-player` inside is already width:100% and its canvas re-measures via a
+   ResizeObserver, so a wider card => more buckets => a crisper waveform. `min(100%, …)`
+   keeps it from overflowing a narrow container or exceeding the composer width.
+   (Width treatment to later propagate to the iOS audio tile.) */
+.message-attachment-card.message-attachment-av.is-audio {
+  width: 100%;
+  max-width: min(100%, var(--composer-content-max-width, 760px));
+}
 .message-attachment-av video,
 .message-attachment-av audio,
 .chat-media-av-item video,
