@@ -2370,6 +2370,32 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'inspect_video_frames',
+      description:
+        "Decode SEVERAL frames from a video in one call using the OS's built-in VideoToolbox " +
+        '(hardware-accelerated; works WITHOUT ffmpeg installed) so you can scrub/inspect a clip. ' +
+        'Provide `timestamps` (an array of seconds) for exact frames, or `everyNSeconds` to sample ' +
+        'evenly from 0; omit both to grab a single frame at 0. `maxFrames` caps the count (default ' +
+        'and hard max 8). Returns each frame as an inline image (grouped as a filmstrip). If a ' +
+        'sample falls past the end of the clip the tool stops and returns the frames it got. Reads ' +
+        'a realpath-jailed workspace path; native (no external process), non-mutating, read-only-safe.',
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          inputPath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to a video file.' },
+          timestamps: {
+            type: 'array',
+            items: { type: 'number' },
+            description: 'Explicit frame timestamps in seconds (each >= 0). Takes precedence over everyNSeconds.'
+          },
+          everyNSeconds: { type: 'number', description: 'Sample one frame every N seconds starting at 0 (ignored if timestamps is given).' },
+          maxFrames: { type: 'number', description: 'Maximum number of frames to return (default 8, hard cap 8).' }
+        },
+        required: ['inputPath']
+      }
+    },
+    {
       name: 'video_encode_clip',
       description:
         "Re-encode a segment of a workspace video to H.264 MP4 using the OS's built-in VideoToolbox " +

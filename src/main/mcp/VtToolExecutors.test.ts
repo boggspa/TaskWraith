@@ -116,6 +116,7 @@ function build(overrides: Partial<VtToolDeps> = {}) {
 describe('isVtMcpToolName', () => {
   it('recognizes the VideoToolbox tools only', () => {
     expect(isVtMcpToolName('video_decode_frame')).toBe(true)
+    expect(isVtMcpToolName('inspect_video_frames')).toBe(true)
     expect(isVtMcpToolName('video_encode_clip')).toBe(true)
     expect(isVtMcpToolName('video_concat_clips')).toBe(true)
     expect(isVtMcpToolName('audio_mix')).toBe(true)
@@ -207,6 +208,178 @@ describe('video_decode_frame', () => {
     expect(result.isError).toBeFalsy()
     expect(result.text).toContain('3.2s')
     expect(result.text).toContain('software')
+  })
+})
+
+// inspect_video_frames — loops the SAME native decodeFrame RPC to return several frames
+// in one call. The frames are PNGs that ride the SANITIZED image lane (image blocks +
+// mediaRefHints), NOT the trusted AV channel. Read-only-safe.
+describe('inspect_video_frames', () => {
+  function imageBlocks(result: { content?: Array<{ type: string }> }) {
+    return (result.content ?? []).filter((b) => b.type === 'image') as Array<{
+      type: 'image'
+      mimeType: string
+      data: string
+    }>
+  }
+
+  it('decodes each explicit timestamp over the JAILED path and returns N image blocks + group hints', async () => {
+    const calls: number[] = []
+    const { executors, deps } = build({
+      decodeFrame: vi.fn(async (params) => {
+        calls.push(params.timestampSeconds ?? -1)
+        // Echo the requested timestamp back (the daemon may snap, but here it matches).
+        return { ...DECODE_RESULT, timestampSeconds: params.timestampSeconds ?? 0 }
+      })
+    })
+    const result = await executors.executeVtTool(
+      'inspect_video_frames',
+      { inputPath: 'clip.mp4', timestamps: [0, 3, 75.4] },
+      { appChatId: 'c1' }
+    )
+    expect(result.isError).toBeFalsy()
+    expect(deps.jailInput).toHaveBeenCalledTimes(1)
+    expect(deps.jailInput).toHaveBeenCalledWith('clip.mp4', { appChatId: 'c1' })
+    // One decode per timestamp, all over the jailed real path, preferHardware true.
+    expect(deps.decodeFrame).toHaveBeenCalledTimes(3)
+    expect(calls).toEqual([0, 3, 75.4])
+    expect((deps.decodeFrame as ReturnType<typeof vi.fn>).mock.calls.every(([p]) => p.inputPath === '/ws/clip.mp4' && p.preferHardware === true)).toBe(true)
+    // N image blocks, content order, plus a leading text summary.
+    expect(imageBlocks(result)).toHaveLength(3)
+    expect(imageBlocks(result).every((b) => b.mimeType === 'image/png')).toBe(true)
+    // mediaRefHints carries groupKind + per-frame labels aligned to the image blocks.
+    expect(result.mediaRefHints?.groupKind).toBe('video_frames')
+    expect(result.mediaRefHints?.labels).toEqual(['0:00', '0:03', '1:15'])
+    expect(result.trustedMediaRefs).toBeUndefined()
+  })
+
+  it('defaults to a single frame at 0 when neither timestamps nor everyNSeconds is given', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeVtTool('inspect_video_frames', { inputPath: 'clip.mp4' }, {})
+    expect(result.isError).toBeFalsy()
+    expect(deps.decodeFrame).toHaveBeenCalledTimes(1)
+    expect((deps.decodeFrame as ReturnType<typeof vi.fn>).mock.calls[0][0].timestampSeconds).toBe(0)
+    expect(imageBlocks(result)).toHaveLength(1)
+    expect(result.mediaRefHints?.labels).toEqual(['0:00'])
+  })
+
+  it('samples every N seconds from 0 (0, n, 2n, …)', async () => {
+    const calls: number[] = []
+    const { executors } = build({
+      decodeFrame: vi.fn(async (params) => {
+        calls.push(params.timestampSeconds ?? -1)
+        return { ...DECODE_RESULT, timestampSeconds: params.timestampSeconds ?? 0 }
+      })
+    })
+    const result = await executors.executeVtTool(
+      'inspect_video_frames',
+      { inputPath: 'clip.mp4', everyNSeconds: 5, maxFrames: 4 },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    expect(calls).toEqual([0, 5, 10, 15])
+    expect(result.mediaRefHints?.labels).toEqual(['0:00', '0:05', '0:10', '0:15'])
+  })
+
+  it('STOPS at end-of-clip (a failed decode) and returns the frames gathered so far', async () => {
+    let n = 0
+    const { executors } = build({
+      decodeFrame: vi.fn(async (params) => {
+        n += 1
+        // First two timestamps succeed; the third (past EOF) throws.
+        if (n >= 3) throw new Error('VideoToolbox: requested time past end of asset')
+        return { ...DECODE_RESULT, timestampSeconds: params.timestampSeconds ?? 0 }
+      })
+    })
+    const result = await executors.executeVtTool(
+      'inspect_video_frames',
+      { inputPath: 'clip.mp4', everyNSeconds: 10, maxFrames: 8 },
+      {}
+    )
+    // NOT an error — we keep the 2 frames we got, the EOF just stops the loop.
+    expect(result.isError).toBeFalsy()
+    expect(imageBlocks(result)).toHaveLength(2)
+    expect(result.mediaRefHints?.labels).toEqual(['0:00', '0:10'])
+    expect(result.text).toContain('Inspected 2 frames')
+  })
+
+  it('returns an ERROR result (not a throw) when ZERO frames decode', async () => {
+    const { executors } = build({
+      decodeFrame: vi.fn(async () => {
+        throw new Error('VideoToolbox could not open the asset')
+      })
+    })
+    const result = await executors.executeVtTool('inspect_video_frames', { inputPath: 'clip.mp4', timestamps: [0, 1] }, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('inspect_video_frames failed')
+    expect(result.text).toContain('VideoToolbox could not open the asset')
+    expect(imageBlocks(result)).toHaveLength(0)
+    expect(result.mediaRefHints).toBeUndefined()
+  })
+
+  it('clamps the frame count to the hard cap of 8 even when maxFrames is larger', async () => {
+    const { executors, deps } = build({
+      decodeFrame: vi.fn(async (params) => ({ ...DECODE_RESULT, timestampSeconds: params.timestampSeconds ?? 0 }))
+    })
+    const result = await executors.executeVtTool(
+      'inspect_video_frames',
+      { inputPath: 'clip.mp4', everyNSeconds: 1, maxFrames: 50 },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    // Hard cap = TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE (8).
+    expect(deps.decodeFrame).toHaveBeenCalledTimes(8)
+    expect(imageBlocks(result)).toHaveLength(8)
+    expect(result.mediaRefHints?.labels).toHaveLength(8)
+  })
+
+  it('also clamps an explicit oversized timestamps array to 8', async () => {
+    const { executors, deps } = build({
+      decodeFrame: vi.fn(async (params) => ({ ...DECODE_RESULT, timestampSeconds: params.timestampSeconds ?? 0 }))
+    })
+    const result = await executors.executeVtTool(
+      'inspect_video_frames',
+      { inputPath: 'clip.mp4', timestamps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    expect(deps.decodeFrame).toHaveBeenCalledTimes(8)
+  })
+
+  it('rejects a missing inputPath before jailing', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeVtTool('inspect_video_frames', {}, {})
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('inputPath')
+    expect(deps.jailInput).not.toHaveBeenCalled()
+    expect(deps.decodeFrame).not.toHaveBeenCalled()
+  })
+
+  it('rejects a negative timestamp before jailing', async () => {
+    const { executors, deps } = build()
+    const result = await executors.executeVtTool(
+      'inspect_video_frames',
+      { inputPath: 'clip.mp4', timestamps: [0, -2] },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('timestamp')
+    expect(deps.jailInput).not.toHaveBeenCalled()
+    expect(deps.decodeFrame).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a jail rejection WITHOUT calling decodeFrame', async () => {
+    const { executors, deps } = build({
+      jailInput: vi.fn(() => ({ ok: false as const, reason: 'outside_allowed_roots' }))
+    })
+    const result = await executors.executeVtTool(
+      'inspect_video_frames',
+      { inputPath: '../../etc/passwd', timestamps: [0] },
+      {}
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('outside_allowed_roots')
+    expect(deps.decodeFrame).not.toHaveBeenCalled()
   })
 })
 

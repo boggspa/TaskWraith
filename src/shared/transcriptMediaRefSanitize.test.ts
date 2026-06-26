@@ -41,6 +41,35 @@ describe('sanitizeRawProviderMediaRef', () => {
     expect(ref?.path).toBeUndefined()
   })
 
+  it('keeps a whitelisted groupKind (video_frames) and a bounded caption', () => {
+    const ref = sanitizeRawProviderMediaRef(
+      legitRef({ groupKind: 'video_frames', caption: '0:03' })
+    )
+    expect(ref?.groupKind).toBe('video_frames')
+    expect(ref?.caption).toBe('0:03')
+  })
+
+  it('DROPS an unknown groupKind (forgery boundary) but keeps the ref ungrouped', () => {
+    const ref = sanitizeRawProviderMediaRef(
+      legitRef({ groupKind: 'evil_arbitrary_group', caption: '0:03' })
+    )
+    expect(ref).not.toBeNull()
+    expect(ref?.groupKind).toBeUndefined()
+    // The rest of the (legit) ref still survives — only the forged grouping is stripped.
+    expect(ref?.caption).toBe('0:03')
+    expect(ref?.id).toBe('run-1:tool-image:abc123')
+  })
+
+  it('drops a non-string groupKind', () => {
+    expect(sanitizeRawProviderMediaRef(legitRef({ groupKind: 42 }))?.groupKind).toBeUndefined()
+    expect(sanitizeRawProviderMediaRef(legitRef({ groupKind: { evil: true } }))?.groupKind).toBeUndefined()
+  })
+
+  it('caps a caption at 1024 chars', () => {
+    const ref = sanitizeRawProviderMediaRef(legitRef({ caption: 'x'.repeat(2000) }))
+    expect((ref?.caption ?? '').length).toBe(1024)
+  })
+
   it('strips a hostile file:// path from a tool_result ref (keeps the ref via its thumbnail)', () => {
     const ref = sanitizeRawProviderMediaRef(legitRef({ path: 'file:///etc/passwd' }))
     expect(ref).not.toBeNull()

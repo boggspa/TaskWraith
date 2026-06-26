@@ -5040,6 +5040,71 @@
   margin-top: 10px;
 }
 
+/* NLE filmstrip — a horizontal, scrollable run of decoded video frames
+   (inspect_video_frames). Theme-reactive (panel-border / app-bg-elevated /
+   provider-accent), compact frames, timestamp caption beneath each. Takes the full
+   strip width and scrolls horizontally rather than wrapping, so the frames read as one
+   contiguous "scrub" rail. */
+.tw-filmstrip {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-bg-elevated) 60%, transparent);
+  scrollbar-width: thin;
+}
+
+.tw-filmstrip-frame {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tw-filmstrip-thumb {
+  display: block;
+  width: 104px;
+  height: 62px;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 76%, transparent);
+  background: rgba(0, 0, 0, 0.24);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.tw-filmstrip-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.tw-filmstrip-frame:hover .tw-filmstrip-thumb,
+.tw-filmstrip-frame:focus-visible .tw-filmstrip-thumb {
+  border-color: color-mix(in srgb, var(--provider-accent, var(--accent)) 52%, var(--panel-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--provider-accent, var(--accent)) 32%, transparent);
+}
+
+.tw-filmstrip-label {
+  font-size: var(--font-size-xs, 11px);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, var(--text-secondary));
+}
+
 .discord-context-picker-backdrop {
   position: fixed;
   inset: 0;

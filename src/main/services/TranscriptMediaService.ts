@@ -54,6 +54,13 @@ export interface CreateToolResultMediaRefsOptions {
   assetWriter?: TranscriptMediaAssetWriter
   maxBytes?: number
   maxRefs?: number
+  /**
+   * Optional per-image-block presentation hints from the (trusted, main-side) tool
+   * result. `labels[i]` becomes the `caption` of the ref built from the i-th image block
+   * (in `blocks` order); `groupKind` is stamped onto every produced ref so the renderer
+   * can group a contiguous run (e.g. `video_frames` → an NLE filmstrip). Cosmetic only.
+   */
+  hints?: { groupKind?: string; labels?: string[] }
 }
 
 export interface CreateWorkspacePathMediaRefsOptions {
@@ -433,14 +440,28 @@ export function createToolResultMediaRefs({
   thumbnailer = defaultTranscriptMediaThumbnailer,
   assetWriter,
   maxBytes = TRANSCRIPT_MEDIA_MAX_TOOL_IMAGE_BYTES,
-  maxRefs = TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE
+  maxRefs = TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE,
+  hints
 }: CreateToolResultMediaRefsOptions): TranscriptMediaRef[] {
   const refs: TranscriptMediaRef[] = []
   const sourceSegment = source === 'generated' ? 'generated-image' : 'tool-image'
+  // `groupKind` (when present) is stamped on every produced ref; `labels` align to the
+  // image blocks in `blocks` order (blockIndex), NOT to refs.length — so a label still
+  // maps to its block even if an earlier block was skipped (non-image) without producing
+  // a ref. A non-string / empty label is simply omitted (no caption).
+  const groupKind =
+    typeof hints?.groupKind === 'string' && hints.groupKind ? hints.groupKind : undefined
+  const labelAt = (i: number): string | undefined => {
+    const label = hints?.labels?.[i]
+    return typeof label === 'string' && label.length > 0 ? label : undefined
+  }
+  let blockIndex = -1
   for (const rawBlock of blocks) {
     if (refs.length >= maxRefs) break
     const block = imageBlockFromUnknown(rawBlock)
     if (!block) continue
+    blockIndex += 1
+    const caption = labelAt(blockIndex)
     const decoded = decodedImageBlock(block, maxBytes)
     const index = refs.length + 1
     if ('error' in decoded) {
@@ -457,7 +478,9 @@ export function createToolResultMediaRefs({
               ? `Generated image ${index}`
               : `Tool result image ${index}`),
         mimeType: normalizedMimeType(block.mimeType) || 'application/octet-stream',
-        status: decoded.error
+        status: decoded.error,
+        ...(caption ? { caption } : {}),
+        ...(groupKind ? { groupKind } : {})
       })
       continue
     }
@@ -499,7 +522,9 @@ export function createToolResultMediaRefs({
       sha256: hash,
       assetId,
       thumbnail,
-      status: 'available'
+      status: 'available',
+      ...(caption ? { caption } : {}),
+      ...(groupKind ? { groupKind } : {})
     })
   }
   return refs

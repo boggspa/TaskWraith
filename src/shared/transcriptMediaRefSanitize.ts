@@ -42,6 +42,16 @@ const RAW_MEDIA_SOURCES = new Set<TranscriptMediaSource>([
 ])
 
 /**
+ * The ONLY `groupKind` values a RAW (provider-controlled) ref may carry. `groupKind` is
+ * cosmetic (it picks a renderer layout, e.g. the NLE filmstrip), but a hostile provider
+ * must not be able to forge arbitrary grouping, so we value-restrict it to a known
+ * allowlist — any other value is dropped (the ref still renders, just ungrouped). New
+ * group kinds must be added here explicitly. House security posture: allowlist, not
+ * length-cap.
+ */
+const SAFE_GROUP_KINDS = new Set<string>(['video_frames'])
+
+/**
  * Sources for which a provider-supplied `path` is retained. Everything else
  * (notably `generated` / `tool_result` — the only sources that legitimately
  * ride the RAW provider lane) has its `path` stripped, so a hostile
@@ -230,8 +240,17 @@ export function sanitizeRawProviderMediaRef(raw: unknown): TranscriptMediaRef | 
   const rawSha = trimmedString(record.sha256, 256)
   const sha256 = rawSha && RAW_SHA_RE.test(rawSha) ? rawSha : ''
   const assetId = trimmedString(record.assetId, 256)
+  // `groupKind` is cosmetic but VALUE-RESTRICTED on the RAW lane: only a known group
+  // kind survives, so a hostile provider can't forge arbitrary grouping. Anything else
+  // (including a present-but-unknown value) is silently dropped → the ref renders
+  // ungrouped. This is the forgery boundary for the filmstrip grouping.
+  const groupKind =
+    typeof record.groupKind === 'string' && SAFE_GROUP_KINDS.has(record.groupKind)
+      ? record.groupKind
+      : undefined
   if (alt) ref.alt = alt
   if (caption) ref.caption = caption
+  if (groupKind) ref.groupKind = groupKind
   if (width !== undefined) ref.width = width
   if (height !== undefined) ref.height = height
   if (byteLength !== undefined) ref.byteLength = byteLength

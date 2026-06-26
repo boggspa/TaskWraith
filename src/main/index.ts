@@ -17185,6 +17185,10 @@ async function executeGeminiMcpTool(
         toolName,
         source: 'tool_result',
         blocks: resultImageBlocks,
+        // Per-frame caption + grouping (e.g. inspect_video_frames → a filmstrip). The
+        // hints are aligned to the image blocks above in content order; the host trusts
+        // them because finalRichResult is main-side executor output, not provider stdout.
+        hints: finalRichResult?.mediaRefHints,
         assetWriter: ({ sha256, buffer, mimeType }) =>
           writeTranscriptMediaAsset({ sha256, buffer, mimeType })
       })

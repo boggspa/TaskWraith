@@ -67,6 +67,56 @@ describe('TranscriptMediaService', () => {
     expect(refs[0].assetId).toContain('run:run-1:tool-image:')
   })
 
+  it('threads mediaRefHints onto refs: labels[i] → caption, groupKind → every ref', () => {
+    const refs = createToolResultMediaRefs({
+      messageId: 'msg-frames',
+      runId: 'run-frames',
+      toolName: 'inspect_video_frames',
+      blocks: [
+        { type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 },
+        { type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }
+      ],
+      thumbnailer: () => ({ dataBase64: 'thumb', mimeType: 'image/jpeg', width: 1, height: 1 }),
+      hints: { groupKind: 'video_frames', labels: ['0:00', '0:03'] }
+    })
+
+    expect(refs).toHaveLength(2)
+    // Caption comes from labels[i] aligned to block order.
+    expect(refs[0].caption).toBe('0:00')
+    expect(refs[1].caption).toBe('0:03')
+    // groupKind is stamped on every produced ref so the renderer can group the run.
+    expect(refs.every((ref) => ref.groupKind === 'video_frames')).toBe(true)
+  })
+
+  it('omits caption when a label is missing/empty and omits groupKind when no hints', () => {
+    const refs = createToolResultMediaRefs({
+      messageId: 'msg-partial',
+      toolName: 'inspect_video_frames',
+      blocks: [
+        { type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 },
+        { type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }
+      ],
+      thumbnailer: () => ({ dataBase64: 'thumb', mimeType: 'image/jpeg' }),
+      // Only one label, and no groupKind.
+      hints: { labels: ['0:00'] }
+    })
+
+    expect(refs[0].caption).toBe('0:00')
+    expect(refs[1].caption).toBeUndefined()
+    expect(refs.every((ref) => ref.groupKind === undefined)).toBe(true)
+  })
+
+  it('does not set caption/groupKind when no hints are passed at all', () => {
+    const refs = createToolResultMediaRefs({
+      messageId: 'msg-nohints',
+      toolName: 'capture',
+      blocks: [{ type: 'image', mimeType: 'image/png', data: PNG_1X1_BASE64 }],
+      thumbnailer: () => ({ dataBase64: 'thumb', mimeType: 'image/jpeg' })
+    })
+    expect(refs[0].caption).toBeUndefined()
+    expect(refs[0].groupKind).toBeUndefined()
+  })
+
   it('extracts nested MCP image blocks from raw result envelopes', () => {
     const blocks = extractMcpImageBlocksFromRawResult({
       result: JSON.stringify({

@@ -57,6 +57,9 @@ export interface ChatMediaRef {
   status?: TranscriptMediaStatus
   alt?: string
   caption?: string
+  /** Grouping hint — a contiguous run of refs sharing `groupKind` is laid out as a unit
+   *  (e.g. `video_frames` → an NLE filmstrip). Mirrors TranscriptMediaRef.groupKind. */
+  groupKind?: string
   access?: ExternalPathGrant['access']
 }
 
@@ -466,7 +469,8 @@ export function collectChatMediaRefs(
       thumbnail: mediaRef.thumbnail,
       status: mediaRef.status,
       alt: mediaRef.alt,
-      caption: mediaRef.caption
+      caption: mediaRef.caption,
+      ...(mediaRef.groupKind ? { groupKind: mediaRef.groupKind } : {})
     })
   }
 
@@ -663,7 +667,8 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
       thumbnail: mediaRef.thumbnail,
       status: mediaRef.status,
       alt: mediaRef.alt,
-      caption: mediaRef.caption
+      caption: mediaRef.caption,
+      ...(mediaRef.groupKind ? { groupKind: mediaRef.groupKind } : {})
     })
   }
 
@@ -901,6 +906,91 @@ function ChatMessageAvAttachment({
   )
 }
 
+/** The grouping kind that renders a contiguous ref run as an NLE filmstrip. */
+const FILMSTRIP_GROUP_KIND = 'video_frames'
+
+/**
+ * A horizontal NLE "filmstrip" for a run of video-frame refs (inspect_video_frames):
+ * compact frame thumbnails laid out left-to-right with their timestamp caption beneath,
+ * each clickable into the EXISTING lightbox (onPreviewImage) — no new overlay. Only
+ * frames with a renderable preview are shown; a frame that can't be previewed falls back
+ * to a standard attachment card so it is never silently dropped.
+ */
+function VideoFilmstrip({
+  refs,
+  workspacePath,
+  onPreviewImage
+}: {
+  refs: ChatMediaRef[]
+  workspacePath?: string
+  onPreviewImage?: (ref: ChatMediaRef) => void
+}) {
+  if (refs.length === 0) return null
+  return (
+    <div className="tw-filmstrip" role="group" aria-label="Video frames">
+      {refs.map((ref) => {
+        const previewSrc = chatMediaPreviewSrc(ref)
+        if (!previewSrc) {
+          // No previewable surface (rare for a decoded PNG) — keep the frame visible as a
+          // plain card rather than dropping it from the strip.
+          return (
+            <ChatMessageAttachmentCard
+              key={ref.id}
+              mediaRef={ref}
+              workspacePath={workspacePath}
+              title={onPreviewImage ? `Preview ${ref.name}` : ref.name}
+              onClick={() => onPreviewImage?.(ref)}
+            />
+          )
+        }
+        const label = ref.caption || ref.name
+        return (
+          <button
+            key={ref.id}
+            type="button"
+            className="tw-filmstrip-frame"
+            title={onPreviewImage ? `Preview ${label}` : label}
+            aria-label={`Video frame ${label}`}
+            onClick={onPreviewImage ? () => onPreviewImage(ref) : undefined}
+          >
+            <span className="tw-filmstrip-thumb">
+              <img src={previewSrc} alt={ref.caption || ref.name} loading="lazy" decoding="async" />
+            </span>
+            {ref.caption ? <span className="tw-filmstrip-label">{ref.caption}</span> : null}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * Partition refs into a sequence of segments, where each MAXIMAL run of consecutive refs
+ * sharing `groupKind === 'video_frames'` becomes one `filmstrip` segment and every other
+ * ref is its own `single` segment. Refs arrive in emission order, so the frames of one
+ * inspect_video_frames call are contiguous and group cleanly without reordering.
+ */
+function partitionFilmstripRuns(
+  refs: ChatMediaRef[]
+): Array<{ kind: 'filmstrip'; refs: ChatMediaRef[] } | { kind: 'single'; ref: ChatMediaRef }> {
+  const segments: Array<
+    { kind: 'filmstrip'; refs: ChatMediaRef[] } | { kind: 'single'; ref: ChatMediaRef }
+  > = []
+  for (const ref of refs) {
+    if (ref.groupKind === FILMSTRIP_GROUP_KIND) {
+      const last = segments[segments.length - 1]
+      if (last && last.kind === 'filmstrip') {
+        last.refs.push(ref)
+      } else {
+        segments.push({ kind: 'filmstrip', refs: [ref] })
+      }
+    } else {
+      segments.push({ kind: 'single', ref })
+    }
+  }
+  return segments
+}
+
 export function ChatMessageMediaStrip({
   refs,
   workspacePath,
@@ -912,9 +1002,21 @@ export function ChatMessageMediaStrip({
 }) {
   const { copiedId, copy } = useCopyFeedback()
   if (refs.length === 0) return null
+  const segments = partitionFilmstripRuns(refs)
   return (
     <div className="message-attachment-strip" aria-label="Message attachments">
-      {refs.map((ref) => {
+      {segments.map((segment, segmentIndex) => {
+        if (segment.kind === 'filmstrip') {
+          return (
+            <VideoFilmstrip
+              key={`filmstrip:${segment.refs[0].id}:${segmentIndex}`}
+              refs={segment.refs}
+              workspacePath={workspacePath}
+              onPreviewImage={onPreviewImage}
+            />
+          )
+        }
+        const ref = segment.ref
         const previewSrc = ref.kind === 'image' ? chatMediaPreviewSrc(ref) : ''
         const isCopied = copiedId === ref.id
         if (ref.kind === 'image') {

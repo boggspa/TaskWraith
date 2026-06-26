@@ -143,6 +143,10 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   // returns an image (like appwatch_latest_frame / canvas_screenshot), no
   // workspace mutation and no external binary → allowed under read-only.
   'video_decode_frame',
+  // Multi-frame read-only scrub: loops the same native VideoToolbox decode to
+  // return up to 8 frames at once. No workspace mutation, no external binary →
+  // allowed under read-only, exactly like video_decode_frame.
+  'inspect_video_frames',
   // creative reads / validation — the *import* / applescript / blender / midi
   // mutators stay workspace_write (caught by the default below)
   'creative_project_snapshot',

@@ -2084,6 +2084,14 @@ export interface TranscriptMediaRef {
   workspaceRelativePath?: string
   thumbnail?: TranscriptMediaThumbnail
   status?: TranscriptMediaStatus
+  /**
+   * Optional grouping hint for the renderer: a contiguous run of refs sharing the same
+   * `groupKind` is laid out as a unit (e.g. `video_frames` → an NLE filmstrip) instead
+   * of separate cards. Purely cosmetic. On the RAW provider lane this is VALUE-RESTRICTED
+   * to a known allowlist (see `sanitizeRawProviderMediaRefs`) so a hostile provider can't
+   * forge arbitrary grouping.
+   */
+  groupKind?: string
 }
 
 export interface ChatMessage {

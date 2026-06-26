@@ -13,6 +13,11 @@ export type McpToolExecutionResult = {
   // hard-drops kind!=='image'). Un-forgeable because only main-side executor code can
   // construct a McpToolExecutionResult; provider stdout can never reach this field.
   trustedMediaRefs?: TranscriptMediaRef[]
+  // Per-image-block presentation hints for the SANITIZED image lane: `labels[i]` becomes
+  // the caption of the ref built from the i-th image block (content order), `groupKind`
+  // groups a contiguous run (e.g. `video_frames` → an NLE filmstrip). Mirror of the field
+  // on McpBridgeRuntime's McpToolExecutionResult — the two must stay in sync.
+  mediaRefHints?: { groupKind?: string; labels?: string[] }
 }
 
 export type AttachedWindowStreamingSnapshot = {

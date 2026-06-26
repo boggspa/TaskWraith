@@ -475,4 +475,108 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(html).toContain('Open file')
     expect(html).toContain('Close')
   })
+
+  it('carries groupKind through collectMessageMediaRefs (no field-drop)', () => {
+    const refs = collectMessageMediaRefs(
+      userMessage({
+        mediaRefs: [
+          {
+            id: 'frame-1',
+            kind: 'image',
+            format: 'raster',
+            source: 'tool_result',
+            name: 'inspect_video_frames image 1',
+            mimeType: 'image/png',
+            assetId: 'tool-image:f1',
+            thumbnail: { dataBase64: 'iVBORw0KGgo=', mimeType: 'image/png' },
+            caption: '0:03',
+            groupKind: 'video_frames',
+            status: 'available'
+          }
+        ]
+      } as ChatMessage['metadata'])
+    )
+    expect(refs).toHaveLength(1)
+    expect(refs[0].groupKind).toBe('video_frames')
+    expect(refs[0].caption).toBe('0:03')
+  })
+
+  it('groups a CONSECUTIVE run of video_frames refs into ONE filmstrip', () => {
+    const frame = (n: number): ChatMediaRef => ({
+      id: `frame-${n}`,
+      kind: 'image',
+      source: 'tool_result',
+      name: `frame ${n}`,
+      path: '',
+      mimeType: 'image/png',
+      thumbnail: { dataBase64: 'iVBORw0KGgo=', mimeType: 'image/png' },
+      caption: `0:0${n}`,
+      groupKind: 'video_frames'
+    })
+    const refs = [frame(1), frame(2), frame(3)]
+    const html = renderToStaticMarkup(
+      <ChatMessageMediaStrip refs={refs} workspacePath="/repo" onPreviewImage={() => {}} />
+    )
+    // Exactly ONE filmstrip container wrapping all three frames.
+    expect((html.match(/tw-filmstrip"/g) ?? []).length).toBe(1)
+    expect((html.match(/tw-filmstrip-frame/g) ?? []).length).toBe(3)
+    // Per-frame timestamp captions are rendered beneath the thumbs.
+    expect(html).toContain('tw-filmstrip-label')
+    expect(html).toContain('0:01')
+    expect(html).toContain('0:03')
+    // No standard image-thumb cards were emitted for the grouped frames.
+    expect(html).not.toContain('message-attachment-thumb is-image')
+  })
+
+  it('renders a filmstrip for the video_frames run AND separate cards for other refs', () => {
+    const refs: ChatMediaRef[] = [
+      {
+        id: 'screenshot-1',
+        kind: 'image',
+        source: 'upload',
+        name: 'screen.png',
+        path: '/repo/screen.png'
+      },
+      {
+        id: 'frame-1',
+        kind: 'image',
+        source: 'tool_result',
+        name: 'frame 1',
+        path: '',
+        mimeType: 'image/png',
+        thumbnail: { dataBase64: 'iVBORw0KGgo=', mimeType: 'image/png' },
+        caption: '0:00',
+        groupKind: 'video_frames'
+      },
+      {
+        id: 'frame-2',
+        kind: 'image',
+        source: 'tool_result',
+        name: 'frame 2',
+        path: '',
+        mimeType: 'image/png',
+        thumbnail: { dataBase64: 'iVBORw0KGgo=', mimeType: 'image/png' },
+        caption: '0:05',
+        groupKind: 'video_frames'
+      },
+      {
+        id: 'readme-1',
+        kind: 'file',
+        source: 'upload',
+        name: 'README.md',
+        path: '/repo/README.md'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <ChatMessageMediaStrip refs={refs} workspacePath="/repo" onPreviewImage={() => {}} />
+    )
+    // One filmstrip for the two contiguous video_frames refs...
+    expect((html.match(/tw-filmstrip"/g) ?? []).length).toBe(1)
+    expect((html.match(/tw-filmstrip-frame/g) ?? []).length).toBe(2)
+    // ...the standalone upload image renders as a normal thumb card...
+    expect(html).toContain('aria-label="Preview image screen.png"')
+    // ...and the file ref renders as its own copy-path card.
+    expect(html).toContain('README.md')
+    expect(html).toContain('is-file')
+  })
 })

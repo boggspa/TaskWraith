@@ -187,6 +187,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   // it rides the proven image media spine and renders inline. Reads a realpath-
   // jailed workspace path; gated as a file change. See src/main/mcp/VtToolExecutors.ts.
   'video_decode_frame',
+  // Decode SEVERAL frames from a workspace video in one call (read-only) — at explicit
+  // timestamps, every N seconds, or just [0]. Loops the SAME native VideoToolbox decode
+  // as video_decode_frame; each frame is a PNG that rides the proven image media spine,
+  // grouped into an NLE filmstrip in the transcript. Read-only-safe (orchestration).
+  // See src/main/mcp/VtToolExecutors.ts.
+  'inspect_video_frames',
   // Re-encode a SEGMENT of a workspace video to an H.264 MP4 via the daemon's native
   // VideoToolbox (no ffmpeg required; hardware-accelerated). Output is a video FILE,
   // so — like transcode_video — it rides the TRUSTED non-image media_refs channel
@@ -245,6 +251,7 @@ export const MEDIA_EDITING_TOOL_NAMES = [
   'video_probe',
   'video_thumbnail',
   'video_decode_frame',
+  'inspect_video_frames',
   'video_encode_clip',
   'video_concat_clips',
   'audio_mix'

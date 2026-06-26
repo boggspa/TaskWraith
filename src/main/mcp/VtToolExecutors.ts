@@ -43,7 +43,7 @@ import { buildAvMediaRef, type AvPosterResult, type GeneratePoster } from '../me
  * invoked), exactly like `video_concat_clips`.
  */
 
-export const VT_MCP_TOOL_NAMES = ['video_decode_frame', 'video_encode_clip', 'video_concat_clips', 'audio_mix'] as const
+export const VT_MCP_TOOL_NAMES = ['video_decode_frame', 'inspect_video_frames', 'video_encode_clip', 'video_concat_clips', 'audio_mix'] as const
 export type VtMcpToolName = (typeof VT_MCP_TOOL_NAMES)[number]
 
 export function isVtMcpToolName(name: string): name is VtMcpToolName {
@@ -164,6 +164,21 @@ function humanBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
+// inspect_video_frames hard cap on frames per call = the image lane's
+// TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE (8). A larger `maxFrames` can never exceed it
+// (the renderer/createToolResultMediaRefs drops overflow anyway), so we clamp up front.
+const INSPECT_VIDEO_FRAMES_HARD_CAP = 8
+
+// Format a frame timestamp as a compact NLE label, e.g. 3 → "0:03", 75.4 → "1:15".
+// Sub-second precision is dropped (the filmstrip caption is a scrub marker, not a code).
+function formatTimestampLabel(seconds: number): string {
+  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0
+  const total = Math.floor(safe)
+  const mins = Math.floor(total / 60)
+  const secs = total % 60
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
 export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
   const { jailInput, jailOverlay, decodeFrame, encodeClip, concatClips, mixdown, stagingPath, readOutput, persistOutput, generatePoster, removeFile } = deps
 
@@ -227,6 +242,113 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return fail('video_decode_frame', `video_decode_frame failed: ${message}`)
+    }
+  }
+
+  // Decode SEVERAL frames from a workspace video in ONE call (read-only analysis) so a
+  // model can "scrub" a clip — at explicit `timestamps`, every `everyNSeconds`, or just
+  // [0]. Mirrors video_decode_frame's jail + image-block lane, but loops the SAME native
+  // `decodeFrame` daemon RPC sequentially (no Swift change). The frames are PNGs, so —
+  // exactly like video_decode_frame — they ride the proven SANITIZED image media spine
+  // (createToolResultMediaRefs), with per-frame timestamp captions + a `video_frames`
+  // group hint (mediaRefHints) so the renderer can lay them out as an NLE filmstrip.
+  // HARD-CAPPED to 8 frames = TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE (the image lane drops
+  // the overflow anyway). EOF-robust: a decode that fails (e.g. everyNSeconds walking off
+  // the end of the clip) STOPS the loop and we return the frames gathered so far; only a
+  // ZERO-frame result is an error.
+  async function executeInspectVideoFrames(
+    args: Record<string, unknown>,
+    ctx: VtToolContext
+  ): Promise<McpToolExecutionResult> {
+    const inputPath = typeof args.inputPath === 'string' ? args.inputPath.trim() : ''
+    if (!inputPath) {
+      return fail('inspect_video_frames', 'provide inputPath (a video file inside the workspace)')
+    }
+
+    // Build the requested timestamp list (seconds, ascending) BEFORE jailing/decoding.
+    //  1. explicit `timestamps` — each must be finite and >= 0;
+    //  2. else `everyNSeconds` (> 0) → 0, n, 2n, … (count bounded by the cap below);
+    //  3. else default to a single frame at [0].
+    let timestamps: number[]
+    if (args.timestamps !== undefined) {
+      if (!Array.isArray(args.timestamps)) {
+        return fail('inspect_video_frames', 'timestamps must be an array of numbers >= 0')
+      }
+      const parsed: number[] = []
+      for (const raw of args.timestamps) {
+        const ts = numArg(raw)
+        if (ts === undefined || ts < 0) {
+          return fail('inspect_video_frames', 'each timestamp must be a finite number >= 0')
+        }
+        parsed.push(ts)
+      }
+      timestamps = parsed
+    } else if (args.everyNSeconds !== undefined) {
+      const step = numArg(args.everyNSeconds)
+      if (step === undefined || step <= 0) {
+        return fail('inspect_video_frames', 'everyNSeconds must be a finite number > 0')
+      }
+      timestamps = []
+    } else {
+      timestamps = [0]
+    }
+
+    // Clamp the count to min(maxFrames ?? 8, 8) — the hard cap is the image lane's
+    // TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE (8); a larger maxFrames cannot exceed it.
+    const requestedMax = numArg(args.maxFrames)
+    const maxFrames = Math.min(
+      requestedMax !== undefined && requestedMax >= 1 ? Math.floor(requestedMax) : 8,
+      INSPECT_VIDEO_FRAMES_HARD_CAP
+    )
+
+    // For the everyNSeconds mode, materialize 0, n, 2n, … up to the (clamped) cap. The
+    // real end-of-clip cutoff is enforced by the EOF-stop in the decode loop below.
+    if (args.everyNSeconds !== undefined && args.timestamps === undefined) {
+      const step = numArg(args.everyNSeconds) as number
+      for (let i = 0; i < maxFrames; i += 1) timestamps.push(i * step)
+    }
+    timestamps = timestamps.slice(0, maxFrames)
+
+    const jailed = jailInput(inputPath, ctx)
+    if (!jailed.ok) {
+      return fail('inspect_video_frames', `could not read video: ${jailed.reason}`)
+    }
+
+    const blocks: McpToolContentBlock[] = []
+    const labels: string[] = []
+    let lastError: string | undefined
+    // Decode SEQUENTIALLY (for…await), one daemon RPC per timestamp. A failed decode is
+    // treated as end-of-clip: STOP the loop and keep the frames collected so far (don't
+    // fail the whole tool just because everyNSeconds overshot the clip's duration).
+    for (const ts of timestamps) {
+      try {
+        const result = await decodeFrame({
+          inputPath: jailed.realPath,
+          timestampSeconds: ts,
+          preferHardware: true
+        })
+        blocks.push({ type: 'image', mimeType: 'image/png', data: result.pngBase64 })
+        // Label from the ACTUAL decoded timestamp (the daemon may snap to a keyframe).
+        labels.push(formatTimestampLabel(result.timestampSeconds))
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error)
+        break
+      }
+    }
+
+    // Zero successful frames → a real failure (bad clip, first decode threw, etc.).
+    if (blocks.length === 0) {
+      return fail(
+        'inspect_video_frames',
+        `inspect_video_frames failed: ${lastError ?? 'no frames could be decoded'}`
+      )
+    }
+
+    const summary = `Inspected ${blocks.length} frame${blocks.length === 1 ? '' : 's'} at ${labels.join(', ')}`
+    return {
+      text: summary,
+      content: [{ type: 'text', text: summary }, ...blocks],
+      mediaRefHints: { groupKind: 'video_frames', labels }
     }
   }
 
@@ -582,6 +704,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       switch (toolName) {
         case 'video_decode_frame':
           return executeVideoDecodeFrame(args, ctx)
+        case 'inspect_video_frames':
+          return executeInspectVideoFrames(args, ctx)
         case 'video_encode_clip':
           return executeVideoEncodeClip(args, ctx)
         case 'video_concat_clips':
