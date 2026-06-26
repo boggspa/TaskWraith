@@ -146,6 +146,10 @@ export function BridgeNetworkingPanel(): React.JSX.Element {
         {lan?.lastError && (
           <div className="settings-hint bridge-networking-reason">{lan.lastError}</div>
         )}
+        <div className="settings-hint bridge-networking-reason">
+          Human collaboration shares and projected sessions rely on this bridge path, so keep it
+          running for reliable invite-based remote access outside your local network.
+        </div>
       </section>
 
       <IosRemoteBridgeSection />

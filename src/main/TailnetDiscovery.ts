@@ -48,28 +48,80 @@ const DEFAULT_MAX_PROBES = 128
 /** Per-probe timeout — a slow/hung device must not stall the whole fan-out. */
 const DEFAULT_PROBE_TIMEOUT_MS = 4000
 
-/** Parse a /v1/hostinfo response body into a DiscoveredHost. Requires the
- * identity pubkey and at least one relay URL (a host the phone cannot reach is
- * not a candidate); display name + platform are best-effort. Returns null for
- * any non-TaskWraith / malformed body. */
-export function parseDiscoveredHost(body: unknown): DiscoveredHost | null {
+const TASKWRAITH_HOSTINFO_PROTOCOL = 'taskwraith-e2ee-v1'
+const RAW_IDENTITY_KEY_BYTES = 32
+const MAX_DISPLAY_NAME_CHARS = 80
+const HOST_PLATFORMS = new Set(['mac', 'windows', 'linux'])
+
+function isRawIdentityPubKeyB64(value: string): boolean {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false
+  try {
+    return Buffer.from(value, 'base64').length === RAW_IDENTITY_KEY_BYTES
+  } catch {
+    return false
+  }
+}
+
+function isAllowedRelayUrl(value: string, magicDNSName?: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return false
+  }
+  if (parsed.username || parsed.password) return false
+  if (parsed.protocol === 'ws:') {
+    return isLocalRelayHost(parsed.hostname)
+  }
+  if (parsed.protocol !== 'wss:') return false
+
+  const expected = magicDNSName?.trim().replace(/\.$/, '').toLowerCase()
+  if (!expected) return true
+  const host = parsed.hostname.toLowerCase()
+  return host === expected || host.endsWith(`.${expected}`)
+}
+
+function isLocalRelayHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  if (host === 'localhost') return true
+  if (host === '::1') return true
+  if (/^127(?:\.\d{1,3}){3}$/.test(host)) return true
+  if (/^10(?:\.\d{1,3}){3}$/.test(host)) return true
+  if (/^192\.168(?:\.\d{1,3}){2}$/.test(host)) return true
+  const m = /^172\.(\d{1,3})(?:\.\d{1,3}){2}$/.exec(host)
+  return Boolean(m && Number(m[1]) >= 16 && Number(m[1]) <= 31)
+}
+
+function cleanDisplayName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > MAX_DISPLAY_NAME_CHARS) return undefined
+  return trimmed
+}
+
+/** Parse a /v1/hostinfo response body into a DiscoveredHost. Requires the exact
+ * TaskWraith protocol, a raw 32-byte identity pubkey, and at least one safe relay
+ * URL. Display name + platform are best-effort. Returns null for any non-
+ * TaskWraith / malformed body. */
+export function parseDiscoveredHost(body: unknown, magicDNSName?: string): DiscoveredHost | null {
   if (!body || typeof body !== 'object') return null
   const o = body as Record<string, unknown>
+  if (o.protocol !== TASKWRAITH_HOSTINFO_PROTOCOL) return null
   const macIdentityPubKey =
     typeof o.macIdentityPubKey === 'string' ? o.macIdentityPubKey.trim() : ''
-  if (!macIdentityPubKey) return null
+  if (!isRawIdentityPubKeyB64(macIdentityPubKey)) return null
   const relayUrls = Array.isArray(o.relayUrls)
     ? o.relayUrls
-        .filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+        .filter((u): u is string => typeof u === 'string')
         .map((u) => u.trim())
+        .filter((u) => isAllowedRelayUrl(u, magicDNSName))
     : []
   if (relayUrls.length === 0) return null
-  const macDisplayName =
-    typeof o.macDisplayName === 'string' && o.macDisplayName.trim()
-      ? o.macDisplayName.trim()
-      : undefined
+  const macDisplayName = cleanDisplayName(o.macDisplayName)
   const hostPlatform =
-    typeof o.hostPlatform === 'string' && o.hostPlatform.trim() ? o.hostPlatform.trim() : undefined
+    typeof o.hostPlatform === 'string' && HOST_PLATFORMS.has(o.hostPlatform.trim())
+      ? o.hostPlatform.trim()
+      : undefined
   return { macIdentityPubKey, macDisplayName, relayUrls, hostPlatform }
 }
 
@@ -126,7 +178,7 @@ export async function probeTailnetHost(
     } catch {
       return null
     }
-    return parseDiscoveredHost(parsed)
+    return parseDiscoveredHost(parsed, name)
   }
   return withTimeout(doProbe(), timeoutMs, null)
 }

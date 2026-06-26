@@ -12,6 +12,7 @@ import { MarkdownMessage } from './MarkdownMessage'
  * the human-collaboration-collaborator:* IPC); this is purely UI + orchestration.
  */
 type Step = 'paste' | 'connecting' | 'sas' | 'viewing'
+type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected'
 
 interface ProjectionRow {
   id: string
@@ -52,6 +53,7 @@ export function JoinSharedChatModal({
   const [mode, setMode] = useState<'readOnly' | 'comments'>('comments')
   const [projection, setProjection] = useState<Projection | null>(null)
   const [comment, setComment] = useState('')
+  const [connectionState, setConnectionState] = useState<ConnectionState>('idle')
   const [busy, setBusy] = useState(false)
   const rowsRef = useRef<HTMLDivElement | null>(null)
 
@@ -62,7 +64,12 @@ export function JoinSharedChatModal({
       setProjection(payload.projection as Projection)
     )
     const offStatus = window.api.onHumanCollaborationCollaboratorStatus?.((payload) => {
-      if (payload.error) setError(payload.error)
+      if (payload.connected === true) setConnectionState('connected')
+      else if (payload.connected === false) setConnectionState('disconnected')
+      if (payload.error) {
+        setError(payload.error)
+        setConnectionState('disconnected')
+      }
     })
     return () => {
       off?.()
@@ -77,6 +84,7 @@ export function JoinSharedChatModal({
     setInviteText('')
     setDisplayName('')
     setError(null)
+    setConnectionState('idle')
     setSasCode('')
     setProjection(null)
     setComment('')
@@ -100,6 +108,7 @@ export function JoinSharedChatModal({
       invite = JSON.parse(inviteText) as Record<string, unknown>
     } catch {
       setError('That does not look like a valid invite. Paste the JSON the host copied.')
+      setConnectionState('disconnected')
       return
     }
     if (invite?.type !== 'taskwraith-human-collaboration-invite' || !invite.relayUrl) {
@@ -108,9 +117,11 @@ export function JoinSharedChatModal({
           ? 'This invite has no connection info — the host needs remote access ON, then a fresh invite.'
           : 'That JSON is not a TaskWraith collaboration invite.'
       )
+      setConnectionState('disconnected')
       return
     }
     setBusy(true)
+    setConnectionState('connecting')
     setStep('connecting')
     try {
       const res = await window.api.humanCollaborationCollaboratorJoin({
@@ -127,8 +138,10 @@ export function JoinSharedChatModal({
       setSasCode(res.confirmCode)
       setMode(res.mode)
       setStep('sas')
+      setConnectionState('connecting')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not connect to the shared chat.')
+      setConnectionState('disconnected')
       void window.api.humanCollaborationCollaboratorLeave?.()
       setStep('paste')
     } finally {
@@ -142,12 +155,32 @@ export function JoinSharedChatModal({
     try {
       await window.api.humanCollaborationCollaboratorConfirm()
       setStep('viewing')
+      setConnectionState('connected')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not confirm the session.')
+      setConnectionState('disconnected')
     } finally {
       setBusy(false)
     }
   }, [])
+
+  const connectionLabel =
+    connectionState === 'connected'
+      ? 'Connected'
+      : connectionState === 'connecting'
+        ? 'Connecting…'
+        : connectionState === 'disconnected'
+          ? 'Disconnected'
+          : 'Not connected'
+
+  const connectionClassName =
+    connectionState === 'connected'
+      ? 'join-connection-status is-connected'
+      : connectionState === 'disconnected'
+        ? 'join-connection-status is-disconnected'
+        : connectionState === 'connecting'
+          ? 'join-connection-status is-connecting'
+          : 'join-connection-status'
 
   const handleSendComment = useCallback(async () => {
     const text = comment.trim()
@@ -176,6 +209,7 @@ export function JoinSharedChatModal({
         {step === 'paste' || step === 'connecting' ? (
           <>
             <h2 className="creative-approval-modal-title">Join a shared chat</h2>
+            <div className={connectionClassName}>Connection: {connectionLabel}</div>
             <p className="creative-approval-modal-description">
               Paste the invite the host shared with you, then verify the 6-digit code together.
             </p>
@@ -216,6 +250,7 @@ export function JoinSharedChatModal({
         {step === 'sas' ? (
           <>
             <h2 className="creative-approval-modal-title">Compare the code</h2>
+            <div className={connectionClassName}>Connection: {connectionLabel}</div>
             <p className="creative-approval-modal-description">
               The host sees a 6-digit code too. Confirm out of band (call/message) that these match
               before joining — this is what stops an imposter in the middle.
@@ -236,6 +271,7 @@ export function JoinSharedChatModal({
         {step === 'viewing' ? (
           <>
             <h2 className="creative-approval-modal-title">{projection?.title || 'Shared chat'}</h2>
+            <div className={connectionClassName}>Connection: {connectionLabel}</div>
             <p className="creative-approval-modal-description">
               You are following this chat live{mode === 'comments' ? ' and can leave comments' : ' (read-only)'}.
               The host stays in control of the AI.

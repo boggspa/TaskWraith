@@ -1724,12 +1724,14 @@ function shareModeLabel(mode: HumanCollaborationShare['mode']): string {
 export function SharesFooterPopover({
   shares,
   resolveChatTitle,
+  connectedShareChatIds,
   onJumpToChat,
   onRevokeShare,
   onOpenSettings
 }: {
   shares: HumanCollaborationShare[]
   resolveChatTitle?: (chatId: string) => string | undefined
+  connectedShareChatIds?: Set<string>
   onJumpToChat?: (chatId: string) => void
   onRevokeShare?: (shareId: string) => void
   onOpenSettings: () => void
@@ -1746,6 +1748,7 @@ export function SharesFooterPopover({
       ) : (
         shares.map((share) => {
           const title = resolveChatTitle?.(share.chatId) || 'Shared chat'
+          const isConnected = connectedShareChatIds?.has(share.chatId) ?? false
           const active = share.participants.filter(
             (participant) => participant.status === 'active'
           ).length
@@ -1761,6 +1764,8 @@ export function SharesFooterPopover({
                 <span className="sidebar-footer-share-sub">
                   {shareModeLabel(share.mode)} ·{' '}
                   {active > 0 ? `${active} active` : 'Awaiting collaborator'}
+                  {' · '}
+                  {isConnected ? 'Live' : 'Not connected'}
                 </span>
               </button>
               {onRevokeShare && (
@@ -4413,6 +4418,7 @@ export function Sidebar({
                 resolveChatTitle={(chatId) =>
                   chats.find((candidate) => candidate.appChatId === chatId)?.title
                 }
+                connectedShareChatIds={collaboratingChatIds}
                 onJumpToChat={(chatId) => {
                   setSharesPopoverOpen(false)
                   const chat = chats.find((candidate) => candidate.appChatId === chatId)

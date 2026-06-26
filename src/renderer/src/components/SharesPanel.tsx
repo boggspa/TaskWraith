@@ -37,6 +37,7 @@ export function SharesPanelView({
   chatTitles,
   loading,
   error,
+  connectedChatIds,
   onRevoke,
   onRevokeParticipant,
   now
@@ -45,6 +46,7 @@ export function SharesPanelView({
   chatTitles: Record<string, string>
   loading: boolean
   error: string | null
+  connectedChatIds?: Set<string>
   onRevoke: (shareId: string) => void
   onRevokeParticipant?: (shareId: string, collaboratorId: string) => void
   // The "current time" for open-invite expiry, supplied by the container so the
@@ -57,6 +59,7 @@ export function SharesPanelView({
         const participants = share.participants.filter(
           (participant) => participant.status !== 'revoked'
         )
+        const isConnected = connectedChatIds?.has(share.chatId) ?? false
         const openInvites = share.invites.filter(
           (invite) => typeof invite.consumedAt !== 'number' && invite.expiresAt > now
         ).length
@@ -64,10 +67,11 @@ export function SharesPanelView({
           share,
           title: chatTitles[share.chatId] || 'Shared chat',
           participants,
-          openInvites
+          openInvites,
+          isConnected
         }
       }),
-    [shares, chatTitles, now]
+    [shares, chatTitles, now, connectedChatIds]
   )
 
   return (
@@ -95,12 +99,14 @@ export function SharesPanelView({
         </div>
       ) : (
         <ul className="shares-panel-list">
-          {rows.map(({ share, title, participants, openInvites }) => (
+          {rows.map(({ share, title, participants, openInvites, isConnected }) => (
             <li className="shares-panel-card" key={share.shareId}>
               <div className="shares-panel-card-head">
                 <div className="shares-panel-card-title-wrap">
                   <span className="shares-panel-card-title">{title}</span>
-                  <span className="shares-panel-card-mode">{shareModeLabel(share.mode)}</span>
+                  <span className="shares-panel-card-mode">
+                    {shareModeLabel(share.mode)} · {isConnected ? 'Live' : 'Not connected'}
+                  </span>
                 </div>
                 <button
                   type="button"
@@ -167,6 +173,7 @@ export function SharesPanel() {
   // Sampled at each data refresh (never during render) so the view's
   // open-invite expiry check is pure and stable across a render pass.
   const [now, setNow] = useState(() => Date.now())
+  const [connectedChatIds, setConnectedChatIds] = useState<Set<string>>(new Set())
 
   const refresh = useCallback(() => {
     setNow(Date.now())
@@ -183,6 +190,19 @@ export function SharesPanel() {
       })
       .catch(() => setError('Could not load shares.'))
       .finally(() => setLoading(false))
+  }, [])
+
+  const refreshConnected = useCallback(() => {
+    if (typeof window.api.humanCollaborationConnectedChatIds !== 'function') return
+    void window.api
+      .humanCollaborationConnectedChatIds()
+      .then((ids) => {
+        setConnectedChatIds(new Set(Array.isArray(ids) ? ids : []))
+      })
+      .catch(() => {
+        // Optional/ephemeral endpoint; leave the current connected set unchanged on
+        // best-effort failure to avoid noisy jitter.
+      })
   }, [])
 
   // Resolve chat titles for the shared chatIds. Best-effort — a share whose
@@ -204,15 +224,23 @@ export function SharesPanel() {
   useEffect(() => {
     refresh()
     refreshTitles()
+    refreshConnected()
     if (typeof window.api.onHumanCollaborationUpdated !== 'function') return
     const unsubscribe = window.api.onHumanCollaborationUpdated(() => {
       refresh()
       refreshTitles()
+      refreshConnected()
     })
+
+    const connectedInterval = window.setInterval(() => {
+      refreshConnected()
+    }, 5000)
+
     return () => {
       unsubscribe?.()
+      window.clearInterval(connectedInterval)
     }
-  }, [refresh, refreshTitles])
+  }, [refresh, refreshTitles, refreshConnected])
 
   const handleRevoke = useCallback(
     (shareId: string) => {
@@ -253,6 +281,7 @@ export function SharesPanel() {
       error={error}
       onRevoke={handleRevoke}
       onRevokeParticipant={handleRevokeParticipant}
+      connectedChatIds={connectedChatIds}
       now={now}
     />
   )

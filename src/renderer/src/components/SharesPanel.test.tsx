@@ -78,6 +78,21 @@ describe('SharesPanelView', () => {
     expect(html).toContain('Stop sharing')
   })
 
+  it('marks a share as live when its chat has a connected collaborator session', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare()]}
+        chatTitles={{ 'chat-1': 'Design review' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        connectedChatIds={new Set(['chat-1'])}
+        now={NOW}
+      />
+    )
+    expect(html).toContain('Comments · Live')
+  })
+
   it('falls back to a generic title when the chat is unresolved', () => {
     const html = renderToStaticMarkup(
       <SharesPanelView

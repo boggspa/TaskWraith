@@ -842,4 +842,18 @@ describe('SharesFooterPopover', () => {
     )
     expect(html).not.toContain('sidebar-footer-share-revoke')
   })
+
+  it('marks share rows as live when the chat has a connected collaborator session', () => {
+    const html = renderToStaticMarkup(
+      <SharesFooterPopover
+        shares={[makeShare()]}
+        resolveChatTitle={() => 'Design review'}
+        connectedShareChatIds={new Set(['parent-1'])}
+        onJumpToChat={() => {}}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).toContain('Design review')
+    expect(html).toContain('Live')
+  })
 })

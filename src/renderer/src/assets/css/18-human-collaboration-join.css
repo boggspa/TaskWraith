@@ -43,6 +43,24 @@
   padding: 7px 10px;
 }
 
+.join-connection-status {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.join-connection-status.is-connecting {
+  color: color-mix(in srgb, var(--warning, #f5b14c) 80%, var(--text-primary));
+}
+
+.join-connection-status.is-connected {
+  color: color-mix(in srgb, var(--success, #34d399) 82%, var(--text-primary));
+}
+
+.join-connection-status.is-disconnected {
+  color: color-mix(in srgb, var(--danger, #e2554f) 82%, var(--text-primary));
+}
+
 .join-actions {
   display: flex;
   justify-content: flex-end;

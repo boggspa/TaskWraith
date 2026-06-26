@@ -192,6 +192,66 @@ describe('HumanCollaborationStore', () => {
     expect(consumed?.invites[0]?.consumedAt).toBe(1200)
   })
 
+  it('lists reconnect candidates for active participants by collaborator identity', () => {
+    const store = new HumanCollaborationStore()
+    const created = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 10_000 })
+    store.consumeInvite({
+      shareId: created.share.shareId,
+      inviteToken: created.inviteToken,
+      displayName: 'Alex',
+      publicKeyId: 'ed25519:alex',
+      now: 1_005
+    })
+    const second = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 2_000, inviteTtlMs: 10_000 })
+    const secondConsume = store.consumeInvite({
+      shareId: second.share.shareId,
+      inviteToken: second.inviteToken,
+      displayName: 'Alex',
+      publicKeyId: 'ed25519:alex',
+      now: 2_005
+    })
+
+    const candidates = store.listReconnectCandidates('ed25519:alex')
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]).toMatchObject({
+      shareId: created.share.shareId,
+      chatId: 'chat-1',
+      mode: 'comments',
+      inviteId: second.invite.inviteId,
+      roomId: second.invite.roomId,
+      inviteExpiresAt: second.invite.expiresAt,
+      participant: {
+        collaboratorId: secondConsume.participant.collaboratorId,
+        displayName: 'Alex',
+        publicKeyId: 'ed25519:alex',
+        status: 'active'
+      }
+    })
+  })
+
+  it('excludes revoked participants and disabled shares from reconnect candidates', () => {
+    const store = new HumanCollaborationStore()
+    const created = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 10_000 })
+    const consumed = store.consumeInvite({
+      shareId: created.share.shareId,
+      inviteToken: created.inviteToken,
+      displayName: 'Alex',
+      publicKeyId: 'ed25519:alex',
+      now: 1001
+    })
+    expect(store.listReconnectCandidates('ed25519:alex')).toHaveLength(1)
+
+    store.revokeParticipant({
+      shareId: created.share.shareId,
+      collaboratorId: consumed.participant.collaboratorId,
+      now: 1002
+    })
+    expect(store.listReconnectCandidates('ed25519:alex')).toHaveLength(0)
+
+    store.revokeShare(created.share.shareId, 1004)
+    expect(store.listReconnectCandidates('ed25519:alex')).toHaveLength(0)
+  })
+
   it('blocks display names that impersonate the host/assistant/providers', () => {
     const store = new HumanCollaborationStore()
     const admit = (displayName: string, publicKeyId: string): string => {

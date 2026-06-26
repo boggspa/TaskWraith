@@ -62,6 +62,16 @@ export interface VerifyInviteResult {
   existingParticipant: HumanCollaboratorParticipant | null
 }
 
+export interface HumanCollaborationReconnectCandidate {
+  shareId: string
+  chatId: string
+  mode: HumanCollaborationMode
+  inviteId: string
+  roomId: string
+  inviteExpiresAt: number
+  participant: HumanCollaboratorParticipant
+}
+
 const DEFAULT_INVITE_TTL_MS = 10 * 60 * 1000
 const MAX_ACTIVE_COLLABORATORS = 2
 // Cap the per-share idempotency map so a stream of unique clientMessageIds from
@@ -82,6 +92,41 @@ export class HumanCollaborationStore {
 
   listShares(chatId?: string): HumanCollaborationShare[] {
     return cloneSnapshot(this.memory).shares.filter((share) => !chatId || share.chatId === chatId)
+  }
+
+  /**
+   * Discover active participant reconnect targets by pinned collaborator identity.
+   * Returns candidates for trusted reconnect workflows (share id + room id +
+   * participant identity), filtered to currently enabled shares.
+   */
+  listReconnectCandidates(publicKeyId: string): HumanCollaborationReconnectCandidate[] {
+    const normalizedPublicKeyId = String(publicKeyId).trim()
+    if (!normalizedPublicKeyId) return []
+    const candidates: HumanCollaborationReconnectCandidate[] = []
+
+    for (const share of this.memory.shares) {
+      if (!share.enabled) continue
+      for (const participant of share.participants) {
+        if (participant.status !== 'active' || participant.publicKeyId !== normalizedPublicKeyId) {
+          continue
+        }
+        const invite = [...share.invites]
+          .filter((entry) => entry.collaboratorId === participant.collaboratorId && Boolean(entry.roomId))
+          .sort((a, b) => b.createdAt - a.createdAt)[0]
+        if (!invite?.roomId) continue
+        candidates.push({
+          shareId: share.shareId,
+          chatId: share.chatId,
+          mode: share.mode,
+          inviteId: invite.inviteId,
+          roomId: invite.roomId,
+          inviteExpiresAt: invite.expiresAt,
+          participant: { ...participant }
+        })
+      }
+    }
+
+    return candidates.sort((a, b) => b.inviteExpiresAt - a.inviteExpiresAt)
   }
 
   getShare(shareId: string): HumanCollaborationShare | null {
