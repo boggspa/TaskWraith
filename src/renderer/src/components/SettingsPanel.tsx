@@ -85,6 +85,7 @@ import { ApprovalLedgerPanel } from './ApprovalLedgerPanel'
 // daemon/APNs configuration sit together as a single device-management
 // page.
 import { PairingPage } from './PairingPage'
+import { SharesPanel } from './SharesPanel'
 import { CommittedDraftField } from './CommittedDraftField'
 import { MessagesBridgePanel } from './MessagesBridgePanel'
 import { ImageGenerationSettingsCard } from './ImageGenerationSettingsCard'
@@ -969,6 +970,7 @@ export type SettingsTab =
   | 'safety-privacy'
   | 'messages'
   | 'pairing'
+  | 'shares'
   | 'workspaces'
   | 'pinned-messages'
   | 'model-usage'
@@ -1099,6 +1101,14 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     description: 'iPhone and iPad pairing, remote workspace access, Tailscale, bridge networking, and push wake.',
     aliases: ['ios', 'iphone', 'ipad', 'remote', 'pairing', 'tailscale', 'apns', 'mobile', 'bridge'],
     scope: 'device'
+  },
+  {
+    id: 'shares',
+    label: 'Shares',
+    group: 'integrations',
+    description: 'Chats shared with human collaborators — participants, access mode, and per-share revoke.',
+    aliases: ['share', 'shares', 'shared chats', 'collaborators', 'people', 'collaboration', 'guests', 'invite'],
+    scope: 'global'
   },
   {
     id: 'messages',
@@ -6140,6 +6150,9 @@ export function SettingsPanel({
 
         {/* ── Pairing (post-1.0.2: folded in from the legacy modal sheet) ── */}
         {activeTab === 'pairing' && <PairingPage />}
+
+        {/* ── Shares (human collaboration lifecycle) ─────────────────────── */}
+        {activeTab === 'shares' && <SharesPanel />}
       </div>
       {/* end settings-panel-content */}
     </div>

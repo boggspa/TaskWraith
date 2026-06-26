@@ -750,6 +750,141 @@
   background: rgba(220, 80, 80, 0.14);
   color: rgba(255, 200, 200, 0.95);
 }
+
+/* Settings → Shares (human collaboration lifecycle). */
+.shares-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.shares-panel-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.shares-panel-note {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  margin: 0;
+}
+.shares-panel-empty {
+  padding: 14px 12px;
+}
+.shares-panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.shares-panel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  background: color-mix(in srgb, var(--panel-elevated-bg, var(--surface-1)) 60%, transparent);
+}
+.shares-panel-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.shares-panel-card-title-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.shares-panel-card-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shares-panel-card-mode {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+}
+.shares-panel-revoke {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--danger, #e2554f) 45%, transparent);
+  background: color-mix(in srgb, var(--danger, #e2554f) 12%, transparent);
+  color: color-mix(in srgb, var(--danger, #e2554f) 92%, var(--text-primary));
+  font: inherit;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 5px 11px;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.shares-panel-revoke:hover,
+.shares-panel-revoke:focus-visible {
+  background: color-mix(in srgb, var(--danger, #e2554f) 20%, transparent);
+  outline: none;
+}
+.shares-panel-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.shares-panel-muted {
+  font-size: var(--font-size-sm, 13px);
+  color: var(--text-secondary);
+}
+.shares-panel-participants {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.shares-panel-participant {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-sm, 13px);
+}
+.shares-panel-participant-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shares-panel-participant-status {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+}
+.shares-panel-dot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-secondary) 45%, transparent);
+}
+.shares-panel-dot.is-active {
+  background: var(--success, #34d399);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--success, #34d399) 55%, transparent);
+}
+.shares-panel-dot.is-pending {
+  background: var(--warning, #f5b14c);
+}
+.shares-panel-open-invites {
+  font-size: var(--font-size-xs, 11px);
+}
 .approval-grant-admin {
   display: flex;
   flex-direction: column;

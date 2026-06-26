@@ -21431,10 +21431,7 @@ function App(): React.JSX.Element {
                   setInspectingRunId(runId)
                 }}
                 onOpenSettingsTab={(tab) => {
-                  // 'shares' joins the SettingsTab union in a later slice; cast
-                  // until then so the deep-link wiring lands with the footer
-                  // popovers.
-                  setSettingsActiveTab(tab as SettingsTab)
+                  setSettingsActiveTab(tab)
                   setShowSettings(true)
                 }}
                 pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}

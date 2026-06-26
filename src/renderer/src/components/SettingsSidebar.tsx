@@ -134,6 +134,14 @@ function SettingsTabSymbolIcon({ tab }: { tab: SettingsTab }) {
         <rect x="4.5" y="1.8" width="7" height="12.4" rx="1.5" />
         <path d="M7 3.7h2M7.3 12.2h1.4" />
       </svg>
+    ) : tab === 'shares' ? (
+      <svg {...common}>
+        <circle cx="8" cy="3.7" r="1.85" />
+        <circle cx="3.9" cy="12.1" r="1.85" />
+        <circle cx="12.1" cy="12.1" r="1.85" />
+        <path d="M6.8 5.2 5.1 10.5" />
+        <path d="M9.2 5.2 10.9 10.5" />
+      </svg>
     ) : tab === 'workspaces' ? (
       <svg {...common}>
         <path d="M2.5 5.2h4l1 1.3h6v5.8a1.2 1.2 0 0 1-1.2 1.2H3.7a1.2 1.2 0 0 1-1.2-1.2Z" />
