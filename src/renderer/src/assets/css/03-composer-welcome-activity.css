@@ -7785,7 +7785,7 @@
     max-width: 84px;
   }
 
-  .composer-secondary-command:not(.composer-command-palette-trigger) {
+  .composer-secondary-command {
     display: none;
   }
 

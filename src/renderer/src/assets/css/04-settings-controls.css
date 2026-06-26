@@ -5366,29 +5366,6 @@ input:disabled, select:disabled, textarea:disabled {
   overflow: hidden;
 }
 
-/* Command palette (the .composer-discovery-card.command-palette-card variant)
-   floats over the transcript — frost it so text behind stays legible. Scoped to
-   the modifier so the standalone discovery card is untouched. */
-.command-palette-card {
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  isolation: isolate;
-}
-/* native_glass floors: --app-bg-elevated collapses to ~0.04-0.06 alpha there,
-   see-through even blurred — floor to an opaque surface token. */
-[data-appearance='native_glass']:is(
-    [data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage']
-  )
-  .command-palette-card {
-  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
-}
-[data-appearance='native_glass']:not(
-    :is([data-theme='light'], [data-theme='citrus'], [data-theme='mist'], [data-theme='sage'])
-  )
-  .command-palette-card {
-  background: color-mix(in srgb, var(--surface-2) 64%, transparent);
-}
-
 .composer-discovery-header {
   display: flex;
   align-items: flex-start;
@@ -5413,23 +5390,6 @@ input:disabled, select:disabled, textarea:disabled {
   color: var(--text-secondary);
 }
 
-.command-palette-search {
-  width: 100%;
-  border: 1px solid var(--sidebar-border);
-  border-radius: var(--radius-sm);
-  background: var(--input-bg);
-  color: var(--text-primary);
-  padding: var(--space-sm) var(--space-md);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  outline: none;
-}
-
-.command-palette-search:focus {
-  border-color: var(--accent);
-}
-
-.command-palette-list,
 .memory-file-list {
   overflow-y: auto;
   min-height: 0;
@@ -5439,64 +5399,6 @@ input:disabled, select:disabled, textarea:disabled {
   padding-right: 2px;
 }
 
-.command-palette-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.command-palette-group-title {
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-  padding: 2px var(--space-xs);
-}
-
-.command-palette-item {
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  display: grid;
-  grid-template-columns: minmax(112px, 0.42fr) minmax(0, 1fr);
-  gap: var(--space-md);
-  padding: var(--space-sm);
-  cursor: pointer;
-}
-
-.command-palette-item:hover,
-.command-palette-item:focus-visible {
-  border-color: var(--sidebar-border);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.command-palette-command {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
-  color: var(--accent);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.command-palette-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.command-palette-copy strong {
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-}
-
-.command-palette-copy span,
-.command-palette-copy small,
-.command-palette-empty,
 .memory-file-empty {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);

@@ -2,41 +2,28 @@ import type { ProviderCapabilityContract, ProviderId } from '../../../main/store
 
 /**
  * ComposerSlashCommands — single source of truth for the chat composer's
- * slash picker AND the existing Cmd-K command palette. Migrated out of
- * App.tsx so both surfaces consume the same data without drift.
+ * slash picker, including the Cmd-K shortcut entry point. Migrated out of
+ * App.tsx so command data and dispatch stay in one place.
  *
- * The legacy CommandPaletteItem types live here too because the existing
- * palette wiring keeps using them — the slash picker wraps each
+ * The legacy CommandPaletteItem adapter types live here too because provider
+ * command dispatch still uses them — the slash picker wraps each
  * CommandPaletteItem in a `palette-passthrough` ComposerSlashCommand and
  * delegates dispatch to the existing `handlePaletteCommand`, so no
  * duplicate dispatch logic.
  *
- * Subsequent layers will introduce additional `kind`s
- * (`action`, `prompt-template`, `gemini-pty`, `insert`) for commands
+ * Additional layers introduce `kind`s
+ * (`action`, `prompt-template`, `insert`) for commands
  * that don't fit the legacy palette shape.
  */
 
 // ---------------------------------------------------------------------------
-// Legacy CommandPaletteItem types — verbatim relocation from App.tsx so the
-// existing Cmd-K palette can keep importing them. Any future palette
-// behaviour changes should happen here; the types are no longer fragmented
-// between App.tsx and the new picker surface.
+// Legacy CommandPaletteItem adapter types — verbatim relocation from App.tsx.
+// Provider-backed slash commands still use this shape for dispatch, while the
+// visible command surface is the slash picker.
 // ---------------------------------------------------------------------------
 
 export type CommandPaletteSource = 'core' | 'workspace' | 'global'
 export type CommandPaletteGroup = 'Core' | 'Discovery' | 'Memory' | 'Inspectors' | 'Custom'
-
-/**
- * Items can carry an optional `action` identifier when the palette entry
- * should trigger a renderer-side state change instead of sending a slash
- * command through the bridge. Used by the Gemini-only quick toggles
- * (persistent session, checkpoints, GEMINI.md inspector, /restore).
- */
-export type CommandPaletteAction =
-  | 'restore-checkpoint'
-  | 'toggle-memory-inspector'
-  | 'toggle-persistent-session'
-  | 'toggle-checkpoints'
 
 export interface CommandPaletteItem {
   id: string
@@ -46,7 +33,6 @@ export interface CommandPaletteItem {
   group: CommandPaletteGroup
   source: CommandPaletteSource
   sourcePath?: string
-  action?: CommandPaletteAction
 }
 
 // ---------------------------------------------------------------------------
@@ -55,96 +41,7 @@ export interface CommandPaletteItem {
 // derive the same data without re-importing the App component.
 // ---------------------------------------------------------------------------
 
-export const GEMINI_PALETTE_CORE: CommandPaletteItem[] = [
-  {
-    id: 'core-help',
-    command: '/help',
-    label: 'Help',
-    description: 'Show Gemini CLI slash command help.',
-    group: 'Core',
-    source: 'core'
-  },
-  {
-    id: 'core-gemini-help',
-    command: '/gemini-help',
-    label: 'Gemini CLI help',
-    description: 'Send /help to the Gemini CLI without colliding with TaskWraith Help.',
-    group: 'Core',
-    source: 'core'
-  },
-  {
-    id: 'core-stats',
-    command: '/stats',
-    label: 'Stats',
-    description: 'Show current Gemini session usage and stats.',
-    group: 'Core',
-    source: 'core'
-  },
-  {
-    id: 'core-commands-list',
-    command: '/commands list',
-    label: 'List commands',
-    description: 'Ask Gemini CLI to list built-in and custom commands.',
-    group: 'Discovery',
-    source: 'core'
-  },
-  {
-    id: 'core-commands-reload',
-    command: '/commands reload',
-    label: 'Reload commands',
-    description: 'Reload Gemini CLI custom command definitions.',
-    group: 'Discovery',
-    source: 'core'
-  },
-  {
-    id: 'core-memory-list',
-    command: '/memory list',
-    label: 'List memory',
-    description: 'Ask Gemini CLI which memory files are loaded.',
-    group: 'Memory',
-    source: 'core'
-  },
-  {
-    id: 'core-memory-show',
-    command: '/memory show',
-    label: 'Show memory',
-    description: 'Ask Gemini CLI to print active memory contents.',
-    group: 'Memory',
-    source: 'core'
-  },
-  {
-    id: 'core-memory-refresh',
-    command: '/memory refresh',
-    label: 'Refresh memory',
-    description: 'Reload memory from GEMINI.md files without editing them.',
-    group: 'Memory',
-    source: 'core'
-  },
-  {
-    id: 'core-mcp',
-    command: '/mcp',
-    label: 'MCP',
-    description: 'Open Gemini CLI MCP server status.',
-    group: 'Inspectors',
-    source: 'core'
-  },
-  {
-    id: 'core-extensions',
-    command: '/extensions',
-    label: 'Extensions',
-    description: 'Open Gemini CLI extension status.',
-    group: 'Inspectors',
-    source: 'core'
-  },
-  {
-    id: 'core-hooks',
-    command: '/hooks',
-    label: 'Hooks',
-    description: 'Open Gemini CLI hook status.',
-    group: 'Inspectors',
-    source: 'core'
-  }
-]
+export const RETIRED_PROVIDER_PALETTE_CORE: CommandPaletteItem[] = []
 
 export const CODEX_PALETTE_CORE: CommandPaletteItem[] = [
   {
@@ -289,13 +186,6 @@ export interface PalettePassthroughCommand extends ComposerSlashCommandBase {
   paletteItem: CommandPaletteItem
 }
 
-/** Live Gemini CLI command — written into the persistent session via
- * `writeGeminiSession`. Only Gemini supports this kind (the other three
- * providers don't have a PTY-backed session that consumes slash text). */
-export interface GeminiPtyCommand extends ComposerSlashCommandBase {
-  kind: 'gemini-pty'
-}
-
 /**
  * Context handed to an `action` command's `run()` at dispatch time.
  *
@@ -354,7 +244,6 @@ export interface InsertCommand extends ComposerSlashCommandBase {
 
 export type ComposerSlashCommand =
   | PalettePassthroughCommand
-  | GeminiPtyCommand
   | ActionCommand
   | PromptTemplateCommand
   | InsertCommand
@@ -380,13 +269,10 @@ export function wrapPaletteItemAsSlashCommand(item: CommandPaletteItem): Palette
 
 export interface ComposerSlashRegistryInput {
   provider: ProviderId
-  /** Already-resolved palette items for the current provider + chat
-   * state. The renderer keeps ownership of the dynamic context
-   * (persistent session enabled, discovered commands, etc.) and feeds
-   * the resolved list in here. */
+  /** Already-resolved palette items for the current provider + chat state. */
   paletteItems: CommandPaletteItem[]
   /** Additional slash commands that don't map cleanly to legacy palette
-   * items — `action`, `prompt-template`, `gemini-pty`, `insert`. The
+   * items — `action`, `prompt-template`, `insert`. The
    * builder concatenates these after the palette-passthrough block. */
   extraCommands?: ComposerSlashCommand[]
   /** Provider capability snapshot for the current chat scope. When
@@ -449,8 +335,7 @@ export function dedupeComposerSlashCommands(
 }
 
 /** Filter a registry by user-typed query against label / description /
- * command / group. Substring match, case-insensitive — matches the
- * Cmd-K palette behaviour at App.tsx:11881. */
+ * command / group / source path. Substring match, case-insensitive. */
 export function filterComposerSlashCommands(
   commands: ComposerSlashCommand[],
   query: string
@@ -458,7 +343,9 @@ export function filterComposerSlashCommands(
   const needle = query.trim().toLowerCase()
   if (!needle) return commands
   return commands.filter((command) => {
-    const haystack = `${command.command} ${command.label} ${command.description} ${command.group}`
+    const sourcePath =
+      command.kind === 'palette-passthrough' ? command.paletteItem.sourcePath || '' : ''
+    const haystack = `${command.command} ${command.label} ${command.description} ${command.group} ${sourcePath}`
     return haystack.toLowerCase().includes(needle)
   })
 }
@@ -557,15 +444,12 @@ export const COMPOSER_SLASH_GROUP_ORDER: CommandPaletteGroup[] = [
 ]
 
 /** Resolve the per-provider palette core. Mirrors the routing logic at
- * App.tsx:11874 (codex → CODEX, non-Gemini CLI providers → CLI_PROVIDER, gemini →
- * GEMINI). The caller still owns merging with discovered commands and
- * Gemini's quick-toggle items because those are context-dependent.
- *
+ * App.tsx:11874 (codex → CODEX, non-Codex CLI providers → CLI_PROVIDER).
  * Grok/Cursor/Ollama take the generic CLI core: provider-native TUI slash
- * commands are not reachable over our headless/ACP/local run paths, and the
- * Gemini core's PTY-backed entries ("Ask Gemini CLI…", /memory, /extensions)
- * are meaningless outside Gemini. /review here is TaskWraith's own read-only
- * diff review (reviewDiffPrompt + a plan-mode run), provider-agnostic. */
+ * commands are not reachable over our headless/ACP/local run paths. /review
+ * here is TaskWraith's own read-only diff review (reviewDiffPrompt + a
+ * plan-mode run), provider-agnostic. Retired provider ids intentionally return
+ * an empty command set. */
 export function paletteCoreForProvider(provider: ProviderId): CommandPaletteItem[] {
   if (provider === 'codex') return CODEX_PALETTE_CORE
   if (
@@ -577,5 +461,5 @@ export function paletteCoreForProvider(provider: ProviderId): CommandPaletteItem
   ) {
     return CLI_PROVIDER_PALETTE_CORE
   }
-  return GEMINI_PALETTE_CORE
+  return RETIRED_PROVIDER_PALETTE_CORE
 }

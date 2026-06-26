@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import {
-  GEMINI_PALETTE_CORE,
   CODEX_PALETTE_CORE,
   CLI_PROVIDER_PALETTE_CORE,
   COMPOSER_SLASH_GROUP_ORDER,
@@ -18,7 +17,7 @@ import {
 describe('ComposerSlashCommands', () => {
   describe('wrapPaletteItemAsSlashCommand', () => {
     it('wraps a CommandPaletteItem as a palette-passthrough ComposerSlashCommand', () => {
-      const item = GEMINI_PALETTE_CORE[0]
+      const item = CODEX_PALETTE_CORE[0]
       const wrapped = wrapPaletteItemAsSlashCommand(item)
       expect(wrapped.kind).toBe('palette-passthrough')
       expect(wrapped.id).toBe(item.id)
@@ -28,14 +27,14 @@ describe('ComposerSlashCommands', () => {
       expect(wrapped.group).toBe(item.group)
       // The original item is retained so the dispatcher can route it to
       // the existing handlePaletteCommand without losing fields like
-      // `source`, `sourcePath`, or `action`.
+      // `source` or `sourcePath`.
       expect(wrapped.paletteItem).toBe(item)
     })
   })
 
   describe('paletteCoreForProvider', () => {
-    it('returns GEMINI_PALETTE_CORE for gemini', () => {
-      expect(paletteCoreForProvider('gemini')).toBe(GEMINI_PALETTE_CORE)
+    it('returns no commands for retired Gemini chats', () => {
+      expect(paletteCoreForProvider('gemini')).toEqual([])
     })
     it('returns CODEX_PALETTE_CORE for codex', () => {
       expect(paletteCoreForProvider('codex')).toBe(CODEX_PALETTE_CORE)
@@ -46,11 +45,10 @@ describe('ComposerSlashCommands', () => {
     it('returns CLI_PROVIDER_PALETTE_CORE for kimi', () => {
       expect(paletteCoreForProvider('kimi')).toBe(CLI_PROVIDER_PALETTE_CORE)
     })
-    it('returns CLI_PROVIDER_PALETTE_CORE for grok (generic /review, not the Gemini PTY set)', () => {
+    it('returns CLI_PROVIDER_PALETTE_CORE for grok', () => {
       // Grok's TUI slash commands (e.g. /code-review on 0.2.51) don't exist
       // over the headless/ACP run path; the generic CLI core gives a Grok
-      // chat TaskWraith's own read-only /review + /diff instead of Gemini's
-      // PTY-backed entries.
+      // chat TaskWraith's own read-only /review + /diff.
       expect(paletteCoreForProvider('grok')).toBe(CLI_PROVIDER_PALETTE_CORE)
     })
     it('returns CLI_PROVIDER_PALETTE_CORE for cursor', () => {
@@ -64,10 +62,10 @@ describe('ComposerSlashCommands', () => {
   describe('buildComposerSlashCommandRegistry', () => {
     it('wraps every palette item as a palette-passthrough entry', () => {
       const result = buildComposerSlashCommandRegistry({
-        provider: 'gemini',
-        paletteItems: GEMINI_PALETTE_CORE
+        provider: 'codex',
+        paletteItems: CODEX_PALETTE_CORE
       })
-      expect(result).toHaveLength(GEMINI_PALETTE_CORE.length)
+      expect(result).toHaveLength(CODEX_PALETTE_CORE.length)
       for (const entry of result) {
         expect(entry.kind).toBe('palette-passthrough')
       }
@@ -201,7 +199,7 @@ describe('ComposerSlashCommands', () => {
 
     it('produces an empty registry when no items are provided', () => {
       const result = buildComposerSlashCommandRegistry({
-        provider: 'gemini',
+        provider: 'codex',
         paletteItems: []
       })
       expect(result).toEqual([])
@@ -293,8 +291,25 @@ describe('ComposerSlashCommands', () => {
   describe('matchLeadingSlashCommand', () => {
     it('matches the longest registered command, including multi-word commands', () => {
       const registry = buildComposerSlashCommandRegistry({
-        provider: 'gemini',
-        paletteItems: GEMINI_PALETTE_CORE
+        provider: 'codex',
+        paletteItems: [
+          {
+            id: 'custom-commands-list',
+            command: '/commands list',
+            label: 'List commands',
+            description: 'List available commands.',
+            group: 'Discovery',
+            source: 'core'
+          },
+          {
+            id: 'custom-commands-reload',
+            command: '/commands reload',
+            label: 'Reload commands',
+            description: 'Reload available commands.',
+            group: 'Discovery',
+            source: 'core'
+          }
+        ]
       })
 
       const match = matchLeadingSlashCommand('/commands reload now', registry)
@@ -304,8 +319,17 @@ describe('ComposerSlashCommands', () => {
 
     it('does not collapse incomplete multi-word commands to a sibling prefix', () => {
       const registry = buildComposerSlashCommandRegistry({
-        provider: 'gemini',
-        paletteItems: GEMINI_PALETTE_CORE
+        provider: 'codex',
+        paletteItems: [
+          {
+            id: 'custom-commands-list',
+            command: '/commands list',
+            label: 'List commands',
+            description: 'List available commands.',
+            group: 'Discovery',
+            source: 'core'
+          }
+        ]
       })
 
       expect(matchLeadingSlashCommand('/commands', registry)).toBeNull()
@@ -353,7 +377,7 @@ describe('ComposerSlashCommands', () => {
         source: 'workspace' as const
       }
       const registry = buildComposerSlashCommandRegistry({
-        provider: 'gemini',
+        provider: 'codex',
         paletteItems: [customPaletteItem]
       })
 
@@ -436,23 +460,6 @@ describe('ComposerSlashCommands', () => {
   })
 
   describe('per-provider palette parity', () => {
-    it('Gemini palette CORE has the expected entries', () => {
-      const ids = GEMINI_PALETTE_CORE.map((entry) => entry.id)
-      expect(ids).toEqual([
-        'core-help',
-        'core-gemini-help',
-        'core-stats',
-        'core-commands-list',
-        'core-commands-reload',
-        'core-memory-list',
-        'core-memory-show',
-        'core-memory-refresh',
-        'core-mcp',
-        'core-extensions',
-        'core-hooks'
-      ])
-    })
-
     it('Codex palette CORE has the expected entries', () => {
       const ids = CODEX_PALETTE_CORE.map((entry) => entry.id)
       expect(ids).toEqual([

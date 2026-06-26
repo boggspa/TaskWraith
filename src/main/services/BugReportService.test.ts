@@ -29,8 +29,8 @@ import {
 const baseSubmission: BugReportSubmission = {
   title: 'Composer freezes after Cmd+K',
   description:
-    'I opened the command palette, typed "new chat", and the\ncomposer stopped accepting keystrokes.',
-  expected: 'Composer should accept input after Cmd+K closes the palette.',
+    'I opened slash commands, typed "new chat", and the\ncomposer stopped accepting keystrokes.',
+  expected: 'Composer should accept input after Cmd+K closes slash commands.',
   severity: 'major',
   context: {
     timestamp: '2026-05-24T19:10:00.000Z',

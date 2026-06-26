@@ -19,7 +19,7 @@ function keyEvent(input: {
 }
 
 describe('key command bindings', () => {
-  it('resolves defaults and matches the command palette shortcut', () => {
+  it('resolves defaults and matches the slash commands shortcut', () => {
     const bindings = resolveKeyCommandBindings({})
 
     expect(formatKeyCommandBinding(bindings['command-palette'])).toEqual(['Cmd/Ctrl', 'K'])

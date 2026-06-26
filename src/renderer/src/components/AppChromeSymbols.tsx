@@ -649,7 +649,7 @@ export function PlusSymbolIcon() {
 }
 
 // Composer-unification (Phase J1): ChartBarSymbolIcon was only used by
-// the Gemini-only `/stats` button which moved into the command palette.
+// the retired Gemini-only `/stats` button.
 // The dead icon component is removed; if a future surface needs a
 // chart-bar glyph we can re-add it then.
 
@@ -879,9 +879,7 @@ export function FolderSymbolIcon() {
 }
 
 // Composer-unification (Phase J1): CheckpointSymbolIcon was only used
-// by the Gemini-only Checkpoints toggle button which moved into the
-// command palette (and the palette uses text labels, not glyphs, for
-// the toggle items). Dead icon removed.
+// by the retired Gemini-only Checkpoints toggle button. Dead icon removed.
 
 // Composer-unification (Phase J1): the previous WorktreeSymbolIcon was
 // consumed only by the Gemini-only worktree button in the top-toggles

@@ -48,7 +48,6 @@ import { WelcomeWorkspacePicker } from '../components/WelcomeWorkspacePicker'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
 import { extractFirstEnsembleDmTarget, formatComposerPathMention, parseComposerMentionTrigger } from '../lib/ComposerMentionTrigger'
 import {
-  GEMINI_PALETTE_CORE as COMMAND_PALETTE_CORE,
   hasSlashCommandPlaceholders,
   slashCommandDispatchPrefix,
   matchLeadingSlashCommand
@@ -65,8 +64,6 @@ import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
 import { buildParticipantToolGrantPatch, getParticipantToolGrantIds } from '../lib/ensembleParticipantToolGrants'
 import { getDefaultEnsembleParticipantConfig, resolveEnsembleParticipantSettings } from '../lib/ensembleProviderDefaults'
-import { formatBytes } from '../lib/formatBytes'
-import { getMemoryPreviewText } from '../lib/geminiCommandDiscovery'
 import {
   MAX_IMAGE_ATTACHMENTS,
   collectClipboardAttachmentPaths,
@@ -126,9 +123,6 @@ export interface ComposerProps {
   codexReasoningEffort: any
   codexReasoningOptions: any
   codexServiceTier: any
-  commandDiscoveryStatus: any
-  commandPaletteGroups: any
-  commandPaletteQuery: any
   composerAboveBarStackAuraClass: any
   composerAgentAuraClass: any
   composerAreaRef: any
@@ -184,8 +178,6 @@ export interface ComposerProps {
   formatPlanImportCostEstimate: any
   formatPlanImportRunConstraintValue: any
   formatPlanImportTokenEstimate: any
-  geminiMemoryFiles: any
-  geminiMemoryStatus: any
   geminiTrustWriteBusy: any
   geminiTrustWriteError: any
   geminiWorkspaceTrustReady: any
@@ -257,7 +249,8 @@ export interface ComposerProps {
   intentNote: any
   interfaceStyle: any
   isAttachingWindow: any
-  isCommandPaletteOpen: any
+  /** Monotonic external request to open slash commands. */
+  openSlashCommandsRequestId: number
   isCurrentChatBusyForSteer: any
   isCurrentChatProviderLocked: any
   isCurrentChatRunning: any
@@ -267,7 +260,6 @@ export interface ComposerProps {
   isCurrentGlobalChat: any
   isCurrentGuestParticipantRunning: any
   isEnsembleModeEnabled: any
-  isMemoryInspectorOpen: any
   isPreparingDiffReview: any
   isSteerBusyForCurrentChat: any
   isWelcomeChat: any
@@ -307,10 +299,6 @@ export interface ComposerProps {
   providerRates: any
   queuedMessagesAboveRowEntries: any
   queuedRunQueueCount: any
-  refreshCodexThreads: any
-  refreshCommandDiscovery: any
-  refreshGeminiMemory: any
-  refreshProviderMetadata: any
   refreshWorkflowState: any
   rememberCurrentChatComposerSelection: any
   renderPlanImportFileGroundings: any
@@ -332,7 +320,6 @@ export interface ComposerProps {
   setClaudeReasoningEffort: any
   setCodexReasoningEffort: any
   setCodexServiceTier: any
-  setCommandPaletteQuery: any
   setCurrentChat: any
   setCustomModel: any
   setDiffActionMenuOpen: any
@@ -342,7 +329,6 @@ export interface ComposerProps {
   setGoalPopoverOpen: any
   setGuestParticipantForCurrentChat: any
   setIntentNote: any
-  setIsCommandPaletteOpen: any
   setKimiThinkingEnabled: any
   setLastNonCustomModelType: any
   setPendingElevation: any
@@ -372,7 +358,6 @@ export interface ComposerProps {
   updateCurrentEnsembleOrchestrationMode: any
   updateCurrentGoalStatus: any
   updateSelectedParticipant: any
-  visibleCommandPaletteItems: any
   visibleScheduledTasks: any
   welcomeCopy: any
   welcomeHeatmapSlots: any
@@ -417,9 +402,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     codexReasoningEffort,
     codexReasoningOptions,
     codexServiceTier,
-    commandDiscoveryStatus,
-    commandPaletteGroups,
-    commandPaletteQuery,
     composerAboveBarStackAuraClass,
     composerAgentAuraClass,
     composerAreaRef,
@@ -475,8 +457,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     formatPlanImportCostEstimate,
     formatPlanImportRunConstraintValue,
     formatPlanImportTokenEstimate,
-    geminiMemoryFiles,
-    geminiMemoryStatus,
     geminiTrustWriteBusy,
     geminiTrustWriteError,
     geminiWorkspaceTrustReady,
@@ -548,7 +528,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     intentNote,
     interfaceStyle,
     isAttachingWindow,
-    isCommandPaletteOpen,
+    openSlashCommandsRequestId,
     isCurrentChatBusyForSteer,
     isCurrentChatProviderLocked,
     isCurrentChatRunning,
@@ -558,7 +538,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     isCurrentGlobalChat,
     isCurrentGuestParticipantRunning,
     isEnsembleModeEnabled,
-    isMemoryInspectorOpen,
     isPreparingDiffReview,
     isSteerBusyForCurrentChat,
     isWelcomeChat,
@@ -597,10 +576,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     providerRates,
     queuedMessagesAboveRowEntries,
     queuedRunQueueCount,
-    refreshCodexThreads,
-    refreshCommandDiscovery,
-    refreshGeminiMemory,
-    refreshProviderMetadata,
     refreshWorkflowState,
     rememberCurrentChatComposerSelection,
     renderPlanImportFileGroundings,
@@ -622,7 +597,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setClaudeReasoningEffort,
     setCodexReasoningEffort,
     setCodexServiceTier,
-    setCommandPaletteQuery,
     setCurrentChat,
     setCustomModel,
     setDiffActionMenuOpen,
@@ -632,7 +606,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setGoalPopoverOpen,
     setGuestParticipantForCurrentChat,
     setIntentNote,
-    setIsCommandPaletteOpen,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
     setPendingElevation,
@@ -662,7 +635,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     updateCurrentEnsembleOrchestrationMode,
     updateCurrentGoalStatus,
     updateSelectedParticipant,
-    visibleCommandPaletteItems,
     visibleScheduledTasks,
     welcomeCopy,
     welcomeHeatmapSlots,
@@ -780,6 +752,63 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const sendConfirmationTimeoutRef = useRef<number | null>(null)
   const sendConfirmationRafRef = useRef<number | null>(null)
 
+  const parseSlashTokenBeforeCaret = (
+    text: string,
+    caret: number
+  ): { anchor: number; query: string } | null => {
+    const safeCaret = Math.max(0, Math.min(caret, text.length))
+    const before = text.slice(0, safeCaret)
+    const slashMatch = before.match(/(?:^|\s)\/([\w-]*)$/)
+    if (!slashMatch) return null
+    const query = slashMatch[1] || ''
+    return {
+      anchor: safeCaret - query.length - 1,
+      query
+    }
+  }
+
+  /**
+   * Open the slash command menu at the current textarea cursor.
+   * Reuses an existing slash token immediately before the caret when present.
+   * Otherwise inserts a fresh slash trigger at the caret without discarding
+   * existing draft text. If the caret is adjacent to a word, insert a leading
+   * space too so subsequent query typing still matches the slash-token parser.
+   */
+  const openSlashCommandsMenu = (): void => {
+    const ta = composerTextareaRef.current
+    const text = prompt
+    const caret = ta?.selectionStart ?? text.length
+    const safeCaret = Math.max(0, Math.min(caret, text.length))
+    const token = parseSlashTokenBeforeCaret(text, safeCaret)
+    const query = token ? token.query : ''
+    const needsLeadingSpace = !token && safeCaret > 0 && !/\s/.test(text[safeCaret - 1])
+    const insertedTrigger = needsLeadingSpace ? ' /' : '/'
+    const anchor = token ? token.anchor : safeCaret + (needsLeadingSpace ? 1 : 0)
+
+    if (!token) {
+      setChatPromptDraft(
+        currentComposerChatId,
+        `${text.slice(0, safeCaret)}${insertedTrigger}${text.slice(safeCaret)}`
+      )
+    }
+
+    slashAnchorIndexRef.current = anchor
+    setSlashQuery(query)
+    setSlashMenuOpen(true)
+    if (mentionMenuOpen) {
+      setMentionMenuOpen(false)
+      setMentionQuery('')
+      mentionAnchorIndexRef.current = null
+    }
+    requestAnimationFrame(() => {
+      const textarea = composerTextareaRef.current
+      if (!textarea) return
+      const nextCaret = anchor + 1 + query.length
+      textarea.focus()
+      textarea.setSelectionRange(nextCaret, nextCaret)
+    })
+  }
+
   // 1.0.4-AQ3 — caret-restore layout effect. Snapshots the caret in
   // `onChange` (before React reconciles), then re-applies it post-commit
   // if it doesn't already match. Only runs when the textarea is focused
@@ -803,6 +832,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       // retry. Better than a thrown error breaking the round.
     }
   }, [prompt])
+
+  useEffect(() => {
+    if (openSlashCommandsRequestId <= 0) return
+    openSlashCommandsMenu()
+  }, [openSlashCommandsRequestId])
 
   const triggerSendConfirmation = () => {
     if (!currentChat || (!isCurrentGlobalChat && !currentWorkspace) || !prompt.trim()) return
@@ -1040,13 +1074,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
             focusComposerTextarea(prompt.length)
           }
           return
-        case 'gemini-pty':
-          // PTY pass-through — only viable on Gemini (Codex/Claude/Kimi
-          // run-process invocations don't surface a live CLI). Bridge
-          // command failure (no persistent session) surfaces via the
-          // existing raw-events logging that handleBridgeCommand owns.
-          void handleBridgeCommand(command.command)
-          return
         case 'action':
           void command.run(buildSlashRunContext())
           return
@@ -1093,7 +1120,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     }
     // For dispatch kinds that consume the token themselves (insert /
     // template), skip the generic strip. For everything else (palette-
-    // passthrough / gemini-pty / action), strip the slash token first
+    // passthrough / action), strip the slash token first
     // so the next user prompt starts clean.
     if (command.kind !== 'insert' && command.kind !== 'prompt-template') {
       consumeSlashTokenFromPrompt()
@@ -1151,14 +1178,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       if (shouldClearDraft) {
         setChatPromptDraft(currentComposerChatId, '')
       }
-      return true
-    }
-    if (command.kind === 'gemini-pty') {
-      const commandText = match.remainder
-        ? `${command.command} ${match.remainder}`
-        : command.command
-      void handleBridgeCommand(commandText)
-      setChatPromptDraft(currentComposerChatId, '')
       return true
     }
     if (command.kind === 'prompt-template') {
@@ -1928,12 +1947,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
               )}
               {/*
                 Composer-unification (Phase J1): one uniform top-toggles row
-                for every provider. Gemini's persistent-session + checkpoints
-                toggles moved into the command palette popover (see
-                `geminiQuickToggleItems` below) so the visible top row is
-                identical across providers: session indicator + permission
-                indicator + schedule + runtime profile. Provider
-                identity is expressed through theme tokens only.
+                for every provider: session indicator + permission indicator
+                + schedule + runtime profile. Provider identity is expressed
+                through theme tokens only.
               */}
               {/*
                 Phase K-followup — Removed the informational "New X
@@ -2136,16 +2152,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           // Whichever matches wins; the other is force-closed. Only
                           // one popover open at a time.
                           const caret = e.target.selectionStart ?? nextValue.length
-                          const before = nextValue.slice(0, caret)
-                          const slashMatch = before.match(/(?:^|\s)\/([\w-]*)$/)
+                          const slashMatch = parseSlashTokenBeforeCaret(nextValue, caret)
                           const mentionTrigger = !slashMatch
                             ? parseComposerMentionTrigger(nextValue, caret)
                             : null
                           if (slashMatch) {
-                            // The `/` itself sits at `caret - slashQueryLen - 1`.
-                            const queryLen = slashMatch[1].length
-                            slashAnchorIndexRef.current = caret - queryLen - 1
-                            setSlashQuery(slashMatch[1] || '')
+                            slashAnchorIndexRef.current = slashMatch.anchor
+                            setSlashQuery(slashMatch.query)
                             setSlashMenuOpen(true)
                             if (mentionMenuOpen) {
                               setMentionMenuOpen(false)
@@ -2973,184 +2986,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         </div>
                       </div>
                     )}
-                    {isCommandPaletteOpen && (
-                      <div className="composer-discovery-card command-palette-card">
-                        <div className="composer-discovery-header">
-                          <div>
-                            <strong>
-                              {currentProvider === 'gemini'
-                                ? 'Slash command palette'
-                                : `${currentProviderLabel} command palette`}
-                            </strong>
-                            <span>
-                              {currentProvider === 'gemini'
-                                ? commandDiscoveryStatus
-                                : `App-native ${currentProviderLabel} commands and provider controls.`}
-                            </span>
-                          </div>
-                          <div className="composer-discovery-actions">
-                            {currentProvider === 'gemini' ? (
-                              <button
-                                className="btn btn-sm btn-ghost"
-                                type="button"
-                                onClick={() => void refreshCommandDiscovery()}
-                                disabled={!currentWorkspace}
-                              >
-                                Refresh
-                              </button>
-                            ) : currentProvider === 'codex' ? (
-                              <button
-                                className="btn btn-sm btn-ghost"
-                                type="button"
-                                onClick={() => void refreshCodexThreads()}
-                                disabled={!currentWorkspace}
-                              >
-                                Refresh threads
-                              </button>
-                            ) : (
-                              <button
-                                className="btn btn-sm btn-ghost"
-                                type="button"
-                                onClick={() => void refreshProviderMetadata(currentProvider)}
-                                disabled={!currentWorkspace}
-                              >
-                                Refresh status
-                              </button>
-                            )}
-                            <button
-                              className="btn btn-sm btn-ghost"
-                              type="button"
-                              onClick={() => {
-                                setIsCommandPaletteOpen(false)
-                                setCommandPaletteQuery('')
-                              }}
-                            >
-                              Dismiss
-                            </button>
-                          </div>
-                        </div>
-                        <input
-                          className="command-palette-search"
-                          type="search"
-                          aria-label={`Filter ${currentProviderLabel} commands`}
-                          value={commandPaletteQuery}
-                          onChange={(event) => setCommandPaletteQuery(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Escape') {
-                              setIsCommandPaletteOpen(false)
-                              setCommandPaletteQuery('')
-                            }
-                          }}
-                          placeholder={
-                            currentProvider === 'gemini'
-                              ? 'Filter commands, memory, hooks...'
-                              : `Filter ${currentProviderLabel} commands...`
-                          }
-                          autoFocus
-                        />
-                        <div className="command-palette-list">
-                          {commandPaletteGroups.map((group) => {
-                            const groupItems = visibleCommandPaletteItems.filter(
-                              (item) => item.group === group
-                            )
-                            if (groupItems.length === 0) return null
-                            return (
-                              <div key={group} className="command-palette-group">
-                                <div className="command-palette-group-title">{group}</div>
-                                {groupItems.map((item) => (
-                                  <button
-                                    key={item.id}
-                                    className="command-palette-item"
-                                    type="button"
-                                    onClick={() => handlePaletteCommand(item)}
-                                    disabled={!currentWorkspace || !currentChat}
-                                    title={
-                                      currentProvider === 'gemini'
-                                        ? `Send ${item.command} to Gemini CLI`
-                                        : `Run ${item.command}`
-                                    }
-                                  >
-                                    <span className="command-palette-command">{item.command}</span>
-                                    <span className="command-palette-copy">
-                                      <strong>{item.label}</strong>
-                                      <span>{item.description}</span>
-                                      {item.sourcePath && <small>{item.sourcePath}</small>}
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
-                            )
-                          })}
-                          {visibleCommandPaletteItems.length === 0 && (
-                            <div className="command-palette-empty">
-                              No commands match this filter.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    {currentProvider === 'gemini' && isMemoryInspectorOpen && (
-                      <div className="composer-discovery-card memory-inspector-card">
-                        <div className="composer-discovery-header">
-                          <div>
-                            <strong>GEMINI.md memory</strong>
-                            <span>{geminiMemoryStatus}</span>
-                          </div>
-                          <button
-                            className="btn btn-sm btn-ghost"
-                            type="button"
-                            onClick={() => void refreshGeminiMemory()}
-                            disabled={!currentWorkspace}
-                          >
-                            Refresh
-                          </button>
-                        </div>
-                        <div className="memory-inspector-actions">
-                          {COMMAND_PALETTE_CORE.filter((item) => item.group === 'Memory').map(
-                            (item) => (
-                              <button
-                                key={item.id}
-                                className="composer-picker-command"
-                                type="button"
-                                onClick={() => void handleBridgeCommand(item.command)}
-                                disabled={!currentWorkspace || !currentChat}
-                              >
-                                <span className="composer-picker-command-slash">
-                                  {item.command}
-                                </span>
-                              </button>
-                            )
-                          )}
-                        </div>
-                        <div className="memory-file-list">
-                          {geminiMemoryFiles.map((file) => (
-                            <details key={file.id} className="memory-file-card">
-                              <summary>
-                                <span className={`memory-file-scope scope-${file.scope}`}>
-                                  {file.scope}
-                                </span>
-                                <span className="memory-file-path">{file.displayPath}</span>
-                                {file.sizeBytes !== undefined && (
-                                  <span className="memory-file-size">
-                                    {formatBytes(file.sizeBytes)}
-                                  </span>
-                                )}
-                              </summary>
-                              <pre
-                                className={`memory-file-content ${file.error ? 'memory-file-error' : ''}`}
-                              >
-                                {getMemoryPreviewText(file)}
-                              </pre>
-                            </details>
-                          ))}
-                          {geminiMemoryFiles.length === 0 && (
-                            <div className="memory-file-empty">
-                              No GEMINI.md files discovered yet.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
                     <div className="composer-inline-pickers">
                       <div className="composer-inline-pickers-left">
                         {(() => {
@@ -3278,18 +3113,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 : [
                                     {
                                       id: 'palette',
-                                      label:
-                                        currentProvider === 'gemini'
-                                          ? 'Slash commands'
-                                          : 'Command palette',
-                                      description:
-                                        currentProvider === 'gemini'
-                                          ? 'Gemini slash command palette'
-                                          : `${currentProviderLabel} command palette`,
+                                      label: 'Slash commands',
+                                      description: `${currentProviderLabel} slash command menu`,
                                       icon: <CommandSymbolIcon />,
-                                      active: isCommandPaletteOpen,
+                                      active: slashMenuOpen,
                                       disabled: workspaceActionDisabled,
-                                      onSelect: () => setIsCommandPaletteOpen((current) => !current)
+                                      onSelect: () => openSlashCommandsMenu()
                                     },
                                     {
                                       id: 'review',

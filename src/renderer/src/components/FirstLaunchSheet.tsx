@@ -832,8 +832,8 @@ export function FirstLaunchSheet({
               etc.
             </li>
             <li>
-              <strong>Cmd-K command palette.</strong> Anywhere in the app, press <kbd>Cmd</kbd>+
-              <kbd>K</kbd> for the global command palette.
+              <strong>Cmd-K opens slash commands.</strong> Anywhere in the app, press{' '}
+              <kbd>Cmd</kbd>+<kbd>K</kbd> to open the composer slash menu.
             </li>
             <li>
               <strong>Commit &amp; open PRs from the composer.</strong> The composer&apos;s{' '}

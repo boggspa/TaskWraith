@@ -191,7 +191,6 @@ import { getLiveToolFileDiffSummaries, liveSummariesAreFuzzy } from './lib/LiveF
 import { parseGeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type { GeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type {
-  CommandPaletteGroup,
   CommandPaletteItem,
   ComposerSlashCommand,
   SlashCommandRunContext
@@ -459,11 +458,6 @@ import { formatWorkDuration } from './lib/runCompleteSummary'
 import { ollamaMemoryUsageFields } from './lib/ollamaMemoryDisplay'
 import { fetchProviderRates, type RendererProviderRates } from './lib/providerRateEstimate'
 import {
-  mergeCommandPaletteItems,
-  normalizeDiscoveredCommandItems,
-  type GeminiMemoryFile
-} from './lib/geminiCommandDiscovery'
-import {
   buildWelcomeUsageDashboardData,
   type WelcomeUsageTab
 } from './lib/welcomeUsageDashboard'
@@ -568,16 +562,6 @@ function mergeTranscriptMediaRefs(
 }
 
 const EMPTY_AGENT_QUESTION_QUEUE: readonly AgentQuestionState[] = Object.freeze([])
-// Slice H: the command-palette group order is a fixed constant — hoisted to
-// module scope so its identity is stable (it was a per-render array literal,
-// which churned `composerCtx`/pane composer ctxs and blocked React.memo).
-const COMPOSER_COMMAND_PALETTE_GROUPS: readonly CommandPaletteGroup[] = Object.freeze([
-  'Core',
-  'Discovery',
-  'Memory',
-  'Inspectors',
-  'Custom'
-])
 // Slice H: stable empty placeholders for the focused-only guest-participant
 // pickers when projected into a (non-focused) Multiview pane — see
 // paneComposerCtx. Frozen module-scope arrays so their identity never changes.
@@ -2390,17 +2374,8 @@ function App(): React.JSX.Element {
   const [pendingAgentQuestionsByChatId, setPendingAgentQuestionsForChat] = usePerChatState<
     readonly AgentQuestionState[]
   >(EMPTY_AGENT_QUESTION_QUEUE)
-  const [commandPaletteOpenByChatId, setCommandPaletteOpenForChat] = usePerChatState(false)
-  const [commandPaletteQueryByChatId, setCommandPaletteQueryForChat] = usePerChatState('')
-  const [discoveredCommands, setDiscoveredCommands] = useState<CommandPaletteItem[]>([])
-  const [commandDiscoveryStatus, setCommandDiscoveryStatus] = useState(
-    'Static Gemini commands loaded.'
-  )
-  const [isMemoryInspectorOpen, setIsMemoryInspectorOpen] = useState(false)
-  const [geminiMemoryFiles, setGeminiMemoryFiles] = useState<GeminiMemoryFile[]>([])
-  const [geminiMemoryStatus, setGeminiMemoryStatus] = useState(
-    'GEMINI.md memory has not been inspected yet.'
-  )
+  const [slashCommandsOpenRequestByChatId, setSlashCommandsOpenRequestForChat] =
+    usePerChatState(0)
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([])
   const [workflowDefinitions, setWorkflowDefinitions] = useState<WorkflowDefinition[]>([])
   // First-class Workflows compose state. A workflow's chat is an ordinary
@@ -3114,12 +3089,9 @@ function App(): React.JSX.Element {
   const pendingAgentQuestions = currentComposerChatId
     ? pendingAgentQuestionsByChatId[currentComposerChatId] || EMPTY_AGENT_QUESTION_QUEUE
     : EMPTY_AGENT_QUESTION_QUEUE
-  const isCommandPaletteOpen = currentComposerChatId
-    ? Boolean(commandPaletteOpenByChatId[currentComposerChatId])
-    : false
-  const commandPaletteQuery = currentComposerChatId
-    ? commandPaletteQueryByChatId[currentComposerChatId] || ''
-    : ''
+  const slashCommandsOpenRequestId = currentComposerChatId
+    ? slashCommandsOpenRequestByChatId[currentComposerChatId] || 0
+    : 0
   const scheduleRunAt = currentComposerChatId
     ? scheduleRunAtByChatId[currentComposerChatId] || ''
     : ''
@@ -3321,13 +3293,11 @@ function App(): React.JSX.Element {
     const chatId = getCurrentComposerStateChatId()
     setPendingPlanImportForChat(chatId, value)
   }
-  const setCommandPaletteQuery = (value: string | ((previous: string) => string)) => {
+  const requestOpenSlashCommands = (): boolean => {
     const chatId = getCurrentComposerStateChatId()
-    setCommandPaletteQueryForChat(chatId, value)
-  }
-  const setIsCommandPaletteOpen = (value: boolean | ((previous: boolean) => boolean)) => {
-    const chatId = getCurrentComposerStateChatId()
-    setCommandPaletteOpenForChat(chatId, value)
+    if (!chatId) return false
+    setSlashCommandsOpenRequestForChat(chatId, (previous) => previous + 1)
+    return true
   }
   const setScheduleRunAt = (value: string | ((previous: string) => string)) => {
     const chatId = getCurrentComposerStateChatId()
@@ -6409,8 +6379,7 @@ function App(): React.JSX.Element {
       setComposerDraftForChat(chatId, '')
       setPendingPlanChoiceForChat(chatId, null)
       setPendingAgentQuestionsForChat(chatId, EMPTY_AGENT_QUESTION_QUEUE)
-      setCommandPaletteOpenForChat(chatId, false)
-      setCommandPaletteQueryForChat(chatId, '')
+      setSlashCommandsOpenRequestForChat(chatId, 0)
       setScheduleRunAtForChat(chatId, '')
     }
     setChats(Array.isArray(nextChats) ? nextChats : [])
@@ -6580,7 +6549,6 @@ function App(): React.JSX.Element {
     setDiffRefreshStatus('')
     setShowGeminiTerminal(false)
     setShowFileEditor(false)
-    setIsMemoryInspectorOpen(false)
     setScheduledTasks([])
     activeRunWorkspacePathRef.current = null
   }
@@ -6714,67 +6682,6 @@ function App(): React.JSX.Element {
     // Pre-fill the composer for the new sub-thread (per-chat draft).
     setChatPromptDraft(subThread.appChatId, delegationPrompt)
   }
-
-  const refreshCommandDiscovery = useCallback(
-    async (workspacePath: string | undefined = currentWorkspace?.path) => {
-      const discoveryApi = window.api as any
-      if (!workspacePath || typeof discoveryApi.discoverGeminiCommands !== 'function') {
-        setDiscoveredCommands([])
-        setCommandDiscoveryStatus(
-          'Static Gemini commands loaded. Custom command discovery is unavailable.'
-        )
-        return
-      }
-
-      setCommandDiscoveryStatus('Discovering custom Gemini commands...')
-      try {
-        const commands = normalizeDiscoveredCommandItems(
-          await discoveryApi.discoverGeminiCommands(workspacePath)
-        )
-        setDiscoveredCommands(commands)
-        setCommandDiscoveryStatus(
-          commands.length > 0
-            ? `Discovered ${commands.length} custom command${commands.length === 1 ? '' : 's'}.`
-            : 'Static Gemini commands loaded. No custom command files found.'
-        )
-      } catch (error) {
-        setDiscoveredCommands([])
-        setCommandDiscoveryStatus(
-          `Static Gemini commands loaded. Discovery failed: ${redactLog(String(error))}`
-        )
-      }
-    },
-    [currentWorkspace?.path]
-  )
-
-  const refreshGeminiMemory = useCallback(
-    async (workspacePath: string | undefined = currentWorkspace?.path) => {
-      const memoryApi = window.api as any
-      if (!workspacePath || typeof memoryApi.discoverGeminiMemory !== 'function') {
-        setGeminiMemoryFiles([])
-        setGeminiMemoryStatus('GEMINI.md discovery is unavailable.')
-        return
-      }
-
-      setGeminiMemoryStatus('Inspecting GEMINI.md files...')
-      try {
-        const memoryFiles = await memoryApi.discoverGeminiMemory(workspacePath)
-        const normalized = Array.isArray(memoryFiles)
-          ? memoryFiles.filter((item) => item?.path && item?.displayPath)
-          : []
-        setGeminiMemoryFiles(normalized)
-        setGeminiMemoryStatus(
-          normalized.length > 0
-            ? `Found ${normalized.length} GEMINI.md file${normalized.length === 1 ? '' : 's'}.`
-            : 'No workspace or global GEMINI.md files found.'
-        )
-      } catch (error) {
-        setGeminiMemoryFiles([])
-        setGeminiMemoryStatus(`GEMINI.md inspection failed: ${redactLog(String(error))}`)
-      }
-    },
-    [currentWorkspace?.path]
-  )
 
   const clearImagePermissions = () => {
     setPermissionRequestPaths([])
@@ -8086,19 +7993,6 @@ function App(): React.JSX.Element {
       return next.length > 0 ? [...prev, ...next] : prev
     })
   }, [scheduledTasks])
-
-  useEffect(() => {
-    if (!currentWorkspace?.path) {
-      setDiscoveredCommands([])
-      setGeminiMemoryFiles([])
-      setCommandDiscoveryStatus('Static Gemini commands loaded.')
-      setGeminiMemoryStatus('GEMINI.md memory has not been inspected yet.')
-      return
-    }
-
-    void refreshCommandDiscovery(currentWorkspace.path)
-    void refreshGeminiMemory(currentWorkspace.path)
-  }, [currentWorkspace?.path, refreshCommandDiscovery, refreshGeminiMemory])
 
   // ----- Raw Events auto-follow scrolling -------------------------------
   // Mirrors the transcript auto-follow design (see the long block above
@@ -13625,8 +13519,6 @@ function App(): React.JSX.Element {
   }
 
   const handlePaletteCommand = (item: CommandPaletteItem) => {
-    setIsCommandPaletteOpen(false)
-    setCommandPaletteQuery('')
     // 1.0.4-AT6 — when an ensemble chat has a selected participant,
     // route diagnostic slash commands (`/status`, `/model`,
     // `/permissions`, `/mcp`, `/resume`, `/fork`) at THAT
@@ -13639,28 +13531,6 @@ function App(): React.JSX.Element {
     // so the right-tab data reflects the targeted participant.
     const slashTargetProvider: ProviderId =
       isCurrentEnsembleChat && selectedParticipant ? selectedParticipant.provider : currentProvider
-    // Composer-unification (Phase J1): renderer-side action items
-    // dispatch to local handlers instead of running through the
-    // provider command bridge. These are the Gemini quick-toggle
-    // items moved from the inline-pickers tail.
-    if (item.action) {
-      switch (item.action) {
-        case 'restore-checkpoint':
-          void handleRestoreCheckpoint()
-          return
-        case 'toggle-memory-inspector':
-          setIsMemoryInspectorOpen((current) => !current)
-          return
-        case 'toggle-persistent-session':
-          void handlePersistentSessionToggle()
-          return
-        case 'toggle-checkpoints':
-          handleSettingsChange({ geminiCheckpointingEnabled: !geminiCheckpointingEnabled })
-          return
-        default:
-          return
-      }
-    }
     if (slashTargetProvider === 'codex') {
       if (item.command === '/status' || item.command === '/permissions') {
         openInspectorTab('safety')
@@ -13711,9 +13581,8 @@ function App(): React.JSX.Element {
       slashTargetProvider === 'cursor' ||
       slashTargetProvider === 'ollama'
     ) {
-      // Grok/Cursor/Ollama route here too: their palettes are the generic CLI core, and the
-      // fall-through below writes into the GEMINI PTY session — wrong shell
-      // outside Gemini. /review dispatches TaskWraith's provider-agnostic
+      // Grok/Cursor/Ollama route here too: their slash commands are the
+      // generic CLI core. /review dispatches TaskWraith's provider-agnostic
       // read-only diff review (a plan-mode run), not provider-native TUI commands.
       if (item.command === '/status' || item.command === '/permissions') {
         void refreshProviderMetadata(slashTargetProvider)
@@ -13728,17 +13597,6 @@ function App(): React.JSX.Element {
       }
       return
     }
-    if (slashTargetProvider === 'gemini') {
-      const bridgeCommand = item.command === '/gemini-help' ? '/help' : item.command
-      void handleBridgeCommand(bridgeCommand)
-      if (item.command === '/commands reload') {
-        void refreshCommandDiscovery()
-      } else if (item.command === '/memory refresh') {
-        void refreshGeminiMemory()
-      }
-      return
-    }
-    void handleBridgeCommand(item.command)
   }
 
   // promptWithoutCurrentSlashToken / consumeSlashTokenFromPrompt /
@@ -14156,17 +14014,6 @@ function App(): React.JSX.Element {
   // App-level openSideChatFromSlashCommand (above) is passed to <Composer> as a
   // prop so the side-slash submit path keeps working from any pane.
 
-  const handleRestoreCheckpoint = async () => {
-    const confirmed = window.confirm(
-      'Open Gemini /restore in the persistent session? This only opens Gemini CLI restore selection; restore is not executed by TaskWraith.'
-    )
-    if (!confirmed) {
-      return
-    }
-
-    await handleBridgeCommand('/restore')
-  }
-
   const syncPersistentModelSelection = (nextModel: string) => {
     if (!persistentSessionActiveRef.current) {
       return
@@ -14180,24 +14027,6 @@ function App(): React.JSX.Element {
     markPersistentSessionRestartNeeded(
       `Gemini model changed to ${nextModelLabel}. Restart the persistent session to apply the new model.`
     )
-  }
-
-  const handlePersistentSessionToggle = async () => {
-    if (isPersistentSessionEnabled || persistentSessionActiveRef.current) {
-      if (persistentSessionNeedsRestart) {
-        const stopped = await stopPersistentGeminiSession(
-          'Persistent Gemini session stopped for restart.'
-        )
-        if (stopped) {
-          await startPersistentGeminiSession()
-        }
-        return
-      }
-      await stopPersistentGeminiSession()
-      return
-    }
-
-    await startPersistentGeminiSession()
   }
 
   // 1.0.4-AQ4 — Copy message content to clipboard. 1.0.8: routed
@@ -15116,9 +14945,8 @@ function App(): React.JSX.Element {
     openWorkspacePopoutWindowFromKeyboard,
     pickImagesFromKeyboard,
     rememberCurrentChatComposerSelection,
+    requestOpenSlashCommands,
     reviewCurrentDiffFromKeyboard,
-    setCommandPaletteQuery,
-    setIsCommandPaletteOpen,
     stopCurrentRunFromKeyboard,
     syncPersistentModelSelection
   })
@@ -15132,9 +14960,8 @@ function App(): React.JSX.Element {
     openWorkspacePopoutWindowFromKeyboard,
     pickImagesFromKeyboard,
     rememberCurrentChatComposerSelection,
+    requestOpenSlashCommands,
     reviewCurrentDiffFromKeyboard,
-    setCommandPaletteQuery,
-    setIsCommandPaletteOpen,
     stopCurrentRunFromKeyboard,
     syncPersistentModelSelection
   }
@@ -15161,11 +14988,6 @@ function App(): React.JSX.Element {
 
       const runKeyCommand = (commandId: KeyCommandId): boolean => {
         if (commandId === 'close-overlays') {
-          if (isCommandPaletteOpen) {
-            keyboardActions.setIsCommandPaletteOpen(false)
-            keyboardActions.setCommandPaletteQuery('')
-            return true
-          }
           if (showSettings) {
             setShowSettings(false)
             return true
@@ -15193,8 +15015,8 @@ function App(): React.JSX.Element {
           return true
         }
         if (commandId === 'command-palette') {
-          keyboardActions.setIsCommandPaletteOpen(true)
-          return true
+          if (target?.closest('.side-chat-composer')) return false
+          return keyboardActions.requestOpenSlashCommands()
         }
         if (commandId === 'settings') {
           if (isChatPopoutWindow) return false
@@ -15263,7 +15085,6 @@ function App(): React.JSX.Element {
   }, [
     appearance,
     currentProvider,
-    isCommandPaletteOpen,
     lastNonCustomModelType,
     permissionRequestPaths.length,
     selectedModelType,
@@ -18007,20 +17828,6 @@ function App(): React.JSX.Element {
     trustResult?.status === 'inherited' ||
     sessionTrust
   const trustSelectValue = geminiWorkspaceTrustReady ? 'trusted' : 'untrusted'
-  const persistentSessionLabel =
-    persistentSessionStatus === 'active'
-      ? 'Persistent session on'
-      : persistentSessionStatus === 'starting'
-        ? 'Starting session'
-        : persistentSessionStatus === 'stopping'
-          ? 'Stopping session'
-          : persistentSessionStatus === 'unavailable'
-            ? 'Session API unavailable'
-            : persistentSessionStatus === 'error'
-              ? 'Session error'
-              : persistentSessionStatus === 'exited'
-                ? 'Session exited'
-                : 'Persistent session off'
   const geminiTerminalStatusLabel = isRunning
     ? 'attached to current run'
     : persistentSessionStatus === 'active'
@@ -18889,66 +18696,11 @@ function App(): React.JSX.Element {
   // composer above-bar's diff-action menu, so the model is no longer
   // asked to drive git on the user's behalf.
 
-  // Composer-unification (Phase J1): Gemini's standalone /stats, /help,
-  // GEMINI.md, /restore, persistent-session and checkpoints buttons are
-  // gone from the inline-pickers tail and live HERE in the palette. The
-  // `action` field marks items that flip renderer state rather than
-  // sending a slash command through the bridge.
   const slashCommandProvider: ProviderId =
     isCurrentEnsembleChat && selectedParticipant ? selectedParticipant.provider : currentProvider
-  const buildGeminiQuickToggleItems = (provider: ProviderId): CommandPaletteItem[] =>
-    provider === 'gemini'
-      ? [
-          {
-            id: 'gemini-quick-persistent-session',
-            command: isPersistentSessionEnabled
-              ? 'Disable persistent session'
-              : 'Enable persistent session',
-            label: persistentSessionLabel,
-            description: persistentSessionNeedsRestart
-              ? sessionRestartReason
-              : 'Keep an interactive Gemini CLI session open across runs for slash commands.',
-            group: 'Core',
-            source: 'core',
-            action: 'toggle-persistent-session'
-          },
-          {
-            id: 'gemini-quick-checkpoints',
-            command: geminiCheckpointingEnabled ? 'Disable checkpointing' : 'Enable checkpointing',
-            label: geminiCheckpointingEnabled ? 'Checkpoints on' : 'Checkpoints off',
-            description: geminiCheckpointingEnabled
-              ? 'Disable Gemini CLI checkpointing for new runs.'
-              : 'Enable Gemini CLI checkpointing for new runs.',
-            group: 'Core',
-            source: 'core',
-            action: 'toggle-checkpoints'
-          },
-          {
-            id: 'gemini-quick-memory-inspector',
-            command: 'GEMINI.md',
-            label: isMemoryInspectorOpen ? 'Close GEMINI.md inspector' : 'Open GEMINI.md inspector',
-            description: 'Inspect the GEMINI.md memory files loaded by the Gemini CLI.',
-            group: 'Memory',
-            source: 'core',
-            action: 'toggle-memory-inspector'
-          },
-          {
-            id: 'gemini-quick-restore',
-            command: '/restore',
-            label: 'Restore checkpoint',
-            description:
-              'Open Gemini CLI /restore after confirmation. Checkpoint discovery is handled by Gemini.',
-            group: 'Inspectors',
-            source: 'core',
-            action: 'restore-checkpoint'
-          }
-        ]
-      : []
   const resolveSlashPaletteItems = (provider: ProviderId): CommandPaletteItem[] =>
-    provider === 'gemini'
-      ? [...buildGeminiQuickToggleItems(provider), ...mergeCommandPaletteItems(discoveredCommands)]
-      : paletteCoreForProvider(provider)
-  const commandPaletteItems = resolveSlashPaletteItems(slashCommandProvider)
+    paletteCoreForProvider(provider)
+  const slashPaletteItems = resolveSlashPaletteItems(slashCommandProvider)
   const slashCommandProviderCapabilities =
     providerCapabilitiesByProvider[slashCommandProvider] ||
     (slashCommandProvider === currentProvider ? currentProviderCapabilities : undefined)
@@ -19923,7 +19675,7 @@ function App(): React.JSX.Element {
   // the provider can't service (e.g. `/mcp` hides when MCP is offline).
   const composerSlashCommands: ComposerSlashCommand[] = buildComposerSlashCommandRegistry({
     provider: slashCommandProvider,
-    paletteItems: commandPaletteItems,
+    paletteItems: slashPaletteItems,
     extraCommands: composerSlashExtraCommands,
     capabilities: slashCommandProviderCapabilities
   })
@@ -19933,16 +19685,6 @@ function App(): React.JSX.Element {
   // with a SlashCommandRunContext, clearing that pane's draft. The built
   // `composerSlashCommands` registry stays App-owned (its action `run()`
   // closures reference App handlers) and is passed to <Composer> as a prop.
-  const commandPaletteSearch = commandPaletteQuery.trim().toLowerCase()
-  const visibleCommandPaletteItems = commandPaletteSearch
-    ? commandPaletteItems.filter((item) =>
-        `${item.command} ${item.label} ${item.description} ${item.group} ${item.sourcePath || ''}`
-          .toLowerCase()
-          .includes(commandPaletteSearch)
-      )
-    : commandPaletteItems
-  // Slice H: command-palette groups are the module-scope constant
-  // COMPOSER_COMMAND_PALETTE_GROUPS (referenced directly in composerStableBase).
   const isLinkedChatPopout = Boolean(
     isChatPopoutWindow &&
       currentChat?.parentChatId &&
@@ -20262,13 +20004,6 @@ function App(): React.JSX.Element {
       item: CommandPaletteItem
     ): boolean | void => {
       const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
-      if (item.action) {
-        focusPane()
-        window.alert(
-          'This Gemini session control opens from the focused pane. The pane is now focused.'
-        )
-        return false
-      }
       if (provider === 'codex') {
         if (item.command === '/status' || item.command === '/permissions') {
           void refreshProviderMetadata(provider, workspace?.path)
@@ -20348,7 +20083,6 @@ function App(): React.JSX.Element {
         return
       }
       focusPane()
-      window.alert('Gemini PTY slash commands run from the focused pane. The pane is now focused.')
       return false
     },
     [
@@ -20379,7 +20113,7 @@ function App(): React.JSX.Element {
       const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
       const preserveForFocusedFlow = (ctx: SlashCommandRunContext, message: string): void =>
         preserveSlashDraftForFocusedFlow(ctx, focusPane, message)
-      const paletteItems = resolveSlashPaletteItems(slashProvider).filter((item) => !item.action)
+      const paletteItems = resolveSlashPaletteItems(slashProvider)
       return buildComposerSlashCommandRegistry({
         provider: slashProvider,
         paletteItems,
@@ -21224,10 +20958,9 @@ function App(): React.JSX.Element {
       // popover. The goal BUTTON still renders for parity (clicking focuses the
       // pane via the chrome action; deep goal editing remains focused-only).
       goalPopoverOpen: false,
-      // TODO(per-pane): command palette + memory inspector are focused-only
-      // portals — keep them closed in panes to avoid duplicate overlays.
-      isCommandPaletteOpen: false,
-      isMemoryInspectorOpen: false,
+      // External slash-menu requests target the focused composer; pane-local
+      // plus-menu clicks open each pane's slash menu directly.
+      openSlashCommandsRequestId: 0,
       // ── focused-only state that would otherwise LEAK into resting panes
       //    (adversarial review D1/D2): these fields are keyed to the FOCUSED chat
       //    in composerCtx, so rendering them in a non-focused pane shows that
@@ -21425,14 +21158,10 @@ function App(): React.JSX.Element {
     openPlanImportReview,
     openSideChatFromSlashCommand,
     persistExternalPathGrantPrompt,
-    refreshCodexThreads,
-    refreshProviderMetadata,
     refreshWorkflowState,
     rememberCurrentChatComposerSelection,
-    setCommandPaletteQuery,
     setGoalFromObjective,
     setGuestParticipantForCurrentChat,
-    setIsCommandPaletteOpen,
     setPendingPlanImport,
     setPlanImportPolicy,
     syncPersistentModelSelection,
@@ -21499,9 +21228,6 @@ function App(): React.JSX.Element {
       PLAN_IMPORT_CHIP_LABELS,
       PLAN_IMPORT_RISK_LABELS,
       PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
-      // Slice H: reference the module-scope constant directly so it needs no dep
-      // (the local `commandPaletteGroups` is just an alias to this).
-      commandPaletteGroups: COMPOSER_COMMAND_PALETTE_GROUPS,
       acknowledgedElevationDefaults,
       activeEnsembleConcurrentMode,
       activeEnsembleOrchestrationMode,
@@ -21515,8 +21241,6 @@ function App(): React.JSX.Element {
       applyEnsembleRosterPreset,
       chatByIdRef,
       codexModels,
-      commandDiscoveryStatus,
-      commandPaletteQuery,
       composerAboveBarStackAuraClass,
       composerAgentAuraClass,
       composerContextMenu,
@@ -21549,8 +21273,6 @@ function App(): React.JSX.Element {
       formatPlanImportCostEstimate,
       formatPlanImportRunConstraintValue,
       formatPlanImportTokenEstimate,
-      geminiMemoryFiles,
-      geminiMemoryStatus,
       geminiTrustWriteBusy,
       geminiTrustWriteError,
       geminiWorkspaceTrustReady,
@@ -21596,8 +21318,6 @@ function App(): React.JSX.Element {
       primaryModifierLabel,
       providerRates,
       queuedRunQueueCount,
-      refreshCommandDiscovery,
-      refreshGeminiMemory,
       renderPlanImportFileGroundings,
       renderPlanImportItems,
       resumeAppWatchSnapshot,
@@ -21633,7 +21353,6 @@ function App(): React.JSX.Element {
       updateCurrentEnsembleMaxContinuationHops,
       updateCurrentEnsembleOrchestrationMode,
       updateSelectedParticipant,
-      visibleCommandPaletteItems,
       visibleScheduledTasks,
       welcomeParticipantOverflow,
       workflowDraft,
@@ -21659,8 +21378,6 @@ function App(): React.JSX.Element {
       applyEnsembleRosterPreset,
       chatByIdRef,
       codexModels,
-      commandDiscoveryStatus,
-      commandPaletteQuery,
       composerAboveBarStackAuraClass,
       composerAgentAuraClass,
       composerContextMenu,
@@ -21690,8 +21407,6 @@ function App(): React.JSX.Element {
       externalPathGrants,
       externalPathRepoMetadata,
       externalWorkspaceGroups,
-      geminiMemoryFiles,
-      geminiMemoryStatus,
       geminiTrustWriteBusy,
       geminiTrustWriteError,
       geminiWorkspaceTrustReady,
@@ -21737,8 +21452,6 @@ function App(): React.JSX.Element {
       primaryModifierLabel,
       providerRates,
       queuedRunQueueCount,
-      refreshCommandDiscovery,
-      refreshGeminiMemory,
       resumeAppWatchSnapshot,
       screenWatchUnavailableReason,
       selectedParticipant,
@@ -21772,7 +21485,6 @@ function App(): React.JSX.Element {
       updateCurrentEnsembleMaxContinuationHops,
       updateCurrentEnsembleOrchestrationMode,
       updateSelectedParticipant,
-      visibleCommandPaletteItems,
       visibleScheduledTasks,
       welcomeParticipantOverflow,
       workflowDraft,
@@ -22317,10 +22029,9 @@ function App(): React.JSX.Element {
         // popover. The goal BUTTON still renders for parity (clicking focuses the
         // pane via the chrome action; deep goal editing remains focused-only).
         goalPopoverOpen: false,
-        // TODO(per-pane): command palette + memory inspector are focused-only
-        // portals — keep them closed in panes to avoid duplicate overlays.
-        isCommandPaletteOpen: false,
-        isMemoryInspectorOpen: false,
+        // External slash-menu requests target the focused composer; pane-local
+        // plus-menu clicks open each pane's slash menu directly.
+        openSlashCommandsRequestId: 0,
         // ── focused-only state that would otherwise LEAK into resting panes
         //    (adversarial review D1/D2): these fields are keyed to the FOCUSED chat
         //    in composerCtx, so rendering them in a non-focused pane shows that
@@ -22455,13 +22166,12 @@ function App(): React.JSX.Element {
     handleGuestToggleFastMode,
     imageAttachments,
     isAttachingWindow,
-    isCommandPaletteOpen,
+    openSlashCommandsRequestId: slashCommandsOpenRequestId,
     isCurrentChatProviderLocked,
     isCurrentChatRunning,
     isCurrentComposerLocked,
     isCurrentEnsembleChat,
     isCurrentGlobalChat,
-    isMemoryInspectorOpen,
     isWelcomeChat,
     isWorkflowChatWelcome,
     isWorkflowComposeChat,

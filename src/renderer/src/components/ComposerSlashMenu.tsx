@@ -356,8 +356,8 @@ function ComposerSlashCommandIcon({ name }: { name: SlashCommandIconName }) {
  * aware slash commands. Triggered by the parent detecting a `/` keystroke
  * at start-of-line or after whitespace; selecting an item dispatches via
  * `onPick` which the parent then routes through the slash-command
- * dispatcher (`palette-passthrough` → existing `handlePaletteCommand`,
- * `gemini-pty` → `writeGeminiSession`, etc.).
+   * dispatcher (`palette-passthrough` → existing `handlePaletteCommand`,
+   * `action` → renderer handler, etc.).
  *
  * Visually + interactively mirrors `AgentMentionMenu` (the `@`-mention
  * picker that lives right below in App.tsx) — same fixed positioning,

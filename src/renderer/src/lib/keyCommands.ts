@@ -67,8 +67,8 @@ export const KEY_COMMAND_DEFINITIONS: KeyCommandDefinition[] = [
   {
     id: 'command-palette',
     group: 'Global',
-    command: 'Command palette',
-    description: 'Open the app-wide command palette.',
+    command: 'Slash commands',
+    description: 'Open slash commands in the composer.',
     defaultBinding: { key: 'K', modifiers: [PRIMARY_MODIFIER] },
     allowWhenEditable: true
   },
@@ -84,7 +84,7 @@ export const KEY_COMMAND_DEFINITIONS: KeyCommandDefinition[] = [
     id: 'close-overlays',
     group: 'Global',
     command: 'Close overlay',
-    description: 'Close Settings, command palette, active modal, or custom model edit.',
+    description: 'Close Settings, composer slash commands, active modal, or custom model edit.',
     defaultBinding: { key: 'Escape', modifiers: [] },
     allowWhenEditable: true
   },
