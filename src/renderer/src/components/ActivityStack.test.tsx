@@ -631,4 +631,54 @@ describe('ActivityStack todo_write rendering', () => {
     expect(html).toContain('Render checklist card')
     expect(html).toContain('Ship 1.4.2')
   })
+
+  it('keeps same-provider ensemble plan lanes separate in the live PlanRail', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          {
+            id: 'tool-todo-reviewer',
+            toolName: 'todo_write',
+            displayName: 'Goal steps',
+            category: 'task',
+            status: 'success',
+            parameters: {
+              todos: [{ id: 'review', content: 'Review the patch', status: 'in_progress' }]
+            },
+            metadata: {
+              ensembleParticipantId: 'codex-reviewer',
+              ensembleProvider: 'codex',
+              provider: 'codex'
+            }
+          },
+          {
+            id: 'tool-todo-builder',
+            toolName: 'todo_write',
+            displayName: 'Goal steps',
+            category: 'task',
+            status: 'success',
+            parameters: {
+              todos: [{ id: 'build', content: 'Apply the fix', status: 'pending' }]
+            },
+            metadata: {
+              ensembleParticipantId: 'codex-builder',
+              ensembleProvider: 'codex',
+              provider: 'codex'
+            }
+          }
+        ]}
+        provider="codex"
+        chat={makeEnsembleChat([
+          makeParticipant({ id: 'codex-reviewer', provider: 'codex', role: 'Reviewer', order: 1 }),
+          makeParticipant({ id: 'codex-builder', provider: 'codex', role: 'Builder', order: 2 })
+        ])}
+        liveActivityViewport
+      />
+    )
+
+    expect(html).toContain('Reviewer / Codex')
+    expect(html).toContain('Builder / Codex')
+    expect(html).toContain('Review the patch')
+    expect(html).toContain('Apply the fix')
+  })
 })

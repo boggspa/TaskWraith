@@ -43,6 +43,7 @@ import {
 } from '../../../main/TodoList'
 import { durationLabel } from './CompactToolTrace.lib'
 import { isGlobalChat } from '../lib/chatScope'
+import { getProviderLabel } from '../lib/providerLabels'
 import {
   agentInvocationRouteLabel,
   agentInvocationSourceClassName,
@@ -79,6 +80,35 @@ interface ActivityStackProps {
    */
   expandedActivityIds?: Set<string>
   onExpandedActivityIdsChange?: (next: Set<string>) => void
+}
+
+function providerFromPlanLane(lane: string): ProviderId | undefined {
+  switch (lane) {
+    case 'codex':
+    case 'claude':
+    case 'kimi':
+    case 'grok':
+    case 'cursor':
+    case 'ollama':
+    case 'gemini':
+      return lane as ProviderId
+    default:
+      return undefined
+  }
+}
+
+function planLanePresentation(lane: string, participants?: EnsembleParticipant[]) {
+  const participant = participants?.find((item) => item.id === lane)
+  const provider = participant?.provider || providerFromPlanLane(lane)
+  const providerLabel = provider ? getProviderLabel(provider) : ''
+  const label =
+    participant?.role && providerLabel
+      ? `${participant.role} / ${providerLabel}`
+      : providerLabel || participant?.role || lane
+  return {
+    label,
+    order: typeof participant?.order === 'number' ? participant.order : Number.MAX_SAFE_INTEGER
+  }
 }
 
 const SEARCH_PARAM_KEYS = ['query', 'search_query', 'pattern', 'regex', 'term']
@@ -1653,15 +1683,19 @@ export function ActivityStack({
     const byLane = computeMergedTodosByLane(
       topLevelActivities,
       (a) =>
+        (a.metadata?.ensembleParticipantId as string | undefined) ??
         (a.metadata?.ensembleProvider as string | undefined) ??
         (a.metadata?.provider as string | undefined) ??
         TODO_SOLO_LANE
     )
     return Object.entries(byLane)
       .filter(([, todos]) => todos.length > 0)
-      .map(([lane, todos]) => ({ lane, todos }))
-      .sort((a, b) => a.lane.localeCompare(b.lane))
-  }, [topLevelActivities])
+      .map(([lane, todos]) => {
+        const presentation = planLanePresentation(lane, participants)
+        return { lane, todos, ...presentation }
+      })
+      .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+  }, [topLevelActivities, participants])
   // Phase L5 slice 3 — lifted expansion state. The set of ids that
   // are currently open. Single-open mode (default + always in
   // compactDensity) auto-collapses other rows when one expands;
@@ -1788,7 +1822,7 @@ export function ActivityStack({
                   key={lane.lane}
                   todos={lane.todos}
                   variant="pinned"
-                  laneLabel={lane.lane}
+                  laneLabel={lane.label}
                 />
               ))}
             </div>
