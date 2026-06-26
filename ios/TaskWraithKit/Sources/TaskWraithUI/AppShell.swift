@@ -328,12 +328,6 @@ struct ConnectedShell: View {
                 NavigationSplitView {
                     HomeView(model: model, selection: $model.selectedTaskId, explicitSelection: true)
                         .navigationSplitViewColumnWidth(min: 300, ideal: 340)
-                        // De-blue the system sidebar collapse/expand chevron: it
-                        // inherits the app-root accent (chroma1 blue) otherwise.
-                        // The sidebar's row selection uses explicit chrome (custom
-                        // Button rows, not the inherited tint), so scoping a
-                        // monochrome tint here only neutralises the system toggle.
-                        .tint(TWTheme.textPrimary)
                         .iPadSidebarInnerRim(edge: .trailing)
                 } detail: {
                     if let taskId = model.selectedTaskId, taskId.hasPrefix("new-") {
@@ -347,6 +341,7 @@ struct ConnectedShell: View {
                                     ? String(taskId.split(separator: ":")[1]) : nil)
                         }
                         .id(taskId)
+                        .tint(TWTheme.chroma1)
                     } else if let taskId = model.selectedTaskId {
                         // Hand-rolled third column: SwiftUI's `.inspector`
                         // presents as an overlay here regardless of attach
@@ -369,6 +364,7 @@ struct ConnectedShell: View {
                         }
                         .animation(.easeInOut(duration: 0.22), value: model.inspectorPresented)
                         .id(taskId)
+                        .tint(TWTheme.chroma1)
                     } else {
                         VStack(spacing: 8) {
                             TaskWraithMonolineBrandView(markSize: 58, titleSize: 22)
@@ -378,6 +374,14 @@ struct ConnectedShell: View {
                         .background(TWTheme.appBg)
                     }
                 }
+                // De-blue the system NavigationSplitView sidebar toggle. It is the
+                // split's own chrome (a sibling of the columns, not their child), so
+                // a tint on the sidebar CONTENT never reached it — the tint has to
+                // sit on the split itself. The sidebar is safe under a monochrome
+                // tint (it uses explicit chrome, and its pills force their own
+                // tint); the detail panes above re-assert chroma1 so the rest of the
+                // app keeps its accent.
+                .tint(TWTheme.textPrimary)
             }
         } else {
             NavigationStack {
