@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatRecord, WorkflowDefinition, WorkspaceRecord } from '../../../main/store/types'
-import { Sidebar } from './Sidebar'
+import { Sidebar, DevicesFooterPopover } from './Sidebar'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 
@@ -629,5 +629,60 @@ describe('Sidebar footer controls', () => {
       collaboratingChatIds: new Set(['parent-1'])
     })
     expect(shared).toContain('glow-yellow')
+  })
+})
+
+function makeDevice(overrides: Record<string, unknown> = {}) {
+  return {
+    iphoneIdentityPubKey: 'key-1',
+    pairId: 'pair-1',
+    controllerDisplayName: "Chris's iPhone",
+    pairedAt: '2026-06-25T00:00:00.000Z',
+    connected: true,
+    ...overrides
+  }
+}
+
+describe('DevicesFooterPopover', () => {
+  it('shows an empty state with no paired devices', () => {
+    const html = renderToStaticMarkup(
+      <DevicesFooterPopover devices={[]} onOpenSettings={() => {}} />
+    )
+    expect(html).toContain('No paired devices')
+    expect(html).toContain('Manage devices')
+  })
+
+  it('renders a connected device with a lit LED and a Connected label', () => {
+    const html = renderToStaticMarkup(
+      <DevicesFooterPopover devices={[makeDevice()]} onOpenSettings={() => {}} />
+    )
+    expect(html).toContain("Chris&#x27;s iPhone")
+    expect(html).toContain('sidebar-footer-led is-on')
+    expect(html).toContain('Connected')
+  })
+
+  it('renders a disconnected device as Idle with an unlit LED', () => {
+    const html = renderToStaticMarkup(
+      <DevicesFooterPopover
+        devices={[makeDevice({ connected: false, controllerDisplayName: 'iPad' })]}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).toContain('iPad')
+    expect(html).toContain('Idle')
+    // The LED span is present but without the is-on modifier.
+    expect(html).toContain('class="sidebar-footer-led"')
+  })
+
+  it('caps the list at five devices and surfaces the overflow count', () => {
+    const devices = Array.from({ length: 7 }, (_, index) =>
+      makeDevice({ iphoneIdentityPubKey: `key-${index}`, controllerDisplayName: `Device ${index}` })
+    )
+    const html = renderToStaticMarkup(
+      <DevicesFooterPopover devices={devices} onOpenSettings={() => {}} />
+    )
+    expect(html).toContain('Device 4')
+    expect(html).not.toContain('Device 5')
+    expect(html).toContain('+2 more')
   })
 })

@@ -2719,6 +2719,54 @@
   font-weight: 500;
 }
 
+/* Devices popover rows — name + connected/idle LED. */
+.sidebar-footer-device-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  font-size: var(--font-size-sm, 13px);
+}
+
+.sidebar-footer-led {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-secondary) 45%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-secondary) 24%, transparent);
+}
+
+.sidebar-footer-led.is-on {
+  background: var(--success, #34d399);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--success, #34d399) 40%, transparent),
+    0 0 8px color-mix(in srgb, var(--success, #34d399) 60%, transparent);
+}
+
+.sidebar-footer-device-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.sidebar-footer-device-status {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+}
+
+.sidebar-footer-popover-more {
+  padding: 4px 8px 2px;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
 .app-shell-stats-toolbar {
   --app-shell-stat-cpu: #4f8cff;
   --app-shell-stat-ram: #36b76a;

@@ -1647,15 +1647,20 @@ function SharesFooterPopover({
   )
 }
 
-// Devices popover — up to five paired devices with a connected/idle LED, or an
-// empty state, then a deep-link to Settings → Devices. Body fleshed out in a
-// later slice.
-function DevicesFooterPopover({
+// Devices popover — up to five paired devices, each with a connected/idle LED,
+// or an empty state, then a deep-link to Settings → Devices. The summaries
+// expose only a `connected` boolean (no last-seen), so the LED is green when
+// connected and grey ("Idle") otherwise.
+const DEVICES_POPOVER_LIMIT = 5
+export function DevicesFooterPopover({
+  devices = [],
   onOpenSettings
 }: {
   devices?: PairedRemoteDeviceSummary[]
   onOpenSettings: () => void
 }) {
+  const shown = devices.slice(0, DEVICES_POPOVER_LIMIT)
+  const overflow = devices.length - shown.length
   return (
     <SidebarFooterPopover
       title="Devices"
@@ -1663,7 +1668,29 @@ function DevicesFooterPopover({
       navLabel="Manage devices"
       onNav={onOpenSettings}
     >
-      <div className="sidebar-footer-popover-empty">No paired devices</div>
+      {devices.length === 0 ? (
+        <div className="sidebar-footer-popover-empty">No paired devices</div>
+      ) : (
+        <>
+          {shown.map((device) => (
+            <div className="sidebar-footer-device-row" key={device.iphoneIdentityPubKey}>
+              <span
+                className={`sidebar-footer-led${device.connected ? ' is-on' : ''}`}
+                aria-hidden
+              />
+              <span className="sidebar-footer-device-name">
+                {device.controllerDisplayName || 'Paired device'}
+              </span>
+              <span className="sidebar-footer-device-status">
+                {device.connected ? 'Connected' : 'Idle'}
+              </span>
+            </div>
+          ))}
+          {overflow > 0 && (
+            <div className="sidebar-footer-popover-more">+{overflow} more</div>
+          )}
+        </>
+      )}
     </SidebarFooterPopover>
   )
 }
