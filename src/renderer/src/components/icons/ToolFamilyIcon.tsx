@@ -171,6 +171,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'audio_extract':
     case 'transcode_audio':
     case 'transcode_video':
+    case 'inspect_video_frames':
+    case 'inspect_audio_segment':
+    case 'transcribe_audio':
       return 'edit'
     case 'mcp_tool':
     case 'dynamic_tool':

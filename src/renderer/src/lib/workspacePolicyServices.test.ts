@@ -11,7 +11,8 @@ describe('workspacePolicyServices', () => {
       'File changes',
       'Tool calls',
       'Sub-thread delegation',
-      'Canvas interaction'
+      'Canvas interaction',
+      'Media editing'
     ])
   })
 
