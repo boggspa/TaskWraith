@@ -296,6 +296,8 @@ export interface GeminiPtyCommand extends ComposerSlashCommandBase {
  * this context, so the same closure works no matter which pane fired it.
  */
 export interface SlashCommandRunContext {
+  /** The raw invoking composer draft at dispatch time. */
+  rawPrompt: string
   /** The composer draft with the leading `/<query>` token removed (read-only
    * snapshot). Equivalent to the old `promptWithoutCurrentSlashToken()`. */
   promptWithoutSlashToken: string
@@ -410,7 +412,29 @@ export function buildComposerSlashCommandRegistry(
 ): ComposerSlashCommand[] {
   const wrapped = input.paletteItems.map(wrapPaletteItemAsSlashCommand)
   const combined = [...wrapped, ...(input.extraCommands ?? [])]
-  return combined.filter((command) => passesCapabilityGate(command, input.capabilities))
+  return dedupeComposerSlashCommands(
+    combined.filter((command) => passesCapabilityGate(command, input.capabilities))
+  )
+}
+
+/**
+ * Slash tokens must be unique in the final picker/submit registry. Provider
+ * palette items are appended before TaskWraith action commands, so later
+ * entries intentionally win when a local action replaces a provider token
+ * such as `/help`.
+ */
+export function dedupeComposerSlashCommands(
+  commands: ComposerSlashCommand[]
+): ComposerSlashCommand[] {
+  const order: string[] = []
+  const byCommand = new Map<string, ComposerSlashCommand>()
+  for (const command of commands) {
+    const key = command.command.trim().toLowerCase()
+    if (!key) continue
+    if (!byCommand.has(key)) order.push(key)
+    byCommand.set(key, command)
+  }
+  return order.map((key) => byCommand.get(key)!)
 }
 
 /** Filter a registry by user-typed query against label / description /
@@ -462,18 +486,24 @@ export const COMPOSER_SLASH_GROUP_ORDER: CommandPaletteGroup[] = [
 ]
 
 /** Resolve the per-provider palette core. Mirrors the routing logic at
- * App.tsx:11874 (codex → CODEX, claude/kimi/grok → CLI_PROVIDER, gemini →
+ * App.tsx:11874 (codex → CODEX, non-Gemini CLI providers → CLI_PROVIDER, gemini →
  * GEMINI). The caller still owns merging with discovered commands and
  * Gemini's quick-toggle items because those are context-dependent.
  *
- * Grok takes the generic CLI core: its TUI slash commands (e.g. 0.2.51's
- * /code-review) are not reachable over our headless/ACP run path, and the
+ * Grok/Cursor/Ollama take the generic CLI core: provider-native TUI slash
+ * commands are not reachable over our headless/ACP/local run paths, and the
  * Gemini core's PTY-backed entries ("Ask Gemini CLI…", /memory, /extensions)
- * are meaningless for a Grok chat. /review here is TaskWraith's own read-only
+ * are meaningless outside Gemini. /review here is TaskWraith's own read-only
  * diff review (reviewDiffPrompt + a plan-mode run), provider-agnostic. */
 export function paletteCoreForProvider(provider: ProviderId): CommandPaletteItem[] {
   if (provider === 'codex') return CODEX_PALETTE_CORE
-  if (provider === 'claude' || provider === 'kimi' || provider === 'grok') {
+  if (
+    provider === 'claude' ||
+    provider === 'kimi' ||
+    provider === 'grok' ||
+    provider === 'cursor' ||
+    provider === 'ollama'
+  ) {
     return CLI_PROVIDER_PALETTE_CORE
   }
   return GEMINI_PALETTE_CORE

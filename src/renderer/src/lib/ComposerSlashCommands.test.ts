@@ -50,6 +50,12 @@ describe('ComposerSlashCommands', () => {
       // PTY-backed entries.
       expect(paletteCoreForProvider('grok')).toBe(CLI_PROVIDER_PALETTE_CORE)
     })
+    it('returns CLI_PROVIDER_PALETTE_CORE for cursor', () => {
+      expect(paletteCoreForProvider('cursor')).toBe(CLI_PROVIDER_PALETTE_CORE)
+    })
+    it('returns CLI_PROVIDER_PALETTE_CORE for ollama', () => {
+      expect(paletteCoreForProvider('ollama')).toBe(CLI_PROVIDER_PALETTE_CORE)
+    })
   })
 
   describe('buildComposerSlashCommandRegistry', () => {
@@ -84,6 +90,110 @@ describe('ComposerSlashCommands', () => {
       expect(result).toHaveLength(CODEX_PALETTE_CORE.length + 1)
       expect(result[result.length - 1].id).toBe('test-extra')
       expect(result[result.length - 1].kind).toBe('action')
+    })
+
+    it('dedupes duplicate command strings case-insensitively with later extras winning', () => {
+      const basePaletteItem = {
+        id: 'palette-review',
+        command: '/review',
+        label: 'Review',
+        description: 'Show existing review command',
+        group: 'Inspectors' as const,
+        source: 'core' as const
+      }
+      const extras: ComposerSlashCommand[] = [
+        {
+          kind: 'action',
+          id: 'first-review-override',
+          command: '/ReViEw',
+          label: 'First override',
+          description: 'First override should lose',
+          group: 'Custom',
+          run: () => undefined
+        },
+        {
+          kind: 'action',
+          id: 'second-review-override',
+          command: '/review',
+          label: 'Second override',
+          description: 'Later duplicate should win',
+          group: 'Custom',
+          run: () => undefined
+        },
+        {
+          kind: 'action',
+          id: 'unique-action',
+          command: '/custom',
+          label: 'Custom',
+          description: 'Unique action',
+          group: 'Custom',
+          run: () => undefined
+        }
+      ]
+      const result = buildComposerSlashCommandRegistry({
+        provider: 'codex',
+        paletteItems: [basePaletteItem],
+        extraCommands: extras
+      })
+
+      const reviewCommand = result.find((entry) => entry.command.toLowerCase() === '/review')
+      expect(reviewCommand).toBeDefined()
+      expect(reviewCommand?.id).toBe('second-review-override')
+      expect(result).toContainEqual(
+        expect.objectContaining({
+          id: 'unique-action',
+          command: '/custom'
+        })
+      )
+      expect(result).toHaveLength(2)
+    })
+
+    it('produces a registry with no duplicate command tokens after dedupe', () => {
+      const extras: ComposerSlashCommand[] = [
+        {
+          kind: 'action',
+          id: 'palette-review-override',
+          command: '/STATUS',
+          label: 'Status override',
+          description: 'Override status command',
+          group: 'Core',
+          run: () => undefined
+        },
+        {
+          kind: 'action',
+          id: 'first-duplicate-model',
+          command: '/MODEL',
+          label: 'Model override',
+          description: 'First model override',
+          group: 'Core',
+          run: () => undefined
+        },
+        {
+          kind: 'action',
+          id: 'second-duplicate-model',
+          command: '/model',
+          label: 'Model override final',
+          description: 'Second model override',
+          group: 'Core',
+          run: () => undefined
+        }
+      ]
+      const result = buildComposerSlashCommandRegistry({
+        provider: 'codex',
+        paletteItems: CODEX_PALETTE_CORE,
+        extraCommands: extras
+      })
+
+      const normalizedCommands = result.map((entry) => entry.command.toLowerCase())
+      expect(new Set(normalizedCommands).size).toBe(normalizedCommands.length)
+      expect(result).toHaveLength(normalizedCommands.length)
+      expect(result).toHaveLength(9)
+      const statusCommand = result.find((entry) => entry.command.toLowerCase() === '/status')
+      expect(statusCommand?.id).toBe('palette-review-override')
+      const modelCommand = result.find((entry) => entry.command.toLowerCase() === '/model')
+      expect(modelCommand?.id).toBe('second-duplicate-model')
+      expect(result[0]?.id).toBe('palette-review-override')
+      expect(result[1]?.id).toBe('second-duplicate-model')
     })
 
     it('produces an empty registry when no items are provided', () => {

@@ -192,12 +192,12 @@ import type { GeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type {
   CommandPaletteGroup,
   CommandPaletteItem,
-  ComposerSlashCommand
+  ComposerSlashCommand,
+  SlashCommandRunContext
 } from './lib/ComposerSlashCommands'
 import {
-  CODEX_PALETTE_CORE as CODEX_COMMAND_PALETTE_CORE,
-  CLI_PROVIDER_PALETTE_CORE as CLI_PROVIDER_COMMAND_PALETTE_CORE,
-  buildComposerSlashCommandRegistry
+  buildComposerSlashCommandRegistry,
+  paletteCoreForProvider
 } from './lib/ComposerSlashCommands'
 import { CreativeActionApprovalModal } from './components/CreativeActionApprovalModal'
 import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
@@ -228,7 +228,13 @@ import {
 import type { GitPrSummary, GitRepositorySnapshot } from '../../main/services/GitService'
 import { Sidebar } from './components/Sidebar'
 import { Inspector } from './components/Inspector'
-import { SettingsPanel, type SettingsTab } from './components/SettingsPanel'
+import {
+  SETTINGS_TABS,
+  SettingsPanel,
+  isSettingsTabVisible,
+  type SettingsTab
+} from './components/SettingsPanel'
+import { resolveSettingsTabFromSlashArg } from './lib/resolveSettingsSlashTab'
 import { SettingsSidebar } from './components/SettingsSidebar'
 import { SubThreadCreator } from './components/SubThreadCreator'
 import { FirstLaunchSheet } from './components/FirstLaunchSheet'
@@ -515,12 +521,9 @@ import {
 } from './lib/localStorageFlags'
 // Composer-unification (Phase J1 → slash-picker): the legacy
 // CommandPaletteItem / Action / Group / Source types and the per-provider
-// CORE constants live in src/renderer/src/lib/ComposerSlashCommands.ts
-// so the Cmd-K palette AND the new slash picker consume the same data
-// without drift. Imported here to keep their historical names in scope
-// for the rest of App.tsx.
-//
-// Imports below the const block — see top-of-file `import` group.
+// Provider palette CORE constants live in
+// src/renderer/src/lib/ComposerSlashCommands.ts so the Cmd-K palette
+// and slash picker consume the same data without drift.
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 
@@ -535,11 +538,9 @@ const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
  * fallback floor. Kept under 7s so it never lingers if the user
  * tabs away. */
 const WORKSPACE_ADD_POINTER_DURATION_MS = 6000
-// Per-provider palette CORE constants moved to
-// src/renderer/src/lib/ComposerSlashCommands.ts. Imported under the
-// historical names (COMMAND_PALETTE_CORE / CODEX_COMMAND_PALETTE_CORE /
-// CLI_PROVIDER_COMMAND_PALETTE_CORE) via the top-of-file import block,
-// so existing usages downstream remain unchanged.
+// Per-provider palette CORE constants live in
+// src/renderer/src/lib/ComposerSlashCommands.ts and are resolved through
+// paletteCoreForProvider() so App routing stays aligned with the slash menu.
 
 // sanitizeContextText moved to `src/main/PromptComposition.ts` and re-exported below.
 
@@ -13704,12 +13705,14 @@ function App(): React.JSX.Element {
     if (
       slashTargetProvider === 'claude' ||
       slashTargetProvider === 'kimi' ||
-      slashTargetProvider === 'grok'
+      slashTargetProvider === 'grok' ||
+      slashTargetProvider === 'cursor' ||
+      slashTargetProvider === 'ollama'
     ) {
-      // Grok routes here too: its palette is the generic CLI core, and the
+      // Grok/Cursor/Ollama route here too: their palettes are the generic CLI core, and the
       // fall-through below writes into the GEMINI PTY session — wrong shell
-      // for a Grok chat. /review dispatches TaskWraith's provider-agnostic
-      // read-only diff review (a plan-mode run), not Grok's TUI /code-review.
+      // outside Gemini. /review dispatches TaskWraith's provider-agnostic
+      // read-only diff review (a plan-mode run), not provider-native TUI commands.
       if (item.command === '/status' || item.command === '/permissions') {
         void refreshProviderMetadata(slashTargetProvider)
         openInspectorTab('safety')
@@ -14073,8 +14076,11 @@ function App(): React.JSX.Element {
     setGoalPopoverOpen(true)
   }
 
-  const handleGoalSlashCommand = (promptWithoutSlashToken: string): void => {
-    const trimmed = prompt.trim()
+  const handleGoalSlashCommand = (
+    promptWithoutSlashToken: string,
+    rawPrompt: string = prompt
+  ): void => {
+    const trimmed = rawPrompt.trim()
     if (trimmed && !/^\/goal\b/i.test(trimmed)) {
       openGoalPopover(false, promptWithoutSlashToken.trim())
       return
@@ -18875,8 +18881,10 @@ function App(): React.JSX.Element {
   // gone from the inline-pickers tail and live HERE in the palette. The
   // `action` field marks items that flip renderer state rather than
   // sending a slash command through the bridge.
+  const slashCommandProvider: ProviderId =
+    isCurrentEnsembleChat && selectedParticipant ? selectedParticipant.provider : currentProvider
   const geminiQuickToggleItems: CommandPaletteItem[] =
-    currentProvider === 'gemini'
+    slashCommandProvider === 'gemini'
       ? [
           {
             id: 'gemini-quick-persistent-session',
@@ -18924,14 +18932,33 @@ function App(): React.JSX.Element {
         ]
       : []
   const commandPaletteItems =
-    currentProvider === 'codex'
-      ? CODEX_COMMAND_PALETTE_CORE
-      : // Grok rides the generic CLI core (it previously fell into the Gemini
-        // branch: PTY quick-toggles + "Ask Gemini CLI…" entries, none of which
-        // a Grok chat can service — and no /review or /diff at all).
-        currentProvider === 'claude' || currentProvider === 'kimi' || currentProvider === 'grok'
-        ? CLI_PROVIDER_COMMAND_PALETTE_CORE
-        : [...geminiQuickToggleItems, ...mergeCommandPaletteItems(discoveredCommands)]
+    slashCommandProvider === 'gemini'
+      ? [...geminiQuickToggleItems, ...mergeCommandPaletteItems(discoveredCommands)]
+      : paletteCoreForProvider(slashCommandProvider)
+  const slashCommandProviderCapabilities =
+    providerCapabilitiesByProvider[slashCommandProvider] ||
+    (slashCommandProvider === currentProvider ? currentProviderCapabilities : undefined)
+  const slashActionRemainder = (
+    ctx: SlashCommandRunContext,
+    commandPattern: RegExp
+  ): string => {
+    const raw = ctx.rawPrompt.trim()
+    return commandPattern.test(raw)
+      ? raw.replace(commandPattern, '').trim()
+      : ctx.promptWithoutSlashToken.trim()
+  }
+  const insertSlashScaffold = (
+    ctx: SlashCommandRunContext,
+    commandPattern: RegExp,
+    text: string
+  ): void => {
+    const remainder = slashActionRemainder(ctx, commandPattern)
+    const next = remainder
+      ? `${remainder}\n\n${text}`
+      : text
+    ctx.setDraft(next)
+    ctx.focusComposer(next.length)
+  }
   /**
    * Cross-provider TaskWraith actions promoted to first-class slash entries.
    * These don't have a CommandPaletteItem analog because they fire
@@ -18961,7 +18988,7 @@ function App(): React.JSX.Element {
         // The slash menu closes on the space after "/audit", so the menu-driven
         // selection defaults to quick; a typed "/audit <mode>" is still honored
         // here by scanning the raw prompt. Default: quick.
-        const match = prompt.match(/\/audit\s+(quick|deep|release)\b/i)
+        const match = ctx.rawPrompt.match(/\/audit\s+(quick|deep|release)\b/i)
         const mode = (match?.[1]?.toLowerCase() as 'quick' | 'deep' | 'release') || 'quick'
         // v1: no card UI yet — clear the slash token, log, and kick off the run.
         // Live phase/finding updates arrive via window.api.onAuditRunChanged.
@@ -18999,7 +19026,7 @@ function App(): React.JSX.Element {
         'Set or manage this chat’s persistent objective. Usage: /goal <objective>, /goal pause, /goal resume, /goal block, /goal complete.',
       group: 'Custom',
       run: (ctx) => {
-        handleGoalSlashCommand(ctx.promptWithoutSlashToken)
+        handleGoalSlashCommand(ctx.promptWithoutSlashToken, ctx.rawPrompt)
       }
     },
     {
@@ -19076,6 +19103,127 @@ function App(): React.JSX.Element {
       }
     },
     {
+      kind: 'insert',
+      id: 'taskwraith-discuss',
+      command: '/discuss',
+      label: 'Discuss ensemble-side',
+      description: 'Insert the provider-recognized /discuss prefix.',
+      group: 'Custom',
+      insertText: '/discuss '
+    },
+    {
+      kind: 'insert',
+      id: 'taskwraith-meta',
+      command: '/meta',
+      label: 'Meta instruction',
+      description: 'Insert the provider-recognized /meta prefix.',
+      group: 'Custom',
+      insertText: '/meta '
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-stop',
+      command: '/stop',
+      label: 'Stop current run',
+      description: 'Cancel the active run or ensemble round in this chat.',
+      group: 'Custom',
+      run: () => {
+        void handleCancel()
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-cancel',
+      command: '/cancel',
+      label: 'Cancel current run',
+      description: 'Alias for /stop.',
+      group: 'Custom',
+      run: () => {
+        void handleCancel()
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-copy-transcript',
+      command: '/copy-transcript',
+      label: 'Copy transcript',
+      description: 'Copy the current chat transcript as Markdown.',
+      group: 'Custom',
+      run: () => {
+        void handleCopyCurrentTranscript()
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-copy',
+      command: '/copy',
+      label: 'Copy transcript',
+      description: 'Alias for /copy-transcript.',
+      group: 'Custom',
+      run: () => {
+        void handleCopyCurrentTranscript()
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-files',
+      command: '/files',
+      label: 'Attach files',
+      description: 'Open the file/image picker for composer attachments.',
+      group: 'Custom',
+      run: () => {
+        void handlePickImages()
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-screen',
+      command: '/screen',
+      label: attachedWindow ? 'Detach screen watch' : 'Attach screen watch',
+      description: 'Toggle the app/window screen watch attachment.',
+      group: 'Custom',
+      run: () => {
+        if (attachedWindow) {
+          void handleDetachWindow()
+        } else {
+          void handleAttachWindow()
+        }
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-detach-screen',
+      command: '/detach-screen',
+      label: 'Detach screen watch',
+      description: 'Stop sharing the currently attached app/window.',
+      group: 'Custom',
+      run: () => {
+        void handleDetachWindow()
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-editor',
+      command: '/editor',
+      label: 'Open File Editor',
+      description: 'Open the workspace File Editor popout.',
+      group: 'Custom',
+      run: () => {
+        openWorkspacePopoutWindow('file-editor')
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-diff-window',
+      command: '/diff-window',
+      label: 'Open Diff Studio window',
+      description: 'Open Diff Studio in a workspace popout window.',
+      group: 'Custom',
+      run: () => {
+        openWorkspacePopoutWindow('diff-studio')
+      }
+    },
+    {
       kind: 'action',
       id: 'taskwraith-side',
       command: '/side',
@@ -19139,6 +19287,11 @@ function App(): React.JSX.Element {
       description: 'Open the Settings panel — docs, shortcuts, and policy info.',
       group: 'Custom',
       run: () => {
+        if (isChatPopoutWindow) {
+          window.alert('Settings open in the main TaskWraith window.')
+          return
+        }
+        setSettingsActiveTab('key-commands')
         setShowSettings(true)
       }
     },
@@ -19147,33 +19300,35 @@ function App(): React.JSX.Element {
       id: 'taskwraith-feedback',
       command: '/feedback',
       label: 'Send feedback',
-      description: 'Open the Settings panel and jump to the feedback section.',
+      description: 'Open the bug report and feedback sheet.',
       group: 'Custom',
       run: () => {
-        setShowSettings(true)
+        if (isChatPopoutWindow) {
+          window.alert('Feedback opens in the main TaskWraith window.')
+          return
+        }
+        setShowBugReportSheet(true)
       }
     },
     {
       kind: 'action',
-      id: 'taskwraith-compact',
-      command: '/compact',
-      label: 'Compact context',
-      description: 'Summarise the current chat to shrink prompt size on the next turn.',
+      id: 'taskwraith-settings',
+      command: '/settings',
+      label: 'Open Settings',
+      description: 'Open Settings, optionally to a tab: /settings providers, approvals, usage, mcp.',
       group: 'Custom',
-      run: () => {
-        // Context compaction lives on the main side at the
-        // PromptComposition layer and runs automatically per turn — the
-        // slash entry doesn’t have a direct surface today. Log a
-        // friendly note so the user understands the picker fired
-        // correctly but the manual compact handle is still pending.
-        setRawLogs((prev) => [
-          ...prev,
-          {
-            type: 'info',
-            content:
-              'Slash /compact: TaskWraith already runs compact-context per turn (see PromptComposition.ts). A manual on-demand recompact entry will land in a follow-up slice.'
-          }
-        ])
+      run: (ctx) => {
+        if (isChatPopoutWindow) {
+          window.alert('Settings open in the main TaskWraith window.')
+          return
+        }
+        const arg = slashActionRemainder(ctx, /^\/settings\b/i)
+        const tab = resolveSettingsTabFromSlashArg(arg, {
+          settingsTabs: SETTINGS_TABS,
+          isTabVisible: isSettingsTabVisible
+        })
+        setSettingsActiveTab(tab)
+        setShowSettings(true)
       }
     },
     /* Prompt-template seams. Drop a canned prompt at the slash position
@@ -19183,6 +19338,48 @@ function App(): React.JSX.Element {
      * skill becomes a prompt-template entry whose template comes from
      * the skill's frontmatter. Group=Custom so they sort below the
      * provider-native palette. */
+    {
+      kind: 'action',
+      id: 'taskwraith-template-compact',
+      command: '/compact',
+      label: 'Compact context',
+      description: 'Insert a concise context-summary request for this chat.',
+      group: 'Custom',
+      run: (ctx) =>
+        insertSlashScaffold(
+          ctx,
+          /^\/compact\b/i,
+          'Create a compact context summary for continuing this chat. Preserve decisions, constraints, open tasks, changed files, risks, and next actions. Do not omit unresolved questions or verification state.\n\n'
+        )
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-template-compact-shared',
+      command: '/compact-shared',
+      label: 'Compact shared ensemble context',
+      description: 'Insert a summary request meant for every ensemble participant.',
+      group: 'Custom',
+      run: (ctx) =>
+        insertSlashScaffold(
+          ctx,
+          /^\/compact-shared\b/i,
+          'Create a shared ensemble context checkpoint for all participants. Summarize the common objective, decisions, constraints, participant responsibilities, unresolved disagreements, changed files, risks, and next actions. Keep provider-specific session details separate from shared facts.\n\n'
+        )
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-template-compact-selected',
+      command: '/compact-selected',
+      label: 'Compact selected participant context',
+      description: 'Insert a summary request scoped to the selected ensemble participant.',
+      group: 'Custom',
+      run: (ctx) =>
+        insertSlashScaffold(
+          ctx,
+          /^\/compact-selected\b/i,
+          'Create a compact context summary for the selected participant only. Capture that participant’s role, relevant prior statements, assigned tasks, constraints, open questions, and next action. Do not reset or alter other participants’ context.\n\n'
+        )
+    },
     {
       kind: 'prompt-template',
       id: 'taskwraith-template-explain',
@@ -19220,10 +19417,10 @@ function App(): React.JSX.Element {
   // TaskWraith actions and prompt templates. `capabilities` gates entries
   // the provider can't service (e.g. `/mcp` hides when MCP is offline).
   const composerSlashCommands: ComposerSlashCommand[] = buildComposerSlashCommandRegistry({
-    provider: currentProvider,
+    provider: slashCommandProvider,
     paletteItems: commandPaletteItems,
     extraCommands: composerSlashExtraCommands,
-    capabilities: currentProviderCapabilities
+    capabilities: slashCommandProviderCapabilities
   })
 
   // tryHandleActionSlashSubmit moved INTO <Composer> (Slice C). It matches a

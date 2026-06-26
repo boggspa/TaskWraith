@@ -986,10 +986,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   /** Build the context handed to an action command's `run()`. Computed against
    * THIS composer's draft + slash state so App-level closures operate on the
    * invoking pane. */
-  const buildSlashRunContext = (): SlashCommandRunContext => ({
+  const buildSlashRunContext = (options?: { onSetDraft?: () => void }): SlashCommandRunContext => ({
+    rawPrompt: prompt,
     promptWithoutSlashToken: promptWithoutCurrentSlashToken(),
     consumeSlashToken: consumeSlashTokenFromPrompt,
-    setDraft: (value: string) => setChatPromptDraft(currentComposerChatId, value),
+    setDraft: (value: string) => {
+      options?.onSetDraft?.()
+      setChatPromptDraft(currentComposerChatId, value)
+    },
     focusComposer: focusComposerTextarea
   })
 
@@ -1095,10 +1099,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setSlashMenuOpen(false)
     setSlashQuery('')
     slashAnchorIndexRef.current = null
-    // run() reads the current `prompt` (e.g. to parse "/audit deep"); clear it
-    // AFTER so the literal command text never reaches the provider as a message.
-    void command.run(buildSlashRunContext())
-    setChatPromptDraft(currentComposerChatId, '')
+    let actionWroteDraft = false
+    // run() reads the current prompt through SlashCommandRunContext. Clear the
+    // literal slash command after dispatch unless the action deliberately wrote
+    // a replacement draft (for example /import-plan or /compact scaffolds).
+    void command.run(
+      buildSlashRunContext({
+        onSetDraft: () => {
+          actionWroteDraft = true
+        }
+      })
+    )
+    if (!actionWroteDraft) {
+      setChatPromptDraft(currentComposerChatId, '')
+    }
     return true
   }
 
