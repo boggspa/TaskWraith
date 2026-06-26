@@ -2244,6 +2244,8 @@ public struct ProviderGlyphIcon: View {
 }
 
 public struct MarkdownLite: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let text: String
     let participants: [RemoteEnsembleState.Participant]
     let baseColor: Color
@@ -2294,13 +2296,37 @@ public struct MarkdownLite: View {
                 numbers = []
             }
             if !tableRows.isEmpty {
-                if let table = MarkdownTable.parse(lines: tableRows) {
-                    out.append(.table(table))
-                } else {
-                    out.append(.paragraph(text: tableRows.joined(separator: "\n")))
-                }
+                appendTableRows(tableRows)
                 tableRows = []
             }
+        }
+        func firstRecoverableTableStart(in rows: [String]) -> Int? {
+            guard rows.count >= 3 else { return nil }
+            for index in 1..<(rows.count - 1)
+            where MarkdownTable.parse(lines: Array(rows[index...])) != nil {
+                return index
+            }
+            return nil
+        }
+        func appendTableRows(_ rows: [String]) {
+            if let table = MarkdownTable.parse(lines: rows) {
+                out.append(.table(table))
+                return
+            }
+            if let tableStart = firstRecoverableTableStart(in: rows) {
+                let proseRows = Array(rows[..<tableStart])
+                if !proseRows.isEmpty {
+                    out.append(.paragraph(text: proseRows.joined(separator: "\n")))
+                }
+                let candidateRows = Array(rows[tableStart...])
+                if let table = MarkdownTable.parse(lines: candidateRows) {
+                    out.append(.table(table))
+                } else {
+                    out.append(.paragraph(text: candidateRows.joined(separator: "\n")))
+                }
+                return
+            }
+            out.append(.paragraph(text: rows.joined(separator: "\n")))
         }
 
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -2405,6 +2431,21 @@ public struct MarkdownLite: View {
         }
     }
 
+    static func _markdownLiteBlockKindsForTesting(_ text: String) -> [String] {
+        MarkdownLite(text).blocks.map { block in
+            switch block {
+            case .heading: return "heading"
+            case .bullet: return "bullet"
+            case .numbered: return "numbered"
+            case .code: return "code"
+            case .table: return "table"
+            case .quote: return "quote"
+            case .paragraph: return "paragraph"
+            case .divider: return "divider"
+            }
+        }
+    }
+
     @ViewBuilder
     private func blockView(_ block: Block) -> some View {
         switch block {
@@ -2495,6 +2536,7 @@ public struct MarkdownLite: View {
         .overlay(shape.strokeBorder(TWTheme.border, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Markdown table")
+        .accessibilityHint("Scroll horizontally to read additional columns")
     }
 
     private func tableRow(
@@ -2510,6 +2552,7 @@ public struct MarkdownLite: View {
                 tableCell(
                     column < cells.count ? cells[column] : "",
                     header: header,
+                    columnHeader: table.headers[column],
                     alignment: table.alignments[column],
                     rowIndex: rowIndex,
                     columnIndex: column,
@@ -2529,6 +2572,7 @@ public struct MarkdownLite: View {
     private func tableCell(
         _ raw: String,
         header: Bool,
+        columnHeader: String,
         alignment: MarkdownTableAlignment,
         rowIndex: Int,
         columnIndex: Int,
@@ -2542,16 +2586,26 @@ public struct MarkdownLite: View {
             .frame(width: columnWidth, alignment: frameAlignment(for: alignment))
             .padding(.vertical, 8)
             .padding(.horizontal, 8)
-            .accessibilityLabel(tableAccessibilityLabel(raw, rowIndex: rowIndex, columnIndex: columnIndex))
+            .accessibilityLabel(
+                tableAccessibilityLabel(
+                    raw,
+                    columnHeader: columnHeader,
+                    rowIndex: rowIndex,
+                    columnIndex: columnIndex
+                )
+            )
     }
 
     private func tableColumnWidth(for columnCount: Int) -> CGFloat {
+        let baseWidth: CGFloat
         switch columnCount {
-        case 0...2: return 136
-        case 3: return 104
-        case 4: return 76
-        default: return 68
+        case 0...2: baseWidth = 136
+        case 3: baseWidth = 104
+        case 4: baseWidth = 76
+        default: baseWidth = 68
         }
+        guard dynamicTypeSize.isAccessibilitySize else { return baseWidth }
+        return max(baseWidth, 112)
     }
 
     private func tableCellTotalWidth(_ columnWidth: CGFloat) -> CGFloat {
@@ -2598,6 +2652,7 @@ public struct MarkdownLite: View {
 
     private func tableAccessibilityLabel(
         _ raw: String,
+        columnHeader: String,
         rowIndex: Int,
         columnIndex: Int
     ) -> String {
@@ -2606,7 +2661,11 @@ public struct MarkdownLite: View {
         if rowIndex == 0 {
             return "Header column \(columnIndex + 1), \(fallback)"
         }
-        return "Row \(rowIndex), column \(columnIndex + 1), \(fallback)"
+        let header = columnHeader.trimmingCharacters(in: .whitespacesAndNewlines)
+        if header.isEmpty {
+            return "Row \(rowIndex), column \(columnIndex + 1), \(fallback)"
+        }
+        return "Row \(rowIndex), \(header), \(fallback)"
     }
 
     /// Inline markdown (bold/italic/code/links) + provider-tinted mentions.

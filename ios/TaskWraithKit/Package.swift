@@ -55,6 +55,10 @@ let package = Package(
         .testTarget(
             name: "TaskWraithKitTests",
             dependencies: ["TaskWraithKit"]
+        ),
+        .testTarget(
+            name: "TaskWraithUITests",
+            dependencies: ["TaskWraithUI"]
         )
     ]
 )
