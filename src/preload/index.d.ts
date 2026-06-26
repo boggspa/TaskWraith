@@ -1260,7 +1260,12 @@ declare global {
         CreateShareResult & { relayUrl: string; hostIdentityPubKeyB64: string }
       >
       humanCollaborationListShares: (chatId?: string) => Promise<HumanCollaborationShare[]>
+      humanCollaborationConnectedChatIds: () => Promise<string[]>
       humanCollaborationRevokeShare: (shareId: string) => Promise<HumanCollaborationShare | null>
+      humanCollaborationRevokeParticipant: (input: {
+        shareId: string
+        collaboratorId: string
+      }) => Promise<HumanCollaborationShare | null>
       humanCollaborationConsumeInvite: (input: {
         shareId: string
         inviteToken: string

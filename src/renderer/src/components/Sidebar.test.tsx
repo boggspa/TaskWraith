@@ -128,6 +128,7 @@ function renderSidebar(
     onCreateWorkflow?: () => void
     collaboratingChatIds?: Set<string>
     pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
+    hasConnectedCollaborator?: boolean
   } = {}
 ) {
   const workspace = makeWorkspace()
@@ -143,6 +144,7 @@ function renderSidebar(
       workflows={options.workflows}
       collaboratingChatIds={options.collaboratingChatIds}
       pendingAgentApprovalByChatId={options.pendingAgentApprovalByChatId}
+      hasConnectedCollaborator={options.hasConnectedCollaborator}
       onSelectWorkspace={() => {}}
       onRemoveWorkspace={() => {}}
       onSelectWorkspaceDialog={() => {}}
@@ -626,14 +628,19 @@ describe('Sidebar footer controls', () => {
     expect(html).not.toContain('glow-red')
   })
 
-  it('glows the Shares button yellow only while a chat is shared', () => {
-    const idle = renderSidebar([makeChat()])
-    expect(idle).not.toContain('glow-yellow')
-
-    const shared = renderSidebar([makeChat()], {
+  it('glows the Shares button yellow only when a collaborator is connected', () => {
+    // Sharing alone does NOT glow — the glow is the precise "someone's actually
+    // here" signal, driven by a live collaborator session.
+    const sharingButEmpty = renderSidebar([makeChat()], {
       collaboratingChatIds: new Set(['parent-1'])
     })
-    expect(shared).toContain('glow-yellow')
+    expect(sharingButEmpty).not.toContain('glow-yellow')
+
+    const connected = renderSidebar([makeChat()], {
+      collaboratingChatIds: new Set(['parent-1']),
+      hasConnectedCollaborator: true
+    })
+    expect(connected).toContain('glow-yellow')
   })
 })
 

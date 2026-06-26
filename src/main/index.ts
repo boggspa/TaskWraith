@@ -23781,6 +23781,11 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle('human-collaboration:list-shares', (_, chatId?: string) =>
       chatService.listHumanCollaborationShares(chatId)
     )
+    // chatIds with a live collaborator session (joined + not left/revoked).
+    // Guarded so a poll never constructs the runtime: no runtime => nobody in.
+    ipcMain.handle('human-collaboration:connected-chat-ids', () =>
+      humanCollaborationRuntime ? humanCollaborationRuntime.connectedChatIds() : []
+    )
     ipcMain.handle('human-collaboration:revoke-share', (_, shareId: string) => {
       // Close the relay rooms for this share's invites before revoking.
       const target = chatService
@@ -23793,6 +23798,26 @@ if (isGeminiMcpBridgeProcess) {
       if (result) broadcastHumanCollaborationUpdate(result.chatId)
       return result
     })
+    ipcMain.handle(
+      'human-collaboration:revoke-participant',
+      (_, input: { shareId: string; collaboratorId: string }) => {
+        const result = chatService.revokeHumanCollaborationParticipant(
+          input.shareId,
+          input.collaboratorId
+        )
+        if (result) {
+          // Tear down only the relay room that admitted THIS collaborator, so
+          // their live session drops immediately while the share + any other
+          // collaborators stay up (mirrors revoke-share's closeRoom, scoped).
+          const invite = result.invites.find(
+            (candidate) => candidate.collaboratorId === input.collaboratorId
+          )
+          if (invite?.roomId) humanCollaborationHostTransport?.closeRoom(invite.roomId)
+          broadcastHumanCollaborationUpdate(result.chatId)
+        }
+        return result
+      }
+    )
     ipcMain.handle(
       'human-collaboration:consume-invite',
       (

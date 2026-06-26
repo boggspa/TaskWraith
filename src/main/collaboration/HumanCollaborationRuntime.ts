@@ -441,6 +441,21 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     return true
   }
 
+  /**
+   * chatIds that currently have at least one LIVE collaborator session — a
+   * collaborator who completed admission and has not disconnected (graceful
+   * leave) or been revoked. This is the only state that reflects "someone is
+   * actually connected right now" (the store's participant status and the
+   * transport's room map only clear on revoke, not on leave), so it drives the
+   * Shares "someone's here" glow. NB: an ungraceful drop (crash / lost network)
+   * lingers until revoke or restart.
+   */
+  connectedChatIds(): string[] {
+    const ids = new Set<string>()
+    for (const session of this.sessions.values()) ids.add(session.chatId)
+    return Array.from(ids)
+  }
+
   sealForCollaborator(
     sessionId: string,
     message: Omit<HumanCollaborationPlainMessage, 'msgId'> & { msgId?: number }

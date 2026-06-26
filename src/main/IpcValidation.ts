@@ -98,7 +98,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // 'compose-run' / 'create-sub-thread' precedent and is the IPC-boundary shape gate.
   'human-collaboration:create-share': ['object'],
   'human-collaboration:list-shares': ['optionalString'],
+  'human-collaboration:connected-chat-ids': [],
   'human-collaboration:revoke-share': ['nonEmptyString'],
+  'human-collaboration:revoke-participant': ['object'],
   'human-collaboration:consume-invite': ['object'],
   'human-collaboration:append-comment': ['object'],
   'human-collaboration:projection': ['object'],

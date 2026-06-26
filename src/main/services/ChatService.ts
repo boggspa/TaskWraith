@@ -340,6 +340,16 @@ export class ChatService {
     return this.requireHumanCollaborationStore().revokeShare(requireNonEmptyString(shareId, 'Share id'))
   }
 
+  revokeHumanCollaborationParticipant(
+    shareId: string,
+    collaboratorId: string
+  ): HumanCollaborationShare | null {
+    return this.requireHumanCollaborationStore().revokeParticipant({
+      shareId: requireNonEmptyString(shareId, 'Share id'),
+      collaboratorId: requireNonEmptyString(collaboratorId, 'Collaborator id')
+    })
+  }
+
   consumeHumanCollaborationInvite(args: {
     shareId: string
     inviteToken: string

@@ -868,6 +868,25 @@
   font-size: var(--font-size-xs, 11px);
   color: var(--text-secondary);
 }
+.shares-panel-participant-remove {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--danger, #e2554f) 38%, transparent);
+  background: transparent;
+  color: color-mix(in srgb, var(--danger, #e2554f) 88%, var(--text-primary));
+  font: inherit;
+  font-size: var(--font-size-xs, 11px);
+  border-radius: 7px;
+  padding: 2px 9px;
+  cursor: pointer;
+  opacity: 0.82;
+  transition: background 100ms ease, opacity 100ms ease;
+}
+.shares-panel-participant-remove:hover,
+.shares-panel-participant-remove:focus-visible {
+  background: color-mix(in srgb, var(--danger, #e2554f) 14%, transparent);
+  opacity: 1;
+  outline: none;
+}
 .shares-panel-dot {
   flex: 0 0 8px;
   width: 8px;

@@ -215,6 +215,10 @@ interface SidebarProps {
   collaborationShares?: HumanCollaborationShare[]
   /** Revoke (stop) a single share by id, from the Shares popover. */
   onRevokeShare?: (shareId: string) => void
+  /** True when at least one collaborator is LIVE-connected to a share right now
+   * — drives the Shares button's yellow "someone's here" glow (more precise
+   * than merely sharing). */
+  hasConnectedCollaborator?: boolean
   /**
    * Model Usage card View-B ("API spend") inputs, forwarded to
    * `ModelUsageCard`. Bundles the rate table + display-currency settings
@@ -1881,6 +1885,7 @@ export function Sidebar({
   pendingApprovalQueueByChatId = {},
   collaborationShares = [],
   onRevokeShare,
+  hasConnectedCollaborator = false,
   modelUsageApiSpend
 }: SidebarProps) {
   const [hoveredWorkspace, setHoveredWorkspace] = useState<string | null>(null)
@@ -1920,7 +1925,6 @@ export function Sidebar({
     return out
   }, [pendingAgentApprovalByChatId, pendingApprovalQueueByChatId])
   const hasPendingApprovals = pendingApprovalsFlat.length > 0
-  const hasActiveShares = collaboratingChatIds.size > 0
   // Stable so the Approvals popover doesn't re-fetch the ledger on every
   // unrelated Sidebar re-render (e.g. the 5s device poll) while it's open.
   const loadRecentApprovals = useCallback(
@@ -4349,7 +4353,7 @@ export function Sidebar({
             </button>
             <button
               type="button"
-              className={`sidebar-footer-icon-btn${hasActiveShares ? ' glow-yellow' : ''}${
+              className={`sidebar-footer-icon-btn${hasConnectedCollaborator ? ' glow-yellow' : ''}${
                 sharesPopoverOpen ? ' is-open' : ''
               }`}
               onClick={() => {
@@ -4358,8 +4362,10 @@ export function Sidebar({
                 setDevicesPopoverOpen(false)
                 setSharesPopoverOpen((open) => !open)
               }}
-              title={hasActiveShares ? 'Shares — active share' : 'Shares'}
-              aria-label={hasActiveShares ? 'Shares, a chat is shared' : 'Shares'}
+              title={hasConnectedCollaborator ? 'Shares — collaborator connected' : 'Shares'}
+              aria-label={
+                hasConnectedCollaborator ? 'Shares, a collaborator is connected' : 'Shares'
+              }
               aria-haspopup="dialog"
               aria-expanded={sharesPopoverOpen}
             >

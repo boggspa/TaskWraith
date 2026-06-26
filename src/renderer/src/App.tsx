@@ -1497,6 +1497,31 @@ function App(): React.JSX.Element {
   useEffect(() => {
     refreshHumanCollaborationShares()
   }, [refreshHumanCollaborationShares])
+  // chatIds with a LIVE collaborator session (joined + not left/revoked) — the
+  // "someone's actually here" signal for the Shares footer glow. Polled (the
+  // host learns of a graceful leave only via the runtime session map, which
+  // isn't broadcast), guarded so it no-ops when the bridge isn't present.
+  const [connectedCollaborationChatIds, setConnectedCollaborationChatIds] = useState<Set<string>>(
+    new Set()
+  )
+  useEffect(() => {
+    if (typeof window.api.humanCollaborationConnectedChatIds !== 'function') return
+    let cancelled = false
+    const poll = (): void => {
+      void window.api
+        .humanCollaborationConnectedChatIds()
+        .then((ids) => {
+          if (!cancelled) setConnectedCollaborationChatIds(new Set(ids || []))
+        })
+        .catch(() => {})
+    }
+    poll()
+    const interval = window.setInterval(poll, 5000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [])
   // Shared helper: create a collaboration share for `chatId` and copy the
   // out-of-band invite payload. Used by both "Share this chat" (current chat)
   // and "New Shared Chat" (a freshly-created chat).
@@ -21463,6 +21488,7 @@ function App(): React.JSX.Element {
                 pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
                 collaborationShares={humanCollaborationShares}
                 onRevokeShare={handleRevokeHumanShare}
+                hasConnectedCollaborator={connectedCollaborationChatIds.size > 0}
               />
             )}
             <div

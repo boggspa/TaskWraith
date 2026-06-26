@@ -947,8 +947,12 @@ const api = {
   }) => ipcRenderer.invoke('human-collaboration:create-share', input),
   humanCollaborationListShares: (chatId?: string) =>
     ipcRenderer.invoke('human-collaboration:list-shares', chatId),
+  humanCollaborationConnectedChatIds: () =>
+    ipcRenderer.invoke('human-collaboration:connected-chat-ids'),
   humanCollaborationRevokeShare: (shareId: string) =>
     ipcRenderer.invoke('human-collaboration:revoke-share', shareId),
+  humanCollaborationRevokeParticipant: (input: { shareId: string; collaboratorId: string }) =>
+    ipcRenderer.invoke('human-collaboration:revoke-participant', input),
   humanCollaborationConsumeInvite: (input: {
     shareId: string
     inviteToken: string

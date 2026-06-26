@@ -38,6 +38,7 @@ export function SharesPanelView({
   loading,
   error,
   onRevoke,
+  onRevokeParticipant,
   now
 }: {
   shares: HumanCollaborationShare[]
@@ -45,6 +46,7 @@ export function SharesPanelView({
   loading: boolean
   error: string | null
   onRevoke: (shareId: string) => void
+  onRevokeParticipant?: (shareId: string, collaboratorId: string) => void
   // The "current time" for open-invite expiry, supplied by the container so the
   // view stays a pure function of its props (no clock read during render).
   now: number
@@ -129,6 +131,16 @@ export function SharesPanelView({
                         <span className="shares-panel-participant-status">
                           {participantStatusLabel(participant.status)}
                         </span>
+                        {onRevokeParticipant && (
+                          <button
+                            type="button"
+                            className="shares-panel-participant-remove"
+                            onClick={() => onRevokeParticipant(share.shareId, participant.collaboratorId)}
+                            aria-label={`Remove ${participant.displayName} from this share`}
+                          >
+                            Remove
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -218,6 +230,21 @@ export function SharesPanel() {
     [refresh]
   )
 
+  const handleRevokeParticipant = useCallback(
+    (shareId: string, collaboratorId: string) => {
+      if (typeof window.api.humanCollaborationRevokeParticipant !== 'function') return
+      if (!window.confirm('Remove this collaborator? They lose access immediately.')) return
+      void window.api
+        .humanCollaborationRevokeParticipant({ shareId, collaboratorId })
+        .then(() => refresh())
+        .catch(() => {
+          setError('Could not remove the collaborator.')
+          refresh()
+        })
+    },
+    [refresh]
+  )
+
   return (
     <SharesPanelView
       shares={shares}
@@ -225,6 +252,7 @@ export function SharesPanel() {
       loading={loading}
       error={error}
       onRevoke={handleRevoke}
+      onRevokeParticipant={handleRevokeParticipant}
       now={now}
     />
   )

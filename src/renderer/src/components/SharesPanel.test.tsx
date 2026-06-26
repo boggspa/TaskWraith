@@ -136,6 +136,36 @@ describe('SharesPanelView', () => {
     expect(html).toContain('No collaborators yet')
   })
 
+  it('renders a per-participant Remove control when a handler is supplied', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare()]}
+        chatTitles={{ 'chat-1': 'Design review' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        onRevokeParticipant={() => {}}
+        now={NOW}
+      />
+    )
+    expect(html).toContain('shares-panel-participant-remove')
+    expect(html).toContain('Remove')
+  })
+
+  it('omits the per-participant Remove control without a handler', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare()]}
+        chatTitles={{ 'chat-1': 'Design review' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        now={NOW}
+      />
+    )
+    expect(html).not.toContain('shares-panel-participant-remove')
+  })
+
   it('excludes revoked participants from the roster', () => {
     const html = renderToStaticMarkup(
       <SharesPanelView
