@@ -156,56 +156,75 @@ struct HomeView: View {
                 // and the inspector toolbar's black/white style.
                 .tint(TWTheme.textPrimary)
             }
-            // Each control is its own ToolbarItem so the system lays them out
-            // individually. A single wide custom pill GROUP at .cancellationAction
-            // didn't fit the iPad sidebar's nav slot and dropped the Settings +
-            // More segments (regression from "Polish iOS toolbar icon chrome").
-            ToolbarItem(placement: .cancellationAction) {
-                Button {
-                    model.refreshConnection()
-                } label: {
-                    ToolbarIconPillLabel("Refresh", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-            }
-            ToolbarItem(placement: .cancellationAction) {
-                Button {
-                    model.settingsPresented = true
-                } label: {
-                    ToolbarIconPillLabel("Settings", systemImage: "gearshape")
-                }
-                .buttonStyle(.plain)
-            }
-            ToolbarItem(placement: .cancellationAction) {
-                Menu {
-                    Button("First-launch guide", systemImage: "questionmark.circle") {
-                        model.firstLaunchSheetPresented = true
+            // Unified utility pill — Refresh / Settings / More share ONE glass
+            // capsule (ToolbarIconPillGroup of ToolbarIconSegmentLabel cells with
+            // cascading dividers), matching the inspector pill in ThreadDetailView,
+            // instead of three separate per-icon pills. Placed at .primaryAction —
+            // the SAME proven placement the inspector pill uses — so the wide group
+            // isn't squeezed by the narrow leading sidebar slot that dropped the
+            // Settings + More segments in the earlier .cancellationAction attempt.
+            // The sidebar collapse/expand stays the system NavigationSplitView
+            // chevron (de-blued via a monochrome .tint on the column in
+            // ConnectedShell) — folding it into this pill would hide the only
+            // toggle when the sidebar collapses. New Chat stays its own circle
+            // at .primaryAction above.
+            ToolbarItem(placement: .primaryAction) {
+                ToolbarIconPillGroup {
+                    Button {
+                        model.refreshConnection()
+                    } label: {
+                        ToolbarIconSegmentLabel(
+                            "Refresh",
+                            systemImage: "arrow.clockwise"
+                        )
                     }
-                    Divider()
-                    if model.isDemo {
-                        Button("Exit demo", systemImage: "xmark.circle") {
-                            model.exitDemoMode()
-                        }
-                    } else {
-                        Button(
-                            "Find hosts on your tailnet",
-                            systemImage: "antenna.radiowaves.left.and.right"
-                        ) {
-                            showDiscoverySheet = true
+                    .buttonStyle(.plain)
+                    .tint(TWTheme.textPrimary)
+                    Button {
+                        model.settingsPresented = true
+                    } label: {
+                        ToolbarIconSegmentLabel(
+                            "Settings",
+                            systemImage: "gearshape",
+                            leadingDivider: true
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .tint(TWTheme.textPrimary)
+                    Menu {
+                        Button("First-launch guide", systemImage: "questionmark.circle") {
+                            model.firstLaunchSheetPresented = true
                         }
                         Divider()
-                        Button("Disconnect", role: .destructive) { model.disconnect() }
-                        Button("Forget this host", role: .destructive) { model.forgetPairing() }
-                        Divider()
-                        Button("Enter demo mode", systemImage: "play.circle") {
-                            showDemoConfirm = true
+                        if model.isDemo {
+                            Button("Exit demo", systemImage: "xmark.circle") {
+                                model.exitDemoMode()
+                            }
+                        } else {
+                            Button(
+                                "Find hosts on your tailnet",
+                                systemImage: "antenna.radiowaves.left.and.right"
+                            ) {
+                                showDiscoverySheet = true
+                            }
+                            Divider()
+                            Button("Disconnect", role: .destructive) { model.disconnect() }
+                            Button("Forget this host", role: .destructive) { model.forgetPairing() }
+                            Divider()
+                            Button("Enter demo mode", systemImage: "play.circle") {
+                                showDemoConfirm = true
+                            }
                         }
+                    } label: {
+                        ToolbarIconSegmentLabel(
+                            "More",
+                            systemImage: "ellipsis.circle",
+                            leadingDivider: true
+                        )
                     }
-                } label: {
-                    ToolbarIconPillLabel("More", systemImage: "ellipsis.circle")
+                    .buttonStyle(.plain)
+                    .tint(TWTheme.textPrimary)
                 }
-                .buttonStyle(.plain)
-                .tint(TWTheme.textPrimary)
             }
         }
         .navigationDestination(item: $canvasMode) { mode in

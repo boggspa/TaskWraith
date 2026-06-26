@@ -328,6 +328,12 @@ struct ConnectedShell: View {
                 NavigationSplitView {
                     HomeView(model: model, selection: $model.selectedTaskId, explicitSelection: true)
                         .navigationSplitViewColumnWidth(min: 300, ideal: 340)
+                        // De-blue the system sidebar collapse/expand chevron: it
+                        // inherits the app-root accent (chroma1 blue) otherwise.
+                        // The sidebar's row selection uses explicit chrome (custom
+                        // Button rows, not the inherited tint), so scoping a
+                        // monochrome tint here only neutralises the system toggle.
+                        .tint(TWTheme.textPrimary)
                         .iPadSidebarInnerRim(edge: .trailing)
                 } detail: {
                     if let taskId = model.selectedTaskId, taskId.hasPrefix("new-") {
