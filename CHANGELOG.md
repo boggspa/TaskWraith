@@ -4,6 +4,14 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.6.5 - 2026-06-26
+
+### Fixed
+- **iOS Bossman removal.** Roster updates from the iOS companion now distinguish
+  old clients that omit the Bossman marker from current clients explicitly sending
+  `isBossman: false`, so turning Bossman off clears the Mac-side assignment and
+  removes the crown instead of preserving the previous participant.
+
 ## 1.6.4 - 2026-06-26
 
 ### Added
