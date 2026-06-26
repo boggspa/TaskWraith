@@ -2067,6 +2067,15 @@ export interface TranscriptMediaRef {
   durationMs?: number
   /** Codec descriptor for AV refs, e.g. "h264,aac" (informational, for the UI/agent). */
   codecs?: string
+  /**
+   * Compact waveform envelope for AUDIO refs — N integer buckets (target 256,
+   * hard-cap 512), each 0–255 = round(maxAbsSampleInBucket * 255). Harvested from
+   * the same offscreen Web-Audio analysis pass that paints the poster (no second
+   * decode); the renderer canvas-draws a crisp DAW waveform from it (normalize by
+   * /255). Optional everywhere — absent for non-audio, oversized-skipped, or older
+   * refs (the poster JPEG is the graceful fallback). Kept tiny (≤~700 bytes JSON).
+   */
+  peaks?: number[]
   byteLength?: number
   sha256?: string
   assetId?: string

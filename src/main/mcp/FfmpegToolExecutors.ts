@@ -1,8 +1,7 @@
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
 import { buildFfmpegArgs, buildFfprobeArgs, type AudioOutFormat, type FfmpegIntent } from '../media/FfmpegCommand'
 import { parseFfprobeJson } from '../media/FfprobeResult'
-import { buildAvMediaRef, type GeneratePoster } from '../media/AvMediaRef'
-import type { TranscriptMediaThumbnail } from '../store/types'
+import { buildAvMediaRef, type AvPosterResult, type GeneratePoster } from '../media/AvMediaRef'
 
 /**
  * ffmpeg-family MCP tool executors. Pure logic — the binary resolver, the realpath
@@ -298,11 +297,11 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
       // generatePoster impl throws, the producer must still return its ref — the
       // poster is decorative. The real impl is already fail-tolerant; this is
       // defense-in-depth so the producer's contract holds for ANY injected dep.
-      let thumbnail: TranscriptMediaThumbnail | undefined
+      let poster: AvPosterResult | undefined
       try {
-        thumbnail = await generatePoster(outputPath, kind, mimeType, buffer.length)
+        poster = await generatePoster(outputPath, kind, mimeType, buffer.length)
       } catch {
-        thumbnail = undefined
+        poster = undefined
       }
       const ref = buildAvMediaRef({
         sha256: persisted.sha256,
@@ -312,7 +311,8 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
         byteLength: buffer.length,
         durationMs: probed.durationMs,
         codecs: probed.codecs,
-        thumbnail
+        thumbnail: poster?.thumbnail,
+        peaks: poster?.peaks
       })
       // buildAvMediaRef only returns null on a non-AV mime — unreachable here
       // (mimeType is main-derived from a validated format), but fail LOUDLY rather

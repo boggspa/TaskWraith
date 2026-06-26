@@ -29,19 +29,33 @@ const AV_MIMES = new Set<string>([
 ])
 
 /**
+ * The result of the best-effort poster/waveform pass: a small JPEG `thumbnail`
+ * (the graceful fallback) AND, for AUDIO, a compact `peaks` envelope harvested from
+ * the SAME offscreen analysis decode (no second decode). Both fields are optional and
+ * independent — a video gives a thumbnail and no peaks; a big audio file skipped for
+ * heap may give neither.
+ */
+export interface AvPosterResult {
+  thumbnail?: TranscriptMediaThumbnail
+  /** Compact waveform envelope (N≤512 ints 0–255) for audio refs; absent otherwise. */
+  peaks?: number[]
+}
+
+/**
  * Best-effort poster/waveform generator for an already-written AV staging file.
  * INJECTED into the producers (the real impl lives in index.ts: VideoToolbox frame
- * decode for video, the offscreen audio engine's waveform for audio, both downscaled
- * to a small size-capped JPEG). MUST be fail-tolerant — it never throws and resolves
- * to `undefined` on any error/timeout/empty result, so a producer always returns its
- * ref (just with no poster). Called BEFORE the staging file is removed.
+ * decode for video, the offscreen audio engine's waveform + harvested peaks for audio,
+ * the JPEG downscaled to a small size-capped poster). MUST be fail-tolerant — it never
+ * throws and resolves to `undefined` (or an empty `{}`) on any error/timeout/empty
+ * result, so a producer always returns its ref (just with no poster/peaks). Called
+ * BEFORE the staging file is removed.
  */
 export type GeneratePoster = (
   outputPath: string,
   kind: 'audio' | 'video',
   mimeType: string,
   byteLength: number
-) => Promise<TranscriptMediaThumbnail | undefined>
+) => Promise<AvPosterResult | undefined>
 
 export interface BuildAvMediaRefInput {
   sha256: string
@@ -58,6 +72,14 @@ export interface BuildAvMediaRefInput {
    * dep and hands it in, or omits it on any failure (fail-tolerant).
    */
   thumbnail?: TranscriptMediaThumbnail
+  /**
+   * Optional compact waveform envelope for AUDIO refs — N integer buckets (≤512,
+   * each 0–255). Harvested by the producer from the same analysis pass as the
+   * poster. PURE, fail-tolerant passthrough (mirrors `thumbnail`): only put on the
+   * ref when it is a non-empty array of finite numbers; never throws on malformed
+   * input. The renderer draws a DAW waveform from it (normalize /255).
+   */
+  peaks?: number[]
 }
 
 export function buildAvMediaRef(input: BuildAvMediaRefInput): TranscriptMediaRef | null {
@@ -88,6 +110,21 @@ export function buildAvMediaRef(input: BuildAvMediaRefInput): TranscriptMediaRef
   if (typeof input.codecs === 'string' && input.codecs.length > 0) ref.codecs = input.codecs
   if (input.thumbnail && typeof input.thumbnail.dataBase64 === 'string' && input.thumbnail.dataBase64.length > 0) {
     ref.thumbnail = input.thumbnail
+  }
+  // Fail-tolerant peaks passthrough (mirrors thumbnail): only attach a non-empty
+  // array of finite numbers, hard-capped at 512 buckets, each coerced to an int
+  // 0..255. A malformed/oversized value is silently dropped (poster fallback) —
+  // never thrown. This is the last main-side guard before the field hits a ref.
+  if (Array.isArray(input.peaks) && input.peaks.length > 0) {
+    const capped = input.peaks.length > 512 ? input.peaks.slice(0, 512) : input.peaks
+    const cleaned: number[] = []
+    for (const value of capped) {
+      const n = typeof value === 'number' ? value : Number(value)
+      if (!Number.isFinite(n)) continue
+      const q = Math.round(n)
+      cleaned.push(q < 0 ? 0 : q > 255 ? 255 : q)
+    }
+    if (cleaned.length > 0) ref.peaks = cleaned
   }
   return ref
 }

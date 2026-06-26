@@ -95,6 +95,37 @@ export interface AudioRenderMeta {
   wavHeaderOk: boolean
 }
 
+/** Target number of waveform buckets harvested from the offscreen analysis pass.
+ * 256 is plenty for a crisp inline DAW strip while staying compact (~700 bytes JSON). */
+export const AUDIO_PEAKS_TARGET_BUCKETS = 256
+/** HARD cap on the harvested peaks array length. The page is asked for
+ * AUDIO_PEAKS_TARGET_BUCKETS, but main-side validation re-clamps to this ceiling so a
+ * malformed/oversized page result can never bloat the ref or the iOS projection. */
+export const AUDIO_PEAKS_MAX_BUCKETS = 512
+
+/**
+ * PURE main-side validator for the waveform peaks harvested from the offscreen page.
+ * The page is OUR script, but it runs in a browser context, so we re-validate its
+ * output before trusting it onto a ref: every bucket is coerced to an integer in
+ * 0..255 (non-finite → 0), and the array is HARD-capped at AUDIO_PEAKS_MAX_BUCKETS.
+ * Returns undefined for a non-array / empty input so the ref simply omits `peaks`
+ * (the poster JPEG fallback kicks in). Never throws.
+ */
+export function normalizeHarvestedPeaks(raw: unknown): number[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+  const capped = raw.length > AUDIO_PEAKS_MAX_BUCKETS ? raw.slice(0, AUDIO_PEAKS_MAX_BUCKETS) : raw
+  const out: number[] = []
+  for (const value of capped) {
+    const n = typeof value === 'number' ? value : Number(value)
+    if (!Number.isFinite(n)) {
+      out.push(0)
+      continue
+    }
+    out.push(clamp(Math.round(n), 0, 255))
+  }
+  return out.length > 0 ? out : undefined
+}
+
 /** A real audio file, decoded + measured by the offscreen Web Audio engine.
  * This is the introspection the "drive the real app" path can never give —
  * peak/RMS/dBFS/clipping/silence off the actual samples, not an exported file. */
@@ -110,6 +141,14 @@ export interface AudioAnalysisMeta {
   clippedSamples: number
   clippedPercent: number
   silencePercent: number
+  /**
+   * Compact waveform envelope — N integer buckets (target 256, hard-cap 512), each
+   * 0–255 = round(maxAbsSampleInBucket * 255). Built in the SAME offscreen pass that
+   * paints the waveform PNG (reuses the already-decoded channel data — no second
+   * decode). Absent if the page couldn't produce it; the host re-validates via
+   * normalizeHarvestedPeaks before putting it on a ref.
+   */
+  peaks?: number[]
 }
 
 /** Decoder input: the audio bytes (base64) + the sniffed container + the canvas

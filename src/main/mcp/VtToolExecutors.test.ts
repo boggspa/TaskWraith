@@ -384,7 +384,7 @@ describe('video_encode_clip', () => {
     const { executors, deps } = build({
       generatePoster: vi.fn(async () => {
         order.push('poster')
-        return { dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 }
+        return { thumbnail: { dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 } }
       }),
       removeFile: vi.fn(() => {
         order.push('remove')
@@ -834,10 +834,14 @@ describe('audio_mix', () => {
     expect(getRemoved()).toContain('/staging/out.wav')
   })
 
-  // Part 1 — audio_mix asks for an AUDIO-kind waveform poster, threaded onto the ref.
-  it('threads an audio-kind waveform poster onto the mixed ref', async () => {
+  // Part 1 — audio_mix asks for an AUDIO-kind waveform poster + harvested peaks, both
+  // threaded onto the ref (the poster is the fallback; peaks drive the DAW waveform).
+  it('threads an audio-kind waveform poster AND peaks onto the mixed ref', async () => {
     const { executors, deps } = build({
-      generatePoster: vi.fn(async () => ({ dataBase64: 'V0FWRQ==', mimeType: 'image/jpeg', width: 320, height: 80 }))
+      generatePoster: vi.fn(async () => ({
+        thumbnail: { dataBase64: 'V0FWRQ==', mimeType: 'image/jpeg', width: 320, height: 80 },
+        peaks: [0, 128, 255, 64]
+      }))
     })
     const result = await executors.executeVtTool('audio_mix', { tracks: [{ sourcePath: 'a.wav' }], format: 'wav' }, {})
     expect(result.isError).toBeFalsy()
@@ -845,6 +849,7 @@ describe('audio_mix', () => {
     const refs = result.trustedMediaRefs ?? []
     expect(refs).toHaveLength(1)
     expect(refs[0].thumbnail).toEqual({ dataBase64: 'V0FWRQ==', mimeType: 'image/jpeg', width: 320, height: 80 })
+    expect(refs[0].peaks).toEqual([0, 128, 255, 64])
   })
 
   it('still returns the mixed ref WITHOUT a thumbnail when the poster generator throws', async () => {

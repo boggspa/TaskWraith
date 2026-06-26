@@ -5399,6 +5399,161 @@
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
+/* ============================================================================
+   WaveformAudioPlayer — DAW-clip-style inline audio player (Logic Pro / Pro
+   Tools "audio clip" look). The canvas IS the UI (the headless <audio> has no
+   native controls). Theme-reactive via CSS vars: --wf-played / --wf-unplayed are
+   read by the canvas at draw time; the surface tints from --accent + --text-*.
+   ============================================================================ */
+.tw-wave-player {
+  /* Colours the canvas reads via getComputedStyle (canvas can't use vars directly). */
+  --wf-played: var(--accent, #4c8dff);
+  --wf-unplayed: color-mix(in srgb, var(--text-primary) 26%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--text-primary) 5%, transparent),
+    color-mix(in srgb, var(--text-primary) 9%, transparent)
+  );
+  border: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.14);
+}
+
+/* The headless <audio> element drives playback but is never shown. */
+.tw-wave-audio-el {
+  display: none;
+}
+
+/* Play / pause — a round, accent-tinted button, the only chrome beside the wave. */
+.tw-wave-playbtn {
+  flex: 0 0 auto;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+  border-radius: 50%;
+  color: var(--accent, #4c8dff);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    transform 0.08s ease;
+}
+.tw-wave-playbtn:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.tw-wave-playbtn:active {
+  transform: scale(0.94);
+}
+.tw-wave-player[data-playing='true'] .tw-wave-playbtn {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* The seek strip — holds the two stacked waveform/poster layers + the playhead. */
+.tw-wave-strip {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 56px;
+  border-radius: 7px;
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: none; /* let pointer-drag scrub without the page panning */
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+.tw-wave-strip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 1px;
+}
+
+/* Both canvases / posters fill the strip and stack exactly. */
+.tw-wave-canvas,
+.tw-wave-poster {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Played overlay: a width-clipped wrapper. ONLY its `width` changes on timeupdate
+   (set inline by JS) — no canvas redraw, no layout thrash on the layers inside. */
+.tw-wave-played-wrap {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  overflow: hidden;
+  pointer-events: none;
+  will-change: width;
+}
+/* The inner played layer keeps the FULL strip width (set inline to the measured px)
+   so the clip reveals the left portion of the same waveform, not a squashed copy. */
+.tw-wave-canvas-played,
+.tw-wave-poster-played {
+  height: 100%;
+  max-width: none;
+}
+
+/* Poster fallback: the unplayed image is dimmed; the played copy is full-tinted +
+   accent-blended so the played/unplayed split reads even off a flat JPEG. */
+.tw-wave-poster-base {
+  opacity: 0.42;
+  filter: grayscale(0.25);
+}
+.tw-wave-poster-played {
+  opacity: 0.95;
+}
+.tw-wave-player.is-poster .tw-wave-played-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  mix-blend-mode: color;
+  pointer-events: none;
+}
+
+/* 1px playhead. Its `left` is set inline by JS on timeupdate (cheap). */
+.tw-wave-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0%;
+  width: 1px;
+  background: color-mix(in srgb, var(--accent) 92%, #fff 8%);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 70%, transparent);
+  pointer-events: none;
+  will-change: left;
+}
+
+/* m:ss / m:ss — monospaced digits so it doesn't jitter as time ticks. */
+.tw-wave-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* Plain-control fallback (no peaks, no poster) — match the old inline player width. */
+.tw-wave-audio-plain {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  border-radius: 8px;
+}
+
 /* Overlay AV body — sized like the image preview pane. */
 .chat-media-preview-av {
   display: flex;

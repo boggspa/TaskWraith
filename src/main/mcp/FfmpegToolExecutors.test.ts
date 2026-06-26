@@ -244,7 +244,7 @@ describe('audio_extract / transcode_audio / transcode_video (trusted AV refs)', 
     const { executors, deps } = build({
       generatePoster: vi.fn(async () => {
         order.push('poster')
-        return { dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 }
+        return { thumbnail: { dataBase64: 'UE9TVEVS', mimeType: 'image/jpeg', width: 320, height: 180 } }
       }),
       removeFile: vi.fn(() => {
         order.push('remove')

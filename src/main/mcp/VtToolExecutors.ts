@@ -1,6 +1,5 @@
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
-import { buildAvMediaRef, type GeneratePoster } from '../media/AvMediaRef'
-import type { TranscriptMediaThumbnail } from '../store/types'
+import { buildAvMediaRef, type AvPosterResult, type GeneratePoster } from '../media/AvMediaRef'
 
 /**
  * VideoToolbox MCP tool executors. Pure logic — the realpath input jail and the
@@ -176,7 +175,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     kind: 'audio' | 'video',
     mimeType: string,
     byteLength: number
-  ): Promise<TranscriptMediaThumbnail | undefined> {
+  ): Promise<AvPosterResult | undefined> {
     try {
       return await generatePoster(outputPath, kind, mimeType, byteLength)
     } catch {
@@ -315,7 +314,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       // Best-effort poster (fail-tolerant: undefined on any error) BEFORE the
       // finally { removeFile } — the staging MP4 must still be on disk. Guarded so a
       // misbehaving generator can never fail the producer (the poster is decorative).
-      const thumbnail = await safePoster(outputPath, 'video', mimeType, buffer.length)
+      const poster = await safePoster(outputPath, 'video', mimeType, buffer.length)
       const ref = buildAvMediaRef({
         sha256: persisted.sha256,
         mimeType,
@@ -324,7 +323,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         byteLength: buffer.length,
         durationMs: result.durationMs,
         codecs: result.codec,
-        thumbnail
+        thumbnail: poster?.thumbnail
       })
       // buildAvMediaRef only returns null on a non-AV mime — unreachable here
       // (mimeType is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than
@@ -420,7 +419,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       const persisted = persistOutput(buffer, mimeType)
       if (!persisted.ok) return fail('video_concat_clips', `Failed to persist output: ${persisted.reason}`)
       // Best-effort poster (fail-tolerant) BEFORE the finally { removeFile }.
-      const thumbnail = await safePoster(outputPath, 'video', mimeType, buffer.length)
+      const poster = await safePoster(outputPath, 'video', mimeType, buffer.length)
       const ref = buildAvMediaRef({
         sha256: persisted.sha256,
         mimeType,
@@ -429,7 +428,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         byteLength: buffer.length,
         durationMs: result.durationMs,
         codecs: result.codec,
-        thumbnail
+        thumbnail: poster?.thumbnail
       })
       // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType
       // is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than return a
@@ -540,8 +539,10 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       if (!buffer || buffer.length === 0) return fail('audio_mix', 'audio engine produced an empty mix')
       const persisted = persistOutput(buffer, mimeType)
       if (!persisted.ok) return fail('audio_mix', `Failed to persist output: ${persisted.reason}`)
-      // Best-effort waveform poster (fail-tolerant) BEFORE the finally { removeFile }.
-      const thumbnail = await safePoster(outputPath, 'audio', mimeType, buffer.length)
+      // Best-effort waveform poster + harvested peaks (fail-tolerant) BEFORE the
+      // finally { removeFile }. Audio carries BOTH the JPEG poster (fallback) and the
+      // compact `peaks` envelope the renderer DAW-draws from.
+      const poster = await safePoster(outputPath, 'audio', mimeType, buffer.length)
       const ref = buildAvMediaRef({
         sha256: persisted.sha256,
         mimeType,
@@ -550,7 +551,8 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         byteLength: buffer.length,
         durationMs: result.durationMs,
         codecs: result.codec,
-        thumbnail
+        thumbnail: poster?.thumbnail,
+        peaks: poster?.peaks
       })
       // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType is
       // the fixed main-derived 'audio/wav' | 'audio/mp4'), but fail LOUDLY rather than

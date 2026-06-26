@@ -693,10 +693,12 @@ import { createNativeImageEngine } from './mcp/OffscreenImageRenderer'
 import {
   createAudioToolExecutors,
   isAudioMcpToolName,
+  normalizeHarvestedPeaks,
   type AudioToolContext,
   type ResolvedAudioSource
 } from './mcp/AudioToolExecutors'
 import { createNativeAudioEngine } from './mcp/AudioRenderEngine'
+import type { AvPosterResult } from './media/AvMediaRef'
 import { registerTwMediaProtocol, TW_MEDIA_PRIVILEGE } from './media/TwMediaProtocol'
 import { readTranscriptMediaRangeSlice } from './media/twMediaRange'
 import { createFfmpegToolExecutors, isFfmpegMcpToolName } from './mcp/FfmpegToolExecutors'
@@ -2883,10 +2885,10 @@ async function generateAvPoster(
   kind: 'audio' | 'video',
   mimeType: string,
   byteLength: number
-): Promise<TranscriptMediaThumbnail | undefined> {
+): Promise<AvPosterResult | undefined> {
   try {
     return await withPosterTimeout(
-      (async (): Promise<TranscriptMediaThumbnail | undefined> => {
+      (async (): Promise<AvPosterResult | undefined> => {
         if (kind === 'video') {
           const daemon = bridgeDaemonRef
           if (!daemon) return undefined
@@ -2905,7 +2907,9 @@ async function generateAvPoster(
           if (!decoded?.pngBase64) return undefined
           const png = Buffer.from(decoded.pngBase64, 'base64')
           if (png.length === 0) return undefined
-          return downscalePosterJpeg(png)
+          const thumbnail = downscalePosterJpeg(png)
+          // Video has no waveform envelope — thumbnail only.
+          return thumbnail ? { thumbnail } : undefined
         }
         // AUDIO — render a waveform from the file's samples. Skip big files (heap).
         if (byteLength > POSTER_AUDIO_MAX_BYTES) return undefined
@@ -2916,14 +2920,24 @@ async function generateAvPoster(
           return undefined
         }
         if (audioBuffer.length === 0) return undefined
-        const { png } = await getPosterAudioEngine().analyzeAudio({
+        // The SAME offscreen analysis pass paints the poster PNG AND hands back the
+        // compact `peaks` envelope (harvested from the already-decoded channel-0
+        // data — no second decode). Re-validate the page output before trusting it.
+        const { png, meta } = await getPosterAudioEngine().analyzeAudio({
           dataBase64: audioBuffer.toString('base64'),
           mimeType,
           width: POSTER_MAX_EDGE,
           height: 80
         })
-        if (!png || png.length === 0) return undefined
-        return downscalePosterJpeg(png)
+        const peaks = normalizeHarvestedPeaks(meta?.peaks)
+        const thumbnail = png && png.length > 0 ? downscalePosterJpeg(png) : undefined
+        // Return whichever of poster/peaks we got. Peaks can survive even if the
+        // JPEG downscale fails (and vice-versa) — both are optional on the ref.
+        if (!thumbnail && !peaks) return undefined
+        const result: AvPosterResult = {}
+        if (thumbnail) result.thumbnail = thumbnail
+        if (peaks) result.peaks = peaks
+        return result
       })(),
       POSTER_TIMEOUT_MS,
       undefined

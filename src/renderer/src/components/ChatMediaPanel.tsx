@@ -21,6 +21,7 @@ import type {
 import { collectExternalPathGrantsFromMetadata } from '../../../main/store/ExternalPathGrants'
 import { XSymbolIcon } from './AppChromeSymbols'
 import { FileTypeIcon } from './FileTypeIcon'
+import { WaveformAudioPlayer } from './WaveformAudioPlayer'
 import { useCopyFeedback } from '../lib/useCopyFeedback'
 import { formatBytes } from '../lib/formatBytes'
 import { twMediaUrl } from '../../../shared/twMedia'
@@ -44,6 +45,12 @@ export interface ChatMediaRef {
   durationMs?: number
   /** Codec descriptor for AV refs, e.g. "h264,aac" — rendered as-is in a badge. */
   codecs?: string
+  /**
+   * Compact waveform envelope for AUDIO refs — N integer buckets (≤512), each 0–255.
+   * Drives the canvas DAW waveform (WaveformAudioPlayer normalizes by /255). Absent
+   * for non-audio / older refs / oversized-skipped — the poster JPEG is the fallback.
+   */
+  peaks?: number[]
   /** Byte size for AV refs — rendered via formatBytes as a badge. */
   byteLength?: number
   thumbnail?: TranscriptMediaThumbnail
@@ -454,6 +461,7 @@ export function collectChatMediaRefs(
       ...(mediaRef.sha256 ? { sha256: mediaRef.sha256 } : {}),
       ...(typeof mediaRef.durationMs === 'number' ? { durationMs: mediaRef.durationMs } : {}),
       ...(mediaRef.codecs ? { codecs: mediaRef.codecs } : {}),
+      ...(Array.isArray(mediaRef.peaks) && mediaRef.peaks.length > 0 ? { peaks: mediaRef.peaks } : {}),
       ...(typeof mediaRef.byteLength === 'number' ? { byteLength: mediaRef.byteLength } : {}),
       thumbnail: mediaRef.thumbnail,
       status: mediaRef.status,
@@ -650,6 +658,7 @@ export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
       ...(mediaRef.sha256 ? { sha256: mediaRef.sha256 } : {}),
       ...(typeof mediaRef.durationMs === 'number' ? { durationMs: mediaRef.durationMs } : {}),
       ...(mediaRef.codecs ? { codecs: mediaRef.codecs } : {}),
+      ...(Array.isArray(mediaRef.peaks) && mediaRef.peaks.length > 0 ? { peaks: mediaRef.peaks } : {}),
       ...(typeof mediaRef.byteLength === 'number' ? { byteLength: mediaRef.byteLength } : {}),
       thumbnail: mediaRef.thumbnail,
       status: mediaRef.status,
@@ -872,7 +881,13 @@ function ChatMessageAvAttachment({
       <div className="message-attachment-card message-attachment-av is-audio" title={mediaRef.name}>
         {header}
         <MediaCardBadges mediaRef={mediaRef} />
-        <audio controls preload="metadata" src={src} />
+        <WaveformAudioPlayer
+          src={src}
+          peaks={mediaRef.peaks}
+          posterSrc={chatMediaPreviewSrc(mediaRef)}
+          durationMs={mediaRef.durationMs}
+          name={mediaRef.name}
+        />
       </div>
     )
   }
@@ -1017,7 +1032,13 @@ export function ChatMediaPreviewOverlay({
           {isAv && avSrc ? (
             <div className="chat-media-preview-av">
               {mediaRef.kind === 'audio' ? (
-                <audio controls autoPlay preload="metadata" src={avSrc} />
+                <WaveformAudioPlayer
+                  src={avSrc}
+                  peaks={mediaRef.peaks}
+                  posterSrc={chatMediaPreviewSrc(mediaRef)}
+                  durationMs={mediaRef.durationMs}
+                  name={mediaRef.name}
+                />
               ) : (
                 <video controls autoPlay preload="metadata" {...(poster ? { poster } : {})} src={avSrc} />
               )}
@@ -1153,7 +1174,13 @@ export function ChatMediaFloatingPanel({
                       </div>
                       {src ? (
                         ref.kind === 'audio' ? (
-                          <audio controls preload="metadata" src={src} />
+                          <WaveformAudioPlayer
+                            src={src}
+                            peaks={ref.peaks}
+                            posterSrc={chatMediaPreviewSrc(ref)}
+                            durationMs={ref.durationMs}
+                            name={ref.name}
+                          />
                         ) : (
                           <video controls preload="metadata" {...(poster ? { poster } : {})} src={src} />
                         )

@@ -385,12 +385,36 @@ const ANALYZE_SCRIPT = `window.__twAnalyze = function(b64, W, H) {
       var y1 = mid - mx * mid, y2 = mid - mn * mid;
       x.fillRect(px, y1, 1, Math.max(1, y2 - y1));
     }
+    // Harvest a compact waveform envelope from the SAME already-decoded channel-0
+    // data (no second decode). PEAK_BUCKETS buckets, each = round(maxAbsInBucket*255)
+    // clamped 0..255 — the renderer canvas-draws a crisp DAW waveform from this and
+    // normalizes by /255. Bucketed independently of the canvas width W so it is always
+    // ~256 regardless of the poster size. The host re-validates (cap/clamp) before use.
+    var PEAK_BUCKETS = 256;
+    var peaks = [];
+    if (d0.length > 0) {
+      var pstep = d0.length / PEAK_BUCKETS;
+      for (var b = 0; b < PEAK_BUCKETS; b++) {
+        var bs = Math.floor(b * pstep);
+        var be = Math.floor((b + 1) * pstep);
+        if (be <= bs) be = bs + 1;
+        if (be > d0.length) be = d0.length;
+        var amax = 0;
+        for (var pi = bs; pi < be; pi++) {
+          var av = d0[pi]; if (av < 0) av = -av; if (av > amax) amax = av;
+        }
+        if (!isFinite(amax)) amax = 0;
+        var q = Math.round(amax * 255);
+        peaks.push(q < 0 ? 0 : q > 255 ? 255 : q);
+      }
+    }
     function db(v) { return v > 0 ? Number((20 * Math.log10(v)).toFixed(2)) : -120; }
     var meta = {
       durationMs: Math.round(frames / sr * 1000), analysisSampleRate: sr, channels: ch, frames: frames,
       peak: Number(peak.toFixed(5)), peakDbfs: db(peak), rms: Number(rms.toFixed(5)), rmsDbfs: db(rms),
       clippedSamples: clipped, clippedPercent: Number((total ? clipped / total * 100 : 0).toFixed(4)),
-      silencePercent: Number((frames ? silentFrames / frames * 100 : 0).toFixed(2))
+      silencePercent: Number((frames ? silentFrames / frames * 100 : 0).toFixed(2)),
+      peaks: peaks
     };
     return new Promise(function(res) {
       requestAnimationFrame(function() { requestAnimationFrame(function() { res(meta); }); });

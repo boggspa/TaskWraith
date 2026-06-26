@@ -94,4 +94,56 @@ describe('buildAvMediaRef', () => {
     })
     expect(empty!.thumbnail).toBeUndefined()
   })
+
+  it('threads a well-formed peaks envelope through (ints 0..255)', () => {
+    const ref = buildAvMediaRef({
+      sha256: 'a'.repeat(64),
+      mimeType: 'audio/wav',
+      name: 'a.wav',
+      peaks: [0, 64, 128, 255]
+    })
+    expect(ref!.peaks).toEqual([0, 64, 128, 255])
+  })
+
+  it('coerces/clamps peaks (round to int, clamp 0..255, drop non-finite) — fail-tolerant', () => {
+    const ref = buildAvMediaRef({
+      sha256: 'a'.repeat(64),
+      mimeType: 'audio/wav',
+      name: 'a.wav',
+      peaks: [-10, 12.6, 300, Number.NaN, 200]
+    })
+    // -10→0, 12.6→13, 300→255, NaN dropped, 200→200.
+    expect(ref!.peaks).toEqual([0, 13, 255, 200])
+    for (const v of ref!.peaks!) {
+      expect(Number.isInteger(v)).toBe(true)
+      expect(v).toBeGreaterThanOrEqual(0)
+      expect(v).toBeLessThanOrEqual(255)
+    }
+  })
+
+  it('HARD-caps the peaks array at 512 buckets', () => {
+    const ref = buildAvMediaRef({
+      sha256: 'a'.repeat(64),
+      mimeType: 'audio/wav',
+      name: 'a.wav',
+      peaks: Array.from({ length: 3000 }, () => 100)
+    })
+    expect(ref!.peaks).toHaveLength(512)
+  })
+
+  it('omits peaks when absent / empty / fully malformed', () => {
+    expect(buildAvMediaRef({ sha256: 'a'.repeat(64), mimeType: 'audio/wav', name: 'a.wav' })!.peaks).toBeUndefined()
+    expect(
+      buildAvMediaRef({ sha256: 'a'.repeat(64), mimeType: 'audio/wav', name: 'a.wav', peaks: [] })!.peaks
+    ).toBeUndefined()
+    // All non-finite → nothing survives the filter → omitted.
+    expect(
+      buildAvMediaRef({
+        sha256: 'a'.repeat(64),
+        mimeType: 'audio/wav',
+        name: 'a.wav',
+        peaks: [Number.NaN, Number.POSITIVE_INFINITY]
+      })!.peaks
+    ).toBeUndefined()
+  })
 })

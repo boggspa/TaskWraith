@@ -4,9 +4,12 @@ import {
   AudioAnalysisMeta,
   AudioRenderMeta,
   AudioRenderSpec,
+  AUDIO_PEAKS_MAX_BUCKETS,
+  AUDIO_PEAKS_TARGET_BUCKETS,
   createAudioToolExecutors,
   isAudioMcpToolName,
   MAX_AUDIO_DURATION_MS,
+  normalizeHarvestedPeaks,
   type AudioEngine,
   type ResolvedAudioSource
 } from './AudioToolExecutors'
@@ -243,5 +246,51 @@ describe('audio_analyze', () => {
     const result = await executors.executeAudioTool('audio_analyze', { sourcePath: 'clip.wav' }, {})
     expect(result.isError).toBe(true)
     expect(result.text).toContain('Unable to decode audio data')
+  })
+})
+
+describe('normalizeHarvestedPeaks (waveform peaks shape contract)', () => {
+  it('passes a well-formed envelope through, coercing to ints', () => {
+    const out = normalizeHarvestedPeaks([0, 1, 127, 254.6, 255])
+    expect(out).toEqual([0, 1, 127, 255, 255])
+    // Every bucket is an int in 0..255.
+    for (const v of out!) {
+      expect(Number.isInteger(v)).toBe(true)
+      expect(v).toBeGreaterThanOrEqual(0)
+      expect(v).toBeLessThanOrEqual(255)
+    }
+  })
+
+  it('clamps out-of-range values into 0..255 (no negatives, no >255)', () => {
+    expect(normalizeHarvestedPeaks([-50, -1, 256, 9999])).toEqual([0, 0, 255, 255])
+  })
+
+  it('coerces non-finite buckets to 0 rather than dropping them (length preserved)', () => {
+    const out = normalizeHarvestedPeaks([10, NaN, Infinity, -Infinity, 20])
+    expect(out).toEqual([10, 0, 0, 0, 20])
+  })
+
+  it('HARD-caps the array at AUDIO_PEAKS_MAX_BUCKETS (512)', () => {
+    const oversized = Array.from({ length: 4000 }, () => 200)
+    const out = normalizeHarvestedPeaks(oversized)
+    expect(out).toHaveLength(AUDIO_PEAKS_MAX_BUCKETS)
+    expect(AUDIO_PEAKS_MAX_BUCKETS).toBe(512)
+    // The target the page is asked for is the more modest 256.
+    expect(AUDIO_PEAKS_TARGET_BUCKETS).toBe(256)
+  })
+
+  it('returns undefined for a non-array / empty input (ref omits peaks → poster fallback)', () => {
+    expect(normalizeHarvestedPeaks(undefined)).toBeUndefined()
+    expect(normalizeHarvestedPeaks(null)).toBeUndefined()
+    expect(normalizeHarvestedPeaks([])).toBeUndefined()
+    expect(normalizeHarvestedPeaks('not-an-array')).toBeUndefined()
+    expect(normalizeHarvestedPeaks({ 0: 1 })).toBeUndefined()
+  })
+
+  it('stays compact: a 256-bucket envelope serializes well under the 180KB projection cap', () => {
+    const full = normalizeHarvestedPeaks(Array.from({ length: 256 }, (_, i) => i % 256))
+    expect(full).toHaveLength(256)
+    const bytes = JSON.stringify(full).length
+    expect(bytes).toBeLessThan(1500)
   })
 })
