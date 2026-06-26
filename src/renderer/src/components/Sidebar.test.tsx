@@ -708,7 +708,7 @@ describe('ApprovalsFooterPopover', () => {
     const html = renderToStaticMarkup(
       <ApprovalsFooterPopover
         pendingApprovals={[
-          makeApproval({ title: 'Write a file', provider: 'codex', appChatId: 'parent-1' })
+          { chatId: 'parent-1', approval: makeApproval({ title: 'Write a file', provider: 'codex' }) }
         ]}
         onJumpToChat={() => {}}
         onOpenSettings={() => {}}
@@ -717,15 +717,27 @@ describe('ApprovalsFooterPopover', () => {
     expect(html).toContain('Write a file')
     expect(html).toContain('sidebar-footer-led is-pending')
     expect(html).toContain('codex')
-    // appChatId + onJumpToChat present → the row is a clickable button.
+    // A filing chatId + onJumpToChat present → the row is a clickable button.
+    // (The chatId is the map key, so it's present even when the approval's own
+    // appChatId is undefined — the previous appChatId-only gate dropped those.)
     expect(html).toContain('sidebar-footer-approval-row is-clickable')
   })
 
-  it('renders a non-clickable row when there is no chat to jump to', () => {
+  it('stays clickable when the approval has no own appChatId but a filing chatId', () => {
     const html = renderToStaticMarkup(
       <ApprovalsFooterPopover
-        pendingApprovals={[makeApproval({ appChatId: undefined })]}
+        pendingApprovals={[{ chatId: 'parent-1', approval: makeApproval({ appChatId: undefined }) }]}
         onJumpToChat={() => {}}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).toContain('sidebar-footer-approval-row is-clickable')
+  })
+
+  it('renders a non-clickable row when no jump handler is provided', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalsFooterPopover
+        pendingApprovals={[{ chatId: 'parent-1', approval: makeApproval() }]}
         onOpenSettings={() => {}}
       />
     )
@@ -733,9 +745,10 @@ describe('ApprovalsFooterPopover', () => {
   })
 
   it('caps the pending list at six and surfaces the overflow count', () => {
-    const approvals = Array.from({ length: 8 }, (_, index) =>
-      makeApproval({ id: `a-${index}`, title: `Approval ${index}`, appChatId: 'parent-1' })
-    )
+    const approvals = Array.from({ length: 8 }, (_, index) => ({
+      chatId: 'parent-1',
+      approval: makeApproval({ id: `a-${index}`, title: `Approval ${index}` })
+    }))
     const html = renderToStaticMarkup(
       <ApprovalsFooterPopover
         pendingApprovals={approvals}

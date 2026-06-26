@@ -499,7 +499,7 @@ function MenuCheckIcon() {
 
 function RemoteConnectionSymbolIcon() {
   return (
-    <span className="sf-symbol-icon sidebar-remote-icon" aria-hidden>
+    <span className="sf-symbol-icon" aria-hidden>
       <svg
         viewBox="0 0 16 16"
         fill="none"
@@ -1596,9 +1596,9 @@ function SidebarFooterPopover({
   return (
     <div
       className="sidebar-footer-popover"
-      role="menu"
+      role="dialog"
+      aria-modal="false"
       aria-label={ariaLabel ?? title}
-      onKeyDown={moveMenuFocus}
     >
       <div className="sidebar-footer-popover-title">{title}</div>
       <div className="sidebar-footer-popover-body">{children}</div>
@@ -1626,7 +1626,9 @@ export function ApprovalsFooterPopover({
   onOpenSettings,
   loadRecent
 }: {
-  pendingApprovals: AgentApprovalRequest[]
+  /** Each pending approval paired with the chatId it is filed under (the jump
+   * target — see pendingApprovalsFlat). */
+  pendingApprovals: Array<{ chatId: string; approval: AgentApprovalRequest }>
   onJumpToChat?: (chatId: string) => void
   onOpenSettings: () => void
   loadRecent?: () => Promise<ApprovalLedgerRecord[]>
@@ -1661,13 +1663,13 @@ export function ApprovalsFooterPopover({
         <div className="sidebar-footer-popover-empty">No pending approvals</div>
       ) : (
         <>
-          {pendingShown.map((approval) =>
-            approval.appChatId && onJumpToChat ? (
+          {pendingShown.map(({ chatId, approval }) =>
+            chatId && onJumpToChat ? (
               <button
                 key={approval.id}
                 type="button"
                 className="sidebar-footer-approval-row is-clickable"
-                onClick={() => onJumpToChat(approval.appChatId as string)}
+                onClick={() => onJumpToChat(chatId)}
                 title={approval.title}
               >
                 <span className="sidebar-footer-led is-pending" aria-hidden />
@@ -1905,14 +1907,20 @@ export function Sidebar({
   // the Approvals popover. Heads first so the currently-blocking approval for
   // each chat leads.
   const pendingApprovalsFlat = useMemo(() => {
-    const out: AgentApprovalRequest[] = []
+    // Carry the MAP KEY (the chatId the approval is filed under) alongside each
+    // request — the approval's own `appChatId` can be absent or diverge from the
+    // resolved filing chat (sub-thread / fan-out runs), so the key is the source
+    // of truth for "which thread is blocked" and drives the jump.
+    const out: Array<{ chatId: string; approval: AgentApprovalRequest }> = []
     for (const [chatId, head] of Object.entries(pendingAgentApprovalByChatId)) {
-      if (head) out.push(head)
+      if (head) out.push({ chatId, approval: head })
       const tail = pendingApprovalQueueByChatId[chatId]
-      if (tail) out.push(...tail)
+      if (tail) for (const approval of tail) out.push({ chatId, approval })
     }
     return out
   }, [pendingAgentApprovalByChatId, pendingApprovalQueueByChatId])
+  const hasPendingApprovals = pendingApprovalsFlat.length > 0
+  const hasActiveShares = collaboratingChatIds.size > 0
   // Stable so the Approvals popover doesn't re-fetch the ledger on every
   // unrelated Sidebar re-render (e.g. the 5s device poll) while it's open.
   const loadRecentApprovals = useCallback(
@@ -4321,38 +4329,38 @@ export function Sidebar({
           <div className="sidebar-footer-controls" ref={footerControlsWrapRef}>
             <button
               type="button"
-              className={`sidebar-footer-icon-btn${
-                Object.values(pendingAgentApprovalByChatId).some((value) => value != null)
-                  ? ' glow-red'
-                  : ''
-              }${approvalsPopoverOpen ? ' is-open' : ''}`}
+              className={`sidebar-footer-icon-btn${hasPendingApprovals ? ' glow-red' : ''}${
+                approvalsPopoverOpen ? ' is-open' : ''
+              }`}
               onClick={() => {
                 setSettingsMenuOpen(false)
                 setSharesPopoverOpen(false)
                 setDevicesPopoverOpen(false)
                 setApprovalsPopoverOpen((open) => !open)
               }}
-              title="Approvals"
-              aria-label="Approvals"
-              aria-haspopup="menu"
+              title={hasPendingApprovals ? 'Approvals — pending approval' : 'Approvals'}
+              aria-label={
+                hasPendingApprovals ? 'Approvals, a pending approval is waiting' : 'Approvals'
+              }
+              aria-haspopup="dialog"
               aria-expanded={approvalsPopoverOpen}
             >
               <ApprovalsShieldIcon />
             </button>
             <button
               type="button"
-              className={`sidebar-footer-icon-btn${
-                collaboratingChatIds.size > 0 ? ' glow-yellow' : ''
-              }${sharesPopoverOpen ? ' is-open' : ''}`}
+              className={`sidebar-footer-icon-btn${hasActiveShares ? ' glow-yellow' : ''}${
+                sharesPopoverOpen ? ' is-open' : ''
+              }`}
               onClick={() => {
                 setSettingsMenuOpen(false)
                 setApprovalsPopoverOpen(false)
                 setDevicesPopoverOpen(false)
                 setSharesPopoverOpen((open) => !open)
               }}
-              title="Shares"
-              aria-label="Shares"
-              aria-haspopup="menu"
+              title={hasActiveShares ? 'Shares — active share' : 'Shares'}
+              aria-label={hasActiveShares ? 'Shares, a chat is shared' : 'Shares'}
+              aria-haspopup="dialog"
               aria-expanded={sharesPopoverOpen}
             >
               <ShareNetworkIcon />
@@ -4371,7 +4379,7 @@ export function Sidebar({
                 }}
                 title={remoteDeviceConnected ? 'Devices — connected' : 'Devices'}
                 aria-label={remoteDeviceConnected ? 'Devices, a device is connected' : 'Devices'}
-                aria-haspopup="menu"
+                aria-haspopup="dialog"
                 aria-expanded={devicesPopoverOpen}
               >
                 <RemoteConnectionSymbolIcon />

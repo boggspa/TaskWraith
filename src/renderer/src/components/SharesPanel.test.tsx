@@ -31,7 +31,14 @@ const NOW = 1_000_000
 describe('SharesPanelView', () => {
   it('shows a loading state', () => {
     const html = renderToStaticMarkup(
-      <SharesPanelView shares={[]} chatTitles={{}} loading error={null} onRevoke={() => {}} />
+      <SharesPanelView
+        shares={[]}
+        chatTitles={{}}
+        loading
+        error={null}
+        onRevoke={() => {}}
+        now={NOW}
+      />
     )
     expect(html).toContain('Loading shares')
   })
@@ -44,6 +51,7 @@ describe('SharesPanelView', () => {
         loading={false}
         error={null}
         onRevoke={() => {}}
+        now={NOW}
       />
     )
     expect(html).toContain('No active shares')

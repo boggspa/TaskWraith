@@ -38,14 +38,16 @@ export function SharesPanelView({
   loading,
   error,
   onRevoke,
-  now = Date.now()
+  now
 }: {
   shares: HumanCollaborationShare[]
   chatTitles: Record<string, string>
   loading: boolean
   error: string | null
   onRevoke: (shareId: string) => void
-  now?: number
+  // The "current time" for open-invite expiry, supplied by the container so the
+  // view stays a pure function of its props (no clock read during render).
+  now: number
 }) {
   const rows = useMemo(
     () =>
@@ -150,8 +152,12 @@ export function SharesPanel() {
   const [chatTitles, setChatTitles] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Sampled at each data refresh (never during render) so the view's
+  // open-invite expiry check is pure and stable across a render pass.
+  const [now, setNow] = useState(() => Date.now())
 
   const refresh = useCallback(() => {
+    setNow(Date.now())
     if (typeof window.api.humanCollaborationListShares !== 'function') {
       setShares([])
       setLoading(false)
@@ -219,6 +225,7 @@ export function SharesPanel() {
       loading={loading}
       error={error}
       onRevoke={handleRevoke}
+      now={now}
     />
   )
 }
