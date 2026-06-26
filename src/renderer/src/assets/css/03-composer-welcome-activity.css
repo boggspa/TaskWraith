@@ -4797,6 +4797,10 @@
   isolation: isolate;
 }
 
+.composer-plan-popover.is-below {
+  transform: translate(-50%, 0);
+}
+
 .composer-plan-popover-header {
   display: flex;
   align-items: center;

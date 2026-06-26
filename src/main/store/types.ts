@@ -3491,14 +3491,16 @@ export interface ToolActivity {
   parentToolCallId?: string
   /** 1.0.4-AG — optional attribution metadata. `provider` names the
    * CLI/runtime that issued the call, `ensembleProvider` names the
-   * specific ensemble participant when the chat is multi-provider —
-   * so the compact tool-trace render can read "Codex calls write_file"
-   * vs "Claude calls Edit" distinctly during cross-provider rounds.
-   * Both are optional; absent means "fall back to the chat-level
+   * specific ensemble participant provider when the chat is multi-provider,
+   * and `ensembleParticipantId` keeps same-provider participants separated.
+   * That lets compact tool-trace and plan/todo surfaces read "Codex calls
+   * write_file" vs "Claude calls Edit" distinctly during cross-provider rounds.
+   * All are optional; absent means "fall back to the chat-level
    * provider passed to ActivityStack". */
   metadata?: {
     provider?: ProviderId
     ensembleProvider?: ProviderId
+    ensembleParticipantId?: string
   }
   // Legacy fields preserved for backward compatibility
   affectedFilePath?: string

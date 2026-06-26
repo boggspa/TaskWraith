@@ -11,9 +11,18 @@ import { getProviderLabel } from '../lib/providerLabels'
 import { PlanSymbolIcon } from './AppChromeSymbols'
 import { TodoChecklistCard } from './TodoChecklistCard'
 
-interface ComposerPlanLane {
+export interface ComposerPlanLane {
   lane: string
+  provider?: ProviderId
+  role?: string
+  order?: number
   todos: TodoItem[]
+}
+
+export interface ComposerPlanPopoverPosition {
+  left: number
+  top: number
+  placement: 'above' | 'below'
 }
 
 interface ComposerPlanPopoverButtonProps {
@@ -29,8 +38,7 @@ function completedCount(todos: readonly TodoItem[]): number {
   return todos.filter((item) => item.status === 'completed').length
 }
 
-function laneLabel(lane: string): string {
-  if (lane === TODO_SOLO_LANE) return 'Plan'
+function providerFromLane(lane: string): ProviderId | undefined {
   switch (lane) {
     case 'codex':
     case 'claude':
@@ -39,33 +47,54 @@ function laneLabel(lane: string): string {
     case 'cursor':
     case 'ollama':
     case 'gemini':
-      return getProviderLabel(lane as ProviderId)
+      return lane as ProviderId
     default:
-      return lane
+      return undefined
   }
 }
 
-function laneColorStyle(lane: string): CSSProperties {
+export function composerPlanLaneLabel(lane: ComposerPlanLane): string {
+  if (lane.lane === TODO_SOLO_LANE) return 'Plan'
+  const providerLabel = lane.provider ? getProviderLabel(lane.provider) : ''
+  if (lane.role && providerLabel) return `${lane.role} / ${providerLabel}`
+  if (providerLabel) return providerLabel
+  return lane.lane
+}
+
+function laneColorStyle(lane: ComposerPlanLane): CSSProperties {
+  const colorLane = lane.provider || lane.lane
   return {
-    '--composer-plan-lane-color': `var(--provider-${lane}-color, var(--accent))`
+    '--composer-plan-lane-color': `var(--provider-${colorLane}-color, var(--accent))`
   } as CSSProperties
 }
 
-function persistedLaneId(chat: ChatRecord, lane: string): string {
-  if (lane === TODO_SOLO_LANE) return lane
-  return (
-    chat.ensemble?.participants.find((participant) => participant.id === lane)?.provider ?? lane
-  )
+function buildLane(chat: ChatRecord | null | undefined, lane: string, todos: TodoItem[]): ComposerPlanLane {
+  const participant = chat?.ensemble?.participants.find((item) => item.id === lane)
+  const provider = participant?.provider || providerFromLane(lane)
+  return {
+    lane,
+    ...(provider ? { provider } : {}),
+    ...(participant?.role ? { role: participant.role } : {}),
+    ...(typeof participant?.order === 'number' ? { order: participant.order } : {}),
+    todos
+  }
+}
+
+function compareLanes(a: ComposerPlanLane, b: ComposerPlanLane): number {
+  if (a.order !== undefined || b.order !== undefined) {
+    return (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER)
+  }
+  return composerPlanLaneLabel(a).localeCompare(composerPlanLaneLabel(b))
 }
 
 function buildPersistedTodoLanes(chat?: ChatRecord | null): ComposerPlanLane[] {
   return Object.entries(chat?.chatTodos ?? {})
     .filter(([, todos]) => todos.length > 0)
-    .map(([lane, todos]) => ({ lane: chat ? persistedLaneId(chat, lane) : lane, todos }))
-    .sort((a, b) => a.lane.localeCompare(b.lane))
+    .map(([lane, todos]) => buildLane(chat, lane, todos))
+    .sort(compareLanes)
 }
 
-function buildComposerPlanLanes(chat?: ChatRecord | null): ComposerPlanLane[] {
+export function buildComposerPlanLanes(chat?: ChatRecord | null): ComposerPlanLane[] {
   const activities: ToolActivity[] = []
   for (const message of chat?.messages ?? []) {
     for (const activity of message.toolActivities ?? []) {
@@ -77,13 +106,47 @@ function buildComposerPlanLanes(chat?: ChatRecord | null): ComposerPlanLane[] {
   const byLane = computeMergedTodosByLane(
     activities,
     (activity) =>
-      activity.metadata?.ensembleProvider ?? activity.metadata?.provider ?? TODO_SOLO_LANE
+      activity.metadata?.ensembleParticipantId ??
+      activity.metadata?.ensembleProvider ??
+      activity.metadata?.provider ??
+      TODO_SOLO_LANE
   )
   const activityLanes = Object.entries(byLane)
     .filter(([, todos]) => todos.length > 0)
-    .map(([lane, todos]) => ({ lane, todos }))
-    .sort((a, b) => a.lane.localeCompare(b.lane))
+    .map(([lane, todos]) => buildLane(chat, lane, todos))
+    .sort(compareLanes)
   return activityLanes.length > 0 ? activityLanes : buildPersistedTodoLanes(chat)
+}
+
+export function computeComposerPlanPopoverPosition(
+  rect: Pick<DOMRect, 'left' | 'width' | 'top' | 'bottom'>,
+  viewport: { width: number; height: number },
+  popoverSize: { width: number; height: number } = { width: 356, height: 400 }
+): ComposerPlanPopoverPosition {
+  const edgePadding = 8
+  const gap = 8
+  const minLeft = edgePadding + popoverSize.width / 2
+  const maxLeft = Math.max(minLeft, viewport.width - edgePadding - popoverSize.width / 2)
+  const left = Math.min(Math.max(rect.left + rect.width / 2, minLeft), maxLeft)
+  const spaceAbove = Math.max(0, rect.top - edgePadding - gap)
+  const spaceBelow = Math.max(0, viewport.height - rect.bottom - edgePadding - gap)
+  const placement =
+    spaceBelow > spaceAbove && spaceAbove < popoverSize.height ? 'below' : 'above'
+  if (placement === 'below') {
+    const unclampedTop = rect.bottom + gap
+    const maxTop = Math.max(edgePadding, viewport.height - edgePadding - popoverSize.height)
+    return {
+      left,
+      top: Math.min(Math.max(unclampedTop, edgePadding), maxTop),
+      placement
+    }
+  }
+  const unclampedTop = rect.top - gap
+  return {
+    left,
+    top: Math.max(edgePadding + popoverSize.height, Math.min(unclampedTop, viewport.height - edgePadding)),
+    placement
+  }
 }
 
 export function ComposerPlanPopoverButton({
@@ -92,7 +155,7 @@ export function ComposerPlanPopoverButton({
 }: ComposerPlanPopoverButtonProps): React.JSX.Element | null {
   const lanes = useMemo(() => buildComposerPlanLanes(chat), [chat])
   const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const [position, setPosition] = useState<ComposerPlanPopoverPosition | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
 
@@ -114,13 +177,14 @@ export function ComposerPlanPopoverButton({
       return
     }
     const rect = trigger.getBoundingClientRect()
-    const popoverWidth = 356
-    const edgePadding = 8
-    const minLeft = edgePadding + popoverWidth / 2
-    const maxLeft = Math.max(minLeft, window.innerWidth - edgePadding - popoverWidth / 2)
-    const left = Math.min(Math.max(rect.left + rect.width / 2, minLeft), maxLeft)
-    const top = Math.max(edgePadding, rect.top - 8)
-    setPosition({ left, top })
+    const popoverHeight = popoverRef.current?.offsetHeight || 400
+    setPosition(
+      computeComposerPlanPopoverPosition(
+        rect,
+        { width: window.innerWidth, height: window.innerHeight },
+        { width: 356, height: popoverHeight }
+      )
+    )
   }, [])
 
   const closePopover = useCallback((restoreFocus = true): void => {
@@ -169,7 +233,7 @@ export function ComposerPlanPopoverButton({
       ? createPortal(
           <div
             ref={popoverRef}
-            className={`composer-plan-popover shell-${composerStyle}`}
+            className={`composer-plan-popover shell-${composerStyle}${position?.placement === 'below' ? ' is-below' : ''}`}
             role="dialog"
             aria-label="Plan"
             style={
@@ -196,10 +260,12 @@ export function ComposerPlanPopoverButton({
                       {showLaneHeaders && lane.lane !== TODO_SOLO_LANE && (
                         <div
                           className="composer-plan-lane-header"
-                          style={laneColorStyle(lane.lane)}
+                          style={laneColorStyle(lane)}
                         >
                           <span className="composer-plan-lane-dot" aria-hidden />
-                          <span className="composer-plan-lane-label">{laneLabel(lane.lane)}</span>
+                          <span className="composer-plan-lane-label">
+                            {composerPlanLaneLabel(lane)}
+                          </span>
                           {laneActive > 0 && (
                             <span className="composer-plan-lane-count">
                               {summary.completed}/{laneActive}
