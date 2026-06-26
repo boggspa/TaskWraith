@@ -430,8 +430,15 @@ export function collectChatMediaRefs(
   const seen = new Set<string>()
 
   const addRef = (ref: ChatMediaRef) => {
-    if (!ref.path) return
-    const key = `${ref.source}:${ref.path}:${ref.access || ''}`
+    const identity = ref.path
+      ? `path:${ref.path}`
+      : ref.sha256
+        ? `sha:${ref.sha256}:${ref.mimeType || ''}`
+        : ref.id
+          ? `id:${ref.id}`
+          : ''
+    if (!identity) return
+    const key = `${ref.source}:${ref.kind}:${identity}:${ref.access || ''}:${ref.status || ''}`
     if (seen.has(key)) return
     seen.add(key)
     refs.push(ref)
@@ -931,10 +938,40 @@ function ChatMessageAvAttachment({
     )
   }
   const poster = chatMediaPreviewSrc(mediaRef)
+  const durationLabel = formatMediaDuration(mediaRef.durationMs)
+  const videoFrameCount = 6
   return (
     <div className="message-attachment-card message-attachment-av is-video" title={mediaRef.name}>
       {header}
-      <video controls preload="metadata" {...(poster ? { poster } : {})} src={src} />
+      <button
+        type="button"
+        className={`tw-video-clip${poster ? ' has-poster' : ' no-poster'}`}
+        onClick={expand}
+        disabled={!expand}
+        aria-label={`Preview video ${mediaRef.name}`}
+        title={expand ? `Preview ${mediaRef.name}` : mediaRef.name}
+      >
+        <span className="tw-video-clip-frames" aria-hidden="true">
+          {Array.from({ length: videoFrameCount }).map((_, index) => (
+            <span key={index} className="tw-video-clip-frame">
+              {poster ? (
+                <img src={poster} alt="" loading="lazy" decoding="async" />
+              ) : index === 2 ? (
+                <FileTypeIcon path={mediaRef.path || mediaRef.name} size={28} />
+              ) : null}
+            </span>
+          ))}
+        </span>
+        <span className="tw-video-clip-play" aria-hidden="true">
+          <svg viewBox="0 0 18 18" width="16" height="16" role="img">
+            <path d="M6 4.2 13 9l-7 4.8z" fill="currentColor" />
+          </svg>
+        </span>
+        <span className="tw-video-clip-label">
+          <span>{mediaRef.name}</span>
+          {durationLabel && <small>{durationLabel}</small>}
+        </span>
+      </button>
       <MediaCardBadges mediaRef={mediaRef} />
     </div>
   )

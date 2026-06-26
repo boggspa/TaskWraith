@@ -3,6 +3,19 @@ import type { MultiviewPaneMediaRef } from '../../../shared/multiviewLayouts'
 import { twMediaUrl } from '../../../shared/twMedia'
 import { WaveformAudioPlayer } from './WaveformAudioPlayer'
 
+function thumbnailSrc(mediaRef: MultiviewPaneMediaRef): string | undefined {
+  return mediaRef.thumbnail
+    ? `data:${mediaRef.thumbnail.mimeType};base64,${mediaRef.thumbnail.dataBase64}`
+    : undefined
+}
+
+function thumbnailAspectRatio(mediaRef: MultiviewPaneMediaRef): string | undefined {
+  const width = mediaRef.thumbnail?.width
+  const height = mediaRef.thumbnail?.height
+  if (!width || !height || width <= 0 || height <= 0) return undefined
+  return `${width} / ${height}`
+}
+
 /**
  * MediaPane — a Multiview pane that hosts an audio/video player DETACHED from the
  * transcript message flow (the docked media player). It REUSES the existing
@@ -31,8 +44,16 @@ export function MediaPane({
   const videoRef = useRef<HTMLVideoElement | null>(null)
   // `true` once the pane is off-screen → pause both the video and (via prop) audio.
   const [paused, setPaused] = useState(false)
+  const [videoAspectRatio, setVideoAspectRatio] = useState<string | undefined>(() =>
+    thumbnailAspectRatio(mediaRef)
+  )
 
   const src = twMediaUrl(mediaRef.sha256, mediaRef.mimeType)
+  const poster = thumbnailSrc(mediaRef)
+
+  useEffect(() => {
+    setVideoAspectRatio(thumbnailAspectRatio(mediaRef))
+  }, [mediaRef.id, mediaRef.thumbnail?.width, mediaRef.thumbnail?.height])
 
   // PAUSE-ON-HIDE — observe the pane host; pause the <video> when it leaves the
   // viewport and signal the audio player to pause too. Pause-only, never resume.
@@ -96,11 +117,6 @@ export function MediaPane({
     )
   }
 
-  const poster =
-    mediaRef.kind === 'video' && mediaRef.thumbnail
-      ? `data:${mediaRef.thumbnail.mimeType};base64,${mediaRef.thumbnail.dataBase64}`
-      : undefined
-
   return (
     <div className="media-pane" ref={hostRef} data-media-kind={mediaRef.kind}>
       {toolbar}
@@ -109,18 +125,27 @@ export function MediaPane({
           <WaveformAudioPlayer
             src={src}
             peaks={mediaRef.peaks}
+            posterSrc={poster}
             durationMs={mediaRef.durationMs}
             name={mediaRef.name}
             pausedSignal={paused}
           />
         ) : (
-          <div className="media-pane-video-frame">
+          <div
+            className="media-pane-video-frame"
+            style={videoAspectRatio ? { aspectRatio: videoAspectRatio } : undefined}
+          >
             <video
               ref={videoRef}
               controls
               preload="metadata"
               {...(poster ? { poster } : {})}
               src={src}
+              onLoadedMetadata={() => {
+                const video = videoRef.current
+                if (!video?.videoWidth || !video.videoHeight) return
+                setVideoAspectRatio(`${video.videoWidth} / ${video.videoHeight}`)
+              }}
             />
           </div>
         )}

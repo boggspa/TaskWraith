@@ -699,6 +699,8 @@ type ChatScrollState = {
   clientHeight: number
   scrollRatio: number
   atBottom: boolean
+  anchorMessageId?: string
+  anchorOffset?: number
 }
 type ChatPopoutHandoffState = {
   draft?: string
@@ -1047,13 +1049,57 @@ function captureChatScrollState(scroller: HTMLElement | null | undefined): ChatS
   const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
   const scrollTop = Math.max(0, Math.min(maxScrollTop, scroller.scrollTop))
   const distanceFromBottom = maxScrollTop - scrollTop
-  return {
+  const state: ChatScrollState = {
     scrollTop,
     scrollHeight: scroller.scrollHeight,
     clientHeight: scroller.clientHeight,
     scrollRatio: maxScrollTop > 0 ? scrollTop / maxScrollTop : 1,
     atBottom: distanceFromBottom <= 24
   }
+  if (!state.atBottom && typeof scroller.getBoundingClientRect === 'function') {
+    const scrollerRect = scroller.getBoundingClientRect()
+    const messageNodes = scroller.querySelectorAll<HTMLElement>('[data-message-id]')
+    for (const node of messageNodes) {
+      const messageId = node.getAttribute('data-message-id')
+      if (!messageId) continue
+      const nodeRect = node.getBoundingClientRect()
+      if (nodeRect.bottom < scrollerRect.top) continue
+      if (nodeRect.top > scrollerRect.bottom) break
+      state.anchorMessageId = messageId
+      state.anchorOffset = nodeRect.top - scrollerRect.top
+      break
+    }
+  }
+  return state
+}
+
+function escapeDomAttributeValue(value: string): string {
+  return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(value)
+    : value.replace(/["\\]/g, '\\$&')
+}
+
+function restoreChatScrollAnchor(scroller: HTMLElement, scrollState: ChatScrollState): boolean {
+  const anchorOffset = scrollState.anchorOffset
+  if (
+    !scrollState.anchorMessageId ||
+    typeof anchorOffset !== 'number' ||
+    !Number.isFinite(anchorOffset)
+  ) {
+    return false
+  }
+  const target = scroller.querySelector<HTMLElement>(
+    `[data-message-id="${escapeDomAttributeValue(scrollState.anchorMessageId)}"]`
+  )
+  if (!target || typeof scroller.getBoundingClientRect !== 'function') return false
+  const scrollerRect = scroller.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+  scroller.scrollTop = Math.max(
+    0,
+    Math.min(maxScrollTop, scroller.scrollTop + targetRect.top - scrollerRect.top - anchorOffset)
+  )
+  return true
 }
 
 function normalizeChatScrollState(value: unknown): ChatScrollState | undefined {
@@ -1076,7 +1122,13 @@ function normalizeChatScrollState(value: unknown): ChatScrollState | undefined {
     scrollHeight: Math.max(0, scrollHeight),
     clientHeight: Math.max(0, clientHeight),
     scrollRatio: Math.max(0, Math.min(1, scrollRatio)),
-    atBottom: Boolean(source.atBottom)
+    atBottom: Boolean(source.atBottom),
+    ...(typeof source.anchorMessageId === 'string' && Number.isFinite(Number(source.anchorOffset))
+      ? {
+          anchorMessageId: source.anchorMessageId,
+          anchorOffset: Number(source.anchorOffset)
+        }
+      : {})
   }
 }
 
@@ -1087,9 +1139,12 @@ function restoreChatScrollState(
   if (!scroller || !scrollState) return
   const apply = () => {
     const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-    scroller.scrollTop = scrollState.atBottom
-      ? scroller.scrollHeight
-      : Math.max(0, Math.min(maxScrollTop, scrollState.scrollRatio * maxScrollTop))
+    if (scrollState.atBottom) {
+      scroller.scrollTop = scroller.scrollHeight
+      return
+    }
+    if (restoreChatScrollAnchor(scroller, scrollState)) return
+    scroller.scrollTop = Math.max(0, Math.min(maxScrollTop, scrollState.scrollRatio * maxScrollTop))
   }
   requestAnimationFrame(() => {
     apply()
@@ -2594,6 +2649,14 @@ function App(): React.JSX.Element {
   // hot-swap the implementation under test.
   const handleJumpToLatestRef = useRef(handleJumpToLatest)
   handleJumpToLatestRef.current = handleJumpToLatest
+  const setChatMediaPanelOpenPreservingTranscript = useCallback(
+    (next: boolean | ((open: boolean) => boolean)) => {
+      const scrollState = captureChatScrollState(transcriptScrollRef.current)
+      setIsChatMediaPanelOpen(next)
+      restoreChatScrollStateWhenReady(() => transcriptScrollRef.current, scrollState)
+    },
+    []
+  )
   // Perform an internal snap-to-bottom that the auto-follow `evaluate`
   // listener will recognise as the app's own write (via programmaticScrollRef)
   // and therefore NOT mistake for the user arriving at the live edge. Every
@@ -18344,7 +18407,7 @@ function App(): React.JSX.Element {
         setShowCockpit(false)
         break
       case 'media':
-        setIsChatMediaPanelOpen(false)
+        setChatMediaPanelOpenPreservingTranscript(false)
         break
       case 'pins':
         setIsPinnedMessagesPanelOpen(false)
@@ -18369,7 +18432,7 @@ function App(): React.JSX.Element {
         setShowCockpit(true)
         break
       case 'media':
-        setIsChatMediaPanelOpen(true)
+        setChatMediaPanelOpenPreservingTranscript(true)
         break
       case 'pins':
         if (currentChat) setIsPinnedMessagesPanelOpen(true)
@@ -20459,7 +20522,7 @@ function App(): React.JSX.Element {
           setShowCockpit((open) => !open)
           break
         case 'media':
-          setIsChatMediaPanelOpen((open) => !open)
+          setChatMediaPanelOpenPreservingTranscript((open) => !open)
           break
         case 'pins':
           setIsPinnedMessagesPanelOpen((open) => !open)
@@ -23071,7 +23134,7 @@ function App(): React.JSX.Element {
               className={`chat-corner-btn ${isChatMediaPanelOpen ? 'active' : ''}`}
               type="button"
               onClick={() => {
-                setIsChatMediaPanelOpen((open) => !open)
+                setChatMediaPanelOpenPreservingTranscript((open) => !open)
                 setRightDockTab('media')
               }}
               title="Show chat uploads and paths"
@@ -24049,7 +24112,7 @@ function App(): React.JSX.Element {
                         <span className="right-dock-kicker">Media</span>
                         <strong>Uploads and paths</strong>
                       </div>
-                      <button type="button" onClick={() => setIsChatMediaPanelOpen(false)}>
+                      <button type="button" onClick={() => setChatMediaPanelOpenPreservingTranscript(false)}>
                         Close
                       </button>
                     </header>

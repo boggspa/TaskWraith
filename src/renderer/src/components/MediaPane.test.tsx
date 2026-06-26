@@ -30,17 +30,18 @@ describe('MediaPane', () => {
     expect(html).toContain('aria-label="Close voice.wav"')
   })
 
-  it('renders a video ref in the 16:9 frame with a <video> over twmedia://', () => {
+  it('renders a video ref in an aspect-correct frame with a <video> over twmedia://', () => {
     const ref: MultiviewPaneMediaRef = {
       id: 'v1',
       kind: 'video',
       name: 'clip.mp4',
       sha256: 'videoHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000',
       mimeType: 'video/mp4',
-      thumbnail: { dataBase64: 'AAAA', mimeType: 'image/jpeg' }
+      thumbnail: { dataBase64: 'AAAA', mimeType: 'image/jpeg', width: 320, height: 180 }
     }
     const html = renderToStaticMarkup(<MediaPane mediaRef={ref} onClose={noop} />)
     expect(html).toContain('media-pane-video-frame')
+    expect(html).toContain('aspect-ratio:320 / 180')
     expect(html).toContain('<video')
     expect(html).toContain('controls')
     expect(html).toContain(

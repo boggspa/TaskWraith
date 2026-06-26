@@ -4,6 +4,7 @@ import type { ChatMessage } from '../../../main/store/types'
 import {
   ChatMediaPreviewOverlay,
   ChatMessageMediaStrip,
+  collectChatMediaRefs,
   collectMessageMediaRefs,
   type ChatMediaRef
 } from './ChatMediaPanel'
@@ -63,7 +64,7 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(html.indexOf('Preview image screen.png')).toBeLessThan(html.indexOf('README.md'))
   })
 
-  it('renders audio/video refs as inline players over twmedia:// instead of file cards (S0c)', () => {
+  it('renders video refs as clip strips and audio refs as inline players instead of file cards', () => {
     const refs: ChatMediaRef[] = [
       {
         id: 'vid-1',
@@ -72,7 +73,9 @@ describe('ChatMediaPanel attachment rendering', () => {
         name: 'clip.mp4',
         path: '',
         mimeType: 'video/mp4',
-        sha256: 'abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ'
+        sha256: 'abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ',
+        durationMs: 28000,
+        thumbnail: { dataBase64: 'POSTER', mimeType: 'image/jpeg', width: 320, height: 180 }
       },
       {
         id: 'aud-1',
@@ -85,10 +88,11 @@ describe('ChatMediaPanel attachment rendering', () => {
       }
     ]
     const html = renderToStaticMarkup(<ChatMessageMediaStrip refs={refs} workspacePath="/repo" />)
-    expect(html).toContain('<video')
-    expect(html).toContain(
-      'src="twmedia://asset/abcDEF1234567890_abcdefghijklmnopqrstuvwxyz0123456789-XYZ.mp4"'
-    )
+    expect(html).toContain('tw-video-clip has-poster')
+    expect(html).toContain('Preview video clip.mp4')
+    expect(html).toContain('0:28')
+    expect((html.match(/class="tw-video-clip-frame"/g) ?? []).length).toBe(6)
+    expect(html).not.toContain('<video')
     expect(html).toContain('<audio')
     expect(html).toContain('src="twmedia://asset/wavHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000.wav"')
     expect(html).toContain('controls')
@@ -169,6 +173,41 @@ describe('ChatMediaPanel attachment rendering', () => {
     )
     expect(refs).toHaveLength(1)
     expect(refs[0].peaks).toEqual([0, 128, 255])
+  })
+
+  it('keeps pathless sha-backed transcript AV refs in chat-level media collection', () => {
+    const refs = collectChatMediaRefs(
+      {
+        messages: [
+          userMessage({
+            mediaRefs: [
+              {
+                id: 'generated-video',
+                kind: 'video',
+                source: 'tool_result',
+                name: 'render.mp4',
+                mimeType: 'video/mp4',
+                sha256: 'vidHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000',
+                durationMs: 4200,
+                thumbnail: { dataBase64: 'POSTER', mimeType: 'image/jpeg', width: 320, height: 180 },
+                status: 'available'
+              }
+            ]
+          } as ChatMessage['metadata'])
+        ]
+      } as any,
+      [],
+      []
+    )
+    expect(refs).toHaveLength(1)
+    expect(refs[0]).toMatchObject({
+      id: 'generated-video',
+      kind: 'video',
+      path: '',
+      sha256: 'vidHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000',
+      durationMs: 4200
+    })
+    expect(refs[0].thumbnail?.dataBase64).toBe('POSTER')
   })
 
   it('falls back to the poster waveform strip (no canvas) for an audio ref with a poster but NO peaks', () => {
