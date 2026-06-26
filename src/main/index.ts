@@ -1840,7 +1840,7 @@ const desktopToolExecutors = createDesktopToolExecutors({
     isCodexClientStarted: () => Boolean(codexClient)
   },
   notifyRenderer: (channel, payload) => {
-    mainWindow?.webContents.send(channel, payload)
+    safeSendToWebContents(mainWindow, channel, payload)
   },
   logger: console
 })
@@ -1877,6 +1877,19 @@ const canvasService = new CanvasService({
   },
   logger: console
 })
+let canvasShutdownCloseAllInFlight: Promise<void> | null = null
+function teardownCanvasSurfacesForWindowClose(): void {
+  canvasEmbedController.detachAll()
+  if (canvasShutdownCloseAllInFlight) return
+  canvasShutdownCloseAllInFlight = canvasService
+    .closeAll()
+    .catch((err) => {
+      console.warn(`canvas: closeAll failed during shutdown: ${String(err)}`)
+    })
+    .finally(() => {
+      canvasShutdownCloseAllInFlight = null
+    })
+}
 const canvasToolExecutors = createCanvasToolExecutors({ controller: canvasService })
 const imageToolExecutors = createImageToolExecutors({
   engine: createNativeImageEngine(),
@@ -17801,6 +17814,7 @@ function createWindow(): void {
   mainWindow.on('show', updateAppShellStatsPollingMode)
   mainWindow.on('hide', updateAppShellStatsPollingMode)
   mainWindow.on('close', () => {
+    teardownCanvasSurfacesForWindowClose()
     if (windowBoundsSaveTimer) {
       clearTimeout(windowBoundsSaveTimer)
       windowBoundsSaveTimer = null
@@ -22589,6 +22603,7 @@ if (isGeminiMcpBridgeProcess) {
     reconcileBridgeDaemonFromSettings()
     reconcileMessageChannelPollingFromSettings()
     app.on('will-quit', () => {
+      teardownCanvasSurfacesForWindowClose()
       stopMessageChannelPolling()
       stopBridgeDaemon()
       if (stallReconcilerInterval) {

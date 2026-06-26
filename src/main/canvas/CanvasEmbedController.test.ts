@@ -103,6 +103,19 @@ describe('CanvasEmbedController', () => {
     expect(created[0].bounds).toEqual({ x: 5, y: 5, width: 10, height: 10 })
   })
 
+  it('ignores bounds and visibility writes after the embedded webContents is destroyed', () => {
+    const { created, controller } = make()
+    controller.surfaceFor('c1')({ partition: 'p', width: 800, height: 600 })
+    created[0].bounds = { x: 1, y: 2, width: 3, height: 4 }
+    created[0].visible = true
+    created[0].closed = true
+
+    expect(() => controller.setBounds('c1', { x: 9, y: 9, width: 9, height: 9 })).not.toThrow()
+    expect(() => controller.setVisible('c1', false)).not.toThrow()
+    expect(created[0].bounds).toEqual({ x: 1, y: 2, width: 3, height: 4 })
+    expect(created[0].visible).toBe(true)
+  })
+
   it('setContentSize updates the tracked size', () => {
     const { created, controller } = make()
     const surface = controller.surfaceFor('c1')({ partition: 'p', width: 800, height: 600 })

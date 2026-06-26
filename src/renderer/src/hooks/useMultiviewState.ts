@@ -278,6 +278,24 @@ export function paneChatIdsOf(state: MultiviewCoreState): (string | null)[] {
   return state.panes.map((pane) => pane.chatId)
 }
 
+export function removedCanvasIds(
+  previous: ReadonlyArray<MultiviewPaneRecord>,
+  next: ReadonlyArray<MultiviewPaneRecord>
+): string[] {
+  const nextIds = new Set(
+    next.map((pane) => pane.canvasId).filter((canvasId): canvasId is string => Boolean(canvasId))
+  )
+  const removed: string[] = []
+  const seen = new Set<string>()
+  for (const pane of previous) {
+    const canvasId = pane.canvasId
+    if (!canvasId || nextIds.has(canvasId) || seen.has(canvasId)) continue
+    seen.add(canvasId)
+    removed.push(canvasId)
+  }
+  return removed
+}
+
 /**
  * The effective column/row fractions for a layout: the dragged values if the
  * user has resized this layout in this session, else the spec defaults. The

@@ -75,6 +75,32 @@ export class CanvasEmbedController {
 
   constructor(private readonly deps: CanvasEmbedControllerDeps) {}
 
+  private canDrive(entry: EmbeddedEntry): boolean {
+    if (entry.destroyed || entry.view.webContents.isDestroyed()) {
+      entry.destroyed = true
+      return false
+    }
+    return true
+  }
+
+  private safeSetBounds(entry: EmbeddedEntry, rect: CanvasEmbedRect): void {
+    if (!this.canDrive(entry)) return
+    try {
+      entry.view.setBounds(rect)
+    } catch {
+      entry.destroyed = true
+    }
+  }
+
+  private safeSetVisible(entry: EmbeddedEntry, visible: boolean): void {
+    if (!this.canDrive(entry)) return
+    try {
+      entry.view.setVisible(visible)
+    } catch {
+      entry.destroyed = true
+    }
+  }
+
   /** Is this canvas currently embedded (vs standalone)? */
   has(canvasId: string): boolean {
     return this.entries.has(canvasId)
@@ -105,13 +131,13 @@ export class CanvasEmbedController {
     }
     this.entries.set(canvasId, entry)
     parent.addChildView(view)
-    view.setBounds(this.scaled(entry.bounds))
+    this.safeSetBounds(entry, this.scaled(entry.bounds))
     return {
       webContents: view.webContents as unknown as CanvasHostSurface['webContents'],
       getTitle: () => view.webContents.getTitle(),
       setContentSize: (width, height) => {
         entry.bounds = { ...entry.bounds, width: Math.max(0, width), height: Math.max(0, height) }
-        if (!entry.destroyed && entry.visible) view.setBounds(this.scaled(entry.bounds))
+        if (entry.visible) this.safeSetBounds(entry, this.scaled(entry.bounds))
       },
       isDestroyed: () => entry.destroyed || view.webContents.isDestroyed(),
       destroy: () => this.detach(canvasId),
@@ -143,7 +169,7 @@ export class CanvasEmbedController {
     const entry = this.entries.get(canvasId)
     if (!entry || entry.destroyed) return
     entry.bounds = clampRect(rect)
-    if (entry.visible) entry.view.setBounds(this.scaled(entry.bounds))
+    if (entry.visible) this.safeSetBounds(entry, this.scaled(entry.bounds))
   }
 
   /** Show/hide the view (e.g. hide while an app modal occludes the pane). */
@@ -151,10 +177,10 @@ export class CanvasEmbedController {
     const entry = this.entries.get(canvasId)
     if (!entry || entry.destroyed) return
     entry.visible = visible
-    entry.view.setVisible(visible)
+    this.safeSetVisible(entry, visible)
     // Belt-and-suspenders: park it off-screen when hidden so it can't paint over
     // the DOM even if a platform ignores setVisible.
-    entry.view.setBounds(visible ? this.scaled(entry.bounds) : OFFSCREEN)
+    this.safeSetBounds(entry, visible ? this.scaled(entry.bounds) : OFFSCREEN)
   }
 
   /** Detach + destroy the embedded view for a canvas (idempotent). */

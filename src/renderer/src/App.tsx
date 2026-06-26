@@ -490,7 +490,7 @@ import { MediaPane } from './components/MediaPane'
 import { CanvasPane } from './components/CanvasPane'
 import { CanvasPaneLauncher } from './components/CanvasPaneLauncher'
 import { Composer, type ComposerProps } from './components/Composer'
-import { useMultiviewState } from './hooks/useMultiviewState'
+import { removedCanvasIds, useMultiviewState } from './hooks/useMultiviewState'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 // Re-exported so the existing `TranscriptPanel.test.tsx` (which imports it
 // from './App') keeps resolving after the component moved to its own module.
@@ -2403,6 +2403,17 @@ function App(): React.JSX.Element {
   // Multiview: split the central pane into 1-4 panes. Inert until a layout is
   // chosen — single layout renders byte-identically to before Multiview.
   const multiview = useMultiviewState()
+  const previousMultiviewPanesRef = useRef(multiview.panes)
+  useEffect(() => {
+    const removed = removedCanvasIds(previousMultiviewPanesRef.current, multiview.panes)
+    previousMultiviewPanesRef.current = multiview.panes
+    if (removed.length === 0) return
+    const closeCanvas = window.api?.canvas?.close
+    if (!closeCanvas) return
+    for (const canvasId of removed) {
+      void closeCanvas(canvasId)
+    }
+  }, [multiview.panes])
   // Detach a transcript A/V player into its own Multiview pane (the docked media
   // player). `ChatMediaRef` is a structural superset of the pane's
   // `MultiviewPaneMediaRef`; we narrow to the node-free subset (and clamp `kind`

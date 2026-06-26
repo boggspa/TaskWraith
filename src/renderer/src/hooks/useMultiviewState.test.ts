@@ -21,6 +21,7 @@ import {
   getLayoutTracks,
   MULTIVIEW_MIN_PANE_PX,
   normalizeMultiviewCoreState,
+  removedCanvasIds,
   type MultiviewCoreState
 } from './useMultiviewState'
 
@@ -186,6 +187,44 @@ describe('applySetPaneCanvas', () => {
     expect(s.panes[0].mediaRef).toBe(m)
     s = applySetPaneCanvas(s, 0, 'cv1')
     expect(s.panes[0]).toEqual({ id: 't0', chatId: null, canvasId: 'cv1', mediaRef: null })
+  })
+})
+
+describe('removedCanvasIds', () => {
+  it('reports canvases removed by chat/media overwrite and layout shrink', () => {
+    let before = applySetPaneCanvas(
+      state({ layout: 'vertical-2', panes: panesOf([null, null]) }),
+      0,
+      'cv-chat'
+    )
+    let after = applySetPaneChat(before, 0, 'chat-x')
+    expect(removedCanvasIds(before.panes, after.panes)).toEqual(['cv-chat'])
+
+    before = applySetPaneCanvas(state({ layout: 'vertical-2', panes: panesOf([null, null]) }), 0, 'cv-media')
+    after = applySetPaneMedia(before, 0, mediaRef())
+    expect(removedCanvasIds(before.panes, after.panes)).toEqual(['cv-media'])
+
+    before = state({
+      layout: 'quad',
+      panes: [
+        { id: 't0', chatId: 'a' },
+        { id: 't1', chatId: null, canvasId: 'cv-keep' },
+        { id: 't2', chatId: null, canvasId: 'cv-drop' },
+        { id: 't3', chatId: null }
+      ]
+    })
+    after = applySetLayout(before, 'vertical-2')
+    expect(removedCanvasIds(before.panes, after.panes)).toEqual(['cv-drop'])
+  })
+
+  it('ignores canvases that remain live and dedupes duplicate ids defensively', () => {
+    const before: MultiviewPaneRecord[] = [
+      { id: 'a', chatId: null, canvasId: 'cv1' },
+      { id: 'b', chatId: null, canvasId: 'cv1' },
+      { id: 'c', chatId: null, canvasId: 'cv2' }
+    ]
+    const after: MultiviewPaneRecord[] = [{ id: 'z', chatId: null, canvasId: 'cv2' }]
+    expect(removedCanvasIds(before, after)).toEqual(['cv1'])
   })
 })
 
