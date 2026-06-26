@@ -9,6 +9,7 @@ import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerg
 import { readComposerDrafts, writeComposerDrafts } from './lib/composerDraftStore'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
+import { resolveSlashParticipantForChat } from './lib/resolveSlashParticipant'
 import {
   applyScheduledEnsembleSnapshot,
   buildScheduledEnsembleSnapshot
@@ -18883,8 +18884,8 @@ function App(): React.JSX.Element {
   // sending a slash command through the bridge.
   const slashCommandProvider: ProviderId =
     isCurrentEnsembleChat && selectedParticipant ? selectedParticipant.provider : currentProvider
-  const geminiQuickToggleItems: CommandPaletteItem[] =
-    slashCommandProvider === 'gemini'
+  const buildGeminiQuickToggleItems = (provider: ProviderId): CommandPaletteItem[] =>
+    provider === 'gemini'
       ? [
           {
             id: 'gemini-quick-persistent-session',
@@ -18931,10 +18932,11 @@ function App(): React.JSX.Element {
           }
         ]
       : []
-  const commandPaletteItems =
-    slashCommandProvider === 'gemini'
-      ? [...geminiQuickToggleItems, ...mergeCommandPaletteItems(discoveredCommands)]
-      : paletteCoreForProvider(slashCommandProvider)
+  const resolveSlashPaletteItems = (provider: ProviderId): CommandPaletteItem[] =>
+    provider === 'gemini'
+      ? [...buildGeminiQuickToggleItems(provider), ...mergeCommandPaletteItems(discoveredCommands)]
+      : paletteCoreForProvider(provider)
+  const commandPaletteItems = resolveSlashPaletteItems(slashCommandProvider)
   const slashCommandProviderCapabilities =
     providerCapabilitiesByProvider[slashCommandProvider] ||
     (slashCommandProvider === currentProvider ? currentProviderCapabilities : undefined)
@@ -18959,6 +18961,51 @@ function App(): React.JSX.Element {
     ctx.setDraft(next)
     ctx.focusComposer(next.length)
   }
+  const preserveSlashDraftForFocusedFlow = (
+    ctx: SlashCommandRunContext,
+    focusPane: (() => void) | undefined,
+    message: string
+  ): void => {
+    focusPane?.()
+    ctx.setDraft(ctx.rawPrompt)
+    ctx.focusComposer(ctx.rawPrompt.length)
+    window.alert(message)
+  }
+  const buildScopedComposerSlashExtraCommands = ({
+    chat,
+    provider,
+    workspace,
+    isEnsembleChat,
+    selectedParticipant: slashSelectedParticipant,
+    activeGoal,
+    attachedWindow: scopedAttachedWindow,
+    handleCancelCommand,
+    handlePickFilesCommand,
+    handleCopyTranscriptCommand,
+    handleAttachWindowCommand,
+    handleDetachWindowCommand,
+    openWorkspacePopoutCommand,
+    openSideChatCommand,
+    handleGoalCommand,
+    focusPaneForFocusedFlow
+  }: {
+    chat: ChatRecord | null
+    provider: ProviderId
+    workspace: WorkspaceRecord | null | undefined
+    isEnsembleChat: boolean
+    selectedParticipant: EnsembleParticipant | null
+    activeGoal: ActiveGoal | null
+    attachedWindow: typeof attachedWindow | null
+    handleCancelCommand: () => void | Promise<void>
+    handlePickFilesCommand: () => void | Promise<void>
+    handleCopyTranscriptCommand: () => void | Promise<unknown>
+    handleAttachWindowCommand: (ctx: SlashCommandRunContext) => void | Promise<void>
+    handleDetachWindowCommand: (ctx: SlashCommandRunContext) => void | Promise<void>
+    openWorkspacePopoutCommand: (kind: 'file-editor' | 'diff-studio') => void
+    openSideChatCommand: (sideCommand: SideSlashCommand) => void
+    handleGoalCommand: (ctx: SlashCommandRunContext) => void
+    focusPaneForFocusedFlow?: () => void
+  }): ComposerSlashCommand[] => [
   /**
    * Cross-provider TaskWraith actions promoted to first-class slash entries.
    * These don't have a CommandPaletteItem analog because they fire
@@ -18966,7 +19013,6 @@ function App(): React.JSX.Element {
    * surface today. Listed in the Custom group below the per-provider
    * palette-passthrough block.
    */
-  const composerSlashExtraCommands: ComposerSlashCommand[] = [
     {
       kind: 'action',
       id: 'taskwraith-audit',
@@ -18976,9 +19022,8 @@ function App(): React.JSX.Element {
         'Run a multi-agent strengths/weaknesses audit of this workspace. Optional mode: quick (default), deep, release.',
       group: 'Custom',
       run: (ctx) => {
-        const chat = currentChat
         if (!chat) return
-        const workspacePath = chat.workspacePath
+        const workspacePath = chat.workspacePath || workspace?.path
         if (!workspacePath) {
           // v1: audits are workspace-scoped — a global chat has no repo to audit.
           window.alert('Open a workspace chat to run an audit.')
@@ -18999,7 +19044,7 @@ function App(): React.JSX.Element {
           .startAuditRun({
             mode,
             chatId: chat.appChatId,
-            preferredProvider: getChatProvider(chat),
+            preferredProvider: provider,
             workspacePath,
             ...(chat.workspaceId ? { workspaceId: chat.workspaceId } : {})
           })
@@ -19021,12 +19066,12 @@ function App(): React.JSX.Element {
       kind: 'action',
       id: 'taskwraith-goal',
       command: '/goal',
-      label: currentActiveGoal ? 'Manage active goal' : 'Set active goal',
+      label: activeGoal ? 'Manage active goal' : 'Set active goal',
       description:
         'Set or manage this chat’s persistent objective. Usage: /goal <objective>, /goal pause, /goal resume, /goal block, /goal complete.',
       group: 'Custom',
       run: (ctx) => {
-        handleGoalSlashCommand(ctx.promptWithoutSlashToken, ctx.rawPrompt)
+        handleGoalCommand(ctx)
       }
     },
     {
@@ -19038,6 +19083,14 @@ function App(): React.JSX.Element {
         'Review a pasted plan as untrusted input, pick a safe run policy, then run it through the normal queue.',
       group: 'Custom',
       run: (ctx) => {
+        if (focusPaneForFocusedFlow) {
+          preserveSlashDraftForFocusedFlow(
+            ctx,
+            focusPaneForFocusedFlow,
+            'Plan Import opens in the focused pane. This pane is now focused; run /import-plan again.'
+          )
+          return
+        }
         // Was `handleImportPlanSlashCommand()` (App-level). The composer-side
         // token machinery moved into <Composer>; this closure now drives it
         // through `ctx` so it operates on the INVOKING composer's draft.
@@ -19062,7 +19115,6 @@ function App(): React.JSX.Element {
       description: 'Wipe this chat’s transcript + draft. Keeps the provider session id.',
       group: 'Custom',
       run: (ctx) => {
-        const chat = currentChat
         if (!chat) return
         const confirmed = window.confirm(
           `Clear the conversation in "${chat.title}"?\n\n` +
@@ -19081,11 +19133,7 @@ function App(): React.JSX.Element {
           runs: [],
           updatedAt: Date.now()
         }
-        chatByIdRef.current.set(chat.appChatId, truncated)
-        setCurrentChat(truncated)
-        setChats((prev) =>
-          prev.map((entry) => (entry.appChatId === chat.appChatId ? truncated : entry))
-        )
+        updateChatById(chat.appChatId, () => truncated)
         void window.api.truncateChat(chat.appChatId).catch((err) => {
           console.error('[slash:/clear] truncateChat failed', err)
         })
@@ -19098,8 +19146,8 @@ function App(): React.JSX.Element {
       label: 'Attach an app window',
       description: 'Open the macOS picker so the AI can see what’s on screen.',
       group: 'Custom',
-      run: () => {
-        void handleAttachWindow()
+      run: (ctx) => {
+        void handleAttachWindowCommand(ctx)
       }
     },
     {
@@ -19128,7 +19176,7 @@ function App(): React.JSX.Element {
       description: 'Cancel the active run or ensemble round in this chat.',
       group: 'Custom',
       run: () => {
-        void handleCancel()
+        void handleCancelCommand()
       }
     },
     {
@@ -19139,7 +19187,7 @@ function App(): React.JSX.Element {
       description: 'Alias for /stop.',
       group: 'Custom',
       run: () => {
-        void handleCancel()
+        void handleCancelCommand()
       }
     },
     {
@@ -19150,7 +19198,7 @@ function App(): React.JSX.Element {
       description: 'Copy the current chat transcript as Markdown.',
       group: 'Custom',
       run: () => {
-        void handleCopyCurrentTranscript()
+        void handleCopyTranscriptCommand()
       }
     },
     {
@@ -19161,7 +19209,7 @@ function App(): React.JSX.Element {
       description: 'Alias for /copy-transcript.',
       group: 'Custom',
       run: () => {
-        void handleCopyCurrentTranscript()
+        void handleCopyTranscriptCommand()
       }
     },
     {
@@ -19172,21 +19220,21 @@ function App(): React.JSX.Element {
       description: 'Open the file/image picker for composer attachments.',
       group: 'Custom',
       run: () => {
-        void handlePickImages()
+        void handlePickFilesCommand()
       }
     },
     {
       kind: 'action',
       id: 'taskwraith-screen',
       command: '/screen',
-      label: attachedWindow ? 'Detach screen watch' : 'Attach screen watch',
+      label: scopedAttachedWindow ? 'Detach screen watch' : 'Attach screen watch',
       description: 'Toggle the app/window screen watch attachment.',
       group: 'Custom',
-      run: () => {
-        if (attachedWindow) {
-          void handleDetachWindow()
+      run: (ctx) => {
+        if (scopedAttachedWindow) {
+          void handleDetachWindowCommand(ctx)
         } else {
-          void handleAttachWindow()
+          void handleAttachWindowCommand(ctx)
         }
       }
     },
@@ -19197,8 +19245,8 @@ function App(): React.JSX.Element {
       label: 'Detach screen watch',
       description: 'Stop sharing the currently attached app/window.',
       group: 'Custom',
-      run: () => {
-        void handleDetachWindow()
+      run: (ctx) => {
+        void handleDetachWindowCommand(ctx)
       }
     },
     {
@@ -19209,7 +19257,7 @@ function App(): React.JSX.Element {
       description: 'Open the workspace File Editor popout.',
       group: 'Custom',
       run: () => {
-        openWorkspacePopoutWindow('file-editor')
+        openWorkspacePopoutCommand('file-editor')
       }
     },
     {
@@ -19220,7 +19268,7 @@ function App(): React.JSX.Element {
       description: 'Open Diff Studio in a workspace popout window.',
       group: 'Custom',
       run: () => {
-        openWorkspacePopoutWindow('diff-studio')
+        openWorkspacePopoutCommand('diff-studio')
       }
     },
     {
@@ -19231,7 +19279,7 @@ function App(): React.JSX.Element {
       description: 'Open an isolated sidecar with a copied parent snapshot.',
       group: 'Custom',
       run: (ctx) => {
-        openSideChatFromSlashCommand({
+        openSideChatCommand({
           presentation: 'split',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
         })
@@ -19245,7 +19293,7 @@ function App(): React.JSX.Element {
       description: 'Open the isolated sidecar as the right drawer presentation.',
       group: 'Custom',
       run: (ctx) => {
-        openSideChatFromSlashCommand({
+        openSideChatCommand({
           presentation: 'drawer',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
         })
@@ -19259,7 +19307,7 @@ function App(): React.JSX.Element {
       description: 'Open the linked chat in a separate chat window.',
       group: 'Custom',
       run: (ctx) => {
-        openSideChatFromSlashCommand({
+        openSideChatCommand({
           presentation: 'popout',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
         })
@@ -19273,7 +19321,7 @@ function App(): React.JSX.Element {
       description: 'Navigate the main pane to the linked chat.',
       group: 'Custom',
       run: (ctx) => {
-        openSideChatFromSlashCommand({
+        openSideChatCommand({
           presentation: 'main',
           seedPrompt: ctx.promptWithoutSlashToken.trim()
         })
@@ -19343,7 +19391,7 @@ function App(): React.JSX.Element {
       id: 'taskwraith-template-compact',
       command: '/compact',
       label: 'Compact context',
-      description: isCurrentEnsembleChat
+      description: isEnsembleChat
         ? 'Insert a context-summary request, or expand for ensemble-specific scopes.'
         : 'Insert a concise context-summary request for this chat.',
       group: 'Custom',
@@ -19354,7 +19402,7 @@ function App(): React.JSX.Element {
           'Create a compact context summary for continuing this chat. Preserve decisions, constraints, open tasks, changed files, risks, and next actions. Do not omit unresolved questions or verification state.\n\n'
         )
     },
-    ...(isCurrentEnsembleChat
+    ...(isEnsembleChat
       ? [
           {
             kind: 'action' as const,
@@ -19376,9 +19424,10 @@ function App(): React.JSX.Element {
             id: 'taskwraith-template-compact-selected',
             parentId: 'taskwraith-template-compact',
             command: '/compact-selected',
-            label: selectedParticipant
+            label: slashSelectedParticipant
               ? `Selected participant: ${
-                  selectedParticipant.role || getProviderLabel(selectedParticipant.provider)
+                  slashSelectedParticipant?.role ||
+                  getProviderLabel(slashSelectedParticipant?.provider || provider)
                 }`
               : 'Selected participant context',
             description: 'Insert a summary request scoped to the selected ensemble participant.',
@@ -19423,6 +19472,23 @@ function App(): React.JSX.Element {
         'Review the unstaged changes in this workspace. Flag anything that looks risky, inconsistent with surrounding code, or under-tested.\n\n'
     }
   ]
+  const composerSlashExtraCommands = buildScopedComposerSlashExtraCommands({
+    chat: currentChat,
+    provider: slashCommandProvider,
+    workspace: currentWorkspace,
+    isEnsembleChat: isCurrentEnsembleChat,
+    selectedParticipant,
+    activeGoal: currentActiveGoal,
+    attachedWindow,
+    handleCancelCommand: handleCancel,
+    handlePickFilesCommand: handlePickImages,
+    handleCopyTranscriptCommand: handleCopyCurrentTranscript,
+    handleAttachWindowCommand: () => handleAttachWindow(),
+    handleDetachWindowCommand: () => handleDetachWindow(),
+    openWorkspacePopoutCommand: openWorkspacePopoutWindow,
+    openSideChatCommand: openSideChatFromSlashCommand,
+    handleGoalCommand: (ctx) => handleGoalSlashCommand(ctx.promptWithoutSlashToken, ctx.rawPrompt)
+  })
 
   // Slash-picker registry: per-provider palette items wrapped as
   // palette-passthrough ComposerSlashCommands, plus the cross-provider
@@ -19704,6 +19770,242 @@ function App(): React.JSX.Element {
       togglePinMessageInChat(paneChat, messageId)
     },
     [togglePinMessageInChat]
+  )
+  const handleReviewDiffForChat = useCallback(
+    async (chat: ChatRecord, provider: ProviderId, workspace: WorkspaceRecord | null) => {
+      if (!workspace?.path || isPreparingDiffReview) return
+      setIsPreparingDiffReview(true)
+      try {
+        const diffObj = await window.api.getDiff(workspace.path)
+        setDiff(diffObj)
+        setDiffView('workspace')
+        openInspectorTab('diff')
+        if (chat.chatKind === 'ensemble') {
+          setRawLogs((prev) => [
+            ...prev,
+            {
+              type: 'info',
+              content:
+                'Ensemble /review: runs as a panel discussion of the diff (prompt-only). ' +
+                'Native Codex review only fires in solo Codex chats with a linked thread.'
+            }
+          ])
+        }
+        const request: QueuedRunRequest = {
+          ...buildRunRequestRef.current(undefined, undefined, {
+            chat,
+            prompt: buildReviewCurrentDiffPrompt(diffObj),
+            displayPrompt: '/review current diff',
+            approvalMode: 'plan',
+            imageAttachments:
+              imageAttachmentsByChatIdRef.current[chat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
+          }),
+          codexNativeReview:
+            provider === 'codex' &&
+            chat.chatKind !== 'ensemble' &&
+            Boolean(chat.linkedProviderSessionId)
+        }
+        if (isChatBusy(chat.appChatId)) {
+          queueRunRequestRef.current(
+            request,
+            `Diff review is waiting for this chat's active ${getProviderLabel(provider)} task to exit.`
+          )
+          setDiffRefreshStatus('Diff review queued.')
+          return
+        }
+        void executeRunRef.current(request)
+      } catch (error) {
+        setDiffRefreshStatus('Diff review failed to prepare.')
+        setRawLogs((prev) => [
+          ...prev,
+          { type: 'info', content: `Failed to prepare diff review: ${redactLog(String(error))}` }
+        ])
+      } finally {
+        setIsPreparingDiffReview(false)
+      }
+    },
+    [isPreparingDiffReview]
+  )
+  const handlePanePaletteCommand = useCallback(
+    (
+      paneIndex: number,
+      chat: ChatRecord,
+      provider: ProviderId,
+      workspace: WorkspaceRecord | null,
+      item: CommandPaletteItem
+    ): void => {
+      const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
+      if (item.action) {
+        focusPane()
+        window.alert(
+          'This Gemini session control opens from the focused pane. The pane is now focused.'
+        )
+        return
+      }
+      if (provider === 'codex') {
+        if (item.command === '/status' || item.command === '/permissions') {
+          void refreshProviderMetadata(provider, workspace?.path)
+          openInspectorTab('safety')
+        } else if (
+          item.command === '/model' ||
+          item.command === '/mcp' ||
+          item.command === '/resume'
+        ) {
+          void refreshProviderMetadata(provider, workspace?.path)
+          if (item.command === '/resume') {
+            focusPane()
+            void refreshCodexThreads()
+          }
+          openInspectorTab('capabilities')
+        } else if (item.command === '/diff') {
+          if (workspace?.path) {
+            void window.api.getDiff(workspace.path).then((diffObj) => {
+              setDiff(diffObj)
+              setDiffView('workspace')
+              openInspectorTab('diff')
+            })
+          } else {
+            openInspectorTab('diff')
+          }
+        } else if (item.command === '/review') {
+          void handleReviewDiffForChat(chat, provider, workspace)
+        } else if (item.command === '/fast') {
+          const selection = getChatComposerSelection(chat, provider)
+          const modelOption = codexModels.find((option) => option.id === selection.selectedModelType)
+          if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
+            openInspectorTab('capabilities')
+            return
+          }
+          const nextTier = selection.codexServiceTier === 'fast' ? '' : 'fast'
+          updateChatById(chat.appChatId, (source) => ({
+            ...source,
+            providerMetadata: {
+              ...(source.providerMetadata || {}),
+              codexServiceTier: nextTier
+            },
+            updatedAt: Date.now()
+          }))
+        } else if (item.command === '/fork') {
+          focusPane()
+          openInspectorTab('capabilities')
+          void refreshCodexThreads()
+        }
+        return
+      }
+      if (
+        provider === 'claude' ||
+        provider === 'kimi' ||
+        provider === 'grok' ||
+        provider === 'cursor' ||
+        provider === 'ollama'
+      ) {
+        if (item.command === '/status' || item.command === '/permissions') {
+          void refreshProviderMetadata(provider, workspace?.path)
+          openInspectorTab('safety')
+        } else if (item.command === '/model') {
+          void refreshProviderMetadata(provider, workspace?.path)
+          openInspectorTab('capabilities')
+        } else if (item.command === '/diff') {
+          if (workspace?.path) {
+            void window.api.getDiff(workspace.path).then((diffObj) => {
+              setDiff(diffObj)
+              setDiffView('workspace')
+              openInspectorTab('diff')
+            })
+          } else {
+            openInspectorTab('diff')
+          }
+        } else if (item.command === '/review') {
+          void handleReviewDiffForChat(chat, provider, workspace)
+        }
+        return
+      }
+      focusPane()
+      window.alert('Gemini PTY slash commands run from the focused pane. The pane is now focused.')
+    },
+    [
+      codexModels,
+      handleFocusMultiviewPane,
+      handleReviewDiffForChat,
+      openInspectorTab,
+      refreshCodexThreads,
+      refreshProviderMetadata,
+      updateChatById
+    ]
+  )
+  const buildPaneComposerSlashCommands = useCallback(
+    (
+      paneIndex: number,
+      chat: ChatRecord,
+      provider: ProviderId,
+      workspace: WorkspaceRecord | null
+    ) => {
+      const slashParticipant = resolveSlashParticipantForChat(chat)
+      const slashProvider =
+        chat.chatKind === 'ensemble' && slashParticipant ? slashParticipant.provider : provider
+      const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
+      const preserveForFocusedFlow = (ctx: SlashCommandRunContext, message: string): void =>
+        preserveSlashDraftForFocusedFlow(ctx, focusPane, message)
+      const paletteItems = resolveSlashPaletteItems(slashProvider).filter((item) => !item.action)
+      return buildComposerSlashCommandRegistry({
+        provider: slashProvider,
+        paletteItems,
+        capabilities:
+          providerCapabilitiesByProvider[slashProvider] ||
+          (slashProvider === currentProvider ? currentProviderCapabilities : undefined),
+        extraCommands: buildScopedComposerSlashExtraCommands({
+          chat,
+          provider: slashProvider,
+          workspace,
+          isEnsembleChat: chat.chatKind === 'ensemble',
+          selectedParticipant: slashParticipant,
+          activeGoal: chat.activeGoal || null,
+          attachedWindow:
+            attachedWindowOwnerChatIdRef.current === chat.appChatId ? attachedWindow : null,
+          handleCancelCommand: () => handleCancelMultiviewPane(paneIndex, chat.appChatId),
+          handlePickFilesCommand: () =>
+            handleMultiviewPanePickAttachments(paneIndex, chat.appChatId),
+          handleCopyTranscriptCommand: () =>
+            handleMultiviewPaneCopyTranscript(paneIndex, chat.appChatId),
+          handleAttachWindowCommand: (ctx) =>
+            preserveForFocusedFlow(
+              ctx,
+              'Screen Watch attaches from the focused pane. This pane is now focused; run /screen again.'
+            ),
+          handleDetachWindowCommand: (ctx) =>
+            preserveForFocusedFlow(
+              ctx,
+              'Screen Watch detaches from the focused pane. This pane is now focused; run /detach-screen again.'
+            ),
+          openWorkspacePopoutCommand: (kind) => {
+            if (!workspace?.path) return
+            void window.api.openWorkspacePopout({ kind, workspacePath: workspace.path })
+          },
+          openSideChatCommand: () => {
+            focusPane()
+            window.alert('Side-chat commands open from the focused pane. This pane is now focused.')
+          },
+          handleGoalCommand: (ctx) =>
+            preserveForFocusedFlow(
+              ctx,
+              'Goal commands edit the focused pane. This pane is now focused; run /goal again.'
+            ),
+          focusPaneForFocusedFlow: focusPane
+        })
+      })
+    },
+    [
+      attachedWindow,
+      currentProvider,
+      currentProviderCapabilities,
+      handleCancelMultiviewPane,
+      handleFocusMultiviewPane,
+      handleMultiviewPaneCopyTranscript,
+      handleMultiviewPanePickAttachments,
+      buildScopedComposerSlashExtraCommands,
+      providerCapabilitiesByProvider,
+      resolveSlashPaletteItems
+    ]
   )
   const handleSelectMultiviewLayout = useCallback(
     (layout: MultiviewLayout) => {
@@ -20318,6 +20620,14 @@ function App(): React.JSX.Element {
       currentProvider: viewerProvider,
       currentProviderLabel: viewerProviderLabel,
       currentProviderModelOptions: getProviderModelOptions(viewerProvider),
+      composerSlashCommands: buildPaneComposerSlashCommands(
+        viewerPaneIndex,
+        viewerChat,
+        viewerProvider,
+        viewerWorkspace
+      ),
+      handlePaletteCommand: (item: CommandPaletteItem) =>
+        handlePanePaletteCommand(viewerPaneIndex, viewerChat, viewerProvider, viewerWorkspace, item),
       currentWorkspace: viewerWorkspace,
       currentWorkspacePath: viewerWorkspace?.path,
       // Per-pane git diff stats: read THIS pane's own workspace snapshot so the
@@ -21335,6 +21645,20 @@ function App(): React.JSX.Element {
         currentProvider: viewerProvider,
         currentProviderLabel: viewerProviderLabel,
         currentProviderModelOptions: paneCtxHelpers.getProviderModelOptions(viewerProvider),
+        composerSlashCommands: buildPaneComposerSlashCommands(
+          viewerPaneIndex,
+          viewerChat,
+          viewerProvider,
+          viewerWorkspace
+        ),
+        handlePaletteCommand: (item: CommandPaletteItem) =>
+          handlePanePaletteCommand(
+            viewerPaneIndex,
+            viewerChat,
+            viewerProvider,
+            viewerWorkspace,
+            item
+          ),
         currentWorkspace: viewerWorkspace,
         currentWorkspacePath: viewerWorkspace?.path,
         // Per-pane git diff stats: read THIS pane's own workspace snapshot so the
@@ -21495,7 +21819,9 @@ function App(): React.JSX.Element {
       codexModels,
       composerDraftsByChatId,
       composerStableBase,
+      buildPaneComposerSlashCommands,
       handleCancelMultiviewPane,
+      handlePanePaletteCommand,
       handleMultiviewPaneAddWorkspace,
       handleMultiviewPaneCopyTranscript,
       handleMultiviewPanePickAttachments,
