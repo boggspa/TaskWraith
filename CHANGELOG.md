@@ -4,6 +4,36 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.6.4 - 2026-06-26
+
+### Added
+- **Composer-aligned slash picker.** Slash commands now open in a wider,
+  composer-width picker with grouped sections, richer command descriptions, and
+  custom monoline icons for review, planning, side-chat, ensemble, Gemini,
+  workflow, settings, and utility commands.
+- **More slash command coverage.** Multiview side panes, ensemble controls,
+  workflow helpers, Gemini passthrough commands, prompt templates, model/context
+  tools, and settings shortcuts can be run from typed slash commands or picker
+  selection.
+
+### Changed
+- **Consistent theme opacity.** Every named system theme now obeys Settings ->
+  Appearance -> Main pane opacity, instead of only Light, Dark, Alabaster, and
+  Obsidian honoring the slider.
+- **More readable popovers.** The Settings menu, Approvals, Shares, and Devices
+  mini pickers now use a 75% background material so their contents stay legible
+  across glass-heavy themes.
+- **iOS display scaling.** The companion gained a display-size scaling control for
+  tuning the remote UI density on-device.
+
+### Fixed
+- **Slash routing hardening.** Typed slash commands now route through the shared
+  registry, preserve drafts when a pane handler redirects, resolve participants
+  per focused pane, refresh Gemini command discovery after `/commands reload`, and
+  handle discovered commands with argument placeholders.
+- **Share reconnect polish.** Shared chat discovery and reconnect signals are more
+  resilient when a linked device or collaborator returns after a brief disconnect.
+
 ## 1.6.3 - 2026-06-26
 
 ### Added
