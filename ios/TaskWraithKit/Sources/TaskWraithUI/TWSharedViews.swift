@@ -2482,33 +2482,13 @@ public struct MarkdownLite: View {
     private func tableView(_ table: MarkdownTable) -> some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         return ScrollView(.horizontal, showsIndicators: true) {
-            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
-                GridRow {
-                    ForEach(0..<table.columnCount, id: \.self) { column in
-                        tableCell(
-                            table.headers[column],
-                            header: true,
-                            alignment: table.alignments[column],
-                            rowIndex: 0,
-                            columnIndex: column
-                        )
-                    }
-                }
+            VStack(alignment: .leading, spacing: 0) {
+                tableRow(table.headers, table: table, header: true, rowIndex: 0)
                 ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
-                    GridRow {
-                        ForEach(0..<table.columnCount, id: \.self) { column in
-                            tableCell(
-                                column < row.count ? row[column] : "",
-                                header: false,
-                                alignment: table.alignments[column],
-                                rowIndex: rowIndex + 1,
-                                columnIndex: column
-                            )
-                        }
-                    }
+                    tableRow(row, table: table, header: false, rowIndex: rowIndex + 1)
                 }
             }
-            .fixedSize(horizontal: true, vertical: false)
+            .fixedSize(horizontal: true, vertical: true)
         }
         .background(TWTheme.surface2.opacity(0.86), in: shape)
         .clipShape(shape)
@@ -2517,36 +2497,85 @@ public struct MarkdownLite: View {
         .accessibilityLabel("Markdown table")
     }
 
+    private func tableRow(
+        _ cells: [String],
+        table: MarkdownTable,
+        header: Bool,
+        rowIndex: Int
+    ) -> some View {
+        let columnWidth = tableColumnWidth(for: table.columnCount)
+
+        return HStack(alignment: .top, spacing: 0) {
+            ForEach(0..<table.columnCount, id: \.self) { column in
+                tableCell(
+                    column < cells.count ? cells[column] : "",
+                    header: header,
+                    alignment: table.alignments[column],
+                    rowIndex: rowIndex,
+                    columnIndex: column,
+                    columnWidth: columnWidth
+                )
+            }
+        }
+        .background(tableRowBackground(header: header, rowIndex: rowIndex))
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(TWTheme.border.opacity(0.72)).frame(height: 1)
+        }
+        .overlay(alignment: .leading) {
+            tableColumnDividers(columnCount: table.columnCount, columnWidth: columnWidth)
+        }
+    }
+
     private func tableCell(
         _ raw: String,
         header: Bool,
         alignment: MarkdownTableAlignment,
         rowIndex: Int,
-        columnIndex: Int
+        columnIndex: Int,
+        columnWidth: CGFloat
     ) -> some View {
         inlineText(raw.isEmpty ? " " : raw)
             .font(header ? TWFont.transcript(13, weight: .semibold) : TWFont.transcript(13))
             .foregroundStyle(header ? TWTheme.textPrimary : TWTheme.textSecondary)
             .multilineTextAlignment(textAlignment(for: alignment))
             .fixedSize(horizontal: false, vertical: true)
-            .frame(
-                minWidth: 72,
-                maxWidth: 220,
-                alignment: frameAlignment(for: alignment)
-            )
+            .frame(width: columnWidth, alignment: frameAlignment(for: alignment))
             .padding(.vertical, 8)
             .padding(.horizontal, 8)
-            .background(tableCellBackground(header: header, rowIndex: rowIndex))
-            .overlay(alignment: .trailing) {
-                Rectangle().fill(TWTheme.border.opacity(0.72)).frame(width: 1)
-            }
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(TWTheme.border.opacity(0.72)).frame(height: 1)
-            }
             .accessibilityLabel(tableAccessibilityLabel(raw, rowIndex: rowIndex, columnIndex: columnIndex))
     }
 
-    private func tableCellBackground(header: Bool, rowIndex: Int) -> Color {
+    private func tableColumnWidth(for columnCount: Int) -> CGFloat {
+        switch columnCount {
+        case 0...2: return 136
+        case 3: return 104
+        case 4: return 76
+        default: return 68
+        }
+    }
+
+    private func tableCellTotalWidth(_ columnWidth: CGFloat) -> CGFloat {
+        columnWidth + 16
+    }
+
+    @ViewBuilder
+    private func tableColumnDividers(columnCount: Int, columnWidth: CGFloat) -> some View {
+        if columnCount > 1 {
+            let cellWidth = tableCellTotalWidth(columnWidth)
+            ZStack(alignment: .leading) {
+                ForEach(1..<columnCount, id: \.self) { column in
+                    Rectangle()
+                        .fill(TWTheme.border.opacity(0.72))
+                        .frame(width: 1)
+                        .offset(x: CGFloat(column) * cellWidth - 0.5)
+                }
+            }
+            .frame(width: CGFloat(columnCount) * cellWidth, alignment: .leading)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func tableRowBackground(header: Bool, rowIndex: Int) -> Color {
         if header { return TWTheme.chroma1.opacity(0.14) }
         return rowIndex.isMultiple(of: 2) ? Color.clear : TWTheme.surface3.opacity(0.26)
     }
