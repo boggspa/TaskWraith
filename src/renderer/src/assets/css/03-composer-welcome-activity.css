@@ -4346,6 +4346,84 @@
   animation: composer-goal-complete-flash 900ms ease-out 1;
 }
 
+.composer-plan-control-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.composer-plan-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 54%, transparent);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer-plan-button:hover,
+.composer-plan-button.is-open {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.composer-plan-button .composer-control-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.composer-plan-button.is-active {
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.composer-plan-button.is-completed {
+  color: color-mix(in srgb, var(--success) 88%, var(--text-primary));
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--success) 36%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--success) 18%, transparent);
+}
+
+.composer-plan-button-dot,
+.composer-plan-button-check {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1.5px var(--composer-bg, var(--surface-base));
+}
+
+.composer-plan-button-dot {
+  background: var(--accent);
+}
+
+.composer-plan-button-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 9px;
+  height: 9px;
+  color: var(--success);
+  background: var(--composer-bg, var(--surface-base));
+  animation: composer-goal-complete-flash 900ms ease-out 1;
+}
+
+.composer-plan-button-check::before {
+  content: "\2713";
+  font-size: 7px;
+  line-height: 1;
+}
+
 .composer-copy-transcript-wrap {
   position: relative;
   display: inline-flex;
@@ -4689,6 +4767,151 @@
 }
 
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-goal-popover {
+  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  border-color: var(--surface-border);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  color: var(--surface-text);
+}
+
+.composer-plan-popover {
+  position: fixed;
+  z-index: 12000;
+  width: min(356px, calc(100vw - 16px));
+  max-height: min(400px, calc(100vh - 16px));
+  overflow: hidden;
+  padding: 10px;
+  transform: translate(-50%, -100%);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
+  border-radius: var(--radius-md, 10px);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 96%, transparent);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.32),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: calc(var(--font-size-xs) + 1px);
+  isolation: isolate;
+}
+
+.composer-plan-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.composer-plan-popover-title {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.composer-plan-count-chip {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 52%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-plan-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 350px;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-tertiary) 38%, transparent) transparent;
+}
+
+.composer-plan-lanes::-webkit-scrollbar {
+  width: 6px;
+}
+
+.composer-plan-lanes::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.composer-plan-lanes::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-tertiary) 32%, transparent);
+  border-radius: 999px;
+}
+
+.composer-plan-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer-plan-lane-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+}
+
+.composer-plan-lane-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--composer-plan-lane-color, var(--accent));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--composer-plan-lane-color, var(--accent)) 36%, transparent);
+}
+
+.composer-plan-lane-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-plan-lane-count {
+  margin-left: auto;
+  color: color-mix(in srgb, var(--text-tertiary) 88%, transparent);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.composer-plan-popover .todo-checklist-card {
+  margin: 0;
+  gap: 6px;
+}
+
+.composer-plan-popover .todo-checklist-item {
+  color: color-mix(in srgb, var(--text-secondary) 92%, transparent);
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+}
+
+.composer-plan-popover .todo-checklist-item.status-in_progress {
+  color: var(--text-primary);
+}
+
+.composer-plan-popover .todo-checklist-item.status-completed,
+.composer-plan-popover .todo-checklist-item.status-cancelled {
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+}
+
+.composer-plan-popover .todo-checklist-text {
+  overflow-wrap: anywhere;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-plan-popover {
   background: color-mix(in srgb, var(--surface-1) 78%, transparent);
   border-color: var(--surface-border);
   box-shadow:

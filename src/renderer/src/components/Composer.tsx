@@ -72,6 +72,7 @@ import {
 } from '../lib/imageAttachments'
 import { ComposerImageThumb } from './ComposerImageThumb'
 import { CommittedDraftField } from './CommittedDraftField'
+import { ComposerPlanPopoverButton } from './ComposerPlanPopoverButton'
 import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -4531,6 +4532,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                    document.body
 	                  )}
 	                </span>
+	                <ComposerPlanPopoverButton
+	                  key={currentChat?.appChatId || 'composer-plan'}
+	                  chat={currentChat}
+	                  composerStyle={appearance.composerStyle}
+	                />
 	                <CopyTranscriptButton
 	                  disabled={!currentChat || currentChat.archived || currentChat.messages.length === 0}
 	                  resetKey={currentChat?.appChatId || null}

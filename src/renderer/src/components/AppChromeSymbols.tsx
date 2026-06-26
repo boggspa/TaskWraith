@@ -131,6 +131,28 @@ export function GoalSymbolIcon() {
   )
 }
 
+export function PlanSymbolIcon() {
+  return (
+    <span className="composer-control-icon">
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M5.6 4.2h6.6" />
+        <path d="M5.6 8h6.6" />
+        <path d="M5.6 11.8h6.6" />
+        <path d="m2.5 4.1.8.8 1.4-1.6" />
+        <circle cx="3.6" cy="8" r="0.85" />
+        <circle cx="3.6" cy="11.8" r="0.85" />
+      </svg>
+    </span>
+  )
+}
+
 export function ChatPopoutIcon() {
   return (
     <span className="chat-corner-symbol">
