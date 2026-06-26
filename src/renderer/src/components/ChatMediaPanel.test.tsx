@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
 import {
+  ChatMediaDockPanel,
   ChatMediaPreviewOverlay,
   ChatMessageMediaStrip,
   collectChatMediaRefs,
@@ -208,6 +209,87 @@ describe('ChatMediaPanel attachment rendering', () => {
       durationMs: 4200
     })
     expect(refs[0].thumbnail?.dataBase64).toBe('POSTER')
+  })
+
+  it('renders the right dock as a focused playable media preview, not just a file list', () => {
+    const refs: ChatMediaRef[] = [
+      {
+        id: 'img-1',
+        kind: 'image',
+        source: 'upload',
+        name: 'screen.png',
+        path: '/repo/screen.png'
+      },
+      {
+        id: 'vid-1',
+        kind: 'video',
+        source: 'tool_result',
+        name: 'render.mp4',
+        path: '',
+        mimeType: 'video/mp4',
+        sha256: 'videoHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000',
+        durationMs: 4200,
+        thumbnail: { dataBase64: 'POSTER', mimeType: 'image/jpeg', width: 320, height: 180 }
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <ChatMediaDockPanel
+        refs={refs}
+        workspacePath="/repo"
+        onClose={() => {}}
+        onPreviewImage={() => {}}
+        onDetachToPane={() => {}}
+      />
+    )
+    expect(html).toContain('right-dock-media-preview kind-video')
+    expect(html).toContain('right-dock-media-video-frame')
+    expect(html).toContain('aspect-ratio:320 / 180')
+    expect(html).toContain(
+      'src="twmedia://asset/videoHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000.mp4"'
+    )
+    expect(html).toContain('right-dock-media-list')
+    expect(html).toContain('Detach')
+  })
+
+  it('renders selected right dock audio through the waveform player', () => {
+    const refs: ChatMediaRef[] = [
+      {
+        id: 'aud-1',
+        kind: 'audio',
+        source: 'tool_result',
+        name: 'voice.wav',
+        path: '',
+        mimeType: 'audio/wav',
+        sha256: 'audioHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000',
+        durationMs: 1800,
+        peaks: [12, 96, 220, 128]
+      },
+      {
+        id: 'vid-1',
+        kind: 'video',
+        source: 'tool_result',
+        name: 'render.mp4',
+        path: '',
+        mimeType: 'video/mp4',
+        sha256: 'videoHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <ChatMediaDockPanel
+        refs={refs}
+        workspacePath="/repo"
+        onClose={() => {}}
+        onPreviewImage={() => {}}
+        onDetachToPane={() => {}}
+      />
+    )
+    expect(html).toContain('right-dock-media-preview kind-audio')
+    expect(html).toContain('tw-wave-player is-canvas')
+    expect(html).toContain('tw-wave-canvas')
+    expect(html).toContain(
+      'src="twmedia://asset/audioHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000.wav"'
+    )
+    expect(html).not.toContain('tw-wave-audio-plain')
   })
 
   it('falls back to the poster waveform strip (no canvas) for an audio ref with a poster but NO peaks', () => {

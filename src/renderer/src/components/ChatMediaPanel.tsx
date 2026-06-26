@@ -413,6 +413,13 @@ function MediaCardBadges({ mediaRef }: { mediaRef: ChatMediaRef }): ReactNode {
   )
 }
 
+function mediaThumbnailAspectRatio(mediaRef: ChatMediaRef): string | undefined {
+  const width = mediaRef.thumbnail?.width
+  const height = mediaRef.thumbnail?.height
+  if (!width || !height || width <= 0 || height <= 0) return undefined
+  return `${width} / ${height}`
+}
+
 export function formatChatMediaLocation(path: string, workspacePath?: string): string {
   if (!path) return 'Transcript media'
   if (workspacePath && path.startsWith(`${workspacePath}/`)) {
@@ -567,6 +574,10 @@ export function collectChatMediaRefs(
       return rank(a.ref) - rank(b.ref) || a.index - b.index
     })
     .map(({ ref }) => ref)
+}
+
+function defaultDockMediaRef(refs: ChatMediaRef[]): ChatMediaRef | null {
+  return refs.find((ref) => isAvMediaKind(ref.kind)) || refs.find((ref) => ref.kind === 'image') || refs[0] || null
 }
 
 export function collectMessageMediaRefs(message: ChatMessage): ChatMediaRef[] {
@@ -1276,6 +1287,228 @@ export function ChatMediaPreviewOverlay({
           </button>
         </footer>
       </section>
+    </div>
+  )
+}
+
+function DockVideoPreview({
+  mediaRef,
+  src,
+  poster
+}: {
+  mediaRef: ChatMediaRef
+  src: string
+  poster?: string
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [aspectRatio, setAspectRatio] = useState<string | undefined>(() =>
+    mediaThumbnailAspectRatio(mediaRef)
+  )
+
+  useEffect(() => {
+    setAspectRatio(mediaThumbnailAspectRatio(mediaRef))
+  }, [mediaRef.id, mediaRef.thumbnail?.width, mediaRef.thumbnail?.height])
+
+  return (
+    <div
+      className="right-dock-media-video-frame"
+      style={aspectRatio ? { aspectRatio } : undefined}
+    >
+      <video
+        ref={videoRef}
+        controls
+        preload="metadata"
+        {...(poster ? { poster } : {})}
+        src={src}
+        onLoadedMetadata={() => {
+          const video = videoRef.current
+          if (!video?.videoWidth || !video.videoHeight) return
+          setAspectRatio(`${video.videoWidth} / ${video.videoHeight}`)
+        }}
+      />
+    </div>
+  )
+}
+
+function ChatMediaDockPreview({
+  mediaRef,
+  workspacePath,
+  onPreviewImage,
+  onDetachToPane,
+  copy
+}: {
+  mediaRef: ChatMediaRef
+  workspacePath?: string
+  onPreviewImage?: (ref: ChatMediaRef) => void
+  onDetachToPane?: (ref: ChatMediaRef) => void
+  copy: (id: string, text: string) => void
+}) {
+  const isAv = isAvMediaKind(mediaRef.kind)
+  const avSrc = isAv ? chatMediaTwUrl(mediaRef) : ''
+  const previewSrc = chatMediaPreviewSrc(mediaRef)
+  const location = formatChatMediaLocation(mediaRef.path, workspacePath)
+  const actions = buildMediaCardActions(mediaRef, copy, onDetachToPane)
+
+  return (
+    <section className={`right-dock-media-preview kind-${mediaRef.kind}`} aria-label="Selected media">
+      <div className="right-dock-media-preview-top">
+        <div className="right-dock-media-preview-title">
+          <strong title={mediaRef.name}>{mediaRef.name}</strong>
+          <small title={location}>{location}</small>
+        </div>
+        <MediaActionMenu items={actions} triggerLabel={`Actions for ${mediaRef.name}`} />
+      </div>
+
+      <div className="right-dock-media-preview-body">
+        {isAv && avSrc ? (
+          mediaRef.kind === 'audio' ? (
+            <WaveformAudioPlayer
+              src={avSrc}
+              peaks={mediaRef.peaks}
+              posterSrc={previewSrc}
+              durationMs={mediaRef.durationMs}
+              name={mediaRef.name}
+            />
+          ) : (
+            <DockVideoPreview mediaRef={mediaRef} src={avSrc} poster={previewSrc || undefined} />
+          )
+        ) : mediaRef.kind === 'image' && previewSrc ? (
+          <button
+            type="button"
+            className="right-dock-media-image-preview"
+            onClick={() => onPreviewImage?.(mediaRef)}
+            disabled={!onPreviewImage}
+            aria-label={`Preview image ${mediaRef.name}`}
+          >
+            <img src={previewSrc} alt={mediaRef.name} loading="lazy" decoding="async" />
+          </button>
+        ) : (
+          <div className="right-dock-media-file-preview">
+            <FileTypeIcon path={mediaRef.path || mediaRef.name} size={36} workspacePath={workspacePath} />
+            <span>{mediaRef.name}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="right-dock-media-preview-meta">
+        <MediaCardBadges mediaRef={mediaRef} />
+        {isAv && onDetachToPane && (
+          <button
+            type="button"
+            className="right-dock-media-detach"
+            onClick={() => onDetachToPane(mediaRef)}
+          >
+            Detach
+          </button>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function ChatMediaDockRow({
+  mediaRef,
+  workspacePath,
+  selected,
+  isCopied,
+  onSelect
+}: {
+  mediaRef: ChatMediaRef
+  workspacePath?: string
+  selected: boolean
+  isCopied: boolean
+  onSelect: () => void
+}) {
+  const previewSrc = chatMediaPreviewSrc(mediaRef)
+  const location = formatChatMediaLocation(mediaRef.path, workspacePath)
+  return (
+    <button
+      type="button"
+      className={`right-dock-media-item kind-${mediaRef.kind}${selected ? ' is-selected' : ''}`}
+      onClick={onSelect}
+      title={mediaRef.path || mediaRef.name}
+      aria-pressed={selected}
+    >
+      <span className="right-dock-media-thumb" aria-hidden="true">
+        {previewSrc && (mediaRef.kind === 'image' || mediaRef.kind === 'video' || mediaRef.kind === 'audio') ? (
+          <img src={previewSrc} alt="" loading="lazy" decoding="async" />
+        ) : (
+          <FileTypeIcon path={mediaRef.path || mediaRef.name} size={18} workspacePath={workspacePath} />
+        )}
+      </span>
+      <span>
+        <strong>{mediaRef.name}</strong>
+        <small>{isCopied ? 'Copied' : location}</small>
+      </span>
+      {mediaRef.access && <em>{mediaRef.access}</em>}
+    </button>
+  )
+}
+
+export function ChatMediaDockPanel({
+  refs,
+  workspacePath,
+  onClose,
+  onPreviewImage,
+  onDetachToPane
+}: {
+  refs: ChatMediaRef[]
+  workspacePath?: string
+  onClose: () => void
+  onPreviewImage?: (ref: ChatMediaRef) => void
+  onDetachToPane?: (ref: ChatMediaRef) => void
+}) {
+  const { copiedId, copy } = useCopyFeedback()
+  const [selectedId, setSelectedId] = useState(() => defaultDockMediaRef(refs)?.id || '')
+  const explicitSelectedRef = refs.find((ref) => ref.id === selectedId) || null
+  const selectedRef = explicitSelectedRef || defaultDockMediaRef(refs)
+
+  useEffect(() => {
+    if (refs.length === 0) {
+      setSelectedId('')
+      return
+    }
+    if (explicitSelectedRef) return
+    setSelectedId(defaultDockMediaRef(refs)?.id || '')
+  }, [refs, explicitSelectedRef])
+
+  return (
+    <div className="right-dock-media-panel">
+      <header className="right-dock-panel-header">
+        <div>
+          <span className="right-dock-kicker">Media</span>
+          <strong>Uploads and paths</strong>
+        </div>
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
+      </header>
+
+      {refs.length === 0 || !selectedRef ? (
+        <div className="right-dock-empty">No uploads or external paths on this chat.</div>
+      ) : (
+        <div className="right-dock-media-content">
+          <ChatMediaDockPreview
+            mediaRef={selectedRef}
+            workspacePath={workspacePath}
+            onPreviewImage={onPreviewImage}
+            onDetachToPane={onDetachToPane}
+            copy={copy}
+          />
+          <div className="right-dock-media-list" aria-label="Chat media items">
+            {refs.map((mediaRef) => (
+              <ChatMediaDockRow
+                key={mediaRef.id}
+                mediaRef={mediaRef}
+                workspacePath={workspacePath}
+                selected={mediaRef.id === selectedRef.id}
+                isCopied={copiedId === mediaRef.id}
+                onSelect={() => setSelectedId(mediaRef.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

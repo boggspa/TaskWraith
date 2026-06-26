@@ -248,7 +248,6 @@ import {
   type WorkSessionSetupConfirmInput
 } from './components/WorkSessionSetupSheet'
 import { IncomingPairingPrompt } from './components/IncomingPairingPrompt'
-import { FileTypeIcon } from './components/FileTypeIcon'
 import {
   ArrowUpSendIcon,
   AppleTerminalIcon,
@@ -280,9 +279,9 @@ import {
 } from './components/AppChromeSymbols'
 import { PinnedMessagesPanel } from './components/PinnedMessagesPanel'
 import {
+  ChatMediaDockPanel,
   ChatMediaPreviewOverlay,
   collectChatMediaRefs,
-  formatChatMediaLocation,
   type ChatMediaRef
 } from './components/ChatMediaPanel'
 import { FileEditorPanel } from './components/FileEditorPanel'
@@ -24106,43 +24105,13 @@ function App(): React.JSX.Element {
                 )}
 
                 {activeRightDockTab === 'media' && isChatMediaPanelOpen && (
-                  <div className="right-dock-media-panel">
-                    <header className="right-dock-panel-header">
-                      <div>
-                        <span className="right-dock-kicker">Media</span>
-                        <strong>Uploads and paths</strong>
-                      </div>
-                      <button type="button" onClick={() => setChatMediaPanelOpenPreservingTranscript(false)}>
-                        Close
-                      </button>
-                    </header>
-                    {currentChatMediaRefs.length === 0 ? (
-                      <div className="right-dock-empty">No uploads or external paths on this chat.</div>
-                    ) : (
-                      <div className="right-dock-media-list">
-                        {currentChatMediaRefs.map((mediaRef) => (
-                          <button
-                            key={mediaRef.id}
-                            type="button"
-                            className={`right-dock-media-item kind-${mediaRef.kind}`}
-                            onClick={() => setPreviewChatMediaRef(mediaRef)}
-                            title={mediaRef.path}
-                          >
-                            <FileTypeIcon
-                              path={mediaRef.path}
-                              size={18}
-                              workspacePath={currentWorkspace?.path}
-                            />
-                            <span>
-                              <strong>{mediaRef.name}</strong>
-                              <small>{formatChatMediaLocation(mediaRef.path, currentWorkspace?.path)}</small>
-                            </span>
-                            {mediaRef.access && <em>{mediaRef.access}</em>}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <ChatMediaDockPanel
+                    refs={currentChatMediaRefs}
+                    workspacePath={currentWorkspace?.path}
+                    onClose={() => setChatMediaPanelOpenPreservingTranscript(false)}
+                    onPreviewImage={setPreviewChatMediaRef}
+                    onDetachToPane={openMediaPane}
+                  />
                 )}
 
                 {activeRightDockTab === 'pins' && isPinnedMessagesPanelOpen && (
