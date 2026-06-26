@@ -1,0 +1,80 @@
+[
+  {
+    "id": "review-diff",
+    "label": "Review diff",
+    "file": "icons/review-diff.svg",
+    "hint": "folded diff sheet with reviewed change marks"
+  },
+  {
+    "id": "compact-context",
+    "label": "Compact context",
+    "file": "icons/compact-context.svg",
+    "hint": "inward compression marks around condensed text rows"
+  },
+  {
+    "id": "help",
+    "label": "Help",
+    "file": "icons/help.svg",
+    "hint": "question path inside a chat bubble"
+  },
+  {
+    "id": "feedback",
+    "label": "Feedback",
+    "file": "icons/feedback.svg",
+    "hint": "reply bubble with signal ticks"
+  },
+  {
+    "id": "side-chat",
+    "label": "Move to side chat",
+    "file": "icons/side-chat.svg",
+    "hint": "split chat frame with active side reply"
+  },
+  {
+    "id": "main-chat",
+    "label": "Return to main chat",
+    "file": "icons/main-chat.svg",
+    "hint": "split chat frame with active main reply"
+  },
+  {
+    "id": "explain",
+    "label": "Explain",
+    "file": "icons/explain.svg",
+    "hint": "idea nodes unfolding from a source line"
+  },
+  {
+    "id": "test",
+    "label": "Test",
+    "file": "icons/test.svg",
+    "hint": "test vessel with passing check path"
+  },
+  {
+    "id": "model",
+    "label": "Select model",
+    "file": "icons/model.svg",
+    "hint": "model core with input and output ports"
+  },
+  {
+    "id": "fork",
+    "label": "Fork thread",
+    "file": "icons/fork.svg",
+    "hint": "thread branch splitting into two linked endpoints"
+  },
+  {
+    "id": "goal",
+    "label": "Set goal",
+    "file": "icons/goal.svg",
+    "hint": "target ring with a small goal flag"
+  },
+  {
+    "id": "mcp",
+    "label": "MCP tools",
+    "file": "icons/mcp.svg",
+    "hint": "brokered tool sockets linked through a center hub"
+  },
+  {
+    "id": "memory",
+    "label": "Memory",
+    "file": "icons/memory.svg",
+    "hint": "persistent stack with a recall notch"
+  }
+]

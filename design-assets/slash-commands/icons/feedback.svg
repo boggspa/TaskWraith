@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="slash-feedback-title slash-feedback-desc" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <title id="slash-feedback-title">Feedback</title>
+  <desc id="slash-feedback-desc">Original monoline reply bubble with compact feedback signal ticks.</desc>
+  <path d="M4.6 5.5h14.8v9.2H11l-4.4 3.8v-3.8h-2Z"/>
+  <path d="M8.5 10.4h.1"/>
+  <path d="M12 10.4h.1"/>
+  <path d="M15.5 10.4h.1"/>
+  <path d="M17.2 17.6 19 19.4"/>
+  <path d="M19.4 14.8h2.1"/>
+  <path d="M17.2 12l1.8-1.8"/>
+</svg>

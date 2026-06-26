@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="slash-review-diff-title slash-review-diff-desc" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <title id="slash-review-diff-title">Review diff</title>
+  <desc id="slash-review-diff-desc">Original monoline folded diff sheet with reviewed change marks.</desc>
+  <path d="M5.8 3.8h7.7l4.7 4.7v11.7H5.8Z"/>
+  <path d="M13.5 3.8v4.7h4.7"/>
+  <path d="M8.5 9.8h4.2"/>
+  <path d="M8.5 13h7"/>
+  <path d="M8.5 16.2h3.3"/>
+  <path d="m14.4 17 1.4 1.4 3-3.4"/>
+</svg>

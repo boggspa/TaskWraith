@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="slash-side-chat-title slash-side-chat-desc" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <title id="slash-side-chat-title">Move to side chat</title>
+  <desc id="slash-side-chat-desc">Original monoline split chat frame with the side reply panel active.</desc>
+  <path d="M4.4 4.5h15.2v15H4.4Z"/>
+  <path d="M14.4 4.5v15"/>
+  <path d="M16.3 8.1h1.6"/>
+  <path d="M16.3 10.8h1.6"/>
+  <path d="M7.2 8.2h4.3"/>
+  <path d="M7.2 11h3.1"/>
+  <path d="M16 14.2h2.3v2.2h-2.8l-1.1 1v-3.2Z"/>
+</svg>

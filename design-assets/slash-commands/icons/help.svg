@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="slash-help-title slash-help-desc" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <title id="slash-help-title">Help</title>
+  <desc id="slash-help-desc">Original monoline chat bubble with a question path and answer dot.</desc>
+  <path d="M4.4 5.1h15.2v10.4H11l-4.1 3.4v-3.4H4.4Z"/>
+  <path d="M9.3 9a2.8 2.8 0 0 1 5.2 1.4c0 1.9-2.3 2-2.3 3.4"/>
+  <path d="M12.2 16.4h.1"/>
+</svg>

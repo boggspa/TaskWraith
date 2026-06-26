@@ -31,6 +31,202 @@ interface ComposerSlashMenuProps {
   composerStyle?: ComposerStyle
 }
 
+interface SlashMenuPlacementInput {
+  anchorTop: number
+  surfaceLeft: number
+  surfaceWidth: number
+  viewportWidth: number
+  viewportHeight: number
+}
+
+export function resolveComposerSlashMenuPlacement({
+  anchorTop,
+  surfaceLeft,
+  surfaceWidth,
+  viewportWidth,
+  viewportHeight
+}: SlashMenuPlacementInput): { left: number; maxHeight: number; top: number; width: number } {
+  const margin = 8
+  const horizontalInset = 16
+  const availableWidth = Math.max(0, viewportWidth - margin * 2)
+  const desiredWidth = Math.max(0, surfaceWidth - horizontalInset)
+  const widthFloor = Math.min(320, availableWidth)
+  const width = Math.min(Math.max(desiredWidth, widthFloor), availableWidth)
+  const preferredLeft = surfaceLeft + horizontalInset / 2
+  const maxLeft = Math.max(margin, viewportWidth - width - margin)
+  const left = Math.min(Math.max(preferredLeft, margin), maxLeft)
+  const top = Math.max(margin, anchorTop - margin)
+  const availableHeightAboveComposer = Math.max(96, top - margin)
+  const maxHeight = Math.min(420, availableHeightAboveComposer, Math.max(96, viewportHeight - 16))
+  return { left, maxHeight, top, width }
+}
+
+type SlashCommandIconName =
+  | 'bolt'
+  | 'branch'
+  | 'clear'
+  | 'command'
+  | 'compact'
+  | 'explain'
+  | 'feedback'
+  | 'goal'
+  | 'help'
+  | 'memory'
+  | 'model'
+  | 'network'
+  | 'permissions'
+  | 'review'
+  | 'side'
+  | 'status'
+  | 'test'
+
+export function resolveComposerSlashCommandIcon(
+  command: Pick<ComposerSlashCommand, 'command' | 'description' | 'group' | 'id' | 'label'>
+): SlashCommandIconName {
+  const haystack =
+    `${command.id} ${command.command} ${command.label} ${command.description} ${command.group}`.toLowerCase()
+  if (haystack.includes('review') || haystack.includes('diff')) return 'review'
+  if (haystack.includes('compact')) return 'compact'
+  if (haystack.includes('help')) return 'help'
+  if (haystack.includes('feedback')) return 'feedback'
+  if (haystack.includes('side')) return 'side'
+  if (haystack.includes('explain')) return 'explain'
+  if (haystack.includes('test')) return 'test'
+  if (haystack.includes('goal')) return 'goal'
+  if (haystack.includes('memory')) return 'memory'
+  if (haystack.includes('model')) return 'model'
+  if (haystack.includes('fork') || haystack.includes('resume')) return 'branch'
+  if (haystack.includes('mcp') || haystack.includes('extension') || haystack.includes('hook')) return 'network'
+  if (haystack.includes('permission') || haystack.includes('approval') || haystack.includes('audit')) {
+    return 'permissions'
+  }
+  if (haystack.includes('fast')) return 'bolt'
+  if (haystack.includes('status') || haystack.includes('stats')) return 'status'
+  if (haystack.includes('clear')) return 'clear'
+  return 'command'
+}
+
+function ComposerSlashCommandIcon({ name }: { name: SlashCommandIconName }) {
+  const common = {
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    strokeWidth: 1.8
+  }
+  return (
+    <svg
+      className="composer-slash-menu-icon-svg"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {name === 'bolt' ? (
+        <path {...common} d="M13 2.8 5.8 13h5.4L10.8 21.2 18.2 10h-5.6L13 2.8Z" />
+      ) : name === 'branch' ? (
+        <>
+          <path {...common} d="M7 6v6a5 5 0 0 0 5 5h5" />
+          <path {...common} d="M7 12h6a4 4 0 0 0 4-4V6" />
+          <circle {...common} cx="7" cy="6" r="2" />
+          <circle {...common} cx="17" cy="6" r="2" />
+          <circle {...common} cx="17" cy="17" r="2" />
+        </>
+      ) : name === 'clear' ? (
+        <>
+          <path {...common} d="M5 7h14" />
+          <path {...common} d="M9 7V5.5h6V7" />
+          <path {...common} d="M8 10v8.5h8V10" />
+          <path {...common} d="M10.5 12.5v3.8M13.5 12.5v3.8" />
+        </>
+      ) : name === 'compact' ? (
+        <>
+          <path {...common} d="M4 8h6V2.8" />
+          <path {...common} d="M20 8h-6V2.8" />
+          <path {...common} d="M4 16h6v5.2" />
+          <path {...common} d="M20 16h-6v5.2" />
+          <path {...common} d="M10 8 4 2M14 8l6-6M10 16l-6 6M14 16l6 6" />
+        </>
+      ) : name === 'explain' ? (
+        <>
+          <path {...common} d="M7 3.5h7l3 3v14H7z" />
+          <path {...common} d="M14 3.5v3h3" />
+          <path {...common} d="M9.5 11h5M9.5 14h5M9.5 17h3" />
+          <path {...common} d="M5 8l-2 2 2 2M19 12l2-2-2-2" />
+        </>
+      ) : name === 'feedback' ? (
+        <>
+          <path {...common} d="M5 5.5h14v9.5H9l-4 3.5z" />
+          <path {...common} d="M8.5 9h7M8.5 12h4.5" />
+        </>
+      ) : name === 'goal' ? (
+        <>
+          <circle {...common} cx="12" cy="12" r="7.5" />
+          <circle {...common} cx="12" cy="12" r="3.8" />
+          <path {...common} d="M12 4.5V2.8M19.5 12h1.7M12 19.5v1.7M4.5 12H2.8" />
+        </>
+      ) : name === 'help' ? (
+        <>
+          <circle {...common} cx="12" cy="12" r="8.2" />
+          <path {...common} d="M9.8 9.2a2.3 2.3 0 1 1 3.8 1.8c-.9.7-1.5 1.1-1.5 2.2" />
+          <path {...common} d="M12 16.8h.01" />
+        </>
+      ) : name === 'memory' ? (
+        <>
+          <path {...common} d="M6 7c0-1.7 2.7-3 6-3s6 1.3 6 3-2.7 3-6 3-6-1.3-6-3Z" />
+          <path {...common} d="M6 7v5c0 1.7 2.7 3 6 3s6-1.3 6-3V7" />
+          <path {...common} d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5" />
+        </>
+      ) : name === 'model' ? (
+        <>
+          <path {...common} d="m12 3.5 7 4v8l-7 4-7-4v-8z" />
+          <path {...common} d="m5.4 7.8 6.6 3.8 6.6-3.8M12 11.6v7.8" />
+        </>
+      ) : name === 'network' ? (
+        <>
+          <circle {...common} cx="6" cy="12" r="2.2" />
+          <circle {...common} cx="18" cy="7" r="2.2" />
+          <circle {...common} cx="18" cy="17" r="2.2" />
+          <path {...common} d="m8 11.1 8-3.2M8 12.9l8 3.2" />
+        </>
+      ) : name === 'permissions' ? (
+        <>
+          <path {...common} d="M12 3.2 18.5 6v5.2c0 4.1-2.7 7.4-6.5 9.6-3.8-2.2-6.5-5.5-6.5-9.6V6z" />
+          <path {...common} d="m9.2 12.2 2 2 3.8-4.2" />
+        </>
+      ) : name === 'review' ? (
+        <>
+          <path {...common} d="M5.5 4.5h8.8l3.2 3.2v11.8h-12z" />
+          <path {...common} d="M14 4.5V8h3.5" />
+          <path {...common} d="M8.3 11h5.4M8.3 14h3.2" />
+          <circle {...common} cx="15.6" cy="15.6" r="2.2" />
+          <path {...common} d="m17.2 17.2 2.3 2.3" />
+        </>
+      ) : name === 'side' ? (
+        <>
+          <rect {...common} x="4" y="5" width="16" height="14" rx="2.2" />
+          <path {...common} d="M11 5v14M6.8 9h1.8M6.8 12h1.8M6.8 15h1.8" />
+        </>
+      ) : name === 'status' ? (
+        <>
+          <path {...common} d="M4.5 14a7.5 7.5 0 1 1 15 0" />
+          <path {...common} d="m12 14 4-4" />
+          <path {...common} d="M7 18h10" />
+        </>
+      ) : name === 'test' ? (
+        <>
+          <path {...common} d="M9 3.5h6M10 3.5v5.2l-4.3 7.6A3 3 0 0 0 8.3 21h7.4a3 3 0 0 0 2.6-4.7L14 8.7V3.5" />
+          <path {...common} d="M8.4 15.5h7.2" />
+        </>
+      ) : (
+        <>
+          <path {...common} d="M9 4.5 4 19.5" />
+          <path {...common} d="m13 8 4 4-4 4" />
+        </>
+      )}
+    </svg>
+  )
+}
+
 /**
  * Floating popover anchored to the composer textarea that lists provider-
  * aware slash commands. Triggered by the parent detecting a `/` keystroke
@@ -65,7 +261,12 @@ export function ComposerSlashMenu({
 }: ComposerSlashMenuProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [highlight, setHighlight] = useState(0)
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
+  const [position, setPosition] = useState<{
+    left: number
+    maxHeight: number
+    top: number
+    width: number
+  } | null>(null)
 
   // Filtered + grouped command list. Filter substring lives entirely
   // inside the menu; the parent just hands us the full registry.
@@ -101,10 +302,21 @@ export function ComposerSlashMenu({
       const anchor = anchorRef.current
       if (!anchor) return
       const rect = anchor.getBoundingClientRect()
+      const surface = anchor.closest('.composer-surface') as HTMLElement | null
+      const surfaceRect = surface?.getBoundingClientRect() ?? rect
       // Anchor the popover ABOVE the textarea so the input never gets
-      // pushed down when the picker opens. Right-shift by 8px to match
-      // the AgentMentionMenu's offset for visual continuity.
-      setPosition({ left: rect.left + 8, top: rect.top - 8 })
+      // pushed down when the picker opens. Width tracks the composer with
+      // a small inset, matching Codex's slash menu without overflowing
+      // narrow side panes or multiview cells.
+      setPosition(
+        resolveComposerSlashMenuPlacement({
+          anchorTop: rect.top,
+          surfaceLeft: surfaceRect.left,
+          surfaceWidth: surfaceRect.width,
+          viewportHeight: window.innerHeight,
+          viewportWidth: window.innerWidth
+        })
+      )
     })
     return () => {
       cancelled = true
@@ -188,6 +400,8 @@ export function ComposerSlashMenu({
         position: 'fixed',
         left: position.left,
         top: position.top,
+        maxHeight: position.maxHeight,
+        width: position.width,
         transform: 'translateY(-100%)',
         zIndex: 50
       }}
@@ -219,9 +433,16 @@ export function ComposerSlashMenu({
                       onMouseEnter={() => setHighlight(localFlatIndex)}
                       onClick={() => onPick(entry)}
                     >
-                      <span className="composer-slash-menu-command">{entry.command}</span>
+                      <span className="composer-slash-menu-icon" aria-hidden="true">
+                        <ComposerSlashCommandIcon
+                          name={resolveComposerSlashCommandIcon(entry)}
+                        />
+                      </span>
                       <span className="composer-slash-menu-copy">
-                        <span className="composer-slash-menu-label">{entry.label}</span>
+                        <span className="composer-slash-menu-title-row">
+                          <span className="composer-slash-menu-label">{entry.label}</span>
+                          <span className="composer-slash-menu-command">{entry.command}</span>
+                        </span>
                         <span className="composer-slash-menu-description">{entry.description}</span>
                       </span>
                     </li>

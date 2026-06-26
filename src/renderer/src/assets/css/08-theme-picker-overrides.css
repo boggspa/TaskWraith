@@ -421,9 +421,8 @@
   background: color-mix(in srgb, var(--panel-elevated-bg) 96%, transparent);
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 10px;
+  box-sizing: border-box;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.36);
-  min-width: 320px;
-  max-width: 440px;
   padding: 4px;
   font-size: var(--font-size-xs);
   max-height: 360px;
@@ -483,7 +482,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
   color: var(--text-secondary);
@@ -492,16 +491,33 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--text-primary);
 }
+.composer-slash-menu-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
+}
+.composer-slash-menu-icon-svg {
+  width: 19px;
+  height: 19px;
+  display: block;
+}
+.composer-slash-menu-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
 .composer-slash-menu-command {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: calc(var(--font-size-xs) - 1px);
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  color: var(--text-primary);
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
   white-space: nowrap;
-  flex: 0 0 auto;
   font-weight: 500;
+  flex: 0 0 auto;
 }
 .composer-slash-menu-copy {
   display: flex;
@@ -513,6 +529,7 @@
 .composer-slash-menu-label {
   font-weight: 600;
   color: inherit;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

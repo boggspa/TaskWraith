@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="slash-model-title slash-model-desc" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <title id="slash-model-title">Select model</title>
+  <desc id="slash-model-desc">Original monoline model core with input and output ports.</desc>
+  <path d="M8.2 6.8h7.6v10.4H8.2Z"/>
+  <path d="M10.4 10.2 12 8.9l1.6 1.3v3.6L12 15.1l-1.6-1.3Z"/>
+  <path d="M4.2 8.4h4"/>
+  <path d="M4.2 15.6h4"/>
+  <path d="M15.8 8.4h4"/>
+  <path d="M15.8 15.6h4"/>
+  <path d="M5.1 8.4h.1"/>
+  <path d="M5.1 15.6h.1"/>
+  <path d="M18.8 8.4h.1"/>
+  <path d="M18.8 15.6h.1"/>
+</svg>

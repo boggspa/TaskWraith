@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="slash-explain-title slash-explain-desc" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <title id="slash-explain-title">Explain</title>
+  <desc id="slash-explain-desc">Original monoline source line unfolding into connected explanation nodes.</desc>
+  <path d="M5 6.2h7.2"/>
+  <path d="M5 10h5.4"/>
+  <path d="M5 13.8h4.1"/>
+  <path d="M13 8.3h3.4v3.4H13Z"/>
+  <path d="M17.7 14.4h2.8v2.8h-2.8Z"/>
+  <path d="M11.2 10.1 13 10"/>
+  <path d="M16.4 11.7 18 14.4"/>
+</svg>
