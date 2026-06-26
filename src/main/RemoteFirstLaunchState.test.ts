@@ -146,6 +146,25 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(state.ollamaModelCommands.length).toBeGreaterThan(0)
   })
 
+  it('projects active app notices for the iOS first-launch sheet', () => {
+    const state = buildRemoteFirstLaunchState({
+      generatedAt: '2026-06-21T18:02:00.000Z',
+      workspace,
+      providers: {},
+      usage: {}
+    })
+
+    expect(state.notifications.map((notice) => notice.id)).toContain(
+      'antigravity-not-planned-2026-06-26'
+    )
+    const antigravity = state.notifications.find(
+      (notice) => notice.id === 'antigravity-not-planned-2026-06-26'
+    )
+    expect(antigravity?.tone).toBe('default')
+    expect(antigravity?.kind).toBe('info')
+    expect(antigravity?.title).toBe('AntiGravity will not be added.')
+  })
+
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {
     const noWorkspace = {
       visibleCount: 0,

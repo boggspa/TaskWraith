@@ -86,5 +86,12 @@ export const APP_NOTIFICATIONS: readonly AppNotification[] = [
     title: 'Grok Composer 2.5 Fast is here.',
     body: 'Grok now runs on Composer 2.5 Fast — a faster agentic coding model, and the new default for Grok runs. Pick it from the Grok model selector in the composer.',
     dismissible: true
+  },
+  {
+    id: 'antigravity-not-planned-2026-06-26',
+    kind: 'info',
+    title: 'AntiGravity will not be added.',
+    body: 'TaskWraith will not integrate Google AntiGravity as a Gemini replacement because it would require unsupported credential use and would not fit TaskWraith’s provider model.',
+    dismissible: true
   }
 ]

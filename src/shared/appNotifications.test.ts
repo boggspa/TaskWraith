@@ -91,4 +91,15 @@ describe('APP_NOTIFICATIONS registry', () => {
     expect(grok && appNotificationTone(grok.kind)).toBe('default')
     expect(grok?.title).toMatch(/Composer 2\.5 Fast/)
   })
+
+  it('seeds the AntiGravity policy notice as a neutral info card', () => {
+    const antigravity = APP_NOTIFICATIONS.find(
+      (n) => n.id === 'antigravity-not-planned-2026-06-26'
+    )
+    expect(antigravity).toBeDefined()
+    expect(antigravity && appNotificationTone(antigravity.kind)).toBe('default')
+    expect(antigravity?.kind).toBe('info')
+    expect(antigravity?.title).toBe('AntiGravity will not be added.')
+    expect(antigravity?.body).toContain('Google AntiGravity')
+  })
 })

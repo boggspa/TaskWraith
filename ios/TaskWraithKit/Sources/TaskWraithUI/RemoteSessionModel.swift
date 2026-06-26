@@ -1333,7 +1333,10 @@ public final class RemoteSessionModel: ObservableObject {
         if let rollup = Self.decodeDemo(UsageRollupMessage.Rollup.self, rollupJSON) { usageRollup = rollup }
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
-         "notifications":[{"id":"gemini-retired","kind":"provider-retired","title":"Gemini has been retired.","body":"Google ended Gemini CLI sign-in, so Gemini is no longer available for new runs. Existing chats remain visible.","tone":"danger","dismissible":true}],
+         "notifications":[
+          {"id":"gemini-retired","kind":"provider-retired","title":"Gemini has been retired.","body":"Google ended Gemini CLI sign-in, so Gemini is no longer available for new runs. Existing chats remain visible.","tone":"danger","dismissible":true},
+          {"id":"antigravity-not-planned-2026-06-26","kind":"info","title":"AntiGravity will not be added.","body":"TaskWraith will not integrate Google AntiGravity as a Gemini replacement because it would require unsupported credential use and would not fit TaskWraith’s provider model.","tone":"default","dismissible":true}
+         ],
          "workspace":{"visibleCount":1,"totalCount":1,"runningCount":0,"hasVisibleWorkspaces":true,"capabilities":{"monitor":true,"approve":true,"answer":true,"startTurn":true,"steer":true,"fileRead":true,"fileWrite":false}},
          "providerCards":[
           {"id":"codex","label":"Codex","optional":false,"statusKind":"ready","statusText":"Ready on Mac","detail":"OpenAI Codex CLI is available for fast agentic coding runs from the Mac.","setupHint":"Sign-in happens on the Mac through the Codex CLI.","setupCommands":[{"id":"codex","label":"Codex","command":"npm i -g @openai/codex","source":"OpenAI"}],"usageWindows":[{"id":"codex-5h","label":"Current session (5h)","usedPercent":28,"resetAt":"2026-06-19T14:00:00Z"}],"usageGeneratedAt":"2026-06-19T10:45:00Z"},

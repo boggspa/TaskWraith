@@ -9,7 +9,10 @@ struct FirstLaunchStateDecodeTests {
     func decodesStateMessage() throws {
         let json = """
         {"state":{"schemaVersion":1,"generatedAt":"2026-06-21T18:02:00.000Z",
-         "notifications":[{"id":"gemini-retired","kind":"provider-retired","title":"Gemini retired","body":"Existing chats remain visible.","tone":"danger","dismissible":true}],
+         "notifications":[
+          {"id":"gemini-retired","kind":"provider-retired","title":"Gemini retired","body":"Existing chats remain visible.","tone":"danger","dismissible":true},
+          {"id":"antigravity-not-planned-2026-06-26","kind":"info","title":"AntiGravity will not be added.","body":"TaskWraith will not integrate Google AntiGravity as a Gemini replacement because it would require unsupported credential use and would not fit TaskWraith’s provider model.","tone":"default","dismissible":true}
+         ],
          "workspace":{"visibleCount":2,"totalCount":4,"runningCount":1,"hasVisibleWorkspaces":true,"capabilities":{"monitor":true,"approve":true,"answer":true,"startTurn":true,"steer":true,"fileRead":true,"fileWrite":false}},
          "providerCards":[
           {"id":"codex","label":"Codex","optional":false,"statusKind":"ready","statusText":"Ready on Mac","detail":"Codex is available.","setupHint":"Run codex login on Mac.","setupCommands":[{"id":"codex","label":"Codex","command":"npm i -g @openai/codex","source":"OpenAI"}],"usageWindows":[{"id":"codex-5h","label":"Current session","usedPercent":28,"resetAt":"2026-06-21T22:00:00.000Z"}],"usageGeneratedAt":"2026-06-21T18:01:00.000Z"},
@@ -22,6 +25,10 @@ struct FirstLaunchStateDecodeTests {
 
         #expect(message.state.schemaVersion == 1)
         #expect(message.state.notifications.first?.tone == "danger")
+        #expect(message.state.notifications.count == 2)
+        #expect(message.state.notifications.last?.id == "antigravity-not-planned-2026-06-26")
+        #expect(message.state.notifications.last?.tone == "default")
+        #expect(message.state.notifications.last?.title == "AntiGravity will not be added.")
         #expect(message.state.workspace?.visibleCount == 2)
         #expect(message.state.workspace?.capabilities.fileWrite == false)
         #expect(message.state.providerCards.map(\.id) == ["codex", "ollama"])
