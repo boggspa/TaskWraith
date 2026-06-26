@@ -81,9 +81,8 @@ CLI login.
   enable `image_generate`, choose OpenAI or xAI Grok, and save the matching API
   key.
 
-TaskWraith stores these keys encrypted on the Mac when platform secure storage
-is available. If secure storage is unavailable, the image-generation settings
-will refuse to save a key.
+TaskWraith stores these keys through platform secure storage on the Mac. If
+secure storage is unavailable, API-key save controls refuse to store new keys.
 
 ## iOS Remote
 
@@ -94,7 +93,8 @@ and inspect selected remote projections under the Mac's policy.
 Current status:
 
 - The iOS app is working through TestFlight phases.
-- Until App Store approval, users can request to be added as TestFlight testers.
+- Until App Store approval, TestFlight access is handled privately by the
+  maintainer rather than through a public self-serve link.
 - Testers can also build the iOS target from this repository with their own
   Apple Developer team.
 

@@ -24,12 +24,25 @@ release hygiene.
 
 ## Reporting Security Issues
 
-Until a dedicated private intake is published, avoid posting exploit details,
-private keys, or sensitive workspace data in public issues. Open a minimal public
-issue requesting a maintainer contact path, or use the repository owner's GitHub
-profile contact route if available. Include affected version, platform, whether
-the build was source-built or downloaded, and a minimal reproduction that avoids
+Use GitHub's private vulnerability reporting flow for this repository:
+
+```text
+https://github.com/boggspa/TaskWraith/security/advisories/new
+```
+
+Do not post exploit details, private keys, or sensitive workspace data in public
+issues, pull requests, or discussions. Keep prompts, commands, paths, diffs,
+model output, logs, screenshots, credentials, and downloaded workspace artifacts
+out of public reports unless they have been sanitized.
+
+Include the affected version, platform, whether the build was source-built or
+downloaded, relevant feature/provider/permission mode, downloaded artifact
+checksum or signing status when relevant, and a minimal reproduction that avoids
 secrets.
+
+If GitHub private reporting is unavailable, open a minimal public issue asking
+for a private security contact path. Keep the public issue limited to the
+affected component and contact request.
 
 ## Dependency Installs
 

@@ -1808,6 +1808,10 @@ export function SettingsPanel({
     summariseProviderApiKeyStatus(kimiAuthStatus ?? null, 'Kimi'),
     usageSummary
   )
+  const claudeApiKeyStorageUnavailable = claudeAuthStatus
+    ? !claudeAuthStatus.encryptionAvailable
+    : false
+  const kimiApiKeyStorageUnavailable = kimiAuthStatus ? !kimiAuthStatus.encryptionAvailable : false
   const cursorAuthSummary = summariseCliProviderEnabled(
     cursorProviderAvailable,
     'Cursor',
@@ -4532,6 +4536,7 @@ export function SettingsPanel({
                     className="settings-select"
                     type="password"
                     value={claudeKeyInput}
+                    disabled={claudeApiKeyStorageUnavailable}
                     onChange={(e) => setClaudeKeyInput(e.target.value)}
                     placeholder={
                       claudeAuthStatus?.apiKeyConfigured ? '••••••••••• (saved)' : 'sk-ant-...'
@@ -4540,7 +4545,7 @@ export function SettingsPanel({
                   />
                   <button
                     className="btn btn-sm"
-                    disabled={!claudeKeyInput.trim()}
+                    disabled={!claudeKeyInput.trim() || claudeApiKeyStorageUnavailable}
                     onClick={() => {
                       onStoreClaudeApiKey?.(claudeKeyInput)
                       setClaudeKeyInput('')
@@ -4555,8 +4560,9 @@ export function SettingsPanel({
                   )}
                 </div>
                 <p className="settings-hint">
-                  API key takes priority over the Claude Code login session and uses API/PAYG
-                  billing. Stored encrypted on-device.
+                  {claudeApiKeyStorageUnavailable
+                    ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
+                    : 'API key takes priority over the Claude Code login session and uses API/PAYG billing. Stored encrypted on-device.'}
                 </p>
 
                 <label className="settings-label">Claude CLI binary</label>
@@ -4611,6 +4617,7 @@ export function SettingsPanel({
                     className="settings-select"
                     type="password"
                     value={kimiKeyInput}
+                    disabled={kimiApiKeyStorageUnavailable}
                     onChange={(e) => setKimiKeyInput(e.target.value)}
                     placeholder={
                       kimiAuthStatus?.apiKeyConfigured ? '••••••••••• (saved)' : 'moonshot-...'
@@ -4619,7 +4626,7 @@ export function SettingsPanel({
                   />
                   <button
                     className="btn btn-sm"
-                    disabled={!kimiKeyInput.trim()}
+                    disabled={!kimiKeyInput.trim() || kimiApiKeyStorageUnavailable}
                     onClick={() => {
                       onStoreKimiApiKey?.(kimiKeyInput)
                       setKimiKeyInput('')
@@ -4634,7 +4641,9 @@ export function SettingsPanel({
                   )}
                 </div>
                 <p className="settings-hint">
-                  Your Moonshot API key (MOONSHOT_API_KEY). Stored encrypted on-device.
+                  {kimiApiKeyStorageUnavailable
+                    ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
+                    : 'Your Moonshot API key (MOONSHOT_API_KEY). Stored encrypted on-device.'}
                 </p>
 
                 <label className="settings-label">Kimi CLI binary</label>

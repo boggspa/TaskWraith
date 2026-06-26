@@ -518,11 +518,19 @@ declare global {
         openInBrowser?: boolean
       }) => Promise<{ ok: boolean; url?: string; error?: string; stderr?: string }>
       getClaudeAuthStatus: () => Promise<ProviderApiKeyStatus>
-      storeClaudeApiKey: (key: string) => Promise<void>
+      storeClaudeApiKey: (key: string) => Promise<{
+        stored: boolean
+        encryptionAvailable: boolean
+        error?: string
+      }>
       clearClaudeApiKey: () => Promise<void>
       triggerClaudeLogin: () => Promise<{ ok: boolean; code?: number | null; error?: string }>
       getKimiAuthStatus: () => Promise<ProviderApiKeyStatus>
-      storeKimiApiKey: (key: string) => Promise<void>
+      storeKimiApiKey: (key: string) => Promise<{
+        stored: boolean
+        encryptionAvailable: boolean
+        error?: string
+      }>
       clearKimiApiKey: () => Promise<void>
       upgradeKimiCli: () => Promise<{ ok: boolean; error?: string }>
       getGeminiAuthStatus: () => Promise<GeminiAuthStatus>

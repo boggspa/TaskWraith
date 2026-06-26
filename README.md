@@ -172,25 +172,12 @@ Run `npm run security:deps` before release work or after dependency changes.
 
 ## Discord Context
 
-Discord Context is a read-only composer attachment for solo and ensemble chats.
-It reads a recent snapshot from channels your bot can access, labels it as
-untrusted context, and does not post back to Discord.
-
-Configure it with a Discord bot token and at least one server ID. The bot needs
-permission to view the channel and read message history. For local development
-you can put the variables in `.env`; for a packaged macOS app launched from
-Finder, use one of the runtime config files below and restart TaskWraith:
-
-```sh
-mkdir -p "$HOME/.config/taskwraith"
-cat > "$HOME/.config/taskwraith/discord-context.env" <<'EOF'
-TASKWRAITH_DISCORD_BOT_TOKEN=your-bot-token
-TASKWRAITH_DISCORD_GUILD_IDS=123456789012345678
-EOF
-```
-
-`TASKWRAITH_DISCORD_GUILD_IDS` accepts a comma-separated list. The singular
-`TASKWRAITH_DISCORD_GUILD_ID` alias also works for one server.
+Discord Context is optional and read-only: it attaches recent messages from
+bot-accessible channels as untrusted context and does not post back to Discord.
+Setup requires a Discord bot token, at least one guild/server ID, and channel
+read permissions; see
+[Advanced Optional Setup - Discord Context](ADVANCED_OPTIONAL_SETUP.md#discord-context)
+for the environment variables and packaged-app config path.
 
 ## Useful Commands
 

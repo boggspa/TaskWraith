@@ -236,13 +236,13 @@ export async function readCodexUsageCredentialLive(): Promise<CodexUsageCredenti
 export function encryptApiKey(value: string): string | null {
   const trimmed = value.trim()
   if (!trimmed) return null
-  if (!safeStorage.isEncryptionAvailable()) return trimmed
+  if (!safeStorage.isEncryptionAvailable()) return null
   return safeStorage.encryptString(trimmed).toString('base64')
 }
 
 export function decryptApiKey(stored?: string | null): string | null {
   if (!stored) return null
-  if (!safeStorage.isEncryptionAvailable()) return stored
+  if (!safeStorage.isEncryptionAvailable()) return null
   try {
     return safeStorage.decryptString(Buffer.from(stored, 'base64'))
   } catch {

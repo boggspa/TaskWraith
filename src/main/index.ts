@@ -25587,7 +25587,22 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     ipcMain.handle('store-claude-api-key', async (_, rawKey: string) => {
-      const encrypted = encryptApiKey(String(rawKey || ''))
+      const key = String(rawKey || '').trim()
+      if (!key) {
+        AppStore.updateSettings({ claudeApiKey: undefined })
+        return {
+          stored: false,
+          encryptionAvailable: safeStorage.isEncryptionAvailable()
+        }
+      }
+      if (!safeStorage.isEncryptionAvailable()) {
+        return {
+          stored: false,
+          encryptionAvailable: false,
+          error: 'Secure storage is unavailable, so the Claude API key was not saved.'
+        }
+      }
+      const encrypted = encryptApiKey(key)
       AppStore.updateSettings({ claudeApiKey: encrypted || undefined })
       return {
         stored: Boolean(encrypted),
@@ -25824,7 +25839,22 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     ipcMain.handle('store-kimi-api-key', async (_, rawKey: string) => {
-      const encrypted = encryptApiKey(String(rawKey || ''))
+      const key = String(rawKey || '').trim()
+      if (!key) {
+        AppStore.updateSettings({ kimiApiKey: undefined })
+        return {
+          stored: false,
+          encryptionAvailable: safeStorage.isEncryptionAvailable()
+        }
+      }
+      if (!safeStorage.isEncryptionAvailable()) {
+        return {
+          stored: false,
+          encryptionAvailable: false,
+          error: 'Secure storage is unavailable, so the Kimi API key was not saved.'
+        }
+      }
+      const encrypted = encryptApiKey(key)
       AppStore.updateSettings({ kimiApiKey: encrypted || undefined })
       return {
         stored: Boolean(encrypted),
