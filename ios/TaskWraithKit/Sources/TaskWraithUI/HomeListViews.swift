@@ -576,9 +576,9 @@ struct HomeView: View {
         let accent = card.isEnsemble
             ? TWTheme.chroma2 : TWTheme.providerAccent(card.provider)
         let rowInsets = EdgeInsets(
-            top: appScale.scaled(3),
+            top: appScale.scaled(2),
             leading: appScale.scaled(nested ? 28 : 16),
-            bottom: appScale.scaled(3),
+            bottom: appScale.scaled(2),
             trailing: appScale.scaled(16)
         )
         // Satellite rows (desktop-sidebar parity): no container chrome unless
