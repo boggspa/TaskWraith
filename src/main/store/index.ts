@@ -36,6 +36,7 @@ import {
   ProductCrashInput,
   ProductCrashRecord,
   RuntimeProfile,
+  UserMcpServerConfig,
   HandoffCard,
   HandoffCardFilter,
   ProductUpdateChangelog,
@@ -491,6 +492,7 @@ const defaultSettings: AppSettings = {
   defaultGeminiAuthProfileId: null,
   geminiAuthProfiles: [],
   geminiApiRuntime: 'auto',
+  userMcpServers: [],
   storeLocalChatHistory: true,
   storeRawEvents: false,
   storePromptResponseInUsage: false,
@@ -648,6 +650,62 @@ function normalizeKeyCommandBindings(
     normalized[id] = { key, modifiers }
   }
   return normalized
+}
+
+function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const servers: UserMcpServerConfig[] = []
+  for (const item of value.slice(0, 64)) {
+    const record = objectOrUndefined(item as Record<string, unknown> | null | undefined)
+    if (!record) continue
+    const id = typeof record.id === 'string' ? record.id.trim() : ''
+    const name = typeof record.name === 'string' ? record.name.trim() : ''
+    if (!id || !name || seen.has(id)) continue
+    seen.add(id)
+    const transport =
+      record.transport === 'http' || record.transport === 'sse' ? record.transport : 'stdio'
+    const args = Array.isArray(record.args)
+      ? record.args
+          .filter((arg): arg is string => typeof arg === 'string')
+          .map((arg) => arg.trim())
+          .filter(Boolean)
+          .slice(0, 64)
+      : []
+    const envRecord = objectOrUndefined(record.env as Record<string, unknown> | null | undefined)
+    const env = envRecord
+      ? Object.fromEntries(
+          Object.entries(envRecord)
+            .filter(([key, val]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof val === 'string')
+            .map(([key, val]) => [key, val])
+            .slice(0, 64)
+        )
+      : {}
+    const command = typeof record.command === 'string' ? record.command.trim() : ''
+    const url = typeof record.url === 'string' ? record.url.trim() : ''
+    const canEnable = transport === 'stdio' ? Boolean(command) : Boolean(url)
+    const normalized: UserMcpServerConfig = {
+      id,
+      name,
+      enabled: Boolean(record.enabled && canEnable),
+      transport
+    }
+    if (command) normalized.command = command
+    if (args.length > 0) normalized.args = args
+    if (url) normalized.url = url
+    if (Object.keys(env).length > 0) normalized.env = env
+    if (typeof record.description === 'string' && record.description.trim()) {
+      normalized.description = record.description.trim()
+    }
+    if (typeof record.createdAt === 'string' && record.createdAt.trim()) {
+      normalized.createdAt = record.createdAt.trim()
+    }
+    if (typeof record.updatedAt === 'string' && record.updatedAt.trim()) {
+      normalized.updatedAt = record.updatedAt.trim()
+    }
+    servers.push(normalized)
+  }
+  return servers
 }
 
 function normalizeUpdateChangelog(value: unknown): ProductUpdateChangelog | undefined {
@@ -1073,6 +1131,7 @@ export class AppStore {
             ? null
             : defaultSettings.defaultGeminiAuthProfileId,
       geminiAuthProfiles: Array.isArray(stored.geminiAuthProfiles) ? stored.geminiAuthProfiles : [],
+      userMcpServers: normalizeUserMcpServers(stored.userMcpServers),
       transcriptFontFamily: normalizeSettingsFontFamily(
         stored.transcriptFontFamily,
         defaultSettings.transcriptFontFamily || TASKWRAITH_DEFAULT_FONT_STACK

@@ -13,6 +13,7 @@ import type {
   ProductUpdateChangelog,
   RuntimeProfile,
   ScheduledTask,
+  UserMcpServerConfig,
   WorkflowDefinition,
   WorkflowRunTemplate,
   WorkflowTrigger,
@@ -102,6 +103,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'agenticServices',
   'nativeSubAgentRequests',
   'geminiApiRuntime',
+  'userMcpServers',
   'geminiMcpBridgeEnabled',
   'geminiMcpBridgeLastStatus',
   'bridgeDaemonEnabled',
@@ -205,6 +207,55 @@ export function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : []
+}
+
+function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
+  if (!Array.isArray(value)) return []
+  const servers: UserMcpServerConfig[] = []
+  const seenIds = new Set<string>()
+  for (const item of value.slice(0, 64)) {
+    const record = isRecord(item) ? item : null
+    if (!record) continue
+    const id = optionalString(record.id)?.trim()
+    const name = optionalString(record.name)?.trim()
+    if (!id || !name || seenIds.has(id)) continue
+    seenIds.add(id)
+    const transport =
+      record.transport === 'http' || record.transport === 'sse' ? record.transport : 'stdio'
+    const args = stringArray(record.args)
+      .map((arg) => arg.trim())
+      .filter(Boolean)
+      .slice(0, 64)
+    const env: Record<string, string> = {}
+    if (isRecord(record.env)) {
+      for (const [key, rawValue] of Object.entries(record.env).slice(0, 64)) {
+        if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof rawValue === 'string') {
+          env[key] = rawValue
+        }
+      }
+    }
+    const command = optionalString(record.command)?.trim()
+    const url = optionalString(record.url)?.trim()
+    const description = optionalString(record.description)?.trim()
+    const createdAt = optionalString(record.createdAt)?.trim()
+    const updatedAt = optionalString(record.updatedAt)?.trim()
+    const canEnable = transport === 'stdio' ? Boolean(command) : Boolean(url)
+    const sanitized: UserMcpServerConfig = {
+      id,
+      name,
+      enabled: Boolean(record.enabled && canEnable),
+      transport
+    }
+    if (command) sanitized.command = command
+    if (args.length > 0) sanitized.args = args
+    if (url) sanitized.url = url
+    if (Object.keys(env).length > 0) sanitized.env = env
+    if (description) sanitized.description = description
+    if (createdAt) sanitized.createdAt = createdAt
+    if (updatedAt) sanitized.updatedAt = updatedAt
+    servers.push(sanitized)
+  }
+  return servers
 }
 
 export function imageAttachmentSnapshots(
@@ -879,6 +930,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('ollamaRunProfiles' in sanitized && !isRecord(sanitized.ollamaRunProfiles)) {
       sanitized.ollamaRunProfiles = {}
+    }
+    if ('userMcpServers' in sanitized) {
+      sanitized.userMcpServers = sanitizeUserMcpServers(sanitized.userMcpServers)
     }
     if ('ollamaProviderParityAcknowledgedAt' in sanitized) {
       const acknowledgedAt = sanitized.ollamaProviderParityAcknowledgedAt

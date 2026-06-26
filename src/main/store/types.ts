@@ -1319,6 +1319,22 @@ export interface RuntimeProfile {
   updatedAt: string
 }
 
+export type UserMcpServerTransport = 'stdio' | 'http' | 'sse'
+
+export interface UserMcpServerConfig {
+  id: string
+  name: string
+  enabled: boolean
+  transport: UserMcpServerTransport
+  command?: string
+  args?: string[]
+  url?: string
+  env?: Record<string, string>
+  description?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
 export interface HandoffCard {
   id: string
   status: 'draft' | 'dispatched' | 'archived'
@@ -1470,6 +1486,7 @@ export interface AppSettings {
    * `'never'` forces CLI. Step 1 persists this field but does not yet
    * consume it — wiring lands in Phase M1 Step 2. */
   geminiApiRuntime?: GeminiApiRuntimeMode
+  userMcpServers?: UserMcpServerConfig[]
   codexUsageCredential?: {
     encryptedAccessToken?: string
     accountId?: string

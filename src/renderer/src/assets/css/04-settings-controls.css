@@ -3093,6 +3093,135 @@
   margin: 0;
 }
 
+.settings-user-mcp-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 28px 16px;
+  border: 1px dashed color-mix(in srgb, var(--panel-border) 66%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.settings-user-mcp-empty strong {
+  color: var(--text-primary);
+}
+
+.settings-user-mcp-empty p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.settings-user-mcp-list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-user-mcp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 54%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-bg) 38%, transparent);
+}
+
+.settings-user-mcp-main {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.settings-user-mcp-main strong {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.settings-user-mcp-main > span {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-user-mcp-actions,
+.settings-user-mcp-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-user-mcp-actions {
+  justify-content: flex-end;
+}
+
+.settings-user-mcp-toggle {
+  display: inline-flex;
+  align-items: center;
+}
+
+.settings-user-mcp-editor {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--panel-border) 58%);
+}
+
+.settings-user-mcp-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-user-mcp-form-grid .settings-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.settings-user-mcp-form-grid .settings-field > span {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+
+.settings-user-mcp-field-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-user-mcp-form-grid .settings-select,
+.settings-user-mcp-textarea {
+  width: 100%;
+  max-width: none;
+}
+
+.settings-user-mcp-textarea {
+  min-height: 92px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 66%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-bg) 72%, transparent);
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.settings-user-mcp-footer {
+  justify-content: space-between;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-user-mcp-error {
+  color: var(--danger, #ff5f57);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+
 .settings-safety-page {
   column-span: all;
   -webkit-column-span: all;
@@ -3646,6 +3775,7 @@
   .settings-mcp-summary-grid,
   .settings-mcp-server-grid,
   .settings-mcp-management-grid,
+  .settings-user-mcp-form-grid,
   .settings-key-commands-summary-grid,
   .settings-composer-preview-controls,
   .settings-effects-grid,
@@ -3666,6 +3796,7 @@
 
   .settings-mcp-tool-row,
   .settings-mcp-tool-detail-grid,
+  .settings-user-mcp-row,
   .settings-key-command-row {
     grid-template-columns: 1fr;
   }
@@ -3675,6 +3806,12 @@
   }
 
   .settings-key-command-actions {
+    justify-content: flex-start;
+  }
+
+  .settings-user-mcp-actions,
+  .settings-user-mcp-footer {
+    align-items: flex-start;
     justify-content: flex-start;
   }
 

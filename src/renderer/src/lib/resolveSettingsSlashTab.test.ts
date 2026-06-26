@@ -13,6 +13,9 @@ describe('resolveSettingsTabFromSlashArg', () => {
       'key-commands'
     )
     expect(resolveSettingsTabFromSlashArg('tools mcp', { settingsTabs: SETTINGS_TABS })).toBe('mcp')
+    expect(resolveSettingsTabFromSlashArg('mcp servers', { settingsTabs: SETTINGS_TABS })).toBe(
+      'mcp-servers'
+    )
   })
 
   it('falls back when the resolved tab is feature-gated', () => {

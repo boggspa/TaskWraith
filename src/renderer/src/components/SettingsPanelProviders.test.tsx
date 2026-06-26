@@ -214,6 +214,33 @@ describe('SettingsPanel provider cards', () => {
     expect(mcpHtml).toContain('no manual Cursor or Grok MCP install is required')
   })
 
+  it('renders user-managed MCP servers on the dedicated MCP Servers page', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp-servers',
+          userMcpServers: [
+            {
+              id: 'server-filesystem',
+              name: 'filesystem',
+              enabled: true,
+              transport: 'stdio',
+              command: 'npx',
+              args: ['@modelcontextprotocol/server-filesystem', '/Users/chris/project'],
+              env: { PROJECT_ROOT: '/Users/chris/project' }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('MCP servers')
+    expect(html).toContain('filesystem')
+    expect(html).toContain('2 args')
+    expect(html).toContain('1 env var')
+    expect(html).toContain('Add server')
+  })
+
   it('renders the General auto-update checkbox enabled by default', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior' })} />

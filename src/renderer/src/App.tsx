@@ -22428,6 +22428,7 @@ function App(): React.JSX.Element {
                 kimi: agentMcpStatusByProvider.kimi,
                 ollama: agentMcpStatusByProvider.ollama
               }}
+              userMcpServers={settings?.userMcpServers}
               geminiMcpBridgeEnabled={geminiMcpBridgeEnabled}
               codexSandboxFallback={codexSandboxFallback}
               funFxEnabled={appearance.funFxEnabled}

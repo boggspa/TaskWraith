@@ -56,12 +56,15 @@ describe('Settings tabs', () => {
     const tabsById = Object.fromEntries(SETTINGS_TABS.map((tab) => [tab.id, tab]))
 
     expect(tabsById['key-commands']?.label).toBe('Keyboard shortcuts')
-    expect(tabsById.mcp?.label).toBe('Tools & MCPs')
+    expect(tabsById.mcp?.label).toBe('Provider Tools')
+    expect(tabsById['mcp-servers']?.label).toBe('MCP Servers')
     expect(tabsById['approval-ledger']?.label).toBe('Approvals & Grants')
     expect(tabsById['safety-privacy']?.label).toBe('Safety & Privacy')
 
     expect(settingsTabMatchesQuery(tabsById['key-commands'], 'hotkeys')).toBe(true)
-    expect(settingsTabMatchesQuery(tabsById.mcp, 'extensions')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById.mcp, 'tool audit')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'extensions')).toBe(false)
+    expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'custom mcp')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['safety-privacy'], 'mobile visibility')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['safety-privacy'], 'screen watch')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById.pairing, 'iphone')).toBe(true)

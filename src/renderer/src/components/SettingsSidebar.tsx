@@ -123,6 +123,12 @@ function SettingsTabSymbolIcon({ tab }: { tab: SettingsTab }) {
         <path d="M4.2 5.2h3.2v3.2H4.2zM8.6 7.6h3.2v3.2H8.6z" />
         <path d="M7.4 6.8h1.2M5.8 8.4v2.2h2.8" />
       </svg>
+    ) : tab === 'mcp-servers' ? (
+      <svg {...common}>
+        <rect x="2.6" y="2.8" width="10.8" height="3.4" rx="1" />
+        <rect x="2.6" y="9.8" width="10.8" height="3.4" rx="1" />
+        <path d="M5 4.5h.1M5 11.5h.1M8 6.2v3.6M5.2 8h5.6" />
+      </svg>
     ) : tab === 'local-servers' ? (
       <svg {...common}>
         <rect x="2.6" y="3" width="10.8" height="3.5" rx="1" />

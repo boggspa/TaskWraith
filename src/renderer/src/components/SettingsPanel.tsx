@@ -29,7 +29,9 @@ import type {
   VisualEffectStyle,
   WorkspaceRecord,
   PinnedMessageGroup,
-  UsageRecord
+  UsageRecord,
+  UserMcpServerConfig,
+  UserMcpServerTransport
 } from '../../../main/store/types'
 import { humaniseModelId } from '../lib/modelDisplayName'
 import { getDashboardStatsByGroup, isDashboardStatVisible } from '../lib/dashboardStatRegistry'
@@ -184,6 +186,7 @@ interface SettingsPanelProps {
   providerCapabilities?: ProviderCapabilityContract | null
   providerCapabilitiesByProvider?: Partial<Record<ProviderId, ProviderCapabilityContract | null>>
   mcpStatusByProvider?: Partial<Record<ProviderId, any>>
+  userMcpServers?: AppSettings['userMcpServers']
   geminiMcpBridgeEnabled: boolean
   codexSandboxFallback: CodexSandboxFallbackMode
   funFxEnabled: boolean
@@ -285,6 +288,7 @@ interface SettingsPanelProps {
     auditOrchestration?: AppSettings['auditOrchestration']
     agenticServices?: AgenticServicesSettings
     nativeSubAgentRequests?: NativeSubAgentRequestPolicy
+    userMcpServers?: AppSettings['userMcpServers']
     autoResumeParentOnSubThreadCompletion?: boolean
     geminiMcpBridgeEnabled?: boolean
     codexSandboxFallback?: CodexSandboxFallbackMode
@@ -610,6 +614,148 @@ const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
   grok: 'Grok',
   cursor: 'Cursor',
   ollama: 'Ollama'
+}
+
+type UserMcpServerFormState = {
+  name: string
+  description: string
+  transport: UserMcpServerTransport
+  command: string
+  url: string
+  argsText: string
+  envText: string
+  enabled: boolean
+}
+
+const USER_MCP_TRANSPORT_OPTIONS: Array<{ value: UserMcpServerTransport; label: string }> = [
+  { value: 'stdio', label: 'stdio' },
+  { value: 'http', label: 'HTTP' },
+  { value: 'sse', label: 'SSE' }
+]
+
+function emptyUserMcpServerForm(): UserMcpServerFormState {
+  return {
+    name: '',
+    description: '',
+    transport: 'stdio',
+    command: '',
+    url: '',
+    argsText: '',
+    envText: '',
+    enabled: false
+  }
+}
+
+function formatUserMcpServerArgs(args?: string[]): string {
+  return Array.isArray(args) ? args.join('\n') : ''
+}
+
+function formatUserMcpServerEnv(env?: Record<string, string>): string {
+  return env
+    ? Object.entries(env)
+        .map(([key, value]) => `${key}=${value}`)
+        .join('\n')
+    : ''
+}
+
+function formFromUserMcpServer(server: UserMcpServerConfig): UserMcpServerFormState {
+  return {
+    name: server.name,
+    description: server.description || '',
+    transport: server.transport,
+    command: server.command || '',
+    url: server.url || '',
+    argsText: formatUserMcpServerArgs(server.args),
+    envText: formatUserMcpServerEnv(server.env),
+    enabled: server.enabled
+  }
+}
+
+function parseUserMcpServerArgs(value: string): string[] {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 64)
+}
+
+function parseUserMcpServerEnv(value: string): { env: Record<string, string>; error?: string } {
+  const env: Record<string, string> = {}
+  for (const rawLine of value.split('\n')) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const separatorIndex = line.indexOf('=')
+    if (separatorIndex <= 0) return { env, error: 'Environment lines must use KEY=value.' }
+    const key = line.slice(0, separatorIndex).trim()
+    const val = line.slice(separatorIndex + 1)
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      return { env, error: `Invalid environment variable name: ${key}` }
+    }
+    env[key] = val
+  }
+  return { env }
+}
+
+function hasRunnableUserMcpEndpoint(server: Pick<UserMcpServerConfig, 'transport' | 'command' | 'url'>): boolean {
+  return server.transport === 'stdio'
+    ? Boolean(server.command?.trim())
+    : Boolean(server.url?.trim())
+}
+
+function makeUserMcpServerId(name: string): string {
+  const slug =
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'server'
+  return `user-mcp-${slug}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+function buildUserMcpServerFromForm(
+  form: UserMcpServerFormState,
+  existing?: UserMcpServerConfig
+): { server?: UserMcpServerConfig; error?: string } {
+  const name = form.name.trim()
+  if (!name) return { error: 'Server name is required.' }
+  const args = parseUserMcpServerArgs(form.argsText)
+  const parsedEnv = parseUserMcpServerEnv(form.envText)
+  if (parsedEnv.error) return { error: parsedEnv.error }
+  const command = form.command.trim()
+  const url = form.url.trim()
+  if (form.transport === 'stdio' && form.enabled && !command) {
+    return { error: 'A stdio server needs a command before it can be enabled.' }
+  }
+  if (form.transport !== 'stdio' && form.enabled && !url) {
+    return { error: 'HTTP and SSE servers need a URL before they can be enabled.' }
+  }
+  if (url) {
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { error: 'MCP server URL must start with http:// or https://.' }
+      }
+    } catch {
+      return { error: 'MCP server URL is not valid.' }
+    }
+  }
+  const now = new Date().toISOString()
+  const server: UserMcpServerConfig = {
+    id: existing?.id || makeUserMcpServerId(name),
+    name,
+    enabled: form.enabled,
+    transport: form.transport,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  }
+  const description = form.description.trim()
+  if (description) server.description = description
+  if (command) server.command = command
+  if (args.length > 0) server.args = args
+  if (url) server.url = url
+  if (Object.keys(parsedEnv.env).length > 0) server.env = parsedEnv.env
+  return { server }
 }
 
 const AUDIT_ARTIFACT_PROVIDER_OPTIONS: Array<{
@@ -965,6 +1111,7 @@ export type SettingsTab =
   | 'providers'
   | 'roster'
   | 'mcp'
+  | 'mcp-servers'
   | 'key-commands'
   | 'approval-ledger'
   | 'safety-privacy'
@@ -1080,11 +1227,28 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
   },
   {
     id: 'mcp',
-    label: 'Tools & MCPs',
+    label: 'Provider Tools',
     group: 'integrations',
-    description: 'TaskWraith MCP bridge status, tool catalog, provider surfaces, and connector planning.',
-    aliases: ['mcp', 'tools', 'servers', 'extensions', 'skills', 'connectors', 'bridge'],
+    description: 'TaskWraith MCP bridge status, built-in tool catalog, provider surfaces, and policy audit.',
+    aliases: [
+      'provider tools',
+      'taskwraith tools',
+      'tools',
+      'tools mcp',
+      'tools and mcps',
+      'tool audit',
+      'bridge',
+      'mcp bridge'
+    ],
     scope: 'provider'
+  },
+  {
+    id: 'mcp-servers',
+    label: 'MCP Servers',
+    group: 'integrations',
+    description: 'User-managed MCP server definitions, enablement, transport, commands, URLs, and env vars.',
+    aliases: ['mcp', 'servers', 'mcp servers', 'custom mcp', 'external tools', 'connectors'],
+    scope: 'global'
   },
   {
     id: 'local-servers',
@@ -1581,6 +1745,7 @@ export function SettingsPanel({
   providerCapabilities,
   providerCapabilitiesByProvider,
   mcpStatusByProvider,
+  userMcpServers = [],
   geminiMcpBridgeEnabled,
   codexSandboxFallback,
   funFxEnabled,
@@ -1667,6 +1832,14 @@ export function SettingsPanel({
   const [installedFontStatus, setInstalledFontStatus] = useState('')
   const [composerPreviewText, setComposerPreviewText] = useState('')
   const [mcpToolQuery, setMcpToolQuery] = useState('')
+  const [mcpServerFormMode, setMcpServerFormMode] = useState<'hidden' | 'create' | 'edit'>(
+    'hidden'
+  )
+  const [editingMcpServerId, setEditingMcpServerId] = useState<string | null>(null)
+  const [mcpServerForm, setMcpServerForm] = useState<UserMcpServerFormState>(
+    emptyUserMcpServerForm
+  )
+  const [mcpServerFormError, setMcpServerFormError] = useState('')
   const [keyCommandQuery, setKeyCommandQuery] = useState('')
   const [recordingKeyCommandId, setRecordingKeyCommandId] = useState<KeyCommandId | null>(null)
   const [keyCommandRecordError, setKeyCommandRecordError] = useState('')
@@ -1732,6 +1905,75 @@ export function SettingsPanel({
       setKimiClassifierEnabled(!enabled)
       setKimiClassifierStatus('unavailable')
     })
+  }
+
+  const resetMcpServerForm = (): void => {
+    setMcpServerFormMode('hidden')
+    setEditingMcpServerId(null)
+    setMcpServerForm(emptyUserMcpServerForm())
+    setMcpServerFormError('')
+  }
+
+  const startCreateMcpServer = (): void => {
+    setMcpServerFormMode('create')
+    setEditingMcpServerId(null)
+    setMcpServerForm(emptyUserMcpServerForm())
+    setMcpServerFormError('')
+  }
+
+  const startEditMcpServer = (server: UserMcpServerConfig): void => {
+    setMcpServerFormMode('edit')
+    setEditingMcpServerId(server.id)
+    setMcpServerForm(formFromUserMcpServer(server))
+    setMcpServerFormError('')
+  }
+
+  const persistUserMcpServers = (servers: UserMcpServerConfig[]): void => {
+    onChange({ userMcpServers: servers })
+  }
+
+  const saveMcpServerForm = (): void => {
+    const existing =
+      editingMcpServerId && mcpServerFormMode === 'edit'
+        ? userMcpServers.find((server) => server.id === editingMcpServerId)
+        : undefined
+    const result = buildUserMcpServerFromForm(mcpServerForm, existing)
+    if (!result.server) {
+      setMcpServerFormError(result.error || 'Could not save this MCP server.')
+      return
+    }
+    const next =
+      existing && editingMcpServerId
+        ? userMcpServers.map((server) =>
+            server.id === editingMcpServerId ? (result.server as UserMcpServerConfig) : server
+          )
+        : [...userMcpServers, result.server]
+    persistUserMcpServers(next)
+    resetMcpServerForm()
+  }
+
+  const toggleUserMcpServer = (server: UserMcpServerConfig, enabled: boolean): void => {
+    if (enabled && !hasRunnableUserMcpEndpoint(server)) {
+      startEditMcpServer(server)
+      setMcpServerFormError(
+        server.transport === 'stdio'
+          ? 'Add a command before enabling this stdio MCP server.'
+          : 'Add a URL before enabling this MCP server.'
+      )
+      return
+    }
+    persistUserMcpServers(
+      userMcpServers.map((entry) =>
+        entry.id === server.id
+          ? { ...entry, enabled, updatedAt: new Date().toISOString() }
+          : entry
+      )
+    )
+  }
+
+  const deleteUserMcpServer = (serverId: string): void => {
+    persistUserMcpServers(userMcpServers.filter((server) => server.id !== serverId))
+    if (editingMcpServerId === serverId) resetMcpServerForm()
   }
 
   const refreshExchangeRates = async (): Promise<void> => {
@@ -1974,6 +2216,8 @@ export function SettingsPanel({
   const connectedMcpProviderCount = providerMcpSummaries.filter(
     (entry) => entry.available || entry.enabled
   ).length
+  const enabledUserMcpServerCount = userMcpServers.filter((server) => server.enabled).length
+  const userMcpTransportCount = new Set(userMcpServers.map((server) => server.transport)).size
   const mcpToolSearch = mcpToolQuery.trim().toLowerCase()
   const filteredMcpToolCatalog = MCP_TOOL_CATALOG.filter((tool) => {
     if (!mcpToolSearch) return true
@@ -4881,7 +5125,7 @@ export function SettingsPanel({
           ) /* end providers */
         }
 
-        {/* ── MCP ───────────────────────────────────────── */}
+        {/* ── Provider Tools ─────────────────────────────── */}
         {activeTab === 'mcp' && (
           <div className="settings-mcp-page">
             <div className="settings-group span-all settings-mcp-overview">
@@ -4889,13 +5133,13 @@ export function SettingsPanel({
                 <div>
                   <div className="settings-section-title-row">
                     <h4 className="sidebar-section-title" style={{ margin: 0 }}>
-                      MCP servers and TaskWraith tools
+                      Provider tools and TaskWraith bridge
                     </h4>
                   </div>
                   <p className="settings-hint">
                     Audit the tool surface agents can see, the transcript labels users see, and the
-                    policy gate attached to each capability. Custom server editing stays provider
-                    owned until TaskWraith has safe config-writing plumbing.
+                    policy gate attached to each capability. User-managed MCP servers live in the
+                    MCP Servers page.
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
@@ -4914,8 +5158,7 @@ export function SettingsPanel({
                   <button
                     type="button"
                     className="btn btn-sm btn-ghost"
-                    disabled
-                    title="Custom MCP server editing is not wired yet."
+                    onClick={() => setActiveTab('mcp-servers')}
                   >
                     Add server
                   </button>
@@ -4924,7 +5167,7 @@ export function SettingsPanel({
 
               <div className="settings-mcp-summary-grid">
                 <article className="settings-mcp-summary-card">
-                  <span>Built-in tools</span>
+                  <span>TaskWraith tools</span>
                   <strong>{TASKWRAITH_MCP_TOOLS.length}</strong>
                   <small>TaskWraith MCP bridge catalog</small>
                 </article>
@@ -4938,7 +5181,7 @@ export function SettingsPanel({
                 <article className="settings-mcp-summary-card">
                   <span>Primary policy</span>
                   <strong>{getMcpPolicyLabel(agenticServices, 'mcpTools')}</strong>
-                  <small>MCP and tools gate</small>
+                  <small>provider tool gate</small>
                 </article>
                 <article className="settings-mcp-summary-card">
                   <span>Visible now</span>
@@ -5194,12 +5437,16 @@ export function SettingsPanel({
               </div>
               <div className="settings-mcp-management-grid">
                 <article className="settings-mcp-management-card">
-                  <strong>Custom MCP servers</strong>
+                  <strong>User MCP servers</strong>
                   <p>
-                    External server discovery and toggles will live here once config editing lands.
+                    Add, edit, enable, and remove app-managed external MCP server definitions.
                   </p>
-                  <button type="button" className="btn btn-sm btn-ghost" disabled>
-                    Managed in provider config
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={() => setActiveTab('mcp-servers')}
+                  >
+                    Open MCP Servers
                   </button>
                 </article>
                 <article className="settings-mcp-management-card">
@@ -5221,6 +5468,273 @@ export function SettingsPanel({
                 </article>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ── MCP Servers ───────────────────────────────── */}
+        {activeTab === 'mcp-servers' && (
+          <div className="settings-mcp-page settings-user-mcp-page">
+            <div className="settings-group span-all settings-mcp-overview">
+              <div className="settings-mcp-header">
+                <div>
+                  <div className="settings-section-title-row">
+                    <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                      MCP servers
+                    </h4>
+                    <span className="settings-editable-pill">Editable</span>
+                  </div>
+                  <p className="settings-hint">
+                    Manage external MCP server definitions TaskWraith owns. Provider launch wiring
+                    can consume these records without mutating Claude, Codex, or Cursor config files.
+                  </p>
+                </div>
+                <div className="settings-mcp-header-actions">
+                  <button type="button" className="btn btn-sm" onClick={startCreateMcpServer}>
+                    Add server
+                  </button>
+                </div>
+              </div>
+
+              <div className="settings-mcp-summary-grid">
+                <article className="settings-mcp-summary-card">
+                  <span>Servers</span>
+                  <strong>{userMcpServers.length}</strong>
+                  <small>user-managed definitions</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Enabled</span>
+                  <strong>{enabledUserMcpServerCount}</strong>
+                  <small>ready for provider launch wiring</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Transports</span>
+                  <strong>{userMcpTransportCount}</strong>
+                  <small>stdio, HTTP, or SSE</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>TaskWraith bridge</span>
+                  <strong>{geminiMcpBridgeEnabled ? 'On' : 'Off'}</strong>
+                  <small>built-in provider tools stay separate</small>
+                </article>
+              </div>
+            </div>
+
+            <div className="settings-group span-all">
+              <div className="settings-mcp-section-title">
+                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                  User MCP servers
+                </h4>
+                <p className="settings-hint">
+                  These records are stored by TaskWraith and can be audited here before being
+                  attached to provider runtime profiles.
+                </p>
+              </div>
+
+              {userMcpServers.length === 0 ? (
+                <div className="settings-user-mcp-empty">
+                  <strong>No MCP servers added</strong>
+                  <p>Add a local stdio server or a remote HTTP/SSE endpoint.</p>
+                  <button type="button" className="btn btn-sm" onClick={startCreateMcpServer}>
+                    Add server
+                  </button>
+                </div>
+              ) : (
+                <div className="settings-user-mcp-list">
+                  {userMcpServers.map((server) => {
+                    const endpoint =
+                      server.transport === 'stdio'
+                        ? server.command || 'No command'
+                        : server.url || 'No URL'
+                    return (
+                      <article key={server.id} className="settings-user-mcp-row">
+                        <div className="settings-user-mcp-main">
+                          <strong>{server.name}</strong>
+                          <span>{server.description || endpoint}</span>
+                          <div className="settings-mcp-server-meta">
+                            <span>{server.transport}</span>
+                            <span>{endpoint}</span>
+                            {server.args && server.args.length > 0 && (
+                              <span>{pluralizeCount(server.args.length, 'arg')}</span>
+                            )}
+                            {server.env && Object.keys(server.env).length > 0 && (
+                              <span>{pluralizeCount(Object.keys(server.env).length, 'env var')}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="settings-user-mcp-actions">
+                          <label className="settings-user-mcp-toggle">
+                            <span className="sr-only">Enable {server.name}</span>
+                            <input
+                              type="checkbox"
+                              checked={server.enabled}
+                              onChange={(event) =>
+                                toggleUserMcpServer(server, event.target.checked)
+                              }
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => startEditMcpServer(server)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => deleteUserMcpServer(server.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {mcpServerFormMode !== 'hidden' && (
+              <div className="settings-group span-all settings-user-mcp-editor">
+                <div className="settings-mcp-section-title">
+                  <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                    {mcpServerFormMode === 'edit' ? 'Edit MCP server' : 'Add MCP server'}
+                  </h4>
+                  <p className="settings-hint">
+                    Environment values are stored in local app settings. Prefer shell-level
+                    environment for secrets until encrypted MCP secrets land.
+                  </p>
+                </div>
+
+                <div className="settings-user-mcp-form-grid">
+                  <label className="settings-field">
+                    <span>Name</span>
+                    <input
+                      className="settings-select"
+                      value={mcpServerForm.name}
+                      onChange={(event) =>
+                        setMcpServerForm((prev) => ({ ...prev, name: event.target.value }))
+                      }
+                      placeholder="filesystem"
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Transport</span>
+                    <select
+                      className="settings-select"
+                      value={mcpServerForm.transport}
+                      onChange={(event) =>
+                        setMcpServerForm((prev) => ({
+                          ...prev,
+                          transport: event.target.value as UserMcpServerTransport
+                        }))
+                      }
+                    >
+                      {USER_MCP_TRANSPORT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="settings-field settings-user-mcp-field-wide">
+                    <span>Description</span>
+                    <input
+                      className="settings-select"
+                      value={mcpServerForm.description}
+                      onChange={(event) =>
+                        setMcpServerForm((prev) => ({
+                          ...prev,
+                          description: event.target.value
+                        }))
+                      }
+                      placeholder="Project filesystem tools"
+                    />
+                  </label>
+                  {mcpServerForm.transport === 'stdio' ? (
+                    <label className="settings-field settings-user-mcp-field-wide">
+                      <span>Command</span>
+                      <input
+                        className="settings-select"
+                        value={mcpServerForm.command}
+                        onChange={(event) =>
+                          setMcpServerForm((prev) => ({ ...prev, command: event.target.value }))
+                        }
+                        placeholder="npx"
+                      />
+                    </label>
+                  ) : (
+                    <label className="settings-field settings-user-mcp-field-wide">
+                      <span>URL</span>
+                      <input
+                        className="settings-select"
+                        value={mcpServerForm.url}
+                        onChange={(event) =>
+                          setMcpServerForm((prev) => ({ ...prev, url: event.target.value }))
+                        }
+                        placeholder="http://127.0.0.1:3000/mcp"
+                      />
+                    </label>
+                  )}
+                  <label className="settings-field">
+                    <span>Arguments</span>
+                    <textarea
+                      className="settings-user-mcp-textarea"
+                      value={mcpServerForm.argsText}
+                      onChange={(event) =>
+                        setMcpServerForm((prev) => ({ ...prev, argsText: event.target.value }))
+                      }
+                      rows={4}
+                      placeholder="@modelcontextprotocol/server-filesystem&#10;/Users/chris/project"
+                      disabled={mcpServerForm.transport !== 'stdio'}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Environment</span>
+                    <textarea
+                      className="settings-user-mcp-textarea"
+                      value={mcpServerForm.envText}
+                      onChange={(event) =>
+                        setMcpServerForm((prev) => ({ ...prev, envText: event.target.value }))
+                      }
+                      rows={4}
+                      placeholder="API_BASE_URL=http://127.0.0.1:3000"
+                    />
+                  </label>
+                </div>
+
+                <div className="settings-user-mcp-footer">
+                  <label className="settings-effects-check-row">
+                    <input
+                      type="checkbox"
+                      checked={mcpServerForm.enabled}
+                      onChange={(event) =>
+                        setMcpServerForm((prev) => ({ ...prev, enabled: event.target.checked }))
+                      }
+                    />
+                    <span>
+                      Enabled
+                      <small>Disabled servers stay saved but are not offered to provider runs.</small>
+                    </span>
+                  </label>
+                  <div className="settings-mcp-header-actions">
+                    {mcpServerFormError && (
+                      <span className="settings-user-mcp-error">{mcpServerFormError}</span>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={resetMcpServerForm}
+                    >
+                      Cancel
+                    </button>
+                    <button type="button" className="btn btn-sm" onClick={saveMcpServerForm}>
+                      Save server
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -289,6 +289,51 @@ describe('MainSanitizers settings patches', () => {
     expect(coerced.localServersStopOnQuit).toBe(false)
   })
 
+  it('sanitizes user-managed MCP server settings', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    const sanitized = sanitizeSettingsPatch({
+      userMcpServers: [
+        {
+          id: 'server-1',
+          name: ' filesystem ',
+          enabled: true,
+          transport: 'stdio',
+          command: ' npx ',
+          args: [' @modelcontextprotocol/server-filesystem ', '', 5],
+          env: {
+            PROJECT_ROOT: '/repo',
+            'bad-key': 'drop'
+          },
+          description: ' Local files '
+        },
+        {
+          id: 'server-1',
+          name: 'duplicate'
+        },
+        {
+          id: '',
+          name: 'missing id'
+        }
+      ]
+    })
+
+    expect(sanitized.userMcpServers).toEqual([
+      {
+        id: 'server-1',
+        name: 'filesystem',
+        enabled: true,
+        transport: 'stdio',
+        command: 'npx',
+        args: ['@modelcontextprotocol/server-filesystem'],
+        env: {
+          PROJECT_ROOT: '/repo'
+        },
+        description: 'Local files'
+      }
+    ])
+  })
+
   it('sanitizes changelog persistence settings', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
