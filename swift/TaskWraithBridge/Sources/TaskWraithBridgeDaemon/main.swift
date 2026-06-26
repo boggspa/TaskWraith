@@ -1061,6 +1061,62 @@ dispatcher.register("audio.mixdown") { params in
     }
 }
 
+// `audio.windowClip` — cut a [startMs,endMs] WINDOW out of one source audio file
+// and write it as a standalone 16-bit PCM WAV at the TS-owned staging `outputPath`.
+// Backs `inspect_audio_segment`'s interactive playable clip: it REUSES AudioMixer's
+// decode + frame-math + writeWAV (no second WAV writer) to slice the decoded float
+// planes. Mirrors `audio.mixdown`: decode params → runBlocking → map AudioMixError to
+// JSONRPCError → return the metadata dict (`durationMs`/`sampleRate`/`channels`/
+// `codec`). We do NOT return bytes — TS reads + deletes the file at outputPath. An
+// unreadable/>2ch source or an empty (post-clamp) window → invalidParams; a decode/
+// writer failure → internalError.
+
+struct AudioWindowClipParams: Decodable {
+    let sourcePath: String
+    let startMs: Int
+    let endMs: Int
+    let outputPath: String
+}
+
+dispatcher.register("audio.windowClip") { params in
+    let parsed: AudioWindowClipParams
+    do {
+        parsed = try decodeParams(params, as: AudioWindowClipParams.self)
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid audio.windowClip params: \(error.localizedDescription)"
+        )
+    }
+    do {
+        let result = try runBlocking { @Sendable [
+            sourcePath = parsed.sourcePath,
+            startMs = parsed.startMs,
+            endMs = parsed.endMs,
+            outputPath = parsed.outputPath
+        ] in
+            try await AudioMixer.windowClip(
+                sourcePath: sourcePath,
+                startMs: startMs,
+                endMs: endMs,
+                outputPath: outputPath
+            )
+        }
+        return result.toJSONObject()
+    } catch let err as AudioMixer.AudioMixError {
+        switch err {
+        case .badInput(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.invalidParams, message: message)
+        case .mixFailed(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: message)
+        }
+    } catch let err as JSONRPCError {
+        throw err
+    } catch {
+        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: error.localizedDescription)
+    }
+}
+
 // `audio.transcribe` — native on-device speech-to-text (Speech framework's
 // SFSpeechRecognizer): authorize → on-device-only recognize the (TS-jailed)
 // audio file → return the transcript (`text`, per-segment `segments`,

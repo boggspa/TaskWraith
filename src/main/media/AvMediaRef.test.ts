@@ -83,6 +83,22 @@ describe('buildAvMediaRef', () => {
     expect(ref!.thumbnail).toEqual(thumbnail)
   })
 
+  it('threads a non-empty caption through and omits a blank/absent one', () => {
+    // inspect_audio_segment's <m:ss>–<m:ss> window range rides as the caption.
+    const captioned = buildAvMediaRef({
+      sha256: 'a'.repeat(64),
+      mimeType: 'audio/wav',
+      name: 'song [1:05–1:20]',
+      caption: '1:05–1:20'
+    })
+    expect(captioned!.caption).toBe('1:05–1:20')
+    // Absent → undefined; whitespace-only → dropped (no useless empty caption).
+    expect(buildAvMediaRef({ sha256: 'a'.repeat(64), mimeType: 'audio/wav', name: 'a.wav' })!.caption).toBeUndefined()
+    expect(
+      buildAvMediaRef({ sha256: 'a'.repeat(64), mimeType: 'audio/wav', name: 'a.wav', caption: '   ' })!.caption
+    ).toBeUndefined()
+  })
+
   it('omits the thumbnail when not provided / empty', () => {
     expect(buildAvMediaRef({ sha256: 'a'.repeat(64), mimeType: 'video/mp4', name: 'v.mp4' })!.thumbnail).toBeUndefined()
     // An empty dataBase64 is dropped (never ship a useless poster).

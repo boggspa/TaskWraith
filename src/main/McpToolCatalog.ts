@@ -2311,21 +2311,22 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'inspect_audio_segment',
       description:
-        'Analyze a TIME WINDOW of a workspace audio file: render that sub-range as an inline waveform PNG ' +
-        'plus its measured peak / RMS (and dBFS) and silence percent. Like audio_analyze but scoped to ' +
-        '[startMs, endMs] — use it to zoom into one part of a clip ("how loud is the chorus at 1:05–1:20", ' +
-        '"is the intro silent"). Source the file with `sourcePath` (a path inside the workspace); `startMs` ' +
-        'and `endMs` bound the window in milliseconds (0 <= startMs < endMs). Decoding is in-process (no ' +
-        'network); non-mutating and read-only-safe (no file is written).',
+        'Extract a TIME WINDOW of a workspace audio file as an INTERACTIVE, PLAYABLE clip: ' +
+        'returns the [startMs, endMs] sub-range as an inline audio player (waveform + scrub) ' +
+        'plus a windowed on-device TRANSCRIPT when speech is present. Use it to zoom into one ' +
+        'part of a clip ("play the chorus at 1:05–1:20", "what is said in the intro"). Source the ' +
+        'file with `sourcePath` (a path inside the workspace); `startMs` and `endMs` bound the ' +
+        'window in milliseconds (0 <= startMs < endMs; max span 120s). Native decode (no network). ' +
+        'The clip is content-addressed into the internal asset store — NO workspace file is written ' +
+        '(non-mutating, read-only-safe). The transcript is best-effort: it is omitted (the clip still ' +
+        'returns) if macOS Speech permission or the on-device locale model is unavailable.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: {
         type: 'object',
         properties: {
           sourcePath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to an audio file.' },
           startMs: { type: 'number', description: 'Window start in milliseconds (>= 0).' },
-          endMs: { type: 'number', description: 'Window end in milliseconds (must be > startMs).' },
-          width: { type: 'number', description: 'Waveform image width in px (default 1024).' },
-          height: { type: 'number', description: 'Waveform image height in px (default 256).' }
+          endMs: { type: 'number', description: 'Window end in milliseconds (must be > startMs; span <= 120000ms).' }
         },
         required: ['sourcePath', 'startMs', 'endMs']
       }
@@ -2398,8 +2399,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         '(hardware-accelerated; works WITHOUT ffmpeg installed) so you can scrub/inspect a clip. ' +
         'Provide `timestamps` (an array of seconds) for exact frames, or `everyNSeconds` to sample ' +
         'evenly from 0; omit both to grab a single frame at 0. `maxFrames` caps the count (default ' +
-        'and hard max 8). Returns each frame as an inline image (grouped as a filmstrip). If a ' +
-        'sample falls past the end of the clip the tool stops and returns the frames it got. Reads ' +
+        '8, hard max 24). Returns each frame as an inline image (grouped as a scrollable filmstrip). ' +
+        'If a sample falls past the end of the clip the tool stops and returns the frames it got. Reads ' +
         'a realpath-jailed workspace path; native (no external process), non-mutating, read-only-safe.',
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: {
@@ -2412,7 +2413,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             description: 'Explicit frame timestamps in seconds (each >= 0). Takes precedence over everyNSeconds.'
           },
           everyNSeconds: { type: 'number', description: 'Sample one frame every N seconds starting at 0 (ignored if timestamps is given).' },
-          maxFrames: { type: 'number', description: 'Maximum number of frames to return (default 8, hard cap 8).' }
+          maxFrames: { type: 'number', description: 'Maximum number of frames to return (default 8, hard cap 24).' }
         },
         required: ['inputPath']
       }

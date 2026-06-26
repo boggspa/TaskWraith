@@ -15,9 +15,10 @@ export type McpToolExecutionResult = {
   trustedMediaRefs?: TranscriptMediaRef[]
   // Per-image-block presentation hints for the SANITIZED image lane: `labels[i]` becomes
   // the caption of the ref built from the i-th image block (content order), `groupKind`
-  // groups a contiguous run (e.g. `video_frames` → an NLE filmstrip). Mirror of the field
-  // on McpBridgeRuntime's McpToolExecutionResult — the two must stay in sync.
-  mediaRefHints?: { groupKind?: string; labels?: string[] }
+  // groups a contiguous run (e.g. `video_frames` → an NLE filmstrip), `maxRefs` raises the
+  // per-message ref cap for THIS result only (ceiling-clamped at the dispatch seam). Mirror
+  // of the field on McpBridgeRuntime's McpToolExecutionResult — the two must stay in sync.
+  mediaRefHints?: { groupKind?: string; labels?: string[]; maxRefs?: number }
 }
 
 export type AttachedWindowStreamingSnapshot = {

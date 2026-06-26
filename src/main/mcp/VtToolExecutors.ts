@@ -187,10 +187,13 @@ function humanBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
-// inspect_video_frames hard cap on frames per call = the image lane's
-// TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE (8). A larger `maxFrames` can never exceed it
-// (the renderer/createToolResultMediaRefs drops overflow anyway), so we clamp up front.
-const INSPECT_VIDEO_FRAMES_HARD_CAP = 8
+// inspect_video_frames hard cap on frames per call. RAISED to 24 (was 8 = the image
+// lane's default TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE) so a model can scrub a clip in
+// more detail; the renderer filmstrip already scrolls + groups any count into one strip.
+// A larger `maxFrames` is clamped to this up front, AND the result carries a per-call
+// `maxRefs: 24` hint so the dispatch seam's createToolResultMediaRefs honors all 24 (the
+// GLOBAL default stays 8 for every other path).
+const INSPECT_VIDEO_FRAMES_MAX = 24
 
 // Format a frame timestamp as a compact NLE label, e.g. 3 → "0:03", 75.4 → "1:15".
 // Sub-second precision is dropped (the filmstrip caption is a scrub marker, not a code).
@@ -316,12 +319,12 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       timestamps = [0]
     }
 
-    // Clamp the count to min(maxFrames ?? 8, 8) — the hard cap is the image lane's
-    // TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE (8); a larger maxFrames cannot exceed it.
+    // Clamp the count to min(maxFrames ?? 8, INSPECT_VIDEO_FRAMES_MAX=24). Default stays 8
+    // (a sensible scrub size); an explicit larger maxFrames is honored up to the 24 cap.
     const requestedMax = numArg(args.maxFrames)
     const maxFrames = Math.min(
       requestedMax !== undefined && requestedMax >= 1 ? Math.floor(requestedMax) : 8,
-      INSPECT_VIDEO_FRAMES_HARD_CAP
+      INSPECT_VIDEO_FRAMES_MAX
     )
 
     // For the everyNSeconds mode, materialize 0, n, 2n, … up to the (clamped) cap. The
@@ -371,7 +374,9 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
     return {
       text: summary,
       content: [{ type: 'text', text: summary }, ...blocks],
-      mediaRefHints: { groupKind: 'video_frames', labels }
+      // maxRefs: 24 lets the dispatch seam emit all the frames we collected (the GLOBAL
+      // default is 8); a trusted main-side hint, ceiling-clamped at createToolResultMediaRefs.
+      mediaRefHints: { groupKind: 'video_frames', labels, maxRefs: INSPECT_VIDEO_FRAMES_MAX }
     }
   }
 

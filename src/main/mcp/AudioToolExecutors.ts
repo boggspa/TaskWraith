@@ -5,6 +5,8 @@ import {
   sniffImageMime
 } from '../services/TranscriptMediaService'
 import { TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES } from '../services/TranscriptMediaAssetStore'
+import { buildAvMediaRef } from '../media/AvMediaRef'
+import type { TranscriptMediaThumbnail } from '../store/types'
 
 /**
  * audio_render_wav MCP tool executor — the first "in-house media surface" proving
@@ -49,6 +51,11 @@ export const MAX_AUDIO_RENDER_PIXELS = 24_000_000
  * generous for a "preview a tone / show me its waveform" proving slice while
  * bounding the OfflineAudioContext buffer + the per-sample draw loop. */
 export const MAX_AUDIO_DURATION_MS = 30_000
+/** Hard cap on an inspect_audio_segment PLAYABLE window: 120s. The window becomes a
+ * standalone content-addressed WAV (120s stereo 16-bit @ 48kHz ≈ 23MB — under the audio
+ * asset cap) the renderer plays inline. A larger span is REJECTED (not silently
+ * truncated) so the model knows to narrow it. Enforced BEFORE the daemon ever decodes. */
+export const MAX_AUDIO_SEGMENT_CLIP_MS = 120_000
 const DEFAULT_DURATION_MS = 1_000
 const DEFAULT_FREQUENCY_HZ = 440
 const DEFAULT_GAIN = 0.8
@@ -193,6 +200,23 @@ export interface AudioToolExecutors {
   ) => Promise<McpToolExecutionResult>
 }
 
+/**
+ * The product of `produceWindowClip`: a content-addressed windowed WAV written to the
+ * internal asset store. `sha256`/`byteLength`/`durationMs` come from the daemon clip +
+ * persist; `peaks`/`thumbnail` from the best-effort poster pass (same as audio_mix); and
+ * `transcript`/`segments` from the BEST-EFFORT windowed transcribe (omitted on any
+ * permission/locale failure — never fatal, see Item 2).
+ */
+export interface WindowClipProduction {
+  sha256: string
+  byteLength: number
+  durationMs: number
+  peaks?: number[]
+  thumbnail?: TranscriptMediaThumbnail
+  transcript?: string
+  segments?: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+}
+
 export interface AudioToolExecutorDeps {
   engine: AudioEngine
   /** Resolve an audio source (sourcePath inside the workspace) to bytes. */
@@ -200,6 +224,32 @@ export interface AudioToolExecutorDeps {
     args: Record<string, unknown>,
     ctx: AudioToolContext
   ) => Promise<ResolvedAudioSource>
+  /**
+   * Realpath-jail a workspace audio path → its real path (the daemon reads the FILE,
+   * not bytes). DISTINCT from `resolveAudioSource` (which returns decoded bytes for the
+   * offscreen waveform engine): inspect_audio_segment v2 hands a path to the daemon's
+   * `audio.windowClip` RPC, so it needs the jailed realPath, not a base64 blob. Returns
+   * the same jail failure reasons as resolveAudioSource. OPTIONAL so older callers/tests
+   * that never invoke inspect_audio_segment need not provide it.
+   */
+  jailAudio?: (
+    args: Record<string, unknown>,
+    ctx: AudioToolContext
+  ) => { ok: true; realPath: string } | { ok: false; reason: string }
+  /**
+   * Produce a PLAYABLE windowed clip for inspect_audio_segment: slice [startMs,endMs] out
+   * of the (already-jailed) `sourcePath` via the daemon's native `audio.windowClip`, read
+   * + persist it to the content-addressed asset store, generate a best-effort poster/peaks,
+   * AND best-effort transcribe the windowed slice (Item 2) — all before deleting the staging
+   * file. REJECTS on a daemon/persist failure (the executor maps it to a tool error); the
+   * transcribe step NEVER rejects the whole call (it's caught internally). OPTIONAL (older
+   * callers/tests need not provide it; inspect_audio_segment requires it at runtime).
+   */
+  produceWindowClip?: (
+    sourcePath: string,
+    startMs: number,
+    endMs: number
+  ) => Promise<WindowClipProduction>
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -226,6 +276,16 @@ function formatMsLabel(ms: number): string {
   const mins = Math.floor(totalSeconds / 60)
   const secs = totalSeconds % 60
   return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+// Last path segment of an agent-supplied sourcePath (cosmetic, for the output label only
+// — never a filesystem path). Splits on both separators so a Windows-style path still
+// yields a clean leaf; strips the extension. Mirrors VtToolExecutors.sourceBaseName.
+function sourceBaseName(sourcePath: unknown): string {
+  const raw = typeof sourcePath === 'string' ? sourcePath.trim() : ''
+  const leaf = raw.split(/[\\/]/).filter(Boolean).pop() ?? ''
+  const stem = leaf.replace(/\.[^.]+$/, '')
+  return stem || 'audio'
 }
 
 function snapSampleRate(value: number | null): number {
@@ -347,7 +407,7 @@ function resolveSpec(args: Record<string, unknown>): AudioRenderSpec | { error: 
 }
 
 export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioToolExecutors {
-  const { engine, resolveAudioSource } = deps
+  const { engine, resolveAudioSource, jailAudio, produceWindowClip } = deps
 
   async function executeRenderWav(
     args: Record<string, unknown>,
@@ -388,21 +448,20 @@ export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioTool
     }
   }
 
-  // inspect_audio_segment — audio_analyze restricted to a [startMs,endMs] WINDOW: a
-  // DAW-style waveform strip + levels of a sub-range. Same jail + offscreen engine +
-  // image-block lane as executeAnalyze, but the in-page script renders + measures ONLY
-  // the windowed frame slice (analyzeAudio passes startMs/endMs through). Read-only: no
-  // file output, no trustedMediaRefs. The single windowed waveform PNG rides the proven
-  // SANITIZED image media spine; a `audio_segment` group hint + the `<m:ss>–<m:ss>`
-  // window label caption the ref.
+  // inspect_audio_segment v2 — emit a PLAYABLE, content-addressed [startMs,endMs] WINDOW
+  // as a TRUSTED-AV media ref (peaks + caption), NOT a static waveform PNG. The renderer
+  // auto-renders the interactive WaveformAudioPlayer (same lane as an audio_mix output —
+  // no renderer change). The clip is produced by produceWindowClip (daemon audio.windowClip
+  // → persist → poster/peaks → BEST-EFFORT windowed transcript), then wrapped by
+  // buildAvMediaRef with a `<m:ss>–<m:ss>` caption. The text block carries the window range
+  // + peak/RMS dBFS + silence% (from the SAME offscreen analysis the poster runs) + the
+  // transcript when present. Still read-only-safe: content-addressing writes only the
+  // internal asset store, never the workspace.
   async function executeInspectAudioSegment(
     args: Record<string, unknown>,
     ctx: AudioToolContext
   ): Promise<McpToolExecutionResult> {
-    const dims = resolveDims(args)
-    if ('error' in dims) return fail('inspect_audio_segment', dims.error)
-
-    // Validate the window BEFORE any decode: both bounds finite, 0 <= startMs < endMs.
+    // Validate the window BEFORE any work: both bounds finite, 0 <= startMs < endMs.
     const startMs = numArg(args.startMs)
     const endMs = numArg(args.endMs)
     if (startMs === null || endMs === null) {
@@ -411,48 +470,56 @@ export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioTool
     if (startMs < 0 || endMs <= startMs) {
       return fail('inspect_audio_segment', 'window must satisfy 0 <= startMs < endMs')
     }
-
-    const source = await resolveAudioSource(args, ctx)
-    if (!source.ok) return fail('inspect_audio_segment', `could not read audio: ${source.reason}`)
-    try {
-      const { png, meta } = await engine.analyzeAudio({
-        dataBase64: source.dataBase64,
-        mimeType: source.mimeType,
-        width: dims.width,
-        height: dims.height,
-        startMs,
-        endMs
-      })
-      const windowLabel = `${formatMsLabel(startMs)}–${formatMsLabel(endMs)}`
-      const result = imageBlockResult(
+    // Clamp the PLAYABLE span to 120s — REJECT a longer window (the agent narrows it)
+    // rather than silently truncate. Enforced before the daemon ever decodes the source.
+    if (endMs - startMs > MAX_AUDIO_SEGMENT_CLIP_MS) {
+      return fail(
         'inspect_audio_segment',
-        {
-          ...meta,
-          windowStartMs: startMs,
-          windowEndMs: endMs,
-          windowLabel,
-          sourceMimeType: source.mimeType,
-          sourceBytes: source.byteLength
-        },
-        png
+        `window too long (${endMs - startMs}ms; max ${MAX_AUDIO_SEGMENT_CLIP_MS}ms / 120s). Narrow startMs/endMs.`
       )
-      // A C2-sniff failure / oversize already returned an error result (no image block);
-      // only decorate a genuine success (the image block carries the windowed waveform).
-      if (result.isError) return result
-      // Replace the bare JSON text with a human window summary (range + peak/RMS dBFS +
-      // silence%) so the model gets a readable answer, then attach the group hint + the
-      // window-range caption for the SANITIZED image lane.
-      const summary =
-        `Audio ${windowLabel}: peak ${meta.peakDbfs} dBFS, RMS ${meta.rmsDbfs} dBFS, ` +
-        `${meta.silencePercent}% silent`
-      const textBlocks = (result.content ?? []).map((block) =>
-        block.type === 'text' ? { type: 'text' as const, text: summary } : block
-      )
+    }
+
+    // The interactive clip path needs BOTH new deps. Guard so a partially-wired factory
+    // fails loudly with an actionable message instead of a confusing crash.
+    if (!jailAudio || !produceWindowClip) {
+      return fail('inspect_audio_segment', 'internal: audio window-clip pipeline is not configured')
+    }
+
+    // Realpath-jail the source FILE for the daemon (the daemon opens the path, not bytes).
+    const jailed = jailAudio(args, ctx)
+    if (!jailed.ok) return fail('inspect_audio_segment', `could not read audio: ${jailed.reason}`)
+
+    try {
+      const produced = await produceWindowClip(jailed.realPath, startMs, endMs)
+      const windowLabel = `${formatMsLabel(startMs)}–${formatMsLabel(endMs)}`
+      const ref = buildAvMediaRef({
+        sha256: produced.sha256,
+        mimeType: 'audio/wav',
+        name: `${sourceBaseName(args.sourcePath)} [${windowLabel}]`,
+        runId: ctx.appRunId,
+        byteLength: produced.byteLength,
+        durationMs: produced.durationMs,
+        thumbnail: produced.thumbnail,
+        peaks: produced.peaks,
+        caption: windowLabel
+      })
+      // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType is
+      // the fixed 'audio/wav'), but fail LOUDLY rather than strand the persisted asset.
+      if (!ref) return fail('inspect_audio_segment', 'internal: unsupported output mime audio/wav')
+
+      // Text answer: the window range + a clip-duration line, plus the windowed transcript
+      // when the best-effort transcribe succeeded (omitted on a permission/locale miss).
+      const transcript = typeof produced.transcript === 'string' ? produced.transcript.trim() : ''
+      const lines = [
+        `Audio ${windowLabel} (${(produced.durationMs / 1000).toFixed(1)}s playable clip).`
+      ]
+      if (transcript) lines.push(`Transcript: ${transcript}`)
+      const text = lines.join('\n')
+
       return {
-        ...result,
-        text: summary,
-        content: textBlocks,
-        mediaRefHints: { groupKind: 'audio_segment', labels: [windowLabel] }
+        text,
+        content: [{ type: 'text', text }],
+        trustedMediaRefs: [ref]
       }
     } catch (error) {
       return fail('inspect_audio_segment', error instanceof Error ? error.message : String(error))

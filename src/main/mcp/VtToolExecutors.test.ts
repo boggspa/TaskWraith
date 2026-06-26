@@ -334,7 +334,7 @@ describe('inspect_video_frames', () => {
     expect(result.mediaRefHints).toBeUndefined()
   })
 
-  it('clamps the frame count to the hard cap of 8 even when maxFrames is larger', async () => {
+  it('clamps the frame count to the hard cap of 24 even when maxFrames is larger', async () => {
     const { executors, deps } = build({
       decodeFrame: vi.fn(async (params) => ({ ...DECODE_RESULT, timestampSeconds: params.timestampSeconds ?? 0 }))
     })
@@ -344,23 +344,54 @@ describe('inspect_video_frames', () => {
       {}
     )
     expect(result.isError).toBeFalsy()
-    // Hard cap = TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE (8).
-    expect(deps.decodeFrame).toHaveBeenCalledTimes(8)
-    expect(imageBlocks(result)).toHaveLength(8)
-    expect(result.mediaRefHints?.labels).toHaveLength(8)
+    // Hard cap = INSPECT_VIDEO_FRAMES_MAX (24).
+    expect(deps.decodeFrame).toHaveBeenCalledTimes(24)
+    expect(imageBlocks(result)).toHaveLength(24)
+    expect(result.mediaRefHints?.labels).toHaveLength(24)
+    // The result carries a per-call maxRefs hint so the dispatch seam emits all 24.
+    expect(result.mediaRefHints?.maxRefs).toBe(24)
   })
 
-  it('also clamps an explicit oversized timestamps array to 8', async () => {
+  it('clamps an explicit oversized timestamps array to the DEFAULT 8 when maxFrames is unset', async () => {
     const { executors, deps } = build({
       decodeFrame: vi.fn(async (params) => ({ ...DECODE_RESULT, timestampSeconds: params.timestampSeconds ?? 0 }))
     })
     const result = await executors.executeVtTool(
       'inspect_video_frames',
-      { inputPath: 'clip.mp4', timestamps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] },
+      { inputPath: 'clip.mp4', timestamps: Array.from({ length: 40 }, (_, i) => i) },
       {}
     )
     expect(result.isError).toBeFalsy()
+    // No maxFrames → the default 8 still applies (24 is a ceiling on an explicit ask).
     expect(deps.decodeFrame).toHaveBeenCalledTimes(8)
+  })
+
+  it('honors an explicit maxFrames up to 24 with an oversized timestamps array', async () => {
+    const { executors, deps } = build({
+      decodeFrame: vi.fn(async (params) => ({ ...DECODE_RESULT, timestampSeconds: params.timestampSeconds ?? 0 }))
+    })
+    const result = await executors.executeVtTool(
+      'inspect_video_frames',
+      { inputPath: 'clip.mp4', timestamps: Array.from({ length: 40 }, (_, i) => i), maxFrames: 24 },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    expect(deps.decodeFrame).toHaveBeenCalledTimes(24)
+  })
+
+  it('still defaults to 8 frames (and a maxRefs hint of 24) when maxFrames is unset', async () => {
+    const { executors, deps } = build({
+      decodeFrame: vi.fn(async (params) => ({ ...DECODE_RESULT, timestampSeconds: params.timestampSeconds ?? 0 }))
+    })
+    const result = await executors.executeVtTool(
+      'inspect_video_frames',
+      { inputPath: 'clip.mp4', everyNSeconds: 1 },
+      {}
+    )
+    expect(result.isError).toBeFalsy()
+    // Default stays 8 (a sensible scrub size); the cap is only a ceiling on explicit asks.
+    expect(deps.decodeFrame).toHaveBeenCalledTimes(8)
+    expect(result.mediaRefHints?.maxRefs).toBe(24)
   })
 
   it('rejects a missing inputPath before jailing', async () => {

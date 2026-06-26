@@ -66,6 +66,11 @@ export interface BuildAvMediaRefInput {
   durationMs?: number
   codecs?: string
   /**
+   * Optional human caption (e.g. inspect_audio_segment's `<m:ss>–<m:ss>` window range)
+   * surfaced under the card. PURE passthrough — only set when a non-empty string.
+   */
+  caption?: string
+  /**
    * Optional small poster/waveform preview (JPEG, ~320px, size-capped) so the
    * card isn't blank before playback. PURE passthrough — this builder does zero
    * IO; the caller (the producer) generates it via the injected `generatePoster`
@@ -108,6 +113,7 @@ export function buildAvMediaRef(input: BuildAvMediaRefInput): TranscriptMediaRef
   if (typeof input.byteLength === 'number' && Number.isFinite(input.byteLength)) ref.byteLength = input.byteLength
   if (typeof input.durationMs === 'number' && Number.isFinite(input.durationMs)) ref.durationMs = input.durationMs
   if (typeof input.codecs === 'string' && input.codecs.length > 0) ref.codecs = input.codecs
+  if (typeof input.caption === 'string' && input.caption.trim().length > 0) ref.caption = input.caption
   if (input.thumbnail && typeof input.thumbnail.dataBase64 === 'string' && input.thumbnail.dataBase64.length > 0) {
     ref.thumbnail = input.thumbnail
   }

@@ -1890,7 +1890,100 @@ const imageToolCallBudget = new ImageToolCallBudget()
 // image budget) since each call writes a content-addressed PNG asset.
 const audioToolExecutors = createAudioToolExecutors({
   engine: createNativeAudioEngine(),
-  resolveAudioSource
+  resolveAudioSource,
+  // inspect_audio_segment v2 — realpath-jail the source FILE (the daemon opens the path,
+  // not bytes). Reuse the audio validator (sniffs audio mime + realpath-jails to the
+  // workspace/grants), returning ONLY the real path (we don't need the decoded bytes here).
+  jailAudio: (args, ctx) => {
+    const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
+    const sourcePath = typeof args.sourcePath === 'string' ? args.sourcePath.trim() : ''
+    if (!sourcePath) return { ok: false, reason: 'provide sourcePath (a workspace audio file)' }
+    if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
+    const validation = validateWorkspaceAudioPath({
+      workspacePath: chat.workspacePath,
+      candidatePath: sourcePath,
+      externalPathGrants: normalizeExternalPathGrants(
+        collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+      )
+    })
+    return validation.ok ? { ok: true, realPath: validation.realPath } : { ok: false, reason: validation.reason }
+  },
+  // inspect_audio_segment v2 — slice a [startMs,endMs] WINDOW out of the (already-jailed)
+  // source into a standalone WAV via the daemon's native audio.windowClip, persist it to
+  // the content-addressed asset store, poster/peaks it, and BEST-EFFORT transcribe the
+  // windowed slice (Item 2 — caught here so a Speech-permission/locale failure NEVER fails
+  // the call). Mirrors the audio_mix producer lane (same staging→readOutput→persistOutput→
+  // generateAvPoster→finally removeFile), but with one source + a transcript step.
+  produceWindowClip: async (sourcePath, startMs, endMs) => {
+    const daemon = bridgeDaemonRef
+    if (!daemon) throw new Error('audio bridge daemon is not running')
+    const mimeType = 'audio/wav'
+    const outputPath = join(MEDIA_STAGING_DIR, `tw-${randomUUID()}.wav`)
+    fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
+    try {
+      // Round the integer-typed bounds: the daemon decodes startMs/endMs as Swift Int and
+      // rejects a fractional JSON value (12500.5) with invalidParams.
+      const clip = await mediaProcessLimiter.run(() =>
+        daemon.request<{ durationMs: number; sampleRate: number; channels: number; codec: string }>(
+          'audio.windowClip',
+          { sourcePath, startMs: Math.round(startMs), endMs: Math.round(endMs), outputPath },
+          { timeoutMs: 120_000 }
+        )
+      )
+      // Read with the per-mime cap (audio 64MB) BEFORE the heap read — same as the VtTool
+      // readOutput dep. A 120s clip stays well under it, but a malformed daemon result can't
+      // amplify into an oversized readFileSync.
+      const stat = fsSync.statSync(outputPath)
+      const cap = maxTranscriptMediaBytesForMime(mimeType)
+      if (stat.size > cap) throw new Error(`clip output too large (${stat.size} bytes; max ${cap})`)
+      const buffer = fsSync.readFileSync(outputPath)
+      if (!buffer || buffer.length === 0) throw new Error('audio engine produced an empty clip')
+      // Persist to the content-addressed store + get its canonical sha256 (same helper +
+      // store the image/AV lanes use, so the twmedia:// URL is byte-identical).
+      const sha256 = sha256Base64Url(buffer)
+      const persisted = getTranscriptMediaAssetStore().write({ sha256, mimeType, buffer })
+      if (!persisted.ok) throw new Error(`Failed to persist clip: ${persisted.reason}`)
+      // Best-effort poster/peaks BEFORE removeFile (the staging file must still exist).
+      const poster = await generateAvPoster(outputPath, 'audio', mimeType, buffer.length)
+      // Best-effort WINDOWED transcript (Item 2): transcribe the staging WAV. NEVER fail
+      // the call — a denied Speech permission / undownloaded locale model just omits it.
+      let transcript: string | undefined
+      let segments:
+        | Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+        | undefined
+      try {
+        const t = await mediaProcessLimiter.run(() =>
+          daemon.request<{
+            text: string
+            segments: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+            localeIdentifier: string
+            onDevice: boolean
+          }>('audio.transcribe', { sourcePath: outputPath }, { timeoutMs: 120_000 })
+        )
+        if (t && typeof t.text === 'string' && t.text.trim()) {
+          transcript = t.text
+          segments = Array.isArray(t.segments) ? t.segments : undefined
+        }
+      } catch {
+        // omit; permission/locale — the clip + peaks + levels still ride back.
+      }
+      return {
+        sha256,
+        byteLength: buffer.length,
+        durationMs: clip.durationMs,
+        peaks: poster?.peaks,
+        thumbnail: poster?.thumbnail,
+        transcript,
+        segments
+      }
+    } finally {
+      try {
+        fsSync.unlinkSync(outputPath)
+      } catch {
+        // best-effort staging cleanup
+      }
+    }
+  }
 })
 const audioToolCallBudget = new ImageToolCallBudget()
 const ffmpegToolCallBudget = new ImageToolCallBudget()
@@ -17206,6 +17299,10 @@ async function executeGeminiMcpTool(
         // hints are aligned to the image blocks above in content order; the host trusts
         // them because finalRichResult is main-side executor output, not provider stdout.
         hints: finalRichResult?.mediaRefHints,
+        // Per-call ref cap (e.g. inspect_video_frames's 24-frame filmstrip). A TRUSTED
+        // main-side hint — createToolResultMediaRefs ceiling-clamps it to 32 so even a
+        // forged value can't emit an unbounded number of refs. Absent → the default 8.
+        maxRefs: finalRichResult?.mediaRefHints?.maxRefs,
         assetWriter: ({ sha256, buffer, mimeType }) =>
           writeTranscriptMediaAsset({ sha256, buffer, mimeType })
       })

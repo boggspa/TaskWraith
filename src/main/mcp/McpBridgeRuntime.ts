@@ -124,6 +124,15 @@ export interface McpToolExecutionResult {
   // state by the host, bypassing the image-only provider sanitizer (kind!=='image' is
   // hard-dropped). Un-forgeable: only main-side executor code constructs this result.
   trustedMediaRefs?: TranscriptMediaRef[]
+  // Per-image-block presentation hints carried alongside `content` image blocks for the
+  // SANITIZED image lane (createToolResultMediaRefs). `labels[i]` becomes the caption of
+  // the ref built from the i-th image block (in content order); `groupKind` lets the
+  // renderer group a contiguous run of refs (e.g. `video_frames` → an NLE filmstrip).
+  // `maxRefs` raises the per-MESSAGE ref cap for THIS result only (a trusted main-side
+  // hint, ceiling-clamped at the dispatch seam) so e.g. a 24-frame filmstrip isn't cut to
+  // the global default of 8. Purely cosmetic — the bytes still ride the sniffed, size-capped
+  // image spine. MUST stay in sync with the mirror on index.types.ts's McpToolExecutionResult.
+  mediaRefHints?: { groupKind?: string; labels?: string[]; maxRefs?: number }
 }
 
 export interface McpToolDefinition {

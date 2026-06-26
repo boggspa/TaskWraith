@@ -11,6 +11,13 @@ import type {
 export const TRANSCRIPT_MEDIA_MAX_TOOL_IMAGE_BYTES = 8 * 1024 * 1024
 export const TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES = 12 * 1024 * 1024
 export const TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE = 8
+/**
+ * Absolute ceiling on a per-call `maxRefs` override. A caller (the trusted main-side
+ * dispatch seam) may raise the per-message ref cap above the default 8 (e.g. a 24-frame
+ * inspect_video_frames filmstrip), but the override is HARD-clamped to this ceiling so a
+ * forged/oversized hint can't make one message emit an unbounded number of refs.
+ */
+export const TRANSCRIPT_MEDIA_MAX_REFS_CEILING = 32
 
 const RASTER_IMAGE_MIME_TYPES = new Set([
   'image/png',
@@ -58,9 +65,11 @@ export interface CreateToolResultMediaRefsOptions {
    * Optional per-image-block presentation hints from the (trusted, main-side) tool
    * result. `labels[i]` becomes the `caption` of the ref built from the i-th image block
    * (in `blocks` order); `groupKind` is stamped onto every produced ref so the renderer
-   * can group a contiguous run (e.g. `video_frames` → an NLE filmstrip). Cosmetic only.
+   * can group a contiguous run (e.g. `video_frames` → an NLE filmstrip). `maxRefs` is a
+   * convenience mirror of the top-level `maxRefs` (the dispatch seam passes the hint here);
+   * when both are set the top-level one wins. Cosmetic only.
    */
-  hints?: { groupKind?: string; labels?: string[] }
+  hints?: { groupKind?: string; labels?: string[]; maxRefs?: number }
 }
 
 export interface CreateWorkspacePathMediaRefsOptions {
@@ -440,9 +449,21 @@ export function createToolResultMediaRefs({
   thumbnailer = defaultTranscriptMediaThumbnailer,
   assetWriter,
   maxBytes = TRANSCRIPT_MEDIA_MAX_TOOL_IMAGE_BYTES,
-  maxRefs = TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE,
+  maxRefs,
   hints
 }: CreateToolResultMediaRefsOptions): TranscriptMediaRef[] {
+  // Resolve the effective per-message cap. The top-level `maxRefs` is primary; the
+  // `hints.maxRefs` mirror only applies when no top-level value was passed. A non-finite
+  // / < 1 value falls back to the default (8), and the result is HARD-clamped to
+  // TRANSCRIPT_MEDIA_MAX_REFS_CEILING (32) so a forged main-side hint can't blow up the
+  // ref count. Every non-filmstrip path passes no override → 8. (Note: NOT a destructure
+  // default — that would swallow the "was it explicitly passed?" signal the mirror needs.)
+  const overrideMaxRefs = maxRefs ?? hints?.maxRefs
+  const requestedMaxRefs =
+    typeof overrideMaxRefs === 'number' && Number.isFinite(overrideMaxRefs) && overrideMaxRefs >= 1
+      ? Math.floor(overrideMaxRefs)
+      : TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE
+  const effectiveMaxRefs = Math.min(requestedMaxRefs, TRANSCRIPT_MEDIA_MAX_REFS_CEILING)
   const refs: TranscriptMediaRef[] = []
   const sourceSegment = source === 'generated' ? 'generated-image' : 'tool-image'
   // `groupKind` (when present) is stamped on every produced ref; `labels` align to the
@@ -457,7 +478,7 @@ export function createToolResultMediaRefs({
   }
   let blockIndex = -1
   for (const rawBlock of blocks) {
-    if (refs.length >= maxRefs) break
+    if (refs.length >= effectiveMaxRefs) break
     const block = imageBlockFromUnknown(rawBlock)
     if (!block) continue
     blockIndex += 1

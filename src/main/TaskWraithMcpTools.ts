@@ -174,10 +174,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   // drive-the-real-app path can't give. Reads a path-jailed workspace file;
   // gated as a file change (writes a waveform asset).
   'audio_analyze',
-  // audio_analyze restricted to a [startMs,endMs] WINDOW — a DAW-style waveform strip
-  // + levels of a sub-range. Same offscreen Web Audio engine + path-jailed read as
-  // audio_analyze, but renders/measures only the windowed slice. Non-mutating, no file
-  // output, read-only-safe (orchestration). See src/main/mcp/AudioToolExecutors.ts.
+  // Cut a [startMs,endMs] WINDOW of a workspace audio file into a PLAYABLE, content-
+  // addressed WAV clip (waveform peaks + best-effort on-device transcript) that rides
+  // the TRUSTED AV media_refs channel and renders as an interactive player. Slices via
+  // the daemon's native audio.windowClip; path-jailed read. Content-addresses the
+  // INTERNAL asset store only (no workspace file) → read-only-safe (orchestration). See
+  // src/main/mcp/AudioToolExecutors.ts.
   'inspect_audio_segment',
   // Analyze a workspace media file with the user-installed ffprobe (S1b): codec,
   // dimensions, fps, duration, rotation, HDR, channels — over a realpath-jailed

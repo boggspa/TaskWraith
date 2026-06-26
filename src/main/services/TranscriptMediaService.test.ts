@@ -9,6 +9,8 @@ import {
   extractMcpImageBlocksFromRawResult,
   extractProviderImageBlocksFromRawEvent,
   sniffImageMime,
+  TRANSCRIPT_MEDIA_MAX_REFS_CEILING,
+  TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE,
   validateWorkspaceImagePath
 } from './TranscriptMediaService'
 
@@ -115,6 +117,69 @@ describe('TranscriptMediaService', () => {
     })
     expect(refs[0].caption).toBeUndefined()
     expect(refs[0].groupKind).toBeUndefined()
+  })
+
+  // A run of N identical image blocks (the inspect_video_frames filmstrip shape).
+  function imageBlocks(n: number) {
+    return Array.from({ length: n }, () => ({ type: 'image' as const, mimeType: 'image/png', data: PNG_1X1_BASE64 }))
+  }
+
+  it('caps refs at the default of 8 when no maxRefs override is given', () => {
+    const refs = createToolResultMediaRefs({
+      messageId: 'msg-default',
+      toolName: 'inspect_video_frames',
+      blocks: imageBlocks(20),
+      thumbnailer: () => ({ dataBase64: 'thumb', mimeType: 'image/jpeg' })
+    })
+    expect(refs).toHaveLength(TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE)
+    expect(TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE).toBe(8)
+  })
+
+  it('honors a per-call maxRefs override above the default (e.g. a 24-frame filmstrip)', () => {
+    const refs = createToolResultMediaRefs({
+      messageId: 'msg-24',
+      toolName: 'inspect_video_frames',
+      blocks: imageBlocks(24),
+      thumbnailer: () => ({ dataBase64: 'thumb', mimeType: 'image/jpeg' }),
+      maxRefs: 24
+    })
+    expect(refs).toHaveLength(24)
+  })
+
+  it('also honors maxRefs supplied via the hints mirror', () => {
+    const refs = createToolResultMediaRefs({
+      messageId: 'msg-hints-24',
+      toolName: 'inspect_video_frames',
+      blocks: imageBlocks(24),
+      thumbnailer: () => ({ dataBase64: 'thumb', mimeType: 'image/jpeg' }),
+      hints: { groupKind: 'video_frames', maxRefs: 24 }
+    })
+    expect(refs).toHaveLength(24)
+  })
+
+  it('CEILING-clamps a forged/oversized maxRefs to 32 (a hostile hint cannot blow up the count)', () => {
+    const refs = createToolResultMediaRefs({
+      messageId: 'msg-forged',
+      toolName: 'inspect_video_frames',
+      blocks: imageBlocks(100),
+      thumbnailer: () => ({ dataBase64: 'thumb', mimeType: 'image/jpeg' }),
+      maxRefs: 9999
+    })
+    expect(refs).toHaveLength(TRANSCRIPT_MEDIA_MAX_REFS_CEILING)
+    expect(TRANSCRIPT_MEDIA_MAX_REFS_CEILING).toBe(32)
+  })
+
+  it('falls back to the default for a non-finite / < 1 maxRefs', () => {
+    for (const bad of [0, -5, NaN, Infinity]) {
+      const refs = createToolResultMediaRefs({
+        messageId: `msg-bad-${bad}`,
+        toolName: 'inspect_video_frames',
+        blocks: imageBlocks(20),
+        thumbnailer: () => ({ dataBase64: 'thumb', mimeType: 'image/jpeg' }),
+        maxRefs: bad
+      })
+      expect(refs).toHaveLength(TRANSCRIPT_MEDIA_MAX_REFS_PER_MESSAGE)
+    }
   })
 
   it('extracts nested MCP image blocks from raw result envelopes', () => {

@@ -380,6 +380,162 @@ enum AudioMixer {
         )
     }
 
+    // MARK: - Window clip (inspect_audio_segment)
+
+    /// `audio.windowClip` result. FIXED shape the TS staging-read path consumes:
+    /// `durationMs`(Int) / `sampleRate`(Int) / `channels`(Int) / `codec`(String).
+    /// The codec is the TRUE writer output — `writeWAV` emits 16-bit PCM, so this is
+    /// always `"pcm_s16le"` (not a claim; it's what we wrote).
+    struct WindowClipResult: Sendable {
+        let durationMs: Int
+        let sampleRate: Int
+        let channels: Int
+        let codec: String
+
+        func toJSONObject() -> [String: Any] {
+            return [
+                "durationMs": durationMs,
+                "sampleRate": sampleRate,
+                "channels": channels,
+                "codec": codec
+            ]
+        }
+    }
+
+    /// Cut a `[startMs, endMs]` WINDOW out of one source and write it as a standalone
+    /// 16-bit PCM WAV at `outputPath` (a TS-owned staging path the TS side reads +
+    /// deletes). REUSES `mixdown`'s decode (`AVAudioFile.processingFormat` → planar
+    /// float32 at the file's NATIVE rate), the exact frame-math (`offsetMs` placement
+    /// style), and `writeWAV` verbatim (incl. TPDF dither) — no second WAV writer.
+    ///
+    /// Frame bounds (computed against the DECODED sample rate, mirroring mixdown):
+    ///   frameStart = floor(startMs * sr / 1000), clamped to [0, length]
+    ///   frameEnd   = floor(endMs   * sr / 1000), clamped to [0, length], forced > frameStart
+    /// An empty/degenerate window (after clamping to the file length) → `.badInput`.
+    ///
+    /// - Parameters:
+    ///   - sourcePath: the (TS-jailed) source audio file to slice.
+    ///   - startMs/endMs: the window bounds (ms; the TS side already validated finite,
+    ///     0 <= startMs < endMs, and span <= 120s — we re-clamp defensively here too).
+    ///   - outputPath: where to WRITE the windowed WAV (TS reads + deletes it).
+    static func windowClip(
+        sourcePath: String,
+        startMs: Int,
+        endMs: Int,
+        outputPath: String
+    ) async throws -> WindowClipResult {
+        let url = URL(fileURLWithPath: sourcePath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw AudioMixError.badInput("source file does not exist: \(sourcePath)")
+        }
+
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(forReading: url)
+        } catch {
+            throw AudioMixError.badInput(
+                "unreadable/unsupported source \(sourcePath): \(error.localizedDescription)"
+            )
+        }
+
+        // processingFormat is float32 deinterleaved at the file's NATIVE rate (decodeAudio
+        // resamples to this rate). Frame bounds are computed against THIS rate.
+        let pf = file.processingFormat
+        let sampleRate = Int(pf.sampleRate.rounded())
+        guard sampleRate > 0 else {
+            throw AudioMixError.mixFailed("source reported a non-positive sample rate")
+        }
+        let srcChannels = Int(pf.channelCount)
+        guard srcChannels >= 1, srcChannels <= 2 else {
+            throw AudioMixError.badInput(
+                "source \(sourcePath) has \(srcChannels) channels; only 1 or 2 are supported"
+            )
+        }
+
+        let length = file.length // AVAudioFramePosition (Int64), total frames
+        guard length > 0 else {
+            throw AudioMixError.badInput("source has zero audio frames: \(sourcePath)")
+        }
+
+        // Memory cap: reuse mixdown's 1 GiB decode ceiling on the source's float planes.
+        let decodeBytes = length &* Int64(srcChannels) &* 4
+        if decodeBytes > MIX_MAX_TOTAL_DECODE_BYTES {
+            throw AudioMixError.badInput(
+                "source too large: decoded audio exceeds \(MIX_MAX_TOTAL_DECODE_BYTES) bytes"
+            )
+        }
+
+        // Frame-math: floor(ms * sr / 1000), clamped to [0, length], frameEnd > frameStart.
+        // Use Double then floor (mirrors mixdown's placement computation), and clamp BOTH
+        // ends to the actual file length so an over-long window simply hits EOF.
+        let rawStart = Int64((Double(max(0, startMs)) * Double(sampleRate) / 1000.0).rounded(.down))
+        let rawEnd = Int64((Double(max(0, endMs)) * Double(sampleRate) / 1000.0).rounded(.down))
+        let frameStart = min(max(0, rawStart), length)
+        let frameEnd = min(max(0, rawEnd), length)
+        guard frameEnd > frameStart else {
+            throw AudioMixError.badInput(
+                "window [\(startMs)ms, \(endMs)ms] is empty after clamping to the \(length)-frame source")
+        }
+        let windowFrames = frameEnd - frameStart
+
+        // Decode the WHOLE source into one planar buffer, then slice. (A read into a
+        // capacity-(length) buffer mirrors mixdown; we copy out the [frameStart,frameEnd)
+        // span per channel into fresh planes the writer owns.)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: pf,
+            frameCapacity: AVAudioFrameCount(length)
+        ) else {
+            throw AudioMixError.mixFailed("could not allocate a decode buffer for \(sourcePath)")
+        }
+        do {
+            try file.read(into: buffer)
+        } catch {
+            throw AudioMixError.mixFailed("failed to decode \(sourcePath): \(error.localizedDescription)")
+        }
+        let readFrames = Int64(buffer.frameLength)
+        guard readFrames > 0, let srcPlanes = buffer.floatChannelData else {
+            throw AudioMixError.mixFailed("decoded zero usable frames from \(sourcePath)")
+        }
+        // The window must fit inside what was actually read (a short read clamps it).
+        let safeEnd = min(frameEnd, readFrames)
+        guard safeEnd > frameStart else {
+            throw AudioMixError.badInput("window starts at/after end of decoded audio")
+        }
+        let copyFrames = safeEnd - frameStart
+
+        // Build per-channel float planes holding ONLY the windowed slice. writeWAV takes
+        // `[UnsafeMutablePointer<Float>]` (one per channel) + a frame count; we own these
+        // and free them after the write.
+        var slicePlanes: [UnsafeMutablePointer<Float>] = []
+        slicePlanes.reserveCapacity(srcChannels)
+        for _ in 0..<srcChannels {
+            slicePlanes.append(UnsafeMutablePointer<Float>.allocate(capacity: Int(copyFrames)))
+        }
+        defer { for p in slicePlanes { p.deallocate() } }
+        for c in 0..<srcChannels {
+            let src = srcPlanes[c].advanced(by: Int(frameStart))
+            slicePlanes[c].update(from: src, count: Int(copyFrames))
+        }
+
+        // Reuse the EXACT same WAV writer as mixdown (16-bit PCM, TPDF dither). No new
+        // writer path — `writeWAV` mutates the planes in-place (dither) then quantizes.
+        try writeWAV(
+            outputPath: outputPath,
+            planes: slicePlanes,
+            channels: srcChannels,
+            frames: copyFrames,
+            sampleRate: sampleRate
+        )
+
+        let durationMs = Int((Double(copyFrames) * 1000.0 / Double(sampleRate)).rounded())
+        return WindowClipResult(
+            durationMs: durationMs,
+            sampleRate: sampleRate,
+            channels: srcChannels,
+            codec: "pcm_s16le"
+        )
+    }
+
     /// Per-source scalar metadata, paired 1:1 with `channelPtrStorage` when
     /// building the `TWMixSource[]` inside the pinned-pointer scope.
     private struct MixMeta {
