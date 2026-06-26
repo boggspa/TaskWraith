@@ -137,9 +137,9 @@ export class HumanCollaborationStore {
       expiresAt: now + (args.inviteTtlMs ?? DEFAULT_INVITE_TTL_MS),
       roomId
     }
-    // Prune invites that are both consumed AND well past expiry (createShare is
-    // the only place invites accrue), so the list can't grow without bound over
-    // a long-lived share. A fresh/unconsumed/in-grace invite is always kept.
+    // Prune invites well past expiry — consumed or not (createShare is the only
+    // place invites accrue), so the list can't grow without bound over a
+    // long-lived share. Fresh/not-yet-expired and in-grace invites are kept.
     share.invites = [...share.invites.filter((existingInvite) => !isDeadInvite(existingInvite, now)), invite]
 
     if (!existing) this.memory.shares.push(share)
@@ -427,11 +427,13 @@ function idempotencyKey(collaboratorId: string, clientMessageId: string): string
   return `${collaboratorId}:${clientMessageId}`
 }
 
-// An invite is "dead" (safe to prune) once it has been consumed AND its expiry
-// is more than the retention grace in the past. Unconsumed invites are kept
-// until they expire and consumed-but-recent ones are kept through the grace.
+// An invite is "dead" (safe to prune) once its expiry is more than the
+// retention grace in the past — for BOTH consumed and unconsumed invites. An
+// unconsumed invite can no longer admit anyone past its expiry, so it is just
+// as dead as a consumed one; keeping it only leaks a stale relay seat on boot
+// re-open. Not-yet-expired invites and consumed-but-recent ones (within the
+// grace, for the ledger/UI) are kept.
 function isDeadInvite(invite: HumanCollaborationInvite, now: number): boolean {
-  if (typeof invite.consumedAt !== 'number') return false
   return invite.expiresAt < now - CONSUMED_INVITE_RETENTION_MS
 }
 

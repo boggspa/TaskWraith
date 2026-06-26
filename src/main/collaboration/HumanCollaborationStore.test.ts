@@ -272,4 +272,24 @@ describe('HumanCollaborationStore', () => {
     expect(share?.invites.length).toBe(1)
     expect(share?.invites[0]?.consumedAt).toBeUndefined()
   })
+
+  it('prunes unconsumed invites that are long past expiry on the next createShare', () => {
+    const store = new HumanCollaborationStore()
+    const first = store.createShare({
+      chatId: 'chat-1',
+      mode: 'comments',
+      now: 1000,
+      inviteTtlMs: 1000
+    })
+    // The first invite is NEVER consumed; it simply expired (at 2000) and the
+    // 24h retention grace has elapsed. It can no longer admit anyone, so minting
+    // a fresh invite on the same share drops the dead one (was kept forever).
+    const dayMs = 24 * 60 * 60 * 1000
+    store.createShare({ chatId: 'chat-1', mode: 'comments', now: 2000 + dayMs + 1 })
+    const share = store.getShare(first.share.shareId)
+    expect(share?.invites.length).toBe(1)
+    expect(share?.invites[0]?.consumedAt).toBeUndefined()
+    // The surviving invite is the fresh one, not the long-expired original.
+    expect(share?.invites[0]?.expiresAt).toBeGreaterThan(2000 + dayMs)
+  })
 })

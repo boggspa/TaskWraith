@@ -22797,8 +22797,13 @@ if (isGeminiMcpBridgeProcess) {
     const reopenCollaborationRooms = (): void => {
       const hostRelay = collaborationHostRelayUrl()
       if (!hostRelay) return
-      const dayMs = 24 * 60 * 60 * 1000
       const now = Date.now()
+      // Re-open the host's mac-seat ONLY for invites a NEW collaborator can
+      // still consume: unconsumed AND not-yet-expired. Boot re-open does NOT
+      // resume an already-joined collaborator — that session was in-memory and
+      // is gone after a restart, and the invite it consumed can no longer
+      // re-admit (RESUME-1). So a consumed or expired invite's room would just
+      // hold a dead relay seat for the process lifetime.
       const liveInvites = humanCollaborationStore
         .listShares()
         .filter((share) => share.enabled)
@@ -22806,7 +22811,8 @@ if (isGeminiMcpBridgeProcess) {
         .filter(
           (invite) =>
             typeof invite.roomId === 'string' &&
-            !(typeof invite.consumedAt === 'number' && invite.expiresAt < now - dayMs)
+            typeof invite.consumedAt !== 'number' &&
+            invite.expiresAt > now
         )
       if (liveInvites.length === 0) return
       getHumanCollaborationRuntime() // construct runtime + transport
