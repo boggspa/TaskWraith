@@ -48,6 +48,7 @@ import { ProviderGlyph } from './icons/ProviderGlyph'
 import { isSubThreadChat } from '../lib/chatScope'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
+import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 
 const ageTickListeners = new Set<() => void>()
 if (typeof window !== 'undefined') {
@@ -194,7 +195,15 @@ interface SidebarProps {
   /** Opens the iPhone/iPad pairing sheet (QR + JSON). When undefined
    * the remote-connection icon falls back to opening Settings →
    * Bridge Networking as a discoverability hint. */
-  onShowPairingSheet?: () => void
+  /** Deep-link to a specific Settings tab — used by the footer control
+   * popovers (Approvals / Shares / Devices), each of which has a bottom nav
+   * item that opens the matching tab. Falls back to the generic Settings
+   * opener when omitted. */
+  onOpenSettingsTab?: (tab: 'pairing' | 'approval-ledger' | 'shares') => void
+  /** Per-chat head-of-queue agent approvals. Drives the Approvals footer
+   * button's red glow and the pending list inside its popover. Sparse — only
+   * chats with a live approval appear (see usePerChatState). */
+  pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
   /**
    * Model Usage card View-B ("API spend") inputs, forwarded to
    * `ModelUsageCard`. Bundles the rate table + display-currency settings
@@ -205,6 +214,10 @@ interface SidebarProps {
 }
 
 interface PairedRemoteDeviceSummary {
+  iphoneIdentityPubKey: string
+  pairId: string
+  controllerDisplayName: string
+  pairedAt: string
   connected: boolean
 }
 
@@ -489,6 +502,50 @@ function RemoteConnectionSymbolIcon() {
         <path d="M4.2 4.2a5.3 5.3 0 0 1 7.6 0" />
         <path d="M5.6 5.7a3.4 3.4 0 0 1 4.8 0" />
         <path d="M6.8 7.1a1.7 1.7 0 0 1 2.4 0" />
+      </svg>
+    </span>
+  )
+}
+
+// Shield + check — mirrors the Settings → "Approvals & Grants" tab glyph so the
+// footer Approvals button reads as the same surface.
+function ApprovalsShieldIcon() {
+  return (
+    <span className="sf-symbol-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M8 2.2 12.8 4v3.4c0 3-1.8 5.2-4.8 6.4-3-1.2-4.8-3.4-4.8-6.4V4Z" />
+        <path d="m5.8 8 1.4 1.4 3-3.2" />
+      </svg>
+    </span>
+  )
+}
+
+// Share-fan: one source node linking out to two recipients. Distinct from the
+// People (two-person) glyph and the shield — reads as "this thread is shared
+// out to others".
+function ShareNetworkIcon() {
+  return (
+    <span className="sf-symbol-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="8" cy="3.7" r="1.85" />
+        <circle cx="3.9" cy="12.1" r="1.85" />
+        <circle cx="12.1" cy="12.1" r="1.85" />
+        <path d="M6.8 5.2 5.1 10.5" />
+        <path d="M9.2 5.2 10.9 10.5" />
       </svg>
     </span>
   )
@@ -1507,6 +1564,110 @@ function getLastRunStatus(
   return { label: run.status || 'Completed', tone: 'muted' }
 }
 
+// Shared shell for the three footer control popovers (Approvals / Shares /
+// Devices). Mirrors the SidebarSettingsMenu philosophy: a small anchored panel
+// whose body lists live state and whose bottom item deep-links to the matching
+// Settings tab. Anchored to the right of the footer control cluster (see CSS)
+// so it stays inside the sidebar regardless of which button opened it.
+function SidebarFooterPopover({
+  title,
+  navLabel,
+  onNav,
+  ariaLabel,
+  children
+}: {
+  title: string
+  navLabel: string
+  onNav: () => void
+  ariaLabel?: string
+  children?: ReactNode
+}) {
+  return (
+    <div
+      className="sidebar-footer-popover"
+      role="menu"
+      aria-label={ariaLabel ?? title}
+      onKeyDown={moveMenuFocus}
+    >
+      <div className="sidebar-footer-popover-title">{title}</div>
+      <div className="sidebar-footer-popover-body">{children}</div>
+      <div className="sidebar-settings-menu-divider" aria-hidden />
+      <button
+        type="button"
+        className="sidebar-settings-menu-item sidebar-footer-popover-nav"
+        onClick={onNav}
+      >
+        <span className="sidebar-settings-menu-item-label">{navLabel}</span>
+        <MenuChevronIcon />
+      </button>
+    </div>
+  )
+}
+
+// Approvals popover — pending agent approvals stacked newest-first, then the
+// most recent resolved decisions, then a deep-link to Settings → Approvals &
+// Grants. Body fleshed out in a later slice; the scaffold proves open/close +
+// nav. `onJumpToChat` navigates the host to the thread holding an approval.
+function ApprovalsFooterPopover({
+  onOpenSettings
+}: {
+  pendingApprovals?: AgentApprovalRequest[]
+  onJumpToChat?: (chatId: string) => void
+  onOpenSettings: () => void
+}) {
+  return (
+    <SidebarFooterPopover
+      title="Approvals"
+      ariaLabel="Pending and recent approvals"
+      navLabel="Approvals & Grants"
+      onNav={onOpenSettings}
+    >
+      <div className="sidebar-footer-popover-empty">No pending approvals</div>
+    </SidebarFooterPopover>
+  )
+}
+
+// Shares popover — active shared chats with per-share participants / mode /
+// status and a revoke affordance, then a deep-link to Settings → Shares. Body
+// fleshed out in a later slice.
+function SharesFooterPopover({
+  onOpenSettings
+}: {
+  onOpenSettings: () => void
+}) {
+  return (
+    <SidebarFooterPopover
+      title="Shares"
+      ariaLabel="Active shared chats"
+      navLabel="Manage shares"
+      onNav={onOpenSettings}
+    >
+      <div className="sidebar-footer-popover-empty">No active shares</div>
+    </SidebarFooterPopover>
+  )
+}
+
+// Devices popover — up to five paired devices with a connected/idle LED, or an
+// empty state, then a deep-link to Settings → Devices. Body fleshed out in a
+// later slice.
+function DevicesFooterPopover({
+  onOpenSettings
+}: {
+  devices?: PairedRemoteDeviceSummary[]
+  onOpenSettings: () => void
+}) {
+  return (
+    <SidebarFooterPopover
+      title="Devices"
+      ariaLabel="Paired devices"
+      navLabel="Manage devices"
+      onNav={onOpenSettings}
+    >
+      <div className="sidebar-footer-popover-empty">No paired devices</div>
+    </SidebarFooterPopover>
+  )
+}
+
 export function Sidebar({
   workspaces,
   currentWorkspace,
@@ -1557,13 +1718,30 @@ export function Sidebar({
   onCancelWorkflowExecution,
   onDeleteWorkflow,
   onSetWorkflowUnattended,
-  onShowPairingSheet,
+  onOpenSettingsTab,
+  pendingAgentApprovalByChatId = {},
   modelUsageApiSpend
 }: SidebarProps) {
   const [hoveredWorkspace, setHoveredWorkspace] = useState<string | null>(null)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [settingsMenuPane, setSettingsMenuPane] = useState<SidebarSettingsMenuPane>('root')
+  // Footer control-row popovers (Approvals / Shares / Devices). At most one is
+  // open at a time — each button's onClick closes the others (and the settings
+  // menu) before toggling itself.
+  const [approvalsPopoverOpen, setApprovalsPopoverOpen] = useState(false)
+  const [sharesPopoverOpen, setSharesPopoverOpen] = useState(false)
+  const [devicesPopoverOpen, setDevicesPopoverOpen] = useState(false)
+  // Deep-link helper for the footer popovers' bottom nav items. Falls back to
+  // the generic Settings opener for any caller that hasn't wired the tab-aware
+  // callback (keeps the prop optional).
+  const openSettingsTab = useCallback(
+    (tab: 'pairing' | 'approval-ledger' | 'shares') => {
+      if (onOpenSettingsTab) onOpenSettingsTab(tab)
+      else onOpenSettings()
+    },
+    [onOpenSettingsTab, onOpenSettings]
+  )
   /*
    * 1.0.5-SB5 — Drag-and-drop pinning state. `draggedChatId`
    * carries the id of the chat currently being dragged so the
@@ -1593,12 +1771,18 @@ export function Sidebar({
   // menu portal, etc.).
   const newMenuWrapRef = useRef<HTMLDivElement | null>(null)
   const settingsMenuWrapRef = useRef<HTMLDivElement | null>(null)
+  // One wrap around the whole footer control cluster (Approvals/Shares/Devices
+  // buttons + their popovers) so a single outside-click/Escape listener
+  // dismisses whichever popover is open. The popovers anchor to this cluster's
+  // right edge, keeping them inside the sidebar regardless of which opened.
+  const footerControlsWrapRef = useRef<HTMLDivElement | null>(null)
   // Ref to the sidebar search <input> so the local Cmd/Ctrl+F shortcut
   // (the "⌘F" hint next to the field) can focus it. Kept Sidebar-local —
   // App.tsx owns no part of this binding.
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const [sidebarSearch, setSidebarSearch] = useState('')
   const [remoteDeviceConnected, setRemoteDeviceConnected] = useState(false)
+  const [pairedDevices, setPairedDevices] = useState<PairedRemoteDeviceSummary[]>([])
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(EXPANDED_WORKSPACES_STORAGE_KEY)
@@ -2021,6 +2205,34 @@ export function Sidebar({
     }
   }, [settingsMenuOpen])
 
+  // Outside-click / Escape dismissal for the footer control popovers. A single
+  // listener covers all three: any click outside the control cluster closes
+  // whichever is open; Escape closes all.
+  useEffect(() => {
+    if (!approvalsPopoverOpen && !sharesPopoverOpen && !devicesPopoverOpen) return
+    const handleMouseDown = (event: globalThis.MouseEvent) => {
+      const wrap = footerControlsWrapRef.current
+      if (!wrap) return
+      if (event.target instanceof Node && wrap.contains(event.target)) return
+      setApprovalsPopoverOpen(false)
+      setSharesPopoverOpen(false)
+      setDevicesPopoverOpen(false)
+    }
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setApprovalsPopoverOpen(false)
+        setSharesPopoverOpen(false)
+        setDevicesPopoverOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [approvalsPopoverOpen, sharesPopoverOpen, devicesPopoverOpen])
+
   useEffect(() => {
     if (!IOS_REMOTE_ENABLED) {
       setRemoteDeviceConnected(false)
@@ -2031,10 +2243,15 @@ export function Sidebar({
       try {
         const devices = (await window.api.bridgeListPairedDevices()) as PairedRemoteDeviceSummary[]
         if (!cancelled) {
-          setRemoteDeviceConnected((devices ?? []).some((device) => device.connected))
+          const list = devices ?? []
+          setPairedDevices(list)
+          setRemoteDeviceConnected(list.some((device) => device.connected))
         }
       } catch {
-        if (!cancelled) setRemoteDeviceConnected(false)
+        if (!cancelled) {
+          setPairedDevices([])
+          setRemoteDeviceConnected(false)
+        }
       }
     }
     void refreshRemoteDevices()
@@ -3889,6 +4106,9 @@ export function Sidebar({
             <button
               className="sidebar-footer-settings"
               onClick={() => {
+                setApprovalsPopoverOpen(false)
+                setSharesPopoverOpen(false)
+                setDevicesPopoverOpen(false)
                 setSettingsMenuOpen((current) => !current)
                 setSettingsMenuPane('root')
               }}
@@ -3917,29 +4137,96 @@ export function Sidebar({
               />
             )}
           </div>
-          {IOS_REMOTE_ENABLED && (
+          {/* Traffic-light control cluster: Approvals (red) / Shares (yellow) /
+              Devices (green). Each opens a popover anchored to this cluster's
+              right edge; the bottom item deep-links to the matching Settings
+              tab. Settings stays flex:1 so it dominates the row. */}
+          <div className="sidebar-footer-controls" ref={footerControlsWrapRef}>
             <button
               type="button"
-              className={`sidebar-footer-remote${remoteDeviceConnected ? ' is-connected' : ''}`}
-              onClick={onShowPairingSheet ?? onOpenSettings}
-              title={
-                remoteDeviceConnected
-                  ? 'Remote device connected'
-                  : onShowPairingSheet
-                    ? 'Pair iPhone / iPad'
-                    : 'Remote connection (Settings)'
-              }
-              aria-label={
-                remoteDeviceConnected
-                  ? 'Open remote connection settings, device connected'
-                  : onShowPairingSheet
-                    ? 'Pair iPhone or iPad'
-                    : 'Open remote connection settings'
-              }
+              className={`sidebar-footer-icon-btn${
+                Object.values(pendingAgentApprovalByChatId).some((value) => value != null)
+                  ? ' glow-red'
+                  : ''
+              }${approvalsPopoverOpen ? ' is-open' : ''}`}
+              onClick={() => {
+                setSettingsMenuOpen(false)
+                setSharesPopoverOpen(false)
+                setDevicesPopoverOpen(false)
+                setApprovalsPopoverOpen((open) => !open)
+              }}
+              title="Approvals"
+              aria-label="Approvals"
+              aria-haspopup="menu"
+              aria-expanded={approvalsPopoverOpen}
             >
-              <RemoteConnectionSymbolIcon />
+              <ApprovalsShieldIcon />
             </button>
-          )}
+            <button
+              type="button"
+              className={`sidebar-footer-icon-btn${
+                collaboratingChatIds.size > 0 ? ' glow-yellow' : ''
+              }${sharesPopoverOpen ? ' is-open' : ''}`}
+              onClick={() => {
+                setSettingsMenuOpen(false)
+                setApprovalsPopoverOpen(false)
+                setDevicesPopoverOpen(false)
+                setSharesPopoverOpen((open) => !open)
+              }}
+              title="Shares"
+              aria-label="Shares"
+              aria-haspopup="menu"
+              aria-expanded={sharesPopoverOpen}
+            >
+              <ShareNetworkIcon />
+            </button>
+            {IOS_REMOTE_ENABLED && (
+              <button
+                type="button"
+                className={`sidebar-footer-icon-btn${
+                  remoteDeviceConnected ? ' glow-green' : ''
+                }${devicesPopoverOpen ? ' is-open' : ''}`}
+                onClick={() => {
+                  setSettingsMenuOpen(false)
+                  setApprovalsPopoverOpen(false)
+                  setSharesPopoverOpen(false)
+                  setDevicesPopoverOpen((open) => !open)
+                }}
+                title={remoteDeviceConnected ? 'Devices — connected' : 'Devices'}
+                aria-label={remoteDeviceConnected ? 'Devices, a device is connected' : 'Devices'}
+                aria-haspopup="menu"
+                aria-expanded={devicesPopoverOpen}
+              >
+                <RemoteConnectionSymbolIcon />
+              </button>
+            )}
+
+            {approvalsPopoverOpen && (
+              <ApprovalsFooterPopover
+                onOpenSettings={() => {
+                  setApprovalsPopoverOpen(false)
+                  openSettingsTab('approval-ledger')
+                }}
+              />
+            )}
+            {sharesPopoverOpen && (
+              <SharesFooterPopover
+                onOpenSettings={() => {
+                  setSharesPopoverOpen(false)
+                  openSettingsTab('shares')
+                }}
+              />
+            )}
+            {devicesPopoverOpen && (
+              <DevicesFooterPopover
+                devices={pairedDevices}
+                onOpenSettings={() => {
+                  setDevicesPopoverOpen(false)
+                  openSettingsTab('pairing')
+                }}
+              />
+            )}
+          </div>
         </div>
         <AppShellStatsToolbar />
       </div>

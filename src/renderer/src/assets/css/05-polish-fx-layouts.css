@@ -2533,7 +2533,19 @@
   opacity: 1;
 }
 
-.sidebar-footer-remote {
+/* Footer control cluster — three icon buttons (Approvals / Shares / Devices),
+   each opening a popover. They share a base look; a per-button glow class
+   signals state (red = pending approval, yellow = active share, green = device
+   connected). Replaces the old single `.sidebar-footer-remote` button. */
+.sidebar-footer-controls {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex: 0 0 auto;
+}
+
+.sidebar-footer-icon-btn {
   appearance: none;
   -webkit-appearance: none;
   flex: 0 0 32px;
@@ -2553,30 +2565,77 @@
   transition: color 0.14s, background 0.14s, border-color 0.14s, box-shadow 0.14s;
 }
 
-.sidebar-footer-remote:hover,
-.sidebar-footer-remote:focus-visible {
+.sidebar-footer-icon-btn:hover,
+.sidebar-footer-icon-btn:focus-visible {
   color: var(--sidebar-text);
   border-color: color-mix(in srgb, var(--accent) 34%, transparent);
   background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  outline: none;
 }
 
-.sidebar-footer-remote .sf-symbol-icon {
-  width: 21px;
-  height: 21px;
+.sidebar-footer-icon-btn.is-open {
+  color: var(--sidebar-text);
+  border-color: color-mix(in srgb, var(--accent) 46%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 11%, transparent);
+}
+
+.sidebar-footer-icon-btn .sf-symbol-icon {
+  width: 20px;
+  height: 20px;
   opacity: 0.78;
 }
 
-.sidebar-footer-remote .sf-symbol-icon svg {
-  width: 21px;
-  height: 21px;
+.sidebar-footer-icon-btn .sf-symbol-icon svg {
+  width: 20px;
+  height: 20px;
 }
 
-.sidebar-footer-remote:hover .sf-symbol-icon,
-.sidebar-footer-remote:focus-visible .sf-symbol-icon {
+.sidebar-footer-icon-btn:hover .sf-symbol-icon,
+.sidebar-footer-icon-btn:focus-visible .sf-symbol-icon,
+.sidebar-footer-icon-btn.is-open .sf-symbol-icon {
   opacity: 1;
 }
 
-.sidebar-footer-remote.is-connected {
+/* Glow states — applied only while the button's condition holds. */
+.sidebar-footer-icon-btn.glow-red {
+  color: color-mix(in srgb, var(--danger, #e2554f) 90%, var(--sidebar-text));
+  border-color: color-mix(in srgb, var(--danger, #e2554f) 56%, transparent);
+  background:
+    radial-gradient(
+      circle at 50% 42%,
+      color-mix(in srgb, var(--danger, #e2554f) 22%, transparent),
+      transparent 68%
+    ),
+    color-mix(in srgb, var(--danger, #e2554f) 10%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--danger, #e2554f) 16%, transparent),
+    0 0 16px color-mix(in srgb, var(--danger, #e2554f) 34%, transparent);
+}
+.sidebar-footer-icon-btn.glow-red .sf-symbol-icon {
+  opacity: 1;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--danger, #e2554f) 58%, transparent));
+}
+
+.sidebar-footer-icon-btn.glow-yellow {
+  color: color-mix(in srgb, var(--warning, #f5b14c) 92%, var(--sidebar-text));
+  border-color: color-mix(in srgb, var(--warning, #f5b14c) 56%, transparent);
+  background:
+    radial-gradient(
+      circle at 50% 42%,
+      color-mix(in srgb, var(--warning, #f5b14c) 24%, transparent),
+      transparent 68%
+    ),
+    color-mix(in srgb, var(--warning, #f5b14c) 10%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--warning, #f5b14c) 18%, transparent),
+    0 0 16px color-mix(in srgb, var(--warning, #f5b14c) 34%, transparent);
+}
+.sidebar-footer-icon-btn.glow-yellow .sf-symbol-icon {
+  opacity: 1;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--warning, #f5b14c) 56%, transparent));
+}
+
+.sidebar-footer-icon-btn.glow-green {
   color: color-mix(in srgb, var(--success, #34d399) 88%, var(--sidebar-text));
   border-color: color-mix(in srgb, var(--success, #34d399) 56%, transparent);
   background:
@@ -2590,20 +2649,74 @@
     0 0 0 1px color-mix(in srgb, var(--success, #34d399) 16%, transparent),
     0 0 16px color-mix(in srgb, var(--success, #34d399) 34%, transparent);
 }
-
-.sidebar-footer-remote.is-connected .sf-symbol-icon {
+.sidebar-footer-icon-btn.glow-green .sf-symbol-icon {
   opacity: 1;
   filter: drop-shadow(0 0 5px color-mix(in srgb, var(--success, #34d399) 60%, transparent));
 }
 
-.sidebar-footer-remote.is-connected:hover,
-.sidebar-footer-remote.is-connected:focus-visible {
-  color: color-mix(in srgb, var(--success, #34d399) 96%, white);
-  border-color: color-mix(in srgb, var(--success, #34d399) 72%, transparent);
-  background: color-mix(in srgb, var(--success, #34d399) 16%, transparent);
+/* Footer popover — shared shell for all three control buttons. Anchored to the
+   cluster's right edge so it stays inside the sidebar regardless of which
+   button opened it. Reuses the settings-menu item styles for rows + nav. */
+.sidebar-footer-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 90;
+  width: min(264px, calc(var(--sidebar-width, 280px) - 24px));
+  max-height: min(70vh, 480px);
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-elevated-bg) 90%, transparent);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--success, #34d399) 24%, transparent),
-    0 0 22px color-mix(in srgb, var(--success, #34d399) 44%, transparent);
+    0 1px 0 inset color-mix(in srgb, #ffffff 10%, transparent),
+    0 18px 46px rgba(0, 0, 0, 0.38),
+    0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+  animation: sidebar-new-menu-fade-in 140ms ease-out;
+  transform-origin: bottom right;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-footer-popover {
+  border-color: var(--surface-border);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+  color: var(--surface-text);
+  box-shadow:
+    0 1px 0 inset rgba(255, 255, 255, 0.72),
+    0 18px 46px rgba(0, 0, 0, 0.16),
+    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.sidebar-footer-popover-title {
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  padding: 2px 6px 4px;
+}
+
+.sidebar-footer-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sidebar-footer-popover-empty {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm, 13px);
+  padding: 12px 8px;
+  text-align: center;
+  opacity: 0.76;
+}
+
+.sidebar-footer-popover-nav .sidebar-settings-menu-item-label {
+  font-weight: 500;
 }
 
 .app-shell-stats-toolbar {

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatRecord, WorkflowDefinition, WorkspaceRecord } from '../../../main/store/types'
 import { Sidebar } from './Sidebar'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
+import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 
 const EXPANDED_WORKSPACES_STORAGE_KEY = 'taskwraith-sidebar-expanded-workspace-ids'
 const COLLAPSED_SUB_THREAD_PARENTS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sub-thread-parent-ids'
@@ -120,6 +121,8 @@ function renderSidebar(
     ensembleModeEnabled?: boolean
     workflows?: WorkflowDefinition[]
     onCreateWorkflow?: () => void
+    collaboratingChatIds?: Set<string>
+    pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
   } = {}
 ) {
   const workspace = makeWorkspace()
@@ -133,6 +136,8 @@ function renderSidebar(
       usageSummary={[]}
       runningChatIds={[]}
       workflows={options.workflows}
+      collaboratingChatIds={options.collaboratingChatIds}
+      pendingAgentApprovalByChatId={options.pendingAgentApprovalByChatId}
       onSelectWorkspace={() => {}}
       onRemoveWorkspace={() => {}}
       onSelectWorkspaceDialog={() => {}}
@@ -145,6 +150,18 @@ function renderSidebar(
       onCreateWorkflow={options.onCreateWorkflow}
     />
   )
+}
+
+function makeApproval(overrides: Partial<AgentApprovalRequest> = {}): AgentApprovalRequest {
+  return {
+    id: 'approval-1',
+    provider: 'codex',
+    method: 'shell',
+    title: 'Run a command',
+    body: 'ls -la',
+    actions: ['accept', 'decline'],
+    ...overrides
+  }
 }
 
 afterEach(() => {
@@ -573,5 +590,44 @@ describe('Sidebar Chats section', () => {
     expect(html).toContain('Expand Chats')
     expect(html).toContain('New general chat')
     expect(html).not.toContain('Global thread')
+  })
+})
+
+describe('Sidebar footer controls', () => {
+  it('renders the Approvals and Shares control buttons', () => {
+    const html = renderSidebar([makeChat()])
+    expect(html).toContain('aria-label="Approvals"')
+    expect(html).toContain('aria-label="Shares"')
+  })
+
+  it('glows the Approvals button red only while an approval is pending', () => {
+    // glow-red is unique to the Approvals button, so presence/absence of the
+    // class unambiguously reflects the pending-approval signal.
+    const idle = renderSidebar([makeChat()])
+    expect(idle).not.toContain('glow-red')
+
+    const pending = renderSidebar([makeChat()], {
+      pendingAgentApprovalByChatId: { 'parent-1': makeApproval() }
+    })
+    expect(pending).toContain('glow-red')
+  })
+
+  it('ignores cleared (null) approval entries for the red glow', () => {
+    // usePerChatState deletes keys on reset, but guard against a lingering null
+    // still suppressing the glow.
+    const html = renderSidebar([makeChat()], {
+      pendingAgentApprovalByChatId: { 'parent-1': null }
+    })
+    expect(html).not.toContain('glow-red')
+  })
+
+  it('glows the Shares button yellow only while a chat is shared', () => {
+    const idle = renderSidebar([makeChat()])
+    expect(idle).not.toContain('glow-yellow')
+
+    const shared = renderSidebar([makeChat()], {
+      collaboratingChatIds: new Set(['parent-1'])
+    })
+    expect(shared).toContain('glow-yellow')
   })
 })

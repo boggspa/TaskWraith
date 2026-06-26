@@ -21404,14 +21404,14 @@ function App(): React.JSX.Element {
                   }
                   setInspectingRunId(runId)
                 }}
-                onShowPairingSheet={
-                  IOS_REMOTE_ENABLED
-                    ? () => {
-                        setSettingsActiveTab('pairing')
-                        setShowSettings(true)
-                      }
-                    : undefined
-                }
+                onOpenSettingsTab={(tab) => {
+                  // 'shares' joins the SettingsTab union in a later slice; cast
+                  // until then so the deep-link wiring lands with the footer
+                  // popovers.
+                  setSettingsActiveTab(tab as SettingsTab)
+                  setShowSettings(true)
+                }}
+                pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
               />
             )}
             <div
