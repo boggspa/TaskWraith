@@ -20206,16 +20206,20 @@ function App(): React.JSX.Element {
       // TODO(per-pane): duplicate-chat shares draft — `setChatPromptDraft` is
       // keyed by chatId, so the same chat shown in two panes shares one draft.
     }
+    const paneComposerKey = `${viewerPaneIndex}:${viewerChatId}`
+    const memoizedPaneComposerCtx = paneComposerCtxByKey[paneComposerKey]
+    // The memoized ctx is keyed for render stability, but its `currentChat`
+    // comes from chatByIdRef. If this pane's chat object has advanced since the
+    // memo was built, fall back to the freshly-built ctx so composer controls
+    // like Plan/Goal see the same live chat as the transcript.
+    const effectivePaneComposerCtx =
+      memoizedPaneComposerCtx?.currentChat === viewerChat ? memoizedPaneComposerCtx : paneComposerCtx
+
     return (
       <ChatViewPane
         key={`${viewerPaneIndex}:${viewerChatId}`}
         paneIndex={viewerPaneIndex}
-        composerProps={
-          // Slice H: prefer the memoized pane ctx (stable identity → pane bails
-          // when its inputs are unchanged); fall back to the inline build for
-          // safety (e.g. a chat id absent from the memo's snapshot).
-          paneComposerCtxByKey[`${viewerPaneIndex}:${viewerChatId}`] ?? paneComposerCtx
-        }
+        composerProps={effectivePaneComposerCtx}
         refs={multiview.paneRefs[viewerPaneIndex]}
         chat={viewerChat}
         messages={viewerChat.messages || EMPTY_CHAT_MESSAGES}
