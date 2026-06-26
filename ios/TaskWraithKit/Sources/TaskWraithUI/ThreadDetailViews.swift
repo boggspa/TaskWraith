@@ -1339,9 +1339,29 @@ struct ThreadDetailView: View {
         }
     }
 
+    private var threadHeaderTitle: String {
+        let title = (card?.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "Chat" : title
+    }
+
+    private var threadHeaderSubtitle: String? {
+        var parts: [String] = []
+        if let workspaceName = model.workspaceName(for: card?.workspaceId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !workspaceName.isEmpty
+        {
+            parts.append(workspaceName)
+        }
+        let hostName = model.macDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !hostName.isEmpty {
+            parts.append(hostName)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
     private func navigationChrome(_ base: AnyView, proxy: ScrollViewProxy) -> some View {
         base
-        .navigationTitle(card?.title ?? "Chat")
+        .navigationTitle(threadHeaderTitle)
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -1460,6 +1480,11 @@ struct ThreadDetailView: View {
     private func toolbarChrome(_ base: AnyView) -> some View {
         base
         .toolbar {
+            #if os(iOS)
+                ToolbarItem(placement: .principal) {
+                    ThreadNavigationTitle(title: threadHeaderTitle, subtitle: threadHeaderSubtitle)
+                }
+            #endif
             // Individual circular pills (matching the workspaces sidebar), NOT a
             // shared ToolbarIconPillGroup capsule — one consistent toolbar look
             // app-wide, and individual ToolbarItems overflow gracefully where a
@@ -1515,6 +1540,32 @@ struct ThreadDetailView: View {
             }
         }
 
+    }
+}
+
+private struct ThreadNavigationTitle: View {
+    let title: String
+    let subtitle: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(TWTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .truncationMode(.tail)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .truncationMode(.middle)
+            }
+        }
+        .frame(maxWidth: 260, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 
