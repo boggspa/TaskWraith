@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 128 128" role="img" aria-labelledby="ghost-guy-mark-monoline-title">
   <title id="ghost-guy-mark-monoline-title">TaskWraith ghost mark monoline</title>
+  <style>
+    svg { color: #111827; }
+    @media (prefers-color-scheme: dark) { svg { color: #f8fafc; } }
+  </style>
   <g fill="none" stroke="currentColor" stroke-width="3.25" stroke-linecap="round" stroke-linejoin="round">
     <path d="M56 30H80L92 36L98 48V84H92L86 90L80 84L74 96L68 84L56 96L50 84H38V48L44 36Z"/>
     <path d="M50 84V104"/>

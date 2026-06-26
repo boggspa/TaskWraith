@@ -11,6 +11,9 @@ history, and workspace state stay on your machine throughout.
   safe-first-run path, capability matrix, local storage/reset notes, provider
   data boundaries, release verification commands, and known limits for cautious
   evaluators.
+- **Composer variant gallery.** Added a dedicated composer-shell gallery covering
+  the Electron variants in dark/light mode plus representative iOS companion
+  references.
 
 ## 1.6.2 - 2026-06-25
 

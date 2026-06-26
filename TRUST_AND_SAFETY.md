@@ -1,5 +1,9 @@
 # Trust and Safety
 
+<p align="center">
+  <img src="design-assets/ghost/ghost-guy-mark-monoline.svg" alt="TaskWraith monoline mark" width="72" />
+</p>
+
 TaskWraith is a local-first agent workbench, but it is still software that can
 coordinate powerful tools against a developer machine. Treat it like a shell,
 editor, git client, browser automation surface, and remote-control bridge in one
@@ -200,4 +204,3 @@ from the source repository alone.
   allowlists are intentionally powerful. Use them only after a low-risk trial.
 - Public adoption is still small, so cautious users should rely on source review,
   verification steps, and no-risk trials before trusting important workspaces.
-

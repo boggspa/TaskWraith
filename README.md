@@ -1,5 +1,9 @@
 # TaskWraith
 
+<p align="center">
+  <img src="design-assets/ghost/ghost-guy-mark-monoline.svg" alt="TaskWraith monoline mark" width="72" />
+</p>
+
 [![CI](https://github.com/boggspa/TaskWraith/actions/workflows/ci.yml/badge.svg)](https://github.com/boggspa/TaskWraith/actions/workflows/ci.yml)
 ![Latest GitHub release](https://img.shields.io/github/v/release/boggspa/TaskWraith)
 ![License](https://img.shields.io/github/license/boggspa/TaskWraith)
@@ -21,6 +25,20 @@ workspace state on the user's machine.
 > `ios/TaskWraithApp/README.md`).
 
 ## Trust, Safety, and First Runs
+
+<table>
+  <tr>
+    <td width="76" align="center" valign="middle">
+      <img src="design-assets/ghost/ghost-guy-mark-monoline.svg" alt="" width="48" />
+    </td>
+    <td valign="middle">
+      <strong>Start with low-risk work.</strong><br />
+      TaskWraith is designed to keep permissions visible and auditable, but it
+      still coordinates powerful local tools. Use a scratch repo and read-only
+      posture first, then widen trust only after the behavior is familiar.
+    </td>
+  </tr>
+</table>
 
 TaskWraith has a broad optional permissions surface: provider CLIs, local models,
 workspace file tools, shell/git actions, iOS remote control, collaborator
@@ -89,6 +107,9 @@ baseline.
   composer goal control. Codex uses native goal state when the installed runtime
   exposes it; every provider gets a TaskWraith-managed fallback with explicit
   complete/blocked lifecycle tools.
+- **Composer Shells**: Provider-aware and task-oriented composer variants give
+  each working mode its own affordances without changing the safety model. See
+  [COMPOSER_VARIANTS.md](COMPOSER_VARIANTS.md) for the Electron shell gallery.
 - **Ensemble Mode**: Multi-provider single-thread chats with up to twelve named
   participants, turn-bound or continuous orchestration, optional parallel fan-out,
   and TaskWraith MCP tools shared across providers.
@@ -198,5 +219,5 @@ Swift toolchain and is not part of the cross-platform `npm run ci`.
 - `scripts`: Build, security, validation, signing, and packaging utilities.
 
 See `CHANGELOG.md` for release history, and `TRUST_AND_SAFETY.md`,
-`ARCHITECTURE.md`, `SAFETY.md`, `SECURITY.md`, and `TERMS_NOTES.md` for more
-detail.
+`COMPOSER_VARIANTS.md`, `ARCHITECTURE.md`, `SAFETY.md`, `SECURITY.md`, and
+`TERMS_NOTES.md` for more detail.
