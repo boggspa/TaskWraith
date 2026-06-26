@@ -19,6 +19,7 @@ import TaskWraithKit
 struct HomeView: View {
     @ObservedObject var model: RemoteSessionModel
     @Binding var selection: String?
+    @Environment(\.appScale) private var appScale
     /// Parent chats whose sub-thread/side-chat children are collapsed. Backed by
     /// the model so it survives the theme-revision teardown (see selectedTaskId).
     private var collapsedParents: Set<String> {
@@ -114,7 +115,7 @@ struct HomeView: View {
         }
         #if os(iOS)
             .listStyle(.plain)
-            .listSectionSpacing(10)
+            .listSectionSpacing(appScale.scaled(10))
         #endif
         .scrollContentBackground(.hidden)
         .background(TWTheme.sidebarBg)
@@ -575,7 +576,11 @@ struct HomeView: View {
         let accent = card.isEnsemble
             ? TWTheme.chroma2 : TWTheme.providerAccent(card.provider)
         let rowInsets = EdgeInsets(
-            top: 3, leading: nested ? 28 : 16, bottom: 3, trailing: 16)
+            top: appScale.scaled(3),
+            leading: appScale.scaled(nested ? 28 : 16),
+            bottom: appScale.scaled(3),
+            trailing: appScale.scaled(16)
+        )
         // Satellite rows (desktop-sidebar parity): no container chrome unless
         // the thread is ACTIVE — running or waiting on the user — which gets
         // a faint accent wash so live work pops out of the list.
@@ -591,7 +596,7 @@ struct HomeView: View {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(accent.opacity(0.35))
                     )
-                    .padding(.vertical, 2)
+                    .padding(.vertical, appScale.scaled(2))
             } else {
                 Color.clear
             }
@@ -612,7 +617,7 @@ struct HomeView: View {
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .strokeBorder(accent.opacity(0.5))
                         )
-                        .padding(.vertical, 2)
+                        .padding(.vertical, appScale.scaled(2))
                 } else {
                     rowChrome
                 }
@@ -668,7 +673,12 @@ struct HomeView: View {
     @ViewBuilder
     private func workflowRow(_ workflow: RemoteWorkflow) -> some View {
         let accent = TWTheme.providerAccent(workflow.provider)
-        let rowInsets = EdgeInsets(top: 3, leading: 16, bottom: 3, trailing: 16)
+        let rowInsets = EdgeInsets(
+            top: appScale.scaled(3),
+            leading: appScale.scaled(16),
+            bottom: appScale.scaled(3),
+            trailing: appScale.scaled(16)
+        )
         let isSelected = explicitSelection && selection == workflow.threadId
         let chrome = Group {
             if isSelected {
@@ -678,7 +688,7 @@ struct HomeView: View {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(accent.opacity(0.5))
                     )
-                    .padding(.vertical, 2)
+                    .padding(.vertical, appScale.scaled(2))
             } else if workflow.isRunning {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(accent.opacity(0.10))
@@ -686,7 +696,7 @@ struct HomeView: View {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .strokeBorder(accent.opacity(0.35))
                     )
-                    .padding(.vertical, 2)
+                    .padding(.vertical, appScale.scaled(2))
             } else {
                 Color.clear
             }
@@ -785,6 +795,7 @@ struct TaskRow: View {
     @ObservedObject var model: RemoteSessionModel
     let card: RemoteTaskCard
     var nested: Bool = false
+    @Environment(\.appScale) private var appScale
 
     private var nestIcon: String {
         if card.isGuestSideChat || card.isIsolatedSideChat {
@@ -798,7 +809,7 @@ struct TaskRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: appScale.scaled(8)) {
             if nested || card.parentChatId != nil {
                 Image(systemName: nestIcon)
                     .font(.caption2)
@@ -812,15 +823,15 @@ struct TaskRow: View {
             if let agentName = card.agentName {
                 AgentIdentityBadge(
                     name: agentName, accentHex: card.agentAccent,
-                    slug: card.agentSlug, size: 18)
+                    slug: card.agentSlug, size: appScale.scaled(18))
                     .padding(.top, 2)
             } else {
                 ProviderGlyphIcon(
-                    provider: card.provider, isEnsemble: card.isEnsemble, size: 16
+                    provider: card.provider, isEnsemble: card.isEnsemble, size: appScale.scaled(16)
                 )
                 .padding(.top, 2)
             }
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: appScale.scaled(4)) {
                 if let agentName = card.agentName {
                     Text(agentName)
                         .font(.caption.weight(.semibold))
@@ -832,7 +843,7 @@ struct TaskRow: View {
                 // the title truncates rather than wrapping to a second line. It's
                 // one Dynamic Type step smaller but still a text style, so it keeps
                 // scaling for accessibility.
-                HStack(spacing: 6) {
+                HStack(spacing: appScale.scaled(6)) {
                     Text(card.title ?? card.id)
                         .font(nested ? .footnote : .callout)
                         .foregroundStyle(TWTheme.textPrimary)
@@ -848,8 +859,8 @@ struct TaskRow: View {
                 }
             }
         }
-        .padding(.vertical, 2)
-        .padding(.leading, nested ? 8 : 0)
+        .padding(.vertical, appScale.scaled(2))
+        .padding(.leading, nested ? appScale.scaled(8) : 0)
     }
 }
 

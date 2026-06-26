@@ -19,6 +19,7 @@ import TaskWraithKit
 struct Composer: View {
     @ObservedObject var model: RemoteSessionModel
     let card: RemoteTaskCard
+    @Environment(\.appScale) private var appScale
     var runModel: String? = nil
     var runStatus: String? = nil
     /// Shell attachment: a diff header above / telemetry rail below flatten
@@ -433,7 +434,7 @@ struct Composer: View {
                 text: $text,
                 focused: $inputFocused,
                 participants: model.ensembleStates[card.id]?.participants ?? [],
-                font: twUIComposerFont(shell.fontDesign),
+                font: twUIComposerFont(shell.fontDesign, scale: appScale),
                 textColor: shell.palette.textPrimary,
                 placeholderColor: shell.palette.placeholder,
                 placeholder: placeholder

@@ -168,12 +168,13 @@ struct GlassPillHeader: View {
     var count: Int? = nil
     var collapsed: Bool = false
     var onToggle: (() -> Void)? = nil
+    @Environment(\.appScale) private var appScale
 
     var body: some View {
         Button {
             withAnimation(.easeInOut(duration: 0.18)) { onToggle?() }
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: appScale.scaled(6)) {
                 Image(systemName: collapsed ? "chevron.right" : "chevron.down")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(TWTheme.textTertiary)
@@ -186,15 +187,15 @@ struct GlassPillHeader: View {
                 if let count, count > 0 {
                     Text("\(count)")
                         .font(.caption2.weight(.semibold).monospacedDigit())
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, appScale.scaled(6))
                         .padding(.vertical, 1)
                         .background(TWTheme.surface3, in: Capsule())
                         .foregroundStyle(TWTheme.textTertiary)
                 }
             }
             .foregroundStyle(TWTheme.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, appScale.scaled(12))
+            .padding(.vertical, appScale.scaled(6))
             .modifier(GlassPillBackground())
         }
         .buttonStyle(.plain)
@@ -335,6 +336,7 @@ struct ToolbarIconPillGroup<Content: View>: View {
 private struct ToolbarIconPillChromeModifier: ViewModifier {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.appScale) private var appScale
     var isActive: Bool = false
 
     func body(content: Content) -> some View {
@@ -352,9 +354,9 @@ private struct ToolbarIconPillChromeModifier: ViewModifier {
         let shape = Capsule()
 
         content
-            .font(.system(size: 15, weight: .semibold))
+            .font(.system(size: appScale.scaled(15), weight: .semibold))
             .foregroundStyle(symbol)
-            .frame(width: 34, height: 34)
+            .frame(width: appScale.scaled(34), height: appScale.scaled(34))
             .background {
                 if !reduceTransparency && TWTheme.composerGlassEnabled {
                     shape.fill(.ultraThinMaterial)
@@ -1342,8 +1344,10 @@ public enum TWFont {
             return .custom(name, size: size, relativeTo: style)
         case .sfPro: return .system(size: size, weight: weight, design: .default)
         case .serif: return .system(size: size, weight: weight, design: .serif)
-        case .monospaced: return .system(size: size, weight: weight, design: .monospaced)
-        case .rounded: return .system(size: size, weight: weight, design: .rounded)
+        case .monospaced:
+            return .system(size: size, weight: weight, design: .monospaced)
+        case .rounded:
+            return .system(size: size, weight: weight, design: .rounded)
         }
     }
 }
@@ -4643,7 +4647,7 @@ private enum MobileSettingsSection: String, CaseIterable, Identifiable, Hashable
     var subtitle: String {
         switch self {
         case .general: return "Device role, defaults, and orientation."
-        case .appearance: return "Theme, accent, and app icon."
+        case .appearance: return "Theme, accent, app icon, and display size."
         case .composer: return "Composer shell, tools, and transcript type."
         case .providers: return "Readiness, availability, and Mac-owned setup."
         case .ensembleRoster: return "Multi-provider roles and preset orientation."
@@ -4703,7 +4707,7 @@ private enum MobileSettingsSection: String, CaseIterable, Identifiable, Hashable
             self == .toolsMcp ? "mcp tools browser automation integrations setup" : "",
             self == .localServers ? "ollama local runtime dev servers localhost" : "",
             self == .composer ? "shell transcript font tool call style" : "",
-            self == .appearance ? "theme accent color icon glass" : ""
+            self == .appearance ? "theme accent color icon glass scale zoom display size font text" : ""
         ].joined(separator: " ").lowercased()
     }
 }
@@ -4714,6 +4718,7 @@ private enum MobileSettingsSection: String, CaseIterable, Identifiable, Hashable
 public struct AppSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.appScale) private var appScale
     @ObservedObject private var model: RemoteSessionModel
     @ObservedObject private var themes = TWThemeStore.shared
     @State private var appIcon: TWAppIconVariant = TWAppIconController.selected
@@ -4778,7 +4783,7 @@ public struct AppSettingsSheet: View {
         NavigationStack {
             HStack(spacing: 0) {
                 settingsSidebar
-                    .frame(width: 300)
+                    .frame(width: appScale.scaled(300))
                     .background(TWTheme.sidebarBg)
                     .iPadSidebarInnerRim(edge: .trailing)
                 detailScroll(selectedSection)
@@ -4956,9 +4961,9 @@ public struct AppSettingsSheet: View {
                 case .about: aboutSection
                 }
             }
-            .padding(.horizontal, horizontalSizeClass == .regular ? 28 : 16)
-            .padding(.vertical, 20)
-            .frame(maxWidth: horizontalSizeClass == .regular ? 840 : .infinity, alignment: .topLeading)
+                .padding(.horizontal, appScale.scaled(horizontalSizeClass == .regular ? 28 : 16))
+                .padding(.vertical, appScale.scaled(20))
+                .frame(maxWidth: horizontalSizeClass == .regular ? appScale.scaled(840) : .infinity, alignment: .topLeading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(TWTheme.appBg.ignoresSafeArea())
@@ -4998,6 +5003,7 @@ public struct AppSettingsSheet: View {
             SettingsCard(title: "Current defaults", systemImage: "slider.horizontal.3") {
                 SettingsValueRow(title: "Theme", value: themes.systemTheme.label)
                 SettingsValueRow(title: "Accent", value: themes.accentTheme.label)
+                SettingsValueRow(title: "Display size", value: themes.appScalePreference.label)
                 SettingsValueRow(title: "Composer shell", value: composerShellLabel)
                 SettingsValueRow(title: "Transcript font", value: themes.transcriptFontPreference.label)
             }
@@ -5018,6 +5024,14 @@ public struct AppSettingsSheet: View {
                         .foregroundStyle(TWTheme.textSecondary)
                 }
             #endif
+            SettingsCard(title: "Display size", systemImage: "textformat.size") {
+                SettingsValueRow(title: "Current", value: "\(themes.appScalePreference.label) · \(themes.appScalePreference.valueLabel)")
+                appScaleControl
+                Text("Changes TaskWraith's local iPhone/iPad interface size. Default is the current layout.")
+                    .font(.footnote)
+                    .foregroundStyle(TWTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             SettingsCard(title: "System theme", systemImage: "circle.lefthalf.filled") {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
                     ForEach(TWSystemTheme.allCases) { theme in
@@ -5720,20 +5734,78 @@ public struct AppSettingsSheet: View {
             themes.toolTheme = tool
         }
     }
+
+    private var appScaleControl: some View {
+        HStack(spacing: 8) {
+            Button {
+                themes.appScalePreference = themes.appScalePreference.steppedDown()
+            } label: {
+                Text("-")
+                    .frame(maxWidth: .infinity)
+            }
+            .disabled(themes.appScalePreference == TWAppScale.minimum)
+            .accessibilityLabel("Decrease display size")
+
+            Button {
+                themes.appScalePreference = .standard
+            } label: {
+                Text("Default")
+                    .frame(maxWidth: .infinity)
+            }
+            .disabled(themes.appScalePreference == .standard)
+            .accessibilityLabel("Reset display size")
+
+            Button {
+                themes.appScalePreference = themes.appScalePreference.steppedUp()
+            } label: {
+                Text("+")
+                    .frame(maxWidth: .infinity)
+            }
+            .disabled(themes.appScalePreference == TWAppScale.maximum)
+            .accessibilityLabel("Increase display size")
+        }
+        .buttonStyle(AppScaleButtonStyle())
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Display size")
+        .accessibilityValue(themes.appScalePreference.label)
+    }
+}
+
+private struct AppScaleButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.appScale) private var appScale
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(isEnabled ? TWTheme.textPrimary : TWTheme.textMuted)
+            .padding(.horizontal, appScale.scaled(10))
+            .padding(.vertical, appScale.scaled(9))
+            .frame(minHeight: max(44, appScale.scaled(44)))
+            .background(
+                isEnabled ? TWTheme.surface2 : TWTheme.surface2.opacity(0.45),
+                in: RoundedRectangle(cornerRadius: appScale.scaled(11), style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: appScale.scaled(11), style: .continuous)
+                    .strokeBorder(configuration.isPressed ? TWTheme.chroma1.opacity(0.5) : TWTheme.border, lineWidth: 1)
+            )
+    }
 }
 
 private struct SettingsIconPlate: View {
     let systemImage: String
     let selected: Bool
+    @Environment(\.appScale) private var appScale
 
     var body: some View {
         Image(systemName: systemImage)
-            .font(.system(size: 16, weight: .semibold))
+            .font(.system(size: appScale.scaled(16), weight: .semibold))
             .foregroundStyle(selected ? TWTheme.chroma1 : TWTheme.textSecondary)
-            .frame(width: 34, height: 34)
+            .frame(width: appScale.scaled(34), height: appScale.scaled(34))
             .background(
                 selected ? TWTheme.chroma1.opacity(0.15) : TWTheme.surface2,
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                in: RoundedRectangle(cornerRadius: appScale.scaled(10), style: .continuous)
             )
     }
 }
@@ -5742,9 +5814,10 @@ private struct SettingsMetricPill: View {
     let title: String
     let value: String
     let systemImage: String
+    @Environment(\.appScale) private var appScale
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: appScale.scaled(7)) {
             Image(systemName: systemImage)
             VStack(alignment: .leading, spacing: 0) {
                 Text(title)
@@ -5757,9 +5830,9 @@ private struct SettingsMetricPill: View {
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .background(TWTheme.surface1.opacity(0.86), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, appScale.scaled(9))
+        .padding(.vertical, appScale.scaled(7))
+        .background(TWTheme.surface1.opacity(0.86), in: RoundedRectangle(cornerRadius: appScale.scaled(10), style: .continuous))
     }
 }
 
@@ -5767,6 +5840,7 @@ private struct SettingsCard<Content: View>: View {
     let title: String
     let systemImage: String
     private let content: Content
+    @Environment(\.appScale) private var appScale
 
     init(title: String, systemImage: String, @ViewBuilder content: () -> Content) {
         self.title = title
@@ -5775,17 +5849,17 @@ private struct SettingsCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: appScale.scaled(12)) {
             Label(title, systemImage: systemImage)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(TWTheme.textPrimary)
             content
         }
-        .padding(14)
+        .padding(appScale.scaled(14))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: appScale.scaled(16), style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: appScale.scaled(16), style: .continuous)
                 .strokeBorder(TWTheme.border, lineWidth: 1)
         )
     }
@@ -5795,12 +5869,13 @@ private struct SettingsInfoRow: View {
     let icon: String
     let title: String
     let detail: String
+    @Environment(\.appScale) private var appScale
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: appScale.scaled(10)) {
             Image(systemName: icon)
                 .foregroundStyle(TWTheme.chroma1)
-                .frame(width: 22)
+                .frame(width: appScale.scaled(22))
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -5839,13 +5914,14 @@ private struct SettingsSelectionButton: View {
     let selected: Bool
     let swatch: Color
     let action: () -> Void
+    @Environment(\.appScale) private var appScale
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: appScale.scaled(8)) {
                 Circle()
                     .fill(swatch)
-                    .frame(width: 13, height: 13)
+                    .frame(width: appScale.scaled(13), height: appScale.scaled(13))
                     .overlay(Circle().strokeBorder(TWTheme.border, lineWidth: 1))
                 Text(title)
                     .font(.footnote.weight(selected ? .semibold : .regular))
@@ -5856,11 +5932,11 @@ private struct SettingsSelectionButton: View {
                         .foregroundStyle(TWTheme.chroma1)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .background(selected ? TWTheme.chroma1.opacity(0.13) : TWTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.horizontal, appScale.scaled(10))
+            .padding(.vertical, appScale.scaled(9))
+            .background(selected ? TWTheme.chroma1.opacity(0.13) : TWTheme.surface2, in: RoundedRectangle(cornerRadius: appScale.scaled(10), style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: appScale.scaled(10), style: .continuous)
                     .strokeBorder(selected ? TWTheme.chroma1.opacity(0.42) : TWTheme.border, lineWidth: 1)
             )
         }

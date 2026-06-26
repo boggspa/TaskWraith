@@ -120,6 +120,7 @@ public struct RootView: View {
         }
         .tint(TWTheme.chroma1)
         .twColorScheme()
+        .twAppScale(themes.appScalePreference)
         // Theme tokens are computed statics — a revision bump rebuilds the
         // tree so every TWTheme read picks up the new selection.
         .id(themes.revision)
@@ -271,6 +272,7 @@ struct MastheadRow: View {
 struct ConnectedShell: View {
     @ObservedObject var model: RemoteSessionModel
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.appScale) private var appScale
     @StateObject private var fileState = MobileFileEditorState()
     @StateObject private var diffState = MobileDiffStudioState()
     @State private var shellMode: ShellMode = .app
@@ -327,7 +329,10 @@ struct ConnectedShell: View {
             } else {
                 NavigationSplitView {
                     HomeView(model: model, selection: $model.selectedTaskId, explicitSelection: true)
-                        .navigationSplitViewColumnWidth(min: 300, ideal: 340)
+                        .navigationSplitViewColumnWidth(
+                            min: appScale.scaled(300),
+                            ideal: appScale.scaled(340)
+                        )
                         .iPadSidebarInnerRim(edge: .trailing)
                 } detail: {
                     if let taskId = model.selectedTaskId, taskId.hasPrefix("new-") {
@@ -356,7 +361,7 @@ struct ConnectedShell: View {
                                     model.inspectorPresented = false
                                     model.selectedTaskId = childId
                                 }
-                                .frame(width: 390)
+                                .frame(width: appScale.scaled(390))
                                 .background(TWTheme.appBg)
                                 .iPadSidebarInnerRim(edge: .leading)
                                 .transition(.move(edge: .trailing))

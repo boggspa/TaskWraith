@@ -37,8 +37,9 @@ import TaskWraithKit
     /// UIFont parity for `twComposerFont` (which returns `.system(.body, design:)`).
     /// Built from the Dynamic-Type body font so size tracks the user's text-size
     /// setting exactly like the SwiftUI original.
-    func twUIComposerFont(_ design: ComposerShellFontDesign) -> UIFont {
+    func twUIComposerFont(_ design: ComposerShellFontDesign, scale: TWAppScale = .standard) -> UIFont {
         let base = UIFont.preferredFont(forTextStyle: .body)
+        let pointSize = scale.scaled(base.pointSize)
         let systemDesign: UIFontDescriptor.SystemDesign
         switch design {
         case .system: systemDesign = .default
@@ -46,9 +47,9 @@ import TaskWraithKit
         case .serif: systemDesign = .serif
         }
         if let descriptor = base.fontDescriptor.withDesign(systemDesign) {
-            return UIFont(descriptor: descriptor, size: base.pointSize)
+            return UIFont(descriptor: descriptor, size: pointSize)
         }
-        return base
+        return UIFont(descriptor: base.fontDescriptor, size: pointSize)
     }
 
     struct MentionTextView: UIViewRepresentable {

@@ -422,6 +422,19 @@ public final class TWThemeStore: ObservableObject {
         }
     }
 
+    /// App-scale preference for the iOS `- / Default / +` display-size control.
+    /// `standard` is the baseline and equals the current shipped layout.
+    public var appScalePreference: TWAppScale {
+        get {
+            TWAppScaleStore(defaults: .standard).scale
+        }
+        set {
+            var store = TWAppScaleStore(defaults: .standard)
+            store.scale = newValue
+            revision += 1
+        }
+    }
+
     /// Tool-call icon/accent color (ToolActivityCards categories).
     @MainActor public static var toolAccent: Color { shared.toolTheme.color }
 }
@@ -432,5 +445,59 @@ extension View {
     @MainActor public func twColorScheme() -> some View {
         preferredColorScheme(
             TWThemeStore.shared.systemTheme.isLight ? .light : .dark)
+    }
+}
+
+private struct TWAppScaleEnvironmentKey: EnvironmentKey {
+    static let defaultValue: TWAppScale = .standard
+}
+
+public extension EnvironmentValues {
+    /// App-scale bucket used by settings/controls later; defaults to `.standard`.
+    var appScale: TWAppScale {
+        get { self[TWAppScaleEnvironmentKey.self] }
+        set { self[TWAppScaleEnvironmentKey.self] = newValue }
+    }
+}
+
+public extension View {
+    /// Override the effective app-scale for this subtree.
+    @ViewBuilder
+    func twAppScale(_ value: TWAppScale) -> some View {
+        modifier(TWAppScaleViewModifier(scale: value))
+    }
+}
+
+private struct TWAppScaleViewModifier: ViewModifier {
+    let scale: TWAppScale
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.appScale, scale)
+            .dynamicTypeSize(scale.adjustedDynamicTypeSize(from: dynamicTypeSize))
+    }
+}
+
+private extension TWAppScale {
+    func adjustedDynamicTypeSize(from current: DynamicTypeSize) -> DynamicTypeSize {
+        guard self != .standard else { return current }
+        let sizes: [DynamicTypeSize] = [
+            .xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge,
+            .accessibility1, .accessibility2, .accessibility3, .accessibility4,
+            .accessibility5
+        ]
+        guard let index = sizes.firstIndex(of: current) else { return current }
+        switch self {
+        case .compact:
+            // Keep explicit accessibility text sizes intact; compact layout should
+            // not fight a user's OS-level readability setting.
+            guard current < .accessibility1 else { return current }
+            return sizes[max(0, index - 1)]
+        case .standard:
+            return current
+        case .large:
+            return sizes[min(sizes.count - 1, index + 1)]
+        }
     }
 }
