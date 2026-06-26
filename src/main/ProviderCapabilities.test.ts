@@ -191,17 +191,39 @@ describe('ProviderCapabilities', () => {
     expect(claude.tools.delegate.policy).toBe('ask')
   })
 
-  it('treats grok/cursor elicit/delegate as provider-delegated', () => {
-    const grok = buildProviderCapabilityContract({
-      provider: 'grok',
-      settings: settings(),
-      status: { provider: 'grok', available: true, version: '1.0.0' }
-    })
+  it('treats read-only grok/cursor elicit/delegate as provider-delegated when the bridge is off', () => {
+    for (const provider of ['cursor', 'grok'] as const) {
+      const contract = buildProviderCapabilityContract({
+        provider,
+        settings: settings(),
+        approvalMode: 'plan',
+        status: { provider, available: true, version: '1.0.0' }
+      })
 
-    expect(grok.tools.elicit.state).toBe('delegated')
-    expect(grok.tools.elicit.enforcedByTaskWraith).toBe(false)
-    expect(grok.tools.delegate.state).toBe('delegated')
-    expect(grok.tools.delegate.enforcedByTaskWraith).toBe(false)
+      expect(contract.tools.elicit.state).toBe('delegated')
+      expect(contract.tools.elicit.enforcedByTaskWraith).toBe(false)
+      expect(contract.tools.delegate.state).toBe('delegated')
+      expect(contract.tools.delegate.enforcedByTaskWraith).toBe(false)
+    }
+  })
+
+  it('auto-marks Cursor and Grok as TaskWraith MCP bridge-backed for write-capable runs', () => {
+    for (const provider of ['cursor', 'grok'] as const) {
+      const contract = buildProviderCapabilityContract({
+        provider,
+        settings: settings(),
+        approvalMode: 'default',
+        status: { provider, available: true, version: '1.0.0' }
+      })
+
+      expect(contract.mcp.state).toBe('available')
+      expect(contract.mcp.source).toBe('bridge')
+      expect(contract.mcp.message).toContain('no manual')
+      expect(contract.tools.shellCommands.source).toBe('bridge')
+      expect(contract.tools.fileChanges.source).toBe('bridge')
+      expect(contract.tools.elicit.state).toBe('available')
+      expect(contract.tools.delegate.state).toBe('gated')
+    }
   })
 
   it('marks Cursor and Grok as TaskWraith MCP bridge-backed when the bridge is enabled', () => {

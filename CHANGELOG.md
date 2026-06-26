@@ -17,6 +17,10 @@ history, and workspace state stay on your machine throughout.
 - **README screenshot refresh.** Replaced the first README gallery row with
   current local screenshots for first launch, the general app layout, and a live
   ensemble run.
+- **Cursor/Grok bridge clarity.** Write-capable Cursor and Grok runs now describe
+  and use TaskWraith's scoped MCP broker without asking users to manually install
+  provider-side MCP config; the shared bridge copy no longer names retired Gemini
+  as an active setup target.
 
 ## 1.6.2 - 2026-06-25
 

@@ -205,12 +205,13 @@ describe('SettingsPanel provider cards', () => {
     expect(providersHtml).not.toContain('GEMINI_API_KEY')
     expect(providersHtml).not.toContain('Gemini runtime')
 
-    // The shared TaskWraith MCP bridge control (legacy gemini-named props, serves
-    // every provider) still lives on the MCP tab and must NOT be removed.
+    // The shared TaskWraith MCP bridge control still lives on the MCP tab and
+    // should describe active-provider broker wiring rather than retired Gemini setup.
     const mcpHtml = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
     )
-    expect(mcpHtml).toContain('Enables the bundled TaskWraith MCP server')
+    expect(mcpHtml).toContain('Enables TaskWraith&#x27;s bundled MCP broker')
+    expect(mcpHtml).toContain('no manual Cursor or Grok MCP install is required')
   })
 
   it('renders the General auto-update checkbox enabled by default', () => {

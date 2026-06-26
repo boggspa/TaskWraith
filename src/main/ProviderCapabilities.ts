@@ -426,7 +426,15 @@ function ollamaLocalMcpCapability(input: {
  * backed by the shared TaskWraith broker. Native Cursor shell/write tools are
  * constrained so side effects go through the brokered tools and TaskWraith
  * approval/path checks. */
-function cursorMcpCapability(enabled: boolean): ProviderMcpCapability {
+function bridgeRequiredForWriteMode(approvalMode: string | null | undefined): boolean {
+  return typeof approvalMode === 'string' && approvalMode.trim() !== '' && approvalMode.trim() !== 'plan'
+}
+
+function cursorMcpCapability(input: {
+  enabledBySetting: boolean
+  requiredForRun: boolean
+}): ProviderMcpCapability {
+  const enabled = input.requiredForRun
   return {
     state: enabled ? 'available' : 'unavailable',
     source: 'bridge',
@@ -436,16 +444,22 @@ function cursorMcpCapability(enabled: boolean): ProviderMcpCapability {
     serverName: 'taskwraith',
     tools: enabled ? [...TASKWRAITH_MCP_TOOLS] : [],
     message:
-      enabled
-        ? 'TaskWraith registers a brokered MCP server for Cursor write-mode runs. Native Cursor shell/write tools are constrained so workspace side effects go through TaskWraith approvals.'
-        : 'TaskWraith MCP registration for Cursor is disabled in Settings.'
+      input.requiredForRun
+        ? 'TaskWraith will register a transient brokered MCP server for this Cursor write-mode run. Native Cursor shell/write tools are constrained so workspace side effects go through TaskWraith approvals; no manual Cursor MCP install is required.'
+        : input.enabledBySetting
+          ? 'TaskWraith MCP bridge preference is on, but read-only Cursor runs do not need a scoped broker. Write-capable Cursor runs auto-inject it when needed.'
+          : 'TaskWraith MCP registration for Cursor is off for this read-only run; write-capable Cursor runs auto-inject the scoped bridge when needed.'
   }
 }
 
 /** Grok ACP runs can receive the shared TaskWraith MCP bridge directly in
  * session/new. Write-capable seats get the full governed tool list; read-only
  * seats stay safe-subset unless explicitly advertised. */
-function grokMcpCapability(enabled: boolean): ProviderMcpCapability {
+function grokMcpCapability(input: {
+  enabledBySetting: boolean
+  requiredForRun: boolean
+}): ProviderMcpCapability {
+  const enabled = input.requiredForRun
   return {
     state: enabled ? 'available' : 'unavailable',
     source: 'bridge',
@@ -455,9 +469,11 @@ function grokMcpCapability(enabled: boolean): ProviderMcpCapability {
     serverName: 'TaskWraith',
     tools: enabled ? [...TASKWRAITH_MCP_TOOLS] : [],
     message:
-      enabled
-        ? 'TaskWraith registers a brokered MCP server for Grok ACP runs. Mutating MCP tools are executed by TaskWraith after approval and workspace/path checks.'
-        : 'TaskWraith MCP registration for Grok is disabled in Settings.'
+      input.requiredForRun
+        ? 'TaskWraith will advertise a brokered MCP server through Grok ACP for this write-capable run. Mutating MCP tools are executed by TaskWraith after approval and workspace/path checks; no manual Grok MCP install is required.'
+        : input.enabledBySetting
+          ? 'TaskWraith MCP bridge preference is on, but read-only Grok safe-subset advertising remains behind the separate Grok read-only gate. Write-capable Grok ACP runs auto-inject the scoped bridge when needed.'
+          : 'TaskWraith MCP registration for Grok is off for this read-only run; write-capable Grok ACP runs auto-inject the scoped bridge when needed.'
   }
 }
 
@@ -802,13 +818,20 @@ export function buildProviderCapabilityContract({
       'Ollama local mode cannot spawn sub-threads.'
     )
   } else {
+    const bridgeRequired = bridgeRequiredForWriteMode(effectiveMode)
     mcp =
       provider === 'claude' || provider === 'kimi'
         ? cliTaskWraithMcpCapability(provider, mcpStatus)
         : provider === 'cursor'
-          ? cursorMcpCapability(Boolean(settings.geminiMcpBridgeEnabled))
+          ? cursorMcpCapability({
+              enabledBySetting: Boolean(settings.geminiMcpBridgeEnabled),
+              requiredForRun: bridgeRequired
+            })
           : provider === 'grok'
-            ? grokMcpCapability(Boolean(settings.geminiMcpBridgeEnabled))
+            ? grokMcpCapability({
+                enabledBySetting: Boolean(settings.geminiMcpBridgeEnabled),
+                requiredForRun: bridgeRequired
+              })
             : providerManagedMcpCapability(provider)
     const taskWraithBridgeProvider =
       (provider === 'cursor' || provider === 'grok') && mcp.available

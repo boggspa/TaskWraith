@@ -10138,19 +10138,21 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
   // Write-capable seats receive the full brokered TaskWraith server: mutating
   // MCP tools still route through executeGeminiMcpTool, which applies the
   // TaskWraith approval ledger, workspace/path checks, and write locks before
-  // any side effect. Read-only seats stay conservative: they only receive the
-  // safe subset when the read-only advertise flag is explicitly enabled.
+  // any side effect. Write-capable Grok seats auto-inject this scoped broker even
+  // when the legacy bridge preference is off; read-only seats stay conservative
+  // and only receive the safe subset when the preference + read-only advertise
+  // flag are explicitly enabled.
   let grokMcpServers: unknown[] = []
   const grokWriteSeat = grokWriteCapable(payload.approvalMode)
   const grokReadOnlySeat = !grokWriteSeat
   const grokReadOnlyAdvertiseFlag = grokReadOnlyMcpAdvertiseEnabled()
   const grokBridgeEnabled = Boolean(AppStore.getSettings().geminiMcpBridgeEnabled)
   const grokAdvertiseTaskWraithMcp =
-    grokBridgeEnabled && (grokWriteSeat || grokReadOnlyAdvertiseFlag)
+    grokWriteSeat || (grokBridgeEnabled && grokReadOnlyAdvertiseFlag)
   const grokMcpDebug = process.env.TASKWRAITH_GROK_DEBUG
   if (grokMcpDebug === '1' || grokMcpDebug === 'true' || grokMcpDebug === 'yes') {
     process.stderr.write(
-      `[grok-mcp] bridge gate advertise=${grokAdvertiseTaskWraithMcp} bridgeEnabled=${grokBridgeEnabled} writeSeat=${grokWriteSeat} readOnlyAdvertiseFlag=${grokReadOnlyAdvertiseFlag} approvalMode=${JSON.stringify(payload.approvalMode)} resume=${Boolean(payload.providerSessionId)}\n`
+      `[grok-mcp] bridge gate advertise=${grokAdvertiseTaskWraithMcp} bridgeEnabled=${grokBridgeEnabled} writeSeat=${grokWriteSeat} readOnlyAdvertiseFlag=${grokReadOnlyAdvertiseFlag} writeSeatAutoBridge=${grokWriteSeat && !grokBridgeEnabled} approvalMode=${JSON.stringify(payload.approvalMode)} resume=${Boolean(payload.providerSessionId)}\n`
     )
   }
   if (grokAdvertiseTaskWraithMcp) {
