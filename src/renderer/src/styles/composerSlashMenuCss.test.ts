@@ -28,6 +28,9 @@ describe('composer slash menu CSS', () => {
   it('keeps an icon slot and compact title row for slash command rows', () => {
     const css = readCss()
 
+    expect(cssBlockStartingAt(css, '.composer-slash-menu-disclosure-slot {')).toContain(
+      'flex: 0 0 18px'
+    )
     expect(cssBlockStartingAt(css, '.composer-slash-menu-icon {')).toContain('flex: 0 0 24px')
     expect(cssBlockStartingAt(css, '.composer-slash-menu-title-row {')).toContain(
       'align-items: baseline'

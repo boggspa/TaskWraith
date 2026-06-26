@@ -268,6 +268,9 @@ export interface ComposerSlashCommandBase {
   label: string
   description: string
   group: CommandPaletteGroup
+  /** Optional parent command id for slash-picker hierarchy. Child commands
+   * remain normal dispatchable slash commands so typed submits still work. */
+  parentId?: string
 }
 
 /** Wraps a legacy CommandPaletteItem; delegates dispatch to the existing

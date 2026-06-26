@@ -19343,7 +19343,9 @@ function App(): React.JSX.Element {
       id: 'taskwraith-template-compact',
       command: '/compact',
       label: 'Compact context',
-      description: 'Insert a concise context-summary request for this chat.',
+      description: isCurrentEnsembleChat
+        ? 'Insert a context-summary request, or expand for ensemble-specific scopes.'
+        : 'Insert a concise context-summary request for this chat.',
       group: 'Custom',
       run: (ctx) =>
         insertSlashScaffold(
@@ -19352,34 +19354,44 @@ function App(): React.JSX.Element {
           'Create a compact context summary for continuing this chat. Preserve decisions, constraints, open tasks, changed files, risks, and next actions. Do not omit unresolved questions or verification state.\n\n'
         )
     },
-    {
-      kind: 'action',
-      id: 'taskwraith-template-compact-shared',
-      command: '/compact-shared',
-      label: 'Compact shared ensemble context',
-      description: 'Insert a summary request meant for every ensemble participant.',
-      group: 'Custom',
-      run: (ctx) =>
-        insertSlashScaffold(
-          ctx,
-          /^\/compact-shared\b/i,
-          'Create a shared ensemble context checkpoint for all participants. Summarize the common objective, decisions, constraints, participant responsibilities, unresolved disagreements, changed files, risks, and next actions. Keep provider-specific session details separate from shared facts.\n\n'
-        )
-    },
-    {
-      kind: 'action',
-      id: 'taskwraith-template-compact-selected',
-      command: '/compact-selected',
-      label: 'Compact selected participant context',
-      description: 'Insert a summary request scoped to the selected ensemble participant.',
-      group: 'Custom',
-      run: (ctx) =>
-        insertSlashScaffold(
-          ctx,
-          /^\/compact-selected\b/i,
-          'Create a compact context summary for the selected participant only. Capture that participant’s role, relevant prior statements, assigned tasks, constraints, open questions, and next action. Do not reset or alter other participants’ context.\n\n'
-        )
-    },
+    ...(isCurrentEnsembleChat
+      ? [
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-template-compact-shared',
+            parentId: 'taskwraith-template-compact',
+            command: '/compact-shared',
+            label: 'Shared ensemble context',
+            description: 'Insert a summary request meant for every ensemble participant.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) =>
+              insertSlashScaffold(
+                ctx,
+                /^\/compact-shared\b/i,
+                'Create a shared ensemble context checkpoint for all participants. Summarize the common objective, decisions, constraints, participant responsibilities, unresolved disagreements, changed files, risks, and next actions. Keep provider-specific session details separate from shared facts.\n\n'
+              )
+          },
+          {
+            kind: 'action' as const,
+            id: 'taskwraith-template-compact-selected',
+            parentId: 'taskwraith-template-compact',
+            command: '/compact-selected',
+            label: selectedParticipant
+              ? `Selected participant: ${
+                  selectedParticipant.role || getProviderLabel(selectedParticipant.provider)
+                }`
+              : 'Selected participant context',
+            description: 'Insert a summary request scoped to the selected ensemble participant.',
+            group: 'Custom' as const,
+            run: (ctx: SlashCommandRunContext) =>
+              insertSlashScaffold(
+                ctx,
+                /^\/compact-selected\b/i,
+                'Create a compact context summary for the selected participant only. Capture that participant’s role, relevant prior statements, assigned tasks, constraints, open questions, and next action. Do not reset or alter other participants’ context.\n\n'
+              )
+          }
+        ]
+      : []),
     {
       kind: 'prompt-template',
       id: 'taskwraith-template-explain',

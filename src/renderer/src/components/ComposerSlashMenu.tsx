@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ComposerStyle } from '../../../main/store/types'
 import {
@@ -67,8 +67,11 @@ type SlashCommandIconName =
   | 'clear'
   | 'command'
   | 'compact'
+  | 'copy'
+  | 'editor'
   | 'explain'
   | 'feedback'
+  | 'files'
   | 'goal'
   | 'help'
   | 'memory'
@@ -76,9 +79,91 @@ type SlashCommandIconName =
   | 'network'
   | 'permissions'
   | 'review'
+  | 'screen'
+  | 'settings'
   | 'side'
   | 'status'
+  | 'stop'
   | 'test'
+
+export interface ComposerSlashMenuRow {
+  command: ComposerSlashCommand
+  depth: number
+  hasChildren: boolean
+  isExpanded: boolean
+}
+
+export interface ComposerSlashMenuGroup {
+  group: CommandPaletteGroup
+  rows: ComposerSlashMenuRow[]
+}
+
+function childrenByParentId(
+  commands: readonly ComposerSlashCommand[]
+): Map<string, ComposerSlashCommand[]> {
+  const byParent = new Map<string, ComposerSlashCommand[]>()
+  for (const command of commands) {
+    if (!command.parentId) continue
+    const children = byParent.get(command.parentId) || []
+    children.push(command)
+    byParent.set(command.parentId, children)
+  }
+  return byParent
+}
+
+export function buildComposerSlashMenuGroups(
+  commands: ComposerSlashCommand[],
+  query: string,
+  expandedCommandIds: readonly string[]
+): ComposerSlashMenuGroup[] {
+  const trimmedQuery = query.trim()
+  const hasQuery = trimmedQuery.length > 0
+  const filtered = filterComposerSlashCommands(commands, query)
+  const filteredIds = new Set(filtered.map((command) => command.id))
+  const commandIds = new Set(commands.map((command) => command.id))
+  const expandedIds = new Set(expandedCommandIds)
+  const childMap = childrenByParentId(commands)
+  const groups: ComposerSlashMenuGroup[] = []
+
+  for (const group of COMPOSER_SLASH_GROUP_ORDER) {
+    const rows: ComposerSlashMenuRow[] = []
+    for (const command of commands) {
+      if (command.group !== group) continue
+      if (command.parentId && commandIds.has(command.parentId)) continue
+
+      const children = childMap.get(command.id) || []
+      const matchingChildren = children.filter((child) => filteredIds.has(child.id))
+      const parentMatches = filteredIds.has(command.id)
+      if (!parentMatches && matchingChildren.length === 0) continue
+
+      const showChildren = Boolean(
+        children.length > 0 &&
+          (expandedIds.has(command.id) || (hasQuery && matchingChildren.length > 0))
+      )
+      rows.push({
+        command,
+        depth: 0,
+        hasChildren: children.length > 0,
+        isExpanded: showChildren
+      })
+
+      if (showChildren) {
+        const visibleChildren = hasQuery ? matchingChildren : children
+        for (const child of visibleChildren) {
+          rows.push({
+            command: child,
+            depth: 1,
+            hasChildren: false,
+            isExpanded: false
+          })
+        }
+      }
+    }
+    if (rows.length > 0) groups.push({ group, rows })
+  }
+
+  return groups
+}
 
 export function resolveComposerSlashCommandIcon(
   command: Pick<ComposerSlashCommand, 'command' | 'description' | 'group' | 'id' | 'label'>
@@ -87,14 +172,20 @@ export function resolveComposerSlashCommandIcon(
     `${command.id} ${command.command} ${command.label} ${command.description} ${command.group}`.toLowerCase()
   if (haystack.includes('review') || haystack.includes('diff')) return 'review'
   if (haystack.includes('compact')) return 'compact'
+  if (haystack.includes('settings')) return 'settings'
   if (haystack.includes('help')) return 'help'
   if (haystack.includes('feedback')) return 'feedback'
+  if (haystack.includes('memory')) return 'memory'
+  if (haystack.includes('model')) return 'model'
+  if (haystack.includes('copy')) return 'copy'
+  if (haystack.includes('screen') || haystack.includes('window')) return 'screen'
+  if (haystack.includes('file') || haystack.includes('attach')) return 'files'
+  if (haystack.includes('editor')) return 'editor'
+  if (haystack.includes('stop') || haystack.includes('cancel')) return 'stop'
   if (haystack.includes('side')) return 'side'
   if (haystack.includes('explain')) return 'explain'
   if (haystack.includes('test')) return 'test'
   if (haystack.includes('goal')) return 'goal'
-  if (haystack.includes('memory')) return 'memory'
-  if (haystack.includes('model')) return 'model'
   if (haystack.includes('fork') || haystack.includes('resume')) return 'branch'
   if (haystack.includes('mcp') || haystack.includes('extension') || haystack.includes('hook')) return 'network'
   if (haystack.includes('permission') || haystack.includes('approval') || haystack.includes('audit')) {
@@ -146,6 +237,17 @@ function ComposerSlashCommandIcon({ name }: { name: SlashCommandIconName }) {
           <path {...common} d="M20 16h-6v5.2" />
           <path {...common} d="M10 8 4 2M14 8l6-6M10 16l-6 6M14 16l6 6" />
         </>
+      ) : name === 'copy' ? (
+        <>
+          <rect {...common} x="8" y="8" width="10" height="12" rx="1.8" />
+          <path {...common} d="M6 16H5.8A1.8 1.8 0 0 1 4 14.2V5.8A1.8 1.8 0 0 1 5.8 4h7.4A1.8 1.8 0 0 1 15 5.8V6" />
+        </>
+      ) : name === 'editor' ? (
+        <>
+          <path {...common} d="M5 4.5h14v15H5z" />
+          <path {...common} d="M8 8h5.5M8 11h8M8 14h4.5" />
+          <path {...common} d="m14.5 17 3-3 1.5 1.5-3 3H14.5z" />
+        </>
       ) : name === 'explain' ? (
         <>
           <path {...common} d="M7 3.5h7l3 3v14H7z" />
@@ -157,6 +259,11 @@ function ComposerSlashCommandIcon({ name }: { name: SlashCommandIconName }) {
         <>
           <path {...common} d="M5 5.5h14v9.5H9l-4 3.5z" />
           <path {...common} d="M8.5 9h7M8.5 12h4.5" />
+        </>
+      ) : name === 'files' ? (
+        <>
+          <path {...common} d="M5 6.5h5l1.6 2H19v9.5H5z" />
+          <path {...common} d="M5 8.5V6a2 2 0 0 1 2-2h3l1.5 2H17a2 2 0 0 1 2 2v.5" />
         </>
       ) : name === 'goal' ? (
         <>
@@ -201,6 +308,18 @@ function ComposerSlashCommandIcon({ name }: { name: SlashCommandIconName }) {
           <circle {...common} cx="15.6" cy="15.6" r="2.2" />
           <path {...common} d="m17.2 17.2 2.3 2.3" />
         </>
+      ) : name === 'screen' ? (
+        <>
+          <rect {...common} x="4" y="5" width="16" height="11" rx="2" />
+          <path {...common} d="M9 20h6M12 16v4" />
+          <path {...common} d="M8 9.5h2.5M8 12.5h6.5" />
+        </>
+      ) : name === 'settings' ? (
+        <>
+          <circle {...common} cx="12" cy="12" r="3" />
+          <path {...common} d="M12 3.5v2M12 18.5v2M4.6 7.2l1.7 1M17.7 15.8l1.7 1M4.6 16.8l1.7-1M17.7 8.2l1.7-1" />
+          <path {...common} d="M7.8 4.8 9 6.5M15 17.5l1.2 1.7M7.8 19.2 9 17.5M15 6.5l1.2-1.7" />
+        </>
       ) : name === 'side' ? (
         <>
           <rect {...common} x="4" y="5" width="16" height="14" rx="2.2" />
@@ -211,6 +330,11 @@ function ComposerSlashCommandIcon({ name }: { name: SlashCommandIconName }) {
           <path {...common} d="M4.5 14a7.5 7.5 0 1 1 15 0" />
           <path {...common} d="m12 14 4-4" />
           <path {...common} d="M7 18h10" />
+        </>
+      ) : name === 'stop' ? (
+        <>
+          <rect {...common} x="6" y="6" width="12" height="12" rx="2.5" />
+          <path {...common} d="M9.2 9.2 14.8 14.8M14.8 9.2 9.2 14.8" />
         </>
       ) : name === 'test' ? (
         <>
@@ -267,28 +391,45 @@ export function ComposerSlashMenu({
     top: number
     width: number
   } | null>(null)
+  const [expandedCommandIds, setExpandedCommandIds] = useState<string[]>([])
 
-  // Filtered + grouped command list. Filter substring lives entirely
-  // inside the menu; the parent just hands us the full registry.
-  const filtered = useMemo(() => {
-    return filterComposerSlashCommands(commands, query)
-  }, [commands, query])
-
-  // Group commands keyed by their `group` field, in the canonical order
-  // exported from the registry module. Used to render section headers
-  // between item runs.
+  // Group commands keyed by their `group` field, in the canonical order exported
+  // from the registry module. Hierarchical child commands stay normal commands
+  // for dispatch, but render under their parent when expanded or when the query
+  // matches a child.
   const grouped = useMemo(() => {
-    const groups: { group: CommandPaletteGroup; entries: ComposerSlashCommand[] }[] = []
-    for (const group of COMPOSER_SLASH_GROUP_ORDER) {
-      const entries = filtered.filter((entry) => entry.group === group)
-      if (entries.length > 0) groups.push({ group, entries })
-    }
-    return groups
-  }, [filtered])
+    return buildComposerSlashMenuGroups(commands, query, expandedCommandIds)
+  }, [commands, query, expandedCommandIds])
 
   // Flat list (in render order) used by keyboard nav. Kept in lockstep
   // with the grouped render via `flatIndexFor`.
-  const flat = useMemo(() => grouped.flatMap((block) => block.entries), [grouped])
+  const flat = useMemo(() => grouped.flatMap((block) => block.rows), [grouped])
+
+  const toggleExpanded = useCallback((commandId: string): void => {
+    setExpandedCommandIds((current) =>
+      current.includes(commandId)
+        ? current.filter((id) => id !== commandId)
+        : [...current, commandId]
+    )
+  }, [])
+
+  const expandCommand = useCallback((commandId: string): void => {
+    setExpandedCommandIds((current) =>
+      current.includes(commandId) ? current : [...current, commandId]
+    )
+  }, [])
+
+  const collapseCommand = useCallback((commandId: string): void => {
+    setExpandedCommandIds((current) => current.filter((id) => id !== commandId))
+  }, [])
+
+  const pickRow = useCallback((row: ComposerSlashMenuRow): void => {
+    if (row.hasChildren && !row.isExpanded) {
+      expandCommand(row.command.id)
+      return
+    }
+    onPick(row.command)
+  }, [expandCommand, onPick])
 
   // Recompute popover position when the anchor moves / when opening.
   useEffect(() => {
@@ -334,6 +475,10 @@ export function ComposerSlashMenu({
     }
   }, [flat.length])
 
+  useEffect(() => {
+    if (!open) setExpandedCommandIds([])
+  }, [open])
+
   // Keyboard handlers — capture phase so Enter inside the picker beats
   // the textarea's send-on-Enter. Same approach as AgentMentionMenu.
   useEffect(() => {
@@ -352,15 +497,28 @@ export function ComposerSlashMenu({
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
         setHighlight((current) => (current - 1 + flat.length) % flat.length)
+      } else if (event.key === 'ArrowRight') {
+        const row = flat[highlight]
+        if (row?.hasChildren && !row.isExpanded) {
+          event.preventDefault()
+          expandCommand(row.command.id)
+        }
+      } else if (event.key === 'ArrowLeft') {
+        const row = flat[highlight]
+        const parentId = row?.command.parentId || (row?.hasChildren ? row.command.id : null)
+        if (parentId) {
+          event.preventDefault()
+          collapseCommand(parentId)
+        }
       } else if (event.key === 'Enter' || event.key === 'Tab') {
         event.preventDefault()
         const choice = flat[highlight]
-        if (choice) onPick(choice)
+        if (choice) pickRow(choice)
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [open, flat, highlight, onPick, onDismiss])
+  }, [open, flat, highlight, expandCommand, collapseCommand, pickRow, onDismiss])
 
   // Click outside dismisses (anchor clicks bubble back into the textarea
   // and don't count as outside-clicks).
@@ -418,7 +576,8 @@ export function ComposerSlashMenu({
                 {block.group}
               </div>
               <ul className="composer-slash-menu-group-items" role="group">
-                {block.entries.map((entry) => {
+                {block.rows.map((row) => {
+                  const entry = row.command
                   flatIndex += 1
                   const localFlatIndex = flatIndex
                   const isHighlighted = localFlatIndex === highlight
@@ -427,12 +586,39 @@ export function ComposerSlashMenu({
                       key={entry.id}
                       role="option"
                       aria-selected={isHighlighted}
+                      aria-expanded={row.hasChildren ? row.isExpanded : undefined}
                       className={`composer-slash-menu-item ${
                         isHighlighted ? 'is-highlighted' : ''
+                      } ${row.depth > 0 ? 'is-child' : ''} ${
+                        row.hasChildren ? 'has-children' : ''
                       }`}
                       onMouseEnter={() => setHighlight(localFlatIndex)}
-                      onClick={() => onPick(entry)}
+                      onClick={() => pickRow(row)}
                     >
+                      <span className="composer-slash-menu-disclosure-slot">
+                        {row.hasChildren ? (
+                          <button
+                            type="button"
+                            tabIndex={-1}
+                            className={`composer-slash-menu-disclosure ${
+                              row.isExpanded ? 'is-expanded' : ''
+                            }`}
+                            aria-label={
+                              row.isExpanded
+                                ? `Collapse ${entry.label} options`
+                                : `Expand ${entry.label} options`
+                            }
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              toggleExpanded(entry.id)
+                            }}
+                          >
+                            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                              <path d="M6 4.5 9.5 8 6 11.5" />
+                            </svg>
+                          </button>
+                        ) : null}
+                      </span>
                       <span className="composer-slash-menu-icon" aria-hidden="true">
                         <ComposerSlashCommandIcon
                           name={resolveComposerSlashCommandIcon(entry)}

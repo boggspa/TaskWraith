@@ -481,15 +481,57 @@
 .composer-slash-menu-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
   color: var(--text-secondary);
 }
+.composer-slash-menu-item.is-child {
+  padding-left: 24px;
+}
 .composer-slash-menu-item.is-highlighted {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--text-primary);
+}
+.composer-slash-menu-disclosure-slot {
+  width: 18px;
+  height: 22px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.composer-slash-menu-disclosure {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 5px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  background: transparent;
+  cursor: pointer;
+}
+.composer-slash-menu-disclosure:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-primary);
+}
+.composer-slash-menu-disclosure svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  transition: transform 120ms ease;
+}
+.composer-slash-menu-disclosure.is-expanded svg {
+  transform: rotate(90deg);
 }
 .composer-slash-menu-icon {
   width: 24px;
@@ -499,6 +541,9 @@
   align-items: center;
   justify-content: center;
   color: color-mix(in srgb, var(--text-primary) 72%, transparent);
+}
+.composer-slash-menu-item.is-child .composer-slash-menu-icon {
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
 }
 .composer-slash-menu-icon-svg {
   width: 19px;
