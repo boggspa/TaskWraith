@@ -144,6 +144,7 @@ struct ThreadDetailView: View {
     /// One-scroll-per-turn coalescer for the follow-pin (kills stacked scrolls).
     @State private var followPin = TranscriptFollowPin()
     @State private var keyboardVisible = false
+    @State private var activeUserGutterMarker: TranscriptUserGutterMarker?
     /// Secondary workspace granted to subsequent runs (rail picker), keyed by
     /// thread so navigation away and back does not drop an unsent choice.
     @SceneStorage("taskwraith.secondaryWorkspaceSelections")
@@ -387,8 +388,189 @@ struct ThreadDetailView: View {
         }
     }
 
+    private struct TranscriptUserGutterMarker: Identifiable, Equatable {
+        let id: String
+        let rowId: String
+        let ordinal: Int
+        let fraction: Double
+        let title: String
+        let preview: String
+        let attachmentCount: Int
+    }
+
+    private struct TranscriptUserGutterRail: View {
+        let markers: [TranscriptUserGutterMarker]
+        let activeMarker: TranscriptUserGutterMarker?
+        let onSelect: (TranscriptUserGutterMarker) -> Void
+
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+        private let railX: CGFloat = 15
+        private let topInset: CGFloat = 78
+        private let bottomInset: CGFloat = 190
+
+        var body: some View {
+            GeometryReader { geo in
+                if markers.count >= 2 {
+                    let railHeight = max(96, geo.size.height - topInset - bottomInset)
+                    ZStack(alignment: .topLeading) {
+                        Capsule()
+                            .fill(TWTheme.textTertiary.opacity(0.18))
+                            .frame(width: 1, height: railHeight)
+                            .offset(x: railX, y: topInset)
+
+                        ForEach(markers) { marker in
+                            markerButton(marker, railHeight: railHeight)
+                        }
+
+                        if let activeMarker {
+                            previewBubble(activeMarker, railHeight: railHeight)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .animation(
+                        reduceMotion ? nil : .easeOut(duration: 0.16),
+                        value: activeMarker?.id)
+                }
+            }
+            .frame(width: 58)
+            .frame(maxHeight: .infinity)
+            .allowsHitTesting(markers.count >= 2)
+        }
+
+        private func markerY(_ marker: TranscriptUserGutterMarker, railHeight: CGFloat) -> CGFloat {
+            topInset + CGFloat(marker.fraction) * railHeight
+        }
+
+        private func markerButton(_ marker: TranscriptUserGutterMarker, railHeight: CGFloat)
+            -> some View
+        {
+            let isActive = activeMarker?.id == marker.id
+            return Button {
+                onSelect(marker)
+            } label: {
+                Capsule()
+                    .fill(
+                        isActive
+                            ? TWTheme.chroma1
+                            : TWTheme.textSecondary.opacity(0.65)
+                    )
+                    .frame(width: isActive ? 23 : 11, height: isActive ? 3 : 2)
+                    .shadow(
+                        color: isActive ? TWTheme.chroma1.opacity(0.35) : .clear,
+                        radius: isActive ? 5 : 0)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 34, height: 26)
+            .contentShape(Rectangle())
+            .position(x: railX, y: markerY(marker, railHeight: railHeight))
+            .accessibilityLabel("Jump to user message \(marker.ordinal)")
+            .accessibilityHint(marker.title)
+        }
+
+        private func previewBubble(_ marker: TranscriptUserGutterMarker, railHeight: CGFloat)
+            -> some View
+        {
+            let bubbleWidth: CGFloat = horizontalSizeClass == .regular ? 320 : 270
+            let rawY = markerY(marker, railHeight: railHeight) - 46
+            let clampedY = min(max(topInset - 8, rawY), topInset + railHeight - 112)
+            return VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text("You \(marker.ordinal)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(TWTheme.chroma1)
+                    if marker.attachmentCount > 0 {
+                        Label("\(marker.attachmentCount)", systemImage: "paperclip")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(TWTheme.textSecondary)
+                            .labelStyle(.titleAndIcon)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(TWTheme.surface3.opacity(0.92), in: Capsule())
+                    }
+                }
+                Text(marker.title)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .lineLimit(2)
+                if !marker.preview.isEmpty && marker.preview != marker.title {
+                    Text(marker.preview)
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .lineLimit(3)
+                }
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .frame(width: bubbleWidth, alignment: .leading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(TWTheme.border.opacity(0.75))
+            )
+            .shadow(color: Color.black.opacity(0.24), radius: 16, x: 0, y: 10)
+            .offset(x: railX + 22, y: clampedY)
+            .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .leading)))
+            .accessibilityElement(children: .combine)
+        }
+    }
+
     private var visibleDisplayItems: [TranscriptDisplayItem] {
         groupAdjacentToolRows(visibleRows)
+    }
+
+    private var userGutterMarkers: [TranscriptUserGutterMarker] {
+        let items = visibleDisplayItems
+        guard items.count > 1 else { return [] }
+        var markers: [TranscriptUserGutterMarker] = []
+        for (index, item) in items.enumerated() {
+            guard case .row(let row) = item, row.role == "user" else { continue }
+            let denominator = max(1, items.count - 1)
+            markers.append(
+                TranscriptUserGutterMarker(
+                    id: "\(row.id)#\(index)",
+                    rowId: row.id,
+                    ordinal: markers.count + 1,
+                    fraction: Double(index) / Double(denominator),
+                    title: transcriptUserGutterTitle(row.preview ?? ""),
+                    preview: transcriptUserGutterPreview(row.preview ?? ""),
+                    attachmentCount: transcriptUserGutterAttachmentCount(row)
+                )
+            )
+        }
+        return markers
+    }
+
+    private func transcriptUserGutterTitle(_ text: String) -> String {
+        let compact = transcriptUserGutterCompactText(text)
+        guard !compact.isEmpty else { return "User message" }
+        return transcriptUserGutterTruncate(compact, limit: 84)
+    }
+
+    private func transcriptUserGutterPreview(_ text: String) -> String {
+        let compact = transcriptUserGutterCompactText(text)
+        return transcriptUserGutterTruncate(compact, limit: 220)
+    }
+
+    private func transcriptUserGutterCompactText(_ text: String) -> String {
+        text
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func transcriptUserGutterTruncate(_ text: String, limit: Int) -> String {
+        guard text.count > limit else { return text }
+        let index = text.index(text.startIndex, offsetBy: max(1, limit - 1))
+        return String(text[..<index]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+    }
+
+    private func transcriptUserGutterAttachmentCount(_ row: RemoteThreadSnapshot.Row) -> Int {
+        let mediaCount = row.media?.count ?? 0
+        let thumbnailCount = row.imageThumbnails?.count ?? 0
+        let legacyCount = row.imageAttachmentCount ?? 0
+        return max(mediaCount, thumbnailCount, legacyCount)
     }
 
     /// One row of the LIVE block: a snapshot tool row or a streamed text
@@ -920,12 +1102,55 @@ struct ThreadDetailView: View {
             }
             .padding(.bottom, 14)
         }
+        .overlay(alignment: .leading) {
+            transcriptUserGutterOverlay(proxy: proxy)
+        }
+        .onChange(of: userGutterMarkers) { _, markers in
+            guard let activeUserGutterMarker else { return }
+            if !markers.contains(where: { $0.id == activeUserGutterMarker.id }) {
+                self.activeUserGutterMarker = nil
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // AnyView stage-break: the shell stack (banner + changes rows +
             // roster row + composer + rail) exceeds xcodebuild's stricter
             // type-check budget when inlined into the transcript chain.
             if !showsEmptyWelcomeCanvas {
                 AnyView(composerShellStack)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func transcriptUserGutterOverlay(proxy: ScrollViewProxy) -> some View {
+        if userGutterMarkers.count >= 2 {
+            TranscriptUserGutterRail(
+                markers: userGutterMarkers,
+                activeMarker: activeUserGutterMarker,
+                onSelect: { marker in
+                    activateUserGutterMarker(marker, proxy: proxy)
+                }
+            )
+            .padding(.leading, 2)
+        }
+    }
+
+    private func activateUserGutterMarker(
+        _ marker: TranscriptUserGutterMarker, proxy: ScrollViewProxy
+    ) {
+        activeUserGutterMarker = marker
+        autoFollow = false
+        if reduceMotion {
+            proxy.scrollTo(marker.rowId, anchor: .center)
+        } else {
+            withAnimation(.easeOut(duration: 0.22)) {
+                proxy.scrollTo(marker.rowId, anchor: .center)
+            }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_400_000_000)
+            if activeUserGutterMarker?.id == marker.id {
+                activeUserGutterMarker = nil
             }
         }
     }
