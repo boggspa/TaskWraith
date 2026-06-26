@@ -962,15 +962,18 @@ function SidebarChatTitleEditable({
   onCancel: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState(chat.title)
-  // Reset the draft when (a) the chat's persisted title changes from
-  // under us (e.g. another rename via the menu), or (b) edit mode is
-  // entered (so the user sees the current title, not a stale one
-  // from a previous abandoned edit).
+  const wasEditingRef = useRef(false)
+  // Seed the draft when edit mode opens. Once the user is typing, keep
+  // incoming chat updates from clobbering the in-progress rename.
   useEffect(() => {
-    if (!isEditing) return
-    const frame = window.requestAnimationFrame(() => setDraft(chat.title))
-    return () => window.cancelAnimationFrame(frame)
-  }, [isEditing, chat.title])
+    if (!isEditing) {
+      wasEditingRef.current = false
+      return
+    }
+    if (wasEditingRef.current) return
+    wasEditingRef.current = true
+    setDraft(chat.title)
+  }, [isEditing, chat.appChatId, chat.title])
 
   if (isEditing) {
     return (

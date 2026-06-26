@@ -32,8 +32,9 @@ struct ThreadRenameSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Chat name", text: $draft)
+                    TextField("Chat name", text: $draft, axis: .vertical)
                         .focused($focused)
+                        .lineLimit(1...3)
                         .submitLabel(.done)
                         .onSubmit(save)
                         #if os(iOS)

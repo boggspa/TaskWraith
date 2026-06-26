@@ -1566,13 +1566,14 @@ private struct ThreadNavigationTitle: View {
     let subtitle: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .center, spacing: 1) {
             Text(title)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(TWTheme.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
                 .truncationMode(.tail)
+                .multilineTextAlignment(.center)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
                     .font(.system(size: 12, weight: .medium))
@@ -1580,9 +1581,10 @@ private struct ThreadNavigationTitle: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
                     .truncationMode(.middle)
+                    .multilineTextAlignment(.center)
             }
         }
-        .frame(maxWidth: 260, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
         .accessibilityElement(children: .combine)
     }
 }
