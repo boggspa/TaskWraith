@@ -843,21 +843,24 @@ struct TaskRow: View {
                         .foregroundStyle(twAgentAccentColor(card.agentAccent))
                         .lineLimit(1)
                 }
-                Text(card.title ?? card.id)
-                    // Tidier sidebar: just the provider/ensemble glyph + title.
-                    // The metadata chip row (provider · type · status) is dropped,
-                    // and the title is one Dynamic Type step smaller (still a text
-                    // style, so it keeps scaling for accessibility).
-                    .font(nested ? .footnote : .callout)
-                    .foregroundStyle(TWTheme.textPrimary)
-                    .lineLimit(2)
-                // Pending-attention is an actionable "needs you" signal, not one of
-                // the removed status chips — keep it, but only render it when there
-                // is something to flag so ordinary rows stay clean.
-                if pendingAttentionCount > 0 {
-                    Image(systemName: "exclamationmark.bubble.fill")
-                        .font(.caption)
-                        .foregroundStyle(TWTheme.statusAttention)
+                // One tidy row: provider/ensemble glyph + a single-line title.
+                // The metadata chip row (provider · type · status) is dropped and
+                // the title truncates rather than wrapping to a second line. It's
+                // one Dynamic Type step smaller but still a text style, so it keeps
+                // scaling for accessibility.
+                HStack(spacing: 6) {
+                    Text(card.title ?? card.id)
+                        .font(nested ? .footnote : .callout)
+                        .foregroundStyle(TWTheme.textPrimary)
+                        .lineLimit(1)
+                    // Pending-attention is an actionable "needs you" signal (not a
+                    // status chip) — keep it, inline so the row stays one line.
+                    if pendingAttentionCount > 0 {
+                        Image(systemName: "exclamationmark.bubble.fill")
+                            .font(.caption)
+                            .foregroundStyle(TWTheme.statusAttention)
+                    }
+                    Spacer(minLength: 0)
                 }
             }
         }
