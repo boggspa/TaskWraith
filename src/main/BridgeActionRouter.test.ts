@@ -161,6 +161,10 @@ function makeStubExecutor(
       executed: true,
       message: 'ensembleSteer done'
     }),
+    executeSetThreadTitle: make('executeSetThreadTitle', {
+      executed: true,
+      message: 'setThreadTitle done'
+    }),
     executeGoalUpdate: make('executeGoalUpdate', {
       executed: true,
       message: 'goalUpdate done'
@@ -1205,6 +1209,26 @@ describe('BridgeActionRouter', () => {
       expect(result.accepted).toBe(false)
       expect(result.message).toMatch(/not on the remote allowlist/i)
       expect(calls).toHaveLength(0)
+    })
+
+    it('dispatches setThreadTitle to executor.executeSetThreadTitle', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
+      const wire = Buffer.from(
+        JSON.stringify(withReplayMeta({
+          kind: 'setThreadTitle',
+          workspaceId: 'ws-allowed',
+          threadId: 'thread-1',
+          title: 'Renamed from iOS'
+        })),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean; message?: string }
+      expect(result.accepted).toBe(true)
+      expect(result.message).toBe('setThreadTitle done')
+      expect(calls[0].method).toBe('executeSetThreadTitle')
     })
 
     it('dispatches togglePinChat to executor.executeTogglePinChat', async () => {

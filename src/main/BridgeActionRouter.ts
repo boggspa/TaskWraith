@@ -570,6 +570,8 @@ export class BridgeActionRouter {
         return this.executor.executeCreateSideChat(payload)
       case 'setThreadNotes':
         return this.executor.executeSetThreadNotes(payload)
+      case 'setThreadTitle':
+        return this.executor.executeSetThreadTitle(payload)
       case 'goalUpdate':
         return this.executor.executeGoalUpdate(payload)
       case 'toggleMessagePin':
@@ -1024,6 +1026,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     // less powerful than file writes. Gate them under startTurn so the default
     // read-write entry covers them.
     case 'setThreadNotes':
+    case 'setThreadTitle':
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':

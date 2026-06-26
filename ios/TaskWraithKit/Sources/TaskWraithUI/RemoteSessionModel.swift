@@ -1508,6 +1508,33 @@ public final class RemoteSessionModel: ObservableObject {
         threadSnapshots[thread] = draft.build()
     }
 
+    private static func retitledCard(_ card: RemoteTaskCard, title: String) -> RemoteTaskCard {
+        guard
+            let data = try? JSONEncoder().encode(card),
+            var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return card
+        }
+        object["title"] = title
+        guard
+            let nextData = try? JSONSerialization.data(withJSONObject: object),
+            let decoded = try? JSONDecoder().decode(RemoteTaskCard.self, from: nextData)
+        else {
+            return card
+        }
+        return decoded
+    }
+
+    private func applyLocalThreadTitle(_ card: RemoteTaskCard, title: String) {
+        guard let thread = card.threadId else { return }
+        taskCards = taskCards.map { current in
+            if current.id == card.id || current.threadId == thread {
+                return Self.retitledCard(current, title: title)
+            }
+            return current
+        }
+    }
+
     /// Demo-only: append the user's prompt + a canned assistant reply to a thread
     /// so the composer feels interactive with no network. Rows are built via JSON
     /// so they decode through the same Codable path as real rows.
@@ -3491,6 +3518,39 @@ public final class RemoteSessionModel: ObservableObject {
             BridgeAction.setThreadNotes(workspaceId: ws, threadId: thread, notes: notes),
             successLabel: "Notes saved.")
         scheduleThreadRefresh(thread)
+    }
+
+    /// Rename a chat on the Mac; the phone updates optimistically and rolls back
+    /// if policy or ownership checks reject the action.
+    public func renameThread(_ card: RemoteTaskCard, title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            lastActionMessage = "Name can't be empty."
+            return
+        }
+        guard let thread = card.threadId else { return }
+        if (card.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == trimmed {
+            return
+        }
+        if isDemo {
+            applyLocalThreadTitle(card, title: trimmed)
+            lastActionMessage = "Renamed."
+            return
+        }
+        let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        let previousTitle = card.title ?? ""
+        applyLocalThreadTitle(card, title: trimmed)
+        send(
+            BridgeAction.setThreadTitle(workspaceId: ws, threadId: thread, title: trimmed),
+            successLabel: "Renamed.",
+            onAck: { [weak self] accepted in
+                guard let self else { return }
+                if accepted {
+                    self.scheduleThreadRefresh(thread)
+                } else {
+                    self.applyLocalThreadTitle(card, title: previousTitle)
+                }
+            })
     }
 
     /// Set, edit, pause, resume, complete, block, or clear the thread goal.

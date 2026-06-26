@@ -64,6 +64,7 @@ const BRIDGE_WORKSPACE_FILE_PATH_MAX_CHARS = 4096
 const BRIDGE_WORKSPACE_FILE_WRITE_MAX_CHARS = 1_600_000
 const BRIDGE_GOAL_OBJECTIVE_MAX_CHARS = 4000
 const BRIDGE_GOAL_REASON_MAX_CHARS = 800
+const BRIDGE_THREAD_TITLE_MAX_CHARS = 160
 
 export interface BridgeApprovalReplyAction extends BridgeActionMetadata {
   kind: 'approvalReply'
@@ -473,6 +474,14 @@ export interface BridgeSetThreadNotesAction extends BridgeActionMetadata {
   notes: string
 }
 
+export interface BridgeSetThreadTitleAction extends BridgeActionMetadata {
+  kind: 'setThreadTitle'
+  workspaceId: string
+  threadId: string
+  /** Display name for the chat thread. Whitespace-only titles are rejected. */
+  title: string
+}
+
 export type BridgeGoalUpdateOperation =
   | 'set'
   | 'edit'
@@ -652,6 +661,7 @@ export type BridgeActionPayload =
   | BridgeRemoveGuestParticipantAction
   | BridgeCreateSideChatAction
   | BridgeSetThreadNotesAction
+  | BridgeSetThreadTitleAction
   | BridgeGoalUpdateAction
   | BridgeToggleMessagePinAction
   | BridgeProposedPlanDecisionAction
@@ -780,6 +790,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'removeGuestParticipant':
     case 'createSideChat':
     case 'setThreadNotes':
+    case 'setThreadTitle':
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
@@ -849,6 +860,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'removeGuestParticipant':
     case 'createSideChat':
     case 'setThreadNotes':
+    case 'setThreadTitle':
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
@@ -921,6 +933,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'removeGuestParticipant':
     case 'createSideChat':
     case 'setThreadNotes':
+    case 'setThreadTitle':
     case 'goalUpdate':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
@@ -1112,6 +1125,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isSetThreadNotes(parsed)
         ? (parsed as unknown as BridgeSetThreadNotesAction)
         : { kind: 'unknown', rawKind: 'setThreadNotes', raw: parsed }
+    case 'setThreadTitle':
+      return isSetThreadTitle(parsed)
+        ? (parsed as unknown as BridgeSetThreadTitleAction)
+        : { kind: 'unknown', rawKind: 'setThreadTitle', raw: parsed }
     case 'goalUpdate':
       return isGoalUpdate(parsed)
         ? (parsed as unknown as BridgeGoalUpdateAction)
@@ -1533,6 +1550,15 @@ function isEnsembleQueuePrompt(v: Record<string, unknown>): boolean {
 function isSetThreadNotes(v: Record<string, unknown>): boolean {
   return (
     isWorkspaceThreadAction(v) && typeof v.notes === 'string' && v.notes.length <= 20_000
+  )
+}
+
+function isSetThreadTitle(v: Record<string, unknown>): boolean {
+  return (
+    isWorkspaceThreadAction(v) &&
+    typeof v.title === 'string' &&
+    v.title.trim().length > 0 &&
+    v.title.length <= BRIDGE_THREAD_TITLE_MAX_CHARS
   )
 }
 

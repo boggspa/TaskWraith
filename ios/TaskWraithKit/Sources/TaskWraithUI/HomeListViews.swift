@@ -34,6 +34,8 @@ struct HomeView: View {
     /// QR-optional discovery sheet (find other TaskWraith hosts on the tailnet
     /// via the connected host as the "oracle").
     @State private var showDiscoverySheet = false
+    @State private var renameSheetPresented = false
+    @State private var renameTargetCard: RemoteTaskCard?
 
     private func openCanvas(_ mode: ComposeMode) {
         if explicitSelection {
@@ -52,6 +54,46 @@ struct HomeView: View {
         ipadCollapseSeeded = true
         collapsedSections = ["activeRuns", "pinned", "recents", "ensembles", "workflows", "workspaces", "globalChats"]
     }
+
+    private var renameSheetCard: RemoteTaskCard? {
+        guard let target = renameTargetCard else { return nil }
+        return model.taskCards.first { $0.id == target.id } ?? target
+    }
+
+    private func presentRenameSheet(for card: RemoteTaskCard) {
+        renameTargetCard = card
+        renameSheetPresented = true
+    }
+
+    private func renameDisplayTitle(for card: RemoteTaskCard) -> String {
+        let title = (card.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "Chat" : title
+    }
+
+    private func renameSubtitle(for card: RemoteTaskCard) -> String? {
+        var parts: [String] = []
+        if let workspaceName = model.workspaceName(for: card.workspaceId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !workspaceName.isEmpty
+        {
+            parts.append(workspaceName)
+        }
+        let hostName = model.macDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !hostName.isEmpty {
+            parts.append(hostName)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
+    @ViewBuilder
+    private func renameContextMenu(for card: RemoteTaskCard) -> some View {
+        Button {
+            presentRenameSheet(for: card)
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+    }
+
     /// True when hosted in a NavigationSplitView sidebar — rows select
     /// explicitly instead of pushing NavigationLinks. NOT derivable from
     /// the environment: split-view columns report a COMPACT horizontal
@@ -119,6 +161,16 @@ struct HomeView: View {
         #endif
         .scrollContentBackground(.hidden)
         .background(TWTheme.sidebarBg)
+        .sheet(isPresented: $renameSheetPresented, onDismiss: { renameTargetCard = nil }) {
+            if let card = renameSheetCard {
+                ThreadRenameSheet(
+                    currentTitle: renameDisplayTitle(for: card),
+                    subtitle: renameSubtitle(for: card)
+                ) { title in
+                    model.renameThread(card, title: title)
+                }
+            }
+        }
         .onAppear { seedSidebarCollapseIfNeeded() }
         .onChange(of: model.navigationTarget) { _, threadId in
             guard let threadId else { return }
@@ -642,6 +694,7 @@ struct HomeView: View {
                 }
             }
             .buttonStyle(.plain)
+            .contextMenu { renameContextMenu(for: card) }
             .listRowInsets(rowInsets)
             .listRowSeparator(.hidden)
             .listRowBackground(selectedChrome)
@@ -660,6 +713,7 @@ struct HomeView: View {
                 }
             }
             .buttonStyle(.plain)
+            .contextMenu { renameContextMenu(for: card) }
             .listRowInsets(rowInsets)
             .listRowSeparator(.hidden)
             .listRowBackground(rowChrome)

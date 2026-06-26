@@ -33,6 +33,7 @@ import type {
   BridgeRemoveGuestParticipantAction,
   BridgeCreateSideChatAction,
   BridgeSetThreadNotesAction,
+  BridgeSetThreadTitleAction,
   BridgeGoalUpdateAction,
   BridgeToggleMessagePinAction,
   BridgeProposedPlanDecisionAction,
@@ -171,6 +172,7 @@ export interface BridgeActionExecutor {
     action: BridgeCreateSideChatAction
   ): Promise<BridgeActionExecutionResult>
   executeSetThreadNotes(action: BridgeSetThreadNotesAction): Promise<BridgeActionExecutionResult>
+  executeSetThreadTitle(action: BridgeSetThreadTitleAction): Promise<BridgeActionExecutionResult>
   executeGoalUpdate(action: BridgeGoalUpdateAction): Promise<BridgeActionExecutionResult>
   executeToggleMessagePin(
     action: BridgeToggleMessagePinAction
@@ -377,6 +379,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeSetThreadNotesAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('setThreadNotes', action.threadId)
+  }
+  async executeSetThreadTitle(
+    action: BridgeSetThreadTitleAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('setThreadTitle', action.threadId)
   }
   async executeGoalUpdate(action: BridgeGoalUpdateAction): Promise<BridgeActionExecutionResult> {
     return notWired('goalUpdate', action.threadId)
@@ -652,6 +659,7 @@ export interface MainProcessActionExecutorDependencies {
   removeGuestParticipantFn?: (action: BridgeRemoveGuestParticipantAction) => Promise<unknown>
   createSideChatFn?: (action: BridgeCreateSideChatAction) => Promise<unknown>
   setThreadNotesFn?: (action: BridgeSetThreadNotesAction) => Promise<unknown>
+  setThreadTitleFn?: (action: BridgeSetThreadTitleAction) => Promise<unknown>
   goalUpdateFn?: (action: BridgeGoalUpdateAction) => Promise<{
     ok: boolean
     goal?: unknown
@@ -1484,6 +1492,44 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       this.deps.setThreadNotesFn,
       action
     )
+  }
+
+  async executeSetThreadTitle(
+    action: BridgeSetThreadTitleAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.setThreadTitleFn) {
+      this.log(
+        `[BridgeActionExecutor] setThreadTitle has no setThreadTitleFn — threadId=${action.threadId}`
+      )
+      return notWired('setThreadTitle', action.threadId)
+    }
+    try {
+      const result = await this.deps.setThreadTitleFn(action)
+      const resultRecord = isRecord(result) ? result : null
+      const ok = typeof resultRecord?.ok === 'boolean' ? resultRecord.ok : Boolean(result)
+      const reason =
+        typeof resultRecord?.error === 'string'
+          ? resultRecord.error
+          : typeof resultRecord?.reason === 'string'
+            ? resultRecord.reason
+            : undefined
+      if (!ok) {
+        return {
+          executed: false,
+          message: `Rename was not applied${reason ? `: ${reason}` : ''}`
+        }
+      }
+      const title = typeof resultRecord?.title === 'string' ? resultRecord.title : action.title
+      return {
+        executed: true,
+        message: 'Renamed.',
+        data: { threadId: action.threadId, title }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] setThreadTitle failed: ${errMessage}`)
+      return { executed: false, message: `Rename failed: ${errMessage}` }
+    }
   }
 
   async executeGoalUpdate(action: BridgeGoalUpdateAction): Promise<BridgeActionExecutionResult> {

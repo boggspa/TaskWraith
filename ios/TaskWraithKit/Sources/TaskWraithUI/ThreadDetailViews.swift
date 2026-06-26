@@ -136,6 +136,7 @@ struct ThreadDetailView: View {
     /// ensemble) so the host hides the secondary rows + telemetry rail when the
     /// composer is idle — i.e. the compact one-line composer.
     @State private var composerFocused = false
+    @State private var renameSheetPresented = false
     /// Follow the transcript tail as content streams in. Driven by the bottom
     /// sentinel's visibility (on screen ⇒ follow); the jump-to-latest pill and
     /// thread-open also re-arm it.
@@ -1482,7 +1483,14 @@ struct ThreadDetailView: View {
         .toolbar {
             #if os(iOS)
                 ToolbarItem(placement: .principal) {
-                    ThreadNavigationTitle(title: threadHeaderTitle, subtitle: threadHeaderSubtitle)
+                    Button {
+                        renameSheetPresented = true
+                    } label: {
+                        ThreadNavigationTitle(
+                            title: threadHeaderTitle, subtitle: threadHeaderSubtitle)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Rename chat")
                 }
             #endif
             // Individual circular pills (matching the workspaces sidebar), NOT a
@@ -1537,6 +1545,16 @@ struct ThreadDetailView: View {
         .sheet(isPresented: $model.rosterPresented) {
             if let wsId = card?.workspaceId {
                 EnsembleRosterSheet(model: model, threadId: taskId, workspaceId: wsId)
+            }
+        }
+        .sheet(isPresented: $renameSheetPresented) {
+            if let card {
+                ThreadRenameSheet(
+                    currentTitle: threadHeaderTitle,
+                    subtitle: threadHeaderSubtitle
+                ) { title in
+                    model.renameThread(card, title: title)
+                }
             }
         }
 

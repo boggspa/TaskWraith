@@ -32,6 +32,7 @@ import type {
   BridgeGithubPrReadinessAction,
   BridgeGithubCreatePrAction,
   BridgeGoalUpdateAction,
+  BridgeSetThreadTitleAction,
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
   BridgeTogglePinChatAction,
@@ -146,6 +147,12 @@ const sample = {
     op: 'set',
     objective: 'Ship the mobile goal control'
   } satisfies BridgeGoalUpdateAction,
+  setThreadTitle: {
+    kind: 'setThreadTitle',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    title: 'Readable chat title'
+  } satisfies BridgeSetThreadTitleAction,
   proposedPlanDecision: {
     kind: 'proposedPlanDecision',
     workspaceId: 'ws-1',
@@ -269,7 +276,8 @@ describe('NoopActionExecutor', () => {
       executor.executeWorkspaceFileDelete(sample.workspaceFileDelete),
       executor.executeWorkspaceDiff(sample.workspaceDiff),
       executor.executeThreadMediaFetch(sample.threadMediaFetch),
-      executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts)
+      executor.executeDiscoverTailnetHosts(sample.discoverTailnetHosts),
+      executor.executeSetThreadTitle(sample.setThreadTitle)
     ])
     for (const r of results) {
       expect(r.executed).toBe(false)
@@ -299,6 +307,7 @@ describe('NoopActionExecutor', () => {
     expect(results[20].message).toContain('ws-1')
     expect(results[21].message).toContain('media-1')
     expect(results[22].message).toContain('oracle')
+    expect(results[23].message).toContain('t-1')
   })
 })
 
@@ -751,6 +760,26 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     const result = await executor.executeGoalUpdate(sample.goalUpdate)
     expect(result.executed).toBe(false)
     expect(result.message).toBe('thread missing')
+  })
+
+  it('renames a thread through setThreadTitleFn', async () => {
+    const setThreadTitleFn = vi.fn().mockResolvedValue({ ok: true, title: 'Readable chat title' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setThreadTitleFn })
+    const result = await executor.executeSetThreadTitle(sample.setThreadTitle)
+    expect(setThreadTitleFn).toHaveBeenCalledWith(sample.setThreadTitle)
+    expect(result).toMatchObject({
+      executed: true,
+      message: 'Renamed.',
+      data: { threadId: 't-1', title: 'Readable chat title' }
+    })
+  })
+
+  it('surfaces setThreadTitleFn decline reasons', async () => {
+    const setThreadTitleFn = vi.fn().mockResolvedValue({ ok: false, error: 'thread missing' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setThreadTitleFn })
+    const result = await executor.executeSetThreadTitle(sample.setThreadTitle)
+    expect(result.executed).toBe(false)
+    expect(result.message).toBe('Rename was not applied: thread missing')
   })
 
   it('flips a proposed plan status through proposedPlanDecisionFn', async () => {

@@ -1573,6 +1573,16 @@ public enum BridgeAction {
         ])
     }
 
+    public static func setThreadTitle(
+        workspaceId: String, threadId: String, title: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "setThreadTitle", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId, "title": title,
+        ])
+    }
+
     public static func goalUpdate(
         workspaceId: String, threadId: String, op: String,
         objective: String? = nil, reason: String? = nil,

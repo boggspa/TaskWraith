@@ -980,6 +980,7 @@ describe('decodeBridgeActionPayload', () => {
           runId: 'run-1'
         },
         { kind: 'setYoloMode', workspaceId: 'ws-1', enabled: true },
+        { kind: 'setThreadTitle', workspaceId: 'ws-1', threadId: 't-1', title: 'Rename me' },
         { kind: 'togglePinChat', workspaceId: 'ws-1', appChatId: 'chat-1', pinned: true },
         { kind: 'togglePinWorkspace', workspaceId: 'ws-1', pinned: true },
         {
@@ -1162,6 +1163,37 @@ describe('decodeBridgeActionPayload', () => {
       expect(workspaceIdFromPayload(payload)).toBe('ws-1')
       expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
       expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('decodes setThreadTitle as a workspace-bound chat control', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'setThreadTitle',
+          actionId: 'rename-1',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          title: 'New chat name'
+        })
+      )
+      expect(payload.kind).toBe('setThreadTitle')
+      if (payload.kind !== 'setThreadTitle') throw new Error('expected setThreadTitle')
+      expect(payload.title).toBe('New chat name')
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('rejects malformed setThreadTitle payloads', () => {
+      for (const variant of [
+        { kind: 'setThreadTitle', workspaceId: 'ws-1', threadId: 't-1', title: '' },
+        { kind: 'setThreadTitle', workspaceId: 'ws-1', threadId: 't-1', title: '   ' },
+        { kind: 'setThreadTitle', workspaceId: 'ws-1', threadId: 't-1', title: 'x'.repeat(161) },
+        { kind: 'setThreadTitle', workspaceId: 'ws-1', title: 'Missing thread' }
+      ]) {
+        const { payload } = decodeBridgeActionPayload(encode(variant))
+        expect(payload.kind).toBe('unknown')
+        if (payload.kind === 'unknown') expect(payload.rawKind).toBe('setThreadTitle')
+      }
     })
 
     it('rejects malformed goalUpdate payloads', () => {
@@ -1381,6 +1413,15 @@ describe('workspaceIdFromPayload', () => {
         expected: 'ws-yolo'
       },
       {
+        payload: {
+          kind: 'setThreadTitle',
+          workspaceId: 'ws-title',
+          threadId: 't',
+          title: 'Rename'
+        },
+        expected: 'ws-title'
+      },
+      {
         payload: { kind: 'togglePinChat', workspaceId: 'ws-f', appChatId: 'chat-1', pinned: true },
         expected: 'ws-f'
       },
@@ -1480,6 +1521,7 @@ describe('payloadRequiresWorkspaceGating', () => {
       { kind: 'threadMediaFetch', workspaceId: 'w', threadId: 't', rowId: 'm', mediaId: 'img' },
       { kind: 'cancelRun', workspaceId: 'w', threadId: 't', provider: 'gemini', runId: 'r' },
       { kind: 'setYoloMode', workspaceId: 'w', enabled: false },
+      { kind: 'setThreadTitle', workspaceId: 'w', threadId: 't', title: 'Rename' },
       { kind: 'goalUpdate', workspaceId: 'w', threadId: 't', op: 'pause' },
       { kind: 'togglePinChat', workspaceId: 'w', appChatId: 'chat', pinned: true },
       { kind: 'togglePinWorkspace', workspaceId: 'w', pinned: true },
@@ -1561,6 +1603,14 @@ describe('payloadIsMutating', () => {
         workspaceId: 'w',
         threadId: 't',
         op: 'complete'
+      })
+    ).toBe(true)
+    expect(
+      payloadIsMutating({
+        kind: 'setThreadTitle',
+        workspaceId: 'w',
+        threadId: 't',
+        title: 'Rename'
       })
     ).toBe(true)
     expect(

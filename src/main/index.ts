@@ -19651,6 +19651,39 @@ if (isGeminiMcpBridgeProcess) {
           if (canonical) pushRemoteThreadSnapshot(updated, canonical)
           return { ok: true }
         },
+        setThreadTitleFn: async (action) => {
+          const chat = AppStore.getChat(action.threadId)
+          if (!chat) return { ok: false, error: 'Thread not found' }
+          const title = action.title.trim()
+          if (!title) return { ok: false, error: 'Thread title is required' }
+          const canonicalActionWs =
+            action.workspaceId === 'global'
+              ? 'global'
+              : canonicalRemoteWorkspaceId(action.workspaceId) ?? action.workspaceId
+          const chatWs =
+            chat.scope === 'global'
+              ? 'global'
+              : canonicalRemoteWorkspaceId(chat.workspaceId) ?? chat.workspaceId
+          if (chat.scope !== 'global' && chatWs && chatWs !== canonicalActionWs) {
+            return {
+              ok: false,
+              error: `Thread does not belong to workspace "${action.workspaceId}"`
+            }
+          }
+          const updated: ChatRecord = {
+            ...chat,
+            title,
+            updatedAt: Date.now()
+          }
+          AppStore.saveChat(updated)
+          broadcastChatUpdated(updated)
+          broadcastThreadUpdate(updated.appChatId)
+          broadcastThreadList()
+          const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
+          if (canonical) pushRemoteThreadSnapshot(updated, canonical)
+          bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+          return { ok: true, title }
+        },
         goalUpdateFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat) return { ok: false, reason: 'Thread not found' }
