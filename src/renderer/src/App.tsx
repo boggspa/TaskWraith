@@ -108,6 +108,7 @@ import {
   buildHiddenSideChatInitialPrompt,
   buildSideChatRunResultSeedPrompt
 } from './lib/SideChatRunSeed'
+import { handleSideChatComposerKeyDown } from './lib/sideChatComposer'
 import type { SettingsPanelUpdate } from './lib/settingsPanelUpdate'
 import { IOS_REMOTE_ENABLED } from './lib/featureFlags'
 import {
@@ -468,8 +469,12 @@ import {
   type AgentAuraProviderKey,
   type AgentAuraStatus
 } from './components/FxLayers'
+import { CanvasComposerButton } from './components/CanvasComposerButton'
 import { ComposerCumulativeTimecode, ComposerRunTimecode } from './components/ComposerTimecodes'
+import { ComposerPlanPopoverButton } from './components/ComposerPlanPopoverButton'
+import { CopyTranscriptButton } from './components/CopyTranscriptButton'
 import {
+  LiveThreadTokenTally,
   estimateLiveOutputTokensFromChars
 } from './components/LiveThreadTokenTally'
 import { WelcomeUsageDashboard } from './components/WelcomeUsageDashboard'
@@ -12262,7 +12267,7 @@ function App(): React.JSX.Element {
     const request = buildRunRequest(undefined, undefined, {
       chat: sideChatForRequest,
       prompt: requestPrompt,
-      imageAttachments: []
+      imageAttachments: imageAttachmentsByChatIdRef.current[sideChat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
     })
     if (hiddenContextPrompt) {
       request.displayPrompt = sidePrompt
@@ -12277,6 +12282,7 @@ function App(): React.JSX.Element {
     }
     if (isChatBusy(sideChat.appChatId)) {
       queueRunRequest(request)
+      clearComposerAttachmentsForSubmittedRequest(request)
       setChatPromptDraft(sideChat.appChatId, '')
       return
     }
@@ -15116,6 +15122,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const handleAppKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return
       const keyboardActions = keyboardActionsRef.current
       const target = event.target as HTMLElement | null
       const tagName = target?.tagName?.toLowerCase()
@@ -16376,6 +16383,50 @@ function App(): React.JSX.Element {
   const sideCumulativeRunBaseMs = useMemo(
     () => computeCumulativeRunBaseMs(sideChat?.runs),
     [sideChat?.runs]
+  )
+  const sideChatTokenTally = useMemo(
+    () => buildChatTokenTally(sideChat?.runs || []),
+    [sideChat?.runs]
+  )
+  const sideLiveRunOutputTokens = useMemo(() => {
+    if (!isSideChatRunning || !sideChat) return 0
+    const activeRunIds = new Set(
+      (sideChat.runs || [])
+        .filter((run) => !run.endedAt || run.status === 'running' || run.status === 'queued')
+        .map((run) => run.runId)
+        .filter((runId): runId is string => Boolean(runId))
+    )
+    if (activeRunIds.size === 0 && sideRun?.runId) {
+      activeRunIds.add(sideRun.runId)
+    }
+    const activeRoundStartedAt =
+      sideChat.ensemble?.activeRound?.status === 'running'
+        ? Date.parse(sideChat.ensemble.activeRound.startedAt || '')
+        : Number.NaN
+    let liveChars = 0
+    for (const message of sideChat.messages || []) {
+      if (message.role !== 'assistant') continue
+      if (message.runId && activeRunIds.has(message.runId)) {
+        liveChars += message.content?.length || 0
+        continue
+      }
+      if (Number.isFinite(activeRoundStartedAt)) {
+        const messageTime = Date.parse(message.timestamp || '')
+        if (Number.isFinite(messageTime) && messageTime >= activeRoundStartedAt) {
+          liveChars += message.content?.length || 0
+        }
+      }
+    }
+    return estimateLiveOutputTokensFromChars(liveChars)
+  }, [isSideChatRunning, sideChat, sideRun?.runId])
+  const sideThreadTokenTallyHasValue =
+    sideChatTokenTally.totalTokens > 0 || sideLiveRunOutputTokens > 0
+  const sideContextModelId = sideRun?.actualModel || sideRun?.requestedModel || sideComposerSelectedModel
+  const sideDualComposerTelemetry = Boolean(
+    sideChat &&
+      (sideChat.chatKind === 'ensemble' ||
+        sideChat.guestParticipant ||
+        getSideChatMode(sideChat) === 'guestParticipant')
   )
   const composerRunTimecodeStartedAt = isCurrentChatRunning
     ? currentEnsembleRound?.startedAt || currentRun?.startedAt || null
@@ -22938,16 +22989,7 @@ function App(): React.JSX.Element {
                     value={sidePrompt}
                     onContextMenu={sideComposerContextMenu.handleContextMenu}
                     onChange={(event) => setChatPromptDraft(sideChat.appChatId, event.target.value)}
-                    onKeyDown={(event) => {
-                      if (
-                        event.key === 'Enter' &&
-                        !event.shiftKey &&
-                        !event.nativeEvent.isComposing
-                      ) {
-                        event.preventDefault()
-                        handleSideRun()
-                      }
-                    }}
+                    onKeyDown={(event) => handleSideChatComposerKeyDown(event, handleSideRun)}
                     placeholder={`Ask ${sidePanelKindLabel.toLowerCase()}`}
                     aria-label="Linked chat prompt"
                     rows={2}
@@ -23130,7 +23172,7 @@ function App(): React.JSX.Element {
               </div>
               <div
                 className="composer-telemetry-row side-chat-telemetry-row"
-                data-has-token-tally="false"
+                data-has-token-tally={sideThreadTokenTallyHasValue ? 'true' : 'false'}
               >
                 <ComposerRunTimecode
                   running={isSideChatRunning}
@@ -23141,6 +23183,31 @@ function App(): React.JSX.Element {
                   startedAt={sideComposerRunTimecodeStartedAt}
                   cumulativeBaseMs={sideCumulativeRunBaseMs}
                 />
+                <ComposerPlanPopoverButton
+                  key={sideChat.appChatId}
+                  chat={sideChat}
+                  composerStyle={appearance.composerStyle}
+                />
+                <CopyTranscriptButton
+                  disabled={sideChat.archived || (sideChat.messages?.length || 0) === 0}
+                  resetKey={sideChat.appChatId}
+                  onCopy={() => window.api.copyChatMarkdownTranscript(sideChat.appChatId)}
+                />
+                <CanvasComposerButton disabled={!window.api.canvas?.openWindow} />
+                {sideThreadTokenTallyHasValue && (
+                  <LiveThreadTokenTally
+                    baseTally={sideChatTokenTally}
+                    currency={displayCurrency}
+                    dualCostAndRam={sideDualComposerTelemetry}
+                    model={sideContextModelId}
+                    overestimatePercent={overestimatePercent}
+                    provider={sideProvider}
+                    providerRates={providerRates}
+                    running={isSideChatRunning}
+                    liveOutputTokens={sideLiveRunOutputTokens}
+                    title="Linked chat token usage"
+                  />
+                )}
               </div>
             </form>
               </aside>
