@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   buildClaudeCliArgs,
   claudeFastModeSettingsArg,
-  normalizeClaudeEffortFlag
+  normalizeClaudeEffortFlag,
+  normalizeClaudeEffortFlagForModel
 } from './ClaudeCliArgs'
 
 describe('normalizeClaudeEffortFlag', () => {
@@ -22,9 +23,33 @@ describe('normalizeClaudeEffortFlag', () => {
     expect(normalizeClaudeEffortFlag('max')).toBe('max')
   })
 
+  it('maps TaskWraith display aliases onto Claude-supported effort flags', () => {
+    expect(normalizeClaudeEffortFlag('extra')).toBe('xhigh')
+    expect(normalizeClaudeEffortFlag('ultracode')).toBe('max')
+  })
+
   it('rejects unknown values rather than passing them to the CLI', () => {
     expect(normalizeClaudeEffortFlag('extreme')).toBeNull()
     expect(normalizeClaudeEffortFlag('123')).toBeNull()
+  })
+})
+
+describe('normalizeClaudeEffortFlagForModel', () => {
+  it('drops reasoning for Haiku models', () => {
+    expect(normalizeClaudeEffortFlagForModel('max', 'claude-haiku-4-5')).toBeNull()
+    expect(normalizeClaudeEffortFlagForModel('ultracode', 'haiku')).toBeNull()
+  })
+
+  it('keeps Sonnet on its supported effort ladder', () => {
+    expect(normalizeClaudeEffortFlagForModel('high', 'claude-sonnet-4-6')).toBe('high')
+    expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-sonnet-4-6')).toBeNull()
+    expect(normalizeClaudeEffortFlagForModel('ultracode', 'claude-sonnet-4-6')).toBe('max')
+  })
+
+  it('allows Opus/Fable/custom models to use the full Claude CLI ladder', () => {
+    expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-opus-4-8')).toBe('xhigh')
+    expect(normalizeClaudeEffortFlagForModel('ultracode', 'claude-fable-5-1m')).toBe('max')
+    expect(normalizeClaudeEffortFlagForModel('xhigh', 'custom-model')).toBe('xhigh')
   })
 })
 
@@ -77,6 +102,25 @@ describe('buildClaudeCliArgs', () => {
       expect(args).toContain('--effort')
       expect(args[args.indexOf('--effort') + 1]).toBe(effort)
     }
+  })
+
+  it('maps Ultracode to Claude max effort at dispatch', () => {
+    const args = buildClaudeCliArgs({
+      ...base,
+      model: 'claude-opus-4-8',
+      claudeReasoningEffort: 'ultracode'
+    })
+    expect(args).toContain('--effort')
+    expect(args[args.indexOf('--effort') + 1]).toBe('max')
+  })
+
+  it('does not pass an effort flag for Haiku', () => {
+    const args = buildClaudeCliArgs({
+      ...base,
+      model: 'claude-haiku-4-5',
+      claudeReasoningEffort: 'max'
+    })
+    expect(args).not.toContain('--effort')
   })
 
   it('appends --resume when a provider session id is supplied', () => {

@@ -23,7 +23,7 @@ export interface ComposerChipContext {
   modelLabel: string
   /** Codex reasoning effort token (e.g. "low" | "medium" | "high" | "xhigh"). */
   codexReasoningEffort?: string
-  /** Claude reasoning effort token (e.g. "off" | "low" | "medium" | "high"). */
+  /** Claude reasoning effort token (e.g. "low" | "medium" | "high" | "xhigh" | "max" | "ultracode"). */
   claudeReasoningEffort?: string
   /** Kimi thinking toggle (boolean). */
   kimiThinkingEnabled?: boolean
@@ -33,7 +33,7 @@ export interface ComposerChipContext {
  * Extract a short, idiomatic model name per provider convention.
  *
  * Codex (`gpt-5.5`, `gpt-5.4-mini`)        → `5.5`, `5.4-Mini`
- * Claude (`claude-opus-4-7-thinking`)      → `Opus 4.7`
+ * Claude (`claude-opus-4-7-1m`)            → `Opus 4.7 1M`
  * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Code`
  * Gemini (`gemini-2.5-pro`)                → `2.5 Pro`
  * Cursor (`composer-2.5-fast`)             → `Composer 2.5 Fast`
@@ -83,7 +83,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     const match = id.match(/^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d+))?(?=$|-)/)
     if (match) {
       const family = match[1].charAt(0).toUpperCase() + match[1].slice(1)
-      return match[3] ? `${family} ${match[2]}.${match[3]}` : `${family} ${match[2]}`
+      const version = match[3] ? `${match[2]}.${match[3]}` : match[2]
+      const contextSuffix = id.endsWith('-1m') ? ' 1M' : ''
+      return `${family} ${version}${contextSuffix}`
     }
   }
 
@@ -159,7 +161,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
  * Reasoning-level display per provider's product convention.
  *
  * Codex: `Low` / `Medium` / `High` / `Extra High` (xhigh → "Extra High")
- * Claude: `Low` / `Medium` / `Max` (high → "Max" per Claude Code convention)
+ * Claude: `Low` / `Medium` / `High` / `Extra` / `Max` / `Ultracode`
  * Kimi: `Thinking` when on, empty when off
  * Gemini: no reasoning concept today — returns empty
  *
@@ -179,12 +181,7 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   }
 
   if (provider === 'claude') {
-    const effort = (ctx.claudeReasoningEffort || '').toLowerCase()
-    if (!effort || effort === 'off') return ''
-    if (effort === 'high') return 'Max'
-    if (effort === 'low') return 'Low'
-    if (effort === 'medium') return 'Medium'
-    return effort.charAt(0).toUpperCase() + effort.slice(1)
+    return claudeReasoningDisplayLabel(ctx.claudeReasoningEffort)
   }
 
   if (provider === 'kimi') {
@@ -194,6 +191,18 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   return ''
 }
 
+export function claudeReasoningDisplayLabel(effortValue?: string | null): string {
+  const effort = (effortValue || '').toLowerCase()
+  if (!effort || effort === 'off') return ''
+  if (effort === 'low') return 'Low'
+  if (effort === 'medium') return 'Medium'
+  if (effort === 'high') return 'High'
+  if (effort === 'xhigh' || effort === 'extra') return 'Extra'
+  if (effort === 'max') return 'Max'
+  if (effort === 'ultracode') return 'Ultracode'
+  return effort.charAt(0).toUpperCase() + effort.slice(1)
+}
+
 /**
  * Compose the chip text. Per-shell native format when the shell is
  * themed for that provider (Codex shell + Codex provider → real-Codex
@@ -201,7 +210,7 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
  *
  * Examples:
  *   Codex shell + codex provider + xhigh   → `5.5 Extra High`
- *   Claude shell + claude provider + high  → `Opus 4.7 · Max`
+ *   Claude shell + claude provider + high  → `Opus 4.7 · High`
  *   Kimi shell + kimi provider + on        → `K2.7 Code Thinking`
  *   TaskWraith shell + codex + high           → `GPT-5.5 · High`
  *   TaskWraith shell + kimi + on              → `Kimi K2.7 Code · Thinking`

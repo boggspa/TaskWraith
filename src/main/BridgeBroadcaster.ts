@@ -124,7 +124,14 @@ export interface ProviderModelOption {
   id: string
   label: string
   isDefault?: boolean
-  supportedReasoningEfforts?: Array<{ reasoningEffort: string; description?: string }>
+  disabled?: boolean
+  disabledReason?: string
+  supportedReasoningEfforts?: Array<{
+    reasoningEffort: string
+    description?: string
+    disabled?: boolean
+    disabledReason?: string
+  }>
   defaultReasoningEffort?: string | null
 }
 

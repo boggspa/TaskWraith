@@ -45,9 +45,7 @@ describe('normalizeCliProviderModel (claude)', () => {
   it('maps temporarily unavailable Fable ids back to the concrete Claude default', () => {
     expect(normalizeCliProviderModel('claude', 'fable')).toBe('claude-sonnet-4-6')
     expect(normalizeCliProviderModel('claude', 'claude-fable-5')).toBe('claude-sonnet-4-6')
-    expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe(
-      'claude-sonnet-4-6'
-    )
+    expect(normalizeCliProviderModel('claude', 'claude-fable-5-1m')).toBe('claude-sonnet-4-6')
   })
 
   it('maps empty / sentinel ids to Sonnet 4.6', () => {
@@ -60,13 +58,27 @@ describe('normalizeCliProviderModel (claude)', () => {
 
 interface StaticModelShape {
   id: string
+  disabled?: boolean
+  disabledReason?: string
   additionalSpeedTiers?: string[]
-  supportedReasoningEfforts?: Array<{ reasoningEffort: string }>
+  supportedReasoningEfforts?: Array<{
+    reasoningEffort: string
+    disabled?: boolean
+    disabledReason?: string
+  }>
 }
 
 describe('getStaticProviderModels (provider-specific catalogs)', () => {
   it('does not expose generic Default or CLI Default model rows', () => {
-    for (const provider of ['codex', 'claude', 'gemini', 'kimi', 'grok', 'cursor', 'ollama'] as const) {
+    for (const provider of [
+      'codex',
+      'claude',
+      'gemini',
+      'kimi',
+      'grok',
+      'cursor',
+      'ollama'
+    ] as const) {
       const models = getStaticProviderModels(provider)
       expect(models.map((model) => model.id)).not.toEqual(
         expect.arrayContaining(['default', 'cli-default'])
@@ -132,26 +144,57 @@ describe('getStaticProviderModels (claude)', () => {
   const models = getStaticProviderModels('claude') as StaticModelShape[]
   const byId = new Map(models.map((m) => [m.id, m]))
 
-  it('hides temporarily unavailable Fable variants from the picker catalog', () => {
+  it('marks temporarily unavailable Fable 1M disabled in the picker catalog', () => {
     const ids = models.map((m) => m.id)
     expect(ids).not.toContain('default')
     expect(ids).not.toContain('claude-fable-5')
-    expect(ids).not.toContain('claude-fable-5-1m')
-    expect(ids.indexOf('claude-opus-4-8')).toBeGreaterThan(-1)
+    expect(ids).toContain('claude-fable-5-1m')
+    expect(ids).not.toContain('claude-opus-4-8')
+    expect(ids).toContain('claude-opus-4-8-1m')
+    expect(byId.get('claude-fable-5-1m')).toMatchObject({
+      disabled: true,
+      disabledReason: 'Temporarily unavailable from Anthropic'
+    })
   })
 
   it('marks Claude Sonnet 4.6 as the concrete default', () => {
     expect(byId.get('claude-sonnet-4-6')).toMatchObject({ isDefault: true })
   })
 
-  it('keeps the paid Fast tier Opus-only', () => {
-    expect(byId.get('claude-opus-4-8')?.additionalSpeedTiers).toContain('fast')
+  it('keeps the paid Fast tier on the default 1M Opus rows', () => {
+    expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
+    expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
   })
 
-  it('offers the standard Claude thinking efforts on picker-visible thinking models', () => {
-    for (const id of ['claude-opus-4-8', 'claude-opus-4-8-1m', 'claude-sonnet-4-6']) {
-      const efforts = byId.get(id)?.supportedReasoningEfforts?.map((e) => e.reasoningEffort)
-      expect(efforts).toEqual(['off', 'low', 'medium', 'high'])
-    }
+  it('offers family-specific Claude reasoning efforts', () => {
+    const sonnetReasoning = byId.get('claude-sonnet-4-6')?.supportedReasoningEfforts ?? []
+    const opusReasoning = byId.get('claude-opus-4-8-1m')?.supportedReasoningEfforts ?? []
+    const haikuReasoning = byId.get('claude-haiku-4-5')?.supportedReasoningEfforts ?? []
+    expect(
+      sonnetReasoning.map((e) => e.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(
+      sonnetReasoning
+        .filter((e) => e.disabled)
+        .map((e) => e.reasoningEffort)
+    ).toEqual(['xhigh', 'ultracode'])
+    expect(opusReasoning.map((e) => e.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(opusReasoning.every((e) => !e.disabled)).toBe(true)
+    expect(haikuReasoning.map((e) => e.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(haikuReasoning.every((e) => e.disabled)).toBe(true)
   })
 })

@@ -22,13 +22,13 @@ describe('shortModelName', () => {
     expect(shortModelName('claude', 'Claude Haiku 4.0', 'claude-haiku-4-0')).toBe('Haiku 4.0')
   })
 
-  it('extracts the single-digit Fable version without eating the -1m marker', () => {
+  it('extracts the single-digit Fable version while preserving the -1m marker', () => {
     expect(shortModelName('claude', 'Claude Fable 5', 'claude-fable-5')).toBe('Fable 5')
     // -1m is the TaskWraith context-variant marker, NOT a minor version —
     // claude-fable-5-1m must never render as "Fable 5.1".
-    expect(shortModelName('claude', 'Claude Fable 5 1M', 'claude-fable-5-1m')).toBe('Fable 5')
+    expect(shortModelName('claude', 'Claude Fable 5 1M', 'claude-fable-5-1m')).toBe('Fable 5 1M')
     // Two-digit families with the marker keep their existing rendering.
-    expect(shortModelName('claude', 'Claude Opus 4.8 1M', 'claude-opus-4-8-1m')).toBe('Opus 4.8')
+    expect(shortModelName('claude', 'Claude Opus 4.8 1M', 'claude-opus-4-8-1m')).toBe('Opus 4.8 1M')
   })
 
   it('extracts Kimi version', () => {
@@ -54,32 +54,22 @@ describe('shortModelName', () => {
   })
 
   it('renders Grok CLI model ids as Grok model labels', () => {
-    expect(shortModelName('grok', '', 'grok-composer-2.5-fast')).toBe(
-      'Grok Composer 2.5 Fast'
-    )
+    expect(shortModelName('grok', '', 'grok-composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
     expect(shortModelName('grok', '', 'grok-build')).toBe('Grok Build 0.1')
   })
 
   it('renders local Ollama tags as model names', () => {
     expect(shortModelName('ollama', '', 'qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
     expect(shortModelName('ollama', '', 'qwen3.5:9b')).toBe('Qwen 3.5 (9B Param)')
-    expect(shortModelName('ollama', '', 'qwen3.5:9b-q4_K_M')).toBe(
-      'Qwen 3.5 (9B Param)'
-    )
+    expect(shortModelName('ollama', '', 'qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
     expect(shortModelName('ollama', '', 'qwen3.6:35b')).toBe('Qwen 3.6 (35B-A3B)')
     expect(shortModelName('ollama', '', 'gemma4:12b')).toBe('Gemma 4 (12B Param)')
-    expect(shortModelName('ollama', '', 'gemma4:12b-it-q4_K_M')).toBe(
-      'Gemma 4 (12B Param)'
-    )
+    expect(shortModelName('ollama', '', 'gemma4:12b-it-q4_K_M')).toBe('Gemma 4 (12B Param)')
     expect(shortModelName('ollama', '', 'gpt-oss')).toBe('GPT OSS (20B Param)')
     expect(shortModelName('ollama', '', 'gpt-oss:20b')).toBe('GPT OSS (20B Param)')
-    expect(shortModelName('ollama', '', 'minicpm-v4.5:8b')).toBe(
-      'MiniCPM-V 4.5 (8B Param)'
-    )
+    expect(shortModelName('ollama', '', 'minicpm-v4.5:8b')).toBe('MiniCPM-V 4.5 (8B Param)')
     expect(shortModelName('ollama', '', 'granite4.1:30b')).toBe('Granite 4.1 (30B Param)')
-    expect(shortModelName('ollama', '', 'nemotron3:33b')).toBe(
-      'Nemotron 3 Nano Omni (33B Param)'
-    )
+    expect(shortModelName('ollama', '', 'nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
   })
 
   it("resolves the cli-default sentinel to each provider's real default", () => {
@@ -118,7 +108,7 @@ describe('reasoningDisplayLabel', () => {
     ).toBe('Medium')
   })
 
-  it('Claude high becomes Max (Claude Code convention)', () => {
+  it('Claude high stays High', () => {
     expect(
       reasoningDisplayLabel({
         provider: 'claude',
@@ -127,7 +117,28 @@ describe('reasoningDisplayLabel', () => {
         modelLabel: 'Claude Opus 4.7',
         claudeReasoningEffort: 'high'
       })
-    ).toBe('Max')
+    ).toBe('High')
+  })
+
+  it('Claude xhigh and ultracode use TaskWraith labels', () => {
+    expect(
+      reasoningDisplayLabel({
+        provider: 'claude',
+        composerStyle: 'claude',
+        modelId: 'claude-opus-4-8-1m',
+        modelLabel: 'Claude Opus 4.8 1M',
+        claudeReasoningEffort: 'xhigh'
+      })
+    ).toBe('Extra')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'claude',
+        composerStyle: 'claude',
+        modelId: 'claude-opus-4-8-1m',
+        modelLabel: 'Claude Opus 4.8 1M',
+        claudeReasoningEffort: 'ultracode'
+      })
+    ).toBe('Ultracode')
   })
 
   it('Claude off returns empty', () => {
@@ -188,7 +199,7 @@ describe('formatComposerModelChip', () => {
     ).toBe('5.5 Extra High')
   })
 
-  it('Claude shell + claude provider + high → "Opus 4.7 · Max"', () => {
+  it('Claude shell + claude provider + high → "Opus 4.7 · High"', () => {
     expect(
       formatComposerModelChip({
         provider: 'claude',
@@ -197,7 +208,19 @@ describe('formatComposerModelChip', () => {
         modelLabel: 'Claude Opus 4.7',
         claudeReasoningEffort: 'high'
       })
-    ).toBe('Opus 4.7 · Max')
+    ).toBe('Opus 4.7 · High')
+  })
+
+  it('Claude shell + claude provider + ultracode → "Opus 4.8 1M · Ultracode"', () => {
+    expect(
+      formatComposerModelChip({
+        provider: 'claude',
+        composerStyle: 'claude',
+        modelId: 'claude-opus-4-8-1m',
+        modelLabel: 'Claude Opus 4.8 1M',
+        claudeReasoningEffort: 'ultracode'
+      })
+    ).toBe('Opus 4.8 1M · Ultracode')
   })
 
   it('Kimi shell + kimi provider + on → "K2.7 Code Thinking"', () => {

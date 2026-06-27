@@ -394,6 +394,8 @@ public struct ModelOption: Codable, Sendable, Identifiable, Hashable {
     public let id: String
     public let label: String?
     public let isDefault: Bool?
+    public let disabled: Bool?
+    public let disabledReason: String?
     public let supportedReasoningEfforts: [ReasoningEffortOption]?
     public let defaultReasoningEffort: String?
 }
@@ -401,6 +403,8 @@ public struct ModelOption: Codable, Sendable, Identifiable, Hashable {
 public struct ReasoningEffortOption: Codable, Sendable, Identifiable, Hashable {
     public let reasoningEffort: String
     public let description: String?
+    public let disabled: Bool?
+    public let disabledReason: String?
     public var id: String { reasoningEffort }
 }
 

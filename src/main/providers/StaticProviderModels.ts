@@ -100,13 +100,36 @@ export const CODEX_STATIC_MODELS = [
   // gpt-5.2 and gpt-5.3-codex are HARD-retired (see CODEX_RETIRED_MODEL_IDS)
   // and intentionally omitted here.
 ]
-const CLAUDE_THINKING_EFFORTS = [
-  { reasoningEffort: 'off' },
+const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'
+const CLAUDE_FULL_REASONING_EFFORTS = [
   { reasoningEffort: 'low' },
   { reasoningEffort: 'medium' },
-  { reasoningEffort: 'high' }
+  { reasoningEffort: 'high' },
+  { reasoningEffort: 'xhigh' },
+  { reasoningEffort: 'max' },
+  { reasoningEffort: 'ultracode' }
 ]
-export const CLAUDE_THINKING_BUDGET: Record<string, number> = { low: 2048, medium: 8000, high: 16000 }
+const claudeReasoningEfforts = (enabled: ReadonlySet<string>) =>
+  CLAUDE_FULL_REASONING_EFFORTS.map((option) =>
+    enabled.has(option.reasoningEffort)
+      ? option
+      : { ...option, disabled: true, disabledReason: CLAUDE_REASONING_UNAVAILABLE }
+  )
+const CLAUDE_SONNET_REASONING_EFFORTS = claudeReasoningEfforts(
+  new Set(['low', 'medium', 'high', 'max'])
+)
+const CLAUDE_OPUS_REASONING_EFFORTS = claudeReasoningEfforts(
+  new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+)
+const CLAUDE_HAIKU_REASONING_EFFORTS = claudeReasoningEfforts(new Set())
+export const CLAUDE_THINKING_BUDGET: Record<string, number> = {
+  low: 2048,
+  medium: 8000,
+  high: 16000,
+  xhigh: 32000,
+  max: 64000,
+  ultracode: 64000
+}
 const CLAUDE_TEMPORARILY_UNAVAILABLE_MODEL_IDS = new Set([
   'fable',
   'claude-fable-5',
@@ -121,44 +144,43 @@ const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-4-6'
 // renderer knows which models offer the paid Fast tier.
 const CLAUDE_STATIC_MODELS = [
   {
-    id: 'claude-opus-4-8',
-    label: 'Claude Opus 4.8',
-    description: 'Most capable Opus — extended thinking',
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS,
-    additionalSpeedTiers: ['fast']
-  },
-  {
     id: 'claude-opus-4-8-1m',
     label: 'Claude Opus 4.8 1M',
     description: '1M context window — extended thinking',
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'claude-fable-5-1m',
+    label: 'Claude Fable 5 1M',
+    description: 'Temporarily unavailable from Anthropic',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast'],
+    disabled: true,
+    disabledReason: 'Temporarily unavailable from Anthropic'
   },
   {
     id: CLAUDE_DEFAULT_MODEL,
     label: 'Claude Sonnet 4.6',
     description: 'Balanced — extended thinking',
     isDefault: true,
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
+    supportedReasoningEfforts: CLAUDE_SONNET_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
   },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', description: 'Fast & efficient' },
   {
-    id: 'claude-opus-4-7',
-    label: 'Claude Opus 4.7 Legacy',
-    description: 'Previous Opus — extended thinking',
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS,
-    additionalSpeedTiers: ['fast']
+    id: 'claude-haiku-4-5',
+    label: 'Claude Haiku 4.5',
+    description: 'Fast & efficient',
+    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS
   },
   {
     id: 'claude-opus-4-7-1m',
     label: 'Claude Opus 4.7 1M Legacy',
     description: '1M context window — extended thinking',
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
-  },
-  {
-    id: 'claude-opus-4-6',
-    label: 'Claude Opus 4.6 Legacy',
-    description: 'Previous Opus generation',
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS,
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']
   },
   { id: 'custom', label: 'Custom model ID' }

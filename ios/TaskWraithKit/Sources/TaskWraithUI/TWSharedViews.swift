@@ -848,7 +848,10 @@ private func twReasoningOptions(
 
 private func twDefaultReasoningEffort(for option: ModelOption?) -> String? {
     guard let option else { return nil }
-    let efforts = option.supportedReasoningEfforts?.map(\.reasoningEffort) ?? []
+    let efforts =
+        option.supportedReasoningEfforts?
+        .filter { $0.disabled != true }
+        .map(\.reasoningEffort) ?? []
     if let defaultEffort = option.defaultReasoningEffort,
         efforts.contains(defaultEffort)
     {
@@ -863,7 +866,10 @@ private func twNormalizeReasoningSelection(
     catalog: ProviderModelCatalog?, modelId: String?, reasoningEffort: inout String?
 ) {
     let option = twReasoningModelOption(in: catalog, modelId: modelId)
-    let efforts = option?.supportedReasoningEfforts?.map(\.reasoningEffort) ?? []
+    let efforts =
+        option?.supportedReasoningEfforts?
+        .filter { $0.disabled != true }
+        .map(\.reasoningEffort) ?? []
     guard !efforts.isEmpty else {
         reasoningEffort = nil
         return
@@ -878,8 +884,9 @@ private func twReasoningDisplayLabel(_ effort: String) -> String {
     case "low": return "Low"
     case "medium": return "Medium"
     case "high": return "High"
-    case "xhigh": return "Extra High"
+    case "xhigh", "extra": return "Extra"
     case "max": return "Max"
+    case "ultracode": return "Ultracode"
     default:
         return effort.prefix(1).uppercased() + String(effort.dropFirst())
     }
@@ -1028,7 +1035,9 @@ private struct ProviderModelPickerSheet: View {
     ) -> some View {
         let selected =
             catalog?.provider.lowercased() == provider.lowercased() && modelId == option.id
+        let disabled = option.disabled == true
         return Button {
+            guard !disabled else { return }
             if let catalog, allowsProviderChange {
                 provider = catalog.provider
             }
@@ -1040,9 +1049,14 @@ private struct ProviderModelPickerSheet: View {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(option.label ?? option.id)
-                        .foregroundStyle(TWTheme.textPrimary)
+                        .foregroundStyle(disabled ? TWTheme.textSecondary : TWTheme.textPrimary)
                     if option.isDefault == true {
                         Text("Provider default")
+                            .font(.caption)
+                            .foregroundStyle(TWTheme.textSecondary)
+                    }
+                    if disabled, let reason = option.disabledReason, !reason.isEmpty {
+                        Text(reason)
                             .font(.caption)
                             .foregroundStyle(TWTheme.textSecondary)
                     }
@@ -1057,22 +1071,29 @@ private struct ProviderModelPickerSheet: View {
             .padding(.leading, indented ? 18 : 0)
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.55 : 1)
     }
 
     private func reasoningRow(
         _ option: ReasoningEffortOption, indented: Bool = false
     ) -> some View {
         let selected = reasoningEffort == option.reasoningEffort
+        let disabled = option.disabled == true
         return Button {
+            guard !disabled else { return }
             reasoningEffort = option.reasoningEffort
             if dismissesOnSelection { dismiss() }
         } label: {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(twReasoningDisplayLabel(option.reasoningEffort))
-                        .foregroundStyle(TWTheme.textPrimary)
-                    if let description = option.description, !description.isEmpty {
-                        Text(description)
+                        .foregroundStyle(disabled ? TWTheme.textSecondary : TWTheme.textPrimary)
+                    let sublabel = disabled
+                        ? option.disabledReason ?? option.description
+                        : option.description
+                    if let sublabel, !sublabel.isEmpty {
+                        Text(sublabel)
                             .font(.caption)
                             .foregroundStyle(TWTheme.textSecondary)
                     }
@@ -1087,6 +1108,8 @@ private struct ProviderModelPickerSheet: View {
             .padding(.leading, indented ? 18 : 0)
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.55 : 1)
     }
 
     private func normalizeReasoningSelection() {

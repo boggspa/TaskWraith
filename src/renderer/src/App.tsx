@@ -139,7 +139,7 @@ import {
 import {
   CODEX_DEFAULT_MODELS,
   CODEX_DEFAULT_MODEL,
-  CLAUDE_THINKING_EFFORTS,
+  CLAUDE_DEFAULT_REASONING_EFFORT,
   CLAUDE_DEFAULT_MODEL,
   CLAUDE_DEFAULT_MODELS,
   KIMI_DEFAULT_MODELS,
@@ -156,7 +156,9 @@ import {
   isClaudeModelId,
   isKimiModelId,
   isOllamaModelId,
-  normalizeProviderModelKey
+  normalizeProviderModelKey,
+  resolveClaudeDefaultReasoningEffort,
+  resolveClaudeReasoningEfforts
 } from './lib/providerModelDefaults'
 import type { CodexModelOption } from './lib/providerModelDefaults'
 import {
@@ -299,7 +301,11 @@ import { ComposerHighlightOverlay } from './components/ComposerHighlightOverlay'
 import { hasResolvedMention } from './lib/mentionHighlight'
 import { extractHttpUrls } from './lib/urlPresentation'
 import { useCopyFeedback } from './lib/useCopyFeedback'
-import { reasoningDisplayLabel, shortModelName } from './lib/composerChipFormat'
+import {
+  claudeReasoningDisplayLabel,
+  reasoningDisplayLabel,
+  shortModelName
+} from './lib/composerChipFormat'
 import {
   deleteEnsembleRosterPreset,
   listEnsembleRosterPresets,
@@ -308,6 +314,7 @@ import {
   subscribeEnsembleRosterPresets,
   type EnsembleRosterPreset
 } from './lib/ensembleRosterPresets'
+import { resolveEnsembleParticipantSettings } from './lib/ensembleProviderDefaults'
 import {
   rebindEnsembleChatToWorkspace,
   rebindWelcomeEnsembleChatToGlobal,
@@ -1726,7 +1733,9 @@ function App(): React.JSX.Element {
   >({})
   const [codexReasoningEffort, setCodexReasoningEffort] = useState<string>('medium')
   const [codexServiceTier, setCodexServiceTier] = useState<string>('')
-  const [claudeReasoningEffort, setClaudeReasoningEffort] = useState<string>('off')
+  const [claudeReasoningEffort, setClaudeReasoningEffort] = useState<string>(
+    CLAUDE_DEFAULT_REASONING_EFFORT
+  )
   /**
    * Claude's paid Fast tier toggle. Mirrors Codex's `codexServiceTier`;
    * Claude runs receive it as `fastMode` settings for SDK and CLI paths.
@@ -4101,6 +4110,17 @@ function App(): React.JSX.Element {
         : getDefaultModelForProvider(provider)
     const modelOption =
       provider === 'codex' ? codexModels.find((model) => model.id === selected) : undefined
+    const claudeModelOption =
+      provider === 'claude'
+        ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+            (model) => model.id === selected
+          )
+        : undefined
+    const enabledClaudeReasoningEfforts = new Set(
+      resolveClaudeReasoningEfforts(claudeModelOption)
+        .filter((option) => !option.disabled)
+        .map((option) => option.reasoningEffort)
+    )
     return {
       provider,
       selectedModelType: selected,
@@ -4118,7 +4138,10 @@ function App(): React.JSX.Element {
       codexServiceTier:
         typeof metadata.codexServiceTier === 'string' ? metadata.codexServiceTier : '',
       claudeReasoningEffort:
-        typeof metadata.claudeReasoningEffort === 'string' ? metadata.claudeReasoningEffort : 'off',
+        typeof metadata.claudeReasoningEffort === 'string' &&
+        enabledClaudeReasoningEfforts.has(metadata.claudeReasoningEffort)
+          ? metadata.claudeReasoningEffort
+          : resolveClaudeDefaultReasoningEffort(claudeModelOption),
       claudeFastMode:
         typeof metadata.claudeFastMode === 'boolean' ? metadata.claudeFastMode : false,
       kimiThinkingEnabled:
@@ -11418,6 +11441,12 @@ function App(): React.JSX.Element {
     const selectedModel = isValidModelForProvider(provider, guest.selectedModelType)
       ? guest.selectedModelType
       : getDefaultModelForProvider(provider)
+    const guestRunClaudeModelOption =
+      provider === 'claude'
+        ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+            (model) => model.id === selectedModel
+          )
+        : undefined
     const parentTranscriptContext = buildGuestParentTranscriptContext(parentChat)
     const guestPrompt = [
       GUEST_PARTICIPANT_STEERING_PREAMBLE,
@@ -11442,7 +11471,10 @@ function App(): React.JSX.Element {
         provider === 'codex' ? guest.codexReasoningEffort || 'medium' : undefined,
       codexServiceTier: provider === 'codex' ? guest.codexServiceTier || '' : undefined,
       claudeReasoningEffort:
-        provider === 'claude' ? guest.claudeReasoningEffort || 'off' : undefined,
+        provider === 'claude'
+          ? guest.claudeReasoningEffort ||
+            resolveClaudeDefaultReasoningEffort(guestRunClaudeModelOption)
+          : undefined,
       claudeFastMode: provider === 'claude' ? Boolean(guest.claudeFastMode) : undefined,
       kimiThinkingEnabled:
         provider === 'kimi' ? (guest.kimiThinkingEnabled ?? true) : undefined,
@@ -11789,8 +11821,18 @@ function App(): React.JSX.Element {
             (selectedSideParticipant.fastModeEnabled ? 'fast' : '')
         }
         if (selectedSideParticipant.provider === 'claude') {
+          const selectedClaudeSettings = resolveEnsembleParticipantSettings(
+            selectedSideParticipant
+          )
+          const selectedClaudeModel =
+            selectedSideParticipant.model ||
+            getDefaultModelForProvider(selectedSideParticipant.provider)
+          const selectedClaudeModelOption = (
+            agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
+          ).find((model) => model.id === selectedClaudeModel)
           participantMetadata.claudeReasoningEffort =
-            selectedSideParticipant.reasoningEffort || 'off'
+            selectedClaudeSettings.reasoningEffort ||
+            resolveClaudeDefaultReasoningEffort(selectedClaudeModelOption)
           participantMetadata.claudeFastMode = Boolean(selectedSideParticipant.fastModeEnabled)
         }
         if (selectedSideParticipant.provider === 'kimi') {
@@ -16074,9 +16116,13 @@ function App(): React.JSX.Element {
     ...sideComposerModelOptionsRaw.map((model) => {
       const retiresAtRaw = (model as { retiresAt?: unknown }).retiresAt
       const retiresAt = typeof retiresAtRaw === 'string' ? retiresAtRaw : undefined
+      const disabledReason =
+        typeof model.disabledReason === 'string' ? model.disabledReason : undefined
       return {
         id: model.id,
         label: model.label || model.id,
+        ...(model.disabled ? { disabled: true } : {}),
+        ...(disabledReason ? { disabledReason } : {}),
         ...(retiresAt ? { retiresAt } : {})
       }
     }),
@@ -16096,7 +16142,9 @@ function App(): React.JSX.Element {
     sideComposerSelection?.codexReasoningEffort ||
     sideCodexModelOption?.defaultReasoningEffort ||
     'medium'
-  const sideClaudeReasoning = sideComposerSelection?.claudeReasoningEffort || 'off'
+  const sideClaudeReasoning =
+    sideComposerSelection?.claudeReasoningEffort ||
+    resolveClaudeDefaultReasoningEffort(sideClaudeModelOption)
   const sideKimiThinking = sideComposerSelection?.kimiThinkingEnabled ?? true
   let sideComposerReasoningOptions: CombinedModelPickerReasoningOption[] = []
   let sideComposerSelectedReasoning = ''
@@ -16118,17 +16166,12 @@ function App(): React.JSX.Element {
     }))
     sideComposerSelectedReasoning = sideCodexReasoning
   } else if (sideComposerProvider === 'claude') {
-    const sourceOptions = sideClaudeModelOption?.supportedReasoningEfforts?.length
-      ? sideClaudeModelOption.supportedReasoningEfforts
-      : CLAUDE_THINKING_EFFORTS
+    const sourceOptions = resolveClaudeReasoningEfforts(sideClaudeModelOption)
     sideComposerReasoningOptions = sourceOptions.map((option) => ({
       value: option.reasoningEffort,
-      label:
-        option.reasoningEffort === 'off'
-          ? 'Thinking off'
-          : option.reasoningEffort === 'high'
-            ? 'Max'
-            : option.reasoningEffort.charAt(0).toUpperCase() + option.reasoningEffort.slice(1)
+      label: claudeReasoningDisplayLabel(option.reasoningEffort),
+      ...(option.disabled ? { disabled: true } : {}),
+      ...(option.disabledReason ? { disabledReason: option.disabledReason } : {})
     }))
     sideComposerSelectedReasoning = sideClaudeReasoning
   } else if (sideComposerProvider === 'kimi') {
@@ -16232,6 +16275,16 @@ function App(): React.JSX.Element {
         selectedModelType: nextModel,
         customModel: '',
         approvalMode: sideSelectedPermission,
+        ...(provider === 'claude'
+          ? {
+              claudeReasoningEffort: resolveClaudeDefaultReasoningEffort(
+                (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+                  (model) => model.id === nextModel
+                )
+              ),
+              claudeFastMode: false
+            }
+          : {}),
         ...(provider === 'kimi' ? { kimiThinkingEnabled: true } : {}),
         runtimeProfileId: defaultRuntimeProfileIdForProvider(provider)
       },
@@ -16255,6 +16308,7 @@ function App(): React.JSX.Element {
       const modelOption = (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
         (model) => model.id === nextModel
       )
+      metadataPatch.claudeReasoningEffort = resolveClaudeDefaultReasoningEffort(modelOption)
       if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
         metadataPatch.claudeFastMode = false
       }
@@ -16847,9 +16901,13 @@ function App(): React.JSX.Element {
     ...guestComposerModelOptionsRaw.map((model) => {
       const retiresAtRaw = (model as { retiresAt?: unknown }).retiresAt
       const retiresAt = typeof retiresAtRaw === 'string' ? retiresAtRaw : undefined
+      const disabledReason =
+        typeof model.disabledReason === 'string' ? model.disabledReason : undefined
       return {
         id: model.id,
         label: model.label || model.id,
+        ...(model.disabled ? { disabled: true } : {}),
+        ...(disabledReason ? { disabledReason } : {}),
         ...(retiresAt ? { retiresAt } : {})
       }
     }),
@@ -16870,7 +16928,9 @@ function App(): React.JSX.Element {
     guestCodexModelOption?.defaultReasoningEffort ||
     'medium'
   const guestCodexServiceTier = currentGuestParticipant?.codexServiceTier || ''
-  const guestClaudeReasoning = currentGuestParticipant?.claudeReasoningEffort || 'off'
+  const guestClaudeReasoning =
+    currentGuestParticipant?.claudeReasoningEffort ||
+    resolveClaudeDefaultReasoningEffort(guestClaudeModelOption)
   const guestClaudeFastMode = Boolean(currentGuestParticipant?.claudeFastMode)
   const guestKimiThinking = currentGuestParticipant?.kimiThinkingEnabled ?? true
   let guestComposerReasoningOptions: CombinedModelPickerReasoningOption[] = []
@@ -16893,17 +16953,12 @@ function App(): React.JSX.Element {
     }))
     guestComposerSelectedReasoning = guestCodexReasoning
   } else if (guestComposerProvider === 'claude') {
-    const sourceOptions = guestClaudeModelOption?.supportedReasoningEfforts?.length
-      ? guestClaudeModelOption.supportedReasoningEfforts
-      : CLAUDE_THINKING_EFFORTS
+    const sourceOptions = resolveClaudeReasoningEfforts(guestClaudeModelOption)
     guestComposerReasoningOptions = sourceOptions.map((option) => ({
       value: option.reasoningEffort,
-      label:
-        option.reasoningEffort === 'off'
-          ? 'Thinking off'
-          : option.reasoningEffort === 'high'
-            ? 'Max'
-            : option.reasoningEffort.charAt(0).toUpperCase() + option.reasoningEffort.slice(1)
+      label: claudeReasoningDisplayLabel(option.reasoningEffort),
+      ...(option.disabled ? { disabled: true } : {}),
+      ...(option.disabledReason ? { disabledReason: option.disabledReason } : {})
     }))
     guestComposerSelectedReasoning = guestClaudeReasoning
   } else if (guestComposerProvider === 'kimi') {
@@ -16989,6 +17044,12 @@ function App(): React.JSX.Element {
     const customModel = patch.customModel ?? (sameProvider ? existing?.customModel || '' : '')
     const codexModelOption =
       provider === 'codex' ? codexModels.find((model) => model.id === selectedModelType) : undefined
+    const claudeModelOption =
+      provider === 'claude'
+        ? (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+            (model) => model.id === selectedModelType
+          )
+        : undefined
     const result = await window.api.setGuestParticipant({
       parentChatId: currentChat.appChatId,
       provider,
@@ -17011,7 +17072,7 @@ function App(): React.JSX.Element {
         provider === 'claude'
           ? patch.claudeReasoningEffort ??
             (sameProvider ? existing?.claudeReasoningEffort : undefined) ??
-            'off'
+            resolveClaudeDefaultReasoningEffort(claudeModelOption)
           : undefined,
       claudeFastMode:
         provider === 'claude'
@@ -17041,7 +17102,14 @@ function App(): React.JSX.Element {
           ? codexModels.find((option) => option.id === model)?.defaultReasoningEffort || 'medium'
           : undefined,
       codexServiceTier: provider === 'codex' ? '' : undefined,
-      claudeReasoningEffort: provider === 'claude' ? 'off' : undefined,
+      claudeReasoningEffort:
+        provider === 'claude'
+          ? resolveClaudeDefaultReasoningEffort(
+              (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
+                (option) => option.id === model
+              )
+            )
+          : undefined,
       claudeFastMode: provider === 'claude' ? false : undefined,
       kimiThinkingEnabled: provider === 'kimi' ? true : undefined
     })
@@ -17063,6 +17131,7 @@ function App(): React.JSX.Element {
       const modelOption = (agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS).find(
         (model) => model.id === nextModel
       )
+      patch.claudeReasoningEffort = resolveClaudeDefaultReasoningEffort(modelOption)
       if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
         patch.claudeFastMode = false
       }
@@ -17898,9 +17967,7 @@ function App(): React.JSX.Element {
           (model) => model.id === selectedComposerModelType
         )
       : undefined
-  const claudeReasoningOptions = currentClaudeModelOption?.supportedReasoningEfforts?.length
-    ? currentClaudeModelOption.supportedReasoningEfforts
-    : CLAUDE_THINKING_EFFORTS
+  const claudeReasoningOptions = resolveClaudeReasoningEfforts(currentClaudeModelOption)
   const hasAgenticApprovalGate =
     agenticServices.shellCommands !== 'allow' ||
     agenticServices.fileChanges !== 'allow' ||
@@ -20352,7 +20419,9 @@ function App(): React.JSX.Element {
       viewerSelection.codexReasoningEffort ||
       viewerCodexModelOption?.defaultReasoningEffort ||
       'medium'
-    const viewerClaudeReasoning = viewerSelection.claudeReasoningEffort || 'off'
+    const viewerClaudeReasoning =
+      viewerSelection.claudeReasoningEffort ||
+      resolveClaudeDefaultReasoningEffort(viewerClaudeModelOption)
     const viewerKimiThinking = viewerSelection.kimiThinkingEnabled ?? true
     // RAW per-pane reasoning option lists ({ reasoningEffort }[]) for the shared
     // <Composer>. The composer does its OWN mapping to picker shape from
@@ -20368,10 +20437,7 @@ function App(): React.JSX.Element {
           { reasoningEffort: 'high' },
           { reasoningEffort: 'xhigh' }
         ]
-    const viewerClaudeReasoningOptionsRaw = viewerClaudeModelOption?.supportedReasoningEfforts
-      ?.length
-      ? viewerClaudeModelOption.supportedReasoningEfforts
-      : CLAUDE_THINKING_EFFORTS
+    const viewerClaudeReasoningOptionsRaw = resolveClaudeReasoningEfforts(viewerClaudeModelOption)
     // Fast-mode capability/state, the permission option list, and the
     // enabled-grant set are all derived inside the shared <Composer> (from the
     // per-pane provider/model/selection fields in paneComposerCtx), mirroring
@@ -21639,7 +21705,9 @@ function App(): React.JSX.Element {
         viewerSelection.codexReasoningEffort ||
         viewerCodexModelOption?.defaultReasoningEffort ||
         'medium'
-      const viewerClaudeReasoning = viewerSelection.claudeReasoningEffort || 'off'
+      const viewerClaudeReasoning =
+        viewerSelection.claudeReasoningEffort ||
+        resolveClaudeDefaultReasoningEffort(viewerClaudeModelOption)
       const viewerKimiThinking = viewerSelection.kimiThinkingEnabled ?? true
       // RAW per-pane reasoning option lists ({ reasoningEffort }[]) for the shared
       // <Composer>. The composer does its OWN mapping to picker shape from
@@ -21655,10 +21723,9 @@ function App(): React.JSX.Element {
             { reasoningEffort: 'high' },
             { reasoningEffort: 'xhigh' }
           ]
-      const viewerClaudeReasoningOptionsRaw = viewerClaudeModelOption?.supportedReasoningEfforts
-        ?.length
-        ? viewerClaudeModelOption.supportedReasoningEfforts
-        : CLAUDE_THINKING_EFFORTS
+      const viewerClaudeReasoningOptionsRaw = resolveClaudeReasoningEfforts(
+        viewerClaudeModelOption
+      )
       // Fast-mode capability/state, the permission option list, and the
       // enabled-grant set are all derived inside the shared <Composer> (from the
       // per-pane provider/model/selection fields in paneComposerCtx), mirroring

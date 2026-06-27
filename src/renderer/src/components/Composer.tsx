@@ -63,7 +63,11 @@ import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
 import { buildParticipantToolGrantPatch, getParticipantToolGrantIds } from '../lib/ensembleParticipantToolGrants'
-import { getDefaultEnsembleParticipantConfig, resolveEnsembleParticipantSettings } from '../lib/ensembleProviderDefaults'
+import {
+  getDefaultEnsembleParticipantConfig,
+  getEnsembleReasoningOptions,
+  resolveEnsembleParticipantSettings
+} from '../lib/ensembleProviderDefaults'
 import {
   MAX_IMAGE_ATTACHMENTS,
   collectClipboardAttachmentPaths,
@@ -75,7 +79,11 @@ import { ComposerPlanPopoverButton } from './ComposerPlanPopoverButton'
 import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
 import { getProviderLabel } from '../lib/providerLabels'
-import { CLAUDE_DEFAULT_MODELS, CLAUDE_THINKING_EFFORTS } from '../lib/providerModelDefaults'
+import {
+  CLAUDE_DEFAULT_MODELS,
+  resolveClaudeDefaultReasoningEffort
+} from '../lib/providerModelDefaults'
+import { claudeReasoningDisplayLabel } from '../lib/composerChipFormat'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { createPortal } from 'react-dom'
 
@@ -3357,9 +3365,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               const retiresAtRaw = (model as { retiresAt?: unknown }).retiresAt
                               const retiresAt =
                                 typeof retiresAtRaw === 'string' ? retiresAtRaw : undefined
+                              const disabledReason =
+                                typeof model.disabledReason === 'string'
+                                  ? model.disabledReason
+                                  : undefined
                               return {
                                 id: model.id,
                                 label: model.label || model.id,
+                                ...(model.disabled ? { disabled: true } : {}),
+                                ...(disabledReason ? { disabledReason } : {}),
                                 ...(retiresAt ? { retiresAt } : {})
                               }
                             }),
@@ -3395,21 +3409,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }))
                             combinedSelectedReasoning = effectiveCodexReasoning
                           } else if (effectiveProvider === 'claude') {
-                            const sourceOptions = ensembleBinding
-                              ? CLAUDE_THINKING_EFFORTS
+                            combinedReasoningOptions = ensembleBinding
+                              ? getEnsembleReasoningOptions('claude', effectiveSelectedModel)
                               : claudeReasoningOptions
-                            combinedReasoningOptions = sourceOptions
-                              .filter((option) => option?.reasoningEffort)
-                              .map((option) => ({
-                                value: option.reasoningEffort,
-                                label:
-                                  option.reasoningEffort === 'off'
-                                    ? 'Thinking off'
-                                    : option.reasoningEffort === 'high'
-                                      ? 'Max'
-                                      : option.reasoningEffort.charAt(0).toUpperCase() +
-                                        option.reasoningEffort.slice(1)
-                              }))
+                                  .filter((option) => option?.reasoningEffort)
+                                  .map((option) => ({
+                                    value: option.reasoningEffort,
+                                    label: claudeReasoningDisplayLabel(option.reasoningEffort),
+                                    ...(option.disabled ? { disabled: true } : {}),
+                                    ...(option.disabledReason
+                                      ? { disabledReason: option.disabledReason }
+                                      : {})
+                                  }))
                             combinedSelectedReasoning = effectiveClaudeReasoning
                           } else if (effectiveProvider === 'kimi') {
                             combinedReasoningOptions = [
@@ -3438,6 +3449,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 const claudeModelOption = (
                                   agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
                                 ).find((m) => m.id === nextModel)
+                                patch.reasoningEffort =
+                                  resolveClaudeDefaultReasoningEffort(claudeModelOption)
                                 if (!claudeModelOption?.additionalSpeedTiers?.includes('fast')) {
                                   patch.fastModeEnabled = false
                                 }
@@ -3474,6 +3487,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               const claudeModelOption = (
                                 agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
                               ).find((model) => model.id === nextModel)
+                              const nextReasoning =
+                                resolveClaudeDefaultReasoningEffort(claudeModelOption)
+                              setClaudeReasoningEffort(nextReasoning)
+                              metadataPatch.claudeReasoningEffort = nextReasoning
                               if (!claudeModelOption?.additionalSpeedTiers?.includes('fast')) {
                                 setClaudeFastMode(false)
                                 metadataPatch.claudeFastMode = false

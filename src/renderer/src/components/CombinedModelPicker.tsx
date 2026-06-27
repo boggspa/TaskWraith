@@ -32,6 +32,8 @@ import { formatComposerModelChip, reasoningDisplayLabel } from '../lib/composerC
 export interface CombinedModelPickerModelOption {
   id: string
   label: string
+  disabled?: boolean
+  disabledReason?: string
   /** 1.0.7-mini — ISO date (YYYY-MM-DD) when the provider is retiring this
    * model. When present, the picker row renders a small clock + ordinal-
    * date pill in red to flag the deprecation without baking it into the
@@ -103,6 +105,8 @@ export interface CombinedModelPickerReasoningOption {
   value: string
   /** Human-readable label as it should appear in the popover row. */
   label: string
+  disabled?: boolean
+  disabledReason?: string
 }
 
 interface CombinedModelPickerProps {
@@ -206,8 +210,7 @@ export function CombinedModelPicker({
   const [modelHighlight, setModelHighlight] = useState(0)
   const [reasoningHighlight, setReasoningHighlight] = useState(0)
 
-  const selectedModelOption =
-    modelOptions.find((option) => option.id === selectedModelId) ||
+  const selectedModelOption = modelOptions.find((option) => option.id === selectedModelId) ||
     // Show the real id when it isn't in the list (e.g. a server-hydrated or
     // since-dropped model id from a saved preset) rather than silently
     // mislabeling it as the first option. Fall back to the first option only
@@ -383,10 +386,10 @@ export function CombinedModelPicker({
         event.preventDefault()
         if (focusedColumn === 'model') {
           const option = modelOptions[modelHighlight]
-          if (option) onSelectModel(option.id)
+          if (option && !option.disabled) onSelectModel(option.id)
         } else {
           const option = reasoningOptions[reasoningHighlight]
-          if (option) onSelectReasoning(option.value)
+          if (option && !option.disabled) onSelectReasoning(option.value)
         }
       }
     }
@@ -438,12 +441,15 @@ export function CombinedModelPicker({
             <button
               key={option.id}
               type="button"
-              className={`composer-combined-picker-row ${option.id === selectedModelId ? 'is-selected' : ''} ${idx === modelHighlight && focusedColumn === 'model' ? 'is-highlighted' : ''}`}
+              className={`composer-combined-picker-row ${option.id === selectedModelId ? 'is-selected' : ''} ${option.disabled ? 'is-disabled' : ''} ${idx === modelHighlight && focusedColumn === 'model' ? 'is-highlighted' : ''}`}
+              disabled={option.disabled}
+              title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
               onMouseEnter={() => {
                 setFocusedColumn('model')
                 setModelHighlight(idx)
               }}
               onClick={() => {
+                if (option.disabled) return
                 onSelectModel(option.id)
                 // Keep the popover open so the user can also tweak
                 // reasoning without re-clicking the chip. Real Codex
@@ -490,12 +496,16 @@ export function CombinedModelPicker({
             <button
               key={option.value}
               type="button"
-              className={`composer-combined-picker-row ${option.value === selectedReasoning ? 'is-selected' : ''} ${idx === reasoningHighlight && focusedColumn === 'reasoning' ? 'is-highlighted' : ''}`}
+              className={`composer-combined-picker-row ${option.value === selectedReasoning ? 'is-selected' : ''} ${option.value === 'ultracode' ? 'is-ultracode' : ''} ${option.disabled ? 'is-disabled' : ''} ${idx === reasoningHighlight && focusedColumn === 'reasoning' ? 'is-highlighted' : ''}`}
+              data-reasoning-value={option.value}
+              disabled={option.disabled}
+              title={option.disabled ? option.disabledReason || 'Unavailable for this model' : undefined}
               onMouseEnter={() => {
                 setFocusedColumn('reasoning')
                 setReasoningHighlight(idx)
               }}
               onClick={() => {
+                if (option.disabled) return
                 onSelectReasoning(option.value)
               }}
             >
@@ -558,6 +568,8 @@ export function CombinedModelPicker({
         type="button"
         className="composer-combined-picker-trigger"
         data-composer-control="model"
+        data-provider={provider}
+        data-selected-reasoning={selectedReasoning || ''}
         data-fast-mode-active={fastModeEnabled && fastModeCapable ? 'true' : 'false'}
         onClick={() => setOpen((prev) => !prev)}
         disabled={disabled}

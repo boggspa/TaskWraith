@@ -3,7 +3,14 @@ interface CodexModelOption {
   label?: string
   description?: string
   isDefault?: boolean
-  supportedReasoningEfforts?: Array<{ reasoningEffort: string; description?: string }>
+  disabled?: boolean
+  disabledReason?: string
+  supportedReasoningEfforts?: Array<{
+    reasoningEffort: string
+    description?: string
+    disabled?: boolean
+    disabledReason?: string
+  }>
   defaultReasoningEffort?: string | null
   additionalSpeedTiers?: string[]
   /** 1.0.7-mini — ISO date (YYYY-MM-DD) when this model is retired by the
@@ -65,12 +72,30 @@ const CODEX_DEFAULT_MODELS = [
   // resolves / on IPC failure, so it's kept in sync by deletion here.
 ] satisfies CodexModelOption[]
 const CODEX_DEFAULT_MODEL = CODEX_DEFAULT_MODELS[0].id
-const CLAUDE_THINKING_EFFORTS = [
-  { reasoningEffort: 'off' },
+const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'
+const CLAUDE_FULL_REASONING_EFFORTS = [
   { reasoningEffort: 'low' },
   { reasoningEffort: 'medium' },
-  { reasoningEffort: 'high' }
+  { reasoningEffort: 'high' },
+  { reasoningEffort: 'xhigh' },
+  { reasoningEffort: 'max' },
+  { reasoningEffort: 'ultracode' }
 ]
+const claudeReasoningEfforts = (enabled: ReadonlySet<string>) =>
+  CLAUDE_FULL_REASONING_EFFORTS.map((option) =>
+    enabled.has(option.reasoningEffort)
+      ? option
+      : { ...option, disabled: true, disabledReason: CLAUDE_REASONING_UNAVAILABLE }
+  )
+const CLAUDE_SONNET_REASONING_EFFORTS = claudeReasoningEfforts(
+  new Set(['low', 'medium', 'high', 'max'])
+)
+const CLAUDE_OPUS_REASONING_EFFORTS = claudeReasoningEfforts(
+  new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+)
+const CLAUDE_HAIKU_REASONING_EFFORTS = claudeReasoningEfforts(new Set())
+const CLAUDE_THINKING_EFFORTS = CLAUDE_OPUS_REASONING_EFFORTS
+const CLAUDE_DEFAULT_REASONING_EFFORT = 'medium'
 const CLAUDE_TEMPORARILY_HIDDEN_MODEL_IDS = new Set([
   'fable',
   'claude-fable-5',
@@ -79,45 +104,43 @@ const CLAUDE_TEMPORARILY_HIDDEN_MODEL_IDS = new Set([
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-4-6'
 const CLAUDE_DEFAULT_MODELS = [
   {
-    id: 'claude-opus-4-8',
-    label: 'Claude Opus 4.8',
-    description: 'Most capable Opus — extended thinking',
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS,
-    additionalSpeedTiers: ['fast']
-  },
-  {
     id: 'claude-opus-4-8-1m',
     label: 'Claude Opus 4.8 1M',
     description: '1M context window — extended thinking',
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
-    // 1M variants are intentionally excluded from the paid Fast tier.
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'claude-fable-5-1m',
+    label: 'Claude Fable 5 1M',
+    description: 'Temporarily unavailable from Anthropic',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast'],
+    disabled: true,
+    disabledReason: 'Temporarily unavailable from Anthropic'
   },
   {
     id: CLAUDE_DEFAULT_MODEL,
     label: 'Claude Sonnet 4.6',
     description: 'Balanced — extended thinking',
     isDefault: true,
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
+    supportedReasoningEfforts: CLAUDE_SONNET_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium'
   },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', description: 'Fast & efficient' },
   {
-    id: 'claude-opus-4-7',
-    label: 'Claude Opus 4.7 Legacy',
-    description: 'Previous Opus — extended thinking',
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS,
-    additionalSpeedTiers: ['fast']
+    id: 'claude-haiku-4-5',
+    label: 'Claude Haiku 4.5',
+    description: 'Fast & efficient',
+    supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS
   },
   {
     id: 'claude-opus-4-7-1m',
     label: 'Claude Opus 4.7 1M Legacy',
     description: '1M context window — extended thinking',
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS
-  },
-  {
-    id: 'claude-opus-4-6',
-    label: 'Claude Opus 4.6 Legacy',
-    description: 'Previous Opus generation',
-    supportedReasoningEfforts: CLAUDE_THINKING_EFFORTS,
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']
   }
 ] satisfies CodexModelOption[]
@@ -212,13 +235,11 @@ const CLAUDE_MODEL_IDS = new Set([
   'opus',
   'haiku',
   'custom',
-  'claude-opus-4-8',
   'claude-opus-4-8-1m',
-  'claude-opus-4-7',
+  'claude-fable-5-1m',
   'claude-opus-4-7-1m',
   'claude-sonnet-4-6',
-  'claude-haiku-4-5',
-  'claude-opus-4-6'
+  'claude-haiku-4-5'
 ])
 const KIMI_MODEL_IDS = new Set(KIMI_DEFAULT_MODELS.map((model) => model.id))
 const OLLAMA_MODEL_IDS = new Set(OLLAMA_DEFAULT_MODELS.map((model) => model.id))
@@ -236,11 +257,29 @@ const normalizeProviderModelKey = (model?: string | null): string =>
     .trim()
     .toLowerCase()
 
+const resolveClaudeReasoningEfforts = (
+  model?: CodexModelOption | null
+): NonNullable<CodexModelOption['supportedReasoningEfforts']> =>
+  model ? (model.supportedReasoningEfforts ?? []) : CLAUDE_THINKING_EFFORTS
+
+const resolveClaudeDefaultReasoningEffort = (model?: CodexModelOption | null): string => {
+  const efforts = resolveClaudeReasoningEfforts(model)
+    .filter((option) => !option.disabled)
+    .map((option) => option.reasoningEffort)
+  if (efforts.length === 0) return ''
+  if (model?.defaultReasoningEffort && efforts.includes(model.defaultReasoningEffort)) {
+    return model.defaultReasoningEffort
+  }
+  if (efforts.includes(CLAUDE_DEFAULT_REASONING_EFFORT)) return CLAUDE_DEFAULT_REASONING_EFFORT
+  return efforts[0]
+}
+
 export type { CodexModelOption }
 export {
   CODEX_DEFAULT_MODELS,
   CODEX_DEFAULT_MODEL,
   CLAUDE_THINKING_EFFORTS,
+  CLAUDE_DEFAULT_REASONING_EFFORT,
   CLAUDE_DEFAULT_MODEL,
   CLAUDE_DEFAULT_MODELS,
   KIMI_DEFAULT_MODELS,
@@ -261,5 +300,7 @@ export {
   isClaudeModelId,
   isKimiModelId,
   isOllamaModelId,
-  normalizeProviderModelKey
+  normalizeProviderModelKey,
+  resolveClaudeDefaultReasoningEffort,
+  resolveClaudeReasoningEfforts
 }

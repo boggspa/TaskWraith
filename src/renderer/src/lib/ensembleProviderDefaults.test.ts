@@ -3,6 +3,7 @@ import type { EnsembleParticipant } from '../../../main/store/types'
 import {
   getDefaultEnsembleParticipantConfig,
   getEnsembleModelDefaults,
+  getEnsembleReasoningOptions,
   resolveEnsembleParticipantSettings
 } from './ensembleProviderDefaults'
 
@@ -145,6 +146,38 @@ describe('resolveEnsembleParticipantSettings', () => {
     expect(overridden.fastModeEnabled).toBe(true)
   })
 
+  it('coerces Claude reasoning by selected model family', () => {
+    const opus = resolveEnsembleParticipantSettings(
+      participant({
+        provider: 'claude',
+        id: 'ensemble-claude',
+        model: 'claude-opus-4-8-1m',
+        reasoningEffort: 'ultracode'
+      })
+    )
+    expect(opus.reasoningEffort).toBe('ultracode')
+
+    const sonnet = resolveEnsembleParticipantSettings(
+      participant({
+        provider: 'claude',
+        id: 'ensemble-claude',
+        model: 'claude-sonnet-4-6',
+        reasoningEffort: 'xhigh'
+      })
+    )
+    expect(sonnet.reasoningEffort).toBe('medium')
+
+    const haiku = resolveEnsembleParticipantSettings(
+      participant({
+        provider: 'claude',
+        id: 'ensemble-claude',
+        model: 'claude-haiku-4-5',
+        reasoningEffort: 'max'
+      })
+    )
+    expect(haiku.reasoningEffort).toBe('')
+  })
+
   it('resolves gemini with no reasoning axis (empty string)', () => {
     const resolved = resolveEnsembleParticipantSettings(
       participant({ provider: 'gemini', id: 'ensemble-gemini' })
@@ -184,7 +217,15 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
   })
 
   it('does not expose Default or CLI Default as ensemble picker model rows', () => {
-    for (const provider of ['codex', 'claude', 'gemini', 'kimi', 'grok', 'cursor', 'ollama'] as const) {
+    for (const provider of [
+      'codex',
+      'claude',
+      'gemini',
+      'kimi',
+      'grok',
+      'cursor',
+      'ollama'
+    ] as const) {
       const options = getEnsembleModelDefaults(provider).modelOptions
       expect(options.map((option) => option.id)).not.toEqual(
         expect.arrayContaining(['default', 'cli-default'])
@@ -199,12 +240,66 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(getEnsembleModelDefaults('kimi').defaultModelId).toBe('kimi-k2.7-code')
   })
 
-  it('hides temporarily unavailable Claude Fable variants from ensemble model options', () => {
+  it('marks temporarily unavailable Claude Fable 1M disabled in ensemble model options', () => {
     const claude = getEnsembleModelDefaults('claude')
     expect(claude.modelOptions.map((option) => option.id)).not.toEqual(
-      expect.arrayContaining(['default', 'cli-default', 'claude-fable-5', 'claude-fable-5-1m'])
+      expect.arrayContaining([
+        'default',
+        'cli-default',
+        'claude-opus-4-8',
+        'claude-opus-4-7',
+        'claude-opus-4-6',
+        'claude-fable-5'
+      ])
     )
+    expect(claude.modelOptions.find((option) => option.id === 'claude-fable-5-1m')).toMatchObject({
+      disabled: true,
+      disabledReason: 'Temporarily unavailable from Anthropic'
+    })
+    expect(claude.modelOptions.map((option) => option.id)).toEqual([
+      'claude-opus-4-8-1m',
+      'claude-fable-5-1m',
+      'claude-opus-4-7-1m',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5'
+    ])
     expect(claude.defaultModelId).toBe('claude-sonnet-4-6')
+  })
+
+  it('returns model-aware Claude reasoning options for ensemble pickers', () => {
+    const sonnet = getEnsembleReasoningOptions('claude', 'claude-sonnet-4-6')
+    const opus = getEnsembleReasoningOptions('claude', 'claude-opus-4-8-1m')
+    const haiku = getEnsembleReasoningOptions('claude', 'claude-haiku-4-5')
+    expect(sonnet.map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(sonnet.filter((o) => o.disabled).map((o) => o.value)).toEqual([
+      'xhigh',
+      'ultracode'
+    ])
+    expect(opus.map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(opus.every((o) => !o.disabled)).toBe(true)
+    expect(haiku.map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(haiku.every((o) => o.disabled)).toBe(true)
   })
 
   it('exposes grok preferred model id as Grok Build with the effort reasoning axis', () => {

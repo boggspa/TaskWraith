@@ -27,6 +27,7 @@ import {
 import {
   buildProviderChangeParticipantPatch,
   getEnsembleModelDefaults,
+  getEnsembleReasoningOptions,
   resolveEnsembleParticipantSettings
 } from '../lib/ensembleProviderDefaults'
 import {
@@ -236,6 +237,14 @@ function RosterParticipantRow({
 
   const onSelectModel = (nextModel: string): void => {
     const patch: Partial<EnsembleParticipant> = { model: nextModel }
+    if (participant.provider === 'claude') {
+      const nextReasoningOptions = getEnsembleReasoningOptions(participant.provider, nextModel)
+      const enabledReasoningOptions = nextReasoningOptions.filter((option) => !option.disabled)
+      const nextReasoningValues = new Set(enabledReasoningOptions.map((option) => option.value))
+      patch.reasoningEffort = nextReasoningValues.has(defaults.defaultReasoning)
+        ? defaults.defaultReasoning
+        : enabledReasoningOptions[0]?.value
+    }
     // Drop fast mode when the new model can't support it (mirrors composer).
     if (
       (participant.provider === 'codex' || participant.provider === 'claude') &&
@@ -253,6 +262,7 @@ function RosterParticipantRow({
         ? 'on'
         : 'off'
       : resolved.reasoningEffort
+  const reasoningOptions = getEnsembleReasoningOptions(participant.provider, selectedModelId)
   const onSelectReasoning = (value: string): void => {
     if (participant.provider === 'kimi') {
       onPatch(participant.id, { thinkingEnabled: value !== 'off' })
@@ -306,7 +316,7 @@ function RosterParticipantRow({
             modelOptions={modelOptions}
             selectedModelId={selectedModelId}
             onSelectModel={onSelectModel}
-            reasoningOptions={defaults.reasoningOptions}
+            reasoningOptions={reasoningOptions}
             selectedReasoning={selectedReasoning}
             onSelectReasoning={onSelectReasoning}
             codexReasoningEffort={

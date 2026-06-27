@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   CODEX_DEFAULT_MODELS,
   CLAUDE_DEFAULT_MODELS,
+  resolveClaudeDefaultReasoningEffort,
+  resolveClaudeReasoningEfforts,
   GEMINI_DEFAULT_MODELS,
   GROK_DEFAULT_MODELS,
   KIMI_DEFAULT_MODELS,
@@ -11,11 +13,15 @@ import {
 } from './providerModelDefaults'
 
 describe('Claude provider model defaults', () => {
-  it('hides temporarily unavailable Fable variants from the renderer fallback picker list', () => {
+  it('marks temporarily unavailable Fable 1M disabled in the renderer fallback picker list', () => {
     const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)
     expect(ids).not.toContain('default')
     expect(ids).not.toContain('claude-fable-5')
-    expect(ids).not.toContain('claude-fable-5-1m')
+    expect(ids).toContain('claude-fable-5-1m')
+    expect(CLAUDE_DEFAULT_MODELS.find((model) => model.id === 'claude-fable-5-1m')).toMatchObject({
+      disabled: true,
+      disabledReason: 'Temporarily unavailable from Anthropic'
+    })
   })
 
   it('uses Sonnet 4.6 as the concrete Claude fallback model', () => {
@@ -29,6 +35,49 @@ describe('Claude provider model defaults', () => {
     expect(isClaudeModelId('claude-fable-5')).toBe(false)
     expect(isClaudeModelId('claude-fable-5-1m')).toBe(false)
     expect(isClaudeModelId('claude-opus-4-8')).toBe(true)
+  })
+
+  it('exposes only 1M Opus defaults while keeping Sonnet as the default model', () => {
+    const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)
+    expect(ids).not.toContain('claude-opus-4-8')
+    expect(ids).not.toContain('claude-opus-4-7')
+    expect(ids).not.toContain('claude-opus-4-6')
+    expect(ids).toContain('claude-opus-4-8-1m')
+    expect(ids).toContain('claude-opus-4-7-1m')
+  })
+
+  it('resolves family-specific Claude reasoning defaults', () => {
+    const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
+    const sonnetReasoning = resolveClaudeReasoningEfforts(byId.get('claude-sonnet-4-6'))
+    const opusReasoning = resolveClaudeReasoningEfforts(byId.get('claude-opus-4-8-1m'))
+    const haikuReasoning = resolveClaudeReasoningEfforts(byId.get('claude-haiku-4-5'))
+    expect(
+      sonnetReasoning.map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    expect(
+      sonnetReasoning
+        .filter((option) => option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['xhigh', 'ultracode'])
+    expect(opusReasoning.map((option) => option.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(opusReasoning.every((option) => !option.disabled)).toBe(true)
+    expect(haikuReasoning.map((option) => option.reasoningEffort)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(haikuReasoning.every((option) => option.disabled)).toBe(true)
+    expect(resolveClaudeDefaultReasoningEffort(byId.get('claude-haiku-4-5'))).toBe('')
   })
 })
 

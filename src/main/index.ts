@@ -567,7 +567,6 @@ import type { CliProviderRuntimeDependencies } from './providers/CliProviderRunt
 import {
   appendKimiModelArgs,
   appendKimiThinkingArgs,
-  CLAUDE_THINKING_BUDGET,
   CODEX_MODEL_RETIREMENTS,
   CODEX_RETIRED_MODEL_IDS,
   CODEX_STATIC_MODELS,
@@ -893,7 +892,7 @@ import {
   normalizeNativeSubAgentPolicy,
   previewNativeSubAgentTask
 } from './NativeSubAgentPolicy'
-import { buildClaudeCliArgs } from './ClaudeCliArgs'
+import { buildClaudeCliArgs, normalizeClaudeEffortFlagForModel } from './ClaudeCliArgs'
 import { getSubThreadResumeSessionId, resolveSubThreadRecall } from './SubThreadRecall'
 import {
   delegationApprovalBudget,
@@ -9708,10 +9707,7 @@ async function tryRunClaudeSdk(
     state
   )
 
-  const thinkingBudgetSdk =
-    payload.claudeReasoningEffort && payload.claudeReasoningEffort !== 'off'
-      ? (CLAUDE_THINKING_BUDGET[payload.claudeReasoningEffort] ?? null)
-      : null
+  const claudeSdkEffort = normalizeClaudeEffortFlagForModel(payload.claudeReasoningEffort, model)
   // Phase I3 (Claude initiator): register the TaskWraith MCP server so
   // the Claude agent sees delegate_to_subthread etc. in its tool list.
   // The TaskWraith bridge is gated on the same `geminiMcpBridgeEnabled`
@@ -9782,7 +9778,7 @@ async function tryRunClaudeSdk(
       includePartialMessages: true,
       ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
       ...(payload.imagePaths?.length ? { images: payload.imagePaths } : {}),
-      ...(thinkingBudgetSdk ? { maxThinkingTokens: thinkingBudgetSdk } : {}),
+      ...(claudeSdkEffort ? { effort: claudeSdkEffort } : {}),
       ...(claudeSdkMcpServers ? { mcpServers: claudeSdkMcpServers } : {}),
       ...(claudeSdkAllowedTools && claudeSdkAllowedTools.length > 0
         ? { allowedTools: claudeSdkAllowedTools }
@@ -26645,6 +26641,8 @@ if (isGeminiMcpBridgeProcess) {
               id?: unknown
               label?: unknown
               isDefault?: unknown
+              disabled?: unknown
+              disabledReason?: unknown
               supportedReasoningEfforts?: unknown
               defaultReasoningEffort?: unknown
             }>
@@ -26657,10 +26655,21 @@ if (isGeminiMcpBridgeProcess) {
                   id: model.id as string,
                   label: typeof model.label === 'string' ? model.label : (model.id as string),
                   isDefault: Boolean(model.isDefault),
+                  ...(model.disabled === true ? { disabled: true } : {}),
+                  ...(typeof model.disabledReason === 'string'
+                    ? { disabledReason: model.disabledReason }
+                    : {}),
                   supportedReasoningEfforts: Array.isArray(model.supportedReasoningEfforts)
                     ? model.supportedReasoningEfforts
                         .filter(
-                          (option): option is { reasoningEffort: string; description?: string } =>
+                          (
+                            option
+                          ): option is {
+                            reasoningEffort: string
+                            description?: string
+                            disabled?: boolean
+                            disabledReason?: string
+                          } =>
                             Boolean(option) &&
                             typeof option === 'object' &&
                             typeof (option as { reasoningEffort?: unknown }).reasoningEffort ===
@@ -26670,6 +26679,10 @@ if (isGeminiMcpBridgeProcess) {
                           reasoningEffort: option.reasoningEffort,
                           ...(typeof option.description === 'string'
                             ? { description: option.description }
+                            : {}),
+                          ...(option.disabled === true ? { disabled: true } : {}),
+                          ...(typeof option.disabledReason === 'string'
+                            ? { disabledReason: option.disabledReason }
                             : {})
                         }))
                     : [],

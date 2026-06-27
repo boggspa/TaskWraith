@@ -26,6 +26,7 @@ import type {
   CombinedModelPickerReasoningOption
 } from '../components/CombinedModelPicker'
 import type { EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
+import { claudeReasoningDisplayLabel } from './composerChipFormat'
 
 export interface EnsembleModelDefaults {
   modelOptions: CombinedModelPickerModelOption[]
@@ -50,12 +51,28 @@ const CODEX_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'xhigh', label: 'Extra High' }
 ]
 
-const CLAUDE_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'off', label: 'Thinking off' },
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'Max' }
+const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'
+const CLAUDE_FULL_REASONING: CombinedModelPickerReasoningOption[] = [
+  { value: 'low', label: claudeReasoningDisplayLabel('low') },
+  { value: 'medium', label: claudeReasoningDisplayLabel('medium') },
+  { value: 'high', label: claudeReasoningDisplayLabel('high') },
+  { value: 'xhigh', label: claudeReasoningDisplayLabel('xhigh') },
+  { value: 'max', label: claudeReasoningDisplayLabel('max') },
+  { value: 'ultracode', label: claudeReasoningDisplayLabel('ultracode') }
 ]
+const claudeReasoningOptions = (enabled: ReadonlySet<string>): CombinedModelPickerReasoningOption[] =>
+  CLAUDE_FULL_REASONING.map((option) =>
+    enabled.has(option.value)
+      ? option
+      : { ...option, disabled: true, disabledReason: CLAUDE_REASONING_UNAVAILABLE }
+  )
+const CLAUDE_SONNET_REASONING = claudeReasoningOptions(
+  new Set(['low', 'medium', 'high', 'max'])
+)
+const CLAUDE_OPUS_REASONING = claudeReasoningOptions(
+  new Set(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+)
+const CLAUDE_HAIKU_REASONING = claudeReasoningOptions(new Set())
 
 const KIMI_REASONING: CombinedModelPickerReasoningOption[] = [
   { value: 'on', label: 'Thinking on' },
@@ -83,13 +100,16 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
 ]
 
 const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
   { id: 'claude-opus-4-8-1m', label: 'Claude Opus 4.8 1M' },
-  { id: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
+  {
+    id: 'claude-fable-5-1m',
+    label: 'Claude Fable 5 1M',
+    disabled: true,
+    disabledReason: 'Temporarily unavailable from Anthropic'
+  },
   { id: 'claude-opus-4-7-1m', label: 'Claude Opus 4.7 1M' },
   { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-  { id: 'claude-opus-4-6', label: 'Claude Opus 4.6 Legacy' }
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' }
 ]
 
 const GEMINI_MODELS: CombinedModelPickerModelOption[] = [
@@ -131,12 +151,42 @@ const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
 ]
 
 const CODEX_FAST_CAPABLE = new Set<string>(['gpt-5.5', 'gpt-5.4'])
-// Fast mode is Opus-only (Opus 4.8/4.7/4.6); 1M variants are excluded.
+// Fast mode is Opus/Fable-only, and the default picker exposes the 1M Opus rows.
 const CLAUDE_FAST_CAPABLE = new Set<string>([
-  'claude-opus-4-8',
-  'claude-opus-4-7',
-  'claude-opus-4-6'
+  'claude-opus-4-8-1m',
+  'claude-opus-4-7-1m',
+  'claude-fable-5-1m'
 ])
+
+function isClaudeOpusOrFableModel(modelId?: string | null): boolean {
+  const normalized = String(modelId || '').toLowerCase()
+  return normalized.includes('opus') || normalized.includes('fable')
+}
+
+function isClaudeHaikuModel(modelId?: string | null): boolean {
+  return String(modelId || '')
+    .toLowerCase()
+    .includes('haiku')
+}
+
+export function getEnsembleReasoningOptions(
+  provider: ProviderId,
+  modelId?: string | null
+): CombinedModelPickerReasoningOption[] {
+  switch (provider) {
+    case 'codex':
+      return CODEX_REASONING
+    case 'claude':
+      if (isClaudeHaikuModel(modelId)) return CLAUDE_HAIKU_REASONING
+      return isClaudeOpusOrFableModel(modelId) ? CLAUDE_OPUS_REASONING : CLAUDE_SONNET_REASONING
+    case 'kimi':
+      return KIMI_REASONING
+    case 'grok':
+      return GROK_REASONING
+    default:
+      return []
+  }
+}
 
 /**
  * Canonical seed config for a new ensemble participant. Mirrors the
@@ -299,7 +349,18 @@ export function resolveEnsembleParticipantSettings(
   const defaults = getDefaultEnsembleParticipantConfig(participant.provider)
   const model = participant.model || defaults.model
   const permissionPresetId = participant.permissionPresetId || defaults.permissionPresetId
-  const reasoningEffort = participant.reasoningEffort || defaults.reasoningEffort || ''
+  const reasoningOptions =
+    participant.provider === 'kimi' ? [] : getEnsembleReasoningOptions(participant.provider, model)
+  const enabledReasoningOptions = reasoningOptions.filter((option) => !option.disabled)
+  const reasoningValues = new Set(enabledReasoningOptions.map((option) => option.value))
+  const reasoningEffort =
+    enabledReasoningOptions.length === 0
+      ? ''
+      : participant.reasoningEffort && reasoningValues.has(participant.reasoningEffort)
+        ? participant.reasoningEffort
+        : defaults.reasoningEffort && reasoningValues.has(defaults.reasoningEffort)
+          ? defaults.reasoningEffort
+          : (enabledReasoningOptions[0]?.value ?? '')
   const fastModeEnabled = Boolean(participant.fastModeEnabled ?? defaults.fastModeEnabled)
   const thinkingEnabled = Boolean(participant.thinkingEnabled ?? defaults.thinkingEnabled)
   // Codex serviceTier: respect explicit value, else infer 'fast' from
@@ -330,7 +391,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
     case 'claude':
       return {
         modelOptions: CLAUDE_MODELS,
-        reasoningOptions: CLAUDE_REASONING,
+        reasoningOptions: getEnsembleReasoningOptions('claude', 'claude-sonnet-4-6'),
         defaultReasoning: 'medium',
         fastModeCapableModelIds: CLAUDE_FAST_CAPABLE,
         defaultModelId: 'claude-sonnet-4-6'
