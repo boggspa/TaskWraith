@@ -2010,6 +2010,7 @@ export function SettingsPanel({
   const [mcpImportOpen, setMcpImportOpen] = useState(false)
   const [mcpImportText, setMcpImportText] = useState('')
   const [mcpImportError, setMcpImportError] = useState('')
+  const [copiedMcpServerId, setCopiedMcpServerId] = useState<string | null>(null)
   const [keyCommandQuery, setKeyCommandQuery] = useState('')
   const [recordingKeyCommandId, setRecordingKeyCommandId] = useState<KeyCommandId | null>(null)
   const [keyCommandRecordError, setKeyCommandRecordError] = useState('')
@@ -2143,6 +2144,19 @@ export function SettingsPanel({
     setMcpImportOpen(false)
     setMcpImportText('')
     setMcpImportError('')
+  }
+
+  const copyMcpServerAuditJson = (server: UserMcpServerConfig): void => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return
+    void navigator.clipboard
+      .writeText(formatUserMcpServerAuditJson(server))
+      .then(() => {
+        setCopiedMcpServerId(server.id)
+        window.setTimeout(() => {
+          setCopiedMcpServerId((current) => (current === server.id ? null : current))
+        }, 1600)
+      })
+      .catch(() => undefined)
   }
 
   const toggleUserMcpServer = (server: UserMcpServerConfig, enabled: boolean): void => {
@@ -5829,6 +5843,13 @@ export function SettingsPanel({
                               }
                             />
                           </label>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => copyMcpServerAuditJson(server)}
+                          >
+                            {copiedMcpServerId === server.id ? 'Copied' : 'Copy JSON'}
+                          </button>
                           <button
                             type="button"
                             className="btn btn-sm btn-ghost"

@@ -242,6 +242,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Codex + Claude')
     expect(html).toContain('runtime: Codex + Claude')
     expect(html).toContain('Audit JSON')
+    expect(html).toContain('Copy JSON')
     expect(html).toContain('&quot;command&quot;: &quot;npx&quot;')
     expect(html).toContain('&quot;PROJECT_ROOT&quot;: &quot;[stored in TaskWraith settings]&quot;')
     expect(html).not.toContain('&quot;PROJECT_ROOT&quot;: &quot;/Users/chris/project&quot;')
