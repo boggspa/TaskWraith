@@ -25,10 +25,6 @@ export interface TranscriptUserGutterMarkerLayout {
   topPx: number
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
-}
-
 function compactInlineText(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
@@ -110,23 +106,13 @@ export function layoutTranscriptUserGutterMarkers(
   const height = Number.isFinite(frameHeight) && frameHeight > 0 ? frameHeight : 0
   const edgePad = Math.min(8, height / 2)
   const availableHeight = Math.max(0, height - edgePad * 2)
-  const naturalTops = markers.map((marker) =>
-    clamp((marker.topPercent / 100) * height, edgePad, height - edgePad)
-  )
-
-  if (markers.length < 4 || availableHeight <= 0) {
-    return markers.map((marker, index) => ({ key: marker.key, topPx: naturalTops[index] }))
-  }
+  if (availableHeight <= 0) return markers.map((marker) => ({ key: marker.key, topPx: edgePad }))
 
   const compactSpan = Math.min(
     availableHeight,
     (markers.length - 1) * compactMarkerStepPx(markers.length)
   )
-  const naturalCenter =
-    naturalTops.reduce((total, top) => total + top, 0) / Math.max(1, naturalTops.length)
-  const minStart = edgePad
-  const maxStart = edgePad + availableHeight - compactSpan
-  const start = clamp(naturalCenter - compactSpan / 2, minStart, maxStart)
+  const start = edgePad + availableHeight - compactSpan
   const step = markers.length > 1 ? compactSpan / (markers.length - 1) : 0
 
   return markers.map((marker, index) => ({ key: marker.key, topPx: start + step * index }))

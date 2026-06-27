@@ -410,7 +410,7 @@ struct ThreadDetailView: View {
 
         private let railX: CGFloat = 15
         private let topInset: CGFloat = 78
-        private let bottomInset: CGFloat = 190
+        private let bottomInset: CGFloat = 96
 
         var body: some View {
             GeometryReader { geo in
@@ -418,11 +418,6 @@ struct ThreadDetailView: View {
                     let railHeight = max(96, geo.size.height - topInset - bottomInset)
                     let markerYById = markerPositions(railHeight: railHeight)
                     ZStack(alignment: .topLeading) {
-                        Capsule()
-                            .fill(TWTheme.textTertiary.opacity(0.18))
-                            .frame(width: 1, height: railHeight)
-                            .offset(x: railX, y: topInset)
-
                         ForEach(markers) { marker in
                             markerButton(
                                 marker,
@@ -463,19 +458,8 @@ struct ThreadDetailView: View {
         }
 
         private func markerPositions(railHeight: CGFloat) -> [String: CGFloat] {
-            let natural = markers.map { marker in
-                naturalMarkerY(marker, railHeight: railHeight)
-            }
-            if markers.count < 4 {
-                return Dictionary(uniqueKeysWithValues: zip(markers.map(\.id), natural))
-            }
-
             let span = min(railHeight, CGFloat(markers.count - 1) * compactStep(for: markers.count))
-            let naturalCenter =
-                natural.reduce(CGFloat(0), +) / CGFloat(max(1, natural.count))
-            let minStart = topInset
-            let maxStart = topInset + railHeight - span
-            let start = min(max(naturalCenter - span / 2, minStart), maxStart)
+            let start = topInset + railHeight - span
             let step = markers.count > 1 ? span / CGFloat(markers.count - 1) : 0
             return Dictionary(
                 uniqueKeysWithValues: markers.enumerated().map { index, marker in

@@ -1839,17 +1839,6 @@
   display: none;
 }
 
-.transcript-user-gutter-track {
-  position: absolute;
-  left: 11px;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
-  opacity: 0.42;
-}
-
 .transcript-user-gutter-marker {
   appearance: none;
   position: absolute;
@@ -1920,18 +1909,12 @@
   backdrop-filter: blur(24px) saturate(1.18);
   -webkit-backdrop-filter: blur(24px) saturate(1.18);
   pointer-events: auto;
+  cursor: pointer;
 }
 
 .transcript-user-gutter-preview-title {
-  appearance: none;
   display: block;
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
   color: var(--text-primary);
-  cursor: pointer;
   font-size: var(--font-size-sm);
   font-weight: 650;
   line-height: 1.3;
@@ -1941,18 +1924,17 @@
   white-space: nowrap;
 }
 
-.transcript-user-gutter-preview-title:hover,
-.transcript-user-gutter-preview-title:focus-visible {
+.transcript-user-gutter-preview:hover .transcript-user-gutter-preview-title,
+.transcript-user-gutter-preview:focus-visible .transcript-user-gutter-preview-title {
   color: color-mix(in srgb, var(--text-primary) 72%, var(--accent) 28%);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
 
-.transcript-user-gutter-preview-title:focus-visible {
+.transcript-user-gutter-preview:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
   outline-offset: 3px;
-  border-radius: 4px;
 }
 
 .transcript-user-gutter-preview-body {

@@ -77,25 +77,28 @@ function TranscriptUserGutterPreview({
     ? clamp(anchor.anchorX + 12, bounds.left, bounds.right - previewWidth)
     : clamp(anchor.anchorX - previewWidth - 12, bounds.left, bounds.right - previewWidth)
   const top = clamp(anchor.anchorY - previewHeight / 2, bounds.top, bounds.bottom - previewHeight)
+  const jumpToMarker = () => onJumpToMessage(marker.messageId, marker.rowKey)
 
   return (
     <div
       className="transcript-user-gutter-preview"
       style={{ left, top }}
-      role="tooltip"
+      role="button"
+      tabIndex={0}
+      aria-label={`Jump to user message ${marker.ordinal}: ${marker.title}`}
       onMouseEnter={onKeepOpen}
       onMouseLeave={onDismiss}
       onFocus={onKeepOpen}
       onBlur={onDismiss}
+      onClick={jumpToMarker}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          jumpToMarker()
+        }
+      }}
     >
-      <button
-        type="button"
-        className="transcript-user-gutter-preview-title transcript-user-gutter-preview-reference"
-        onClick={() => onJumpToMessage(marker.messageId, marker.rowKey)}
-        aria-label={`Jump to user message ${marker.ordinal}: ${marker.title}`}
-      >
-        {marker.title}
-      </button>
+      <div className="transcript-user-gutter-preview-title">{marker.title}</div>
       {marker.preview && <div className="transcript-user-gutter-preview-body">{marker.preview}</div>}
       {visibleMediaRefs.length > 0 && (
         <div className="transcript-user-gutter-preview-attachments" aria-label="Attachments">
@@ -149,7 +152,7 @@ export function TranscriptUserMessageGutter({
     }
     const left = Math.max(scrollerRect.left + 8, contentRect.left - 34)
     const topInset = clamp(scrollerRect.height * 0.12, 64, 104)
-    const bottomInset = clamp(scrollerRect.height * 0.18, 96, 180)
+    const bottomInset = clamp(scrollerRect.height * 0.08, 56, 96)
     const top = scrollerRect.top + topInset
     const right = Math.min(scrollerRect.right - 8, contentRect.left + 420)
     const bottom = scrollerRect.bottom - bottomInset
@@ -258,7 +261,6 @@ export function TranscriptUserMessageGutter({
       role="navigation"
       aria-label="User messages"
     >
-      <div className="transcript-user-gutter-track" aria-hidden />
       {markers.map((marker, index) => (
         <button
           key={marker.key}

@@ -89,13 +89,14 @@ describe('TranscriptUserMessageGutter model', () => {
     const span = Math.max(...tops) - Math.min(...tops)
 
     expect(layout.map((marker) => marker.key)).toEqual(markers.map((marker) => marker.key))
-    expect(span).toBeLessThanOrEqual(24 * 8)
+    expect(span).toBeLessThanOrEqual(23 * 8)
+    expect(Math.max(...tops)).toBeCloseTo(892, 1)
     for (let index = 1; index < tops.length; index += 1) {
       expect(tops[index]).toBeGreaterThan(tops[index - 1])
     }
   })
 
-  it('keeps sparse marker stacks positioned by transcript height', () => {
+  it('bottom-aligns sparse marker stacks beside the composer gutter', () => {
     const messages = [
       message('first', 'user', 'First prompt'),
       message('assistant-1', 'assistant', 'Assistant answer'),
@@ -104,8 +105,8 @@ describe('TranscriptUserMessageGutter model', () => {
     const markers = buildTranscriptUserGutterMarkers(messages, projectRows(messages))
 
     const layout = layoutTranscriptUserGutterMarkers(markers, 900)
-    const naturalGap = ((markers[1].topPercent - markers[0].topPercent) / 100) * 900
 
-    expect(layout[1].topPx - layout[0].topPx).toBeCloseTo(naturalGap, 1)
+    expect(layout[1].topPx).toBeCloseTo(892, 1)
+    expect(layout[1].topPx - layout[0].topPx).toBeCloseTo(10, 1)
   })
 })
