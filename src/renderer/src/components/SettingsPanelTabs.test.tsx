@@ -73,8 +73,13 @@ describe('Settings tabs', () => {
     expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'mcp.json')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'model context protocol')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'claude desktop')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'claude_desktop_config.json')).toBe(
+      true
+    )
     expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'cursor config')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'cursor mcp.json')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'codex config')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'codex config toml')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'streamable http')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['safety-privacy'], 'mobile visibility')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['safety-privacy'], 'screen watch')).toBe(true)

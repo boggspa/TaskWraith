@@ -13,7 +13,24 @@ describe('resolveSettingsTabFromSlashArg', () => {
       'key-commands'
     )
     expect(resolveSettingsTabFromSlashArg('tools mcp', { settingsTabs: SETTINGS_TABS })).toBe('mcp')
+    expect(resolveSettingsTabFromSlashArg('provider tools', { settingsTabs: SETTINGS_TABS })).toBe(
+      'mcp'
+    )
     expect(resolveSettingsTabFromSlashArg('mcp servers', { settingsTabs: SETTINGS_TABS })).toBe(
+      'mcp-servers'
+    )
+    expect(resolveSettingsTabFromSlashArg('mcp.json', { settingsTabs: SETTINGS_TABS })).toBe(
+      'mcp-servers'
+    )
+    expect(
+      resolveSettingsTabFromSlashArg('cursor mcp.json', { settingsTabs: SETTINGS_TABS })
+    ).toBe('mcp-servers')
+    expect(
+      resolveSettingsTabFromSlashArg('claude_desktop_config.json', {
+        settingsTabs: SETTINGS_TABS
+      })
+    ).toBe('mcp-servers')
+    expect(resolveSettingsTabFromSlashArg('codex config toml', { settingsTabs: SETTINGS_TABS })).toBe(
       'mcp-servers'
     )
   })
