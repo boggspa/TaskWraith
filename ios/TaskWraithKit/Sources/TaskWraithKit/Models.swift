@@ -532,6 +532,11 @@ public struct RemoteTaskCard: Codable, Sendable {
     /// the in-progress welcome screen resolves, but filtered out of list
     /// sections (HomeListViews) — it isn't a real chat yet.
     public let isDraft: Bool?
+    /// Active People/collaboration share. iOS derives its read-only Shared
+    /// section from visible task cards with this flag; invite creation remains
+    /// Mac-only.
+    public let isShared: Bool?
+    public let sharedMode: String?
     /// Mirrors ChatRecord.archived. Electron hides archived chats from its
     /// sidebar lists and counts; the phone filters them out too (HomeListViews)
     /// so the iOS thread count matches the desktop sidebar.

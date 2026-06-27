@@ -196,6 +196,10 @@ export interface RemoteTaskCard {
    * the card so an in-progress welcome screen still resolves, but hide it from
    * chat LISTS — it isn't a real conversation yet. */
   isDraft?: boolean
+  /** Active People/collaboration share. Remote clients derive their Shared
+   * section from this flag; invite creation remains Mac-only. */
+  isShared?: boolean
+  sharedMode?: string
   /** Mirrors ChatRecord.archived. Electron's sidebar hides archived chats from
    * its lists and counts; remote clients must do the same so the iOS thread
    * count matches the desktop sidebar. */
@@ -525,6 +529,8 @@ export interface BuildRemoteTaskCardOptions {
   queuedComposerJobs?: RunQueueJob[]
   /** Open Canvas sessions scoped to this chat (canvasService.list({chatId})). */
   openCanvases?: ReadonlyArray<CanvasSessionSummary>
+  isShared?: boolean
+  sharedMode?: string
 }
 
 export interface BuildRemoteTaskFeedSnapshotInput {
@@ -855,6 +861,8 @@ export function buildRemoteTaskCard(
       : {}),
     ...(chat.chatKind ? { chatKind: chat.chatKind } : {}),
     ...(isContentlessRemoteDraftChat(chat) ? { isDraft: true } : {}),
+    ...(options.isShared ? { isShared: true } : {}),
+    ...(isString(options.sharedMode) ? { sharedMode: options.sharedMode } : {}),
     ...(chat.archived ? { archived: true } : {}),
     workspaceId: chat.workspaceId && chat.workspaceId.length > 0 ? chat.workspaceId : null,
     provider: chat.provider ?? 'gemini',

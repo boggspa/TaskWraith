@@ -52,7 +52,7 @@ struct HomeView: View {
     private func seedSidebarCollapseIfNeeded() {
         guard explicitSelection, !ipadCollapseSeeded else { return }
         ipadCollapseSeeded = true
-        collapsedSections = ["activeRuns", "pinned", "recents", "ensembles", "workflows", "workspaces", "globalChats"]
+        collapsedSections = ["activeRuns", "pinned", "recents", "ensembles", "workflows", "workspaces", "shared", "globalChats"]
     }
 
     private var renameSheetCard: RemoteTaskCard? {
@@ -469,6 +469,26 @@ struct HomeView: View {
                     count: workflowRows.count,
                     collapsed: collapsedSections.contains("workflows")
                 ) { toggleSection("workflows") }
+            }
+        }
+
+        // ── Shared — existing People/collaboration chats only. iOS does not
+        //    create invites; it simply continues already-visible shared chats
+        //    projected by the Mac under the normal workspace allowlist. ─────
+        let sharedCards = listedCards.filter { ($0.isShared ?? false) && $0.parentChatId == nil }
+        if !sharedCards.isEmpty {
+            Section {
+                if !collapsedSections.contains("shared") {
+                    ForEach(sharedCards, id: \.id) { card in
+                        threadRow(card)
+                    }
+                }
+            } header: {
+                GlassPillHeader(
+                    title: "Shared", systemImage: "person.2",
+                    count: sharedCards.count,
+                    collapsed: collapsedSections.contains("shared")
+                ) { toggleSection("shared") }
             }
         }
 
@@ -908,6 +928,12 @@ struct TaskRow: View {
                         Image(systemName: "exclamationmark.bubble.fill")
                             .font(.caption)
                             .foregroundStyle(TWTheme.statusAttention)
+                    }
+                    if card.isShared ?? false {
+                        Image(systemName: "person.2.fill")
+                            .font(.caption2)
+                            .foregroundStyle(TWTheme.chroma2)
+                            .accessibilityLabel("Shared")
                     }
                     Spacer(minLength: 0)
                 }

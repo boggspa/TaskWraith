@@ -21514,6 +21514,7 @@ if (isGeminiMcpBridgeProcess) {
     ): { chat: ChatRecord; taskCard: RemoteTaskCard } => {
       const canonicalChat = canonicalizeRemoteWorkspaceRecord(chat)
       const capabilities = remoteTaskCapabilitiesForWorkspace(canonicalChat.workspaceId)
+      const collaborationShare = humanCollaborationStore.getShareForChat(canonicalChat.appChatId)
       const queuedComposerJobs = AppStore.getRunQueueJobs({
         chatId: canonicalChat.appChatId,
         statuses: ['queued']
@@ -21527,7 +21528,9 @@ if (isGeminiMcpBridgeProcess) {
           capabilities,
           agentIdentity: remoteAgentIdentityForChat(canonicalChat),
           queuedComposerJobs,
-          openCanvases: canvasService.list({ chatId: canonicalChat.appChatId })
+          openCanvases: canvasService.list({ chatId: canonicalChat.appChatId }),
+          isShared: Boolean(collaborationShare),
+          sharedMode: collaborationShare?.mode
         })
       }
     }

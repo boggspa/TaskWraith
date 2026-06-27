@@ -252,6 +252,17 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('projects optional shared-chat metadata for remote Shared sections', () => {
+    const card = buildRemoteTaskCard(chat(), {
+      isShared: true,
+      sharedMode: 'comments'
+    })
+
+    expect(card.isShared).toBe(true)
+    expect(card.sharedMode).toBe('comments')
+    expect(buildRemoteTaskCard(chat()).isShared).toBeUndefined()
+  })
+
   it('projects bounded full task-card titles without UI ellipses', () => {
     const card = buildRemoteTaskCard(chat({ title: `Plan ${'rename '.repeat(40)}` }))
     expect(card.title).toHaveLength(160)
