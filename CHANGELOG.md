@@ -4,13 +4,44 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
-## 1.6.5 - 2026-06-26
+## 1.6.5 - 2026-06-27
+
+### Added
+- **User MCP server manager.** Settings can now manage user-defined MCP servers,
+  import/export provider snippets, show per-server readiness, and copy
+  provider-specific config for Codex, Claude, Cursor, and compatible JSON/TOML
+  targets. Remote server URLs, bearer headers, naming collisions, and invalid
+  exports are validated before they reach provider runtimes.
+- **iOS diff review sheet.** The companion's files-changed / diff summary rows
+  now open a dedicated glass diff sheet for quick review from the composer area.
+- **Shared chats on iOS.** Shared-human chat projections and the shared-chat type
+  chooser now appear on the companion, with sidebar actions restored on desktop.
+- **Transcript user gutter.** User messages gain a compact gutter/jump affordance
+  so long transcripts can move back to the originating request more reliably.
 
 ### Fixed
+- **iOS thread rename parity.** Chat renames from the iOS companion sync back to
+  the Mac, full titles are preserved across the bridge, and headers/sidebar rows
+  avoid unnecessary truncation in rename fields and wide-enough title areas.
 - **iOS Bossman removal.** Roster updates from the iOS companion now distinguish
   old clients that omit the Bossman marker from current clients explicitly sending
   `isBossman: false`, so turning Bossman off clears the Mac-side assignment and
   removes the crown instead of preserving the previous participant.
+- **Transcript jump stability.** Message jump targets now converge more reliably
+  through virtualized transcript rendering and stay anchored when navigating to a
+  specific user message.
+- **Transcript table readability.** Wide Markdown tables wrap and align more
+  consistently across Electron and iOS transcripts.
+- **Claude picker availability.** Fable remains visible but disabled while
+  unavailable, and reasoning options such as Extra / Ultracode stay visible but
+  unselectable on models that do not support them.
+
+### Changed
+- **MCP setup copy is clearer.** Provider-tool setup now labels active MCP
+  servers, routes settings searches to the right config panes, and explains the
+  Cursor/Grok bridge fallback without implying retired Gemini setup work.
+- **Media previews are richer.** Electron previews and inline audio waveform clips
+  gained focused preview affordances and cleaner transcript presentation.
 
 ## 1.6.4 - 2026-06-26
 

@@ -143,6 +143,9 @@ baseline.
 - **Local Ollama**: Tiered workspace tools (read-only through provider parity),
   optional live web search/fetch, per-model context engineering, and session memory
   across runs — all policy-gated like cloud providers.
+- **Custom MCP Servers**: User-defined MCP servers can be managed, validated,
+  imported, exported, and attached to compatible provider runtimes with
+  provider-specific JSON/TOML snippets and readiness checks.
 - **Activity Review**: Live activity viewport for in-flight tools and thinking,
   compact timelines, durations, and raw event inspection.
 - **Diff Studio**: File-list and diff-detail review for run-scoped changes and
@@ -151,15 +154,15 @@ baseline.
   audit state for repeat work without a hosted backend.
 - **iOS Companion**: TestFlight companion surfaces Demo Mode, Workflows,
   first-launch/provider readiness, usage snapshots, approvals, questions,
-  transcript streaming, inline images, and remote file/diff inspection.
+  transcript streaming, thread renaming, inline images, and remote file/diff
+  inspection.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
-Current development version: **v1.6.4**. Latest public release:
-**v1.6.4** — see [CHANGELOG.md](CHANGELOG.md) for release notes.
-If the GitHub Releases page shows an older version, treat newer source changes as
-unreleased development work until a matching tag and release artifacts are
-published.
+Current source version: **v1.6.5**. See [CHANGELOG.md](CHANGELOG.md) for release
+notes. Release artifacts are published from matching GitHub tags; if the GitHub
+Releases page shows an older version, treat newer source changes as
+release-candidate work until a matching tag and release artifacts are published.
 
 ## Public Source Boundary
 
