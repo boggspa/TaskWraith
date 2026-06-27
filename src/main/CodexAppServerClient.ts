@@ -6,7 +6,7 @@ import {
   resolveCliProviderBinary
 } from './providers/CliProviderRuntime'
 import type { RuntimeProfile } from './store/types'
-import type { UserMcpStdioLaunchServer } from './UserMcpServers'
+import type { UserMcpLaunchServer } from './UserMcpServers'
 
 /**
  * Codex's app-server only accepts UUID thread ids (optionally `urn:uuid:`-
@@ -248,7 +248,7 @@ export interface CodexMcpTaskWraithConfig {
   bridgeBinaryPath: string
   bridgeArgs: string[]
   parentProvider: 'codex'
-  userMcpServers?: UserMcpStdioLaunchServer[]
+  userMcpServers?: UserMcpLaunchServer[]
 }
 
 export function codexRuntimeProfileKey(profile: RuntimeProfile | null | undefined): string {
@@ -306,6 +306,11 @@ export function buildCodexTaskWraithMcpArgs(config: CodexMcpTaskWraithConfig): s
   }
   for (const server of config.userMcpServers ?? []) {
     if (!isTomlBareKeyComponent(server.serverName)) continue
+    if (server.transport === 'http') {
+      configArgs.push('-c', `mcp_servers.${server.serverName}.url="${tomlEscapeString(server.url)}"`)
+      continue
+    }
+    if (server.transport !== 'stdio') continue
     const command = tomlEscapeString(server.command)
     const args = server.args.map((arg) => `"${tomlEscapeString(arg)}"`).join(', ')
     configArgs.push(

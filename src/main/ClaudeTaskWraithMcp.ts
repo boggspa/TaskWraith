@@ -4,11 +4,11 @@
 // module mirrors that wiring for Claude's two run modes:
 //
 //  - SDK path: the Anthropic Agent SDK accepts an `mcpServers` map on
-//    the `query({...})` Options object. Each entry is a McpStdioServerConfig
-//    of `{ type, command, args, env }`. The bridge subprocess inherits
-//    TASKWRAITH_PARENT_PROVIDER plus any per-run route stamps from the
-//    `env` block, then stamps every broker request with provider/run/chat
-//    metadata when available.
+//    the `query({...})` Options object. The TaskWraith bridge uses a
+//    stdio server entry; user-managed entries can be stdio, HTTP, or SSE.
+//    The bridge subprocess inherits TASKWRAITH_PARENT_PROVIDER plus any
+//    per-run route stamps from the `env` block, then stamps every broker
+//    request with provider/run/chat metadata when available.
 //  - CLI path: Claude Code 2.1.x exposes `--mcp-config <configs...>`
 //    which accepts JSON file paths whose `mcpServers` map matches the
 //    SDK shape. We write the file under `os.tmpdir()` (or app temp) per
@@ -20,7 +20,7 @@
 // directly against fixed inputs.
 
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
-import type { UserMcpStdioLaunchServer } from './UserMcpServers'
+import type { UserMcpLaunchServer } from './UserMcpServers'
 
 /**
  * TaskWraith MCP tool name list. Re-exported under the Claude-specific name
@@ -48,18 +48,17 @@ export interface ClaudeTaskWraithMcpInput {
   bridgeBinaryPath: string
   /** argv passed to the bridge subprocess (already includes flag literals). */
   bridgeArgs: string[]
-  /** User-managed stdio MCP servers to attach alongside the TaskWraith bridge. */
-  userMcpServers?: UserMcpStdioLaunchServer[]
+  /** User-managed MCP servers to attach alongside the TaskWraith bridge. */
+  userMcpServers?: UserMcpLaunchServer[]
   /** Optional TaskWraith route stamps for per-run MCP subprocesses. */
   appRunId?: string
   appChatId?: string
 }
 
 /**
- * SDK Options.mcpServers entry shape. Matches McpStdioServerConfig
- * from `@anthropic-ai/claude-agent-sdk` (sdk.d.ts) — `type: 'stdio'`,
- * `command`, `args`, `env`. Kept as a structural type so we don't have
- * to import the SDK's types in tests.
+ * SDK Options.mcpServers stdio entry shape. Matches McpStdioServerConfig
+ * from `@anthropic-ai/claude-agent-sdk` (sdk.d.ts). Kept as a structural
+ * type so we don't have to import the SDK's types in tests.
  *
  * `alwaysLoad: true` (1.0.3) disables tool-search deferral for this
  * server. Without it, the Claude SDK puts MCP tools BEHIND a
@@ -82,8 +81,16 @@ export interface ClaudeMcpStdioServerEntry {
   alwaysLoad?: boolean
 }
 
+export interface ClaudeMcpRemoteServerEntry {
+  type: 'http' | 'sse'
+  url: string
+  alwaysLoad?: boolean
+}
+
+export type ClaudeMcpServerEntry = ClaudeMcpStdioServerEntry | ClaudeMcpRemoteServerEntry
+
 export interface ClaudeTaskWraithMcpServers {
-  [serverName: string]: ClaudeMcpStdioServerEntry
+  [serverName: string]: ClaudeMcpServerEntry
 }
 
 function isClaudeUserMcpServerName(value: string): boolean {
@@ -94,7 +101,7 @@ function isClaudeUserMcpServerName(value: string): boolean {
  * Build the `mcpServers` map passed to `query({ options: { mcpServers } })`
  * (SDK path) or written into the `--mcp-config` JSON file (CLI path).
  * Returns null only when both the TaskWraith bridge and user-managed
- * stdio servers are absent, so the caller can omit the option entirely.
+ * servers are absent, so the caller can omit the option entirely.
  *
  * The env stamp lives on the MCP server entry's `env` block: the bridge
  * subprocess inherits provider plus run/chat metadata and the broker uses
@@ -120,11 +127,18 @@ export function buildClaudeTaskWraithMcpServers(
   }
   for (const server of input.userMcpServers ?? []) {
     if (!isClaudeUserMcpServerName(server.serverName)) continue
-    servers[server.serverName] = {
-      type: 'stdio',
-      command: server.command,
-      args: [...server.args],
-      env: { ...(server.env ?? {}) }
+    if (server.transport === 'stdio') {
+      servers[server.serverName] = {
+        type: 'stdio',
+        command: server.command,
+        args: [...server.args],
+        env: { ...(server.env ?? {}) }
+      }
+    } else {
+      servers[server.serverName] = {
+        type: server.transport,
+        url: server.url
+      }
     }
   }
   return Object.keys(servers).length > 0 ? servers : null
@@ -178,7 +192,7 @@ export interface ClaudeTaskWraithCliArgsInput extends ClaudeTaskWraithMcpInput {
 /**
  * Append `--mcp-config <path>` + `--allowedTools <...names>` to the
  * existing Claude CLI argv. Returns the existing args unchanged when
- * both the TaskWraith bridge and user-managed stdio servers are absent.
+ * both the TaskWraith bridge and user-managed servers are absent.
  *
  * The temp file is written separately by the caller — this helper is
  * pure for test determinism.

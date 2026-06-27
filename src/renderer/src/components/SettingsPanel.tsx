@@ -632,8 +632,12 @@ const USER_MCP_TRANSPORT_OPTIONS: Array<{ value: UserMcpServerTransport; label: 
   { value: 'http', label: 'HTTP' },
   { value: 'sse', label: 'SSE' }
 ]
-const USER_MCP_STDIO_RUNTIME_PROVIDERS = ['Codex', 'Claude', 'Cursor'] as const
-const USER_MCP_STDIO_RUNTIME_LABEL = USER_MCP_STDIO_RUNTIME_PROVIDERS.join(' + ')
+const USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT: Record<UserMcpServerTransport, readonly string[]> = {
+  stdio: ['Codex', 'Claude', 'Cursor'],
+  http: ['Codex', 'Claude', 'Cursor'],
+  sse: ['Claude']
+}
+const USER_MCP_STDIO_HTTP_RUNTIME_LABEL = USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT.stdio.join(' + ')
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -709,7 +713,8 @@ function hasRunnableUserMcpEndpoint(server: Pick<UserMcpServerConfig, 'transport
 }
 
 function userMcpServerRuntimeLabel(server: Pick<UserMcpServerConfig, 'transport'>): string {
-  return server.transport === 'stdio' ? `runtime: ${USER_MCP_STDIO_RUNTIME_LABEL}` : 'saved only'
+  const providers = USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT[server.transport]
+  return providers.length > 0 ? `runtime: ${providers.join(' + ')}` : 'saved only'
 }
 
 function makeUserMcpServerId(name: string): string {
@@ -5731,10 +5736,10 @@ export function SettingsPanel({
                     <span className="settings-editable-pill">Editable</span>
                   </div>
                   <p className="settings-hint">
-                    Manage external MCP server definitions TaskWraith owns. Enabled stdio servers
-                    attach to Codex, Claude, and Cursor launches. Cursor uses temporary
-                    workspace-local MCP config that TaskWraith restores after the run; HTTP and
-                    SSE records are saved for transport-specific wiring.
+                    Manage external MCP server definitions TaskWraith owns. Enabled stdio and HTTP
+                    servers attach to Codex, Claude, and Cursor launches; SSE attaches to Claude.
+                    Cursor uses temporary workspace-local MCP config that TaskWraith restores
+                    after the run.
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
@@ -5777,8 +5782,8 @@ export function SettingsPanel({
                 </article>
                 <article className="settings-mcp-summary-card">
                   <span>Runtime</span>
-                  <strong>{USER_MCP_STDIO_RUNTIME_LABEL}</strong>
-                  <small>enabled stdio launch support</small>
+                  <strong>{USER_MCP_STDIO_HTTP_RUNTIME_LABEL}</strong>
+                  <small>stdio and HTTP launch support</small>
                 </article>
                 <article className="settings-mcp-summary-card">
                   <span>TaskWraith bridge</span>
@@ -5838,9 +5843,8 @@ export function SettingsPanel({
                   User MCP servers
                 </h4>
                 <p className="settings-hint">
-                  These records are stored by TaskWraith. Stdio servers are available to Codex,
-                  Claude, and Cursor provider launch paths; HTTP and SSE stay saved for
-                  transport-specific wiring.
+                  These records are stored by TaskWraith. Stdio and HTTP servers are available to
+                  Codex, Claude, and Cursor provider launch paths; SSE is available to Claude.
                 </p>
               </div>
 

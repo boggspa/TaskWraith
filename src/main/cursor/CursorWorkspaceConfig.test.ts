@@ -9,7 +9,7 @@ import { buildCursorMcpServerEntry, CURSOR_MCP_ALLOW_RULES } from './CursorMcpBr
 import {
   buildUserMcpCursorAllowRules,
   buildUserMcpCursorServerEntry,
-  buildUserMcpStdioLaunchServers
+  buildUserMcpLaunchServers
 } from '../UserMcpServers'
 
 describe('mergeCursorDenyRules', () => {
@@ -161,17 +161,27 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
   })
 
   it('can register user-managed MCP servers alongside the TaskWraith bridge', () => {
-    const userServers = buildUserMcpStdioLaunchServers([
-      {
-        id: 'filesystem',
-        name: 'Filesystem',
-        enabled: true,
-        transport: 'stdio',
-        command: 'npx',
-        args: ['@modelcontextprotocol/server-filesystem', '/repo'],
-        env: { PROJECT_ROOT: '/repo' }
-      }
-    ])
+    const userServers = buildUserMcpLaunchServers(
+      [
+        {
+          id: 'filesystem',
+          name: 'Filesystem',
+          enabled: true,
+          transport: 'stdio',
+          command: 'npx',
+          args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+          env: { PROJECT_ROOT: '/repo' }
+        },
+        {
+          id: 'docs',
+          name: 'Docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.test/mcp'
+        }
+      ],
+      ['stdio', 'http']
+    )
     const { fs, files } = makeFakeFs()
 
     const restore = applyCursorWriteModeConfig(fs, CONFIG, DIR, {
@@ -189,6 +199,7 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     const cli = JSON.parse(files.get(CONFIG)!)
     expect(cli.permissions.allow).toContain('Mcp(taskwraith:*)')
     expect(cli.permissions.allow).toContain('Mcp(user_filesystem:*)')
+    expect(cli.permissions.allow).toContain('Mcp(user_docs:*)')
 
     const mcp = JSON.parse(files.get(MCP)!)
     expect(mcp.mcpServers.taskwraith.command).toBe('/x/electron')
@@ -196,6 +207,9 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
       command: 'npx',
       args: ['@modelcontextprotocol/server-filesystem', '/repo'],
       env: { PROJECT_ROOT: '/repo' }
+    })
+    expect(mcp.mcpServers.user_docs).toEqual({
+      url: 'https://example.test/mcp'
     })
 
     restore()

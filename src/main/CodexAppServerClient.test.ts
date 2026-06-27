@@ -157,6 +157,7 @@ describe('buildCodexTaskWraithMcpArgs', () => {
         userMcpServers: [
           {
             serverName: 'user_filesystem',
+            transport: 'stdio',
             command: 'npx',
             args: ['@modelcontextprotocol/server-filesystem', '/repo'],
             env: { PROJECT_ROOT: '/repo' }
@@ -178,6 +179,7 @@ describe('buildCodexTaskWraithMcpArgs', () => {
       userMcpServers: [
         {
           serverName: 'user_docs',
+          transport: 'stdio',
           command: '/usr/local/bin/docs-mcp',
           args: []
         }
@@ -192,17 +194,34 @@ describe('buildCodexTaskWraithMcpArgs', () => {
     ])
   })
 
+  it('can emit remote HTTP user MCP servers when the TaskWraith bridge is disabled', () => {
+    const args = buildCodexTaskWraithMcpArgs({
+      ...makeConfig({ enabled: false }),
+      userMcpServers: [
+        {
+          serverName: 'user_remote_docs',
+          transport: 'http',
+          url: 'https://example.test/mcp'
+        }
+      ]
+    })
+
+    expect(args).toEqual(['-c', 'mcp_servers.user_remote_docs.url="https://example.test/mcp"'])
+  })
+
   it('skips user MCP servers with malformed TOML key names', () => {
     const args = buildCodexTaskWraithMcpArgs({
       ...makeConfig({ enabled: false }),
       userMcpServers: [
         {
           serverName: 'user.docs',
+          transport: 'stdio',
           command: '/usr/local/bin/docs-mcp',
           args: []
         },
         {
           serverName: 'user_docs',
+          transport: 'stdio',
           command: '/usr/local/bin/docs-mcp',
           args: []
         }

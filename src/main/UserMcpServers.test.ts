@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildUserMcpCursorAllowRules,
   buildUserMcpCursorServerEntry,
+  buildUserMcpLaunchServers,
   buildUserMcpServerName,
   buildUserMcpStdioLaunchServers
 } from './UserMcpServers'
@@ -41,6 +42,7 @@ describe('buildUserMcpStdioLaunchServers', () => {
     expect(buildUserMcpStdioLaunchServers(servers)).toEqual([
       {
         serverName: 'user_filesystem',
+        transport: 'stdio',
         command: 'npx',
         args: ['@modelcontextprotocol/server-filesystem', '/repo'],
         env: {
@@ -61,18 +63,62 @@ describe('buildUserMcpStdioLaunchServers', () => {
     )
   })
 
-  it('builds Cursor mcp.json entries and allow rules from sanitized launch servers', () => {
-    const launchServers = buildUserMcpStdioLaunchServers([
+  it('keeps enabled remote servers when their transport is supported', () => {
+    const servers: UserMcpServerConfig[] = [
       {
-        id: 'filesystem',
-        name: 'Filesystem',
+        id: 'docs',
+        name: 'Docs',
         enabled: true,
-        transport: 'stdio',
-        command: 'npx',
-        args: ['@modelcontextprotocol/server-filesystem', '/repo'],
-        env: { PROJECT_ROOT: '/repo' }
+        transport: 'http',
+        url: ' https://example.test/mcp '
+      },
+      {
+        id: 'legacy',
+        name: 'Legacy SSE',
+        enabled: true,
+        transport: 'sse',
+        url: 'https://example.test/sse'
+      }
+    ]
+
+    expect(buildUserMcpLaunchServers(servers, ['stdio', 'http'])).toEqual([
+      {
+        serverName: 'user_docs',
+        transport: 'http',
+        url: 'https://example.test/mcp'
       }
     ])
+    expect(buildUserMcpLaunchServers(servers, ['sse'])).toEqual([
+      {
+        serverName: 'user_legacy_sse',
+        transport: 'sse',
+        url: 'https://example.test/sse'
+      }
+    ])
+  })
+
+  it('builds Cursor mcp.json entries and allow rules from sanitized launch servers', () => {
+    const launchServers = buildUserMcpLaunchServers(
+      [
+        {
+          id: 'filesystem',
+          name: 'Filesystem',
+          enabled: true,
+          transport: 'stdio',
+          command: 'npx',
+          args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+          env: { PROJECT_ROOT: '/repo' }
+        },
+        {
+          id: 'docs',
+          name: 'Docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.test/mcp'
+        }
+      ],
+      ['stdio', 'http']
+    )
 
     const entry = buildUserMcpCursorServerEntry(launchServers)
     expect(entry).toEqual({
@@ -80,8 +126,14 @@ describe('buildUserMcpStdioLaunchServers', () => {
         command: 'npx',
         args: ['@modelcontextprotocol/server-filesystem', '/repo'],
         env: { PROJECT_ROOT: '/repo' }
+      },
+      user_docs: {
+        url: 'https://example.test/mcp'
       }
     })
-    expect(buildUserMcpCursorAllowRules(launchServers)).toEqual(['Mcp(user_filesystem:*)'])
+    expect(buildUserMcpCursorAllowRules(launchServers)).toEqual([
+      'Mcp(user_filesystem:*)',
+      'Mcp(user_docs:*)'
+    ])
   })
 })

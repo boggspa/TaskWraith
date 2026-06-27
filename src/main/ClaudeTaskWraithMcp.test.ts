@@ -57,7 +57,10 @@ describe('buildClaudeTaskWraithMcpServers', () => {
       appRunId: 'run-1',
       appChatId: 'chat-1'
     })
-    expect(servers?.TaskWraith.env).toEqual({
+    const taskWraith = servers?.TaskWraith
+    expect(taskWraith?.type).toBe('stdio')
+    if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
+    expect(taskWraith.env).toEqual({
       TASKWRAITH_PARENT_PROVIDER: 'claude',
       TASKWRAITH_RUN_ID: 'run-1',
       TASKWRAITH_CHAT_ID: 'chat-1'
@@ -74,7 +77,10 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     const args = [...fixture.bridgeArgs]
     const servers = buildClaudeTaskWraithMcpServers({ ...fixture, bridgeArgs: args })!
     args.push('--mutated-after-build')
-    expect(servers.TaskWraith.args).not.toContain('--mutated-after-build')
+    const taskWraith = servers.TaskWraith
+    expect(taskWraith.type).toBe('stdio')
+    if (taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
+    expect(taskWraith.args).not.toContain('--mutated-after-build')
   })
 
   it('adds user-managed stdio servers beside the TaskWraith bridge', () => {
@@ -83,6 +89,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
       userMcpServers: [
         {
           serverName: 'user_filesystem',
+          transport: 'stdio',
           command: 'npx',
           args: ['@modelcontextprotocol/server-filesystem', '/repo'],
           env: { PROJECT_ROOT: '/repo' }
@@ -106,6 +113,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
       userMcpServers: [
         {
           serverName: 'user_docs',
+          transport: 'stdio',
           command: '/usr/local/bin/docs-mcp',
           args: []
         }
@@ -122,6 +130,33 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     })
   })
 
+  it('adds user-managed remote HTTP and SSE servers beside the TaskWraith bridge', () => {
+    const servers = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      userMcpServers: [
+        {
+          serverName: 'user_remote_docs',
+          transport: 'http',
+          url: 'https://example.test/mcp'
+        },
+        {
+          serverName: 'user_legacy_sse',
+          transport: 'sse',
+          url: 'https://example.test/sse'
+        }
+      ]
+    })
+
+    expect(servers?.user_remote_docs).toEqual({
+      type: 'http',
+      url: 'https://example.test/mcp'
+    })
+    expect(servers?.user_legacy_sse).toEqual({
+      type: 'sse',
+      url: 'https://example.test/sse'
+    })
+  })
+
   it('skips user-managed servers with malformed provider-facing names', () => {
     const servers = buildClaudeTaskWraithMcpServers({
       ...fixture,
@@ -129,11 +164,13 @@ describe('buildClaudeTaskWraithMcpServers', () => {
       userMcpServers: [
         {
           serverName: 'user.docs',
+          transport: 'stdio',
           command: '/usr/local/bin/docs-mcp',
           args: []
         },
         {
           serverName: 'user_docs',
+          transport: 'stdio',
           command: '/usr/local/bin/docs-mcp',
           args: []
         }
@@ -255,6 +292,7 @@ describe('extendClaudeCliArgsWithTaskWraithMcp', () => {
       userMcpServers: [
         {
           serverName: 'user_docs',
+          transport: 'stdio',
           command: '/usr/local/bin/docs-mcp',
           args: []
         }

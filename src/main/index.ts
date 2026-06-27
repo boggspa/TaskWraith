@@ -153,7 +153,7 @@ import {
 import {
   buildUserMcpCursorAllowRules,
   buildUserMcpCursorServerEntry,
-  buildUserMcpStdioLaunchServers
+  buildUserMcpLaunchServers
 } from './UserMcpServers'
 import {
   codexCommandFileEditMetadata,
@@ -9289,7 +9289,7 @@ async function loadOptionalClaudeSdk(): Promise<any | null> {
 /**
  * Phase I3 (Claude initiator): assemble the input the TaskWraith MCP
  * helpers need — current `geminiMcpBridgeEnabled` toggle + the same
- * bridge argv Gemini/Codex use, plus user-managed stdio MCP servers.
+ * bridge argv Gemini/Codex use, plus user-managed MCP servers.
  * Centralised so SDK and CLI paths build identical config.
  */
 function claudeTaskWraithMcpInput(route?: AgentRunRoute | null): ClaudeTaskWraithMcpInput {
@@ -9300,7 +9300,7 @@ function claudeTaskWraithMcpInput(route?: AgentRunRoute | null): ClaudeTaskWrait
     enabled,
     bridgeBinaryPath: bridgeCommandStatus.command,
     bridgeArgs: taskwraithMcpBridgeArgs(),
-    userMcpServers: buildUserMcpStdioLaunchServers(settings.userMcpServers),
+    userMcpServers: buildUserMcpLaunchServers(settings.userMcpServers),
     ...(route?.appRunId ? { appRunId: route.appRunId } : {}),
     ...(route?.appChatId ? { appChatId: route.appChatId } : {})
   }
@@ -9715,7 +9715,7 @@ async function tryRunClaudeSdk(
   // Phase I3 (Claude initiator): register the TaskWraith MCP server so
   // the Claude agent sees delegate_to_subthread etc. in its tool list.
   // The TaskWraith bridge is gated on the same `geminiMcpBridgeEnabled`
-  // toggle Gemini/Codex use; user-managed stdio MCP servers attach from
+  // toggle Gemini/Codex use; user-managed MCP servers attach from
   // the dedicated MCP Servers settings page.
   //
   // Phase J3: ALSO pass `allowedTools` here. Previously only the CLI
@@ -10088,7 +10088,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   if (writeCapable && payload.workspace) {
     try {
       const settings = AppStore.getSettings()
-      const userMcpServers = buildUserMcpStdioLaunchServers(settings.userMcpServers)
+      const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, ['stdio', 'http'])
       const cursorDir = join(payload.workspace, '.cursor')
       const cliPath = join(cursorDir, 'cli.json')
       const mcpPath = join(cursorDir, 'mcp.json')
@@ -11381,11 +11381,11 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   // the toggle flips (that would tear down in-flight threads); the
   // user reopens Codex (or relaunches TaskWraith) to pick up the new
   // setting. The TaskWraith bridge mirrors the existing Gemini gate
-  // (geminiMcpBridgeEnabled); user-managed stdio servers can attach
-  // independently through the MCP Servers settings page.
+  // (geminiMcpBridgeEnabled); user-managed stdio/HTTP servers can
+  // attach independently through the MCP Servers settings page.
   const settings = AppStore.getSettings()
   const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
-  const userMcpServers = buildUserMcpStdioLaunchServers(settings.userMcpServers)
+  const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, ['stdio', 'http'])
   const taskWraithBridgeEnabled = Boolean(
     settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available
   )

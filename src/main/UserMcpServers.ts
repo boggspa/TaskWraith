@@ -1,11 +1,20 @@
-import type { UserMcpServerConfig } from './store/types'
+import type { UserMcpServerConfig, UserMcpServerTransport } from './store/types'
 
 export interface UserMcpStdioLaunchServer {
   serverName: string
+  transport: 'stdio'
   command: string
   args: string[]
   env?: Record<string, string>
 }
+
+export interface UserMcpRemoteLaunchServer {
+  serverName: string
+  transport: 'http' | 'sse'
+  url: string
+}
+
+export type UserMcpLaunchServer = UserMcpStdioLaunchServer | UserMcpRemoteLaunchServer
 
 function slugForMcpServer(value: string): string {
   return (
@@ -33,55 +42,82 @@ export function buildUserMcpServerName(
   return candidate
 }
 
-export function buildUserMcpStdioLaunchServers(
-  servers: readonly UserMcpServerConfig[] | undefined
-): UserMcpStdioLaunchServer[] {
+export function buildUserMcpLaunchServers(
+  servers: readonly UserMcpServerConfig[] | undefined,
+  supportedTransports: readonly UserMcpServerTransport[] = ['stdio', 'http', 'sse']
+): UserMcpLaunchServer[] {
   if (!Array.isArray(servers)) return []
+  const supported = new Set<UserMcpServerTransport>(supportedTransports)
   const usedNames = new Set<string>()
-  const launchServers: UserMcpStdioLaunchServer[] = []
+  const launchServers: UserMcpLaunchServer[] = []
   for (const server of servers) {
-    if (!server.enabled || server.transport !== 'stdio') continue
-    const command = server.command?.trim()
-    if (!command) continue
-    const args = Array.isArray(server.args)
-      ? server.args.map((arg) => arg.trim()).filter(Boolean)
-      : []
-    const env =
-      server.env && Object.keys(server.env).length > 0
-        ? Object.fromEntries(
-            Object.entries(server.env).filter(
-              (entry): entry is [string, string] =>
-                /^[A-Za-z_][A-Za-z0-9_]*$/.test(entry[0]) && typeof entry[1] === 'string'
+    if (!server.enabled || !supported.has(server.transport)) continue
+    if (server.transport === 'stdio') {
+      const command = server.command?.trim()
+      if (!command) continue
+      const serverName = buildUserMcpServerName(server, usedNames)
+      const args = Array.isArray(server.args)
+        ? server.args.map((arg) => arg.trim()).filter(Boolean)
+        : []
+      const env =
+        server.env && Object.keys(server.env).length > 0
+          ? Object.fromEntries(
+              Object.entries(server.env).filter(
+                (entry): entry is [string, string] =>
+                  /^[A-Za-z_][A-Za-z0-9_]*$/.test(entry[0]) && typeof entry[1] === 'string'
+              )
             )
-          )
-        : undefined
+          : undefined
+      launchServers.push({
+        serverName,
+        transport: 'stdio',
+        command,
+        args,
+        ...(env && Object.keys(env).length > 0 ? { env } : {})
+      })
+      continue
+    }
+    const url = server.url?.trim()
+    if (!url) continue
+    const serverName = buildUserMcpServerName(server, usedNames)
     launchServers.push({
-      serverName: buildUserMcpServerName(server, usedNames),
-      command,
-      args,
-      ...(env && Object.keys(env).length > 0 ? { env } : {})
+      serverName,
+      transport: server.transport,
+      url
     })
   }
   return launchServers
 }
 
+export function buildUserMcpStdioLaunchServers(
+  servers: readonly UserMcpServerConfig[] | undefined
+): UserMcpStdioLaunchServer[] {
+  return buildUserMcpLaunchServers(servers, ['stdio']).filter(
+    (server): server is UserMcpStdioLaunchServer => server.transport === 'stdio'
+  )
+}
+
 export function buildUserMcpCursorServerEntry(
-  servers: readonly UserMcpStdioLaunchServer[]
+  servers: readonly UserMcpLaunchServer[]
 ): Record<string, unknown> {
   return Object.fromEntries(
     servers.map((server) => [
       server.serverName,
-      {
-        command: server.command,
-        args: [...server.args],
-        ...(server.env ? { env: { ...server.env } } : {})
-      }
+      server.transport === 'stdio'
+        ? {
+            command: server.command,
+            args: [...server.args],
+            ...(server.env ? { env: { ...server.env } } : {})
+          }
+        : {
+            url: server.url
+          }
     ])
   )
 }
 
 export function buildUserMcpCursorAllowRules(
-  servers: readonly UserMcpStdioLaunchServer[]
+  servers: readonly UserMcpLaunchServer[]
 ): string[] {
   return servers.map((server) => `Mcp(${server.serverName}:*)`)
 }

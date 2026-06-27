@@ -228,6 +228,20 @@ describe('SettingsPanel provider cards', () => {
               command: 'npx',
               args: ['@modelcontextprotocol/server-filesystem', '/Users/chris/project'],
               env: { PROJECT_ROOT: '/Users/chris/project' }
+            },
+            {
+              id: 'server-docs',
+              name: 'docs',
+              enabled: true,
+              transport: 'http',
+              url: 'https://example.test/mcp'
+            },
+            {
+              id: 'server-legacy',
+              name: 'legacy',
+              enabled: true,
+              transport: 'sse',
+              url: 'https://example.test/sse'
             }
           ]
         })}
@@ -240,7 +254,9 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('1 env var')
     expect(html).toContain('Import JSON')
     expect(html).toContain('Codex + Claude + Cursor')
+    expect(html).toContain('stdio and HTTP launch support')
     expect(html).toContain('runtime: Codex + Claude + Cursor')
+    expect(html).toContain('runtime: Claude')
     expect(html).toContain('Audit JSON')
     expect(html).toContain('Copy all JSON')
     expect(html).toContain('Copy JSON')
