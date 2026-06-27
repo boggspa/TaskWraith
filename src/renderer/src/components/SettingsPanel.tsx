@@ -6143,6 +6143,15 @@ export function SettingsPanel({
                   <small>built-in provider tools stay separate</small>
                 </article>
               </div>
+
+              {userMcpServers.length > 0 && (
+                <details className="settings-user-mcp-config settings-user-mcp-config-all">
+                  <summary>All servers audit JSON</summary>
+                  <pre>
+                    <code>{formatUserMcpServersAuditJson(userMcpServers)}</code>
+                  </pre>
+                </details>
+              )}
             </div>
 
             {mcpImportOpen && (

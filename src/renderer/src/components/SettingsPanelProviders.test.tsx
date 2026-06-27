@@ -269,6 +269,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('runtime: Codex + Claude + Cursor')
     expect(html).toContain('runtime: Claude')
     expect(html).toContain('Audit JSON')
+    expect(html).toContain('All servers audit JSON')
     expect(html).toContain('Copy all JSON')
     expect(html).toContain('Copy JSON')
     expect(html).toContain('&quot;command&quot;: &quot;npx&quot;')
