@@ -12,6 +12,8 @@ export interface UserMcpRemoteLaunchServer {
   serverName: string
   transport: 'http' | 'sse'
   url: string
+  headers?: Record<string, string>
+  bearerTokenEnvVar?: string
 }
 
 export type UserMcpLaunchServer = UserMcpStdioLaunchServer | UserMcpRemoteLaunchServer
@@ -80,10 +82,27 @@ export function buildUserMcpLaunchServers(
     const url = server.url?.trim()
     if (!url) continue
     const serverName = buildUserMcpServerName(server, usedNames)
+    const headers =
+      server.headers && Object.keys(server.headers).length > 0
+        ? Object.fromEntries(
+            Object.entries(server.headers).filter(
+              (entry): entry is [string, string] =>
+                /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(entry[0]) &&
+                typeof entry[1] === 'string'
+            )
+          )
+        : undefined
+    const rawBearerTokenEnvVar = server.bearerTokenEnvVar?.trim()
+    const bearerTokenEnvVar =
+      rawBearerTokenEnvVar && /^[A-Za-z_][A-Za-z0-9_]*$/.test(rawBearerTokenEnvVar)
+        ? rawBearerTokenEnvVar
+        : undefined
     launchServers.push({
       serverName,
       transport: server.transport,
-      url
+      url,
+      ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(bearerTokenEnvVar ? { bearerTokenEnvVar } : {})
     })
   }
   return launchServers
@@ -110,7 +129,8 @@ export function buildUserMcpCursorServerEntry(
             ...(server.env ? { env: { ...server.env } } : {})
           }
         : {
-            url: server.url
+            url: server.url,
+            ...(server.headers ? { headers: { ...server.headers } } : {})
           }
     ])
   )

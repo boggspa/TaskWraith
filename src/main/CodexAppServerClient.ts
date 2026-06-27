@@ -278,6 +278,12 @@ function isTomlBareKeyComponent(value: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value)
 }
 
+function formatTomlInlineStringTable(entries: Record<string, string>): string {
+  return Object.entries(entries)
+    .map(([key, value]) => `"${tomlEscapeString(key)}" = "${tomlEscapeString(value)}"`)
+    .join(', ')
+}
+
 /**
  * Build the `-c mcp_servers.TaskWraith.*` CLI argument list for Codex
  * CLI. Exported so the I2 tests can pin the exact shape of the
@@ -308,6 +314,22 @@ export function buildCodexTaskWraithMcpArgs(config: CodexMcpTaskWraithConfig): s
     if (!isTomlBareKeyComponent(server.serverName)) continue
     if (server.transport === 'http') {
       configArgs.push('-c', `mcp_servers.${server.serverName}.url="${tomlEscapeString(server.url)}"`)
+      if (server.bearerTokenEnvVar) {
+        configArgs.push(
+          '-c',
+          `mcp_servers.${server.serverName}.bearer_token_env_var="${tomlEscapeString(
+            server.bearerTokenEnvVar
+          )}"`
+        )
+      }
+      if (server.headers && Object.keys(server.headers).length > 0) {
+        configArgs.push(
+          '-c',
+          `mcp_servers.${server.serverName}.http_headers={ ${formatTomlInlineStringTable(
+            server.headers
+          )} }`
+        )
+      }
       continue
     }
     if (server.transport !== 'stdio') continue

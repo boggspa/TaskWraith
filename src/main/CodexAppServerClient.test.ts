@@ -201,12 +201,24 @@ describe('buildCodexTaskWraithMcpArgs', () => {
         {
           serverName: 'user_remote_docs',
           transport: 'http',
-          url: 'https://example.test/mcp'
+          url: 'https://example.test/mcp',
+          headers: {
+            'X-Figma-Region': 'eu',
+            Authorization: 'Bearer ${DOCS_TOKEN}'
+          },
+          bearerTokenEnvVar: 'DOCS_TOKEN'
         }
       ]
     })
 
-    expect(args).toEqual(['-c', 'mcp_servers.user_remote_docs.url="https://example.test/mcp"'])
+    expect(args).toEqual([
+      '-c',
+      'mcp_servers.user_remote_docs.url="https://example.test/mcp"',
+      '-c',
+      'mcp_servers.user_remote_docs.bearer_token_env_var="DOCS_TOKEN"',
+      '-c',
+      'mcp_servers.user_remote_docs.http_headers={ "X-Figma-Region" = "eu", "Authorization" = "Bearer ${DOCS_TOKEN}" }'
+    ])
   })
 
   it('skips user MCP servers with malformed TOML key names', () => {

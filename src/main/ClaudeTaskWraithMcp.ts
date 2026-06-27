@@ -84,6 +84,7 @@ export interface ClaudeMcpStdioServerEntry {
 export interface ClaudeMcpRemoteServerEntry {
   type: 'http' | 'sse'
   url: string
+  headers?: Record<string, string>
   alwaysLoad?: boolean
 }
 
@@ -137,7 +138,8 @@ export function buildClaudeTaskWraithMcpServers(
     } else {
       servers[server.serverName] = {
         type: server.transport,
-        url: server.url
+        url: server.url,
+        ...(server.headers ? { headers: { ...server.headers } } : {})
       }
     }
   }

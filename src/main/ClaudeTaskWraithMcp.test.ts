@@ -137,23 +137,36 @@ describe('buildClaudeTaskWraithMcpServers', () => {
         {
           serverName: 'user_remote_docs',
           transport: 'http',
-          url: 'https://example.test/mcp'
+          url: 'https://example.test/mcp',
+          headers: {
+            Authorization: 'Bearer ${DOCS_TOKEN}'
+          },
+          bearerTokenEnvVar: 'DOCS_TOKEN'
         },
         {
           serverName: 'user_legacy_sse',
           transport: 'sse',
-          url: 'https://example.test/sse'
+          url: 'https://example.test/sse',
+          headers: {
+            'X-Region': 'eu'
+          }
         }
       ]
     })
 
     expect(servers?.user_remote_docs).toEqual({
       type: 'http',
-      url: 'https://example.test/mcp'
+      url: 'https://example.test/mcp',
+      headers: {
+        Authorization: 'Bearer ${DOCS_TOKEN}'
+      }
     })
     expect(servers?.user_legacy_sse).toEqual({
       type: 'sse',
-      url: 'https://example.test/sse'
+      url: 'https://example.test/sse',
+      headers: {
+        'X-Region': 'eu'
+      }
     })
   })
 

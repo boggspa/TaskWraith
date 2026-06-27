@@ -624,6 +624,8 @@ type UserMcpServerFormState = {
   url: string
   argsText: string
   envText: string
+  headersText: string
+  bearerTokenEnvVar: string
   enabled: boolean
 }
 
@@ -638,6 +640,8 @@ const USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT: Record<UserMcpServerTransport, re
   sse: ['Claude']
 }
 const USER_MCP_STDIO_HTTP_RUNTIME_LABEL = USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT.stdio.join(' + ')
+const USER_MCP_ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+const USER_MCP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -652,6 +656,8 @@ function emptyUserMcpServerForm(): UserMcpServerFormState {
     url: '',
     argsText: '',
     envText: '',
+    headersText: '',
+    bearerTokenEnvVar: '',
     enabled: false
   }
 }
@@ -668,6 +674,14 @@ function formatUserMcpServerEnv(env?: Record<string, string>): string {
     : ''
 }
 
+function formatUserMcpServerHeaders(headers?: Record<string, string>): string {
+  return headers
+    ? Object.entries(headers)
+        .map(([key, value]) => `${key}=${value}`)
+        .join('\n')
+    : ''
+}
+
 function formFromUserMcpServer(server: UserMcpServerConfig): UserMcpServerFormState {
   return {
     name: server.name,
@@ -677,6 +691,8 @@ function formFromUserMcpServer(server: UserMcpServerConfig): UserMcpServerFormSt
     url: server.url || '',
     argsText: formatUserMcpServerArgs(server.args),
     envText: formatUserMcpServerEnv(server.env),
+    headersText: formatUserMcpServerHeaders(server.headers),
+    bearerTokenEnvVar: server.bearerTokenEnvVar || '',
     enabled: server.enabled
   }
 }
@@ -698,7 +714,7 @@ function parseUserMcpServerEnv(value: string): { env: Record<string, string>; er
     if (separatorIndex <= 0) return { env, error: 'Environment lines must use KEY=value.' }
     const key = line.slice(0, separatorIndex).trim()
     const val = line.slice(separatorIndex + 1)
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    if (!USER_MCP_ENV_NAME_RE.test(key)) {
       return { env, error: `Invalid environment variable name: ${key}` }
     }
     env[key] = val
@@ -706,7 +722,29 @@ function parseUserMcpServerEnv(value: string): { env: Record<string, string>; er
   return { env }
 }
 
-function hasRunnableUserMcpEndpoint(server: Pick<UserMcpServerConfig, 'transport' | 'command' | 'url'>): boolean {
+function parseUserMcpServerHeaders(value: string): {
+  headers: Record<string, string>
+  error?: string
+} {
+  const headers: Record<string, string> = {}
+  for (const rawLine of value.split('\n')) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const separatorIndex = line.indexOf('=')
+    if (separatorIndex <= 0) return { headers, error: 'Header lines must use Name=value.' }
+    const key = line.slice(0, separatorIndex).trim()
+    const val = line.slice(separatorIndex + 1)
+    if (!USER_MCP_HEADER_NAME_RE.test(key)) {
+      return { headers, error: `Invalid HTTP header name: ${key}` }
+    }
+    headers[key] = val
+  }
+  return { headers }
+}
+
+function hasRunnableUserMcpEndpoint(
+  server: Pick<UserMcpServerConfig, 'transport' | 'command' | 'url'>
+): boolean {
   return server.transport === 'stdio'
     ? Boolean(server.command?.trim())
     : Boolean(server.url?.trim())
@@ -746,18 +784,30 @@ function buildUserMcpServerFromForm(
 ): { server?: UserMcpServerConfig; error?: string } {
   const name = form.name.trim()
   if (!name) return { error: 'Server name is required.' }
-  const args = parseUserMcpServerArgs(form.argsText)
-  const parsedEnv = parseUserMcpServerEnv(form.envText)
+  const args = form.transport === 'stdio' ? parseUserMcpServerArgs(form.argsText) : []
+  const parsedEnv: { env: Record<string, string>; error?: string } =
+    form.transport === 'stdio' ? parseUserMcpServerEnv(form.envText) : { env: {} }
   if (parsedEnv.error) return { error: parsedEnv.error }
+  const parsedHeaders: { headers: Record<string, string>; error?: string } =
+    form.transport === 'stdio' ? { headers: {} } : parseUserMcpServerHeaders(form.headersText)
+  if (parsedHeaders.error) return { error: parsedHeaders.error }
   const command = form.command.trim()
   const url = form.url.trim()
+  const bearerTokenEnvVar = form.bearerTokenEnvVar.trim()
+  if (
+    form.transport !== 'stdio' &&
+    bearerTokenEnvVar &&
+    !USER_MCP_ENV_NAME_RE.test(bearerTokenEnvVar)
+  ) {
+    return { error: 'Bearer token environment variable must be a valid environment variable name.' }
+  }
   if (form.transport === 'stdio' && form.enabled && !command) {
     return { error: 'A stdio server needs a command before it can be enabled.' }
   }
   if (form.transport !== 'stdio' && form.enabled && !url) {
     return { error: 'HTTP and SSE servers need a URL before they can be enabled.' }
   }
-  if (url) {
+  if (form.transport !== 'stdio' && url) {
     try {
       const parsed = new URL(url)
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -778,10 +828,15 @@ function buildUserMcpServerFromForm(
   }
   const description = form.description.trim()
   if (description) server.description = description
-  if (command) server.command = command
-  if (args.length > 0) server.args = args
-  if (url) server.url = url
-  if (Object.keys(parsedEnv.env).length > 0) server.env = parsedEnv.env
+  if (form.transport === 'stdio') {
+    if (command) server.command = command
+    if (args.length > 0) server.args = args
+    if (Object.keys(parsedEnv.env).length > 0) server.env = parsedEnv.env
+  } else {
+    if (url) server.url = url
+    if (Object.keys(parsedHeaders.headers).length > 0) server.headers = parsedHeaders.headers
+    if (bearerTokenEnvVar) server.bearerTokenEnvVar = bearerTokenEnvVar
+  }
   return { server }
 }
 
@@ -789,10 +844,26 @@ function normalizeImportedUserMcpEnv(value: unknown): Record<string, string> | u
   if (!isPlainRecord(value)) return undefined
   const env: Record<string, string> = {}
   for (const [key, rawValue] of Object.entries(value)) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof rawValue !== 'string') continue
+    if (!USER_MCP_ENV_NAME_RE.test(key) || typeof rawValue !== 'string') continue
     env[key] = rawValue
   }
   return Object.keys(env).length > 0 ? env : undefined
+}
+
+function normalizeImportedUserMcpHeaders(value: unknown): Record<string, string> | undefined {
+  if (!isPlainRecord(value)) return undefined
+  const headers: Record<string, string> = {}
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (!USER_MCP_HEADER_NAME_RE.test(key) || typeof rawValue !== 'string') continue
+    headers[key] = rawValue
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined
+}
+
+function normalizeImportedBearerTokenEnvVar(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed && USER_MCP_ENV_NAME_RE.test(trimmed) ? trimmed : undefined
 }
 
 function normalizeImportedUserMcpArgs(value: unknown): string[] | undefined {
@@ -853,6 +924,16 @@ function buildImportedUserMcpServer(
   if (args) server.args = args
   const env = normalizeImportedUserMcpEnv(value.env)
   if (env) server.env = env
+  if (transport !== 'stdio') {
+    const headers =
+      normalizeImportedUserMcpHeaders(value.headers) ??
+      normalizeImportedUserMcpHeaders(value.http_headers)
+    if (headers) server.headers = headers
+    const bearerTokenEnvVar =
+      normalizeImportedBearerTokenEnvVar(value.bearerTokenEnvVar) ??
+      normalizeImportedBearerTokenEnvVar(value.bearer_token_env_var)
+    if (bearerTokenEnvVar) server.bearerTokenEnvVar = bearerTokenEnvVar
+  }
   return server
 }
 
@@ -901,6 +982,14 @@ function userMcpServerAuditEntry(server: UserMcpServerConfig): Record<string, un
             .map((key) => [key, '[stored in TaskWraith settings]'])
         )
       : undefined
+  const headers =
+    server.headers && Object.keys(server.headers).length > 0
+      ? Object.fromEntries(
+          Object.keys(server.headers)
+            .sort()
+            .map((key) => [key, '[stored in TaskWraith settings]'])
+        )
+      : undefined
   const entry =
     server.transport === 'stdio'
       ? {
@@ -912,6 +1001,8 @@ function userMcpServerAuditEntry(server: UserMcpServerConfig): Record<string, un
       : {
           type: server.transport,
           url: server.url || '',
+          ...(headers ? { headers } : {}),
+          ...(server.bearerTokenEnvVar ? { bearer_token_env_var: server.bearerTokenEnvVar } : {}),
           ...(env ? { env } : {})
         }
   return entry
@@ -5738,8 +5829,8 @@ export function SettingsPanel({
                   <p className="settings-hint">
                     Manage external MCP server definitions TaskWraith owns. Enabled stdio and HTTP
                     servers attach to Codex, Claude, and Cursor launches; SSE attaches to Claude.
-                    Cursor uses temporary workspace-local MCP config that TaskWraith restores
-                    after the run.
+                    Remote headers are stored locally and redacted in audit JSON. Cursor uses
+                    temporary workspace-local MCP config that TaskWraith restores after the run.
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
@@ -5800,8 +5891,8 @@ export function SettingsPanel({
                     Import MCP JSON
                   </h4>
                   <p className="settings-hint">
-                    Paste a Claude or Cursor style JSON object with a top-level mcpServers map.
-                    Imported servers are stored as TaskWraith-owned definitions.
+                    Paste a Claude, Cursor, or Codex style JSON object with a top-level mcpServers
+                    map. Imported servers are stored as TaskWraith-owned definitions.
                   </p>
                 </div>
                 <textarea
@@ -5812,7 +5903,7 @@ export function SettingsPanel({
                     setMcpImportError('')
                   }}
                   rows={8}
-                  placeholder={`{\n  "mcpServers": {\n    "filesystem": {\n      "command": "npx",\n      "args": ["@modelcontextprotocol/server-filesystem", "/repo"]\n    }\n  }\n}`}
+                  placeholder={`{\n  "mcpServers": {\n    "docs": {\n      "type": "http",\n      "url": "https://example.test/mcp",\n      "headers": { "X-Region": "eu" }\n    }\n  }\n}`}
                 />
                 <div className="settings-user-mcp-footer">
                   <span className="settings-hint">
@@ -5877,6 +5968,10 @@ export function SettingsPanel({
                             {server.env && Object.keys(server.env).length > 0 && (
                               <span>{pluralizeCount(Object.keys(server.env).length, 'env var')}</span>
                             )}
+                            {server.headers && Object.keys(server.headers).length > 0 && (
+                              <span>{pluralizeCount(Object.keys(server.headers).length, 'header')}</span>
+                            )}
+                            {server.bearerTokenEnvVar && <span>bearer env</span>}
                             <span>{userMcpServerRuntimeLabel(server)}</span>
                           </div>
                           <details className="settings-user-mcp-config">
@@ -5933,8 +6028,8 @@ export function SettingsPanel({
                     {mcpServerFormMode === 'edit' ? 'Edit MCP server' : 'Add MCP server'}
                   </h4>
                   <p className="settings-hint">
-                    Environment values are stored in local app settings. Prefer shell-level
-                    environment for secrets until encrypted MCP secrets land.
+                    Environment and header values are stored in local app settings. Prefer
+                    shell-level environment for secrets until encrypted MCP secrets land.
                   </p>
                 </div>
 
@@ -6031,8 +6126,42 @@ export function SettingsPanel({
                       }
                       rows={4}
                       placeholder="API_BASE_URL=http://127.0.0.1:3000"
+                      disabled={mcpServerForm.transport !== 'stdio'}
                     />
                   </label>
+                  {mcpServerForm.transport !== 'stdio' && (
+                    <>
+                      <label className="settings-field">
+                        <span>Headers</span>
+                        <textarea
+                          className="settings-user-mcp-textarea"
+                          value={mcpServerForm.headersText}
+                          onChange={(event) =>
+                            setMcpServerForm((prev) => ({
+                              ...prev,
+                              headersText: event.target.value
+                            }))
+                          }
+                          rows={4}
+                          placeholder="Authorization=Bearer ${TOKEN}&#10;X-Region=eu"
+                        />
+                      </label>
+                      <label className="settings-field">
+                        <span>Bearer token env var</span>
+                        <input
+                          className="settings-select"
+                          value={mcpServerForm.bearerTokenEnvVar}
+                          onChange={(event) =>
+                            setMcpServerForm((prev) => ({
+                              ...prev,
+                              bearerTokenEnvVar: event.target.value
+                            }))
+                          }
+                          placeholder="FIGMA_OAUTH_TOKEN"
+                        />
+                      </label>
+                    </>
+                  )}
                 </div>
 
                 <div className="settings-user-mcp-footer">

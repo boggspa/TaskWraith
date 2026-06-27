@@ -234,8 +234,17 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
         }
       }
     }
+    const headers: Record<string, string> = {}
+    if (isRecord(record.headers)) {
+      for (const [key, rawValue] of Object.entries(record.headers).slice(0, 64)) {
+        if (/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) && typeof rawValue === 'string') {
+          headers[key] = rawValue
+        }
+      }
+    }
     const command = optionalString(record.command)?.trim()
     const url = optionalString(record.url)?.trim()
+    const bearerTokenEnvVar = optionalString(record.bearerTokenEnvVar)?.trim()
     const description = optionalString(record.description)?.trim()
     const createdAt = optionalString(record.createdAt)?.trim()
     const updatedAt = optionalString(record.updatedAt)?.trim()
@@ -250,6 +259,10 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
     if (args.length > 0) sanitized.args = args
     if (url) sanitized.url = url
     if (Object.keys(env).length > 0) sanitized.env = env
+    if (Object.keys(headers).length > 0) sanitized.headers = headers
+    if (bearerTokenEnvVar && /^[A-Za-z_][A-Za-z0-9_]*$/.test(bearerTokenEnvVar)) {
+      sanitized.bearerTokenEnvVar = bearerTokenEnvVar
+    }
     if (description) sanitized.description = description
     if (createdAt) sanitized.createdAt = createdAt
     if (updatedAt) sanitized.updatedAt = updatedAt

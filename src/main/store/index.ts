@@ -681,8 +681,27 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
             .slice(0, 64)
         )
       : {}
+    const headersRecord = objectOrUndefined(
+      record.headers as Record<string, unknown> | null | undefined
+    )
+    const headers = headersRecord
+      ? Object.fromEntries(
+          Object.entries(headersRecord)
+            .filter(
+              ([key, val]) =>
+                /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) && typeof val === 'string'
+            )
+            .map(([key, val]) => [key, val])
+            .slice(0, 64)
+        )
+      : {}
     const command = typeof record.command === 'string' ? record.command.trim() : ''
     const url = typeof record.url === 'string' ? record.url.trim() : ''
+    const bearerTokenEnvVar =
+      typeof record.bearerTokenEnvVar === 'string' &&
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(record.bearerTokenEnvVar.trim())
+        ? record.bearerTokenEnvVar.trim()
+        : ''
     const canEnable = transport === 'stdio' ? Boolean(command) : Boolean(url)
     const normalized: UserMcpServerConfig = {
       id,
@@ -694,6 +713,8 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
     if (args.length > 0) normalized.args = args
     if (url) normalized.url = url
     if (Object.keys(env).length > 0) normalized.env = env
+    if (Object.keys(headers).length > 0) normalized.headers = headers
+    if (bearerTokenEnvVar) normalized.bearerTokenEnvVar = bearerTokenEnvVar
     if (typeof record.description === 'string' && record.description.trim()) {
       normalized.description = record.description.trim()
     }

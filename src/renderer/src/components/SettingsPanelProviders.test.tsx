@@ -234,7 +234,11 @@ describe('SettingsPanel provider cards', () => {
               name: 'docs',
               enabled: true,
               transport: 'http',
-              url: 'https://example.test/mcp'
+              url: 'https://example.test/mcp',
+              headers: {
+                Authorization: 'Bearer ${DOCS_TOKEN}'
+              },
+              bearerTokenEnvVar: 'DOCS_TOKEN'
             },
             {
               id: 'server-legacy',
@@ -252,6 +256,8 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('filesystem')
     expect(html).toContain('2 args')
     expect(html).toContain('1 env var')
+    expect(html).toContain('1 header')
+    expect(html).toContain('bearer env')
     expect(html).toContain('Import JSON')
     expect(html).toContain('Codex + Claude + Cursor')
     expect(html).toContain('stdio and HTTP launch support')
@@ -263,6 +269,9 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('&quot;command&quot;: &quot;npx&quot;')
     expect(html).toContain('&quot;PROJECT_ROOT&quot;: &quot;[stored in TaskWraith settings]&quot;')
     expect(html).not.toContain('&quot;PROJECT_ROOT&quot;: &quot;/Users/chris/project&quot;')
+    expect(html).toContain('&quot;Authorization&quot;: &quot;[stored in TaskWraith settings]&quot;')
+    expect(html).toContain('&quot;bearer_token_env_var&quot;: &quot;DOCS_TOKEN&quot;')
+    expect(html).not.toContain('Bearer ${DOCS_TOKEN}')
     expect(html).toContain('Add server')
   })
 
@@ -328,6 +337,11 @@ describe('parseUserMcpServersImportJson', () => {
           docs: {
             type: 'streamableHttp',
             url: 'https://example.test/mcp',
+            http_headers: {
+              Authorization: 'Bearer ${DOCS_TOKEN}',
+              'bad header': 'dropped'
+            },
+            bearer_token_env_var: 'DOCS_TOKEN',
             disabled: true
           }
         }
@@ -349,8 +363,13 @@ describe('parseUserMcpServersImportJson', () => {
       name: 'docs 2',
       enabled: false,
       transport: 'http',
-      url: 'https://example.test/mcp'
+      url: 'https://example.test/mcp',
+      headers: {
+        Authorization: 'Bearer ${DOCS_TOKEN}'
+      },
+      bearerTokenEnvVar: 'DOCS_TOKEN'
     })
+    expect(result.servers[0].headers).not.toHaveProperty('bad header')
   })
 
   it('reports an error when no supported MCP server entries are present', () => {

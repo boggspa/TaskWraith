@@ -312,6 +312,18 @@ describe('MainSanitizers settings patches', () => {
           name: 'duplicate'
         },
         {
+          id: 'server-2',
+          name: ' docs ',
+          enabled: true,
+          transport: 'http',
+          url: ' https://example.test/mcp ',
+          headers: {
+            Authorization: 'Bearer ${DOCS_TOKEN}',
+            'bad header': 'drop'
+          },
+          bearerTokenEnvVar: ' DOCS_TOKEN '
+        },
+        {
           id: '',
           name: 'missing id'
         }
@@ -330,6 +342,17 @@ describe('MainSanitizers settings patches', () => {
           PROJECT_ROOT: '/repo'
         },
         description: 'Local files'
+      },
+      {
+        id: 'server-2',
+        name: 'docs',
+        enabled: true,
+        transport: 'http',
+        url: 'https://example.test/mcp',
+        headers: {
+          Authorization: 'Bearer ${DOCS_TOKEN}'
+        },
+        bearerTokenEnvVar: 'DOCS_TOKEN'
       }
     ])
   })

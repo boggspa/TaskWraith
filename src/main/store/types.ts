@@ -1330,6 +1330,8 @@ export interface UserMcpServerConfig {
   args?: string[]
   url?: string
   env?: Record<string, string>
+  headers?: Record<string, string>
+  bearerTokenEnvVar?: string
   description?: string
   createdAt?: string
   updatedAt?: string

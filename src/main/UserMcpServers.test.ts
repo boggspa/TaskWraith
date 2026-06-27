@@ -70,14 +70,22 @@ describe('buildUserMcpStdioLaunchServers', () => {
         name: 'Docs',
         enabled: true,
         transport: 'http',
-        url: ' https://example.test/mcp '
+        url: ' https://example.test/mcp ',
+        headers: {
+          Authorization: 'Bearer ${DOCS_TOKEN}',
+          'bad header': 'drop'
+        },
+        bearerTokenEnvVar: ' DOCS_TOKEN '
       },
       {
         id: 'legacy',
         name: 'Legacy SSE',
         enabled: true,
         transport: 'sse',
-        url: 'https://example.test/sse'
+        url: 'https://example.test/sse',
+        headers: {
+          'X-Region': 'eu'
+        }
       }
     ]
 
@@ -85,14 +93,21 @@ describe('buildUserMcpStdioLaunchServers', () => {
       {
         serverName: 'user_docs',
         transport: 'http',
-        url: 'https://example.test/mcp'
+        url: 'https://example.test/mcp',
+        headers: {
+          Authorization: 'Bearer ${DOCS_TOKEN}'
+        },
+        bearerTokenEnvVar: 'DOCS_TOKEN'
       }
     ])
     expect(buildUserMcpLaunchServers(servers, ['sse'])).toEqual([
       {
         serverName: 'user_legacy_sse',
         transport: 'sse',
-        url: 'https://example.test/sse'
+        url: 'https://example.test/sse',
+        headers: {
+          'X-Region': 'eu'
+        }
       }
     ])
   })
@@ -114,7 +129,11 @@ describe('buildUserMcpStdioLaunchServers', () => {
           name: 'Docs',
           enabled: true,
           transport: 'http',
-          url: 'https://example.test/mcp'
+          url: 'https://example.test/mcp',
+          headers: {
+            'X-Region': 'eu'
+          },
+          bearerTokenEnvVar: 'DOCS_TOKEN'
         }
       ],
       ['stdio', 'http']
@@ -128,7 +147,10 @@ describe('buildUserMcpStdioLaunchServers', () => {
         env: { PROJECT_ROOT: '/repo' }
       },
       user_docs: {
-        url: 'https://example.test/mcp'
+        url: 'https://example.test/mcp',
+        headers: {
+          'X-Region': 'eu'
+        }
       }
     })
     expect(buildUserMcpCursorAllowRules(launchServers)).toEqual([
