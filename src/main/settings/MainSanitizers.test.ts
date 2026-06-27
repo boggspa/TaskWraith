@@ -324,6 +324,13 @@ describe('MainSanitizers settings patches', () => {
           bearerTokenEnvVar: ' DOCS_TOKEN '
         },
         {
+          id: 'server-3',
+          name: ' bad remote ',
+          enabled: true,
+          transport: 'http',
+          url: ' ftp://example.test/mcp '
+        },
+        {
           id: '',
           name: 'missing id'
         }
@@ -353,6 +360,12 @@ describe('MainSanitizers settings patches', () => {
           Authorization: 'Bearer ${DOCS_TOKEN}'
         },
         bearerTokenEnvVar: 'DOCS_TOKEN'
+      },
+      {
+        id: 'server-3',
+        name: 'bad remote',
+        enabled: false,
+        transport: 'http'
       }
     ])
   })

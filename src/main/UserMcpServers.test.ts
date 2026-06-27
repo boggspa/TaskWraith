@@ -86,6 +86,13 @@ describe('buildUserMcpStdioLaunchServers', () => {
         headers: {
           'X-Region': 'eu'
         }
+      },
+      {
+        id: 'bad-remote',
+        name: 'Bad Remote',
+        enabled: true,
+        transport: 'http',
+        url: 'ftp://example.test/mcp'
       }
     ]
 

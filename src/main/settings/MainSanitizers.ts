@@ -209,6 +209,15 @@ export function stringArray(value: unknown): string[] {
     : []
 }
 
+function isValidUserMcpRemoteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
   if (!Array.isArray(value)) return []
   const servers: UserMcpServerConfig[] = []
@@ -243,7 +252,8 @@ function sanitizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
       }
     }
     const command = optionalString(record.command)?.trim()
-    const url = optionalString(record.url)?.trim()
+    const rawUrl = optionalString(record.url)?.trim()
+    const url = rawUrl && isValidUserMcpRemoteUrl(rawUrl) ? rawUrl : undefined
     const bearerTokenEnvVar = optionalString(record.bearerTokenEnvVar)?.trim()
     const description = optionalString(record.description)?.trim()
     const createdAt = optionalString(record.createdAt)?.trim()

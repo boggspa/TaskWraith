@@ -462,6 +462,32 @@ describe('parseUserMcpServersImportJson', () => {
     expect(result.servers[0].headers).not.toHaveProperty('bad header')
   })
 
+  it('skips imported remote MCP servers with non-http URLs', () => {
+    const result = parseUserMcpServersImportJson(
+      JSON.stringify({
+        mcpServers: {
+          good: {
+            type: 'http',
+            url: 'https://example.test/mcp'
+          },
+          bad: {
+            type: 'http',
+            url: 'ftp://example.test/mcp'
+          }
+        }
+      })
+    )
+
+    expect(result.error).toBeUndefined()
+    expect(result.skipped).toBe(1)
+    expect(result.servers).toHaveLength(1)
+    expect(result.servers[0]).toMatchObject({
+      name: 'good',
+      transport: 'http',
+      url: 'https://example.test/mcp'
+    })
+  })
+
   it('imports Codex-style TOML MCP server snippets', () => {
     const result = parseUserMcpServersImportJson(`
       [mcp_servers.filesystem]

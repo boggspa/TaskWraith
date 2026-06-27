@@ -742,6 +742,15 @@ function parseUserMcpServerHeaders(value: string): {
   return { headers }
 }
 
+function isValidUserMcpRemoteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 function hasRunnableUserMcpEndpoint(
   server: Pick<UserMcpServerConfig, 'transport' | 'command' | 'url'>
 ): boolean {
@@ -859,12 +868,7 @@ function buildUserMcpServerFromForm(
     return { error: 'HTTP and SSE servers need a URL before they can be enabled.' }
   }
   if (form.transport !== 'stdio' && url) {
-    try {
-      const parsed = new URL(url)
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return { error: 'MCP server URL must start with http:// or https://.' }
-      }
-    } catch {
+    if (!isValidUserMcpRemoteUrl(url)) {
       return { error: 'MCP server URL is not valid.' }
     }
   }
@@ -1183,6 +1187,7 @@ function buildImportedUserMcpServer(
   const url = typeof value.url === 'string' ? value.url.trim() : ''
   if (transport === 'stdio' && !command) return null
   if (transport !== 'stdio' && !url) return null
+  if (transport !== 'stdio' && !isValidUserMcpRemoteUrl(url)) return null
   const serverName = uniqueImportedUserMcpName(name, usedNames)
   const now = new Date().toISOString()
   const server: UserMcpServerConfig = {

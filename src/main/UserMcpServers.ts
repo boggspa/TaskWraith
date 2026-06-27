@@ -29,6 +29,15 @@ function slugForMcpServer(value: string): string {
   )
 }
 
+function isValidUserMcpRemoteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 export function buildUserMcpServerName(
   server: Pick<UserMcpServerConfig, 'id' | 'name'>,
   usedNames: Set<string>
@@ -80,7 +89,7 @@ export function buildUserMcpLaunchServers(
       continue
     }
     const url = server.url?.trim()
-    if (!url) continue
+    if (!url || !isValidUserMcpRemoteUrl(url)) continue
     const serverName = buildUserMcpServerName(server, usedNames)
     const headers =
       server.headers && Object.keys(server.headers).length > 0
