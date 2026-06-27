@@ -184,6 +184,27 @@ describe('taskwraith-relay round-trip', () => {
     expect(relay.roomCount()).toBe(1)
   })
 
+  it('applies the per-IP connection cap to resolve sockets too', async () => {
+    relay = await createRelayServer({ maxConnectionsPerIp: 1 })
+    const resolveSocket = new WebSocket(`ws://127.0.0.1:${relay.port}/v1/resolve`)
+    openSockets.push(resolveSocket)
+    await new Promise<void>((resolve, reject) => {
+      resolveSocket.on('open', () => resolve())
+      resolveSocket.on('error', reject)
+    })
+    expect(relay.roomCount()).toBe(0)
+
+    const rejected = new WebSocket(`ws://127.0.0.1:${relay.port}/v1/session/sess-b`, {
+      headers: { 'x-taskwraith-role': 'iphone' }
+    })
+    openSockets.push(rejected)
+    const closed = deferred<number>()
+    rejected.on('close', (code) => closed.resolve(code))
+
+    expect(await closed.promise).toBe(4004)
+    expect(relay.roomCount()).toBe(0)
+  })
+
   it('closes a connection with a bad role header', async () => {
     relay = await createRelayServer({})
     const url = `ws://127.0.0.1:${relay.port}/v1/session/${SESSION_ID}`

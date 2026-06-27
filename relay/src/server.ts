@@ -175,6 +175,25 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
   const wss = new WebSocketServer({ server: http, maxPayload: maxFrameBytes })
 
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+    const remoteIp =
+      (req.socket && req.socket.remoteAddress) || String(req.headers['x-forwarded-for'] || '?')
+    const ipCount = connectionsPerIp.get(remoteIp) ?? 0
+    if (ipCount >= maxConnectionsPerIp) {
+      ws.close(4004, 'too many connections')
+      return
+    }
+    connectionsPerIp.set(remoteIp, ipCount + 1)
+    let releasedIpSlot = false
+    const releaseIpSlot = (): void => {
+      if (releasedIpSlot) return
+      releasedIpSlot = true
+      const remaining = (connectionsPerIp.get(remoteIp) ?? 1) - 1
+      if (remaining <= 0) connectionsPerIp.delete(remoteIp)
+      else connectionsPerIp.set(remoteIp, remaining)
+    }
+    ws.on('close', releaseIpSlot)
+    ws.on('error', releaseIpSlot)
+
     const path = (req.url || '').split('?')[0]
     if (path === '/v1/resolve') {
       let handled = false
@@ -208,13 +227,6 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
       return
     }
     const sessionId = match[1]
-    const remoteIp =
-      (req.socket && req.socket.remoteAddress) || String(req.headers['x-forwarded-for'] || '?')
-    const ipCount = connectionsPerIp.get(remoteIp) ?? 0
-    if (ipCount >= maxConnectionsPerIp) {
-      ws.close(4004, 'too many connections')
-      return
-    }
     let room = rooms.get(sessionId)
     if (!room) {
       if (rooms.size >= maxRooms) {
@@ -224,7 +236,6 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
       room = { lastActivity: Date.now() }
       rooms.set(sessionId, room)
     }
-    connectionsPerIp.set(remoteIp, ipCount + 1)
     const incumbent = room[role]
     if (incumbent) {
       // Takeover, not reject. A role seat is only a FORWARDING slot — trust
@@ -286,9 +297,7 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
 
     const cleanup = (): void => {
       clearInterval(heartbeat)
-      const remaining = (connectionsPerIp.get(remoteIp) ?? 1) - 1
-      if (remaining <= 0) connectionsPerIp.delete(remoteIp)
-      else connectionsPerIp.set(remoteIp, remaining)
+      releaseIpSlot()
       const r = rooms.get(sessionId)
       if (!r) return
       if (r[role] === ws) r[role] = undefined
