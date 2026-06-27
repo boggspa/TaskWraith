@@ -3190,6 +3190,13 @@
   min-width: 0;
 }
 
+.settings-user-mcp-snippet-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
 .settings-user-mcp-snippet-heading {
   display: flex;
   align-items: center;

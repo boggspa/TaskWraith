@@ -6843,6 +6843,9 @@ export function SettingsPanel({
                             <details className="settings-user-mcp-config">
                               <summary>Provider config snippets</summary>
                               <div className="settings-user-mcp-snippet-list">
+                                <p className="settings-user-mcp-snippet-note">
+                                  Previews redact stored values. Copy buttons use the saved config.
+                                </p>
                                 {claudeSnippetPreview && (
                                   <section>
                                     <div className="settings-user-mcp-snippet-heading">
