@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildUserMcpServerName, buildUserMcpStdioLaunchServers } from './UserMcpServers'
+import {
+  buildUserMcpCursorAllowRules,
+  buildUserMcpCursorServerEntry,
+  buildUserMcpServerName,
+  buildUserMcpStdioLaunchServers
+} from './UserMcpServers'
 import type { UserMcpServerConfig } from './store/types'
 
 describe('buildUserMcpStdioLaunchServers', () => {
@@ -54,5 +59,29 @@ describe('buildUserMcpStdioLaunchServers', () => {
     expect(buildUserMcpServerName({ id: 'b', name: 'Docs Search' }, used)).toBe(
       'user_docs_search_2'
     )
+  })
+
+  it('builds Cursor mcp.json entries and allow rules from sanitized launch servers', () => {
+    const launchServers = buildUserMcpStdioLaunchServers([
+      {
+        id: 'filesystem',
+        name: 'Filesystem',
+        enabled: true,
+        transport: 'stdio',
+        command: 'npx',
+        args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+        env: { PROJECT_ROOT: '/repo' }
+      }
+    ])
+
+    const entry = buildUserMcpCursorServerEntry(launchServers)
+    expect(entry).toEqual({
+      user_filesystem: {
+        command: 'npx',
+        args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+        env: { PROJECT_ROOT: '/repo' }
+      }
+    })
+    expect(buildUserMcpCursorAllowRules(launchServers)).toEqual(['Mcp(user_filesystem:*)'])
   })
 })

@@ -64,3 +64,24 @@ export function buildUserMcpStdioLaunchServers(
   }
   return launchServers
 }
+
+export function buildUserMcpCursorServerEntry(
+  servers: readonly UserMcpStdioLaunchServer[]
+): Record<string, unknown> {
+  return Object.fromEntries(
+    servers.map((server) => [
+      server.serverName,
+      {
+        command: server.command,
+        args: [...server.args],
+        ...(server.env ? { env: { ...server.env } } : {})
+      }
+    ])
+  )
+}
+
+export function buildUserMcpCursorAllowRules(
+  servers: readonly UserMcpStdioLaunchServer[]
+): string[] {
+  return servers.map((server) => `Mcp(${server.serverName}:*)`)
+}

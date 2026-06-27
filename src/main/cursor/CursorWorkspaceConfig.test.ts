@@ -6,6 +6,11 @@ import {
   type CursorConfigFs
 } from './CursorWorkspaceConfig'
 import { buildCursorMcpServerEntry, CURSOR_MCP_ALLOW_RULES } from './CursorMcpBridge'
+import {
+  buildUserMcpCursorAllowRules,
+  buildUserMcpCursorServerEntry,
+  buildUserMcpStdioLaunchServers
+} from '../UserMcpServers'
 
 describe('mergeCursorDenyRules', () => {
   it('produces a deny-shell config from nothing', () => {
@@ -153,6 +158,47 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     expect(files.get(MCP)).toBe(mcpBytes)
     // We didn't create the dir, so restore leaves it.
     expect(dirs.has(DIR)).toBe(true)
+  })
+
+  it('can register user-managed MCP servers alongside the TaskWraith bridge', () => {
+    const userServers = buildUserMcpStdioLaunchServers([
+      {
+        id: 'filesystem',
+        name: 'Filesystem',
+        enabled: true,
+        transport: 'stdio',
+        command: 'npx',
+        args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+        env: { PROJECT_ROOT: '/repo' }
+      }
+    ])
+    const { fs, files } = makeFakeFs()
+
+    const restore = applyCursorWriteModeConfig(fs, CONFIG, DIR, {
+      mcpConfigPath: MCP,
+      serverEntry: {
+        ...buildCursorMcpServerEntry({
+          command: '/x/electron',
+          args: ['/tmp/taskwraith-mcp-server.cjs']
+        }),
+        ...buildUserMcpCursorServerEntry(userServers)
+      },
+      allowRules: [...CURSOR_MCP_ALLOW_RULES, ...buildUserMcpCursorAllowRules(userServers)]
+    })
+
+    const cli = JSON.parse(files.get(CONFIG)!)
+    expect(cli.permissions.allow).toContain('Mcp(taskwraith:*)')
+    expect(cli.permissions.allow).toContain('Mcp(user_filesystem:*)')
+
+    const mcp = JSON.parse(files.get(MCP)!)
+    expect(mcp.mcpServers.taskwraith.command).toBe('/x/electron')
+    expect(mcp.mcpServers.user_filesystem).toEqual({
+      command: 'npx',
+      args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+      env: { PROJECT_ROOT: '/repo' }
+    })
+
+    restore()
   })
 
   it('"B" mode (allowRules only) writes cli.json allow + deny but NO mcp.json', () => {

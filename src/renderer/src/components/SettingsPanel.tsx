@@ -632,7 +632,7 @@ const USER_MCP_TRANSPORT_OPTIONS: Array<{ value: UserMcpServerTransport; label: 
   { value: 'http', label: 'HTTP' },
   { value: 'sse', label: 'SSE' }
 ]
-const USER_MCP_STDIO_RUNTIME_PROVIDERS = ['Codex', 'Claude'] as const
+const USER_MCP_STDIO_RUNTIME_PROVIDERS = ['Codex', 'Claude', 'Cursor'] as const
 const USER_MCP_STDIO_RUNTIME_LABEL = USER_MCP_STDIO_RUNTIME_PROVIDERS.join(' + ')
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -5732,8 +5732,9 @@ export function SettingsPanel({
                   </div>
                   <p className="settings-hint">
                     Manage external MCP server definitions TaskWraith owns. Enabled stdio servers
-                    attach to Codex and Claude launches without mutating provider config files.
-                    HTTP and SSE records are saved for transport-specific wiring.
+                    attach to Codex, Claude, and Cursor launches. Cursor uses temporary
+                    workspace-local MCP config that TaskWraith restores after the run; HTTP and
+                    SSE records are saved for transport-specific wiring.
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
@@ -5837,8 +5838,9 @@ export function SettingsPanel({
                   User MCP servers
                 </h4>
                 <p className="settings-hint">
-                  These records are stored by TaskWraith. Stdio servers are available to Codex and
-                  Claude provider launch paths; HTTP and SSE stay saved for transport-specific wiring.
+                  These records are stored by TaskWraith. Stdio servers are available to Codex,
+                  Claude, and Cursor provider launch paths; HTTP and SSE stay saved for
+                  transport-specific wiring.
                 </p>
               </div>
 

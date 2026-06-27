@@ -150,7 +150,11 @@ import {
   isCodexAppServerThreadId,
   isCodexConfigParseError
 } from './CodexAppServerClient'
-import { buildUserMcpStdioLaunchServers } from './UserMcpServers'
+import {
+  buildUserMcpCursorAllowRules,
+  buildUserMcpCursorServerEntry,
+  buildUserMcpStdioLaunchServers
+} from './UserMcpServers'
 import {
   codexCommandFileEditMetadata,
   codexCommandText,
@@ -10008,20 +10012,25 @@ async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
 }
 
 // Cursor approves MCP servers per workspace (~/.cursor/projects/<ws>/).
-// After writing the transient workspace `.cursor/mcp.json`, approve only the
-// TaskWraith server for that workspace via `cursor-agent mcp enable taskwraith`.
-// This never approves arbitrary user MCP servers. Idempotent ("already enabled")
-// and cached in-process, so it spawns at most once per workspace per session.
-// Best-effort: failure still leaves the per-run MCP config + --approve-mcps path,
-// and native shell/write remain denied.
-const cursorMcpApprovedWorkspaces = new Set<string>()
-async function ensureCursorMcpApproved(binaryPath: string, workspace: string): Promise<void> {
-  if (cursorMcpApprovedWorkspaces.has(workspace)) return
+// After writing the transient workspace `.cursor/mcp.json`, approve TaskWraith-owned
+// server names for that workspace via `cursor-agent mcp enable <server>`.
+// Idempotent ("already enabled") and cached in-process per workspace + server, so it
+// spawns at most once for each transient server name per session. Best-effort:
+// failure still leaves the per-run MCP config + --approve-mcps path, and native
+// shell/write remain denied.
+const cursorMcpApprovedWorkspaceServers = new Set<string>()
+async function ensureCursorMcpApproved(
+  binaryPath: string,
+  workspace: string,
+  serverName = CURSOR_MCP_SERVER_NAME
+): Promise<void> {
+  const key = `${workspace}\0${serverName}`
+  if (cursorMcpApprovedWorkspaceServers.has(key)) return
   await new Promise<void>((resolve) => {
     try {
       execFile(
         binaryPath,
-        ['mcp', 'enable', CURSOR_MCP_SERVER_NAME],
+        ['mcp', 'enable', serverName],
         { cwd: workspace, timeout: 10000 },
         () => resolve()
       )
@@ -10029,7 +10038,7 @@ async function ensureCursorMcpApproved(binaryPath: string, workspace: string): P
       resolve()
     }
   })
-  cursorMcpApprovedWorkspaces.add(workspace)
+  cursorMcpApprovedWorkspaceServers.add(key)
 }
 
 // CR4/CR6/CRUX parity — Cursor (Composer 2.5) runtime over the shared CLI streaming
@@ -10076,6 +10085,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   let cursorTaskWraithMcpActive = false
   if (writeCapable && payload.workspace) {
     try {
+      const settings = AppStore.getSettings()
+      const userMcpServers = buildUserMcpStdioLaunchServers(settings.userMcpServers)
       const cursorDir = join(payload.workspace, '.cursor')
       const cliPath = join(cursorDir, 'cli.json')
       const mcpPath = join(cursorDir, 'mcp.json')
@@ -10085,20 +10096,28 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       }
       await mcpBridgeRuntime.startGeminiMcpBroker()
       restoreCursorConfig = applyCursorWriteModeConfig(fsSync, cliPath, cursorDir, {
-        allowRules: CURSOR_MCP_ALLOW_RULES,
+        allowRules: [...CURSOR_MCP_ALLOW_RULES, ...buildUserMcpCursorAllowRules(userMcpServers)],
         mcpConfigPath: mcpPath,
-        serverEntry: buildCursorMcpServerEntry({
-          command: bridgeCommandStatus.command,
-          args: taskwraithMcpBridgeArgs(geminiMcpSocketPath()),
-          env: {
-            [GEMINI_MCP_BRIDGE_ENV]: '1',
-            TASKWRAITH_PARENT_PROVIDER: 'cursor',
-            TASKWRAITH_RUN_ID: route.appRunId || '',
-            TASKWRAITH_CHAT_ID: route.appChatId || ''
-          }
-        })
+        serverEntry: {
+          ...buildCursorMcpServerEntry({
+            command: bridgeCommandStatus.command,
+            args: taskwraithMcpBridgeArgs(geminiMcpSocketPath()),
+            env: {
+              [GEMINI_MCP_BRIDGE_ENV]: '1',
+              TASKWRAITH_PARENT_PROVIDER: 'cursor',
+              TASKWRAITH_RUN_ID: route.appRunId || '',
+              TASKWRAITH_CHAT_ID: route.appChatId || ''
+            }
+          }),
+          ...buildUserMcpCursorServerEntry(userMcpServers)
+        }
       })
       await ensureCursorMcpApproved(resolved.binaryPath, payload.workspace)
+      await Promise.all(
+        userMcpServers.map((server) =>
+          ensureCursorMcpApproved(resolved.binaryPath!, payload.workspace!, server.serverName)
+        )
+      )
       cursorTaskWraithMcpActive = true
     } catch {
       restoreCursorConfig = undefined
