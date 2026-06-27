@@ -778,6 +778,23 @@ function uniqueImportedUserMcpName(name: string, usedNames: Set<string>): string
   return candidate
 }
 
+function normalizeUserMcpServerName(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+export function hasUserMcpServerNameConflict(
+  servers: readonly UserMcpServerConfig[],
+  candidateName: string,
+  candidateId?: string
+): boolean {
+  const normalized = normalizeUserMcpServerName(candidateName)
+  if (!normalized) return false
+  return servers.some(
+    (server) =>
+      server.id !== candidateId && normalizeUserMcpServerName(server.name) === normalized
+  )
+}
+
 function buildUserMcpServerFromForm(
   form: UserMcpServerFormState,
   existing?: UserMcpServerConfig
@@ -1183,6 +1200,21 @@ function userMcpServerAuditKey(server: UserMcpServerConfig): string {
   return server.name.trim() || server.id
 }
 
+function uniqueUserMcpServerAuditKey(
+  server: UserMcpServerConfig,
+  usedKeys: Set<string>
+): string {
+  const base = userMcpServerAuditKey(server)
+  let candidate = base
+  let suffix = 2
+  while (usedKeys.has(candidate.toLowerCase())) {
+    candidate = `${base} ${suffix}`
+    suffix += 1
+  }
+  usedKeys.add(candidate.toLowerCase())
+  return candidate
+}
+
 function userMcpServerAuditEntry(server: UserMcpServerConfig): Record<string, unknown> {
   const env =
     server.env && Object.keys(server.env).length > 0
@@ -1234,11 +1266,15 @@ function formatUserMcpServerAuditJson(server: UserMcpServerConfig): string {
   )
 }
 
-function formatUserMcpServersAuditJson(servers: readonly UserMcpServerConfig[]): string {
+export function formatUserMcpServersAuditJson(servers: readonly UserMcpServerConfig[]): string {
+  const usedKeys = new Set<string>()
   return JSON.stringify(
     {
       mcpServers: Object.fromEntries(
-        servers.map((server) => [userMcpServerAuditKey(server), userMcpServerAuditEntry(server)])
+        servers.map((server) => [
+          uniqueUserMcpServerAuditKey(server, usedKeys),
+          userMcpServerAuditEntry(server)
+        ])
       ),
       taskwraith: {
         servers: servers.map((server) => ({
@@ -2462,6 +2498,10 @@ export function SettingsPanel({
     const result = buildUserMcpServerFromForm(mcpServerForm, existing)
     if (!result.server) {
       setMcpServerFormError(result.error || 'Could not save this MCP server.')
+      return
+    }
+    if (hasUserMcpServerNameConflict(userMcpServers, result.server.name, result.server.id)) {
+      setMcpServerFormError('Another MCP server already uses that name.')
       return
     }
     const next =

@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
-import { SettingsPanel, parseUserMcpServersImportJson } from './SettingsPanel'
+import {
+  SettingsPanel,
+  formatUserMcpServersAuditJson,
+  hasUserMcpServerNameConflict,
+  parseUserMcpServersImportJson
+} from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
 import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
 
@@ -418,5 +423,49 @@ describe('parseUserMcpServersImportJson', () => {
     expect(result.servers).toEqual([])
     expect(result.skipped).toBe(1)
     expect(result.error).toContain('No supported MCP servers found')
+  })
+})
+
+describe('user MCP server name/audit helpers', () => {
+  it('detects manual name conflicts case-insensitively while allowing the edited server', () => {
+    const servers = [
+      {
+        id: 'server-docs',
+        name: 'Docs',
+        enabled: true,
+        transport: 'http' as const,
+        url: 'https://example.test/mcp'
+      }
+    ]
+
+    expect(hasUserMcpServerNameConflict(servers, ' docs ')).toBe(true)
+    expect(hasUserMcpServerNameConflict(servers, 'docs', 'server-docs')).toBe(false)
+    expect(hasUserMcpServerNameConflict(servers, 'filesystem')).toBe(false)
+  })
+
+  it('keeps all entries in copy-all audit JSON when legacy duplicate names exist', () => {
+    const audit = JSON.parse(
+      formatUserMcpServersAuditJson([
+        {
+          id: 'server-docs-a',
+          name: 'docs',
+          enabled: true,
+          transport: 'stdio',
+          command: 'node'
+        },
+        {
+          id: 'server-docs-b',
+          name: 'docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.test/mcp'
+        }
+      ])
+    )
+
+    expect(Object.keys(audit.mcpServers)).toEqual(['docs', 'docs 2'])
+    expect(audit.mcpServers.docs.command).toBe('node')
+    expect(audit.mcpServers['docs 2'].url).toBe('https://example.test/mcp')
+    expect(audit.taskwraith.servers).toHaveLength(2)
   })
 })
