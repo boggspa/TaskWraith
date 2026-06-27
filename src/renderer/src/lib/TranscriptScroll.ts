@@ -96,6 +96,19 @@ export function shouldRepinAfterFrame(input: {
 }
 
 /**
+ * Chat switches normally land at the live edge, but an explicit message jump
+ * issued during the switch owns the scroll position for that frame.
+ */
+export function shouldSnapAfterChatSwitch(input: {
+  autoFollow: boolean
+  userScrolledAwayInThisFrame: boolean
+  hasPendingManualJump: boolean
+}): boolean {
+  if (input.hasPendingManualJump) return false
+  return shouldRepinAfterFrame(input)
+}
+
+/**
  * DOM event name dispatched (bubbling) by each `HighlightedCodeBlock`
  * when its rendered element resizes after the initial CodeMirror
  * measurement pass. The transcript scroll effect listens for this on

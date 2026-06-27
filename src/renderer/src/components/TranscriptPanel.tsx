@@ -214,7 +214,8 @@ export type TranscriptPanelProps = {
   onMessageSelectionCandidate?: (message: ChatMessage) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   sideChatSeedMessageId?: string | null
-  jumpToMessageRequest?: { messageId: string; requestId: number } | null
+  jumpToMessageRequest?: { messageId: string; rowKey?: string; requestId: number } | null
+  onManualTranscriptJump?: () => void
   onPreviewImage: (ref: ChatMediaRef) => void
   /** Pop an A/V attachment out into its own Multiview pane (the docked media
    *  player). Optional — omitted when Multiview isn't available to the host. */
@@ -780,6 +781,7 @@ export const TranscriptPanel = memo(
     onOpenSideChatFromMessage,
     sideChatSeedMessageId,
     jumpToMessageRequest,
+    onManualTranscriptJump,
     onPreviewImage,
     onDetachToPane,
     copiedId,
@@ -1083,18 +1085,42 @@ export const TranscriptPanel = memo(
         highlightTimerRef.current = null
       }
     }, [chatId])
+    const findProjectedRowForMessage = useCallback(
+      (messageId: string, rowKey?: string) => {
+        if (rowKey) {
+          const byRowKey = projectedRows.find((candidate) => candidate.rowKey === rowKey)
+          if (byRowKey) return byRowKey
+        }
+        return (
+          projectedRows.find((candidate) => candidate.id === messageId) ||
+          projectedRows.find((candidate) => {
+            const message = displayMessages[candidate.index]
+            const groupedIds = message?.metadata?.groupedToolMessageIds
+            return Array.isArray(groupedIds) && groupedIds.includes(messageId)
+          })
+        )
+      },
+      [displayMessages, projectedRows]
+    )
+    const prepareManualTranscriptJump = useCallback(() => {
+      if (autoFollowRef) autoFollowRef.current = false
+      onManualTranscriptJump?.()
+    }, [autoFollowRef, onManualTranscriptJump])
     const focusMessageBlock = useCallback(
       (messageId: string, rowKey?: string): boolean => {
         const scroller = scrollRef.current
         if (!scroller) return false
-        const target = rowKey
+        const row = findProjectedRowForMessage(messageId, rowKey)
+        const target = row
           ? scroller.querySelector<HTMLElement>(
-              `[data-vrow-id="${escapeDomSelectorValue(rowKey)}"]`
+              `[data-vrow-id="${escapeDomSelectorValue(row.rowKey)}"]`
             )
           : scroller.querySelector<HTMLElement>(
               `[data-message-id="${escapeDomSelectorValue(messageId)}"]`
             )
         if (!target) return false
+        const targetRowKey = row?.rowKey || rowKey
+        prepareManualTranscriptJump()
         const targetRect = target.getBoundingClientRect()
         const scrollerRect = scroller.getBoundingClientRect()
         const targetTop = scroller.scrollTop + targetRect.top - scrollerRect.top
@@ -1102,9 +1128,12 @@ export const TranscriptPanel = memo(
         const nextScrollTop = Math.max(0, targetTop - topOffset)
         scroller.scrollTo({ top: nextScrollTop, behavior: 'auto' })
         syncVirtualizerScrollPosition(nextScrollTop)
-        setHighlightedMessageTarget({ messageId, rowKey })
+        setHighlightedMessageTarget({ messageId, rowKey: targetRowKey })
         setPendingFocusTarget((current) =>
-          current?.messageId === messageId && current?.rowKey === rowKey ? null : current
+          current?.messageId === messageId &&
+          (!current.rowKey || !targetRowKey || current.rowKey === targetRowKey)
+            ? null
+            : current
         )
         if (highlightTimerRef.current !== null) {
           window.clearTimeout(highlightTimerRef.current)
@@ -1112,23 +1141,26 @@ export const TranscriptPanel = memo(
         highlightTimerRef.current = window.setTimeout(() => {
           highlightTimerRef.current = null
           setHighlightedMessageTarget((current) =>
-            current?.messageId === messageId && current?.rowKey === rowKey ? null : current
+            current?.messageId === messageId && current?.rowKey === targetRowKey ? null : current
           )
         }, 1800)
         return true
       },
-      [scrollRef, syncVirtualizerScrollPosition]
+      [
+        findProjectedRowForMessage,
+        prepareManualTranscriptJump,
+        scrollRef,
+        syncVirtualizerScrollPosition
+      ]
     )
 
     const estimateScrollToMessage = useCallback(
       (messageId: string, rowKey?: string): void => {
         const scroller = scrollRef.current
         if (!scroller) return
-        const row =
-          (rowKey ? projectedRows.find((candidate) => candidate.rowKey === rowKey) : undefined) ||
-          projectedRows.find((candidate) => candidate.id === messageId)
+        const row = findProjectedRowForMessage(messageId, rowKey)
         if (!row) return
-        if (autoFollowRef) autoFollowRef.current = false
+        prepareManualTranscriptJump()
         const rowHeights =
           virtualizeEnabled && virtualHeights.length === projectedRows.length
             ? virtualHeights
@@ -1142,7 +1174,8 @@ export const TranscriptPanel = memo(
         syncVirtualizerScrollPosition(nextScrollTop)
       },
       [
-        autoFollowRef,
+        findProjectedRowForMessage,
+        prepareManualTranscriptJump,
         projectedRows,
         scrollRef,
         syncVirtualizerScrollPosition,
@@ -1153,22 +1186,22 @@ export const TranscriptPanel = memo(
 
     const scrollToMessage = useCallback(
       (messageId: string, rowKey?: string): void => {
-        if (autoFollowRef) autoFollowRef.current = false
         if (focusMessageBlock(messageId, rowKey)) return
 
         setPendingFocusTarget({ messageId, rowKey, attempt: 0 })
         estimateScrollToMessage(messageId, rowKey)
       },
-      [autoFollowRef, estimateScrollToMessage, focusMessageBlock]
+      [estimateScrollToMessage, focusMessageBlock]
     )
 
     useEffect(() => {
       const request = jumpToMessageRequest
       if (!request?.messageId) return
-      scrollToMessage(request.messageId)
+      scrollToMessage(request.messageId, request.rowKey)
     }, [
       jumpToMessageRequest?.requestId,
       jumpToMessageRequest?.messageId,
+      jumpToMessageRequest?.rowKey,
       scrollToMessage
     ])
 
@@ -2114,6 +2147,10 @@ export const TranscriptPanel = memo(
     previous.onMessageSelectionCandidate === next.onMessageSelectionCandidate &&
     previous.onOpenSideChatFromMessage === next.onOpenSideChatFromMessage &&
     previous.sideChatSeedMessageId === next.sideChatSeedMessageId &&
+    previous.jumpToMessageRequest?.messageId === next.jumpToMessageRequest?.messageId &&
+    previous.jumpToMessageRequest?.rowKey === next.jumpToMessageRequest?.rowKey &&
+    previous.jumpToMessageRequest?.requestId === next.jumpToMessageRequest?.requestId &&
+    previous.onManualTranscriptJump === next.onManualTranscriptJump &&
     previous.onPreviewImage === next.onPreviewImage &&
     previous.onDetachToPane === next.onDetachToPane &&
     previous.copiedId === next.copiedId &&

@@ -414,6 +414,7 @@ import {
   shouldRepinAfterFrame,
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterTranscriptResize,
+  shouldSnapAfterChatSwitch,
   shouldShowJumpToLatestPill,
   CODE_BLOCK_RESIZE_EVENT
 } from './lib/TranscriptScroll'
@@ -2106,8 +2107,10 @@ function App(): React.JSX.Element {
   const [transcriptJumpRequest, setTranscriptJumpRequest] = useState<{
     chatId: string
     messageId: string
+    rowKey?: string
     requestId: number
   } | null>(null)
+  const transcriptJumpRequestIdRef = useRef(0)
   const [settingsPinnedMessageGroups, setSettingsPinnedMessageGroups] = useState<
     PinnedMessageGroup[]
   >([])
@@ -2620,6 +2623,7 @@ function App(): React.JSX.Element {
     chatId: null,
     count: 0
   })
+  const pendingTranscriptJumpChatIdRef = useRef<string | null>(null)
   // Click/keypress handler for the jump-to-latest pill. Re-engages
   // auto-follow eagerly (so subsequent streaming ticks re-pin without
   // waiting for the smooth scroll to land), clears the unread count
@@ -2666,6 +2670,21 @@ function App(): React.JSX.Element {
   const snapScrollToBottom = useCallback((node: HTMLElement) => {
     programmaticScrollRef.current = true
     node.scrollTop = node.scrollHeight
+  }, [])
+  const beginManualMainTranscriptJump = useCallback(() => {
+    autoFollowRef.current = false
+    userScrolledAwayInFrameRef.current = true
+    programmaticScrollRef.current = true
+    pendingTranscriptJumpChatIdRef.current = null
+    if (repinRafIdRef.current !== null) {
+      cancelAnimationFrame(repinRafIdRef.current)
+      repinRafIdRef.current = null
+    }
+  }, [])
+  const beginManualSideTranscriptJump = useCallback(() => {
+    sideAutoFollowRef.current = false
+    sideProgrammaticScrollRef.current = true
+    pendingTranscriptJumpChatIdRef.current = null
   }, [])
   // Raw Events panel auto-follow mirror of the transcript pair above.
   // The Inspector's Raw Events tab streams every run event as it arrives;
@@ -3005,10 +3024,12 @@ function App(): React.JSX.Element {
     if (!sideChat || !sideAutoFollowRef.current) return
     const scroller = sideTranscriptScrollRef.current
     if (!scroller) return
-    requestAnimationFrame(() => {
+    const rafId = requestAnimationFrame(() => {
+      if (!sideAutoFollowRef.current) return
       sideProgrammaticScrollRef.current = true
       scroller.scrollTop = scroller.scrollHeight
     })
+    return () => cancelAnimationFrame(rafId)
   }, [sideChat?.appChatId, sideChat?.messages?.length, sideChat?.updatedAt])
   // Side-chat panel auto-follow disengage/re-engage. The snap effect above
   // pins the side panel to the bottom on every messages/updatedAt change while
@@ -7814,8 +7835,12 @@ function App(): React.JSX.Element {
     // so the user lands on the latest message in their new thread.
     const scroller = transcriptScrollRef.current
     if (!scroller) return
-    autoFollowRef.current = true
-    userScrolledAwayInFrameRef.current = false
+    const chatId = currentChat?.appChatId ?? null
+    const hasPendingManualJump = Boolean(
+      chatId && pendingTranscriptJumpChatIdRef.current === chatId
+    )
+    autoFollowRef.current = !hasPendingManualJump
+    userScrolledAwayInFrameRef.current = hasPendingManualJump
     // The "↓ N new messages" pill is a per-thread affordance — landing
     // on a fresh chat must never inherit unread count from the
     // previous one. Reset both the rendered state and the per-chat
@@ -7826,11 +7851,26 @@ function App(): React.JSX.Element {
       setUnreadFromBottomCount(0)
     }
     previousMessagesCountRef.current = {
-      chatId: currentChat?.appChatId ?? null,
+      chatId,
       count: currentChat?.messages?.length ?? 0
     }
     // Defer one frame so the new messages render before we measure.
     const rafId = requestAnimationFrame(() => {
+      const hasStillPendingManualJump = Boolean(
+        chatId && pendingTranscriptJumpChatIdRef.current === chatId
+      )
+      if (hasStillPendingManualJump) {
+        pendingTranscriptJumpChatIdRef.current = null
+      }
+      if (
+        !shouldSnapAfterChatSwitch({
+          autoFollow: autoFollowRef.current,
+          userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
+          hasPendingManualJump: hasStillPendingManualJump
+        })
+      ) {
+        return
+      }
       snapScrollToBottom(scroller)
     })
     return () => cancelAnimationFrame(rafId)
@@ -14240,9 +14280,19 @@ function App(): React.JSX.Element {
   )
 
   const jumpToTranscriptMessage = useCallback(
-    (chatId: string | null | undefined, messageId: string) => {
+    (chatId: string | null | undefined, messageId: string, rowKey?: string) => {
       if (!chatId || !messageId) return
-      setTranscriptJumpRequest({ chatId, messageId, requestId: Date.now() })
+      pendingTranscriptJumpChatIdRef.current = chatId
+      autoFollowRef.current = false
+      userScrolledAwayInFrameRef.current = true
+      transcriptJumpRequestIdRef.current =
+        (transcriptJumpRequestIdRef.current + 1) % Number.MAX_SAFE_INTEGER
+      setTranscriptJumpRequest({
+        chatId,
+        messageId,
+        rowKey,
+        requestId: transcriptJumpRequestIdRef.current
+      })
     },
     []
   )
@@ -23553,6 +23603,7 @@ function App(): React.JSX.Element {
                     ? transcriptJumpRequest
                     : null
                 }
+                onManualTranscriptJump={beginManualMainTranscriptJump}
                 copiedId={copiedId}
                 copy={copy}
                 autoFollowRef={autoFollowRef}
@@ -23899,6 +23950,7 @@ function App(): React.JSX.Element {
               jumpToMessageRequest={
                 transcriptJumpRequest?.chatId === sideChat.appChatId ? transcriptJumpRequest : null
               }
+              onManualTranscriptJump={beginManualSideTranscriptJump}
               copiedId={copiedId}
               copy={copy}
               autoFollowRef={sideAutoFollowRef}

@@ -7,6 +7,7 @@ import {
   shouldRepinAfterFrame,
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterTranscriptResize,
+  shouldSnapAfterChatSwitch,
   shouldShowJumpToLatestPill,
   buildCodeBlockResizeEventInit,
   CODE_BLOCK_RESIZE_EVENT
@@ -180,6 +181,45 @@ describe('TranscriptScroll', () => {
           expect(shouldRepinAfterTranscriptResize(input)).toBe(shouldRepinAfterFrame(input))
         }
       }
+    })
+  })
+
+  describe('shouldSnapAfterChatSwitch', () => {
+    it('lands at the bottom for an ordinary chat switch', () => {
+      expect(
+        shouldSnapAfterChatSwitch({
+          autoFollow: true,
+          userScrolledAwayInThisFrame: false,
+          hasPendingManualJump: false
+        })
+      ).toBe(true)
+    })
+
+    it('does not snap over a pending message jump', () => {
+      expect(
+        shouldSnapAfterChatSwitch({
+          autoFollow: true,
+          userScrolledAwayInThisFrame: false,
+          hasPendingManualJump: true
+        })
+      ).toBe(false)
+    })
+
+    it('keeps the existing scroll-away guards for chat-switch landing', () => {
+      expect(
+        shouldSnapAfterChatSwitch({
+          autoFollow: false,
+          userScrolledAwayInThisFrame: false,
+          hasPendingManualJump: false
+        })
+      ).toBe(false)
+      expect(
+        shouldSnapAfterChatSwitch({
+          autoFollow: true,
+          userScrolledAwayInThisFrame: true,
+          hasPendingManualJump: false
+        })
+      ).toBe(false)
     })
   })
 
