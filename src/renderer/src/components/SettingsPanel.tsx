@@ -632,6 +632,8 @@ const USER_MCP_TRANSPORT_OPTIONS: Array<{ value: UserMcpServerTransport; label: 
   { value: 'http', label: 'HTTP' },
   { value: 'sse', label: 'SSE' }
 ]
+const USER_MCP_STDIO_RUNTIME_PROVIDERS = ['Codex', 'Claude'] as const
+const USER_MCP_STDIO_RUNTIME_LABEL = USER_MCP_STDIO_RUNTIME_PROVIDERS.join(' + ')
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -704,6 +706,10 @@ function hasRunnableUserMcpEndpoint(server: Pick<UserMcpServerConfig, 'transport
   return server.transport === 'stdio'
     ? Boolean(server.command?.trim())
     : Boolean(server.url?.trim())
+}
+
+function userMcpServerRuntimeLabel(server: Pick<UserMcpServerConfig, 'transport'>): string {
+  return server.transport === 'stdio' ? `runtime: ${USER_MCP_STDIO_RUNTIME_LABEL}` : 'saved only'
 }
 
 function makeUserMcpServerId(name: string): string {
@@ -5672,8 +5678,8 @@ export function SettingsPanel({
                   </div>
                   <p className="settings-hint">
                     Manage external MCP server definitions TaskWraith owns. Enabled stdio servers
-                    can be attached to supported provider launches without mutating provider config
-                    files.
+                    attach to Codex and Claude launches without mutating provider config files.
+                    HTTP and SSE records are saved for transport-specific wiring.
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
@@ -5705,6 +5711,11 @@ export function SettingsPanel({
                   <span>Transports</span>
                   <strong>{userMcpTransportCount}</strong>
                   <small>stdio, HTTP, or SSE</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Runtime</span>
+                  <strong>{USER_MCP_STDIO_RUNTIME_LABEL}</strong>
+                  <small>enabled stdio launch support</small>
                 </article>
                 <article className="settings-mcp-summary-card">
                   <span>TaskWraith bridge</span>
@@ -5764,8 +5775,8 @@ export function SettingsPanel({
                   User MCP servers
                 </h4>
                 <p className="settings-hint">
-                  These records are stored by TaskWraith. Stdio servers are available to supported
-                  provider launch paths; HTTP and SSE stay saved for transport-specific wiring.
+                  These records are stored by TaskWraith. Stdio servers are available to Codex and
+                  Claude provider launch paths; HTTP and SSE stay saved for transport-specific wiring.
                 </p>
               </div>
 
@@ -5798,6 +5809,7 @@ export function SettingsPanel({
                             {server.env && Object.keys(server.env).length > 0 && (
                               <span>{pluralizeCount(Object.keys(server.env).length, 'env var')}</span>
                             )}
+                            <span>{userMcpServerRuntimeLabel(server)}</span>
                           </div>
                           <details className="settings-user-mcp-config">
                             <summary>Audit JSON</summary>

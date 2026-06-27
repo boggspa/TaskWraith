@@ -239,6 +239,8 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('2 args')
     expect(html).toContain('1 env var')
     expect(html).toContain('Import JSON')
+    expect(html).toContain('Codex + Claude')
+    expect(html).toContain('runtime: Codex + Claude')
     expect(html).toContain('Audit JSON')
     expect(html).toContain('&quot;command&quot;: &quot;npx&quot;')
     expect(html).toContain('&quot;PROJECT_ROOT&quot;: &quot;[stored in TaskWraith settings]&quot;')
