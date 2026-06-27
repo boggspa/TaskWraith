@@ -29,6 +29,7 @@ describe('getTailscaleServeStatus', () => {
     })
     expect(status).toEqual({
       configured: true,
+      dnsName: 'mac.tailnet.ts.net',
       httpsPort: 443,
       proxyTarget: 'http://127.0.0.1:8787'
     })
@@ -64,7 +65,12 @@ describe('getTailscaleServeStatus', () => {
         httpsPort: 443,
         exec: execReturning(config)
       })
-    ).toEqual({ configured: true, httpsPort: 443, proxyTarget: 'http://127.0.0.1:8787' })
+    ).toEqual({
+      configured: true,
+      dnsName: 'mac.tailnet.ts.net',
+      httpsPort: 443,
+      proxyTarget: 'http://127.0.0.1:8787'
+    })
     // Dev sees only its :8443 door.
     expect(
       await getTailscaleServeStatus({
@@ -73,7 +79,12 @@ describe('getTailscaleServeStatus', () => {
         httpsPort: 8443,
         exec: execReturning(config)
       })
-    ).toEqual({ configured: true, httpsPort: 8443, proxyTarget: 'http://127.0.0.1:8788' })
+    ).toEqual({
+      configured: true,
+      dnsName: 'mac.tailnet.ts.net',
+      httpsPort: 8443,
+      proxyTarget: 'http://127.0.0.1:8788'
+    })
     // Release's relay port behind the dev front door is NOT ours → no clobbering
     // re-assert (the bug we're fixing: the loser kept healing onto the shared :443).
     expect(

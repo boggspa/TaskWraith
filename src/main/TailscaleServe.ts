@@ -33,6 +33,8 @@ const defaultExec: ServeExec = async (cmd, args) => {
 export interface TailscaleServeStatus {
   /** True when an HTTPS handler proxies to 127.0.0.1:<port>. */
   configured: boolean
+  /** MagicDNS host for the matching serve front door, when the CLI reports it. */
+  dnsName?: string
   /** The HTTPS port the front door answers on (usually 443). */
   httpsPort?: number
   /** The proxy target found (diagnostic). */
@@ -45,6 +47,21 @@ export interface TailscaleServeStatus {
 interface ServeConfigRaw {
   TCP?: Record<string, unknown>
   Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>
+}
+
+function parseServeHostPort(hostPort: string): { host?: string; port?: number } {
+  const trimmed = hostPort.trim()
+  if (!trimmed) return {}
+  const bracketed = trimmed.match(/^\[([^\]]+)\]:(\d+)$/)
+  if (bracketed) return { host: bracketed[1], port: Number(bracketed[2]) }
+  const idx = trimmed.lastIndexOf(':')
+  if (idx < 0) return { host: trimmed }
+  const host = trimmed.slice(0, idx)
+  const port = Number(trimmed.slice(idx + 1))
+  return {
+    host: host || undefined,
+    port: Number.isInteger(port) && port > 0 ? port : undefined
+  }
 }
 
 /** Does the current serve config already front our relay port? */
@@ -74,7 +91,8 @@ export async function getTailscaleServeStatus(input: {
     return { configured: false, error: 'unparseable `tailscale serve status --json` output' }
   }
   for (const [hostPort, site] of Object.entries(raw.Web ?? {})) {
-    const frontDoorPort = Number(hostPort.split(':').pop())
+    const parsed = parseServeHostPort(hostPort)
+    const frontDoorPort = parsed.port ?? 443
     // Scope to OUR front-door port (when given) so dev/release don't match each
     // other's handler — without this the loser keeps re-asserting serve to its
     // own relay port, clobbering the winner's :443 mapping in a ping-pong.
@@ -88,6 +106,7 @@ export async function getTailscaleServeStatus(input: {
       ) {
         return {
           configured: true,
+          ...(parsed.host ? { dnsName: parsed.host } : {}),
           httpsPort: Number.isInteger(frontDoorPort) && frontDoorPort > 0 ? frontDoorPort : 443,
           proxyTarget: proxy
         }
