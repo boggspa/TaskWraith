@@ -100,6 +100,13 @@ import { normalizeExternalPathGrants } from './lib/normalizeExternalPathGrants'
 import type { SideSlashCommand } from './lib/SideSlashCommand'
 import { selectVisibleAuditRun } from './lib/auditRunVisibility'
 import {
+  auditActionErrorMessage,
+  readDismissedAuditRunIds,
+  sortAuditRuns,
+  upsertAuditRunList,
+  writeDismissedAuditRunIds
+} from './lib/auditRunList'
+import {
   buildIsolatedSideChatContextSeed,
   buildHiddenSideChatInitialPrompt,
   buildSideChatRunResultSeedPrompt
@@ -888,53 +895,10 @@ interface LiveToolFileSummaryState {
   summaries: DiffFileSummary[]
 }
 
-function auditRunTimeKey(run: AuditRunRecord): string {
-  return run.updatedAt || run.endedAt || run.startedAt || run.createdAt || ''
-}
-
-function sortAuditRuns(runs: AuditRunRecord[]): AuditRunRecord[] {
-  return runs.slice().sort((a, b) => auditRunTimeKey(b).localeCompare(auditRunTimeKey(a)))
-}
-
-function upsertAuditRunList(runs: AuditRunRecord[], run: AuditRunRecord): AuditRunRecord[] {
-  return sortAuditRuns([run, ...runs.filter((item) => item.id !== run.id)]).slice(0, 30)
-}
-
 interface AuditRunNoticeState {
   chatId: string
   title: string
   message: string
-}
-
-function auditActionErrorMessage(fallback: string, err: unknown): string {
-  if (err instanceof Error && err.message.trim()) return err.message.trim()
-  if (typeof err === 'string' && err.trim()) return err.trim()
-  return fallback
-}
-
-const DISMISSED_AUDIT_RUNS_STORAGE_KEY = 'taskwraith.dismissedAuditRunIds'
-
-function readDismissedAuditRunIds(): Set<string> {
-  if (typeof window === 'undefined') return new Set()
-  try {
-    const raw = window.localStorage.getItem(DISMISSED_AUDIT_RUNS_STORAGE_KEY)
-    const parsed = raw ? JSON.parse(raw) : []
-    return new Set(Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [])
-  } catch {
-    return new Set()
-  }
-}
-
-function writeDismissedAuditRunIds(ids: Set<string>): void {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(
-      DISMISSED_AUDIT_RUNS_STORAGE_KEY,
-      JSON.stringify([...ids].slice(-100))
-    )
-  } catch {
-    // localStorage is optional; the in-memory state still hides it this session.
-  }
 }
 
 function App(): React.JSX.Element {

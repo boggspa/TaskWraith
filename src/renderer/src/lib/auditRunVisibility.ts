@@ -1,15 +1,8 @@
 import type { AuditRunRecord } from '../../../main/store/types'
+import { sortAuditRuns } from './auditRunList'
 
 export function auditRunIsActive(run: AuditRunRecord): boolean {
   return run.status === 'planning' || run.status === 'awaitingConfirm' || run.status === 'running'
-}
-
-function auditRunTimeKey(run: AuditRunRecord): string {
-  return run.updatedAt || run.endedAt || run.startedAt || run.createdAt || ''
-}
-
-function sortAuditRuns(runs: AuditRunRecord[]): AuditRunRecord[] {
-  return runs.slice().sort((a, b) => auditRunTimeKey(b).localeCompare(auditRunTimeKey(a)))
 }
 
 export function selectVisibleAuditRun(
