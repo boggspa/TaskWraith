@@ -517,11 +517,11 @@ describe('user MCP server name/audit helpers', () => {
       }
     ])
 
-    expect(toml).toContain('[mcp_servers.filesystem]')
+    expect(toml).toContain('[mcp_servers.user_filesystem]')
     expect(toml).toContain('command = "npx"')
     expect(toml).toContain('args = ["@modelcontextprotocol/server-filesystem", "/repo"]')
     expect(toml).toContain('env = { PROJECT_ROOT = "/repo" }')
-    expect(toml).toContain('[mcp_servers."docs remote"]')
+    expect(toml).toContain('[mcp_servers.user_docs_remote]')
     expect(toml).toContain('url = "https://example.test/mcp"')
     expect(toml).toContain('bearer_token_env_var = "DOCS_TOKEN"')
     expect(toml).toContain(
@@ -573,20 +573,20 @@ describe('user MCP server name/audit helpers', () => {
 
     expect(json).toEqual({
       mcpServers: {
-        filesystem: {
+        user_filesystem: {
           type: 'stdio',
           command: 'npx',
           args: ['@modelcontextprotocol/server-filesystem', '/repo'],
           env: { PROJECT_ROOT: '/repo' }
         },
-        docs: {
+        user_docs: {
           type: 'http',
           url: 'https://example.test/mcp',
           headers: {
             Authorization: 'Bearer ${DOCS_TOKEN}'
           }
         },
-        legacy: {
+        user_legacy: {
           type: 'sse',
           url: 'https://example.test/sse'
         }
@@ -648,12 +648,12 @@ describe('user MCP server name/audit helpers', () => {
 
     expect(json).toEqual({
       mcpServers: {
-        filesystem: {
+        user_filesystem: {
           command: 'npx',
           args: ['@modelcontextprotocol/server-filesystem', '/repo'],
           env: { PROJECT_ROOT: '/repo' }
         },
-        docs: {
+        user_docs: {
           url: 'https://example.test/mcp',
           headers: {
             Authorization: 'Bearer ${DOCS_TOKEN}'
@@ -662,6 +662,29 @@ describe('user MCP server name/audit helpers', () => {
       }
     })
     expect(json.mcpServers).not.toHaveProperty('legacy')
+  })
+
+  it('deduplicates provider export keys using runtime-style safe names', () => {
+    const json = JSON.parse(
+      formatUserMcpServersCursorJson([
+        {
+          id: 'a',
+          name: 'Docs Search',
+          enabled: true,
+          transport: 'stdio',
+          command: 'node'
+        },
+        {
+          id: 'b',
+          name: 'Docs Search',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.test/mcp'
+        }
+      ])
+    )
+
+    expect(Object.keys(json.mcpServers)).toEqual(['user_docs_search', 'user_docs_search_2'])
   })
 
   it('redacts values in Cursor JSON preview mode', () => {

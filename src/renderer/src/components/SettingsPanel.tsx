@@ -1246,6 +1246,32 @@ function uniqueUserMcpServerAuditKey(
   return candidate
 }
 
+function slugForUserMcpProviderName(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 48) || 'server'
+  )
+}
+
+function userMcpServerProviderKey(
+  server: Pick<UserMcpServerConfig, 'id' | 'name'>,
+  usedKeys: Set<string>
+): string {
+  const base = `user_${slugForUserMcpProviderName(server.name || server.id)}`
+  let candidate = base
+  let suffix = 2
+  while (usedKeys.has(candidate) || candidate === 'TaskWraith') {
+    candidate = `${base}_${suffix}`
+    suffix += 1
+  }
+  usedKeys.add(candidate)
+  return candidate
+}
+
 function userMcpServerAuditEntry(server: UserMcpServerConfig): Record<string, unknown> {
   const env =
     server.env && Object.keys(server.env).length > 0
@@ -1392,7 +1418,7 @@ export function formatUserMcpServersClaudeJson(
     servers
       .filter(isClaudeExportableUserMcpServer)
       .map((server) => [
-        uniqueUserMcpServerAuditKey(server, usedKeys),
+        userMcpServerProviderKey(server, usedKeys),
         userMcpServerProviderEntry(server, options)
       ])
   )
@@ -1447,7 +1473,7 @@ export function formatUserMcpServersCursorJson(
     servers
       .filter(isCursorExportableUserMcpServer)
       .map((server) => [
-        uniqueUserMcpServerAuditKey(server, usedKeys),
+        userMcpServerProviderKey(server, usedKeys),
         userMcpServerCursorEntry(server, options)
       ])
   )
@@ -1462,7 +1488,7 @@ export function formatUserMcpServersCodexToml(
   const entries: string[] = []
   for (const server of servers) {
     if (!isCodexExportableUserMcpServer(server)) continue
-    const tableKey = formatTomlKeyComponent(uniqueUserMcpServerAuditKey(server, usedKeys))
+    const tableKey = formatTomlKeyComponent(userMcpServerProviderKey(server, usedKeys))
     const lines = [`[mcp_servers.${tableKey}]`]
     if (server.transport === 'stdio') {
       lines.push(`command = ${formatTomlBasicString(server.command?.trim() || '')}`)
