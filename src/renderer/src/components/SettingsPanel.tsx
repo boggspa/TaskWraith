@@ -6632,6 +6632,12 @@ export function SettingsPanel({
               </div>
 
               {userMcpServers.length > 0 && (
+                <p className="settings-user-mcp-config-note">
+                  Config previews redact stored values. Provider copy buttons use the saved config;
+                  audit JSON stays redacted for review.
+                </p>
+              )}
+              {userMcpServers.length > 0 && (
                 <details className="settings-user-mcp-config settings-user-mcp-config-all">
                   <summary>All servers audit JSON</summary>
                   <pre>

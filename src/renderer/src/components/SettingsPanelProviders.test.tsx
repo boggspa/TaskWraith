@@ -293,6 +293,9 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Codex TOML')
     expect(html).toContain('Claude JSON')
     expect(html).toContain('Cursor mcp.json')
+    expect(html).toContain(
+      'Config previews redact stored values. Provider copy buttons use the saved config; audit JSON stays redacted for review.'
+    )
     expect(html).toContain('Audit JSON')
     expect(html).toContain('Provider config snippets')
     expect(html).toContain('Previews redact stored values. Copy buttons use the saved config.')

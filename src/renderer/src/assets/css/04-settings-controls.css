@@ -3154,6 +3154,13 @@
   min-width: 0;
 }
 
+.settings-user-mcp-config-note {
+  margin: 10px 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+}
+
 .settings-user-mcp-config summary {
   width: fit-content;
   cursor: pointer;
