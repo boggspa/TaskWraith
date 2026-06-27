@@ -1,8 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
+import type { UserMcpServerConfig } from '../../../main/store/types'
 import {
   SettingsPanel,
+  formatUserMcpServerClaudeJsonSnippet,
+  formatUserMcpServerCodexTomlSnippet,
+  formatUserMcpServerCursorJsonSnippet,
   formatUserMcpServersClaudeJson,
   formatUserMcpServersCodexToml,
   formatUserMcpServersCursorJson,
@@ -833,6 +837,36 @@ describe('user MCP server name/audit helpers', () => {
     )
 
     expect(Object.keys(json.mcpServers)).toEqual(['user_docs_search', 'user_docs_search_2'])
+  })
+
+  it('keeps per-server provider snippets aligned with duplicate full-export names', () => {
+    const servers: UserMcpServerConfig[] = [
+      {
+        id: 'server-docs-a',
+        name: 'Docs Search',
+        enabled: true,
+        transport: 'stdio',
+        command: 'node'
+      },
+      {
+        id: 'server-docs-b',
+        name: 'Docs Search',
+        enabled: true,
+        transport: 'http',
+        url: 'https://example.test/mcp'
+      }
+    ]
+
+    expect(formatUserMcpServersCursorJson(servers)).toContain('"user_docs_search_2"')
+    expect(formatUserMcpServerClaudeJsonSnippet(servers, servers[1])).toContain(
+      '"user_docs_search_2"'
+    )
+    expect(formatUserMcpServerCursorJsonSnippet(servers, servers[1])).toContain(
+      '"user_docs_search_2"'
+    )
+    expect(formatUserMcpServerCodexTomlSnippet(servers, servers[1])).toContain(
+      '[mcp_servers.user_docs_search_2]'
+    )
   })
 
   it('redacts values in Cursor JSON preview mode', () => {

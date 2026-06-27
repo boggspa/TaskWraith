@@ -1451,6 +1451,20 @@ function userMcpServerProviderEntry(
   }
 }
 
+function findUserMcpServerProviderKey(
+  servers: readonly UserMcpServerConfig[],
+  targetServer: UserMcpServerConfig,
+  isExportable: (server: UserMcpServerConfig) => boolean
+): string | null {
+  const usedKeys = new Set<string>()
+  for (const server of servers) {
+    if (!isExportable(server)) continue
+    const key = userMcpServerProviderKey(server, usedKeys)
+    if (server.id === targetServer.id) return key
+  }
+  return null
+}
+
 export function formatUserMcpServersClaudeJson(
   servers: readonly UserMcpServerConfig[],
   options: { redactValues?: boolean } = {}
@@ -1465,6 +1479,24 @@ export function formatUserMcpServersClaudeJson(
       ])
   )
   return JSON.stringify({ mcpServers }, null, 2)
+}
+
+export function formatUserMcpServerClaudeJsonSnippet(
+  servers: readonly UserMcpServerConfig[],
+  server: UserMcpServerConfig,
+  options: { redactValues?: boolean } = {}
+): string {
+  const providerKey = findUserMcpServerProviderKey(
+    servers,
+    server,
+    isClaudeExportableUserMcpServer
+  )
+  if (!providerKey) return ''
+  return JSON.stringify(
+    { mcpServers: { [providerKey]: userMcpServerProviderEntry(server, options) } },
+    null,
+    2
+  )
 }
 
 function userMcpServerCursorEntry(
@@ -1522,6 +1554,51 @@ export function formatUserMcpServersCursorJson(
   return JSON.stringify({ mcpServers }, null, 2)
 }
 
+export function formatUserMcpServerCursorJsonSnippet(
+  servers: readonly UserMcpServerConfig[],
+  server: UserMcpServerConfig,
+  options: { redactValues?: boolean } = {}
+): string {
+  const providerKey = findUserMcpServerProviderKey(
+    servers,
+    server,
+    isCursorExportableUserMcpServer
+  )
+  if (!providerKey) return ''
+  return JSON.stringify(
+    { mcpServers: { [providerKey]: userMcpServerCursorEntry(server, options) } },
+    null,
+    2
+  )
+}
+
+function formatUserMcpServerCodexTomlEntry(
+  server: UserMcpServerConfig,
+  providerKey: string,
+  options: { redactValues?: boolean } = {}
+): string {
+  const tableKey = formatTomlKeyComponent(providerKey)
+  const lines = [`[mcp_servers.${tableKey}]`]
+  if (server.transport === 'stdio') {
+    lines.push(`command = ${formatTomlBasicString(server.command?.trim() || '')}`)
+    if (server.args && server.args.length > 0) {
+      lines.push(`args = ${formatTomlStringArray(server.args)}`)
+    }
+    if (server.env && Object.keys(server.env).length > 0) {
+      lines.push(`env = ${formatTomlStringInlineTable(server.env, options)}`)
+    }
+  } else {
+    lines.push(`url = ${formatTomlBasicString(server.url?.trim() || '')}`)
+    if (server.bearerTokenEnvVar) {
+      lines.push(`bearer_token_env_var = ${formatTomlBasicString(server.bearerTokenEnvVar)}`)
+    }
+    if (server.headers && Object.keys(server.headers).length > 0) {
+      lines.push(`http_headers = ${formatTomlStringInlineTable(server.headers, options)}`)
+    }
+  }
+  return lines.join('\n')
+}
+
 export function formatUserMcpServersCodexToml(
   servers: readonly UserMcpServerConfig[],
   options: { redactValues?: boolean } = {}
@@ -1530,30 +1607,30 @@ export function formatUserMcpServersCodexToml(
   const entries: string[] = []
   for (const server of servers) {
     if (!isCodexExportableUserMcpServer(server)) continue
-    const tableKey = formatTomlKeyComponent(userMcpServerProviderKey(server, usedKeys))
-    const lines = [`[mcp_servers.${tableKey}]`]
-    if (server.transport === 'stdio') {
-      lines.push(`command = ${formatTomlBasicString(server.command?.trim() || '')}`)
-      if (server.args && server.args.length > 0) {
-        lines.push(`args = ${formatTomlStringArray(server.args)}`)
-      }
-      if (server.env && Object.keys(server.env).length > 0) {
-        lines.push(`env = ${formatTomlStringInlineTable(server.env, options)}`)
-      }
-    } else {
-      lines.push(`url = ${formatTomlBasicString(server.url?.trim() || '')}`)
-      if (server.bearerTokenEnvVar) {
-        lines.push(`bearer_token_env_var = ${formatTomlBasicString(server.bearerTokenEnvVar)}`)
-      }
-      if (server.headers && Object.keys(server.headers).length > 0) {
-        lines.push(`http_headers = ${formatTomlStringInlineTable(server.headers, options)}`)
-      }
-    }
-    entries.push(lines.join('\n'))
+    entries.push(
+      formatUserMcpServerCodexTomlEntry(
+        server,
+        userMcpServerProviderKey(server, usedKeys),
+        options
+      )
+    )
   }
   return entries.length > 0
     ? entries.join('\n\n')
     : '# No enabled Codex-compatible MCP servers.'
+}
+
+export function formatUserMcpServerCodexTomlSnippet(
+  servers: readonly UserMcpServerConfig[],
+  server: UserMcpServerConfig,
+  options: { redactValues?: boolean } = {}
+): string {
+  const providerKey = findUserMcpServerProviderKey(
+    servers,
+    server,
+    isCodexExportableUserMcpServer
+  )
+  return providerKey ? formatUserMcpServerCodexTomlEntry(server, providerKey, options) : ''
 }
 
 const AUDIT_ARTIFACT_PROVIDER_OPTIONS: Array<{
@@ -6728,9 +6805,13 @@ export function SettingsPanel({
                                     <strong>Claude JSON</strong>
                                     <pre>
                                       <code>
-                                        {formatUserMcpServersClaudeJson([server], {
-                                          redactValues: true
-                                        })}
+                                        {formatUserMcpServerClaudeJsonSnippet(
+                                          userMcpServers,
+                                          server,
+                                          {
+                                            redactValues: true
+                                          }
+                                        )}
                                       </code>
                                     </pre>
                                   </section>
@@ -6740,9 +6821,13 @@ export function SettingsPanel({
                                     <strong>Cursor mcp.json</strong>
                                     <pre>
                                       <code>
-                                        {formatUserMcpServersCursorJson([server], {
-                                          redactValues: true
-                                        })}
+                                        {formatUserMcpServerCursorJsonSnippet(
+                                          userMcpServers,
+                                          server,
+                                          {
+                                            redactValues: true
+                                          }
+                                        )}
                                       </code>
                                     </pre>
                                   </section>
@@ -6752,9 +6837,13 @@ export function SettingsPanel({
                                     <strong>Codex TOML</strong>
                                     <pre>
                                       <code>
-                                        {formatUserMcpServersCodexToml([server], {
-                                          redactValues: true
-                                        })}
+                                        {formatUserMcpServerCodexTomlSnippet(
+                                          userMcpServers,
+                                          server,
+                                          {
+                                            redactValues: true
+                                          }
+                                        )}
                                       </code>
                                     </pre>
                                   </section>
