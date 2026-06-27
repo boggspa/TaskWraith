@@ -1,7 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   STICK_ENGAGE_PX,
   STICK_DISENGAGE_PX,
+  captureChatScrollState,
+  normalizeChatScrollState,
+  restoreChatScrollAnchor,
+  restoreChatScrollState,
   shouldEngageAutoFollow,
   shouldDisengageAutoFollow,
   shouldTreatScrollAsUserScrollAway,
@@ -14,7 +18,222 @@ import {
   CODE_BLOCK_RESIZE_EVENT
 } from './TranscriptScroll'
 
+function fakeRect(top: number, bottom: number): DOMRect {
+  return { top, bottom } as DOMRect
+}
+
+function fakeMessageNode(input: {
+  id: string
+  top: number
+  bottom: number
+}): HTMLElement {
+  return {
+    getAttribute: (name: string) => (name === 'data-message-id' ? input.id : null),
+    getBoundingClientRect: () => fakeRect(input.top, input.bottom)
+  } as unknown as HTMLElement
+}
+
+function fakeScroller(input: {
+  scrollTop: number
+  scrollHeight: number
+  clientHeight: number
+  top?: number
+  bottom?: number
+  messages?: HTMLElement[]
+  queryTarget?: HTMLElement | null
+}): HTMLElement {
+  return {
+    scrollTop: input.scrollTop,
+    scrollHeight: input.scrollHeight,
+    clientHeight: input.clientHeight,
+    getBoundingClientRect: () => fakeRect(input.top ?? 0, input.bottom ?? input.clientHeight),
+    querySelectorAll: () => input.messages ?? [],
+    querySelector: () => input.queryTarget ?? null
+  } as unknown as HTMLElement
+}
+
 describe('TranscriptScroll', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  describe('captureChatScrollState', () => {
+    it('captures clamped scroll metrics and bottom state', () => {
+      const scroller = fakeScroller({
+        scrollTop: 980,
+        scrollHeight: 1200,
+        clientHeight: 200
+      })
+
+      expect(captureChatScrollState(scroller)).toEqual({
+        scrollTop: 980,
+        scrollHeight: 1200,
+        clientHeight: 200,
+        scrollRatio: 0.98,
+        atBottom: true
+      })
+    })
+
+    it('captures the first visible message anchor when scrolled away', () => {
+      const beforeViewport = fakeMessageNode({ id: 'old', top: -100, bottom: -1 })
+      const visible = fakeMessageNode({ id: 'target', top: 48, bottom: 120 })
+      const afterViewport = fakeMessageNode({ id: 'later', top: 260, bottom: 320 })
+      const scroller = fakeScroller({
+        scrollTop: 400,
+        scrollHeight: 1200,
+        clientHeight: 200,
+        top: 20,
+        bottom: 220,
+        messages: [beforeViewport, visible, afterViewport]
+      })
+
+      expect(captureChatScrollState(scroller)).toMatchObject({
+        scrollTop: 400,
+        atBottom: false,
+        anchorMessageId: 'target',
+        anchorOffset: 28
+      })
+    })
+  })
+
+  describe('normalizeChatScrollState', () => {
+    it('clamps persisted scroll values while preserving a valid anchor', () => {
+      expect(
+        normalizeChatScrollState({
+          scrollTop: -12,
+          scrollHeight: 500,
+          clientHeight: 180,
+          scrollRatio: 1.4,
+          atBottom: false,
+          anchorMessageId: 'm-1',
+          anchorOffset: '42'
+        })
+      ).toEqual({
+        scrollTop: 0,
+        scrollHeight: 500,
+        clientHeight: 180,
+        scrollRatio: 1,
+        atBottom: false,
+        anchorMessageId: 'm-1',
+        anchorOffset: 42
+      })
+    })
+
+    it('rejects malformed persisted scroll values', () => {
+      expect(normalizeChatScrollState(null)).toBeUndefined()
+      expect(normalizeChatScrollState({ scrollTop: 1 })).toBeUndefined()
+      expect(
+        normalizeChatScrollState({
+          scrollTop: 1,
+          scrollHeight: Number.NaN,
+          clientHeight: 100,
+          scrollRatio: 0.5
+        })
+      ).toBeUndefined()
+    })
+  })
+
+  describe('restoreChatScrollAnchor', () => {
+    it('restores by message anchor when the anchor is still present', () => {
+      const target = fakeMessageNode({ id: 'm-2', top: 70, bottom: 120 })
+      const scroller = fakeScroller({
+        scrollTop: 100,
+        scrollHeight: 800,
+        clientHeight: 200,
+        top: 10,
+        bottom: 210,
+        queryTarget: target
+      })
+
+      expect(
+        restoreChatScrollAnchor(scroller, {
+          scrollTop: 100,
+          scrollHeight: 800,
+          clientHeight: 200,
+          scrollRatio: 0.25,
+          atBottom: false,
+          anchorMessageId: 'm-2',
+          anchorOffset: 25
+        })
+      ).toBe(true)
+      expect(scroller.scrollTop).toBe(135)
+    })
+
+    it('reports false when no usable anchor exists', () => {
+      const scroller = fakeScroller({
+        scrollTop: 100,
+        scrollHeight: 800,
+        clientHeight: 200
+      })
+
+      expect(
+        restoreChatScrollAnchor(scroller, {
+          scrollTop: 100,
+          scrollHeight: 800,
+          clientHeight: 200,
+          scrollRatio: 0.25,
+          atBottom: false
+        })
+      ).toBe(false)
+      expect(scroller.scrollTop).toBe(100)
+    })
+  })
+
+  describe('restoreChatScrollState', () => {
+    it('applies bottom restore across the double-rAF settle path', () => {
+      const callbacks: FrameRequestCallback[] = []
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        callbacks.push(callback)
+        return callbacks.length
+      })
+      const scroller = fakeScroller({
+        scrollTop: 0,
+        scrollHeight: 900,
+        clientHeight: 300
+      })
+
+      restoreChatScrollState(scroller, {
+        scrollTop: 600,
+        scrollHeight: 900,
+        clientHeight: 300,
+        scrollRatio: 1,
+        atBottom: true
+      })
+
+      expect(scroller.scrollTop).toBe(0)
+      callbacks.shift()?.(0)
+      expect(scroller.scrollTop).toBe(900)
+      callbacks.shift()?.(16)
+      expect(scroller.scrollTop).toBe(900)
+    })
+
+    it('falls back to ratio restore when the anchor is missing', () => {
+      const callbacks: FrameRequestCallback[] = []
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        callbacks.push(callback)
+        return callbacks.length
+      })
+      const scroller = fakeScroller({
+        scrollTop: 0,
+        scrollHeight: 900,
+        clientHeight: 300
+      })
+
+      restoreChatScrollState(scroller, {
+        scrollTop: 120,
+        scrollHeight: 600,
+        clientHeight: 200,
+        scrollRatio: 0.5,
+        atBottom: false,
+        anchorMessageId: 'missing',
+        anchorOffset: 12
+      })
+
+      callbacks.shift()?.(0)
+      expect(scroller.scrollTop).toBe(300)
+    })
+  })
+
   describe('shouldEngageAutoFollow', () => {
     it('engages when essentially at the bottom', () => {
       expect(shouldEngageAutoFollow(0)).toBe(true)

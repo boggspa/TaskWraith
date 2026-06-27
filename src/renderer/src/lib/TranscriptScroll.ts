@@ -54,6 +54,149 @@ export const STICK_ENGAGE_PX = 2
  */
 export const STICK_DISENGAGE_PX = 4
 
+export interface ChatScrollState {
+  scrollTop: number
+  scrollHeight: number
+  clientHeight: number
+  scrollRatio: number
+  atBottom: boolean
+  anchorMessageId?: string
+  anchorOffset?: number
+}
+
+export function captureChatScrollState(
+  scroller: HTMLElement | null | undefined
+): ChatScrollState | undefined {
+  if (!scroller) return undefined
+  const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+  const scrollTop = Math.max(0, Math.min(maxScrollTop, scroller.scrollTop))
+  const distanceFromBottom = maxScrollTop - scrollTop
+  const state: ChatScrollState = {
+    scrollTop,
+    scrollHeight: scroller.scrollHeight,
+    clientHeight: scroller.clientHeight,
+    scrollRatio: maxScrollTop > 0 ? scrollTop / maxScrollTop : 1,
+    atBottom: distanceFromBottom <= 24
+  }
+  if (!state.atBottom && typeof scroller.getBoundingClientRect === 'function') {
+    const scrollerRect = scroller.getBoundingClientRect()
+    const messageNodes = scroller.querySelectorAll<HTMLElement>('[data-message-id]')
+    for (const node of messageNodes) {
+      const messageId = node.getAttribute('data-message-id')
+      if (!messageId) continue
+      const nodeRect = node.getBoundingClientRect()
+      if (nodeRect.bottom < scrollerRect.top) continue
+      if (nodeRect.top > scrollerRect.bottom) break
+      state.anchorMessageId = messageId
+      state.anchorOffset = nodeRect.top - scrollerRect.top
+      break
+    }
+  }
+  return state
+}
+
+function escapeDomAttributeValue(value: string): string {
+  return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(value)
+    : value.replace(/["\\]/g, '\\$&')
+}
+
+export function restoreChatScrollAnchor(
+  scroller: HTMLElement,
+  scrollState: ChatScrollState
+): boolean {
+  const anchorOffset = scrollState.anchorOffset
+  if (
+    !scrollState.anchorMessageId ||
+    typeof anchorOffset !== 'number' ||
+    !Number.isFinite(anchorOffset)
+  ) {
+    return false
+  }
+  const target = scroller.querySelector<HTMLElement>(
+    `[data-message-id="${escapeDomAttributeValue(scrollState.anchorMessageId)}"]`
+  )
+  if (!target || typeof scroller.getBoundingClientRect !== 'function') return false
+  const scrollerRect = scroller.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+  scroller.scrollTop = Math.max(
+    0,
+    Math.min(maxScrollTop, scroller.scrollTop + targetRect.top - scrollerRect.top - anchorOffset)
+  )
+  return true
+}
+
+export function normalizeChatScrollState(value: unknown): ChatScrollState | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const source = value as Record<string, unknown>
+  const scrollTop = Number(source.scrollTop)
+  const scrollHeight = Number(source.scrollHeight)
+  const clientHeight = Number(source.clientHeight)
+  const scrollRatio = Number(source.scrollRatio)
+  if (
+    !Number.isFinite(scrollTop) ||
+    !Number.isFinite(scrollHeight) ||
+    !Number.isFinite(clientHeight) ||
+    !Number.isFinite(scrollRatio)
+  ) {
+    return undefined
+  }
+  return {
+    scrollTop: Math.max(0, scrollTop),
+    scrollHeight: Math.max(0, scrollHeight),
+    clientHeight: Math.max(0, clientHeight),
+    scrollRatio: Math.max(0, Math.min(1, scrollRatio)),
+    atBottom: Boolean(source.atBottom),
+    ...(typeof source.anchorMessageId === 'string' && Number.isFinite(Number(source.anchorOffset))
+      ? {
+          anchorMessageId: source.anchorMessageId,
+          anchorOffset: Number(source.anchorOffset)
+        }
+      : {})
+  }
+}
+
+export function restoreChatScrollState(
+  scroller: HTMLElement | null | undefined,
+  scrollState: ChatScrollState | undefined
+): void {
+  if (!scroller || !scrollState) return
+  const apply = () => {
+    const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+    if (scrollState.atBottom) {
+      scroller.scrollTop = scroller.scrollHeight
+      return
+    }
+    if (restoreChatScrollAnchor(scroller, scrollState)) return
+    scroller.scrollTop = Math.max(0, Math.min(maxScrollTop, scrollState.scrollRatio * maxScrollTop))
+  }
+  requestAnimationFrame(() => {
+    apply()
+    requestAnimationFrame(apply)
+  })
+}
+
+export function restoreChatScrollStateWhenReady(
+  getScroller: () => HTMLElement | null | undefined,
+  scrollState: ChatScrollState | undefined,
+  attempts = 8
+): void {
+  if (!scrollState) return
+  let remainingAttempts = attempts
+  const tryRestore = () => {
+    const scroller = getScroller()
+    if (scroller) {
+      restoreChatScrollState(scroller, scrollState)
+      return
+    }
+    if (remainingAttempts <= 0) return
+    remainingAttempts -= 1
+    requestAnimationFrame(tryRestore)
+  }
+  tryRestore()
+}
+
 /**
  * Decide whether the transcript is close enough to the bottom that a
  * scroll event should re-engage auto-follow.

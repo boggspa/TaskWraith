@@ -431,16 +431,16 @@ import {
   type SteerState
 } from './lib/steerState'
 import {
+  captureChatScrollState,
+  normalizeChatScrollState,
+  restoreChatScrollStateWhenReady,
   shouldEngageAutoFollow,
   shouldDisengageAutoFollow,
   shouldTreatScrollAsUserScrollAway,
   shouldRepinAfterFrame,
-  shouldRepinAfterCodeBlockResize,
-  shouldRepinAfterTranscriptResize,
-  shouldSnapAfterChatSwitch,
-  shouldShowJumpToLatestPill,
-  CODE_BLOCK_RESIZE_EVENT
+  type ChatScrollState
 } from './lib/TranscriptScroll'
+import { useTranscriptScrollState } from './app/state/useTranscriptScrollState'
 import {
   composerAboveRowClearancePx,
   countComposerAboveRowStrips
@@ -651,15 +651,6 @@ type SideChatSeedContext = {
   originMessageId?: string
   originRunId?: string
   transcriptVisibility?: NonNullable<ChatRecord['sideChatContext']>['transcriptVisibility']
-}
-type ChatScrollState = {
-  scrollTop: number
-  scrollHeight: number
-  clientHeight: number
-  scrollRatio: number
-  atBottom: boolean
-  anchorMessageId?: string
-  anchorOffset?: number
 }
 type ChatPopoutHandoffState = {
   draft?: string
@@ -906,134 +897,6 @@ function permissionPresetToApprovalMode(preset?: string): string {
   if (preset === 'read_only') return 'plan'
   if (preset === 'workspace_write' || preset === 'full_access') return 'auto_edit'
   return 'default'
-}
-
-function captureChatScrollState(scroller: HTMLElement | null | undefined): ChatScrollState | undefined {
-  if (!scroller) return undefined
-  const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-  const scrollTop = Math.max(0, Math.min(maxScrollTop, scroller.scrollTop))
-  const distanceFromBottom = maxScrollTop - scrollTop
-  const state: ChatScrollState = {
-    scrollTop,
-    scrollHeight: scroller.scrollHeight,
-    clientHeight: scroller.clientHeight,
-    scrollRatio: maxScrollTop > 0 ? scrollTop / maxScrollTop : 1,
-    atBottom: distanceFromBottom <= 24
-  }
-  if (!state.atBottom && typeof scroller.getBoundingClientRect === 'function') {
-    const scrollerRect = scroller.getBoundingClientRect()
-    const messageNodes = scroller.querySelectorAll<HTMLElement>('[data-message-id]')
-    for (const node of messageNodes) {
-      const messageId = node.getAttribute('data-message-id')
-      if (!messageId) continue
-      const nodeRect = node.getBoundingClientRect()
-      if (nodeRect.bottom < scrollerRect.top) continue
-      if (nodeRect.top > scrollerRect.bottom) break
-      state.anchorMessageId = messageId
-      state.anchorOffset = nodeRect.top - scrollerRect.top
-      break
-    }
-  }
-  return state
-}
-
-function escapeDomAttributeValue(value: string): string {
-  return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
-    ? CSS.escape(value)
-    : value.replace(/["\\]/g, '\\$&')
-}
-
-function restoreChatScrollAnchor(scroller: HTMLElement, scrollState: ChatScrollState): boolean {
-  const anchorOffset = scrollState.anchorOffset
-  if (
-    !scrollState.anchorMessageId ||
-    typeof anchorOffset !== 'number' ||
-    !Number.isFinite(anchorOffset)
-  ) {
-    return false
-  }
-  const target = scroller.querySelector<HTMLElement>(
-    `[data-message-id="${escapeDomAttributeValue(scrollState.anchorMessageId)}"]`
-  )
-  if (!target || typeof scroller.getBoundingClientRect !== 'function') return false
-  const scrollerRect = scroller.getBoundingClientRect()
-  const targetRect = target.getBoundingClientRect()
-  const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-  scroller.scrollTop = Math.max(
-    0,
-    Math.min(maxScrollTop, scroller.scrollTop + targetRect.top - scrollerRect.top - anchorOffset)
-  )
-  return true
-}
-
-function normalizeChatScrollState(value: unknown): ChatScrollState | undefined {
-  if (!value || typeof value !== 'object') return undefined
-  const source = value as Record<string, unknown>
-  const scrollTop = Number(source.scrollTop)
-  const scrollHeight = Number(source.scrollHeight)
-  const clientHeight = Number(source.clientHeight)
-  const scrollRatio = Number(source.scrollRatio)
-  if (
-    !Number.isFinite(scrollTop) ||
-    !Number.isFinite(scrollHeight) ||
-    !Number.isFinite(clientHeight) ||
-    !Number.isFinite(scrollRatio)
-  ) {
-    return undefined
-  }
-  return {
-    scrollTop: Math.max(0, scrollTop),
-    scrollHeight: Math.max(0, scrollHeight),
-    clientHeight: Math.max(0, clientHeight),
-    scrollRatio: Math.max(0, Math.min(1, scrollRatio)),
-    atBottom: Boolean(source.atBottom),
-    ...(typeof source.anchorMessageId === 'string' && Number.isFinite(Number(source.anchorOffset))
-      ? {
-          anchorMessageId: source.anchorMessageId,
-          anchorOffset: Number(source.anchorOffset)
-        }
-      : {})
-  }
-}
-
-function restoreChatScrollState(
-  scroller: HTMLElement | null | undefined,
-  scrollState: ChatScrollState | undefined
-): void {
-  if (!scroller || !scrollState) return
-  const apply = () => {
-    const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-    if (scrollState.atBottom) {
-      scroller.scrollTop = scroller.scrollHeight
-      return
-    }
-    if (restoreChatScrollAnchor(scroller, scrollState)) return
-    scroller.scrollTop = Math.max(0, Math.min(maxScrollTop, scrollState.scrollRatio * maxScrollTop))
-  }
-  requestAnimationFrame(() => {
-    apply()
-    requestAnimationFrame(apply)
-  })
-}
-
-function restoreChatScrollStateWhenReady(
-  getScroller: () => HTMLElement | null | undefined,
-  scrollState: ChatScrollState | undefined,
-  attempts = 8
-): void {
-  if (!scrollState) return
-  let remainingAttempts = attempts
-  const tryRestore = () => {
-    const scroller = getScroller()
-    if (scroller) {
-      restoreChatScrollState(scroller, scrollState)
-      return
-    }
-    if (remainingAttempts <= 0) return
-    remainingAttempts -= 1
-    requestAnimationFrame(tryRestore)
-  }
-  tryRestore()
 }
 
 function scheduleAfterPaint(callback: () => void, timeout = 700): () => void {
@@ -2363,7 +2226,24 @@ function App(): React.JSX.Element {
   const geminiTerminalEndRef = useRef<HTMLDivElement>(null)
   const chatSplitRegionRef = useRef<HTMLDivElement>(null)
   const appTranscriptRef = useRef<HTMLDivElement>(null)
-  const transcriptScrollRef = useRef<HTMLDivElement>(null)
+  const {
+    transcriptScrollRef,
+    transcriptContentRef,
+    autoFollowRef,
+    unreadFromBottomCount,
+    showJumpToLatestPill,
+    handleJumpToLatest,
+    beginManualTranscriptJump: beginManualMainTranscriptJump,
+    prepareMessageJump: prepareMainTranscriptMessageJump,
+    clearPendingMessageJump: clearPendingMainTranscriptMessageJump,
+    captureScrollState: captureMainTranscriptScrollState,
+    restoreScrollStateWhenReady: restoreMainTranscriptScrollStateWhenReady,
+    preserveScrollWhile: preserveMainTranscriptScrollWhile
+  } = useTranscriptScrollState({
+    chatId: currentChat?.appChatId ?? null,
+    messages: currentChat?.messages,
+    runCompleteNotice
+  })
   const sideTranscriptScrollRef = useRef<HTMLDivElement>(null)
   const sideTranscriptContentRef = useRef<HTMLDivElement>(null)
   const sideLogsEndRef = useRef<HTMLDivElement>(null)
@@ -2371,23 +2251,6 @@ function App(): React.JSX.Element {
   const sideComposerContextMenu = useComposerTextareaContextMenu()
   const sideChatMenuRef = useRef<HTMLDivElement | null>(null)
   const popoutMenuRef = useRef<HTMLDivElement | null>(null)
-  // Ref pinned to the SINGLE inner content div inside `transcriptScrollRef`
-  // (rendered as `.transcript-inner` in `TranscriptPanel`). A single
-  // `ResizeObserver` watches this node and dispatches a coalesced rAF
-  // re-pin whenever it grows or shrinks — catching ALL late-mount
-  // layout sources (CodeMirror code blocks, ActivityStack rows
-  // revealing tool-result output, shell-command stdout that measures
-  // asynchronously, future content types). See the
-  // `shouldRepinAfterTranscriptResize` doc comment for why this does
-  // NOT reintroduce the historical RO feedback loop.
-  const transcriptContentRef = useRef<HTMLDivElement>(null)
-  // autoFollowRef tracks whether the transcript should auto-stick to the bottom
-  // as new content streams in. The user "owns" scroll: once they scroll away
-  // from the bottom auto-follow disengages until they scroll back near the
-  // bottom. Thresholds and the post-frame re-pin policy live in
-  // `lib/TranscriptScroll` so they can be unit-tested. Stored in a ref to
-  // avoid re-renders.
-  const autoFollowRef = useRef(true)
   const sideAutoFollowRef = useRef(true)
   const lastSideTranscriptScrollTopRef = useRef(0)
   // Set true immediately before the side-chat panel's programmatic snap so its
@@ -2395,111 +2258,17 @@ function App(): React.JSX.Element {
   // returning to the live edge and re-engage follow. Mirrors the main
   // transcript's `programmaticScrollRef`.
   const sideProgrammaticScrollRef = useRef(false)
-  // Tracks whether the user has initiated a real upward scroll (wheel,
-  // touchmove, page-up/arrow-up) since the last paint. The post-frame
-  // re-pin in the messages-update layoutEffect is suppressed when this is
-  // true, so a deliberate scroll-away is never fought by the rAF callback.
-  // Cleared at the start of each layoutEffect pass.
-  const userScrolledAwayInFrameRef = useRef(false)
-  // Holds the rAF id for the pending post-frame re-pin so consecutive
-  // streaming updates can coalesce into a single re-pin write per frame.
-  const repinRafIdRef = useRef<number | null>(null)
-  const lastTranscriptScrollTopRef = useRef(0)
-  // Set true immediately before each programmatic snap-to-bottom write so
-  // the auto-follow `evaluate` listener can distinguish the app's OWN scroll
-  // from a genuine user scroll. Without it, a snap landed the scroll at the
-  // bottom, `evaluate` read distance≈0 and RE-ENGAGED follow — clobbering a
-  // deliberate scroll-up. That self-sustaining loop is the force-scroll-override
-  // bug. Mirrors `anchorWriteRef` in TranscriptPanel's virtual-window listener.
-  const programmaticScrollRef = useRef(false)
-  // "↓ N new messages" jump-to-latest pill state (Slack/Discord/YouTube
-  // pattern). After the 1.0.4 race-window fix the user can scroll up
-  // freely without auto-scroll fighting them — but they had no visible
-  // signal that messages were still arriving below. The pill makes that
-  // *absence* of auto-scroll visible.
-  //
-  // Two-piece state by design: a React state for the rendered count
-  // (drives the pill text + visibility) plus a paired ref for reads
-  // inside layout effects that must observe the latest value without
-  // waiting for a re-render. The ref shadows the state on every write
-  // so layout-effect increments and scroll-listener resets stay in
-  // lockstep with the rendered count.
-  const [unreadFromBottomCount, setUnreadFromBottomCount] = useState(0)
-  const unreadFromBottomCountRef = useRef(0)
-  // Per-chat baseline for computing the new-message delta on each
-  // messages-update pass. Keyed by chatId so a chat switch is
-  // self-correcting: when the id flips, the layout effect treats the
-  // current length as the new baseline rather than counting the full
-  // length of the newly-active chat as "unread". The chat-switch
-  // useEffect at the bottom of this scroll block additionally resets
-  // the count to zero so the pill never carries over across threads.
-  const previousMessagesCountRef = useRef<{ chatId: string | null; count: number }>({
-    chatId: null,
-    count: 0
-  })
-  const pendingTranscriptJumpChatIdRef = useRef<string | null>(null)
-  // Click/keypress handler for the jump-to-latest pill. Re-engages
-  // auto-follow eagerly (so subsequent streaming ticks re-pin without
-  // waiting for the smooth scroll to land), clears the unread count
-  // immediately (so the pill fades as the scroll begins rather than
-  // lingering through the smooth animation), and kicks a smooth
-  // scroll-to-bottom on the transcript scroller. Stable identity via
-  // useCallback so it can be passed to scroller-scoped event listeners
-  // through a ref without forcing those listeners to re-bind.
-  const handleJumpToLatest = useCallback(() => {
-    const scroller = transcriptScrollRef.current
-    if (!scroller) return
-    autoFollowRef.current = true
-    userScrolledAwayInFrameRef.current = false
-    if (unreadFromBottomCountRef.current !== 0) {
-      unreadFromBottomCountRef.current = 0
-      setUnreadFromBottomCount(0)
-    }
-    scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
-  }, [])
-  // Ref shadow of `handleJumpToLatest` so the scroller's keydown
-  // listener (registered once with an empty-deps useEffect) can
-  // invoke the latest callback without re-binding. The callback is
-  // already useCallback'd with [] so this is belt-and-braces — the
-  // ref also gives us a single read site if we later want to
-  // hot-swap the implementation under test.
-  const handleJumpToLatestRef = useRef(handleJumpToLatest)
-  handleJumpToLatestRef.current = handleJumpToLatest
   const setChatMediaPanelOpenPreservingTranscript = useCallback(
     (next: boolean | ((open: boolean) => boolean)) => {
-      const scrollState = captureChatScrollState(transcriptScrollRef.current)
-      setIsChatMediaPanelOpen(next)
-      restoreChatScrollStateWhenReady(() => transcriptScrollRef.current, scrollState)
+      preserveMainTranscriptScrollWhile(() => setIsChatMediaPanelOpen(next))
     },
-    []
+    [preserveMainTranscriptScrollWhile]
   )
-  // Perform an internal snap-to-bottom that the auto-follow `evaluate`
-  // listener will recognise as the app's own write (via programmaticScrollRef)
-  // and therefore NOT mistake for the user arriving at the live edge. Every
-  // internal snap path — messages-update sync write + its rAF re-pin, the
-  // code-block and content-resize re-pins, and the chat-switch landing — routes
-  // through here so none can re-engage follow against a deliberate scroll-up.
-  // (The jump-to-latest pill at `handleJumpToLatest` is deliberately NOT routed
-  // through this: it is user-initiated and re-arms follow on purpose.)
-  const snapScrollToBottom = useCallback((node: HTMLElement) => {
-    programmaticScrollRef.current = true
-    node.scrollTop = node.scrollHeight
-  }, [])
-  const beginManualMainTranscriptJump = useCallback(() => {
-    autoFollowRef.current = false
-    userScrolledAwayInFrameRef.current = true
-    programmaticScrollRef.current = true
-    pendingTranscriptJumpChatIdRef.current = null
-    if (repinRafIdRef.current !== null) {
-      cancelAnimationFrame(repinRafIdRef.current)
-      repinRafIdRef.current = null
-    }
-  }, [])
   const beginManualSideTranscriptJump = useCallback(() => {
     sideAutoFollowRef.current = false
     sideProgrammaticScrollRef.current = true
-    pendingTranscriptJumpChatIdRef.current = null
-  }, [])
+    clearPendingMainTranscriptMessageJump()
+  }, [clearPendingMainTranscriptMessageJump])
   // Raw Events panel auto-follow mirror of the transcript pair above.
   // The Inspector's Raw Events tab streams every run event as it arrives;
   // an earlier implementation unconditionally scrolled the panel to the
@@ -4689,8 +4458,9 @@ function App(): React.JSX.Element {
         hydrateThreadRawLogsFromEvents(popoutChat.appChatId)
         syncThinkingForChat(popoutChat)
         if (popoutHandoff?.scrollState) {
-          autoFollowRef.current = popoutHandoff.scrollState.atBottom
-          restoreChatScrollStateWhenReady(() => transcriptScrollRef.current, popoutHandoff.scrollState)
+          restoreMainTranscriptScrollStateWhenReady(popoutHandoff.scrollState, {
+            syncAutoFollow: true
+          })
         }
         setInitialRouteReady(true)
         return
@@ -4735,8 +4505,9 @@ function App(): React.JSX.Element {
         setChatPromptDraft(chatId, popoutHandoff.draft)
       }
       if (popoutHandoff?.scrollState) {
-        autoFollowRef.current = popoutHandoff.scrollState.atBottom
-        restoreChatScrollStateWhenReady(() => transcriptScrollRef.current, popoutHandoff.scrollState)
+        restoreMainTranscriptScrollStateWhenReady(popoutHandoff.scrollState, {
+          syncAutoFollow: true
+        })
       }
     }
     const handleStorage = (event: StorageEvent) => {
@@ -4746,7 +4517,12 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('storage', handleStorage)
     return () => window.removeEventListener('storage', handleStorage)
-  }, [currentChat?.appChatId, isChatPopoutWindow, setChatPromptDraft])
+  }, [
+    currentChat?.appChatId,
+    isChatPopoutWindow,
+    restoreMainTranscriptScrollStateWhenReady,
+    setChatPromptDraft
+  ])
 
   const handleSettingsChange = (next: SettingsPanelUpdate) => {
     const nextChatContextTurns =
@@ -7212,514 +6988,7 @@ function App(): React.JSX.Element {
     runQueueJobs.length
   ])
 
-  // ----- Transcript auto-follow scrolling -------------------------------
-  // Pins the transcript to the bottom while messages stream in, *unless*
-  // the user has scrolled up to read older content. Replaced an earlier
-  // ResizeObserver-based implementation that introduced a feedback loop:
-  // the composer-area ResizeObserver wrote a CSS variable that drove the
-  // transcript's margin-bottom; observing the transcript content fed
-  // every composer height tick back into a scrollTop write, which
-  // re-laid-out the transcript, which fired the composer observer again.
-  // That loop manifested as freezes-on-typing (severe enough to disconnect
-  // bluetooth keyboards) and the transcript appearing to slide under the
-  // composer.
-  //
-  // Current design — no observers on the scroll container itself:
-  //  1. Scroll listener flips autoFollowRef based on distance-from-bottom,
-  //     with hysteresis (engage / disengage thresholds live in
-  //     `lib/TranscriptScroll`) and rAF throttling.
-  //  2. Wheel/touch/keyboard listeners record real user-initiated
-  //     scroll-aways into `userScrolledAwayInFrameRef`. The post-frame
-  //     re-pin honours this flag so a deliberate scroll-up is never
-  //     fought by the rAF callback.
-  //  3. Layout-effect on `currentChat?.messages` snaps to bottom when new
-  //     messages arrive, then schedules one extra rAF re-pin so any
-  //     late-mount layout shift (CodeMirror chat code blocks,
-  //     ActivityStack collapsing on tool-result arrival — frequent in
-  //     Kimi runs) cannot leave the user stranded above the new bottom.
-  //  4. Chat-switch effect resets autoFollow + snaps to bottom on the new
-  //     thread's last message.
-  //  5. The composer-area observer still writes its measured height, but
-  //     the transcript consumes it as bottom padding / scroll-padding so
-  //     the scroll viewport can extend behind the overlay.
-  useEffect(() => {
-    const scroller = transcriptScrollRef.current
-    if (!scroller) return
-
-    // rAF-coalesce the scroll evaluation. A programmatic autoscroll write
-    // dispatches a scroll event, and `evaluate` READS scrollHeight/scrollTop/
-    // clientHeight — so firing it on every raw scroll event interleaves a
-    // forced layout read with each streamed delta's write (layout thrash).
-    // Collapsing to at most one evaluation per frame mirrors the rAF-throttled
-    // Raw-Events twin below; the synchronous wheel/touch/key intent listeners
-    // still capture scroll-away, so a one-frame re-engage delay is safe.
-    let rafId: number | null = null
-    const evaluate = () => {
-      rafId = null
-      // A programmatic snap-to-bottom (any internal re-pin / chat-switch /
-      // messages-update write, all routed through `snapScrollToBottom`) also
-      // dispatches a scroll event. Do NOT let our own write re-interpret the
-      // resulting bottom position as "the user returned to the live edge" and
-      // re-engage follow — that is the loop that overrode a deliberate
-      // scroll-up. Consume the one-shot flag and skip this evaluation; a
-      // genuine user scroll on a later frame carries no flag and is handled
-      // normally. (Disengage is intentionally skipped here too: the issuing
-      // code already knows the follow intent of its own write.)
-      if (programmaticScrollRef.current) {
-        programmaticScrollRef.current = false
-        lastTranscriptScrollTopRef.current = scroller.scrollTop
-        return
-      }
-      const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
-      // Only the actual bottom opts back into auto-follow. This keeps
-      // transcript scrolling fully user-owned until they deliberately
-      // return to the live edge.
-      if (shouldEngageAutoFollow(distanceFromBottom)) {
-        autoFollowRef.current = true
-        // Once the user lands at the bottom again we forget any
-        // previously-recorded scroll-away so the next stream tick can
-        // re-pin without delay.
-        userScrolledAwayInFrameRef.current = false
-        // Returning to the bottom dismisses the "↓ N new messages"
-        // pill — the user has visually caught up, so there is
-        // nothing left to advertise. Mirror the state write onto
-        // the ref so the layout effect's next pass sees a zero
-        // baseline immediately, not on the following frame.
-        if (unreadFromBottomCountRef.current !== 0) {
-          unreadFromBottomCountRef.current = 0
-          setUnreadFromBottomCount(0)
-        }
-      } else if (shouldDisengageAutoFollow(distanceFromBottom)) {
-        autoFollowRef.current = false
-      }
-      lastTranscriptScrollTopRef.current = scroller.scrollTop
-    }
-    const onScroll = () => {
-      if (
-        shouldTreatScrollAsUserScrollAway({
-          previousScrollTop: lastTranscriptScrollTopRef.current,
-          nextScrollTop: scroller.scrollTop,
-          isProgrammatic: programmaticScrollRef.current
-        })
-      ) {
-        userScrolledAwayInFrameRef.current = true
-        autoFollowRef.current = false
-      }
-      if (rafId !== null) return
-      rafId = requestAnimationFrame(evaluate)
-    }
-    lastTranscriptScrollTopRef.current = scroller.scrollTop
-    scroller.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      scroller.removeEventListener('scroll', onScroll)
-      if (rafId !== null) cancelAnimationFrame(rafId)
-    }
-    // Re-bind on scroller remount. TranscriptPanel is keyed by appChatId
-    // (see its render site) and replaces the scroll node on chat-open; with an
-    // empty dep array this listener stayed orphaned on the initial 'no-chat'
-    // node, so the only auto-follow *disengage* write (above) never ran on the
-    // live scroller — auto-follow could never be turned off by a user scroll-up.
-  }, [currentChat?.appChatId])
-
-  // Detect _real_ user-initiated upward scroll attempts. The plain
-  // `scroll` event fires for both user input and programmatic writes
-  // (including the browser clamping `scrollTop` when content shrinks),
-  // so it cannot by itself distinguish "user wants to read older
-  // content" from "layout just shifted underneath them". The wheel +
-  // touch + keyboard listeners below capture the user-intent signal
-  // and feed it into `userScrolledAwayInFrameRef`, which gates the
-  // post-frame re-pin.
-  useEffect(() => {
-    const scroller = transcriptScrollRef.current
-    if (!scroller) return
-
-    const handleUpwardIntent = (deltaY: number) => {
-      // Only treat _upward_ movement as a scroll-away signal: scrolling
-      // further toward the bottom should not flip the flag (we'd just
-      // immediately re-engage on the next scroll event anyway).
-      if (deltaY >= 0) return
-      // Only react when there's actually somewhere up to scroll. This
-      // catches the race before the browser emits the corresponding
-      // scroll event, including the common "wheel up from bottom"
-      // case where distance-from-bottom is still zero at wheel time.
-      if (scroller.scrollTop > 0) {
-        userScrolledAwayInFrameRef.current = true
-        autoFollowRef.current = false
-      }
-    }
-
-    const onWheel = (event: WheelEvent) => handleUpwardIntent(event.deltaY)
-
-    let lastTouchY: number | null = null
-    const onTouchStart = (event: TouchEvent) => {
-      lastTouchY = event.touches[0]?.clientY ?? null
-    }
-    const onTouchMove = (event: TouchEvent) => {
-      const currentY = event.touches[0]?.clientY ?? null
-      if (currentY === null || lastTouchY === null) return
-      // Touch dragging _down_ scrolls _up_ — invert the delta to match
-      // wheel semantics (negative = upward intent).
-      handleUpwardIntent(lastTouchY - currentY)
-      lastTouchY = currentY
-    }
-    const onTouchEnd = () => {
-      lastTouchY = null
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'PageUp' || event.key === 'ArrowUp' || event.key === 'Home') {
-        handleUpwardIntent(-1)
-        return
-      }
-      // `End` mirrors the jump-to-latest pill: smooth-scroll to the
-      // bottom and clear the unread counter. Fires only when focus is
-      // within the transcript scroller (the listener is scroller-
-      // scoped). When focus is on an editable element inside the
-      // transcript (an inline chat-title rename, a textarea inside a
-      // tool card, a contenteditable code block) End is line-end
-      // navigation — let the native behaviour through and skip our
-      // jump-to-bottom. Otherwise the user can never reach the end
-      // of a line they're editing.
-      if (event.key === 'End') {
-        const focused = event.target as Element | null
-        const isEditable =
-          focused instanceof HTMLInputElement ||
-          focused instanceof HTMLTextAreaElement ||
-          (focused instanceof HTMLElement && focused.isContentEditable)
-        if (!isEditable) {
-          event.preventDefault()
-          handleJumpToLatestRef.current()
-        }
-      }
-    }
-
-    scroller.addEventListener('wheel', onWheel, { passive: true })
-    scroller.addEventListener('touchstart', onTouchStart, { passive: true })
-    scroller.addEventListener('touchmove', onTouchMove, { passive: true })
-    scroller.addEventListener('touchend', onTouchEnd, { passive: true })
-    scroller.addEventListener('keydown', onKeyDown)
-
-    return () => {
-      scroller.removeEventListener('wheel', onWheel)
-      scroller.removeEventListener('touchstart', onTouchStart)
-      scroller.removeEventListener('touchmove', onTouchMove)
-      scroller.removeEventListener('touchend', onTouchEnd)
-      scroller.removeEventListener('keydown', onKeyDown)
-    }
-    // Re-bind on scroller remount (keyed by appChatId) — see the scroll-evaluate
-    // effect above. These wheel/touch/key listeners hold the explicit disengage.
-  }, [currentChat?.appChatId])
-
-  // Listen for `CODE_BLOCK_RESIZE_EVENT` from individual
-  // `HighlightedCodeBlock` instances. CodeMirror measures fenced code
-  // asynchronously after mount: the block paints small, then resizes
-  // once the editor view computes its real layout. In long Kimi
-  // transcripts (lots of fenced code in tool output) that late growth
-  // happens _after_ the messages-update layoutEffect has already
-  // snapped to bottom, leaving the user stranded above the new bottom
-  // ("view scrolls upward each time a new message arrives"). The
-  // bubbling custom event arrives at this scroller and we run the
-  // standard rAF re-pin under the same guards as the messages-update
-  // path — never fighting a deliberate scroll-away.
-  //
-  // The observers live on individual code-block elements (see
-  // `HighlightedCodeBlock`), NOT on the scroll container. The
-  // historical ResizeObserver feedback loop (documented in App.tsx
-  // and `TranscriptScroll.ts`) observed the whole transcript, where
-  // every scrollTop write fed back into more reflows. A scoped
-  // observer on a code block's own bounds is not affected by ancestor
-  // `scrollTop` writes, so this path cannot loop.
-  useEffect(() => {
-    const scroller = transcriptScrollRef.current
-    if (!scroller) return
-
-    let rafId: number | null = null
-    const onCodeBlockResize = () => {
-      // Coalesce bursts of resize events (multiple code blocks in one
-      // assistant message all measuring on the same frame) into a
-      // single rAF re-pin.
-      if (rafId !== null) return
-      rafId = requestAnimationFrame(() => {
-        rafId = null
-        const node = transcriptScrollRef.current
-        if (!node) return
-        if (
-          !shouldRepinAfterCodeBlockResize({
-            autoFollow: autoFollowRef.current,
-            userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current
-          })
-        ) {
-          return
-        }
-        snapScrollToBottom(node)
-      })
-    }
-
-    scroller.addEventListener(CODE_BLOCK_RESIZE_EVENT, onCodeBlockResize)
-    return () => {
-      scroller.removeEventListener(CODE_BLOCK_RESIZE_EVENT, onCodeBlockResize)
-      if (rafId !== null) cancelAnimationFrame(rafId)
-    }
-    // Re-bind on scroller remount (keyed by appChatId) — see the scroll-evaluate
-    // effect above. Otherwise code-block re-pins target the dead 'no-chat' node.
-  }, [currentChat?.appChatId])
-
-  // Generalised re-pin: a SINGLE `ResizeObserver` on the inner transcript
-  // content div (`.transcript-inner`) catches every source of late layout
-  // growth in one place, not just CodeMirror code blocks.
-  //
-  // Follow-up to a12f913. That fix observed individual
-  // `HighlightedCodeBlock` instances and dispatched a custom event so
-  // the messages-update rAF re-pin could re-anchor the bottom after
-  // CodeMirror measured asynchronously. It worked for Kimi transcripts
-  // (heavy with fenced code blocks) but did NOT cover Codex chats heavy
-  // with `Ran /bin/zsh -lc '...'` activity rows — those bounced the user
-  // upward when:
-  //   * a shell-command activity row mounted with multi-line stdout
-  //     that measured asynchronously,
-  //   * a pending tool row transitioned to completed and revealed
-  //     previously-hidden output,
-  //   * new activity rows were appended during streaming faster than
-  //     the rAF re-pin coalesced.
-  //
-  // A content-level observer catches all of the above plus any future
-  // late-mount source (markdown tables expanding to fit, images
-  // loading, future activity types) without per-component plumbing.
-  //
-  // Why this does NOT reintroduce the documented ResizeObserver
-  // feedback loop:
-  //   * The historical bug observed the SCROLL CONTAINER itself — a
-  //     `scrollTop` write caused a reflow that re-fired the observer
-  //     and chained back into more scroll writes.
-  //   * Here we observe the INNER CONTENT div. Its border-box /
-  //     content-box dimensions are determined by its children's
-  //     intrinsic sizes, NOT by the ancestor scroller's `scrollTop`.
-  //     Writing `scrollTop` on the scroller cannot change the content
-  //     div's measured rect.
-  //   * The re-pin is gated on `shouldRepinAfterTranscriptResize`
-  //     which is identical to `shouldRepinAfterFrame` — same guards
-  //     as every other re-pin path (autoFollow engaged AND no user
-  //     scroll-away in this frame). Even in a pathological spurious
-  //     fire, `scrollTop = scrollHeight` is idempotent at the bottom.
-  //   * The per-`HighlightedCodeBlock` observer added in a12f913 is
-  //     intentionally left in place. The two paths are redundant but
-  //     not contradictory — both ultimately schedule the same rAF
-  //     re-pin and the rafId coalescing inside each handler prevents
-  //     multiple writes in one frame.
-  useEffect(() => {
-    const scroller = transcriptScrollRef.current
-    const content = transcriptContentRef.current
-    if (!scroller || !content) return
-    if (typeof ResizeObserver === 'undefined') return
-
-    let rafId: number | null = null
-    const observer = new ResizeObserver(() => {
-      // Coalesce bursts of resize entries from a single batched
-      // callback (multiple children resizing in the same frame) into
-      // a single rAF re-pin.
-      if (rafId !== null) return
-      rafId = requestAnimationFrame(() => {
-        rafId = null
-        const node = transcriptScrollRef.current
-        if (!node) return
-        if (
-          !shouldRepinAfterTranscriptResize({
-            autoFollow: autoFollowRef.current,
-            userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current
-          })
-        ) {
-          return
-        }
-        snapScrollToBottom(node)
-      })
-    })
-
-    observer.observe(content)
-    return () => {
-      observer.disconnect()
-      if (rafId !== null) cancelAnimationFrame(rafId)
-    }
-    // Re-observe on scroller remount (keyed by appChatId) — see the
-    // scroll-evaluate effect above. Otherwise the ResizeObserver watches the
-    // dead 'no-chat' content node and never re-measures the live transcript.
-  }, [currentChat?.appChatId])
-
-  // Stick to bottom when the messages array reference changes. Streaming
-  // updates produce a fresh `currentChat.messages` array via immutable
-  // updates, so this fires once per render that affects messages — never
-  // mid-layout, never inside a ResizeObserver callback.
-  //
-  // After the synchronous scrollTop write we schedule exactly one rAF
-  // re-pin. This is the fix for the "Kimi transcript snaps upward" bug:
-  // the synchronous write captures the post-render `scrollHeight` _before_
-  // child useEffects fire (e.g. `ActivityStack`'s tool-status auto-collapse,
-  // CodeMirror measuring fenced code blocks). Those side effects mutate
-  // `scrollHeight` in the next frame; without a follow-up write the
-  // browser clamps `scrollTop` to the now-smaller maximum and the visible
-  // content shifts upward. The rAF callback re-asserts the snap once those
-  // layout shifts have settled. The `userScrolledAwayInFrameRef` guard
-  // ensures we never fight a deliberate user scroll-up that happened
-  // between the layout effect and the next animation frame.
-  useLayoutEffect(() => {
-    // Compute the new-message delta for the "↓ N new messages" pill
-    // BEFORE any early returns. The pill exists precisely because the
-    // bail-out paths below leave the user stranded above silent new
-    // content — incrementing here is the only place we can observe
-    // "messages arrived AND we chose not to snap to them".
-    //
-    // Why the delta is per-chat: chat switches change `currentChat?.
-    // messages` to a completely different array. Without keying the
-    // baseline on chatId, switching from a 200-message chat to a
-    // 2-message chat would compute a delta of -198 (clamped to 0)
-    // and switching the other way would falsely flag 198 new
-    // messages on a thread the user never scrolled away from.
-    const currentChatIdForCount = currentChat?.appChatId ?? null
-    const currentMessageCount = currentChat?.messages?.length ?? 0
-    const sameChatAsBaseline = previousMessagesCountRef.current.chatId === currentChatIdForCount
-    const deltaSinceLastPass = sameChatAsBaseline
-      ? currentMessageCount - previousMessagesCountRef.current.count
-      : 0
-    previousMessagesCountRef.current = {
-      chatId: currentChatIdForCount,
-      count: currentMessageCount
-    }
-    // On a chat switch (baseline chatId mismatch) the pill must reset
-    // synchronously, before paint. The chat-switch useEffect at the
-    // bottom of this scroll block also resets the count, but it runs
-    // AFTER paint — without the synchronous reset here the user would
-    // briefly see the previous chat's "↓ N new" pill rendered over
-    // the newly-loaded transcript for one frame.
-    if (!sameChatAsBaseline && unreadFromBottomCountRef.current !== 0) {
-      unreadFromBottomCountRef.current = 0
-      setUnreadFromBottomCount(0)
-    }
-    const incrementUnreadIfNewMessagesArrived = () => {
-      if (deltaSinceLastPass <= 0) return
-      const next = unreadFromBottomCountRef.current + deltaSinceLastPass
-      unreadFromBottomCountRef.current = next
-      setUnreadFromBottomCount(next)
-    }
-
-    if (!autoFollowRef.current) {
-      incrementUnreadIfNewMessagesArrived()
-      return
-    }
-    const scroller = transcriptScrollRef.current
-    if (!scroller) return
-    // 1.0.4 — two additional guards prevent the synchronous snap from
-    // fighting a user who has just started scrolling up. Without them,
-    // ensemble chats (which produce 10–100× more store updates per
-    // second than solo runs — per-participant token tallies, active-
-    // round flips, per-tool events) could hit the race window where a
-    // wheel event lands between two rAF-coalesced scroll-listener evals
-    // and `autoFollowRef` is still `true` from the previous frame.
-    //
-    //   (1) `userScrolledAwayInFrameRef` already records the user's
-    //   wheel/touch/key intent (set synchronously by the wheel/touch
-    //   listeners). The rAF re-pin path checks it, but the synchronous
-    //   write below previously didn't — the old code reset the flag at
-    //   the top of the effect, losing the signal before it could be
-    //   honoured. Now the flag is read first; if set we bail entirely
-    //   and never reset it, so the next streaming tick will also bail
-    //   until the scroll-`evaluate` listener clears it when the user
-    //   actually returns to the bottom.
-    //
-    //   The scroll-`evaluate` listener is rAF-COALESCED (not synchronous),
-    //   so `autoFollowRef` is read here as the "was at the bottom before
-    //   this message update" signal rather than re-measuring distance:
-    //   after a large incoming message the previously-bottom-pinned user
-    //   would momentarily look far from the bottom. The user's *disengage*
-    //   intent is still captured synchronously by the wheel/touch
-    //   listeners above, and our own snap can no longer self-re-engage
-    //   follow (see `programmaticScrollRef` / `snapScrollToBottom`).
-    if (userScrolledAwayInFrameRef.current) {
-      incrementUnreadIfNewMessagesArrived()
-      return
-    }
-    // The flag is reset here (rather than at the top of the effect)
-    // because the rAF re-pin below needs a clean signal: any wheel
-    // event landing between this sync write and the rAF callback
-    // should disable the re-pin.
-    userScrolledAwayInFrameRef.current = false
-    // Single snap per messages-update; the browser clamps to
-    // [0, scrollHeight - clientHeight] so we don't need to compute target.
-    snapScrollToBottom(scroller)
-    // Schedule a follow-up rAF re-pin. The cleanup returned below cancels
-    // it when the effect re-runs (next messages update) or the component
-    // unmounts, so consecutive streaming updates coalesce naturally into
-    // one rAF write per frame.
-    repinRafIdRef.current = requestAnimationFrame(() => {
-      repinRafIdRef.current = null
-      const node = transcriptScrollRef.current
-      if (!node) return
-      if (
-        !shouldRepinAfterFrame({
-          autoFollow: autoFollowRef.current,
-          userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current
-        })
-      ) {
-        return
-      }
-      snapScrollToBottom(node)
-    })
-    return () => {
-      // Cancel any pending re-pin if the effect is torn down (component
-      // unmount or the next layout pass scheduling its own rAF).
-      if (repinRafIdRef.current !== null) {
-        cancelAnimationFrame(repinRafIdRef.current)
-        repinRafIdRef.current = null
-      }
-    }
-  }, [currentChat?.appChatId, currentChat?.messages, runCompleteNotice])
-
-  useEffect(() => {
-    // When the active chat changes, snap to the bottom and re-arm auto-follow
-    // so the user lands on the latest message in their new thread.
-    const scroller = transcriptScrollRef.current
-    if (!scroller) return
-    const chatId = currentChat?.appChatId ?? null
-    const hasPendingManualJump = Boolean(
-      chatId && pendingTranscriptJumpChatIdRef.current === chatId
-    )
-    autoFollowRef.current = !hasPendingManualJump
-    userScrolledAwayInFrameRef.current = hasPendingManualJump
-    // The "↓ N new messages" pill is a per-thread affordance — landing
-    // on a fresh chat must never inherit unread count from the
-    // previous one. Reset both the rendered state and the per-chat
-    // baseline so the messages layout effect treats the incoming
-    // thread as already-caught-up.
-    if (unreadFromBottomCountRef.current !== 0) {
-      unreadFromBottomCountRef.current = 0
-      setUnreadFromBottomCount(0)
-    }
-    previousMessagesCountRef.current = {
-      chatId,
-      count: currentChat?.messages?.length ?? 0
-    }
-    // Defer one frame so the new messages render before we measure.
-    const rafId = requestAnimationFrame(() => {
-      const hasStillPendingManualJump = Boolean(
-        chatId && pendingTranscriptJumpChatIdRef.current === chatId
-      )
-      if (hasStillPendingManualJump) {
-        pendingTranscriptJumpChatIdRef.current = null
-      }
-      if (
-        !shouldSnapAfterChatSwitch({
-          autoFollow: autoFollowRef.current,
-          userScrolledAwayInThisFrame: userScrolledAwayInFrameRef.current,
-          hasPendingManualJump: hasStillPendingManualJump
-        })
-      ) {
-        return
-      }
-      snapScrollToBottom(scroller)
-    })
-    return () => cancelAnimationFrame(rafId)
-    // Chat-switch only: message growth is handled by the message layout effect above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentChat?.appChatId])
-  // ---------------------------------------------------------------------
+  // Main transcript scroll ownership lives in useTranscriptScrollState.
 
   useEffect(() => {
     if (!showTerminal && currentWorkspace) {
@@ -7996,8 +7265,8 @@ function App(): React.JSX.Element {
   }, [scheduledTasks])
 
   // ----- Raw Events auto-follow scrolling -------------------------------
-  // Mirrors the transcript auto-follow design (see the long block above
-  // anchored around `transcriptScrollRef`). The Raw Events panel streams
+  // Mirrors the transcript auto-follow design owned by
+  // `useTranscriptScrollState`. The Raw Events panel streams
   // a new entry for every run event; before this fix the effect below
   // unconditionally wrote `scrollTop = scrollHeight` whenever
   // `rawLogs.length` changed, which fought the user any time they tried
@@ -11855,8 +11124,7 @@ function App(): React.JSX.Element {
     }
     await handleSelectChat(chat)
     if (inlineScrollState) {
-      autoFollowRef.current = inlineScrollState.atBottom
-      restoreChatScrollStateWhenReady(() => transcriptScrollRef.current, inlineScrollState)
+      restoreMainTranscriptScrollStateWhenReady(inlineScrollState, { syncAutoFollow: true })
     }
   }
   const openLinkedChatInSidePanelRef = useRef(openLinkedChatInSidePanel)
@@ -11962,13 +11230,11 @@ function App(): React.JSX.Element {
         typeof draftOverride === 'string'
           ? draftOverride
           : composerDraftsByChatId[targetChat.appChatId] || '',
-      scrollState: captureChatScrollState(
-        wasInlinePresentation
-          ? sideTranscriptScrollRef.current
-          : currentChat?.appChatId === targetChat.appChatId
-            ? transcriptScrollRef.current
-            : null
-      )
+      scrollState: wasInlinePresentation
+        ? captureChatScrollState(sideTranscriptScrollRef.current)
+        : currentChat?.appChatId === targetChat.appChatId
+          ? captureMainTranscriptScrollState()
+          : undefined
     })
     void window.api.openWorkspacePopout({
       kind: 'chat',
@@ -12008,7 +11274,7 @@ function App(): React.JSX.Element {
       }
       const linkedMainScrollState =
         presentation === 'split' || presentation === 'drawer'
-          ? captureChatScrollState(transcriptScrollRef.current)
+          ? captureMainTranscriptScrollState()
           : undefined
       const linkedParentChat = await resolveCurrentLinkedParentChat()
       if (!linkedParentChat) return
@@ -12089,7 +11355,7 @@ function App(): React.JSX.Element {
   ) => {
     const linkedMainScrollState =
       currentChat?.appChatId === chat.appChatId
-        ? captureChatScrollState(transcriptScrollRef.current)
+        ? captureMainTranscriptScrollState()
         : undefined
     const parentChat = chat.parentChatId
       ? chatByIdRef.current.get(chat.parentChatId) ||
@@ -14124,9 +13390,7 @@ function App(): React.JSX.Element {
   const jumpToTranscriptMessage = useCallback(
     (chatId: string | null | undefined, messageId: string, rowKey?: string) => {
       if (!chatId || !messageId) return
-      pendingTranscriptJumpChatIdRef.current = chatId
-      autoFollowRef.current = false
-      userScrolledAwayInFrameRef.current = true
+      prepareMainTranscriptMessageJump(chatId)
       transcriptJumpRequestIdRef.current =
         (transcriptJumpRequestIdRef.current + 1) % Number.MAX_SAFE_INTEGER
       setTranscriptJumpRequest({
@@ -14136,7 +13400,7 @@ function App(): React.JSX.Element {
         requestId: transcriptJumpRequestIdRef.current
       })
     },
-    []
+    [prepareMainTranscriptMessageJump]
   )
 
   const deleteMessageFromChat = useCallback(
@@ -14878,14 +14142,19 @@ function App(): React.JSX.Element {
     if (!currentChat?.appChatId) return
     writeChatPopoutHandoff(currentChat.appChatId, {
       draft: prompt,
-      scrollState: captureChatScrollState(transcriptScrollRef.current)
+      scrollState: captureMainTranscriptScrollState()
     })
     void window.api.openWorkspacePopout({
       kind: 'chat',
       chatId: currentChat.appChatId,
       workspacePath: currentChat.workspacePath
     })
-  }, [currentChat?.appChatId, currentChat?.workspacePath, prompt])
+  }, [
+    captureMainTranscriptScrollState,
+    currentChat?.appChatId,
+    currentChat?.workspacePath,
+    prompt
+  ])
 
   const dockChatPopoutWindow = useCallback(
     (presentation: SidePanelPresentation) => {
@@ -14895,12 +14164,12 @@ function App(): React.JSX.Element {
         chatId: currentChat.appChatId,
         presentation,
         draft: prompt,
-        scrollState: captureChatScrollState(transcriptScrollRef.current)
+        scrollState: captureMainTranscriptScrollState()
       }).catch(() => {
         isDockingChatPopoutRef.current = false
       })
     },
-    [currentChat?.appChatId, isChatPopoutWindow, prompt]
+    [captureMainTranscriptScrollState, currentChat?.appChatId, isChatPopoutWindow, prompt]
   )
 
   const createNewChatFromKeyboard = (): boolean => {
@@ -23209,24 +22478,12 @@ function App(): React.JSX.Element {
             that new content was arriving below. The pill makes that
             *absence* of auto-scroll visible.
 
-            Visibility predicate lives in
-            `lib/TranscriptScroll.shouldShowJumpToLatestPill` so the
-            gating logic stays unit-testable alongside the engage /
-            disengage thresholds. We read `autoFollowRef.current`
-            directly rather than mirroring it onto state — the scroll
-            listener already mutates that ref synchronously, and a
-            mirror would just add a frame of lag plus a re-render
-            churn during streaming.
-
-            Click + `End`-key share `handleJumpToLatest` (defined
-            with the scroll-state block higher in the component) so
-            the smooth-scroll, autoFollow re-engage, and count clear
-            stay in lockstep regardless of entry point.
+            Visibility, unread count, click handling, and `End`-key
+            handling are owned by `useTranscriptScrollState` so the
+            smooth-scroll, autoFollow re-engage, and count clear stay
+            in lockstep regardless of entry point.
           */}
-          {shouldShowJumpToLatestPill({
-            autoFollow: autoFollowRef.current,
-            unreadCount: unreadFromBottomCount
-          }) && (
+          {showJumpToLatestPill && (
             <button
               type="button"
               className={`transcript-jump-to-latest-pill provider-${currentProvider}`}
