@@ -3,6 +3,7 @@ import type { ChatMessage } from '../../../main/store/types'
 import { projectRows } from './TranscriptVirtualWindow'
 import {
   buildTranscriptUserGutterMarkers,
+  layoutTranscriptUserGutterMarkers,
   userGutterPreview,
   userGutterTitle
 } from './TranscriptUserMessageGutter'
@@ -75,5 +76,36 @@ describe('TranscriptUserMessageGutter model', () => {
       'Please review the release checklist and focus on the risky edge cases.'
     )
     expect(userGutterPreview(longPrompt).split('\n')).toHaveLength(4)
+  })
+
+  it('compacts dense marker stacks without changing their order', () => {
+    const messages = Array.from({ length: 24 }, (_, index) =>
+      message(`user-${index}`, 'user', `Prompt ${index}`)
+    )
+    const markers = buildTranscriptUserGutterMarkers(messages, projectRows(messages))
+
+    const layout = layoutTranscriptUserGutterMarkers(markers, 900)
+    const tops = layout.map((marker) => marker.topPx)
+    const span = Math.max(...tops) - Math.min(...tops)
+
+    expect(layout.map((marker) => marker.key)).toEqual(markers.map((marker) => marker.key))
+    expect(span).toBeLessThanOrEqual(24 * 8)
+    for (let index = 1; index < tops.length; index += 1) {
+      expect(tops[index]).toBeGreaterThan(tops[index - 1])
+    }
+  })
+
+  it('keeps sparse marker stacks positioned by transcript height', () => {
+    const messages = [
+      message('first', 'user', 'First prompt'),
+      message('assistant-1', 'assistant', 'Assistant answer'),
+      message('second', 'user', 'Second prompt')
+    ]
+    const markers = buildTranscriptUserGutterMarkers(messages, projectRows(messages))
+
+    const layout = layoutTranscriptUserGutterMarkers(markers, 900)
+    const naturalGap = ((markers[1].topPercent - markers[0].topPercent) / 100) * 900
+
+    expect(layout[1].topPx - layout[0].topPx).toBeCloseTo(naturalGap, 1)
   })
 })

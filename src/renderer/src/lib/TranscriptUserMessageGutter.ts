@@ -20,6 +20,15 @@ export interface TranscriptUserGutterMarker {
   message: ChatMessage
 }
 
+export interface TranscriptUserGutterMarkerLayout {
+  key: string
+  topPx: number
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
 function compactInlineText(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
@@ -84,4 +93,41 @@ export function buildTranscriptUserGutterMarkers(
   }
 
   return markers
+}
+
+function compactMarkerStepPx(count: number): number {
+  if (count >= 36) return 5
+  if (count >= 28) return 6
+  if (count >= 18) return 8
+  return 10
+}
+
+export function layoutTranscriptUserGutterMarkers(
+  markers: readonly TranscriptUserGutterMarker[],
+  frameHeight: number
+): TranscriptUserGutterMarkerLayout[] {
+  if (!Array.isArray(markers) || markers.length === 0) return []
+  const height = Number.isFinite(frameHeight) && frameHeight > 0 ? frameHeight : 0
+  const edgePad = Math.min(8, height / 2)
+  const availableHeight = Math.max(0, height - edgePad * 2)
+  const naturalTops = markers.map((marker) =>
+    clamp((marker.topPercent / 100) * height, edgePad, height - edgePad)
+  )
+
+  if (markers.length < 4 || availableHeight <= 0) {
+    return markers.map((marker, index) => ({ key: marker.key, topPx: naturalTops[index] }))
+  }
+
+  const compactSpan = Math.min(
+    availableHeight,
+    (markers.length - 1) * compactMarkerStepPx(markers.length)
+  )
+  const naturalCenter =
+    naturalTops.reduce((total, top) => total + top, 0) / Math.max(1, naturalTops.length)
+  const minStart = edgePad
+  const maxStart = edgePad + availableHeight - compactSpan
+  const start = clamp(naturalCenter - compactSpan / 2, minStart, maxStart)
+  const step = markers.length > 1 ? compactSpan / (markers.length - 1) : 0
+
+  return markers.map((marker, index) => ({ key: marker.key, topPx: start + step * index }))
 }

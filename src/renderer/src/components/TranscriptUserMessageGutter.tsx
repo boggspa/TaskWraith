@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChatRecord } from '../../../main/store/types'
-import type { TranscriptUserGutterMarker } from '../lib/TranscriptUserMessageGutter'
+import {
+  layoutTranscriptUserGutterMarkers,
+  type TranscriptUserGutterMarker
+} from '../lib/TranscriptUserMessageGutter'
 import { collectMessageMediaRefs } from './ChatMediaPanel'
 import { FileTypeIcon } from './FileTypeIcon'
 
@@ -43,12 +46,18 @@ function TranscriptUserGutterPreview({
   marker,
   anchor,
   frame,
-  currentChat
+  currentChat,
+  onJumpToMessage,
+  onKeepOpen,
+  onDismiss
 }: {
   marker: TranscriptUserGutterMarker
   anchor: ActiveMarkerState
   frame: GutterFrame
   currentChat?: ChatRecord | null
+  onJumpToMessage: (messageId: string, rowKey: string) => void
+  onKeepOpen: () => void
+  onDismiss: () => void
 }): React.JSX.Element {
   const mediaRefs = collectMessageMediaRefs(marker.message)
   const visibleMediaRefs = mediaRefs.slice(0, 3)
@@ -74,8 +83,19 @@ function TranscriptUserGutterPreview({
       className="transcript-user-gutter-preview"
       style={{ left, top }}
       role="tooltip"
+      onMouseEnter={onKeepOpen}
+      onMouseLeave={onDismiss}
+      onFocus={onKeepOpen}
+      onBlur={onDismiss}
     >
-      <div className="transcript-user-gutter-preview-title">{marker.title}</div>
+      <button
+        type="button"
+        className="transcript-user-gutter-preview-title transcript-user-gutter-preview-reference"
+        onClick={() => onJumpToMessage(marker.messageId, marker.rowKey)}
+        aria-label={`Jump to user message ${marker.ordinal}: ${marker.title}`}
+      >
+        {marker.title}
+      </button>
       {marker.preview && <div className="transcript-user-gutter-preview-body">{marker.preview}</div>}
       {visibleMediaRefs.length > 0 && (
         <div className="transcript-user-gutter-preview-attachments" aria-label="Attachments">
@@ -114,6 +134,7 @@ export function TranscriptUserMessageGutter({
   const [frame, setFrame] = useState<GutterFrame | null>(null)
   const [activeMarker, setActiveMarker] = useState<ActiveMarkerState | null>(null)
   const markerRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
+  const dismissTimerRef = useRef<number | null>(null)
 
   const updateFrame = useCallback(() => {
     const scroller = scrollRef.current
@@ -169,6 +190,34 @@ export function TranscriptUserMessageGutter({
     () => markers.find((marker) => marker.key === activeMarker?.key) || null,
     [activeMarker?.key, markers]
   )
+  const markerLayoutByKey = useMemo(() => {
+    if (!frame) return null
+    return new Map(
+      layoutTranscriptUserGutterMarkers(markers, frame.height).map((layout) => [
+        layout.key,
+        layout.topPx
+      ])
+    )
+  }, [frame, markers])
+
+  const cancelDismiss = useCallback(() => {
+    if (dismissTimerRef.current !== null) {
+      window.clearTimeout(dismissTimerRef.current)
+      dismissTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleDismiss = useCallback(() => {
+    cancelDismiss()
+    dismissTimerRef.current = window.setTimeout(() => {
+      dismissTimerRef.current = null
+      setActiveMarker(null)
+    }, 120)
+  }, [cancelDismiss])
+
+  useEffect(() => {
+    return () => cancelDismiss()
+  }, [cancelDismiss])
 
   useEffect(() => {
     if (!activeMarker) return
@@ -177,13 +226,14 @@ export function TranscriptUserMessageGutter({
   }, [activeMarker, markers])
 
   const activateMarker = useCallback((marker: TranscriptUserGutterMarker, button: HTMLButtonElement) => {
+    cancelDismiss()
     const rect = button.getBoundingClientRect()
     setActiveMarker({
       key: marker.key,
       anchorX: rect.right,
       anchorY: rect.top + rect.height / 2
     })
-  }, [])
+  }, [cancelDismiss])
 
   const focusMarkerAt = useCallback(
     (index: number) => {
@@ -220,15 +270,17 @@ export function TranscriptUserMessageGutter({
           className={`transcript-user-gutter-marker${
             activeMarker?.key === marker.key ? ' is-active' : ''
           }`}
-          style={{ top: `${marker.topPercent}%` }}
+          style={{
+            top: markerLayoutByKey?.get(marker.key) ?? `${marker.topPercent}%`
+          }}
           data-message-id={marker.messageId}
           data-row-key={marker.rowKey}
           aria-label={`Jump to user message ${marker.ordinal}: ${marker.title}`}
           tabIndex={index === activeIndex ? 0 : -1}
           onMouseEnter={(event) => activateMarker(marker, event.currentTarget)}
-          onMouseLeave={() => setActiveMarker(null)}
+          onMouseLeave={scheduleDismiss}
           onFocus={(event) => activateMarker(marker, event.currentTarget)}
-          onBlur={() => setActiveMarker(null)}
+          onBlur={scheduleDismiss}
           onKeyDown={(event) => {
             const currentIndex = markers.findIndex((candidate) => candidate.key === marker.key)
             if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
@@ -256,6 +308,12 @@ export function TranscriptUserMessageGutter({
           anchor={activeMarker}
           frame={frame}
           currentChat={currentChat}
+          onJumpToMessage={(messageId, rowKey) => {
+            onJumpToMessage(messageId, rowKey)
+            setActiveMarker(null)
+          }}
+          onKeepOpen={cancelDismiss}
+          onDismiss={scheduleDismiss}
         />
       )}
     </div>

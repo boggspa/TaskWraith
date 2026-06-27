@@ -416,6 +416,7 @@ struct ThreadDetailView: View {
             GeometryReader { geo in
                 if markers.count >= 2 {
                     let railHeight = max(96, geo.size.height - topInset - bottomInset)
+                    let markerYById = markerPositions(railHeight: railHeight)
                     ZStack(alignment: .topLeading) {
                         Capsule()
                             .fill(TWTheme.textTertiary.opacity(0.18))
@@ -423,11 +424,18 @@ struct ThreadDetailView: View {
                             .offset(x: railX, y: topInset)
 
                         ForEach(markers) { marker in
-                            markerButton(marker, railHeight: railHeight)
+                            markerButton(
+                                marker,
+                                y: markerYById[marker.id] ?? naturalMarkerY(
+                                    marker, railHeight: railHeight))
                         }
 
                         if let activeMarker {
-                            previewBubble(activeMarker, railHeight: railHeight)
+                            previewBubble(
+                                activeMarker,
+                                y: markerYById[activeMarker.id] ?? naturalMarkerY(
+                                    activeMarker, railHeight: railHeight),
+                                railHeight: railHeight)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -441,12 +449,41 @@ struct ThreadDetailView: View {
             .allowsHitTesting(markers.count >= 2)
         }
 
-        private func markerY(_ marker: TranscriptUserGutterMarker, railHeight: CGFloat) -> CGFloat {
+        private func naturalMarkerY(
+            _ marker: TranscriptUserGutterMarker, railHeight: CGFloat
+        ) -> CGFloat {
             topInset + CGFloat(marker.fraction) * railHeight
         }
 
-        private func markerButton(_ marker: TranscriptUserGutterMarker, railHeight: CGFloat)
-            -> some View
+        private func compactStep(for count: Int) -> CGFloat {
+            if count >= 36 { return 5 }
+            if count >= 28 { return 6 }
+            if count >= 18 { return 8 }
+            return 10
+        }
+
+        private func markerPositions(railHeight: CGFloat) -> [String: CGFloat] {
+            let natural = markers.map { marker in
+                naturalMarkerY(marker, railHeight: railHeight)
+            }
+            if markers.count < 4 {
+                return Dictionary(uniqueKeysWithValues: zip(markers.map(\.id), natural))
+            }
+
+            let span = min(railHeight, CGFloat(markers.count - 1) * compactStep(for: markers.count))
+            let naturalCenter =
+                natural.reduce(CGFloat(0), +) / CGFloat(max(1, natural.count))
+            let minStart = topInset
+            let maxStart = topInset + railHeight - span
+            let start = min(max(naturalCenter - span / 2, minStart), maxStart)
+            let step = markers.count > 1 ? span / CGFloat(markers.count - 1) : 0
+            return Dictionary(
+                uniqueKeysWithValues: markers.enumerated().map { index, marker in
+                    (marker.id, start + CGFloat(index) * step)
+                })
+        }
+
+        private func markerButton(_ marker: TranscriptUserGutterMarker, y: CGFloat) -> some View
         {
             let isActive = activeMarker?.id == marker.id
             return Button {
@@ -464,18 +501,18 @@ struct ThreadDetailView: View {
                         radius: isActive ? 5 : 0)
             }
             .buttonStyle(.plain)
-            .frame(width: 34, height: 26)
+            .frame(width: 34, height: 20)
             .contentShape(Rectangle())
-            .position(x: railX, y: markerY(marker, railHeight: railHeight))
+            .position(x: railX, y: y)
             .accessibilityLabel("Jump to user message \(marker.ordinal)")
             .accessibilityHint(marker.title)
         }
 
-        private func previewBubble(_ marker: TranscriptUserGutterMarker, railHeight: CGFloat)
+        private func previewBubble(_ marker: TranscriptUserGutterMarker, y: CGFloat, railHeight: CGFloat)
             -> some View
         {
             let bubbleWidth: CGFloat = horizontalSizeClass == .regular ? 320 : 270
-            let rawY = markerY(marker, railHeight: railHeight) - 46
+            let rawY = y - 46
             let clampedY = min(max(topInset - 8, rawY), topInset + railHeight - 112)
             return VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
