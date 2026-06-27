@@ -35,7 +35,8 @@ function createDeps(overrides: Partial<Parameters<typeof registerWorkspaceHandle
         workspace('updated', { path, ...partial })
       ),
       removeWorkspace: vi.fn(),
-      clearWorkspaces: vi.fn()
+      clearWorkspaces: vi.fn(),
+      selectWorkspace: vi.fn(async () => workspace('selected'))
     },
     probeExternalPath: vi.fn(async () => ({ branch: 'main' })),
     broadcastWorkspaceUpdate: vi.fn(),
@@ -130,5 +131,15 @@ describe('registerWorkspaceHandlers', () => {
     handlerFor('clear-workspaces')({} as any)
     expect(deps.workspaceService.clearWorkspaces).toHaveBeenCalled()
     expect(deps.broadcastWorkspaceList).toHaveBeenCalledTimes(2)
+  })
+
+  it('delegates workspace selection to the workspace service', async () => {
+    const deps = createDeps()
+    registerWorkspaceHandlers(deps)
+
+    await expect(handlerFor('select-workspace')({} as any)).resolves.toEqual(
+      workspace('selected')
+    )
+    expect(deps.workspaceService.selectWorkspace).toHaveBeenCalledTimes(1)
   })
 })

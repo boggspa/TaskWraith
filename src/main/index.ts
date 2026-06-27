@@ -24823,9 +24823,6 @@ if (isGeminiMcpBridgeProcess) {
 
     ipcMain.handle('list-gemini-sessions', async () => listGeminiSessions())
 
-    // IPC Handlers
-    ipcMain.handle('select-workspace', async () => workspaceService.selectWorkspace())
-
     // C4: `read-image-preview` reads a local image and returns a data URL.
     // Left open it is an arbitrary-image disclosure primitive — a future
     // viewer that routes an agent-supplied `![](/Users/you/Pictures/x.jpg)`

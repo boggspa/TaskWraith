@@ -9,7 +9,11 @@ export interface WorkspaceProbeResult {
 export interface WorkspaceHandlerDeps {
   workspaceService: Pick<
     WorkspaceService,
-    'getWorkspaces' | 'addOrUpdateWorkspace' | 'removeWorkspace' | 'clearWorkspaces'
+    | 'getWorkspaces'
+    | 'addOrUpdateWorkspace'
+    | 'removeWorkspace'
+    | 'clearWorkspaces'
+    | 'selectWorkspace'
   >
   probeExternalPath: (path: string) => Promise<WorkspaceProbeResult | null>
   broadcastWorkspaceUpdate: (workspaceId: string | undefined) => void
@@ -77,4 +81,6 @@ export function registerWorkspaceHandlers(deps: WorkspaceHandlerDeps): void {
     deps.workspaceService.clearWorkspaces()
     deps.broadcastWorkspaceList()
   })
+
+  ipcMain.handle('select-workspace', async () => deps.workspaceService.selectWorkspace())
 }
