@@ -2701,7 +2701,8 @@
     0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-[data-reduce-transparency="true"] :is(.sidebar-settings-menu, .sidebar-footer-popover) {
+[data-reduce-transparency="true"]
+  :is(.sidebar-settings-menu, .sidebar-footer-popover, .sidebar-shared-create-menu) {
   background: var(--sidebar-picker-bg-solid) !important;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

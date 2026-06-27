@@ -2170,6 +2170,12 @@ export function Sidebar({
   const visibleEnsembleChats = isSidebarSearchActive
     ? ensembleChats.filter((chat) => !chat.pinned && chatMatchesSearch(chat, sidebarSearchQuery))
     : ensembleChats.filter((chat) => !chat.pinned)
+  const sharedChats = topLevelChats.filter(
+    (chat) => collaboratingChatIds.has(chat.appChatId) && !chat.archived
+  )
+  const visibleSharedChats = isSidebarSearchActive
+    ? sharedChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
+    : sharedChats
 
   const visiblePinnedWorkspaces = isSidebarSearchActive
     ? pinnedWorkspaces.filter((workspace) => workspaceMatchesSearch(workspace, sidebarSearchQuery))
@@ -4313,7 +4319,11 @@ export function Sidebar({
                       <PlusSymbolIcon />
                     </button>
                     {sharedCreateMenuOpen && (
-                      <div className="sidebar-new-menu" role="menu" onKeyDown={moveMenuFocus}>
+                      <div
+                        className="sidebar-new-menu sidebar-shared-create-menu"
+                        role="menu"
+                        onKeyDown={moveMenuFocus}
+                      >
                         {sharedChatCreateOptions.map((option) => (
                           <button
                             type="button"
@@ -4335,29 +4345,73 @@ export function Sidebar({
               </div>
               {!isSectionCollapsed('shared') && (
                 <div className="sidebar-chat-list sidebar-shared-chat-list">
-                  {topLevelChats
-                    .filter((chat) => collaboratingChatIds.has(chat.appChatId))
-                    .map((chat) => (
+                  {visibleSharedChats.map((chat) => {
+                    const chatAgeTimestamp = chat.updatedAt || chat.createdAt
+                    const isChatRunning = runningChatIdSet.has(chat.appChatId)
+                    const lastRunStatus = getLastRunStatus(chat)
+                    return (
                       <button
                         type="button"
                         key={chat.appChatId}
                         className={`sidebar-item sidebar-chat-item sidebar-shared-chat-item provider-${
                           chat.provider || 'gemini'
-                        }${selectedChatId === chat.appChatId ? ' active' : ''}`}
+                        }${selectedChatId === chat.appChatId ? ' active' : ''}${
+                          isChatRunning ? ' running' : ''
+                        }`}
                         onClick={() => onSelectChat(chat)}
                         title={chat.title || 'Shared chat'}
                       >
-                        {renderChatProviderBadge(chat)}
-                        <span className="sidebar-chat-title-line">{chat.title || 'Shared chat'}</span>
+                        <span className="sidebar-chat-copy" title={chat.title || 'Shared chat'}>
+                          <span className="sidebar-chat-title-line">
+                            {renderChatProviderBadge(chat)}
+                            <SidebarChatTitleEditable
+                              chat={chat}
+                              className="sidebar-chat-title"
+                              query={sidebarSearchQuery}
+                              isSelected={selectedChatId === chat.appChatId}
+                              isEditing={editingChatId === chat.appChatId}
+                              onStartEdit={() => setEditingChatId(chat.appChatId)}
+                              onSubmit={(next) => commitChatRename(chat, next)}
+                              onCancel={() => setEditingChatId(null)}
+                            />
+                          </span>
+                          {(isChatRunning ||
+                            (lastRunStatus &&
+                              lastRunStatus.tone !== 'success' &&
+                              lastRunStatus.tone !== 'muted')) && (
+                            <span className="sidebar-chat-subline">
+                              {isChatRunning ? (
+                                <span className="sidebar-run-status tone-running">Running</span>
+                              ) : lastRunStatus ? (
+                                <span className={`sidebar-run-status tone-${lastRunStatus.tone}`}>
+                                  {lastRunStatus.label}
+                                </span>
+                              ) : null}
+                            </span>
+                          )}
+                        </span>
                         <span
                           className="sidebar-branched-badge sidebar-shared-badge"
                           title="Shared with collaborators"
                         >
                           People
                         </span>
+                        {isChatRunning && (
+                          <span
+                            className="sidebar-chat-busy"
+                            title="Task running"
+                            aria-label="Task running"
+                          />
+                        )}
+                        {!isChatRunning && <ChatAgeLabel timestamp={chatAgeTimestamp} />}
+                        <SidebarOverflowMenu
+                          triggerLabel="Shared chat actions"
+                          items={buildChatMenuItems(chat)}
+                        />
                       </button>
-                    ))}
-                  {collaboratingChatIds.size === 0 && !isSidebarSearchActive && (
+                    )
+                  })}
+                  {visibleSharedChats.length === 0 && !isSidebarSearchActive && (
                     <div className="sidebar-empty-state sidebar-empty-state--ghost">
                       <PeopleSymbolIcon />
                       <strong>No shared chats</strong>

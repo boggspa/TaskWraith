@@ -133,6 +133,11 @@ function renderSidebar(
     collaboratingChatIds?: Set<string>
     pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
     hasConnectedCollaborator?: boolean
+    onRenameChat?: (chatId: string, nextTitle: string) => void
+    onTogglePinChat?: (chatId: string) => void
+    onToggleArchiveChat?: (chatId: string, nextArchived: boolean) => void
+    onDeleteChat?: (chatId: string) => void
+    onOpenInMultiview?: (chat: ChatRecord) => void
   } = {}
 ) {
   const workspace = makeWorkspace()
@@ -160,6 +165,11 @@ function renderSidebar(
       onOpenSettings={() => {}}
       onCreateWorkflow={options.onCreateWorkflow}
       onCreateSharedChat={options.onCreateSharedChat}
+      onRenameChat={options.onRenameChat}
+      onTogglePinChat={options.onTogglePinChat}
+      onToggleArchiveChat={options.onToggleArchiveChat}
+      onDeleteChat={options.onDeleteChat}
+      onOpenInMultiview={options.onOpenInMultiview}
     />
   )
 }
@@ -278,6 +288,56 @@ describe('Sidebar shared chat create options', () => {
 
     expect(html).toContain('sidebar-shared-section')
     expect(html).toContain('aria-label="Choose shared chat type"')
+  })
+
+  it('renders shared chats with the standard chat row action affordance', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('shared')
+    })
+
+    const html = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'shared-1',
+          provider: 'codex',
+          title: 'Shared planning thread'
+        })
+      ],
+      {
+        collaboratingChatIds: new Set(['shared-1']),
+        onRenameChat: () => {},
+        onTogglePinChat: () => {},
+        onToggleArchiveChat: () => {},
+        onDeleteChat: () => {},
+        onOpenInMultiview: () => {}
+      }
+    )
+
+    expect(html).toContain('Shared planning thread')
+    expect(html).toContain('sidebar-shared-chat-item')
+    expect(html).toContain('Shared with collaborators')
+    expect(html).toContain('aria-label="Shared chat actions"')
+    expect(html).toContain('sidebar-overflow-menu')
+  })
+
+  it('hides archived shared chats from the Shared section', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('shared')
+    })
+
+    const html = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'archived-shared-1',
+          title: 'Archived shared thread',
+          archived: true
+        })
+      ],
+      { collaboratingChatIds: new Set(['archived-shared-1']) }
+    )
+
+    expect(html).not.toContain('Archived shared thread')
+    expect(html).toContain('No shared chats')
   })
 })
 

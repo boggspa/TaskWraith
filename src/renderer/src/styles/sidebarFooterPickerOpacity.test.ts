@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const readCss = (): string =>
-  readFileSync(join(process.cwd(), 'src/renderer/src/assets/css/05-polish-fx-layouts.css'), 'utf8')
+const readCss = (file: string): string =>
+  readFileSync(join(process.cwd(), 'src/renderer/src/assets/css', file), 'utf8')
 
 const cssBlockStartingAt = (source: string, selector: string, fromIndex = 0): string => {
   const start = source.indexOf(selector, fromIndex)
@@ -15,7 +15,7 @@ const cssBlockStartingAt = (source: string, selector: string, fromIndex = 0): st
 
 describe('sidebar footer picker opacity CSS', () => {
   it('sets settings and footer picker shells to a 75% solid theme surface', () => {
-    const css = readCss()
+    const css = readCss('05-polish-fx-layouts.css')
 
     const settingsBlock = cssBlockStartingAt(css, '.sidebar-settings-menu {')
     const lightSettingsBlock = cssBlockStartingAt(
@@ -36,11 +36,29 @@ describe('sidebar footer picker opacity CSS', () => {
     }
   })
 
-  it('keeps sidebar footer pickers opaque when transparency is reduced', () => {
-    const css = readCss()
+  it('sets the shared chat create picker to a 75% solid theme surface', () => {
+    const css = readCss('09-ensemble-work-session.css')
+
+    const sharedBlock = cssBlockStartingAt(css, '.sidebar-new-menu.sidebar-shared-create-menu {')
+    const lightSharedBlock = cssBlockStartingAt(
+      css,
+      '.sidebar-new-menu.sidebar-shared-create-menu {',
+      css.indexOf('.sidebar-new-menu.sidebar-shared-create-menu {') + 1
+    )
+
+    for (const block of [sharedBlock, lightSharedBlock]) {
+      expect(block).toContain('--sidebar-picker-bg-solid')
+      expect(block).toContain('var(--sidebar-picker-bg-solid) 75%')
+      expect(block).not.toContain('var(--panel-elevated-bg) 88%')
+      expect(block).not.toContain('var(--surface-1) 86%')
+    }
+  })
+
+  it('keeps sidebar pickers opaque when transparency is reduced', () => {
+    const css = readCss('05-polish-fx-layouts.css')
     const reduceTransparencyBlock = cssBlockStartingAt(
       css,
-      '[data-reduce-transparency="true"] :is(.sidebar-settings-menu, .sidebar-footer-popover) {'
+      ':is(.sidebar-settings-menu, .sidebar-footer-popover, .sidebar-shared-create-menu) {'
     )
 
     expect(reduceTransparencyBlock).toContain(

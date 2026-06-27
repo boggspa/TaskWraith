@@ -121,6 +121,17 @@
     0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+.sidebar-new-menu.sidebar-shared-create-menu {
+  --sidebar-picker-bg-solid: var(--panel-bg-solid, var(--surface-1, #1c1c20));
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .sidebar-new-menu.sidebar-shared-create-menu {
+  --sidebar-picker-bg-solid: var(--surface-1, #ffffff);
+  background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
+}
+
 @keyframes sidebar-new-menu-fade-in {
   from {
     opacity: 0;
