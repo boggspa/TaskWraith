@@ -22316,7 +22316,10 @@ if (isGeminiMcpBridgeProcess) {
       const envRelayUrl = (process.env.TASKWRAITH_RELAY_URL || '').trim()
       const settingsRelayUrl = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
       const configuredRelayUrl = envRelayUrl || settingsRelayUrl
-      const packagedDebugBuild = app.getName().toLowerCase().includes('debug')
+      const packagedDebugBuild = [app.getName(), process.execPath, process.resourcesPath]
+        .join(' ')
+        .toLowerCase()
+        .includes('debug')
       const defaultIosRelayPort = (): number => (app.isPackaged && !packagedDebugBuild ? 8787 : 8788)
       const defaultIosServeHttpsPort = (): number =>
         app.isPackaged && !packagedDebugBuild ? 443 : 8443
@@ -23248,7 +23251,10 @@ if (isGeminiMcpBridgeProcess) {
     // reverse-proxies (WebSocket-aware) to the relay's loopback port. The
     // pairing QR then advertises wss://<dnsName>, which iOS ATS accepts
     // off-LAN — the only way a cellular phone can reach the bridge.
-    const packagedDebugBuild = app.getName().toLowerCase().includes('debug')
+    const packagedDebugBuild = [app.getName(), process.execPath, process.resourcesPath]
+      .join(' ')
+      .toLowerCase()
+      .includes('debug')
     const defaultIosRelayPort = (): number => (app.isPackaged && !packagedDebugBuild ? 8787 : 8788)
     const defaultIosServeHttpsPort = (): number =>
       app.isPackaged && !packagedDebugBuild ? 443 : 8443
