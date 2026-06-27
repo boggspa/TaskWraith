@@ -3190,6 +3190,13 @@
   min-width: 0;
 }
 
+.settings-user-mcp-snippet-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .settings-user-mcp-snippet-list strong {
   color: var(--text-secondary);
   font-size: var(--font-size-xs);

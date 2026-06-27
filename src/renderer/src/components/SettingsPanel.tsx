@@ -2739,6 +2739,7 @@ export function SettingsPanel({
   const [mcpImportText, setMcpImportText] = useState('')
   const [mcpImportError, setMcpImportError] = useState('')
   const [copiedMcpServerId, setCopiedMcpServerId] = useState<string | null>(null)
+  const [copiedMcpServerSnippetKey, setCopiedMcpServerSnippetKey] = useState<string | null>(null)
   const [copiedMcpServersJson, setCopiedMcpServersJson] = useState(false)
   const [copiedMcpServersClaudeJson, setCopiedMcpServersClaudeJson] = useState(false)
   const [copiedMcpServersCursorJson, setCopiedMcpServersCursorJson] = useState(false)
@@ -2890,6 +2891,24 @@ export function SettingsPanel({
         setCopiedMcpServerId(server.id)
         window.setTimeout(() => {
           setCopiedMcpServerId((current) => (current === server.id ? null : current))
+        }, 1600)
+      })
+      .catch(() => undefined)
+  }
+
+  const copyMcpServerProviderSnippet = (
+    serverId: string,
+    provider: 'claude' | 'cursor' | 'codex',
+    text: string
+  ): void => {
+    if (!text || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return
+    const copyKey = `${serverId}:${provider}`
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopiedMcpServerSnippetKey(copyKey)
+        window.setTimeout(() => {
+          setCopiedMcpServerSnippetKey((current) => (current === copyKey ? null : current))
         }, 1600)
       })
       .catch(() => undefined)
@@ -6766,6 +6785,21 @@ export function SettingsPanel({
                         ? server.command || 'No command'
                         : server.url || 'No URL'
                     const exportLabels = userMcpServerProviderExportLabels(server)
+                    const claudeSnippet = isClaudeExportableUserMcpServer(server)
+                      ? formatUserMcpServerClaudeJsonSnippet(userMcpServers, server, {
+                          redactValues: true
+                        })
+                      : ''
+                    const cursorSnippet = isCursorExportableUserMcpServer(server)
+                      ? formatUserMcpServerCursorJsonSnippet(userMcpServers, server, {
+                          redactValues: true
+                        })
+                      : ''
+                    const codexSnippet = isCodexExportableUserMcpServer(server)
+                      ? formatUserMcpServerCodexTomlSnippet(userMcpServers, server, {
+                          redactValues: true
+                        })
+                      : ''
                     return (
                       <article key={server.id} className="settings-user-mcp-row">
                         <div className="settings-user-mcp-main">
@@ -6800,51 +6834,78 @@ export function SettingsPanel({
                             <details className="settings-user-mcp-config">
                               <summary>Provider config snippets</summary>
                               <div className="settings-user-mcp-snippet-list">
-                                {isClaudeExportableUserMcpServer(server) && (
+                                {claudeSnippet && (
                                   <section>
-                                    <strong>Claude JSON</strong>
+                                    <div className="settings-user-mcp-snippet-heading">
+                                      <strong>Claude JSON</strong>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm btn-ghost"
+                                        onClick={() =>
+                                          copyMcpServerProviderSnippet(
+                                            server.id,
+                                            'claude',
+                                            claudeSnippet
+                                          )
+                                        }
+                                      >
+                                        {copiedMcpServerSnippetKey === `${server.id}:claude`
+                                          ? 'Copied Claude'
+                                          : 'Copy Claude'}
+                                      </button>
+                                    </div>
                                     <pre>
-                                      <code>
-                                        {formatUserMcpServerClaudeJsonSnippet(
-                                          userMcpServers,
-                                          server,
-                                          {
-                                            redactValues: true
-                                          }
-                                        )}
-                                      </code>
+                                      <code>{claudeSnippet}</code>
                                     </pre>
                                   </section>
                                 )}
-                                {isCursorExportableUserMcpServer(server) && (
+                                {cursorSnippet && (
                                   <section>
-                                    <strong>Cursor mcp.json</strong>
+                                    <div className="settings-user-mcp-snippet-heading">
+                                      <strong>Cursor mcp.json</strong>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm btn-ghost"
+                                        onClick={() =>
+                                          copyMcpServerProviderSnippet(
+                                            server.id,
+                                            'cursor',
+                                            cursorSnippet
+                                          )
+                                        }
+                                      >
+                                        {copiedMcpServerSnippetKey === `${server.id}:cursor`
+                                          ? 'Copied Cursor'
+                                          : 'Copy Cursor'}
+                                      </button>
+                                    </div>
                                     <pre>
-                                      <code>
-                                        {formatUserMcpServerCursorJsonSnippet(
-                                          userMcpServers,
-                                          server,
-                                          {
-                                            redactValues: true
-                                          }
-                                        )}
-                                      </code>
+                                      <code>{cursorSnippet}</code>
                                     </pre>
                                   </section>
                                 )}
-                                {isCodexExportableUserMcpServer(server) && (
+                                {codexSnippet && (
                                   <section>
-                                    <strong>Codex TOML</strong>
+                                    <div className="settings-user-mcp-snippet-heading">
+                                      <strong>Codex TOML</strong>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm btn-ghost"
+                                        onClick={() =>
+                                          copyMcpServerProviderSnippet(
+                                            server.id,
+                                            'codex',
+                                            codexSnippet
+                                          )
+                                        }
+                                      >
+                                        {copiedMcpServerSnippetKey === `${server.id}:codex`
+                                          ? 'Copied Codex'
+                                          : 'Copy Codex'}
+                                      </button>
+                                    </div>
                                     <pre>
-                                      <code>
-                                        {formatUserMcpServerCodexTomlSnippet(
-                                          userMcpServers,
-                                          server,
-                                          {
-                                            redactValues: true
-                                          }
-                                        )}
-                                      </code>
+                                      <code>{codexSnippet}</code>
                                     </pre>
                                   </section>
                                 )}
