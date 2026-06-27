@@ -23442,9 +23442,12 @@ if (isGeminiMcpBridgeProcess) {
         // pairing instead of a bare NSURLError -1004 on the phone.
         let pairingWarning: string | null = null
         let advertiseRelayUrls: string[] | undefined
+        const runtimeRelayUrls = iosRemoteRuntime.describeHost().relayUrls
+        const relayCandidates =
+          selfHostedWssLane?.candidates.length ? selfHostedWssLane.candidates : runtimeRelayUrls
+        let selection = await selectAdvertisableRelayUrls(relayCandidates)
         if (selfHostedWssLane) {
           const lane = selfHostedWssLane
-          let selection = await selectAdvertisableRelayUrls(lane.candidates)
           if (!selection.advertisable.includes(lane.wssUrl) && lane.cliPath) {
             const httpsPort = app.isPackaged ? 443 : 8443
             const serve = await getTailscaleServeStatus({
@@ -23466,37 +23469,35 @@ if (isGeminiMcpBridgeProcess) {
               if (enabled.ok) selection = await selectAdvertisableRelayUrls(lane.candidates)
             }
           }
-          if (selection.advertisable.length === 0) {
-            console.error(
-              `[remote-bridge] refusing to pair — no advertised relay door answers: ${selection.warnings.join('; ')}`
-            )
-            return {
-              ok: false,
-              error:
-                `None of this Mac's relay doors are answering (${selection.warnings.join('; ')}). ` +
-                'Check the embedded relay started (see the Mac log) and that Tailscale is running ' +
-                'and signed in, then use Settings → Devices → "Remote access via Tailscale" to re-enable.'
-            }
+        }
+        if (selection.advertisable.length === 0) {
+          console.error(
+            `[remote-bridge] refusing to pair — no advertised relay door answers: ${selection.warnings.join('; ')}`
+          )
+          return {
+            ok: false,
+            error:
+              `None of this Mac's relay doors are answering (${selection.warnings.join('; ')}). ` +
+              'Check the embedded relay started (see the Mac log), then restart TaskWraith or toggle ' +
+              'Settings → Devices → iOS remote bridge off/on.'
           }
-          advertiseRelayUrls = selection.advertisable
-          if (selection.warnings.length > 0) {
-            pairingWarning =
-              `Pairing will work, but a relay door was left out of the QR: ` +
-              `${selection.warnings.join('; ')}. ` +
-              (selection.advertisable.some((url) => url.startsWith('wss:'))
-                ? 'Phones may need Tailscale for this pairing until the other door is fixed.'
-                : 'This pairing is home-Wi-Fi only until the Tailscale front door is fixed.')
-            console.warn(`[remote-bridge] ${pairingWarning}`)
-          }
+        }
+        advertiseRelayUrls = selection.advertisable
+        if (selection.warnings.length > 0) {
+          pairingWarning =
+            `Pairing will work, but a relay door was left out of the QR: ` +
+            `${selection.warnings.join('; ')}. ` +
+            (selection.advertisable.some((url) => url.startsWith('wss:'))
+              ? 'Phones may need Tailscale for this pairing until the other door is fixed.'
+              : 'This pairing is home-Wi-Fi only until the Tailscale front door is fixed.')
+          console.warn(`[remote-bridge] ${pairingWarning}`)
         }
         const result = iosRemoteRuntime.beginPairing(
           typeof displayName === 'string' ? displayName : undefined,
-          options?.force === true || advertiseRelayUrls
-            ? {
-                ...(options?.force === true ? { force: true } : {}),
-                ...(advertiseRelayUrls ? { advertiseRelayUrls } : {})
-              }
-            : undefined
+          {
+            ...(options?.force === true ? { force: true } : {}),
+            advertiseRelayUrls
+          }
         )
         return pairingWarning ? { ...result, warning: pairingWarning } : result
       }
