@@ -1,6 +1,6 @@
 {
   "name": "taskwraith",
-  "version": "1.6.6-dev6",
+  "version": "1.6.6-dev7",
   "description": "TaskWraith desktop workspace",
   "main": "./out/main/index.js",
   "author": "Chris Izatt",
