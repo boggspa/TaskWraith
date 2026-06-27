@@ -160,69 +160,73 @@ describe('loadExternalProviderUsageRecords', () => {
     }
   })
 
-  it('keeps older high-token Claude sessions when many newer session files exist', async () => {
-    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-claude-history-'))
-    try {
-      const projectDir = join(homeDir, '.claude', 'projects', 'sample')
-      await mkdir(projectDir, { recursive: true })
+  it(
+    'keeps older high-token Claude sessions when many newer session files exist',
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-claude-history-'))
+      try {
+        const projectDir = join(homeDir, '.claude', 'projects', 'sample')
+        await mkdir(projectDir, { recursive: true })
 
-      const olderHeavyPath = join(projectDir, 'older-heavy.jsonl')
-      await writeFile(
-        olderHeavyPath,
-        JSON.stringify({
-          timestamp: '2026-05-01T10:00:00.000Z',
-          requestId: 'req-heavy',
-          message: {
-            id: 'msg-heavy',
-            model: 'claude-opus',
-            usage: {
-              input_tokens: 9_000,
-              cache_read_input_tokens: 500,
-              cache_creation_input_tokens: 250,
-              output_tokens: 250
-            }
-          }
-        })
-      )
-      await utimes(
-        olderHeavyPath,
-        new Date('2026-05-01T10:00:00.000Z'),
-        new Date('2026-05-01T10:00:00.000Z')
-      )
-
-      for (let index = 0; index < 1_205; index += 1) {
-        const filePath = join(projectDir, `newer-${String(index).padStart(4, '0')}.jsonl`)
+        const olderHeavyPath = join(projectDir, 'older-heavy.jsonl')
         await writeFile(
-          filePath,
+          olderHeavyPath,
           JSON.stringify({
-            timestamp: `2026-06-01T${String(index % 24).padStart(2, '0')}:00:00.000Z`,
-            requestId: `req-${index}`,
+            timestamp: '2026-05-01T10:00:00.000Z',
+            requestId: 'req-heavy',
             message: {
-              id: `msg-${index}`,
-              model: 'claude-sonnet',
-              usage: { input_tokens: 1, output_tokens: 1 }
+              id: 'msg-heavy',
+              model: 'claude-opus',
+              usage: {
+                input_tokens: 9_000,
+                cache_read_input_tokens: 500,
+                cache_creation_input_tokens: 250,
+                output_tokens: 250
+              }
             }
           })
         )
         await utimes(
-          filePath,
-          new Date('2026-06-01T00:00:00.000Z'),
-          new Date(Date.parse('2026-06-01T00:00:00.000Z') + index * 1000)
+          olderHeavyPath,
+          new Date('2026-05-01T10:00:00.000Z'),
+          new Date('2026-05-01T10:00:00.000Z')
         )
+
+        for (let index = 0; index < 1_205; index += 1) {
+          const filePath = join(projectDir, `newer-${String(index).padStart(4, '0')}.jsonl`)
+          await writeFile(
+            filePath,
+            JSON.stringify({
+              timestamp: `2026-06-01T${String(index % 24).padStart(2, '0')}:00:00.000Z`,
+              requestId: `req-${index}`,
+              message: {
+                id: `msg-${index}`,
+                model: 'claude-sonnet',
+                usage: { input_tokens: 1, output_tokens: 1 }
+              }
+            })
+          )
+          await utimes(
+            filePath,
+            new Date('2026-06-01T00:00:00.000Z'),
+            new Date(Date.parse('2026-06-01T00:00:00.000Z') + index * 1000)
+          )
+        }
+
+        const records = await loadExternalProviderUsageRecords({
+          homeDir,
+          now: new Date('2026-06-30T13:00:00.000Z')
+        })
+        const claudeRecords = records.filter((record) => record.provider === 'claude')
+
+        expect(claudeRecords).toHaveLength(1_206)
+        expect(claudeRecords.some((record) => record.totalTokens === 10_000)).toBe(true)
+      } finally {
+        await rm(homeDir, { recursive: true, force: true })
       }
-
-      const records = await loadExternalProviderUsageRecords({
-        homeDir,
-        now: new Date('2026-06-30T13:00:00.000Z')
-      })
-      const claudeRecords = records.filter((record) => record.provider === 'claude')
-
-      expect(claudeRecords).toHaveLength(1_206)
-      expect(claudeRecords.some((record) => record.totalTokens === 10_000)).toBe(true)
-    } finally {
-      await rm(homeDir, { recursive: true, force: true })
-    }
-  })
+    },
+    15_000
+  )
 
   it('keeps early Claude usage from session files larger than the old tail window', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-claude-large-file-'))

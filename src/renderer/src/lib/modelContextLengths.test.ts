@@ -13,14 +13,14 @@ describe('buildModelContextLengthGroups', () => {
     expect(row!.formatted).toBe('1.0M')
   })
 
-  it('claude group contains a row for claude-opus-4-8 with formatted 200k', () => {
+  it('claude group omits non-1M Opus rows from the default catalog', () => {
     const groups = buildModelContextLengthGroups()
     const claudeGroup = groups.find((g) => g.provider === 'claude')
     expect(claudeGroup).toBeDefined()
-    const row = claudeGroup!.models.find((m) => m.modelId === 'claude-opus-4-8')
-    expect(row).toBeDefined()
-    expect(row!.contextWindow).toBe(200_000)
-    expect(row!.formatted).toBe('200k')
+    const ids = claudeGroup!.models.map((m) => m.modelId)
+    expect(ids).not.toContain('claude-opus-4-8')
+    expect(ids).not.toContain('claude-opus-4-7')
+    expect(ids).not.toContain('claude-opus-4-6')
   })
 
   it('codex gpt-5.5 resolves to 1.1M (1_050_000)', () => {
