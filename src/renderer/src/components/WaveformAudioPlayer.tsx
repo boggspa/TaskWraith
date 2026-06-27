@@ -29,7 +29,7 @@ import {
  *   1. `peaks` present       → the canvas DAW waveform (preferred).
  *   2. else `posterSrc`      → the poster waveform JPEG as the strip background, with
  *                              the SAME played-overlay + playhead + click-seek.
- *   3. else                  → a plain <audio controls> (always playable).
+ *   3. else                  → a generated canvas rail with the same playback UI.
  *
  * Source of colour: CSS custom properties read off the rendered element
  * (`--wf-played`, `--wf-unplayed`) so the waveform re-tints with the theme; canvas
@@ -64,6 +64,12 @@ const WAVE_MIN_WIDTH = 160
  * draw loop self-defending against any future writer that bypasses those caps.
  */
 const WAVE_MAX_PEAKS = 1024
+const GENERATED_WAVEFORM_PEAKS = Array.from({ length: 96 }, (_, index) => {
+  const phase = index / 95
+  const envelope = Math.sin(Math.PI * phase)
+  const modulation = 0.58 + 0.24 * Math.sin(index * 0.62) + 0.18 * Math.sin(index * 1.73)
+  return Math.max(10, Math.min(210, Math.round(24 + envelope * 156 * modulation)))
+})
 
 function formatClock(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) seconds = 0
@@ -132,52 +138,15 @@ export function WaveformAudioPlayer({
   const hasPeaks = Array.isArray(peaks) && peaks.length > 0
   const usePoster = !hasPeaks && !!posterSrc
 
-  // No waveform AND no poster → the always-playable plain control. (Variant C tail.)
-  if (!hasPeaks && !usePoster) {
-    return (
-      <PlainAudioFallback
-        src={src}
-        name={name}
-        pausedSignal={pausedSignal}
-      />
-    )
-  }
-
   return (
     <WaveformAudioPlayerCore
       src={src}
-      peaks={hasPeaks ? (peaks as number[]) : undefined}
+      peaks={hasPeaks ? (peaks as number[]) : usePoster ? undefined : GENERATED_WAVEFORM_PEAKS}
       posterSrc={usePoster ? posterSrc : undefined}
       durationMs={durationMs}
       name={name}
       pausedSignal={pausedSignal}
-    />
-  )
-}
-
-/** The Variant-C plain `<audio controls>` tail, with `pausedSignal` honoured so an
- *  off-screen media pane stops it too (the canvas/poster paths do the same). */
-function PlainAudioFallback({
-  src,
-  name,
-  pausedSignal
-}: {
-  src: string
-  name?: string
-  pausedSignal?: boolean
-}): ReactNode {
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  useEffect(() => {
-    if (pausedSignal) audioRef.current?.pause()
-  }, [pausedSignal])
-  return (
-    <audio
-      ref={audioRef}
-      className="tw-wave-audio-plain"
-      controls
-      preload="metadata"
-      src={src}
-      aria-label={name ? `Audio: ${name}` : 'Audio'}
+      generatedWaveform={!hasPeaks && !usePoster}
     />
   )
 }
@@ -188,8 +157,9 @@ function WaveformAudioPlayerCore({
   posterSrc,
   durationMs,
   name,
-  pausedSignal
-}: WaveformAudioPlayerProps): ReactNode {
+  pausedSignal,
+  generatedWaveform = false
+}: WaveformAudioPlayerProps & { generatedWaveform?: boolean }): ReactNode {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const baseCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -375,7 +345,9 @@ function WaveformAudioPlayerCore({
   return (
     <div
       ref={containerRef}
-      className={`tw-wave-player${usingCanvas ? ' is-canvas' : ' is-poster'}`}
+      className={`tw-wave-player${usingCanvas ? ' is-canvas' : ' is-poster'}${
+        generatedWaveform ? ' is-generated' : ''
+      }`}
       data-playing={isPlaying ? 'true' : 'false'}
     >
       {/* Headless audio: the canvas is the UI, so NO `controls`. Kept in the DOM so

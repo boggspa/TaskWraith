@@ -31,11 +31,15 @@ describe('WaveformAudioPlayer', () => {
     expect(html).not.toContain('tw-wave-audio-plain')
   })
 
-  it('falls back to a plain <audio controls> when neither peaks nor poster are present', () => {
+  it('falls back to a generated waveform rail when neither peaks nor poster are present', () => {
     const html = renderToStaticMarkup(<WaveformAudioPlayer src={SRC} name="voice" />)
-    expect(html).toContain('tw-wave-audio-plain')
-    expect(html).toContain('controls')
-    expect(html).not.toContain('is-canvas')
+    expect(html).toContain('tw-wave-player')
+    expect(html).toContain('is-canvas')
+    expect(html).toContain('is-generated')
+    expect(html).toContain('tw-wave-canvas')
+    expect(html).toContain('tw-wave-audio-el')
+    expect(html).not.toMatch(/<audio[^>]*controls/)
+    expect(html).not.toContain('tw-wave-audio-plain')
   })
 
   it('renders the inline player byte-identically whether pausedSignal is omitted or set (canvas path)', () => {
@@ -46,7 +50,7 @@ describe('WaveformAudioPlayer', () => {
     expect(withSignal).toBe(base)
   })
 
-  it('renders the plain fallback byte-identically with pausedSignal set', () => {
+  it('renders the generated fallback byte-identically with pausedSignal set', () => {
     const base = renderToStaticMarkup(<WaveformAudioPlayer src={SRC} name="voice" />)
     const withSignal = renderToStaticMarkup(
       <WaveformAudioPlayer src={SRC} name="voice" pausedSignal={true} />

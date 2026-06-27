@@ -96,7 +96,9 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(html).not.toContain('<video')
     expect(html).toContain('<audio')
     expect(html).toContain('src="twmedia://asset/wavHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000.wav"')
-    expect(html).toContain('controls')
+    expect(html).toContain('tw-wave-player is-canvas is-generated')
+    expect(html).toContain('tw-wave-canvas')
+    expect(html).not.toMatch(/<audio[^>]*controls/)
     // Did NOT degrade to a generic file chip (the regression S0c fixes).
     expect(html).not.toContain('message-attachment-icon')
   })
@@ -312,12 +314,12 @@ describe('ChatMediaPanel attachment rendering', () => {
     expect(html).toContain('src="data:image/jpeg;base64,POSTER"')
     // No peaks → no canvas waveform.
     expect(html).not.toContain('<canvas')
-    // Still a headless <audio> for playback, not the plain-control fallback.
+    // Still a headless <audio> for playback, not a native-control fallback.
     expect(html).toContain('<audio')
     expect(html).not.toContain('tw-wave-audio-plain')
   })
 
-  it('falls back to a plain <audio controls> when an audio ref has neither peaks nor a poster', () => {
+  it('falls back to a generated waveform rail when an audio ref has neither peaks nor a poster', () => {
     const refs: ChatMediaRef[] = [
       {
         id: 'aud-bare',
@@ -330,14 +332,13 @@ describe('ChatMediaPanel attachment rendering', () => {
       }
     ]
     const html = renderToStaticMarkup(<ChatMessageMediaStrip refs={refs} workspacePath="/repo" />)
-    // Neither peaks nor poster → the always-playable plain control.
-    expect(html).toContain('tw-wave-audio-plain')
+    // Neither peaks nor poster → keep the same strip-shaped waveform UI.
+    expect(html).toContain('tw-wave-player is-canvas is-generated')
+    expect(html).toContain('tw-wave-canvas')
     expect(html).toContain('<audio')
-    expect(html).toContain('controls')
+    expect(html).not.toMatch(/<audio[^>]*controls/)
     expect(html).toContain('src="twmedia://asset/bareHash_abcdefghijklmnopqrstuvwxyz0123456789-XYZ0000.wav"')
-    // It is the plain fallback, not the canvas/poster player.
-    expect(html).not.toContain('<canvas')
-    expect(html).not.toContain('tw-wave-player')
+    expect(html).not.toContain('tw-wave-audio-plain')
   })
 
   it('falls back to a file card for an AV ref with no content hash (no twmedia URL)', () => {

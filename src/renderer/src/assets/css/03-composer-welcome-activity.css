@@ -5579,8 +5579,8 @@
 }
 
 /* S0c — inline audio/video players streamed over twmedia://. Break the card's
-   row layout into a column so the native <video>/<audio> controls get full width
-   without overflowing the strip or panel. */
+   row layout into a column so the playback surfaces get full width without
+   overflowing the strip or panel. */
 .message-attachment-card.message-attachment-av {
   flex-direction: column;
   align-items: stretch;
@@ -5595,8 +5595,13 @@
    keeps it from overflowing a narrow container or exceeding the composer width.
    (Width treatment to later propagate to the iOS audio tile.) */
 .message-attachment-card.message-attachment-av.is-audio {
+  flex: 1 1 100%;
+  box-sizing: border-box;
   width: 100%;
+  min-width: min(360px, 100%);
   max-width: min(100%, var(--composer-content-max-width, 760px));
+  padding: 9px 10px 10px;
+  border-radius: 13px;
 }
 .message-attachment-card.message-attachment-av.is-video {
   width: 100%;
@@ -5615,6 +5620,20 @@
 .chat-media-av-item video {
   max-height: 280px;
   background: #000;
+}
+.message-attachment-card.message-attachment-av.is-audio .tw-wave-player {
+  min-height: 108px;
+  padding: 10px 12px;
+  border-radius: 11px;
+}
+.message-attachment-card.message-attachment-av.is-audio .tw-wave-strip {
+  height: 82px;
+  min-height: 72px;
+  border-radius: 8px;
+}
+.message-attachment-card.message-attachment-av.is-audio .tw-wave-playbtn,
+.message-attachment-card.message-attachment-av.is-audio .tw-wave-time {
+  align-self: center;
 }
 .message-attachment-av .message-attachment-name,
 .chat-media-av-name {
@@ -6030,6 +6049,15 @@
   mix-blend-mode: color;
   pointer-events: none;
 }
+.tw-wave-player.is-generated .tw-wave-strip {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 10%, transparent),
+      color-mix(in srgb, var(--text-primary) 5%, transparent)
+    ),
+    color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
 
 /* 1px playhead. Its `left` is set inline by JS on timeupdate (cheap). */
 .tw-wave-playhead {
@@ -6053,12 +6081,23 @@
   white-space: nowrap;
 }
 
-/* Plain-control fallback (no peaks, no poster) — match the old inline player width. */
-.tw-wave-audio-plain {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  border-radius: 8px;
+@media (max-width: 620px) {
+  .message-attachment-card.message-attachment-av.is-audio {
+    min-width: 0;
+    padding: 8px;
+  }
+  .message-attachment-card.message-attachment-av.is-audio .tw-wave-player {
+    gap: 8px;
+    min-height: 92px;
+    padding: 8px;
+  }
+  .message-attachment-card.message-attachment-av.is-audio .tw-wave-strip {
+    height: 66px;
+    min-height: 60px;
+  }
+  .message-attachment-card.message-attachment-av.is-audio .tw-wave-time {
+    font-size: 10px;
+  }
 }
 
 /* Overlay AV body — sized like the image preview pane. */
