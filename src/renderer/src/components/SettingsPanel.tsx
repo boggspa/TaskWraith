@@ -6364,7 +6364,7 @@ export function SettingsPanel({
                     onClick={copyAllMcpServersAuditJson}
                     disabled={userMcpServers.length === 0}
                   >
-                    {copiedMcpServersJson ? 'Copied all' : 'Copy all JSON'}
+                    {copiedMcpServersJson ? 'Copied audit' : 'Copy audit JSON'}
                   </button>
                   <button
                     type="button"
@@ -6587,7 +6587,7 @@ export function SettingsPanel({
                             className="btn btn-sm btn-ghost"
                             onClick={() => copyMcpServerAuditJson(server)}
                           >
-                            {copiedMcpServerId === server.id ? 'Copied' : 'Copy JSON'}
+                            {copiedMcpServerId === server.id ? 'Copied audit' : 'Copy audit JSON'}
                           </button>
                           <button
                             type="button"
