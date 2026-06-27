@@ -5,6 +5,7 @@ import { applyAssistantDelta } from './lib/applyAssistantDelta'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { messagesRenderEqual } from './lib/messagesRenderEqual'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
+import { mergeTranscriptMediaRefs } from './lib/transcriptMediaRefs'
 import { shouldPreferLiveAssistantContent } from './lib/chatUpdatedAssistantMerge'
 import { readComposerDrafts, writeComposerDrafts } from './lib/composerDraftStore'
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
@@ -28,7 +29,6 @@ import {
   AppSettings,
   WorkspaceRecord,
   ChatRecord,
-  ChatListItem,
   ChatMessage,
   ChatRun,
   RunWarning,
@@ -65,7 +65,6 @@ import {
   RunAnalystSnapshot,
   EnsembleParticipant,
   EnsembleOrchestrationMode,
-  SideChatLifecycleState,
   PinnedMessageGroup,
   PinnedMessageSummary,
   AuditRunRecord,
@@ -136,6 +135,22 @@ import {
   isSubThreadChat,
   getUsageWorkspaceIdForChat
 } from './lib/chatScope'
+import {
+  SIDE_CHAT_HIDDEN_CONTEXT_CONSUMED_AT_METADATA_KEY,
+  SIDE_CHAT_HIDDEN_CONTEXT_PROMPT_METADATA_KEY,
+  SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY,
+  SIDE_CHAT_SELECTED_PARTICIPANT_ROLE_METADATA_KEY,
+  applySideChatLifecycle,
+  getLinkedChatAgentIdentity,
+  getLinkedChatKindLabel,
+  getPendingSideChatHiddenContextPrompt,
+  getSideChatLifecycleState,
+  getSideChatMode,
+  getSideChatSelectedParticipantId,
+  isTerminatedSideChat,
+  isTopLevelWorkspaceChat,
+  type SideChatCreateMode
+} from './lib/sideChatLifecycle'
 import {
   CODEX_DEFAULT_MODELS,
   CODEX_DEFAULT_MODEL,
@@ -373,6 +388,13 @@ import {
 import { buildProviderRunFailureSnippet } from './lib/providerRunFailureSnippet'
 import { rawLogFromRunEvent, type RawLogEntry } from './lib/rawLogEntry'
 import { findNextRunnableQueueIndex, isTerminalRunQueueStatus } from './lib/runQueueScheduling'
+import {
+  GUEST_PENDING_RUN_QUEUE_STATUSES,
+  isQueuedDesktopRunQueueJob,
+  isScheduledTaskReadyToDispatch,
+  queuedRunFallbackId,
+  queuedRunJobSortTime
+} from './lib/runQueuePredicates'
 import { ACTIVE_RUN_QUEUE_STATUSES, isChatBusyForDispatch } from './lib/chatBusyState'
 import {
   buildPlanImportDisplayPrompt,
@@ -426,6 +448,11 @@ import { buildRunDiffByPath } from './lib/RunWorkspaceDiff'
 import { shouldRunUsageRefresh } from './lib/usageRefresh'
 import { shouldRenderWelcome } from './lib/welcomeState'
 import {
+  isChatSummaryRecord,
+  mergeChatRecord,
+  reconcileChatRecords
+} from './lib/chatRecordMerge'
+import {
   shouldRebindCurrentChatOnWorkspaceSelect,
   type WorkspaceSelectIntent
 } from './lib/workspaceSelection'
@@ -453,6 +480,13 @@ import { parsePlanModeChoice, type PlanChoiceState } from './lib/planModeChoice'
 import { parseProposedPlan, stripProposedPlanBlock, type ProposedPlanState } from './lib/proposedPlan'
 import { messageAnchorsActivePrompt } from './lib/transcriptDeleteGuard'
 import { type AgentQuestionState } from './components/AgentQuestionCard'
+import {
+  EMPTY_AGENT_QUESTION_QUEUE,
+  agentQuestionQueueHasMessage,
+  enqueueAgentQuestion,
+  findQueuedAgentQuestion,
+  removeAgentQuestionFromQueue
+} from './lib/agentQuestionQueue'
 import {
   extractModelUsageEntriesFromStats,
   extractResetHintsFromText,
@@ -554,22 +588,6 @@ const WORKSPACE_ADD_POINTER_DURATION_MS = 6000
 
 // clampContextTurns moved to `src/main/PromptComposition.ts` and re-exported below.
 
-function mergeTranscriptMediaRefs(
-  existing: readonly TranscriptMediaRef[] | undefined,
-  incoming: readonly TranscriptMediaRef[]
-): TranscriptMediaRef[] {
-  const refs: TranscriptMediaRef[] = []
-  const seen = new Set<string>()
-  for (const ref of [...(existing || []), ...incoming]) {
-    const key = ref.sha256 || ref.assetId || ref.id
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    refs.push(ref)
-  }
-  return refs
-}
-
-const EMPTY_AGENT_QUESTION_QUEUE: readonly AgentQuestionState[] = Object.freeze([])
 // Slice H: stable empty placeholders for the focused-only guest-participant
 // pickers when projected into a (non-focused) Multiview pane — see
 // paneComposerCtx. Frozen module-scope arrays so their identity never changes.
@@ -578,45 +596,6 @@ const EMPTY_GUEST_REASONING_OPTIONS: readonly CombinedModelPickerReasoningOption
   []
 )
 const EMPTY_WELCOME_USAGE_DASHBOARD_DATA = buildWelcomeUsageDashboardData([], [], '30d', 0)
-
-function enqueueAgentQuestion(
-  queue: readonly AgentQuestionState[] = EMPTY_AGENT_QUESTION_QUEUE,
-  next: AgentQuestionState
-): readonly AgentQuestionState[] {
-  const existingIndex = queue.findIndex((question) => question.questionId === next.questionId)
-  if (existingIndex >= 0) {
-    const updated = [...queue]
-    updated[existingIndex] = next
-    return updated
-  }
-  return [...queue, next]
-}
-
-function removeAgentQuestionFromQueue(
-  queue: readonly AgentQuestionState[] = EMPTY_AGENT_QUESTION_QUEUE,
-  questionId: string
-): readonly AgentQuestionState[] {
-  const next = queue.filter((question) => question.questionId !== questionId)
-  return next.length > 0 ? next : EMPTY_AGENT_QUESTION_QUEUE
-}
-
-function findQueuedAgentQuestion(
-  queuesByChatId: Record<string, readonly AgentQuestionState[]>,
-  questionId: string
-): { chatId: string; question: AgentQuestionState } | null {
-  for (const [chatId, queue] of Object.entries(queuesByChatId)) {
-    const question = queue.find((entry) => entry.questionId === questionId)
-    if (question) return { chatId, question }
-  }
-  return null
-}
-
-function agentQuestionQueueHasMessage(
-  queue: readonly AgentQuestionState[] | undefined,
-  messageId: string
-): boolean {
-  return Boolean(queue?.some((question) => question.messageId === messageId))
-}
 
 // Prompt-composition helpers moved to `src/main/PromptComposition.ts` (Phase B3 step 1).
 // Re-exported below from the canonical module so existing call sites keep working
@@ -650,33 +629,6 @@ const getInitialChatPopoutChatId = (): string => {
   return params.get('popout') === 'chat' ? params.get('chat') || '' : ''
 }
 
-const GUEST_PENDING_RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
-  'queued',
-  'steer_promoting',
-  'starting',
-  'active',
-  'cancelling'
-])
-const isScheduledTaskReadyToDispatch = (
-  task: ScheduledTask,
-  nowMs: number = Date.now()
-): boolean => {
-  if (task.status === 'due') return true
-  if (task.status !== 'pending') return false
-  const runAtMs = new Date(task.runAt).getTime()
-  return Number.isFinite(runAtMs) && runAtMs <= nowMs
-}
-const isRemoteComposerRunQueueJob = (job: RunQueueJob): boolean =>
-  Boolean(job.request?.remoteComposer)
-const isQueuedDesktopRunQueueJob = (job: RunQueueJob): boolean =>
-  job.status === 'queued' && !isRemoteComposerRunQueueJob(job)
-const queuedRunFallbackId = (request: QueuedRunRequest): string =>
-  request.appRunId || `${request.provider}-${request.prompt.slice(0, 16)}`
-const queuedRunJobSortTime = (job: RunQueueJob): number => {
-  const parsed = Date.parse(job.enqueuedAt || job.createdAt || job.updatedAt || '')
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
 type SidePanelPresentation = 'split' | 'drawer'
 type SideChatTypePickerOption = {
   id: string
@@ -694,7 +646,6 @@ type InspectorRightTab =
   | 'safety'
   | 'capabilities'
   | 'background-tasks'
-type SideChatCreateMode = 'ensembleClone' | 'singleProvider' | 'fanOut' | 'guestParticipant'
 type SideChatSeedContext = {
   originMessageId?: string
   originRunId?: string
@@ -716,10 +667,6 @@ type ChatPopoutHandoffState = {
 }
 
 const CHAT_POPOUT_HANDOFF_PREFIX = 'taskwraith.chatPopoutHandoff.'
-const SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY = 'sideChatSelectedParticipantId'
-const SIDE_CHAT_SELECTED_PARTICIPANT_ROLE_METADATA_KEY = 'sideChatSelectedParticipantRole'
-const SIDE_CHAT_HIDDEN_CONTEXT_PROMPT_METADATA_KEY = 'sideChatHiddenContextPrompt'
-const SIDE_CHAT_HIDDEN_CONTEXT_CONSUMED_AT_METADATA_KEY = 'sideChatHiddenContextConsumedAt'
 const PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string> = {
   read_only: 'Plan / read-only',
   ask_before_edits: 'Ask before edits',
@@ -954,97 +901,6 @@ function buildIsolatedSideChatContextSeed(parentChat: ChatRecord): string {
   return [heading, '', 'Parent context snapshot:', ...lines].join('\n')
 }
 
-function getPendingSideChatHiddenContextPrompt(chat: ChatRecord | null | undefined): string {
-  if (!chat || chat.parentChatRelation !== 'sideChat') return ''
-  if (chat.providerMetadata?.[SIDE_CHAT_HIDDEN_CONTEXT_CONSUMED_AT_METADATA_KEY]) return ''
-  const value = chat.providerMetadata?.[SIDE_CHAT_HIDDEN_CONTEXT_PROMPT_METADATA_KEY]
-  return typeof value === 'string' ? value.trim() : ''
-}
-
-function getSideChatMode(chat: ChatRecord): SideChatCreateMode {
-  if (chat.sideChatContext?.mode) return chat.sideChatContext.mode
-  return chat.chatKind === 'ensemble' ? 'ensembleClone' : 'singleProvider'
-}
-
-function getSideChatLifecycleState(chat: ChatRecord): SideChatLifecycleState {
-  const state = chat.sideChatContext?.lifecycleState
-  if (state === 'active' || state === 'closed' || state === 'terminated') return state
-  return chat.archived ? 'terminated' : 'active'
-}
-
-function getSideChatSelectedParticipantId(chat: ChatRecord): string {
-  const value = chat.providerMetadata?.[SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY]
-  return typeof value === 'string' ? value : ''
-}
-
-function isTerminatedSideChat(chat: ChatRecord): boolean {
-  return chat.parentChatRelation === 'sideChat' && getSideChatLifecycleState(chat) === 'terminated'
-}
-
-function isTopLevelWorkspaceChat(chat: ChatRecord): boolean {
-  return !chat.parentChatId && chat.parentChatRelation !== 'sideChat' && !isSubThreadChat(chat)
-}
-
-function getLinkedChatAgentIdentity(chat: ChatRecord | null | undefined) {
-  if (!chat) return null
-  if (isSubThreadChat(chat)) return assignAgentIdentityFromSeed(chat.appChatId)
-  if (
-    chat.parentChatRelation !== 'sideChat' ||
-    !['singleProvider', 'guestParticipant'].includes(getSideChatMode(chat))
-  )
-    return null
-  if (getSideChatMode(chat) === 'guestParticipant') {
-    return assignAgentIdentityFromSeed(`${chat.parentChatId || chat.appChatId}:guest`)
-  }
-  const participantId = getSideChatSelectedParticipantId(chat)
-  if (!participantId) return null
-  return assignAgentIdentityFromSeed(`${chat.parentChatId || chat.appChatId}:${participantId}`)
-}
-
-function getLinkedChatKindLabel(chat: ChatRecord): string {
-  if (chat.parentChatRelation === 'sideChat') {
-    const mode = getSideChatMode(chat)
-    if (mode === 'fanOut') return 'Fan-out side chat'
-    if (mode === 'ensembleClone') return 'Side ensemble'
-    if (mode === 'guestParticipant') return 'Guest'
-    return 'Isolated side chat'
-  }
-  return 'Sub-thread'
-}
-
-function applySideChatLifecycle(
-  chat: ChatRecord,
-  lifecycleState: SideChatLifecycleState,
-  terminationReason?: string
-): ChatRecord {
-  if (chat.parentChatRelation !== 'sideChat') return chat
-  const now = Date.now()
-  const sideChatContext: ChatRecord['sideChatContext'] = {
-    createdAt: chat.sideChatContext?.createdAt || chat.createdAt || now,
-    ...(chat.sideChatContext || {}),
-    lifecycleState
-  }
-  if (lifecycleState === 'active') {
-    sideChatContext.openedAt = now
-    sideChatContext.closedAt = undefined
-    sideChatContext.terminatedAt = undefined
-    sideChatContext.terminationReason = undefined
-  } else if (lifecycleState === 'closed') {
-    sideChatContext.closedAt = now
-    sideChatContext.terminatedAt = undefined
-    sideChatContext.terminationReason = undefined
-  } else {
-    sideChatContext.closedAt = now
-    sideChatContext.terminatedAt = now
-    sideChatContext.terminationReason = terminationReason || 'ended_by_user'
-  }
-  return {
-    ...chat,
-    sideChatContext,
-    ...(lifecycleState === 'terminated' ? { archived: true, updatedAt: now } : {})
-  }
-}
-
 function permissionPresetToApprovalMode(preset?: string): string {
   if (preset === 'read_only') return 'plan'
   if (preset === 'workspace_write' || preset === 'full_access') return 'auto_edit'
@@ -1221,51 +1077,6 @@ function scheduleAfterNextPaint(callback: () => void): () => void {
     window.cancelAnimationFrame(rafHandle)
     if (timeoutHandle !== null) window.clearTimeout(timeoutHandle)
   }
-}
-
-function isChatSummaryRecord(chat: ChatRecord | null | undefined): chat is ChatListItem {
-  return Boolean((chat as ChatListItem | null | undefined)?.summaryOnly === true)
-}
-
-function mergeChatRecordValue(existing: ChatRecord | undefined, incoming: ChatRecord): ChatRecord {
-  if (existing && isChatSummaryRecord(incoming) && !isChatSummaryRecord(existing)) {
-    const {
-      summaryOnly: _summaryOnly,
-      messageCount: _messageCount,
-      runCount: _runCount,
-      lastRun: _lastRun,
-      searchText: _searchText,
-      searchPreview: _searchPreview,
-      messages: _messages,
-      runs: _runs,
-      ...summaryFields
-    } = incoming
-    return {
-      ...existing,
-      ...summaryFields,
-      messages: existing.messages,
-      runs: existing.runs
-    }
-  }
-  return incoming
-}
-
-function mergeChatRecord(chats: ChatRecord[], chat: ChatRecord): ChatRecord[] {
-  const existing = chats.find((item) => item.appChatId === chat.appChatId)
-  const merged = mergeChatRecordValue(existing, chat)
-  const next = [merged, ...chats.filter((item) => item.appChatId !== chat.appChatId)]
-  return next.sort((a, b) => b.updatedAt - a.updatedAt)
-}
-
-function reconcileChatRecords(existing: ChatRecord[], incoming: ChatRecord[]): ChatRecord[] {
-  return incoming
-    .map((chat) =>
-      mergeChatRecordValue(
-        existing.find((item) => item.appChatId === chat.appChatId),
-        chat
-      )
-    )
-    .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 const EMPTY_DIFF_FILE_SUMMARIES: DiffFileSummary[] = []
