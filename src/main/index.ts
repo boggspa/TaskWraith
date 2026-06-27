@@ -833,6 +833,7 @@ import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
 import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandlers'
 import { registerWorkspaceFileEditorHandlers } from './ipc/workspaceFileEditorHandlers'
 import { registerWorkspaceDiffSnapshotHandlers } from './ipc/workspaceDiffSnapshotHandlers'
+import { registerTrustHandlers } from './ipc/trustHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -28309,28 +28310,11 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    // Trust Status
-    ipcMain.handle('check-trust', (_, workspacePath: string) =>
-      workspaceService.checkTrust(workspacePath)
-    )
-
-    // One-click persistent workspace trust (#272): write the folder into
-    // ~/.gemini/trustedFolders.json directly so the Gemini CLI picks it up
-    // on its next run. Replaces the broken interactive `/permissions trust`
-    // → "Trust this workspace" terminal flow (the Trust Assistant PTY exits
-    // 0 without persisting). Static call mirrors check-trust's eventual
-    // TrustStatusService delegation.
-    ipcMain.handle('trust-workspace', (_, workspacePath: string) =>
-      TrustStatusService.trustWorkspace(workspacePath)
-    )
-
-    // Phase J3: session-scoped YOLO mode. Frontend toggles + queries.
-    // Renderer state is broadcast via `agentic-yolo-state` whenever the
-    // flag flips so the indicator badge updates across windows.
-    ipcMain.handle('agentic-yolo-get', () => getSessionYoloMode())
-    ipcMain.handle('agentic-yolo-set', (_, enabled: boolean) => {
-      setSessionYoloMode(Boolean(enabled))
-      return getSessionYoloMode()
+    registerTrustHandlers({
+      checkTrust: (workspacePath) => workspaceService.checkTrust(workspacePath),
+      trustWorkspace: (workspacePath) => TrustStatusService.trustWorkspace(workspacePath),
+      getSessionYoloMode,
+      setSessionYoloMode
     })
 
     // Outbound shell / URL bridges (shell:open-link, shell:reveal-in-finder,
