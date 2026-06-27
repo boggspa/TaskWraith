@@ -283,6 +283,10 @@ describe('AppStore global chats', () => {
     const settingsPath = join(userDataPath, 'settings.json')
     fs.writeFileSync(settingsPath, '{"sentinel":true}', 'utf8')
 
+    expect(AppStore.getChatRecordPath('safe-chat')).toBe(
+      join(userDataPath, 'chats', 'safe-chat.json')
+    )
+    expect(AppStore.getChatRecordPath('../settings')).toBeNull()
     expect(AppStore.getChat('../settings')).toBeNull()
     expect(() =>
       AppStore.saveChat({

@@ -1791,6 +1791,11 @@ export class AppStore {
     return this.readChatRecordCached(chatId, chatPathForId(chatsDir, chatId))
   }
 
+  static getChatRecordPath(chatId: string): string | null {
+    if (!isSafeChatId(chatId)) return null
+    return chatPathForId(chatsDir, chatId)
+  }
+
   static createChat(workspaceId: string, workspacePath: string): ChatRecord {
     const settings = this.getSettings()
     const chat: ChatRecord = {

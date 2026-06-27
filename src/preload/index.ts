@@ -66,6 +66,16 @@ const api = {
     ipcRenderer.invoke('spellcheck:replace-misspelling', payload),
   addWordToSpellCheckerDictionary: (payload: { point: { x: number; y: number } }) =>
     ipcRenderer.invoke('spellcheck:add-word-to-dictionary', payload),
+  sidebarShowWorkspaceInFinder: (workspaceId: string) =>
+    ipcRenderer.invoke('sidebar:show-workspace-in-finder', workspaceId),
+  sidebarCopyWorkspaceDirectory: (workspaceId: string) =>
+    ipcRenderer.invoke('sidebar:copy-workspace-directory', workspaceId),
+  sidebarShowChatWorkspaceInFinder: (chatId: string) =>
+    ipcRenderer.invoke('sidebar:show-chat-workspace-in-finder', chatId),
+  sidebarCopyChatWorkingDirectory: (chatId: string) =>
+    ipcRenderer.invoke('sidebar:copy-chat-working-directory', chatId),
+  sidebarCopyChatTranscriptPath: (chatId: string) =>
+    ipcRenderer.invoke('sidebar:copy-chat-transcript-path', chatId),
   copyChatMarkdownTranscript: (chatId: string) =>
     ipcRenderer.invoke('copy-chat-markdown-transcript', chatId),
   // Phase J1 (composer unification): the picker is now cross-provider —

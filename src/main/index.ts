@@ -1245,6 +1245,69 @@ async function revealPathInFinder(pathRaw: unknown): Promise<{ ok: boolean; erro
   }
 }
 
+type SidebarPathActionResult =
+  | { ok: true; path: string }
+  | { ok: false; reason: string; error?: string }
+
+function resolveSidebarWorkspace(workspaceIdRaw: unknown): WorkspaceRecord | null {
+  const workspaceId = typeof workspaceIdRaw === 'string' ? workspaceIdRaw.trim() : ''
+  if (!workspaceId || workspaceId !== workspaceIdRaw) return null
+  return AppStore.getWorkspaces().find((workspace) => workspace.id === workspaceId) || null
+}
+
+function resolveSidebarChat(chatIdRaw: unknown): ChatRecord | SidebarPathActionResult {
+  let chatId: string
+  try {
+    chatId = assertSafeChatId(chatIdRaw, 'sidebar chat id')
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'invalid-chat-id',
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+  const chat = AppStore.getChat(chatId)
+  if (!chat) return { ok: false, reason: 'not-found' }
+  if (chat.archived) return { ok: false, reason: 'archived' }
+  return chat
+}
+
+function resolveWorkspaceForSidebarChat(chatIdRaw: unknown): WorkspaceRecord | SidebarPathActionResult {
+  const chat = resolveSidebarChat(chatIdRaw)
+  if ('ok' in chat) return chat
+  if (chat.scope === 'global' || (!chat.workspaceId && !chat.workspacePath)) {
+    return { ok: false, reason: 'no-workspace' }
+  }
+  const workspaces = AppStore.getWorkspaces()
+  const registeredById = chat.workspaceId
+    ? workspaces.find((workspace) => workspace.id === chat.workspaceId)
+    : null
+  if (registeredById) return registeredById
+  const registeredByPath = chat.workspacePath
+    ? workspaces.find((workspace) => workspace.path === chat.workspacePath)
+    : null
+  return registeredByPath || { ok: false, reason: 'workspace-not-found' }
+}
+
+function revealSidebarPath(pathValue: string): SidebarPathActionResult {
+  if (!fsSync.existsSync(pathValue)) return { ok: false, reason: 'missing' }
+  try {
+    shell.showItemInFolder(pathValue)
+    return { ok: true, path: pathValue }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'finder-error',
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+function copySidebarPath(pathValue: string): SidebarPathActionResult {
+  clipboard.writeText(pathValue, 'clipboard')
+  return { ok: true, path: pathValue }
+}
+
 async function openSafeShellTarget(hrefRaw: unknown): Promise<{ ok: boolean; error?: string }> {
   const decision = classifyShellOpenTarget(hrefRaw)
   try {
@@ -25191,6 +25254,63 @@ if (isGeminiMcpBridgeProcess) {
       }
       const ok = event.sender.session.addWordToSpellCheckerDictionary(snapshot.misspelledWord)
       return { ok }
+    })
+
+    ipcMain.handle('sidebar:show-workspace-in-finder', (event, workspaceId: string) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender)
+      if (!senderWindow || senderWindow.isDestroyed()) {
+        return { ok: false, reason: 'unauthorized' }
+      }
+      const workspace = resolveSidebarWorkspace(workspaceId)
+      if (!workspace) return { ok: false, reason: 'workspace-not-found' }
+      return revealSidebarPath(workspace.path)
+    })
+
+    ipcMain.handle('sidebar:copy-workspace-directory', (event, workspaceId: string) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender)
+      if (!senderWindow || senderWindow.isDestroyed()) {
+        return { ok: false, reason: 'unauthorized' }
+      }
+      const workspace = resolveSidebarWorkspace(workspaceId)
+      if (!workspace) return { ok: false, reason: 'workspace-not-found' }
+      return copySidebarPath(workspace.path)
+    })
+
+    ipcMain.handle('sidebar:show-chat-workspace-in-finder', (event, chatId: string) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender)
+      if (!senderWindow || senderWindow.isDestroyed()) {
+        return { ok: false, reason: 'unauthorized' }
+      }
+      const workspace = resolveWorkspaceForSidebarChat(chatId)
+      if ('ok' in workspace) return workspace
+      return revealSidebarPath(workspace.path)
+    })
+
+    ipcMain.handle('sidebar:copy-chat-working-directory', (event, chatId: string) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender)
+      if (!senderWindow || senderWindow.isDestroyed()) {
+        return { ok: false, reason: 'unauthorized' }
+      }
+      const workspace = resolveWorkspaceForSidebarChat(chatId)
+      if ('ok' in workspace) return workspace
+      return copySidebarPath(workspace.path)
+    })
+
+    ipcMain.handle('sidebar:copy-chat-transcript-path', (event, chatId: string) => {
+      const senderWindow = BrowserWindow.fromWebContents(event.sender)
+      if (!senderWindow || senderWindow.isDestroyed()) {
+        return { ok: false, reason: 'unauthorized' }
+      }
+      if (AppStore.getSettings().storeLocalChatHistory === false) {
+        return { ok: false, reason: 'local-history-disabled' }
+      }
+      const chat = resolveSidebarChat(chatId)
+      if ('ok' in chat) return chat
+      const chatPath = AppStore.getChatRecordPath(chat.appChatId)
+      if (!chatPath || !fsSync.existsSync(chatPath)) {
+        return { ok: false, reason: 'missing' }
+      }
+      return copySidebarPath(chatPath)
     })
 
     ipcMain.handle('copy-chat-markdown-transcript', async (event, chatId: string) => {

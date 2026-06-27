@@ -331,6 +331,10 @@ type CopyChatMarkdownTranscriptResult =
       omissions?: string[]
     }
 
+type SidebarPathActionResult =
+  | { ok: true; path: string }
+  | { ok: false; reason: string; error?: string }
+
 interface SpellcheckContextResult {
   x: number
   y: number
@@ -388,6 +392,11 @@ declare global {
       addWordToSpellCheckerDictionary: (payload: {
         point: { x: number; y: number }
       }) => Promise<{ ok: boolean; reason?: string }>
+      sidebarShowWorkspaceInFinder: (workspaceId: string) => Promise<SidebarPathActionResult>
+      sidebarCopyWorkspaceDirectory: (workspaceId: string) => Promise<SidebarPathActionResult>
+      sidebarShowChatWorkspaceInFinder: (chatId: string) => Promise<SidebarPathActionResult>
+      sidebarCopyChatWorkingDirectory: (chatId: string) => Promise<SidebarPathActionResult>
+      sidebarCopyChatTranscriptPath: (chatId: string) => Promise<SidebarPathActionResult>
       copyChatMarkdownTranscript: (chatId: string) => Promise<CopyChatMarkdownTranscriptResult>
       selectExternalPathGrant: (
         access?: 'read' | 'write',

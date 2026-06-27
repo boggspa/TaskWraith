@@ -278,6 +278,8 @@ interface PairedRemoteDeviceSummary {
   connected: boolean
 }
 
+type SidebarPathAction = () => Promise<{ ok: boolean; reason?: string; error?: string }>
+
 const isSideChatRecord = (chat: ChatRecord): boolean => chat.parentChatRelation === 'sideChat'
 const isLinkedChildChat = (chat: ChatRecord): boolean => isSubThreadChat(chat) || isSideChatRecord(chat)
 
@@ -2760,6 +2762,18 @@ export function Sidebar({
     }
   }, [chats])
 
+  const runSidebarPathAction = useCallback((action: SidebarPathAction): void => {
+    void action()
+      .then((result) => {
+        if (!result.ok) {
+          console.warn('[sidebar] Path action failed', result.reason || result.error || 'unknown')
+        }
+      })
+      .catch((error) => {
+        console.warn('[sidebar] Path action failed', error)
+      })
+  }, [])
+
   /**
    * Build the items rendered inside a chat tile's overflow menu.
    * Keeps the action set consistent across the four sites that render
@@ -2770,6 +2784,8 @@ export function Sidebar({
    */
   const buildChatMenuItems = (chat: ChatRecord): SidebarOverflowMenuItem[] => {
     const items: SidebarOverflowMenuItem[] = []
+    const hasWorkspaceDirectory =
+      chat.scope !== 'global' && Boolean(chat.workspaceId || chat.workspacePath)
     if (onRenameChat) {
       items.push({
         id: 'rename',
@@ -2835,6 +2851,29 @@ export function Sidebar({
         onSelect: () => onOpenInMultiview(chat)
       })
     }
+    if (hasWorkspaceDirectory) {
+      items.push({
+        id: 'show-workspace-in-finder',
+        label: 'Show Workspace in Finder',
+        group: 'secondary',
+        onSelect: () =>
+          runSidebarPathAction(() => window.api.sidebarShowChatWorkspaceInFinder(chat.appChatId))
+      })
+      items.push({
+        id: 'copy-working-directory',
+        label: 'Copy Working Directory',
+        group: 'secondary',
+        onSelect: () =>
+          runSidebarPathAction(() => window.api.sidebarCopyChatWorkingDirectory(chat.appChatId))
+      })
+    }
+    items.push({
+      id: 'copy-chat-transcript-directory',
+      label: 'Copy Chat Transcript Directory',
+      group: 'secondary',
+      onSelect: () =>
+        runSidebarPathAction(() => window.api.sidebarCopyChatTranscriptPath(chat.appChatId))
+    })
     if (onDeleteChat) {
       items.push({
         id: 'delete',
@@ -2881,6 +2920,18 @@ export function Sidebar({
       label: 'New chat',
       group: 'primary',
       onSelect: () => onNewChat(ws.id, ws.path)
+    })
+    items.push({
+      id: 'show-workspace-in-finder',
+      label: 'Show Workspace in Finder',
+      group: 'secondary',
+      onSelect: () => runSidebarPathAction(() => window.api.sidebarShowWorkspaceInFinder(ws.id))
+    })
+    items.push({
+      id: 'copy-working-directory',
+      label: 'Copy Working Directory',
+      group: 'secondary',
+      onSelect: () => runSidebarPathAction(() => window.api.sidebarCopyWorkspaceDirectory(ws.id))
     })
     items.push({
       id: 'remove',

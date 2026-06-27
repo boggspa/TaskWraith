@@ -431,6 +431,18 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('favicon:getForUrl', [''])).toThrow(/non-empty/)
   })
 
+  it('validates sidebar path action identifiers', () => {
+    expect(() => validateIpcArgs('sidebar:show-workspace-in-finder', ['ws-1'])).not.toThrow()
+    expect(() => validateIpcArgs('sidebar:copy-workspace-directory', ['ws-1'])).not.toThrow()
+    expect(() => validateIpcArgs('sidebar:show-workspace-in-finder', [''])).toThrow(/non-empty/)
+    expect(() => validateIpcArgs('sidebar:show-chat-workspace-in-finder', ['chat-1'])).not.toThrow()
+    expect(() => validateIpcArgs('sidebar:copy-chat-working-directory', ['chat-1'])).not.toThrow()
+    expect(() => validateIpcArgs('sidebar:copy-chat-transcript-path', ['chat-1'])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('sidebar:copy-chat-transcript-path', ['../settings'])
+    ).toThrow(/safe chat id/)
+  })
+
   it('accepts bridge daemon status and toggle APIs', () => {
     expect(() => validateIpcArgs('bridge-networking-status', [])).not.toThrow()
     expect(() => validateIpcArgs('set-bridge-daemon-enabled', [true])).not.toThrow()
