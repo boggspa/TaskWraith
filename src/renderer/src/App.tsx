@@ -66,7 +66,6 @@ import {
   EnsembleParticipant,
   EnsembleOrchestrationMode,
   PinnedMessageGroup,
-  PinnedMessageSummary,
   AuditRunRecord,
   ActiveGoal,
   ActiveGoalStatus,
@@ -453,6 +452,11 @@ import {
   mergeChatRecord,
   reconcileChatRecords
 } from './lib/chatRecordMerge'
+import {
+  buildPinnedMessageSummaries,
+  countMessagesWithPinnedMetadata,
+  toggleChatMessagePin
+} from './lib/pinnedMessages'
 import {
   shouldRebindCurrentChatOnWorkspaceSelect,
   type WorkspaceSelectIntent
@@ -13355,19 +13359,7 @@ function App(): React.JSX.Element {
         const messages = source.messages.map((message) => {
           if (message.id !== messageId) return message
           changed = true
-          const metadata = { ...(message.metadata || {}) }
-          if (typeof metadata.pinnedAt === 'number') {
-            delete metadata.pinnedAt
-          } else {
-            metadata.pinnedAt = pinnedAt
-          }
-          const nextMessage: ChatMessage = { ...message }
-          if (Object.keys(metadata).length > 0) {
-            nextMessage.metadata = metadata
-          } else {
-            delete nextMessage.metadata
-          }
-          return nextMessage
+          return toggleChatMessagePin(message, pinnedAt)
         })
         return changed ? { ...source, messages, updatedAt: Date.now() } : source
       })
@@ -17555,23 +17547,10 @@ function App(): React.JSX.Element {
     visibleRunCompleteNotice && !isWelcomeChat
       ? formatWorkDuration(visibleRunCompleteNotice.startedAt, visibleRunCompleteNotice.timestamp)
       : null
-  const currentPinnedMessages = useMemo<PinnedMessageSummary[]>(() => {
-    return (currentChat?.messages || [])
-      .map((message) => {
-        const pinnedAt = message.metadata?.pinnedAt
-        if (typeof pinnedAt !== 'number' || !Number.isFinite(pinnedAt)) return null
-        return {
-          id: message.id,
-          role: message.role,
-          content: message.content,
-          timestamp: message.timestamp,
-          ...(message.runId ? { runId: message.runId } : {}),
-          pinnedAt
-        }
-      })
-      .filter((message): message is PinnedMessageSummary => Boolean(message))
-      .sort((a, b) => b.pinnedAt - a.pinnedAt)
-  }, [currentChat?.messages])
+  const currentPinnedMessages = useMemo(
+    () => buildPinnedMessageSummaries(currentChat?.messages),
+    [currentChat?.messages]
+  )
   const currentPreviewTargets = getPreviewTargetsForChat(currentChat)
   const currentPreviewMenuOpen =
     previewMenuTarget?.paneId != null &&
@@ -19754,9 +19733,7 @@ function App(): React.JSX.Element {
       imageAttachmentsByChatId[viewerChatId] || EMPTY_IMAGE_ATTACHMENTS,
       []
     )
-    const viewerPinnedMessageCount = (viewerChat.messages || []).filter(
-      (message) => typeof message.metadata?.pinnedAt === 'number'
-    ).length
+    const viewerPinnedMessageCount = countMessagesWithPinnedMetadata(viewerChat.messages)
     const focusPaneForChromeAction = (paneIndex: number, chatId: string): void => {
       handleFocusMultiviewPane(paneIndex, chatId)
     }
