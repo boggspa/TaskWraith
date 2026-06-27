@@ -25,7 +25,6 @@ import type {
 import { detectExternalPath } from './services/ExternalPathDetector'
 import { FaviconService } from './services/FaviconService'
 import {
-  type WorkspaceFileListResult,
   listWorkspaceFiles as listWorkspaceFilesForEditor,
   deleteWorkspaceFile as deleteWorkspaceFileForEditor,
   readWorkspaceFile as readWorkspaceFileForEditor,
@@ -485,8 +484,6 @@ import {
   ToolActivity,
   WorkspaceSnapshot,
   AppearanceMode,
-  WorkspaceFileEntry,
-  WorkspaceFileReadResult,
   GeminiWorktreeLaunchOption,
   ProviderId,
   AuditRunRecord,
@@ -834,6 +831,7 @@ import { registerLocalServersHandlers } from './ipc/localServersHandlers'
 import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
 import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandlers'
+import { registerWorkspaceFileEditorHandlers } from './ipc/workspaceFileEditorHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -23806,6 +23804,12 @@ if (isGeminiMcpBridgeProcess) {
       broadcastWorkspaceList
     })
     registerWorkspaceActivityHandlers({ requireRegisteredWorkspace })
+    registerWorkspaceFileEditorHandlers({
+      requireRegisteredWorkspace,
+      findRegisteredWorkspace,
+      recordWorkspaceEditorChange: (input) => AppStore.recordWorkspaceEditorChange(input),
+      scheduleRemoteGitSnapshotRefresh
+    })
 
     registerChatHandlers({
       chatService,
@@ -25337,26 +25341,6 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
-    ipcMain.handle(
-      'list-workspace-files',
-      async (_, workspace: string): Promise<WorkspaceFileEntry[]> => {
-        return (await listWorkspaceFilesForEditor(requireRegisteredWorkspace(workspace))).entries
-      }
-    )
-
-    ipcMain.handle(
-      'list-workspace-files-for-editor',
-      async (_, workspace: string, options?: unknown): Promise<WorkspaceFileListResult> => {
-        const request = isRecord(options) ? options : {}
-        const limit = optionalNumber(request.limit)
-        return listWorkspaceFilesForEditor(requireRegisteredWorkspace(workspace), {
-          path: optionalString(request.path),
-          query: optionalString(request.query),
-          ...(limit !== undefined ? { limit } : {})
-        })
-      }
-    )
-
     /**
      * Slice 1 of the external-path-redesign arc. Given an absolute
      * path, return whether it sits inside a git repo + the current
@@ -25370,14 +25354,6 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     ipcMain.handle(
-      'read-workspace-file',
-      async (_, workspace: string, filePath: string): Promise<WorkspaceFileReadResult> => {
-        const registeredWorkspace = requireRegisteredWorkspace(workspace)
-        return readWorkspaceFileForEditor(registeredWorkspace, filePath)
-      }
-    )
-
-    ipcMain.handle(
       'discover-gemini-commands',
       async (_, workspace: string): Promise<GeminiCommandDiscoveryRecord[]> => {
         return discoverGeminiCommands(requireRegisteredWorkspace(workspace))
@@ -25388,46 +25364,6 @@ if (isGeminiMcpBridgeProcess) {
       'discover-gemini-memory',
       async (_, workspace: string): Promise<GeminiMemoryDiscoveryRecord[]> => {
         return discoverGeminiMemory(requireRegisteredWorkspace(workspace))
-      }
-    )
-
-    ipcMain.handle(
-      'write-workspace-file',
-      async (
-        _,
-        workspace: string,
-        filePath: string,
-        content: string,
-        baseEtag?: string | null
-      ): Promise<WorkspaceFileReadResult> => {
-        const registeredWorkspace = requireRegisteredWorkspace(workspace)
-        const result = await writeWorkspaceFileForEditor({
-          workspacePath: registeredWorkspace,
-          filePath,
-          content,
-          baseEtag,
-          origin: 'file-editor',
-          recordChange: (input) => AppStore.recordWorkspaceEditorChange(input)
-        })
-        const workspaceRecord = findRegisteredWorkspace(registeredWorkspace)
-        scheduleRemoteGitSnapshotRefresh(workspaceRecord?.id, { delayMs: 50, force: true })
-        return result
-      }
-    )
-
-    ipcMain.handle(
-      'delete-workspace-file',
-      async (_, workspace: string, filePath: string) => {
-        const registeredWorkspace = requireRegisteredWorkspace(workspace)
-        const result = await deleteWorkspaceFileForEditor({
-          workspacePath: registeredWorkspace,
-          filePath,
-          origin: 'file-editor',
-          recordChange: (input) => AppStore.recordWorkspaceEditorChange(input)
-        })
-        const workspaceRecord = findRegisteredWorkspace(registeredWorkspace)
-        scheduleRemoteGitSnapshotRefresh(workspaceRecord?.id, { delayMs: 50, force: true })
-        return result
       }
     )
 
