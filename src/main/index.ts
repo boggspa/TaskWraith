@@ -833,6 +833,7 @@ import { registerPtyHandlers } from './ipc/ptyHandlers'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { registerLocalServersHandlers } from './ipc/localServersHandlers'
 import { registerChatHandlers } from './ipc/chatHandlers'
+import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -23795,90 +23796,14 @@ if (isGeminiMcpBridgeProcess) {
       AppStore.deleteHandoffCard(requireNonEmptyString(id, 'Handoff card id'))
     )
 
-    // Workspaces
-    //
-    // `get-workspaces` lazily backfills git branches for any workspace
-    // whose record has `branch: undefined`. The probe-at-registration
-    // logic in `add-or-update-workspace` only runs when the renderer
-    // explicitly patches a workspace; it doesn't catch:
-    //   - workspaces persisted before commit `ec62275` shipped (their
-    //     stored record never had a branch);
-    //   - workspaces added via `select-workspace` (which routes through
-    //     `WorkspaceService.addWorkspaceFromNativeSelection`, bypassing
-    //     the probe wrapper).
-    // Both classes show "detached" forever in the composer above-bar
-    // until something else triggers `add-or-update-workspace`.
-    //
-    // Doing the backfill at fetch time, in parallel, is fast (each
-    // probe is a single `git rev-parse` worth of work) and keeps the
-    // probe surface in one place. After the first successful fetch
-    // every workspace has a branch persisted, so subsequent calls
-    // short-circuit on `missing.length === 0`.
-    ipcMain.handle('get-workspaces', async () => {
-      const workspaces = workspaceService.getWorkspaces()
-      const missing = workspaces.filter((ws) => !ws.branch)
-      if (missing.length === 0) return workspaces
-      try {
+    registerWorkspaceHandlers({
+      workspaceService,
+      probeExternalPath: async (path) => {
         const { probeExternalPath } = await import('./services/ExternalPathProbe')
-        const probed = await Promise.all(
-          missing.map(async (ws) => {
-            try {
-              const result = await probeExternalPath(ws.path)
-              return { id: ws.id, path: ws.path, branch: result?.branch }
-            } catch {
-              return { id: ws.id, path: ws.path, branch: undefined }
-            }
-          })
-        )
-        let touched = false
-        for (const entry of probed) {
-          if (entry.branch) {
-            workspaceService.addOrUpdateWorkspace(entry.path, {
-              branch: entry.branch
-            })
-            touched = true
-          }
-        }
-        return touched ? workspaceService.getWorkspaces() : workspaces
-      } catch {
-        return workspaces
-      }
-    })
-    ipcMain.handle(
-      'add-or-update-workspace',
-      async (_, path: string, partial: Partial<WorkspaceRecord>) => {
-        // Phase J7 follow-up: auto-detect the workspace's current
-        // git branch at registration time. Previously every
-        // WorkspaceRecord persisted with `branch: undefined`, so
-        // the composer's above-bar always read "detached" even on
-        // freshly-checked-out repos. Re-uses the slice-1
-        // ExternalPathProbe (same machinery that drives the
-        // external-path row stack). Best-effort — falls through to
-        // whatever the caller passed if the probe errors.
-        let resolvedPartial: Partial<WorkspaceRecord> = partial || {}
-        if (!resolvedPartial.branch) {
-          try {
-            const { probeExternalPath } = await import('./services/ExternalPathProbe')
-            const probed = await probeExternalPath(path)
-            if (probed?.branch) {
-              resolvedPartial = { ...resolvedPartial, branch: probed.branch }
-            }
-          } catch {
-            /* keep partial as-is */
-          }
-        }
-        const ws = workspaceService.addOrUpdateWorkspace(path, resolvedPartial)
-        broadcastWorkspaceUpdate(ws?.id)
-        return ws
-      }
-    )
-    ipcMain.handle('remove-workspace', (_, id: string) => {
-      workspaceService.removeWorkspace(id)
-      broadcastWorkspaceList()
-    })
-    ipcMain.handle('clear-workspaces', () => {
-      workspaceService.clearWorkspaces()
-      broadcastWorkspaceList()
+        return probeExternalPath(path)
+      },
+      broadcastWorkspaceUpdate,
+      broadcastWorkspaceList
     })
 
     registerChatHandlers({
