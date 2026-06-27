@@ -143,11 +143,11 @@ struct HomeView: View {
     }
     /// Workflows scoped to workspaces the phone already knows (allowlisted) —
     /// mirrors the workspace-folder gating so a workflow never references a
-    /// workspace the user can't see. Workflows with no workspaceId are kept.
+    /// workspace the user can't see.
     private var listedWorkflows: [RemoteWorkflow] {
         let known = Set(model.workspaces.map(\.workspaceId))
         return model.workflows.filter {
-            guard let ws = $0.workspaceId else { return true }
+            guard let ws = $0.workspaceId else { return false }
             return known.contains(ws)
         }
     }
