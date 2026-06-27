@@ -638,13 +638,20 @@ describe('user MCP server name/audit helpers', () => {
       },
       bearerTokenEnvVar: 'DOCS_TOKEN'
     }
+    const bearerOnlyServer = {
+      ...server,
+      headers: undefined,
+      bearerTokenEnvVar: 'DOCS_TOKEN'
+    }
 
     expect(userMcpServerMatchesQuery(server, 'docs search')).toBe(true)
     expect(userMcpServerMatchesQuery(server, 'http')).toBe(true)
     expect(userMcpServerMatchesQuery(server, 'example.test')).toBe(true)
     expect(userMcpServerMatchesQuery(server, 'authorization')).toBe(true)
+    expect(userMcpServerMatchesQuery(bearerOnlyServer, 'authorization')).toBe(true)
     expect(userMcpServerMatchesQuery(server, 'DOCS_TOKEN')).toBe(true)
     expect(userMcpServerMatchesQuery(server, 'claude json')).toBe(true)
+    expect(userMcpServerMatchesQuery(bearerOnlyServer, 'Bearer')).toBe(false)
     expect(userMcpServerMatchesQuery(server, 'Bearer')).toBe(false)
     expect(userMcpServerMatchesQuery(server, 'filesystem')).toBe(false)
   })

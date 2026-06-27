@@ -789,7 +789,7 @@ export function userMcpServerMatchesQuery(
     server.url || '',
     ...(server.args ?? []),
     ...Object.keys(server.env ?? {}),
-    ...Object.keys(server.headers ?? {}),
+    ...Object.keys(userMcpServerRemoteHeaders(server, { redactValues: true }) ?? {}),
     server.bearerTokenEnvVar || '',
     userMcpServerRuntimeLabel(server),
     ...userMcpServerProviderExportLabels(server)
