@@ -100,11 +100,11 @@ export interface DetectTailscaleOptions {
    * the filesystem probe and the PATH search. Pass `null` to force
    * "not found". */
   cliPath?: string | null
-  /** Number of extra status attempts after the first one. Default 1
+  /** Number of extra status attempts after the first one. Default 3
    * because the macOS GUI helper can briefly reject status requests
    * while the Network Extension is waking up. */
   statusRetries?: number
-  /** Delay between status attempts. Default 300ms. */
+  /** Delay between status attempts. Default 750ms. */
   retryDelayMs?: number
   /** Inject sleep for tests. */
   sleep?: (ms: number) => Promise<void>
