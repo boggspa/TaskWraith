@@ -258,7 +258,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('1 env var')
     expect(html).toContain('1 header')
     expect(html).toContain('bearer env')
-    expect(html).toContain('Import JSON')
+    expect(html).toContain('Import config')
     expect(html).toContain('Codex + Claude + Cursor')
     expect(html).toContain('stdio and HTTP launch support')
     expect(html).toContain('runtime: Codex + Claude + Cursor')
@@ -370,6 +370,44 @@ describe('parseUserMcpServersImportJson', () => {
       bearerTokenEnvVar: 'DOCS_TOKEN'
     })
     expect(result.servers[0].headers).not.toHaveProperty('bad header')
+  })
+
+  it('imports Codex-style TOML MCP server snippets', () => {
+    const result = parseUserMcpServersImportJson(`
+      [mcp_servers.filesystem]
+      command = "npx"
+      args = ["@modelcontextprotocol/server-filesystem", "/repo"]
+      env = { PROJECT_ROOT = "/repo", "bad-key" = "dropped" }
+
+      [mcp_servers."figma-remote"]
+      url = "https://mcp.figma.com/mcp"
+      bearer_token_env_var = "FIGMA_OAUTH_TOKEN"
+      http_headers = { "X-Figma-Region" = "eu", Authorization = "Bearer \${FIGMA_OAUTH_TOKEN}" }
+    `)
+
+    expect(result.error).toBeUndefined()
+    expect(result.skipped).toBe(0)
+    expect(result.servers).toHaveLength(2)
+    expect(result.servers[0]).toMatchObject({
+      name: 'filesystem',
+      enabled: true,
+      transport: 'stdio',
+      command: 'npx',
+      args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+      env: { PROJECT_ROOT: '/repo' }
+    })
+    expect(result.servers[0].env).not.toHaveProperty('bad-key')
+    expect(result.servers[1]).toMatchObject({
+      name: 'figma-remote',
+      enabled: true,
+      transport: 'http',
+      url: 'https://mcp.figma.com/mcp',
+      headers: {
+        'X-Figma-Region': 'eu',
+        Authorization: 'Bearer ${FIGMA_OAUTH_TOKEN}'
+      },
+      bearerTokenEnvVar: 'FIGMA_OAUTH_TOKEN'
+    })
   })
 
   it('reports an error when no supported MCP server entries are present', () => {

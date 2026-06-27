@@ -875,6 +875,207 @@ function normalizeImportedUserMcpArgs(value: unknown): string[] | undefined {
   return args.length > 0 ? args : undefined
 }
 
+function stripTomlComment(line: string): string {
+  let quote: '"' | "'" | null = null
+  let escaped = false
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]
+    if (quote === '"') {
+      if (escaped) {
+        escaped = false
+        continue
+      }
+      if (char === '\\') {
+        escaped = true
+        continue
+      }
+      if (char === '"') quote = null
+      continue
+    }
+    if (quote === "'") {
+      if (char === "'") quote = null
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === '#') return line.slice(0, index)
+  }
+  return line
+}
+
+function splitTomlTopLevel(value: string, separator: ',' | '.' = ','): string[] {
+  const parts: string[] = []
+  let start = 0
+  let quote: '"' | "'" | null = null
+  let escaped = false
+  let squareDepth = 0
+  let braceDepth = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    if (quote === '"') {
+      if (escaped) {
+        escaped = false
+        continue
+      }
+      if (char === '\\') {
+        escaped = true
+        continue
+      }
+      if (char === '"') quote = null
+      continue
+    }
+    if (quote === "'") {
+      if (char === "'") quote = null
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === '[') squareDepth += 1
+    else if (char === ']') squareDepth = Math.max(0, squareDepth - 1)
+    else if (char === '{') braceDepth += 1
+    else if (char === '}') braceDepth = Math.max(0, braceDepth - 1)
+    else if (char === separator && squareDepth === 0 && braceDepth === 0) {
+      parts.push(value.slice(start, index).trim())
+      start = index + 1
+    }
+  }
+  const tail = value.slice(start).trim()
+  if (tail) parts.push(tail)
+  return parts
+}
+
+function findTomlTopLevelEquals(value: string): number {
+  let quote: '"' | "'" | null = null
+  let escaped = false
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    if (quote === '"') {
+      if (escaped) {
+        escaped = false
+        continue
+      }
+      if (char === '\\') {
+        escaped = true
+        continue
+      }
+      if (char === '"') quote = null
+      continue
+    }
+    if (quote === "'") {
+      if (char === "'") quote = null
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === '=') return index
+  }
+  return -1
+}
+
+function parseTomlString(value: string): string | undefined {
+  const trimmed = value.trim()
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed)
+    } catch {
+      return undefined
+    }
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1)
+  }
+  return undefined
+}
+
+function parseTomlKey(value: string): string | undefined {
+  const trimmed = value.trim()
+  const quoted = parseTomlString(trimmed)
+  if (quoted !== undefined) return quoted
+  return /^[A-Za-z0-9_-]+$/.test(trimmed) ? trimmed : undefined
+}
+
+function parseTomlDottedPath(value: string): string[] | undefined {
+  const parts = splitTomlTopLevel(value, '.').map(parseTomlKey)
+  return parts.every((part): part is string => typeof part === 'string') ? parts : undefined
+}
+
+function parseTomlStringArray(value: string): string[] | undefined {
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return undefined
+  const inner = trimmed.slice(1, -1).trim()
+  if (!inner) return []
+  const values = splitTomlTopLevel(inner).map(parseTomlString)
+  return values.every((entry): entry is string => typeof entry === 'string') ? values : undefined
+}
+
+function parseTomlStringInlineTable(value: string): Record<string, string> | undefined {
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return undefined
+  const inner = trimmed.slice(1, -1).trim()
+  if (!inner) return {}
+  const table: Record<string, string> = {}
+  for (const pair of splitTomlTopLevel(inner)) {
+    const separatorIndex = findTomlTopLevelEquals(pair)
+    if (separatorIndex <= 0) return undefined
+    const key = parseTomlKey(pair.slice(0, separatorIndex))
+    const val = parseTomlString(pair.slice(separatorIndex + 1))
+    if (key === undefined || val === undefined) return undefined
+    table[key] = val
+  }
+  return table
+}
+
+function parseTomlBoolean(value: string): boolean | undefined {
+  const trimmed = value.trim().toLowerCase()
+  if (trimmed === 'true') return true
+  if (trimmed === 'false') return false
+  return undefined
+}
+
+function parseCodexMcpServersToml(text: string): Record<string, Record<string, unknown>> | null {
+  const servers: Record<string, Record<string, unknown>> = {}
+  let currentServerName: string | null = null
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = stripTomlComment(rawLine).trim()
+    if (!line) continue
+    const tableMatch = line.match(/^\[(.+)]$/)
+    if (tableMatch) {
+      const path = parseTomlDottedPath(tableMatch[1])
+      currentServerName =
+        path && path.length === 2 && path[0] === 'mcp_servers' ? path[1] : null
+      if (currentServerName && !servers[currentServerName]) servers[currentServerName] = {}
+      continue
+    }
+    if (!currentServerName) continue
+    const separatorIndex = findTomlTopLevelEquals(line)
+    if (separatorIndex <= 0) continue
+    const key = parseTomlKey(line.slice(0, separatorIndex))
+    if (!key) continue
+    const rawValue = line.slice(separatorIndex + 1).trim()
+    const entry = servers[currentServerName]
+    if (key === 'args') {
+      const args = parseTomlStringArray(rawValue)
+      if (args) entry.args = args
+    } else if (key === 'env' || key === 'headers' || key === 'http_headers') {
+      const table = parseTomlStringInlineTable(rawValue)
+      if (table) entry[key] = table
+    } else if (key === 'enabled' || key === 'disabled') {
+      const boolValue = parseTomlBoolean(rawValue)
+      if (boolValue !== undefined) entry[key] = boolValue
+    } else {
+      const stringValue = parseTomlString(rawValue)
+      if (stringValue !== undefined) entry[key] = stringValue
+    }
+  }
+  return Object.keys(servers).length > 0 ? servers : null
+}
+
 function normalizeImportedUserMcpTransport(entry: Record<string, unknown>): UserMcpServerTransport {
   const raw = String(entry.type || entry.transport || '').trim().toLowerCase()
   if (raw === 'sse') return 'sse'
@@ -945,10 +1146,19 @@ export function parseUserMcpServersImportJson(
   try {
     parsed = JSON.parse(text)
   } catch {
-    return { servers: [], skipped: 0, error: 'Paste valid JSON before importing.' }
+    const tomlServers = parseCodexMcpServersToml(text)
+    if (tomlServers) {
+      parsed = { mcpServers: tomlServers }
+    } else {
+      return {
+        servers: [],
+        skipped: 0,
+        error: 'Paste valid JSON or Codex MCP TOML before importing.'
+      }
+    }
   }
   if (!isPlainRecord(parsed)) {
-    return { servers: [], skipped: 0, error: 'MCP import JSON must be an object.' }
+    return { servers: [], skipped: 0, error: 'MCP import config must be an object.' }
   }
   const rawServers = isPlainRecord(parsed.mcpServers) ? parsed.mcpServers : parsed
   const usedNames = new Set(existingServers.map((server) => server.name.trim().toLowerCase()))
@@ -1532,7 +1742,18 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     label: 'MCP Servers',
     group: 'integrations',
     description: 'User-managed MCP server definitions, enablement, transport, commands, URLs, and env vars.',
-    aliases: ['mcp', 'servers', 'mcp servers', 'custom mcp', 'external tools', 'connectors'],
+    aliases: [
+      'mcp',
+      'servers',
+      'mcp servers',
+      'custom mcp',
+      'external tools',
+      'connectors',
+      'codex mcp',
+      'codex toml',
+      'toml',
+      'import mcp'
+    ],
     scope: 'global'
   },
   {
@@ -2253,7 +2474,7 @@ export function SettingsPanel({
     resetMcpServerForm()
   }
 
-  const importMcpServersFromJson = (): void => {
+  const importMcpServersFromConfig = (): void => {
     const result = parseUserMcpServersImportJson(mcpImportText, userMcpServers)
     if (result.error) {
       setMcpImportError(result.error)
@@ -5847,7 +6068,7 @@ export function SettingsPanel({
                     className="btn btn-sm btn-ghost"
                     onClick={startImportMcpServers}
                   >
-                    Import JSON
+                    Import config
                   </button>
                   <button type="button" className="btn btn-sm" onClick={startCreateMcpServer}>
                     Add server
@@ -5888,11 +6109,12 @@ export function SettingsPanel({
               <div className="settings-group span-all settings-user-mcp-importer">
                 <div className="settings-mcp-section-title">
                   <h4 className="sidebar-section-title" style={{ margin: 0 }}>
-                    Import MCP JSON
+                    Import MCP config
                   </h4>
                   <p className="settings-hint">
-                    Paste a Claude, Cursor, or Codex style JSON object with a top-level mcpServers
-                    map. Imported servers are stored as TaskWraith-owned definitions.
+                    Paste a Claude or Cursor JSON object with a top-level mcpServers map, or a
+                    Codex TOML snippet with mcp_servers tables. Imported servers are stored as
+                    TaskWraith-owned definitions.
                   </p>
                 </div>
                 <textarea
@@ -5903,7 +6125,7 @@ export function SettingsPanel({
                     setMcpImportError('')
                   }}
                   rows={8}
-                  placeholder={`{\n  "mcpServers": {\n    "docs": {\n      "type": "http",\n      "url": "https://example.test/mcp",\n      "headers": { "X-Region": "eu" }\n    }\n  }\n}`}
+                  placeholder={`{\n  "mcpServers": {\n    "docs": {\n      "type": "http",\n      "url": "https://example.test/mcp",\n      "headers": { "X-Region": "eu" }\n    }\n  }\n}\n\n[mcp_servers.docs]\nurl = "https://example.test/mcp"\nhttp_headers = { "X-Region" = "eu" }`}
                 />
                 <div className="settings-user-mcp-footer">
                   <span className="settings-hint">
@@ -5913,7 +6135,11 @@ export function SettingsPanel({
                     {mcpImportError && (
                       <span className="settings-user-mcp-error">{mcpImportError}</span>
                     )}
-                    <button type="button" className="btn btn-sm" onClick={importMcpServersFromJson}>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={importMcpServersFromConfig}
+                    >
                       Import
                     </button>
                     <button

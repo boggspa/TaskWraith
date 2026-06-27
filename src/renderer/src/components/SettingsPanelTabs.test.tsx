@@ -65,6 +65,7 @@ describe('Settings tabs', () => {
     expect(settingsTabMatchesQuery(tabsById.mcp, 'tool audit')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'extensions')).toBe(false)
     expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'custom mcp')).toBe(true)
+    expect(settingsTabMatchesQuery(tabsById['mcp-servers'], 'codex toml')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['safety-privacy'], 'mobile visibility')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById['safety-privacy'], 'screen watch')).toBe(true)
     expect(settingsTabMatchesQuery(tabsById.pairing, 'iphone')).toBe(true)
