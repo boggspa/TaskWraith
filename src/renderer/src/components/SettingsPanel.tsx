@@ -7641,21 +7641,29 @@ export function SettingsPanel({
           activeTab === 'behavior' && (
             <>
               <div className="settings-group settings-danger-zone span-all">
-                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
-                  Delete all chat history
-                </h4>
-                <div className="settings-danger-zone-actions">
-                  <button
-                    type="button"
-                    className="settings-button settings-button-danger"
-                    onClick={() => {
-                      setDeleteHistoryError('')
-                      setShowDeleteHistoryConfirm(true)
-                    }}
-                    disabled={!onDeleteAllChatHistory || deleteHistoryPending}
-                  >
-                    Delete
-                  </button>
+                <div className="settings-danger-zone-header">
+                  <div className="settings-danger-zone-copy">
+                    <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                      Delete all chat history
+                    </h4>
+                    <p className="settings-hint">
+                      Permanently remove local chat transcripts and run history from this Mac.
+                      Workspaces and settings are left intact.
+                    </p>
+                  </div>
+                  <div className="settings-danger-zone-actions">
+                    <button
+                      type="button"
+                      className="settings-button settings-button-danger"
+                      onClick={() => {
+                        setDeleteHistoryError('')
+                        setShowDeleteHistoryConfirm(true)
+                      }}
+                      disabled={!onDeleteAllChatHistory || deleteHistoryPending}
+                    >
+                      Delete chat history
+                    </button>
+                  </div>
                 </div>
                 {deleteHistoryError && (
                   <p className="settings-error" style={{ margin: 0 }}>
