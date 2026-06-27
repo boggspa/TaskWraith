@@ -764,6 +764,16 @@ function userMcpServerRuntimeLabel(server: Pick<UserMcpServerConfig, 'transport'
   return providers.length > 0 ? `runtime: ${providers.join(' + ')}` : 'saved only'
 }
 
+type UserMcpServerReadinessState = 'ready' | 'disabled' | 'blocked'
+
+export interface UserMcpServerReadiness {
+  state: UserMcpServerReadinessState
+  label: string
+  providers: string[]
+  blockers: string[]
+  notes: string[]
+}
+
 export function userMcpServerStatusLabel(
   server: Pick<UserMcpServerConfig, 'enabled' | 'transport' | 'command' | 'url'>
 ): string {
@@ -772,6 +782,49 @@ export function userMcpServerStatusLabel(
     return server.url?.trim() ? 'needs valid URL' : 'needs URL'
   }
   return server.enabled ? 'enabled' : 'disabled'
+}
+
+export function userMcpServerReadiness(server: UserMcpServerConfig): UserMcpServerReadiness {
+  const providers = [...USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT[server.transport]]
+  const blockers: string[] = []
+  const notes: string[] = []
+  if (server.transport === 'stdio') {
+    if (!server.command?.trim()) blockers.push('Missing command')
+  } else {
+    const url = server.url?.trim()
+    if (!url) blockers.push('Missing URL')
+    else if (!isValidUserMcpRemoteUrl(url)) blockers.push('URL must use http:// or https://')
+  }
+  if (server.transport === 'sse') {
+    notes.push('SSE attaches to Claude only')
+  } else {
+    notes.push('Cursor support is limited to contained write-mode runs')
+  }
+  if (!server.enabled) {
+    return {
+      state: 'disabled',
+      label: 'Disabled',
+      providers: [],
+      blockers: ['Enable this server before it attaches to provider launches'],
+      notes
+    }
+  }
+  if (blockers.length > 0) {
+    return {
+      state: 'blocked',
+      label: 'Needs attention',
+      providers: [],
+      blockers,
+      notes
+    }
+  }
+  return {
+    state: 'ready',
+    label: `Ready for ${providers.join(' + ')}`,
+    providers,
+    blockers: [],
+    notes
+  }
 }
 
 export function userMcpServerMatchesQuery(
@@ -785,6 +838,9 @@ export function userMcpServerMatchesQuery(
     server.description || '',
     server.transport,
     userMcpServerStatusLabel(server),
+    userMcpServerReadiness(server).label,
+    ...userMcpServerReadiness(server).blockers,
+    ...userMcpServerReadiness(server).notes,
     server.command || '',
     server.url || '',
     ...(server.args ?? []),
@@ -3284,6 +3340,16 @@ export function SettingsPanel({
   const activeUserMcpServerCount = userMcpServers.filter(
     (server) => server.enabled && hasRunnableUserMcpEndpoint(server)
   ).length
+  const userMcpServerReadinessRows = userMcpServers.map((server) => ({
+    server,
+    readiness: userMcpServerReadiness(server)
+  }))
+  const readyUserMcpServerCount = userMcpServerReadinessRows.filter(
+    (entry) => entry.readiness.state === 'ready'
+  ).length
+  const blockedUserMcpServerCount = userMcpServerReadinessRows.filter(
+    (entry) => entry.readiness.state === 'blocked'
+  ).length
   const userMcpTransportCount = new Set(userMcpServers.map((server) => server.transport)).size
   const codexExportableUserMcpServerCount = userMcpServers.filter(
     isCodexExportableUserMcpServer
@@ -3295,7 +3361,7 @@ export function SettingsPanel({
     isCursorExportableUserMcpServer
   ).length
   const mcpServerSearch = mcpServerQuery.trim().toLowerCase()
-  const filteredUserMcpServers = userMcpServers.filter((server) =>
+  const filteredUserMcpServers = userMcpServerReadinessRows.filter(({ server }) =>
     userMcpServerMatchesQuery(server, mcpServerSearch)
   )
   const mcpToolSearch = mcpToolQuery.trim().toLowerCase()
@@ -6646,6 +6712,16 @@ export function SettingsPanel({
                   <small>active definitions</small>
                 </article>
                 <article className="settings-mcp-summary-card">
+                  <span>Ready</span>
+                  <strong>{readyUserMcpServerCount}</strong>
+                  <small>attachable on next launch</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Needs attention</span>
+                  <strong>{blockedUserMcpServerCount}</strong>
+                  <small>enabled but incomplete</small>
+                </article>
+                <article className="settings-mcp-summary-card">
                   <span>Transports</span>
                   <strong>{userMcpTransportCount}</strong>
                   <small>stdio, HTTP, or SSE</small>
@@ -6832,7 +6908,7 @@ export function SettingsPanel({
                 <div className="settings-audit-empty">No MCP servers match that search.</div>
               ) : (
                 <div className="settings-user-mcp-list">
-                  {filteredUserMcpServers.map((server) => {
+                  {filteredUserMcpServers.map(({ server, readiness }) => {
                     const endpoint =
                       server.transport === 'stdio'
                         ? server.command || 'No command'
@@ -6885,6 +6961,17 @@ export function SettingsPanel({
                             {exportLabels.map((label) => (
                               <span key={label}>{label}</span>
                             ))}
+                          </div>
+                          <div
+                            className={`settings-user-mcp-readiness settings-user-mcp-readiness-${readiness.state}`}
+                          >
+                            <strong>{readiness.label}</strong>
+                            {readiness.blockers.length > 0 && (
+                              <span>{readiness.blockers.join('; ')}</span>
+                            )}
+                            {readiness.notes.length > 0 && (
+                              <span>{readiness.notes.join('; ')}</span>
+                            )}
                           </div>
                           <details className="settings-user-mcp-config">
                             <summary>Audit JSON</summary>

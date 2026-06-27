@@ -13,6 +13,7 @@ import {
   formatUserMcpServersAuditJson,
   hasUserMcpServerNameConflict,
   parseUserMcpServersImportJson,
+  userMcpServerReadiness,
   userMcpServerProviderExportLabels,
   userMcpServerMatchesQuery,
   userMcpServerStatusLabel
@@ -294,6 +295,12 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('stdio/HTTP; Cursor write-mode support')
     expect(html).toContain('<span>Active</span><strong>3</strong><small>active definitions</small>')
     expect(html).toContain(
+      '<span>Ready</span><strong>3</strong><small>attachable on next launch</small>'
+    )
+    expect(html).toContain(
+      '<span>Needs attention</span><strong>0</strong><small>enabled but incomplete</small>'
+    )
+    expect(html).toContain(
       '<span>Codex export</span><strong>2</strong><small>config-ready TOML entries</small>'
     )
     expect(html).toContain(
@@ -304,6 +311,10 @@ describe('SettingsPanel provider cards', () => {
     )
     expect(html).toContain('runtime: Codex + Claude + Cursor write mode')
     expect(html).toContain('runtime: Claude')
+    expect(html).toContain('Ready for Codex + Claude + Cursor write mode')
+    expect(html).toContain('Ready for Claude')
+    expect(html).toContain('Cursor support is limited to contained write-mode runs')
+    expect(html).toContain('SSE attaches to Claude only')
     expect(html).toContain('Codex TOML')
     expect(html).toContain('Claude JSON')
     expect(html).toContain('Cursor mcp.json')
@@ -331,6 +342,31 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('&quot;bearer_token_env_var&quot;: &quot;DOCS_TOKEN&quot;')
     expect(html).not.toContain('Bearer ${DOCS_TOKEN}')
     expect(html).toContain('Add server')
+  })
+
+  it('shows why enabled MCP server definitions are not launch-ready', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp-servers',
+          userMcpServers: [
+            {
+              id: 'server-bad',
+              name: 'bad remote',
+              enabled: true,
+              transport: 'http',
+              url: 'ftp://example.test/mcp'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain(
+      '<span>Needs attention</span><strong>1</strong><small>enabled but incomplete</small>'
+    )
+    expect(html).toContain('Needs attention')
+    expect(html).toContain('URL must use http:// or https://')
   })
 
   it('offers import from provider config in the empty MCP Servers state', () => {
@@ -595,6 +631,52 @@ describe('user MCP server name/audit helpers', () => {
         url: 'ftp://example.test/mcp'
       })
     ).toBe('needs valid URL')
+  })
+
+  it('audits per-server readiness with provider compatibility and blockers', () => {
+    expect(
+      userMcpServerReadiness({
+        id: 'filesystem',
+        name: 'filesystem',
+        enabled: true,
+        transport: 'stdio',
+        command: 'npx'
+      })
+    ).toMatchObject({
+      state: 'ready',
+      label: 'Ready for Codex + Claude + Cursor write mode',
+      providers: ['Codex', 'Claude', 'Cursor write mode'],
+      blockers: []
+    })
+    expect(
+      userMcpServerReadiness({
+        id: 'bad-remote',
+        name: 'bad remote',
+        enabled: true,
+        transport: 'http',
+        url: 'ftp://example.test/mcp'
+      })
+    ).toMatchObject({
+      state: 'blocked',
+      label: 'Needs attention',
+      providers: [],
+      blockers: ['URL must use http:// or https://']
+    })
+    expect(
+      userMcpServerReadiness({
+        id: 'legacy',
+        name: 'legacy',
+        enabled: false,
+        transport: 'sse',
+        url: 'https://example.test/sse'
+      })
+    ).toMatchObject({
+      state: 'disabled',
+      label: 'Disabled',
+      providers: [],
+      blockers: ['Enable this server before it attaches to provider launches'],
+      notes: ['SSE attaches to Claude only']
+    })
   })
 
   it('labels per-server provider export compatibility', () => {
