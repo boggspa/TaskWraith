@@ -203,16 +203,30 @@ public enum RelayCandidates {
     /// else the single legacy URL. LAN-first is fastest at home; remote-first
     /// avoids burning a LAN timeout on cellular before trying the WSS door.
     public static func ordered(
-        from relayUrls: [String]?, fallback: String, preferRemoteFirst: Bool = false
+        from relayUrls: [String]?,
+        fallback: String,
+        preferRemoteFirst: Bool = false,
+        preferredFirst: String? = nil
     ) -> [String] {
         var seen = Set<String>()
-        let raw = (relayUrls?.isEmpty == false ? relayUrls! : [fallback])
+        var raw = (relayUrls?.isEmpty == false ? relayUrls! : [fallback])
+        if let preferredFirst,
+            !preferredFirst.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            raw.append(preferredFirst)
+        }
         let cleaned = raw
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && seen.insert($0).inserted }
         let local = cleaned.filter { isLocalCandidate($0) }
         let remote = cleaned.filter { !isLocalCandidate($0) }
-        return preferRemoteFirst ? remote + local : local + remote
+        let ordered = preferRemoteFirst ? remote + local : local + remote
+        guard let preferred = preferredFirst?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !preferred.isEmpty
+        else {
+            return ordered
+        }
+        return [preferred] + ordered.filter { $0 != preferred }
     }
 
     /// Per-candidate dial budget: LAN doors are same-network-or-nothing, so

@@ -26,6 +26,25 @@ struct RelayCandidatesTests {
         #expect(ordered == ["wss://mac.tailnet.ts.net", "ws://192.168.0.147:8787"])
     }
 
+    @Test("promotes the last successful relay before generic LAN/remote ordering")
+    func preferredDoorFirst() {
+        let ordered = RelayCandidates.ordered(
+            from: ["ws://192.168.0.147:8787", "wss://mac.tailnet.ts.net"],
+            fallback: "ws://192.168.0.147:8787",
+            preferRemoteFirst: false,
+            preferredFirst: "wss://mac.tailnet.ts.net")
+        #expect(ordered == ["wss://mac.tailnet.ts.net", "ws://192.168.0.147:8787"])
+    }
+
+    @Test("includes a preferred door missing from the stored candidate list")
+    func preferredDoorMissingFromList() {
+        let ordered = RelayCandidates.ordered(
+            from: ["ws://192.168.0.147:8787"],
+            fallback: "ws://192.168.0.147:8787",
+            preferredFirst: "wss://new.tailnet.ts.net")
+        #expect(ordered == ["wss://new.tailnet.ts.net", "ws://192.168.0.147:8787"])
+    }
+
     @Test("falls back to the single legacy URL when the list is absent or empty")
     func fallback() {
         #expect(

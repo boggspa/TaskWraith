@@ -1027,7 +1027,8 @@ public final class RemoteSessionModel: ObservableObject {
         let candidates = RelayCandidates.ordered(
             from: record.relayUrls, fallback: record.relayUrl,
             preferRemoteFirst: preferRemoteRelayFirst(
-                relayUrls: record.relayUrls, fallback: record.relayUrl))
+                relayUrls: record.relayUrls, fallback: record.relayUrl),
+            preferredFirst: record.relayUrl)
         cancelSocketHealthCheck()
         teardown()
         macDisplayName = Self.sanitizedMacName(record.macDisplayName)
@@ -2042,7 +2043,8 @@ public final class RemoteSessionModel: ObservableObject {
                 // The full candidate set from the bootstrap (LAN + wss) —
                 // ONE pairing then reconnects from home Wi-Fi or cellular
                 // alike; `relayUrl` holds the door that last worked.
-                relayUrls: lastRelayUrls, hostPlatform: hostPlatform, pairedAt: pairedAt))
+                relayUrls: lastRelayUrls, hostPlatform: hostPlatform, pairedAt: pairedAt,
+                macAgreePub: existing?.macAgreePub))
         // The host we just connected to is the active one.
         pairingStore.setSelectedHostId(macId)
         refreshPairedHostsPublished()
