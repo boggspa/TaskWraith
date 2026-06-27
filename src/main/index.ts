@@ -22316,13 +22316,17 @@ if (isGeminiMcpBridgeProcess) {
       const envRelayUrl = (process.env.TASKWRAITH_RELAY_URL || '').trim()
       const settingsRelayUrl = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
       const configuredRelayUrl = envRelayUrl || settingsRelayUrl
+      const packagedDebugBuild = app.getName().toLowerCase().includes('debug')
+      const defaultIosRelayPort = (): number => (app.isPackaged && !packagedDebugBuild ? 8787 : 8788)
+      const defaultIosServeHttpsPort = (): number =>
+        app.isPackaged && !packagedDebugBuild ? 443 : 8443
+      const serveWssUrl = (dnsName: string, httpsPort: number): string =>
+        httpsPort === 443 ? `wss://${dnsName}` : `wss://${dnsName}:${httpsPort}`
       const embeddedPort = (relayUrl: string | null): number => {
         // Dev defaults to 8788 so a dev build + a release build can run at the
         // same time without colliding on the embedded relay port (8787) — the
         // second app to bind 8787 otherwise loses its relay and can't be paired.
-        const fallbackPort = Number(
-          process.env.TASKWRAITH_RELAY_PORT || (app.isPackaged ? '8787' : '8788')
-        )
+        const fallbackPort = Number(process.env.TASKWRAITH_RELAY_PORT || defaultIosRelayPort())
         if (!relayUrl) return fallbackPort
         try {
           const parsed = new URL(relayUrl)
@@ -22440,7 +22444,7 @@ if (isGeminiMcpBridgeProcess) {
         const port = embeddedPort(null)
         // Release fronts :443, a dev build :8443 — distinct serve handlers so the
         // two coexist on one Mac instead of fighting over one :443 mapping.
-        const httpsPort = app.isPackaged ? 443 : 8443
+        const httpsPort = defaultIosServeHttpsPort()
         void createRelayServer({
           port,
           hostInfo: relayHostInfoProvider,
@@ -22537,7 +22541,7 @@ if (isGeminiMcpBridgeProcess) {
                 const serve = await getTailscaleServeStatus({
                   cliPath: tailscale.cliPath,
                   relayPort: embeddedPort(null),
-                  httpsPort: app.isPackaged ? 443 : 8443
+                  httpsPort: defaultIosServeHttpsPort()
                 })
                 dnsName = serve.dnsName?.toLowerCase()
               }
@@ -22546,9 +22550,13 @@ if (isGeminiMcpBridgeProcess) {
                 parsed.hostname.toLowerCase() === dnsName
               ) {
                 console.log(
-                  `[remote-bridge] iOS remote transport enabled — self-hosted wss via tailscale serve (${settingsRelayUrl})`
+                  `[remote-bridge] iOS remote transport enabled — self-hosted wss via tailscale serve (${serveWssUrl(dnsName, defaultIosServeHttpsPort())})`
                 )
-                startSelfHostedWssRelay(settingsRelayUrl, dnsName, tailscale.cliPath ?? null)
+                startSelfHostedWssRelay(
+                  serveWssUrl(dnsName, defaultIosServeHttpsPort()),
+                  dnsName,
+                  tailscale.cliPath ?? null
+                )
                 return
               }
             }
@@ -23240,13 +23248,17 @@ if (isGeminiMcpBridgeProcess) {
     // reverse-proxies (WebSocket-aware) to the relay's loopback port. The
     // pairing QR then advertises wss://<dnsName>, which iOS ATS accepts
     // off-LAN — the only way a cellular phone can reach the bridge.
+    const packagedDebugBuild = app.getName().toLowerCase().includes('debug')
+    const defaultIosRelayPort = (): number => (app.isPackaged && !packagedDebugBuild ? 8787 : 8788)
+    const defaultIosServeHttpsPort = (): number =>
+      app.isPackaged && !packagedDebugBuild ? 443 : 8443
     const iosRemoteRelayPort = (): number =>
-      Number(process.env.TASKWRAITH_RELAY_PORT || (app.isPackaged ? '8787' : '8788'))
+      Number(process.env.TASKWRAITH_RELAY_PORT || defaultIosRelayPort())
     // Front-door HTTPS port for `tailscale serve`. Release owns :443; a dev build
     // uses :8443 so the two coexist as SEPARATE serve handlers on one Mac instead
     // of clobbering one shared :443 mapping (which silently broke release pairing).
     const iosRemoteServeHttpsPort = (): number =>
-      Number(process.env.TASKWRAITH_SERVE_HTTPS_PORT || (app.isPackaged ? '443' : '8443'))
+      Number(process.env.TASKWRAITH_SERVE_HTTPS_PORT || defaultIosServeHttpsPort())
     // Advertised wss:// URL: :443 stays implicit (wss://<dns>) so existing release
     // QRs are unchanged; a non-443 dev door must carry its port (wss://<dns>:8443).
     const serveWssUrl = (dnsName: string, httpsPort: number): string =>
@@ -23466,7 +23478,7 @@ if (isGeminiMcpBridgeProcess) {
         if (selfHostedWssLane) {
           const lane = selfHostedWssLane
           if (!selection.advertisable.includes(lane.wssUrl) && lane.cliPath) {
-            const httpsPort = app.isPackaged ? 443 : 8443
+            const httpsPort = defaultIosServeHttpsPort()
             const serve = await getTailscaleServeStatus({
               cliPath: lane.cliPath,
               relayPort: lane.relayPort,
