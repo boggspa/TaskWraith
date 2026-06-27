@@ -6655,9 +6655,19 @@ export function SettingsPanel({
               {userMcpServers.length === 0 ? (
                 <div className="settings-user-mcp-empty">
                   <strong>No MCP servers added</strong>
-                  <p>Add a local stdio server or a remote HTTP/SSE endpoint.</p>
+                  <p>
+                    Add a local stdio server, remote HTTP/SSE endpoint, or import existing Claude,
+                    Cursor, or Codex config.
+                  </p>
                   <button type="button" className="btn btn-sm" onClick={startCreateMcpServer}>
                     Add server
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={startImportMcpServers}
+                  >
+                    Import config
                   </button>
                 </div>
               ) : filteredUserMcpServers.length === 0 ? (

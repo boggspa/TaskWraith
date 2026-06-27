@@ -305,6 +305,17 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Add server')
   })
 
+  it('offers import from provider config in the empty MCP Servers state', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp-servers', userMcpServers: [] })} />
+    )
+
+    expect(html).toContain('No MCP servers added')
+    expect(html).toContain('import existing Claude, Cursor, or Codex config')
+    expect(html).toContain('Add server')
+    expect(html).toContain('Import config')
+  })
+
   it('surfaces user-managed MCP servers in Safety & Privacy', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel
