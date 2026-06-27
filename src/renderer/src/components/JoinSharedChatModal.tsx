@@ -14,6 +14,17 @@ import { MarkdownMessage } from './MarkdownMessage'
 type Step = 'paste' | 'connecting' | 'sas' | 'viewing'
 type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected'
 
+export interface ParsedHumanCollaborationInvite {
+  shareId: string
+  chatId: string
+  inviteToken: string
+  mode: 'readOnly' | 'comments'
+  relayUrl: string
+  relayUrls: string[]
+  roomId: string
+  hostIdentityPubKeyB64?: string
+}
+
 interface ProjectionRow {
   id: string
   role: 'host' | 'assistant' | 'collaborator' | 'placeholder'
@@ -36,6 +47,97 @@ function bubbleClass(role: ProjectionRow['role']): string {
   if (role === 'assistant') return 'message-bubble assistant'
   if (role === 'collaborator') return 'message-bubble system human-collaborator-comment'
   return 'message-bubble system join-projection-placeholder'
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
+}
+
+function decodeInvitePayload(value: string): string {
+  const trimmed = value.trim()
+  try {
+    return decodeURIComponent(trimmed)
+  } catch {
+    // Fall through to base64url.
+  }
+  try {
+    const padded = trimmed.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(trimmed.length / 4) * 4, '=')
+    return atob(padded)
+  } catch {
+    return trimmed
+  }
+}
+
+function parseInviteText(raw: string): Record<string, unknown> {
+  const trimmed = raw.trim()
+  if (!trimmed) throw new Error('Paste the invite the host shared with you.')
+  try {
+    return JSON.parse(trimmed) as Record<string, unknown>
+  } catch {
+    // Accept link-shaped invites too:
+    // taskwraith://join-shared-chat?invite=<encoded-json-or-base64url-json>
+    // https://.../join?invite=<encoded-json-or-base64url-json>
+    let url: URL
+    try {
+      url = new URL(trimmed)
+    } catch {
+      throw new Error('That does not look like a valid invite. Paste the JSON or invite link the host copied.')
+    }
+    const hashParams = url.hash.startsWith('#') ? new URLSearchParams(url.hash.slice(1)) : null
+    const encoded =
+      url.searchParams.get('invite') ||
+      url.searchParams.get('payload') ||
+      hashParams?.get('invite') ||
+      hashParams?.get('payload') ||
+      (url.hash.length > 1 ? url.hash.slice(1) : '')
+    if (!encoded) {
+      throw new Error('That invite link is missing its invite payload.')
+    }
+    try {
+      return JSON.parse(decodeInvitePayload(encoded)) as Record<string, unknown>
+    } catch {
+      throw new Error('That invite link contains an unreadable invite payload.')
+    }
+  }
+}
+
+export function parseHumanCollaborationInvite(raw: string): ParsedHumanCollaborationInvite {
+  const invite = parseInviteText(raw)
+  if (invite?.type !== 'taskwraith-human-collaboration-invite') {
+    throw new Error('That JSON is not a TaskWraith collaboration invite.')
+  }
+  const shareId = asNonEmptyString(invite.shareId)
+  const chatId = asNonEmptyString(invite.chatId)
+  const inviteToken = asNonEmptyString(invite.inviteToken)
+  const roomId = asNonEmptyString(invite.roomId)
+  const relayUrls = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(invite.relayUrls) ? invite.relayUrls : []),
+        invite.relayUrl
+      ]
+        .map(asNonEmptyString)
+        .filter((url): url is string => Boolean(url))
+    )
+  )
+  if (!shareId || !chatId || !inviteToken || !roomId) {
+    throw new Error('This invite is missing required share information. Ask the host for a fresh invite.')
+  }
+  if (relayUrls.length === 0) {
+    throw new Error('This invite has no connection info — the host needs remote access ON, then a fresh invite.')
+  }
+  return {
+    shareId,
+    chatId,
+    inviteToken,
+    mode: invite.mode === 'readOnly' ? 'readOnly' : 'comments',
+    relayUrl: relayUrls[0],
+    relayUrls,
+    roomId,
+    ...(typeof invite.hostIdentityPubKeyB64 === 'string' && invite.hostIdentityPubKeyB64.trim()
+      ? { hostIdentityPubKeyB64: invite.hostIdentityPubKeyB64.trim() }
+      : {})
+  }
 }
 
 export function JoinSharedChatModal({
@@ -103,20 +205,11 @@ export function JoinSharedChatModal({
 
   const handleJoin = useCallback(async () => {
     setError(null)
-    let invite: Record<string, unknown>
+    let invite: ParsedHumanCollaborationInvite
     try {
-      invite = JSON.parse(inviteText) as Record<string, unknown>
-    } catch {
-      setError('That does not look like a valid invite. Paste the JSON the host copied.')
-      setConnectionState('disconnected')
-      return
-    }
-    if (invite?.type !== 'taskwraith-human-collaboration-invite' || !invite.relayUrl) {
-      setError(
-        invite?.type === 'taskwraith-human-collaboration-invite'
-          ? 'This invite has no connection info — the host needs remote access ON, then a fresh invite.'
-          : 'That JSON is not a TaskWraith collaboration invite.'
-      )
+      invite = parseHumanCollaborationInvite(inviteText)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That does not look like a valid invite.')
       setConnectionState('disconnected')
       return
     }
@@ -125,15 +218,15 @@ export function JoinSharedChatModal({
     setStep('connecting')
     try {
       const res = await window.api.humanCollaborationCollaboratorJoin({
-        shareId: String(invite.shareId),
-        chatId: String(invite.chatId),
-        inviteToken: String(invite.inviteToken),
+        shareId: invite.shareId,
+        chatId: invite.chatId,
+        inviteToken: invite.inviteToken,
         displayName: displayName.trim() || 'Guest',
-        mode: invite.mode === 'readOnly' ? 'readOnly' : 'comments',
-        relayUrl: String(invite.relayUrl),
-        roomId: String(invite.roomId),
-        hostIdentityPubKeyB64:
-          typeof invite.hostIdentityPubKeyB64 === 'string' ? invite.hostIdentityPubKeyB64 : undefined
+        mode: invite.mode,
+        relayUrl: invite.relayUrl,
+        relayUrls: invite.relayUrls,
+        roomId: invite.roomId,
+        hostIdentityPubKeyB64: invite.hostIdentityPubKeyB64
       })
       setSasCode(res.confirmCode)
       setMode(res.mode)

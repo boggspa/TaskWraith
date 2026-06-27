@@ -1093,6 +1093,14 @@ function App(): React.JSX.Element {
       try {
         const result = await window.api.humanCollaborationCreateShare({ chatId, mode: 'comments' })
         refreshHumanCollaborationShares()
+        const relayUrls = Array.from(
+          new Set(
+            [
+              ...(Array.isArray(result.relayUrls) ? result.relayUrls : []),
+              result.relayUrl
+            ].filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
+          )
+        )
         const invitePayload = JSON.stringify(
           {
             type: 'taskwraith-human-collaboration-invite',
@@ -1109,6 +1117,7 @@ function App(): React.JSX.Element {
             // Transport coordinates the collaborator dials, + the host identity
             // key to pin (Crypto-F2). relayUrl is '' when remote access is off.
             relayUrl: result.relayUrl,
+            relayUrls,
             roomId: result.roomId,
             hostIdentityPubKeyB64: result.hostIdentityPubKeyB64
           },
@@ -1118,7 +1127,7 @@ function App(): React.JSX.Element {
         if (!navigator.clipboard?.writeText) throw new Error('Clipboard is not available.')
         await navigator.clipboard.writeText(invitePayload)
         window.alert(
-          result.relayUrl
+          relayUrls.length > 0
             ? 'People invite copied. Share it out of band with the collaborator.'
             : 'People invite copied — but remote access is OFF, so collaborators cannot connect yet. Enable remote access in Settings, then create a new invite.'
         )

@@ -23163,8 +23163,19 @@ if (isGeminiMcpBridgeProcess) {
       if (embeddedRelayHandle) return `ws://127.0.0.1:${embeddedRelayHandle.port}`
       return iosRemoteRuntime?.describeHost().relayUrls?.[0] ?? ''
     }
+    const collaborationInviteRelayUrls = (): string[] => {
+      const advertised = iosRemoteRuntime?.describeHost().relayUrls || []
+      const fallback = collaborationHostRelayUrl()
+      return Array.from(
+        new Set(
+          [...advertised, fallback].filter(
+            (url): url is string => typeof url === 'string' && url.trim().length > 0
+          )
+        )
+      )
+    }
     const collaborationInviteRelayUrl = (): string => {
-      const advertised = iosRemoteRuntime?.describeHost().relayUrls?.[0]
+      const advertised = collaborationInviteRelayUrls()[0]
       if (advertised) return advertised
       // Same-Mac testing fallback (loopback).
       return collaborationHostRelayUrl()
@@ -23920,6 +23931,7 @@ if (isGeminiMcpBridgeProcess) {
         return {
           ...result,
           relayUrl: collaborationInviteRelayUrl(),
+          relayUrls: collaborationInviteRelayUrls(),
           hostIdentityPubKeyB64: runtime.hostIdentityPubKeyB64()
         }
       }
@@ -24064,40 +24076,67 @@ if (isGeminiMcpBridgeProcess) {
           displayName: string
           mode: 'readOnly' | 'comments'
           relayUrl: string
+          relayUrls?: string[]
           roomId: string
           hostIdentityPubKeyB64?: string
         }
       ) => {
         disposeCollaboratorClient()
-        const client = new HumanCollaborationCollaboratorClient({
-          socketFactory: wsTransportSocketFactory,
-          onProjection: (projection) =>
-            mainWindow?.webContents.send('human-collaboration-collaborator-projection', { projection }),
-          onConnectionChange: (connected) =>
-            mainWindow?.webContents.send('human-collaboration-collaborator-status', { connected }),
-          onError: (err) =>
-            mainWindow?.webContents.send('human-collaboration-collaborator-status', { error: err.message }),
-          log: (line) => console.warn(line)
-        })
-        humanCollaborationCollaboratorClient = client
-        try {
-          client.connect(input.relayUrl, input.roomId)
-          await client.whenConnected()
-          const { confirmCode } = await client.beginAdmission({
-            shareId: input.shareId,
-            chatId: input.chatId,
-            inviteToken: input.inviteToken,
-            displayName: input.displayName,
-            shareMode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
-            expectedHostIdentityPubKeyB64: input.hostIdentityPubKeyB64
-          })
-          return { confirmCode, chatId: input.chatId, mode: input.mode }
-        } catch (err) {
-          // Don't leak a half-dead client/socket on a failed join.
-          if (humanCollaborationCollaboratorClient === client) disposeCollaboratorClient()
-          else client.dispose()
-          throw err
+        const relayUrls = Array.from(
+          new Set(
+            [
+              ...(Array.isArray(input.relayUrls) ? input.relayUrls : []),
+              input.relayUrl
+            ].filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
+          )
+        )
+        if (relayUrls.length === 0) {
+          throw new Error(
+            'This invite has no relay URL. Ask the host to enable remote access and create a fresh invite.'
+          )
         }
+        const isRetryableJoinError = (err: unknown): boolean => {
+          const message = err instanceof Error ? err.message : String(err)
+          return /transport|connect timed out|timed out|socket|websocket|ECONN|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(
+            message
+          )
+        }
+        let lastRetryableError: unknown = null
+        for (const relayUrl of relayUrls) {
+          const client = new HumanCollaborationCollaboratorClient({
+            socketFactory: wsTransportSocketFactory,
+            onProjection: (projection) =>
+              mainWindow?.webContents.send('human-collaboration-collaborator-projection', { projection }),
+            onConnectionChange: (connected) =>
+              mainWindow?.webContents.send('human-collaboration-collaborator-status', { connected }),
+            onError: (err) =>
+              mainWindow?.webContents.send('human-collaboration-collaborator-status', { error: err.message }),
+            log: (line) => console.warn(line)
+          })
+          humanCollaborationCollaboratorClient = client
+          try {
+            client.connect(relayUrl, input.roomId)
+            await client.whenConnected()
+            const { confirmCode } = await client.beginAdmission({
+              shareId: input.shareId,
+              chatId: input.chatId,
+              inviteToken: input.inviteToken,
+              displayName: input.displayName,
+              shareMode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
+              expectedHostIdentityPubKeyB64: input.hostIdentityPubKeyB64
+            })
+            return { confirmCode, chatId: input.chatId, mode: input.mode }
+          } catch (err) {
+            // Don't leak a half-dead client/socket on a failed candidate.
+            if (humanCollaborationCollaboratorClient === client) disposeCollaboratorClient()
+            else client.dispose()
+            if (!isRetryableJoinError(err)) throw err
+            lastRetryableError = err
+          }
+        }
+        throw lastRetryableError instanceof Error
+          ? lastRetryableError
+          : new Error('Could not connect to any collaboration relay URL.')
       }
     )
     ipcMain.handle('human-collaboration-collaborator:confirm', async () => {

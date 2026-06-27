@@ -1264,7 +1264,7 @@ declare global {
         mode?: HumanCollaborationMode
         inviteTtlMs?: number
       }) => Promise<
-        CreateShareResult & { relayUrl: string; hostIdentityPubKeyB64: string }
+        CreateShareResult & { relayUrl: string; relayUrls?: string[]; hostIdentityPubKeyB64: string }
       >
       humanCollaborationListShares: (chatId?: string) => Promise<HumanCollaborationShare[]>
       humanCollaborationConnectedChatIds: () => Promise<string[]>
@@ -1320,6 +1320,7 @@ declare global {
         displayName: string
         mode: 'readOnly' | 'comments'
         relayUrl: string
+        relayUrls?: string[]
         roomId: string
         hostIdentityPubKeyB64?: string
       }) => Promise<{ confirmCode: string; chatId: string; mode: 'readOnly' | 'comments' }>

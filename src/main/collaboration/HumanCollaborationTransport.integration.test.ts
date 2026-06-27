@@ -250,6 +250,50 @@ describe('human collaboration transport (loopback)', () => {
     }
   })
 
+  it('rebinds an open room when the relay URL changes', () => {
+    vi.useFakeTimers()
+    try {
+      const openedUrls: string[] = []
+      let closeCount = 0
+      let firstHandlers: TransportSocketHandlers | null = null
+      let latestHandlers: TransportSocketHandlers | null = null
+      const factory: TransportSocketFactory = (url, _headers, handlers) => {
+        openedUrls.push(url)
+        if (!firstHandlers) firstHandlers = handlers
+        latestHandlers = handlers
+        return {
+          send: () => {},
+          close: () => {
+            closeCount += 1
+          }
+        }
+      }
+      const transport = new HumanCollaborationHostTransport({ socketFactory: factory })
+      transport.openRoom('ws://old-relay', 'room-r')
+      expect(openedUrls).toEqual(['ws://old-relay/v1/session/room-r'])
+
+      transport.openRoom('ws://new-relay', 'room-r')
+      expect(openedUrls).toEqual([
+        'ws://old-relay/v1/session/room-r',
+        'ws://new-relay/v1/session/room-r'
+      ])
+
+      // The stale socket's close callback must not clear or reconnect over the
+      // replacement socket.
+      firstHandlers!.onClose(1006)
+      vi.advanceTimersByTime(60_000)
+      expect(openedUrls).toHaveLength(2)
+
+      latestHandlers!.onClose(1006)
+      vi.advanceTimersByTime(1000)
+      expect(openedUrls[2]).toBe('ws://new-relay/v1/session/room-r')
+      expect(closeCount).toBeGreaterThan(0)
+      transport.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects a collaborator presenting a bad invite token', async () => {
     const relay = makeInMemoryRelay()
     const chat = makeChat()

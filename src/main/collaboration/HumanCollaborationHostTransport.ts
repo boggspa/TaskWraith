@@ -98,7 +98,11 @@ export class HumanCollaborationHostTransport {
   openRoom(relayUrl: string, roomId: string): void {
     if (this.disposed) return
     const existing = this.rooms.get(roomId)
-    if (existing && existing.socket) return
+    if (existing?.socket) {
+      if (existing.relayUrl === relayUrl) return
+      existing.socket.close()
+      existing.socket = null
+    }
     // Clear any pending reconnect — we're opening now.
     const pending = this.reconnectTimers.get(roomId)
     if (pending) {
@@ -109,7 +113,7 @@ export class HumanCollaborationHostTransport {
     state.relayUrl = relayUrl
     this.rooms.set(roomId, state)
     const url = `${relayUrl.replace(/\/$/, '')}/v1/session/${roomId}`
-    state.socket = this.opts.socketFactory(
+    const socket = this.opts.socketFactory(
       url,
       { 'x-taskwraith-role': 'mac', 'x-taskwraith-protocol': HUMAN_COLLABORATION_PROTOCOL },
       {
@@ -120,13 +124,16 @@ export class HumanCollaborationHostTransport {
         onMessage: (data) => void this.handleInbound(roomId, data),
         onClose: () => {
           const room = this.rooms.get(roomId)
-          if (room) room.socket = null
+          if (room?.socket === socket) room.socket = null
           // Reconnect only if the room is still WANTED (not closeRoom'd/disposed).
-          if (!this.disposed && this.rooms.has(roomId)) this.scheduleRoomReconnect(roomId)
+          if (!this.disposed && this.rooms.get(roomId)?.socket === null) {
+            this.scheduleRoomReconnect(roomId)
+          }
         },
         onError: (err) => this.opts.log?.(`[collab-transport] room ${roomId} error: ${err.message}`)
       }
     )
+    state.socket = socket
   }
 
   private scheduleRoomReconnect(roomId: string): void {

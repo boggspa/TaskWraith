@@ -1016,6 +1016,7 @@ const api = {
     displayName: string
     mode: 'readOnly' | 'comments'
     relayUrl: string
+    relayUrls?: string[]
     roomId: string
     hostIdentityPubKeyB64?: string
   }) => ipcRenderer.invoke('human-collaboration-collaborator:join', input),
