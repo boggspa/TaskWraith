@@ -516,12 +516,13 @@ function resolveMentionPhrase(
       if (!candidates || candidates.length === 0) continue
       const eligible = excludeIds ? candidates.filter((p) => !excludeIds.has(p.id)) : candidates
       if (eligible.length === 0) continue
-      // Take the first (preserves ensemble order). Same-alias ties
-      // (two participants both named "codex") fall back to the first
-      // participant declared in the ensemble — deterministic but
-      // non-obvious to the user. The caller gets `ambiguousAmong`
-      // (the other eligible candidates) so it can surface a warning
-      // and/or re-pick based on round state.
+      // Ambiguous aliases are advisory only. Routing `@codex` to the
+      // first Codex lane when the ensemble has multiple Codex seats is
+      // deterministic, but it is still the wrong failure mode for
+      // orchestration: a provider fallback can override an intentional
+      // role/model tag and send the next turn to the wrong participant.
+      // Force agents/users to use a unique role/model/id alias instead.
+      if (eligible.length > 1) continue
       // Reconstruct the consumed text from the original `phrase`
       // (preserving the user's original casing / spacing) by taking
       // the first `len` words from it. Trailing sentence punctuation
@@ -529,8 +530,7 @@ function resolveMentionPhrase(
       // the *meaningful* mention boundary — the `.` after `Planner`
       // stays in the surrounding text where it belongs.
       const consumedText = reconstructPrefix(phrase, len).replace(TRAILING_PUNCT_RE, '')
-      const ambiguousAmong = eligible.length > 1 ? eligible.slice(1) : undefined
-      return { participant: eligible[0], consumedText, ambiguousAmong }
+      return { participant: eligible[0], consumedText }
     }
   }
   return null

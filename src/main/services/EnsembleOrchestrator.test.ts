@@ -3681,6 +3681,57 @@ Next action:
     expect(harness.cancelRun).toHaveBeenCalledWith('claude', harness.dispatched[0].appRunId)
   })
 
+  it('does not queue behind a stale runtime whose persisted round already ended', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const oldRoundId = harness.chat.ensemble?.activeRound?.roundId
+    harness.chat.ensemble!.activeRound = {
+      ...harness.chat.ensemble!.activeRound!,
+      status: 'completed',
+      endedAt: '2026-05-24T00:00:09.000Z'
+    }
+
+    const result = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Fresh prompt',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+
+    expect(result.status).toBe('started')
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('running')
+    expect(harness.chat.ensemble?.activeRound?.roundId).not.toBe(oldRoundId)
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBeUndefined()
+    expect(harness.chat.messages.at(-1)?.content).toBe('Fresh prompt')
+  })
+
+  it('can cancel a persisted running round even when its runtime is already gone', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    ;(
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, unknown>
+      }
+    ).roundsByChatId.delete('ensemble-chat')
+
+    const ok = await harness.orchestrator.cancelRound('ensemble-chat', 'stale runtime cleanup')
+
+    expect(ok).toBe(true)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
+    expect(harness.chat.ensemble?.activeRound?.activeParticipantId).toBeUndefined()
+    expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBeUndefined()
+  })
+
   // Slice D (1.0.3) — per-participant reasoning + fast-mode + thinking
   // flow through the dispatch payload so each provider adapter sees
   // its own settings. Verifies the orchestrator-side wiring.
@@ -4511,27 +4562,14 @@ Next action:
     })
 
     // Both Codex participants are still in `remaining` after Kimi
-    // finishes, so bare `@codex` is ambiguous. The orchestrator
-    // warns and leaves the default rotation intact: Claude/Planner
-    // remains next instead of a Codex lane being promoted.
+    // finishes, so bare `@codex` is ambiguous and resolves to no
+    // routing target. The default rotation stays intact: Claude/
+    // Planner remains next instead of a Codex lane being promoted.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('claude')
     expect(harness.dispatched[1].ensembleRun).toMatchObject({
       participantId: 'ensemble-claude'
     })
-
-    // System message announcing the ambiguity.
-    const messages = harness.chat.messages.map((m) => m.content)
-    expect(
-      messages.some(
-        (content) =>
-          typeof content === 'string' &&
-          content.includes('was ambiguous') &&
-          content.includes('Codex participants') &&
-          content.includes('Brodex') &&
-          content.includes('No route changed')
-      )
-    ).toBe(true)
   })
 
   it('routes Bossman before advisory worker mentions in the same assistant output', async () => {

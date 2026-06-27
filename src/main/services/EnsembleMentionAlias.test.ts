@@ -370,29 +370,22 @@ describe('Same-provider disambiguation (1.0.4 forward-look)', () => {
     const m2 = findFirstMention('@GPT 5.4 Mini go', set)
     expect(m2?.kind).toBe('participant')
     if (m2?.kind === 'participant') expect(m2.participant.id).toBe(CODEX_MINI.id)
-    // The shared "codex" alias falls back to ensemble-order (CODEX
-    // first), which is the deterministic + documented behaviour.
+    // The shared "codex" alias is intentionally no-route when more
+    // than one enabled Codex participant exists. A role/model/id tag
+    // must be used so the turn cannot jump to the wrong same-provider
+    // lane.
     const match = findFirstMention('@codex go', set)
-    expect(match?.kind).toBe('participant')
-    if (match?.kind === 'participant') {
-      expect(match.participant.id).toBe(CODEX.id)
-    }
+    expect(match).toBeNull()
   })
 
-  it('flags ambiguousAmong when @codex resolves between two Codex peers', () => {
+  it('does not resolve @codex between two Codex peers', () => {
     // The 1.0.4 repro: speaker is Kimi, the ensemble has two Codex
-    // participants, the model writes plain `@codex`. The resolver
-    // still picks the ensemble-first match (CODEX) so the routing is
-    // deterministic, but stashes the other Codex in `ambiguousAmong`
-    // so the orchestrator can surface a transcript warning + the user
-    // can correct the routing in subsequent turns.
+    // participants, the model writes plain `@codex`. This must not
+    // auto-promote either Codex lane; role/model/id mentions remain
+    // the explicit routing surface.
     const set = [CODEX, CODEX_MINI, KIMI]
     const match = findFirstMention('@codex go', set, new Set([KIMI.id]))
-    expect(match?.kind).toBe('participant')
-    if (match?.kind === 'participant') {
-      expect(match.participant.id).toBe(CODEX.id)
-      expect(match.ambiguousAmong?.map((p) => p.id)).toEqual([CODEX_MINI.id])
-    }
+    expect(match).toBeNull()
   })
 
   it('drops ambiguity flag once speaker-exclusion narrows to a single Codex', () => {
