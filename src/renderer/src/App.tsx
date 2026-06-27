@@ -436,9 +436,15 @@ import {
   shouldEngageAutoFollow,
   shouldDisengageAutoFollow,
   shouldTreatScrollAsUserScrollAway,
-  shouldRepinAfterFrame,
-  type ChatScrollState
+  shouldRepinAfterFrame
 } from './lib/TranscriptScroll'
+import {
+  chatPopoutHandoffKey,
+  getInitialChatPopoutChatId,
+  listChatPopoutHandoffChatIds,
+  readChatPopoutHandoff,
+  writeChatPopoutHandoff
+} from './lib/chatPopoutHandoff'
 import { useTranscriptScrollState } from './app/state/useTranscriptScrollState'
 import {
   composerAboveRowClearancePx,
@@ -626,14 +632,6 @@ const EMPTY_WELCOME_USAGE_DASHBOARD_DATA = buildWelcomeUsageDashboardData([], []
  * handle "skip" semantics gracefully.
  */
 
-
-
-const getInitialChatPopoutChatId = (): string => {
-  if (typeof window === 'undefined') return ''
-  const params = new URLSearchParams(window.location.search)
-  return params.get('popout') === 'chat' ? params.get('chat') || '' : ''
-}
-
 type SidePanelPresentation = 'split' | 'drawer'
 type SideChatTypePickerOption = {
   id: string
@@ -656,13 +654,6 @@ type SideChatSeedContext = {
   originRunId?: string
   transcriptVisibility?: NonNullable<ChatRecord['sideChatContext']>['transcriptVisibility']
 }
-type ChatPopoutHandoffState = {
-  draft?: string
-  scrollState?: ChatScrollState
-  writtenAt: number
-}
-
-const CHAT_POPOUT_HANDOFF_PREFIX = 'taskwraith.chatPopoutHandoff.'
 const PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string> = {
   read_only: 'Plan / read-only',
   ask_before_edits: 'Ask before edits',
@@ -954,43 +945,6 @@ interface LiveToolFileSummaryState {
   messages: ChatMessage[]
   workspacePath?: string | null
   summaries: DiffFileSummary[]
-}
-
-function chatPopoutHandoffKey(chatId: string): string {
-  return `${CHAT_POPOUT_HANDOFF_PREFIX}${chatId}`
-}
-
-function writeChatPopoutHandoff(chatId: string, handoff: Omit<ChatPopoutHandoffState, 'writtenAt'>): void {
-  if (typeof window === 'undefined' || !chatId) return
-  try {
-    window.localStorage.setItem(
-      chatPopoutHandoffKey(chatId),
-      JSON.stringify({ ...handoff, writtenAt: Date.now() })
-    )
-  } catch {
-    // Best-effort only. Transcript/run state still lives on the chat record.
-  }
-}
-
-function readChatPopoutHandoff(chatId: string): ChatPopoutHandoffState | null {
-  if (typeof window === 'undefined' || !chatId) return null
-  const key = chatPopoutHandoffKey(chatId)
-  try {
-    const raw = window.localStorage.getItem(key)
-    if (!raw) return null
-    window.localStorage.removeItem(key)
-    const parsed = JSON.parse(raw) as Partial<ChatPopoutHandoffState>
-    return {
-      ...(typeof parsed.draft === 'string' ? { draft: parsed.draft } : {}),
-      ...(parsed.scrollState
-        ? { scrollState: normalizeChatScrollState(parsed.scrollState) }
-        : {}),
-      writtenAt: typeof parsed.writtenAt === 'number' ? parsed.writtenAt : Date.now()
-    }
-  } catch {
-    window.localStorage.removeItem(key)
-    return null
-  }
 }
 
 /**
@@ -6168,15 +6122,8 @@ function App(): React.JSX.Element {
     if (workflowDraft?.chatId) protectedChatIds.add(workflowDraft.chatId)
     // Chats open in popout windows the main process can't enumerate; stale keys
     // only over-protect (safe).
-    try {
-      for (let i = 0; i < window.localStorage.length; i++) {
-        const key = window.localStorage.key(i)
-        if (key && key.startsWith(CHAT_POPOUT_HANDOFF_PREFIX)) {
-          protectedChatIds.add(key.slice(CHAT_POPOUT_HANDOFF_PREFIX.length))
-        }
-      }
-    } catch {
-      /* localStorage unavailable — the other guards still apply */
+    for (const chatId of listChatPopoutHandoffChatIds()) {
+      protectedChatIds.add(chatId)
     }
     // Staged-but-unsent intent the main process can't see: image attachments
     // and Discord context selections live in renderer state keyed by chatId.
