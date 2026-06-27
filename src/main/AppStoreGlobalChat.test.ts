@@ -4,7 +4,13 @@ import { join } from 'path'
 import { AppStore } from './store'
 import type { ChatRecord } from './store/types'
 
-const userDataPath = vi.hoisted(() => `/tmp/taskwraith-global-chat-test-${process.pid}`)
+const userDataPath = vi.hoisted(() => {
+  const tmpRoot =
+    process.platform === 'win32' && /^[A-Za-z]:/.test(process.cwd())
+      ? `${process.cwd().slice(0, 2)}/tmp`
+      : '/tmp'
+  return `${tmpRoot}/taskwraith-global-chat-test-${process.pid}`
+})
 
 vi.mock('electron', () => ({
   app: {
