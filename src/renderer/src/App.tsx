@@ -5174,6 +5174,9 @@ function App(): React.JSX.Element {
     if (next.nativeSubAgentRequests !== undefined) {
       settingsPatch.nativeSubAgentRequests = next.nativeSubAgentRequests
     }
+    if (next.userMcpServers !== undefined) {
+      settingsPatch.userMcpServers = next.userMcpServers
+    }
     if (next.autoResumeParentOnSubThreadCompletion !== undefined) {
       setAutoResumeParentOnSubThreadCompletion(next.autoResumeParentOnSubThreadCompletion)
       settingsPatch.autoResumeParentOnSubThreadCompletion =
@@ -19752,7 +19755,8 @@ function App(): React.JSX.Element {
       id: 'taskwraith-settings',
       command: '/settings',
       label: 'Open Settings',
-      description: 'Open Settings, optionally to a tab: /settings providers, approvals, usage, mcp.',
+      description:
+        'Open Settings, optionally to a tab: /settings providers, approvals, usage, provider tools, mcp servers.',
       group: 'Custom',
       run: (ctx) => {
         if (isChatPopoutWindow) {

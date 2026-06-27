@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   applyRuntimeProfileToPayload,
+  getCliProviderMcpStatus,
   runtimeSettings,
   type CliProviderRuntimeDependencies,
   type RuntimeProfilePayload
@@ -128,5 +129,33 @@ describe('runtimeSettings', () => {
     expect(settings.agenticServices.mcpTools).toBe('deny')
     expect(settings.agenticServices.subThreadDelegation).toBe('workspace')
     expect(settings.agenticServices.networkAccess).toBe('deny')
+  })
+})
+
+describe('getCliProviderMcpStatus', () => {
+  it('keeps Claude MCP available for user-managed servers when the TaskWraith bridge is off', () => {
+    const status = getCliProviderMcpStatus('claude', {
+      getSettings: () =>
+        ({
+          geminiMcpBridgeEnabled: false,
+          userMcpServers: [
+            {
+              id: 'docs',
+              name: 'Docs',
+              enabled: true,
+              transport: 'http',
+              url: 'https://example.test/mcp'
+            }
+          ]
+        }) as AppSettings
+    })
+
+    expect(status.available).toBe(true)
+    expect(status.enabled).toBe(true)
+    expect(status.source).toBe('provider')
+    expect(status.serverName).toBe('User MCP servers')
+    expect(status.tools).toEqual([])
+    expect(status.message).toContain('1 user-managed MCP server')
+    expect(status.message).toContain('TaskWraith MCP bridge is disabled')
   })
 })

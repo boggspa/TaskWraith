@@ -7,6 +7,7 @@ import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import { providerLabel } from '../ProviderAdapters'
 import { AppStore } from '../store'
 import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
+import { buildUserMcpLaunchServers } from '../UserMcpServers'
 import type {
   AppSettings,
   AgenticServicePolicy,
@@ -524,17 +525,28 @@ export function getCliProviderMcpStatus(
   provider: ProviderId,
   deps?: CliProviderRuntimeDependencies
 ) {
-  const enabled = runtimeSettingsFromDeps(deps).geminiMcpBridgeEnabled
+  const settings = runtimeSettingsFromDeps(deps)
+  const bridgeEnabled = Boolean(settings.geminiMcpBridgeEnabled)
+  const userMcpServers =
+    provider === 'claude' ? buildUserMcpLaunchServers(settings.userMcpServers) : []
+  const userServerCount = userMcpServers.length
+  const available = bridgeEnabled || userServerCount > 0
   return {
     provider,
-    available: enabled,
-    enabled,
-    serverName: GEMINI_MCP_SERVER_NAME,
-    tools: enabled ? [...TASKWRAITH_MCP_TOOLS] : [],
+    available,
+    enabled: available,
+    source: bridgeEnabled ? 'bridge' : userServerCount > 0 ? 'provider' : 'bridge',
+    serverName:
+      bridgeEnabled || userServerCount === 0 ? GEMINI_MCP_SERVER_NAME : 'User MCP servers',
+    tools: bridgeEnabled ? [...TASKWRAITH_MCP_TOOLS] : [],
     sections: [],
-    message: enabled
-      ? `TaskWraith registers the ${GEMINI_MCP_SERVER_NAME} MCP bridge for ${providerDisplayName(provider)} runs at launch. Live provider-side MCP listing is provider-managed and not exposed through a safe structured API.`
-      : `TaskWraith MCP bridge is disabled for ${providerDisplayName(provider)} runs.`
+    message: bridgeEnabled
+      ? userServerCount > 0
+        ? `TaskWraith registers the ${GEMINI_MCP_SERVER_NAME} MCP bridge plus ${userServerCount} user-managed MCP server${userServerCount === 1 ? '' : 's'} for ${providerDisplayName(provider)} runs at launch. Live provider-side MCP listing is provider-managed and not exposed through a safe structured API.`
+        : `TaskWraith registers the ${GEMINI_MCP_SERVER_NAME} MCP bridge for ${providerDisplayName(provider)} runs at launch. Live provider-side MCP listing is provider-managed and not exposed through a safe structured API.`
+      : userServerCount > 0
+        ? `${userServerCount} user-managed MCP server${userServerCount === 1 ? '' : 's'} will attach to ${providerDisplayName(provider)} runs at launch. The built-in TaskWraith MCP bridge is disabled, so TaskWraith bridge tools are not advertised.`
+        : `TaskWraith MCP bridge is disabled for ${providerDisplayName(provider)} runs.`
   }
 }
 

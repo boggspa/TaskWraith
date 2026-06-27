@@ -15,7 +15,10 @@ const defaultServices: AgenticServicesSettings = {
 function settings(
   agenticServices: AgenticServicesSettings = defaultServices,
   extra: Partial<AppSettings> = {}
-): Pick<AppSettings, 'agenticServices' | 'geminiMcpBridgeEnabled' | 'codexSandboxFallback'> {
+): Pick<
+  AppSettings,
+  'agenticServices' | 'geminiMcpBridgeEnabled' | 'codexSandboxFallback' | 'userMcpServers'
+> {
   return {
     agenticServices,
     geminiMcpBridgeEnabled: false,
@@ -146,6 +149,31 @@ describe('ProviderCapabilities', () => {
     expect(contract.mcp.message).toContain('did not expose a live server listing')
   })
 
+  it('reports Codex user-managed MCP servers even when the TaskWraith bridge is disabled', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'codex',
+      settings: settings(defaultServices, {
+        userMcpServers: [
+          {
+            id: 'docs',
+            name: 'Docs',
+            enabled: true,
+            transport: 'http',
+            url: 'https://example.test/mcp'
+          }
+        ]
+      }),
+      status: { provider: 'codex', available: true, version: '1.0.0', appServer: 'started' },
+      mcpStatus: { data: [] }
+    })
+
+    expect(contract.mcp.state).toBe('available')
+    expect(contract.mcp.serverName).toBe('User MCP servers')
+    expect(contract.mcp.tools).toEqual([])
+    expect(contract.mcp.message).toContain('1 user-managed MCP server')
+    expect(contract.mcp.message).toContain('TaskWraith MCP bridge is disabled')
+  })
+
   it('marks Claude and Kimi provider-native tools as delegated', () => {
     const claude = buildProviderCapabilityContract({
       provider: 'claude',
@@ -181,7 +209,7 @@ describe('ProviderCapabilities', () => {
         enabled: true,
         available: true,
         serverName: 'TaskWraith',
-        tools: ['ask_user_question']
+        tools: ['ask_user_question', 'delegate_to_subthread']
       }
     })
 
@@ -189,6 +217,40 @@ describe('ProviderCapabilities', () => {
     expect(claude.tools.elicit.requiresApproval).toBe(false)
     expect(claude.tools.delegate.state).toBe('gated')
     expect(claude.tools.delegate.policy).toBe('ask')
+  })
+
+  it('does not expose TaskWraith elicit/delegate rows for Claude user MCP servers only', () => {
+    const claude = buildProviderCapabilityContract({
+      provider: 'claude',
+      settings: settings(defaultServices, {
+        userMcpServers: [
+          {
+            id: 'docs',
+            name: 'Docs',
+            enabled: true,
+            transport: 'http',
+            url: 'https://example.test/mcp'
+          }
+        ]
+      }),
+      status: { provider: 'claude', available: true, version: '1.0.0' },
+      mcpStatus: {
+        enabled: true,
+        available: true,
+        source: 'provider',
+        serverName: 'User MCP servers',
+        tools: [],
+        message:
+          '1 user-managed MCP server will attach to Claude runs at launch. The built-in TaskWraith MCP bridge is disabled.'
+      }
+    })
+
+    expect(claude.mcp.state).toBe('available')
+    expect(claude.mcp.source).toBe('provider')
+    expect(claude.tools.mcpTools.state).toBe('delegated')
+    expect(claude.tools.mcpTools.enforcedByTaskWraith).toBe(false)
+    expect(claude.tools.elicit.state).toBe('unavailable')
+    expect(claude.tools.delegate.state).toBe('unavailable')
   })
 
   it('treats read-only grok/cursor elicit/delegate as provider-delegated when the bridge is off', () => {

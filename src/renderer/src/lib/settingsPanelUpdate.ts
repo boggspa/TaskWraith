@@ -69,6 +69,7 @@ export type SettingsPanelUpdate = {
   auditOrchestration?: AppSettings['auditOrchestration']
   agenticServices?: AgenticServicesSettings
   nativeSubAgentRequests?: NativeSubAgentRequestPolicy
+  userMcpServers?: AppSettings['userMcpServers']
   autoResumeParentOnSubThreadCompletion?: boolean
   geminiMcpBridgeEnabled?: boolean
   codexSandboxFallback?: CodexSandboxFallbackMode

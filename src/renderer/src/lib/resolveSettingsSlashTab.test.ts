@@ -16,6 +16,9 @@ describe('resolveSettingsTabFromSlashArg', () => {
     expect(resolveSettingsTabFromSlashArg('provider tools', { settingsTabs: SETTINGS_TABS })).toBe(
       'mcp'
     )
+    expect(resolveSettingsTabFromSlashArg('mcp', { settingsTabs: SETTINGS_TABS })).toBe(
+      'mcp-servers'
+    )
     expect(resolveSettingsTabFromSlashArg('mcp servers', { settingsTabs: SETTINGS_TABS })).toBe(
       'mcp-servers'
     )

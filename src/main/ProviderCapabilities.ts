@@ -21,6 +21,7 @@ import {
   ollamaTierLabel,
   ollamaToolNamesForTier
 } from './ollama/OllamaToolTiers'
+import { buildUserMcpLaunchServers } from './UserMcpServers'
 
 export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
 
@@ -72,6 +73,7 @@ interface BuildProviderCapabilityContractInput {
     | 'codexSandboxFallback'
     | 'ollamaToolControlTier'
     | 'ollamaProviderParityWorkspaceGrants'
+    | 'userMcpServers'
   >
   workspacePath?: string
   approvalMode?: string
@@ -300,11 +302,30 @@ function mcpToolNamesFromStatus(value: unknown): string[] {
   return [...names].sort()
 }
 
-function codexMcpCapability(mcpStatus: unknown, enabled: boolean): ProviderMcpCapability {
+function codexMcpCapability(
+  mcpStatus: unknown,
+  enabled: boolean,
+  userServerCount = 0
+): ProviderMcpCapability {
   const record = asRecord(mcpStatus)
   const tools = mcpToolNamesFromStatus(mcpStatus)
   const serverCount = Array.isArray(record.data) ? record.data.length : 0
   if (!enabled) {
+    if (userServerCount > 0) {
+      return {
+        state: 'available',
+        source: 'provider',
+        available: true,
+        enabled: true,
+        installed: true,
+        serverName: 'User MCP servers',
+        tools,
+        message:
+          serverCount > 0
+            ? `${serverCount} Codex MCP server${serverCount === 1 ? '' : 's'} reported by app-server. The built-in TaskWraith MCP bridge is disabled.`
+            : `${userServerCount} user-managed MCP server${userServerCount === 1 ? '' : 's'} will be registered for Codex when the app-server starts. Reopen Codex or restart the app-server after changing MCP servers. The built-in TaskWraith MCP bridge is disabled.`
+      }
+    }
     return {
       state: 'unavailable',
       source: 'provider',
@@ -484,22 +505,31 @@ function cliTaskWraithMcpCapability(
   const record = asRecord(mcpStatus)
   const enabled = Boolean(record.enabled)
   const available = Boolean(record.available)
+  const source =
+    record.source === 'provider' || record.source === 'provider-managed' ? 'provider' : 'bridge'
   const tools = Array.isArray(record.tools)
     ? record.tools.map((tool) => String(tool || '')).filter(Boolean)
     : []
   return {
     state: available ? 'available' : enabled ? 'gated' : 'unavailable',
-    source: 'bridge',
+    source,
     available,
     enabled,
     installed: available,
-    serverName: typeof record.serverName === 'string' ? record.serverName : 'TaskWraith',
+    serverName:
+      typeof record.serverName === 'string'
+        ? record.serverName
+        : source === 'provider'
+          ? 'User MCP servers'
+          : 'TaskWraith',
     tools: available ? tools : [],
     message:
       typeof record.message === 'string'
         ? record.message
         : available
-          ? `TaskWraith registers the TaskWraith MCP bridge for ${providerLabel(provider)} runs.`
+          ? source === 'provider'
+            ? `${providerLabel(provider)} launches user-managed MCP servers through provider MCP configuration.`
+            : `TaskWraith registers the TaskWraith MCP bridge for ${providerLabel(provider)} runs.`
           : `TaskWraith MCP bridge is not available for ${providerLabel(provider)}.`
   }
 }
@@ -710,7 +740,15 @@ export function buildProviderCapabilityContract({
       )
     }
   } else if (provider === 'codex') {
-    mcp = codexMcpCapability(mcpStatus, Boolean(settings.geminiMcpBridgeEnabled))
+    const codexUserMcpServerCount = buildUserMcpLaunchServers(settings.userMcpServers, [
+      'stdio',
+      'http'
+    ]).length
+    mcp = codexMcpCapability(
+      mcpStatus,
+      Boolean(settings.geminiMcpBridgeEnabled),
+      codexUserMcpServerCount
+    )
     shellCommands = serviceCapability(
       'shellCommands',
       services.shellCommands,
@@ -865,24 +903,35 @@ export function buildProviderCapabilityContract({
         )
     mcpTools =
       provider === 'claude' || provider === 'kimi' || taskWraithBridgeProvider
-        ? serviceCapability('mcpTools', services.mcpTools, 'bridge', mcp.tools, mcp.message)
+        ? mcp.source === 'provider'
+          ? delegatedCapability(
+              'mcpTools',
+              services.mcpTools,
+              mcp.tools,
+              mcp.message || `${label} MCP servers are provider-managed.`
+            )
+          : serviceCapability('mcpTools', services.mcpTools, 'bridge', mcp.tools, mcp.message)
         : delegatedCapability(
             'mcpTools',
             services.mcpTools,
             mcp.tools,
             mcp.message || `${label} MCP status is unavailable.`
           )
+    const taskWraithMcpToolsAvailable =
+      taskWraithBridgeProvider ||
+      mcp.tools.includes('ask_user_question') ||
+      mcp.tools.includes('delegate_to_subthread')
     if (provider === 'claude' || provider === 'kimi' || taskWraithBridgeProvider) {
       elicit = elicitCapability(
         'bridge',
-        mcp.available,
+        taskWraithMcpToolsAvailable && mcp.tools.includes('ask_user_question'),
         `${label} can ask the user a clarifying question through the TaskWraith MCP bridge (auto-allowed).`,
         `TaskWraith cannot route ${label} user questions until the TaskWraith MCP bridge is available.`
       )
       delegate = delegateCapability(
         'bridge',
         services.subThreadDelegation,
-        mcp.available,
+        taskWraithMcpToolsAvailable && mcp.tools.includes('delegate_to_subthread'),
         `${label} can spawn cross-provider sub-threads through the TaskWraith MCP bridge, gated by the sub-thread delegation setting.`,
         `TaskWraith cannot route ${label} sub-thread delegation until the TaskWraith MCP bridge is available.`
       )

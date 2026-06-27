@@ -9487,7 +9487,7 @@ async function resolveNativeSubAgentToolPreference(
     body:
       `${providerLabel(provider)} requested its native ${toolName} sub-agent tool.\n\n` +
       'Use Provider Native to continue with the provider tool, or use TaskWraith Sub-thread to ask the model to call delegate_to_subthread instead.\n\n' +
-      'Change this later in Settings -> MCP.',
+      'Change this later in Settings -> Provider Tools.',
     workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
     actions: ['useProviderNative', 'useTaskWraithSubthread'],
     preview: {
