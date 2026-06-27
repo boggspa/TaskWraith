@@ -22035,6 +22035,7 @@ if (isGeminiMcpBridgeProcess) {
       relayPort: number
       candidates: string[]
     } | null = null
+    let iosRemoteStartPromise: Promise<void> | null = null
     // Surfaced startup failure (identity unreadable / unprotectable) — shown
     // in Settings → Bridge networking instead of a silent "Off" pill.
     let iosRemoteRuntimeError: string | null = null
@@ -22167,8 +22168,24 @@ if (isGeminiMcpBridgeProcess) {
         console.log(`[remote-bridge] tray unavailable: ${String(error)}`)
       }
     }
-    if (iosRemoteResolution.shouldRun) {
-      const startRuntime = (
+    const stopIosRemoteBridge = async (): Promise<void> => {
+      iosRemoteRuntime?.dispose()
+      iosRemoteRuntime = null
+      selfHostedWssLane = null
+      const relay = embeddedRelayHandle
+      embeddedRelayHandle = null
+      if (relay) {
+        await relay.close().catch((err: unknown) => {
+          console.warn(
+            `[remote-bridge] embedded relay close failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          )
+        })
+      }
+    }
+
+    const startRuntime = (
         relayUrl: string,
         advertiseRelayUrl?: string,
         advertiseRelayUrls?: string[]
@@ -22313,32 +22330,32 @@ if (isGeminiMcpBridgeProcess) {
         }
       }
 
-      const envRelayUrl = (process.env.TASKWRAITH_RELAY_URL || '').trim()
-      const settingsRelayUrl = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
-      const configuredRelayUrl = envRelayUrl || settingsRelayUrl
-      const packagedDebugBuild = [app.getName(), process.execPath, process.resourcesPath]
-        .join(' ')
-        .toLowerCase()
-        .includes('debug')
-      const defaultIosRelayPort = (): number => (app.isPackaged && !packagedDebugBuild ? 8787 : 8788)
-      const defaultIosServeHttpsPort = (): number =>
-        app.isPackaged && !packagedDebugBuild ? 443 : 8443
-      const serveWssUrl = (dnsName: string, httpsPort: number): string =>
-        httpsPort === 443 ? `wss://${dnsName}` : `wss://${dnsName}:${httpsPort}`
-      const embeddedPort = (relayUrl: string | null): number => {
-        // Dev defaults to 8788 so a dev build + a release build can run at the
-        // same time without colliding on the embedded relay port (8787) — the
-        // second app to bind 8787 otherwise loses its relay and can't be paired.
-        const fallbackPort = Number(process.env.TASKWRAITH_RELAY_PORT || defaultIosRelayPort())
-        if (!relayUrl) return fallbackPort
-        try {
-          const parsed = new URL(relayUrl)
-          const parsedPort = Number(parsed.port)
-          return Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : fallbackPort
-        } catch {
-          return fallbackPort
-        }
+    const envRelayUrl = (process.env.TASKWRAITH_RELAY_URL || '').trim()
+    const configuredSettingsRelayUrl = (): string =>
+      (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
+    const packagedDebugBuild = [app.getName(), process.execPath, process.resourcesPath]
+      .join(' ')
+      .toLowerCase()
+      .includes('debug')
+    const defaultIosRelayPort = (): number => (app.isPackaged && !packagedDebugBuild ? 8787 : 8788)
+    const defaultIosServeHttpsPort = (): number =>
+      app.isPackaged && !packagedDebugBuild ? 443 : 8443
+    const serveWssUrl = (dnsName: string, httpsPort: number): string =>
+      httpsPort === 443 ? `wss://${dnsName}` : `wss://${dnsName}:${httpsPort}`
+    const embeddedPort = (relayUrl: string | null): number => {
+      // Dev defaults to 8788 so a dev build + a release build can run at the
+      // same time without colliding on the embedded relay port (8787) — the
+      // second app to bind 8787 otherwise loses its relay and can't be paired.
+      const fallbackPort = Number(process.env.TASKWRAITH_RELAY_PORT || defaultIosRelayPort())
+      if (!relayUrl) return fallbackPort
+      try {
+        const parsed = new URL(relayUrl)
+        const parsedPort = Number(parsed.port)
+        return Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : fallbackPort
+      } catch {
+        return fallbackPort
       }
+    }
       const relayOriginWithPort = (relayUrl: string, port: number): string => {
         try {
           const parsed = new URL(relayUrl)
@@ -22385,42 +22402,42 @@ if (isGeminiMcpBridgeProcess) {
           ? (result.bootstrap.bootstrapPayload as unknown as Record<string, unknown>)
           : null
       }
-      const startEmbeddedRelay = (advertiseRelayUrl: string | null): void => {
+      const startEmbeddedRelay = async (advertiseRelayUrl: string | null): Promise<void> => {
         // No external relay configured → run the relay IN-PROCESS. The relay
         // is a plain Node http+ws server and Electron main is Node, so users
         // never have to run a terminal command for the built-in case. The QR
         // advertises the Mac's Tailscale IP when present (reachable across
         // networks), else the LAN IP (same-Wi-Fi pairing).
         const port = embeddedPort(advertiseRelayUrl)
-        void createRelayServer({
-          port,
-          hostInfo: relayHostInfoProvider,
-          beginPair: relayBeginPairProvider
-        })
-          .then((handle) => {
-            embeddedRelayHandle = handle
-            const advertised = advertiseRelayUrl ? null : pickRelayAdvertiseHost()
-            const relayUrl = advertiseRelayUrl
-              ? relayOriginWithPort(advertiseRelayUrl, handle.port)
-              : `ws://${advertised?.host ?? '127.0.0.1'}:${handle.port}`
-            if (advertised?.kind === 'loopback') {
-              console.warn(
-                '[remote-bridge] no Tailscale/LAN address found — the pairing QR will only be reachable from this machine'
-              )
-            }
-            console.log(
-              `[remote-bridge] embedded relay listening on :${handle.port} — advertising ${relayUrl} (${advertised?.kind ?? 'configured-local'})`
-            )
-            startRuntime(relayUrl)
-            reopenCollaborationRooms()
+        try {
+          const handle = await createRelayServer({
+            port,
+            hostInfo: relayHostInfoProvider,
+            beginPair: relayBeginPairProvider
           })
-          .catch((err: unknown) => {
-            console.error(
-              `[remote-bridge] embedded relay failed to start on :${port} (${
-                err instanceof Error ? err.message : String(err)
-              }) — remote iOS pairing disabled. Free the port, set TASKWRAITH_RELAY_PORT, or point TASKWRAITH_RELAY_URL at an external relay.`
+          embeddedRelayHandle = handle
+          const advertised = advertiseRelayUrl ? null : pickRelayAdvertiseHost()
+          const relayUrl = advertiseRelayUrl
+            ? relayOriginWithPort(advertiseRelayUrl, handle.port)
+            : `ws://${advertised?.host ?? '127.0.0.1'}:${handle.port}`
+          if (advertised?.kind === 'loopback') {
+            console.warn(
+              '[remote-bridge] no Tailscale/LAN address found — the pairing QR will only be reachable from this machine'
             )
-          })
+          }
+          console.log(
+            `[remote-bridge] embedded relay listening on :${handle.port} — advertising ${relayUrl} (${advertised?.kind ?? 'configured-local'})`
+          )
+          startRuntime(relayUrl)
+          reopenCollaborationRooms()
+        } catch (err: unknown) {
+          iosRemoteRuntimeError = err instanceof Error ? err.message : String(err)
+          console.error(
+            `[remote-bridge] embedded relay failed to start on :${port} (${
+              err instanceof Error ? err.message : String(err)
+            }) — remote iOS pairing disabled. Free the port, set TASKWRAITH_RELAY_PORT, or point TASKWRAITH_RELAY_URL at an external relay.`
+          )
+        }
       }
       // Self-hosted Tailscale TLS lane: a wss:// settings URL whose host is
       // THIS Mac's MagicDNS name means "embedded relay behind tailscale
@@ -22439,22 +22456,22 @@ if (isGeminiMcpBridgeProcess) {
       // the ACTUAL relay port), and (2) `bridge-begin-pairing` refuses to
       // hand out a bootstrap until a live self-dial of the wss front door
       // answers — the QR can never advertise a dead door again.
-      const startSelfHostedWssRelay = (
+      const startSelfHostedWssRelay = async (
         wssUrl: string,
         dnsName: string,
         cliPath: string | null
-      ): void => {
+      ): Promise<void> => {
         const port = embeddedPort(null)
         // Release fronts :443, a dev build :8443 — distinct serve handlers so the
         // two coexist on one Mac instead of fighting over one :443 mapping.
         const httpsPort = defaultIosServeHttpsPort()
-        void createRelayServer({
-          port,
-          hostInfo: relayHostInfoProvider,
-          beginPair: relayBeginPairProvider
-        })
-          .then(async (handle) => {
-            embeddedRelayHandle = handle
+        try {
+          const handle = await createRelayServer({
+            port,
+            hostInfo: relayHostInfoProvider,
+            beginPair: relayBeginPairProvider
+          })
+          embeddedRelayHandle = handle
             // T70 — the QR advertises BOTH doors: the LAN ws:// URL (fast
             // path at home, no Tailscale needed on the phone) and the wss
             // front door (works from anywhere with Tailscale). The phone
@@ -22464,128 +22481,168 @@ if (isGeminiMcpBridgeProcess) {
               lanHost && lanHost.kind !== 'loopback'
                 ? `ws://${lanHost.host}:${handle.port}`
                 : null
-            const candidates = [...(lanCandidate ? [lanCandidate] : []), wssUrl]
+            const candidates = [wssUrl, ...(lanCandidate ? [lanCandidate] : [])]
             selfHostedWssLane = { wssUrl, cliPath, relayPort: handle.port, candidates }
             console.log(
               `[remote-bridge] embedded relay on :${handle.port} behind tailscale serve — Mac via loopback, phones via ${candidates.join(' → ')} (${dnsName})`
             )
-            if (cliPath) {
+          if (cliPath) {
               // Confirm the relay actually answers on its loopback port BEFORE we
               // (re)assert a serve door over it. `tailscale serve --bg` PERSISTS
               // across app restarts, so if a prior run left a door up and this
               // run's relay isn't really answering, fronting it would hand phones
               // a 502 ("bad response from server"). Bind → verify → serve.
-              const loopback = await probeRelayFrontDoor(`ws://127.0.0.1:${handle.port}`)
-              if (!loopback.reachable) {
-                console.error(
-                  `[remote-bridge] embedded relay on :${handle.port} is not answering loopback (${loopback.detail}) — tearing down any stale serve front door on :${httpsPort} rather than advertising a dead relay`
+            const loopback = await probeRelayFrontDoor(`ws://127.0.0.1:${handle.port}`)
+            if (!loopback.reachable) {
+              console.error(
+                `[remote-bridge] embedded relay on :${handle.port} is not answering loopback (${loopback.detail}) — tearing down any stale serve front door on :${httpsPort} rather than advertising a dead relay`
+              )
+              await disableTailscaleServe({ cliPath, httpsPort })
+            } else {
+              const serve = await getTailscaleServeStatus({
+                cliPath,
+                relayPort: handle.port,
+                httpsPort
+              })
+              if (!serve.configured) {
+                console.warn(
+                  `[remote-bridge] tailscale serve is NOT fronting :${handle.port} on :${httpsPort}${
+                    serve.error ? ` (status error: ${serve.error})` : ''
+                  } — re-asserting the front door`
                 )
-                await disableTailscaleServe({ cliPath, httpsPort })
-              } else {
-                const serve = await getTailscaleServeStatus({
+                const enabled = await enableTailscaleServe({
                   cliPath,
                   relayPort: handle.port,
                   httpsPort
                 })
-                if (!serve.configured) {
-                  console.warn(
-                    `[remote-bridge] tailscale serve is NOT fronting :${handle.port} on :${httpsPort}${
-                      serve.error ? ` (status error: ${serve.error})` : ''
-                    } — re-asserting the front door`
-                  )
-                  const enabled = await enableTailscaleServe({
-                    cliPath,
-                    relayPort: handle.port,
-                    httpsPort
-                  })
-                  console[enabled.ok ? 'log' : 'error'](
-                    enabled.ok
-                      ? `[remote-bridge] tailscale serve re-enabled for :${handle.port} on :${httpsPort}`
-                      : `[remote-bridge] tailscale serve enable FAILED: ${enabled.message ?? 'unknown'} — phones cannot reach ${wssUrl} until this is fixed (pairing will refuse to advertise it)`
-                  )
-                }
-              }
-            } else {
-              console.warn(
-                '[remote-bridge] tailscale CLI path unknown — cannot verify/repair the serve front door; pairing will probe reachability before advertising'
-              )
-            }
-            startRuntime(`ws://127.0.0.1:${handle.port}`, wssUrl, candidates)
-            reopenCollaborationRooms()
-          })
-          .catch(async (err: unknown) => {
-            console.error(
-              `[remote-bridge] embedded relay failed to start on :${port} (${
-                err instanceof Error ? err.message : String(err)
-              }) — remote iOS pairing disabled. Free the port or set TASKWRAITH_RELAY_PORT.`
-            )
-            // The relay never bound, but a `serve --bg` door from a previous run
-            // persists in tailscaled and would now proxy to a dead port — a 502
-            // trap for any phone that dials it. Take OUR OWN front door down
-            // (httpsPort-scoped, so this never touches the other build's door).
-            if (cliPath) {
-              const torn = await disableTailscaleServe({ cliPath, httpsPort })
-              if (!torn.ok) {
-                console.warn(
-                  `[remote-bridge] could not tear down the stale serve door on :${httpsPort}: ${torn.message ?? 'unknown'}`
+                console[enabled.ok ? 'log' : 'error'](
+                  enabled.ok
+                    ? `[remote-bridge] tailscale serve re-enabled for :${handle.port} on :${httpsPort}`
+                    : `[remote-bridge] tailscale serve enable FAILED: ${enabled.message ?? 'unknown'} — phones cannot reach ${wssUrl} until this is fixed (pairing will refuse to advertise it)`
                 )
               }
             }
-          })
+          } else {
+            console.warn(
+              '[remote-bridge] tailscale CLI path unknown — cannot verify/repair the serve front door; pairing will probe reachability before advertising'
+            )
+          }
+          startRuntime(`ws://127.0.0.1:${handle.port}`, wssUrl, candidates)
+          reopenCollaborationRooms()
+        } catch (err: unknown) {
+          iosRemoteRuntimeError = err instanceof Error ? err.message : String(err)
+          console.error(
+            `[remote-bridge] embedded relay failed to start on :${port} (${
+              err instanceof Error ? err.message : String(err)
+            }) — remote iOS pairing disabled. Free the port or set TASKWRAITH_RELAY_PORT.`
+          )
+          // The relay never bound, but a `serve --bg` door from a previous run
+          // persists in tailscaled and would now proxy to a dead port — a 502
+          // trap for any phone that dials it. Take OUR OWN front door down
+          // (httpsPort-scoped, so this never touches the other build's door).
+          if (cliPath) {
+            const torn = await disableTailscaleServe({ cliPath, httpsPort })
+            if (!torn.ok) {
+              console.warn(
+                `[remote-bridge] could not tear down the stale serve door on :${httpsPort}: ${torn.message ?? 'unknown'}`
+              )
+            }
+          }
+        }
       }
-      void (async () => {
+    const startIosRemoteBridge = async (reason: string): Promise<void> => {
+      if (iosRemoteRuntime) return
+      if (iosRemoteStartPromise) return iosRemoteStartPromise
+      iosRemoteStartPromise = (async () => {
+        const resolution = resolveDaemonShouldRun(
+          AppStore.getSettings().iosRemoteEnabled === true,
+          process.env.IOS_REMOTE_TRUE
+        )
+        if (!resolution.shouldRun) {
+          iosRemoteRuntimeError =
+            resolution.envOverride === 'force-off'
+              ? 'iOS remote bridge is forced off by IOS_REMOTE_TRUE.'
+              : 'iOS remote bridge is disabled in Settings → Devices.'
+          console.warn(`[remote-bridge] not starting for ${reason} — ${iosRemoteRuntimeError}`)
+          return
+        }
+
+        await stopIosRemoteBridge()
+        const settingsRelayUrl = configuredSettingsRelayUrl()
+        const configuredRelayUrl = envRelayUrl || settingsRelayUrl
+        const httpsPort = defaultIosServeHttpsPort()
+        const startTailscaleLane = async (preferredUrl: string | null): Promise<boolean> => {
+          const tailscale = await detectTailscale()
+          let dnsName = tailscale.dnsName?.toLowerCase()
+          if (!dnsName && tailscale.cliPath) {
+            const serve = await getTailscaleServeStatus({
+              cliPath: tailscale.cliPath,
+              relayPort: embeddedPort(null),
+              httpsPort
+            })
+            dnsName = serve.dnsName?.toLowerCase()
+          }
+          if (!dnsName) return false
+          let wssUrl = serveWssUrl(dnsName, httpsPort)
+          if (preferredUrl) {
+            try {
+              const parsed = new URL(preferredUrl)
+              if (parsed.protocol === 'wss:' && parsed.hostname.toLowerCase() === dnsName) {
+                wssUrl = serveWssUrl(dnsName, httpsPort)
+              }
+            } catch {
+              // Ignore malformed preferred URLs and use the discovered lane.
+            }
+          }
+          if (settingsRelayUrl !== wssUrl && !envRelayUrl) {
+            AppStore.updateSettings({ iosRemoteRelayUrl: wssUrl })
+          }
+          console.log(
+            `[remote-bridge] iOS remote transport enabled — self-hosted wss via tailscale serve (${wssUrl})`
+          )
+          await startSelfHostedWssRelay(wssUrl, dnsName, tailscale.cliPath ?? null)
+          return iosRemoteRuntime !== null
+        }
+
         if (settingsRelayUrl && !envRelayUrl) {
           try {
             const parsed = new URL(settingsRelayUrl)
-            if (parsed.protocol === 'wss:') {
-              const tailscale = await detectTailscale()
-              let dnsName = tailscale.dnsName?.toLowerCase()
-              if (!dnsName && tailscale.cliPath) {
-                const serve = await getTailscaleServeStatus({
-                  cliPath: tailscale.cliPath,
-                  relayPort: embeddedPort(null),
-                  httpsPort: defaultIosServeHttpsPort()
-                })
-                dnsName = serve.dnsName?.toLowerCase()
-              }
-              if (
-                dnsName &&
-                parsed.hostname.toLowerCase() === dnsName
-              ) {
-                console.log(
-                  `[remote-bridge] iOS remote transport enabled — self-hosted wss via tailscale serve (${serveWssUrl(dnsName, defaultIosServeHttpsPort())})`
-                )
-                startSelfHostedWssRelay(
-                  serveWssUrl(dnsName, defaultIosServeHttpsPort()),
-                  dnsName,
-                  tailscale.cliPath ?? null
-                )
-                return
-              }
-            }
+            if (parsed.protocol === 'wss:' && (await startTailscaleLane(settingsRelayUrl))) return
           } catch {
             // Unparseable URL → fall through to the existing lanes.
           }
         }
+        if (!envRelayUrl && (await startTailscaleLane(null))) return
         if (settingsRelayUrl && !envRelayUrl && isLocalPlainRelayUrl(settingsRelayUrl)) {
           console.log(
             `[remote-bridge] iOS remote transport enabled — settings relay URL points at this Mac, starting embedded relay for ${settingsRelayUrl}`
           )
-          startEmbeddedRelay(settingsRelayUrl)
+          await startEmbeddedRelay(settingsRelayUrl)
         } else if (configuredRelayUrl) {
           // Self-hosted relay (VPS / Tailscale node / `npx tsx relay/src/cli.ts`).
           console.log(
             `[remote-bridge] iOS remote transport enabled — external relay ${configuredRelayUrl}`
           )
           startRuntime(configuredRelayUrl)
-          // Deferred: this branch runs synchronously inside whenReady, before
-          // the collaboration helpers below are initialized; the microtask runs
-          // after the block completes.
-          queueMicrotask(() => reopenCollaborationRooms())
+          reopenCollaborationRooms()
         } else {
-          startEmbeddedRelay(null)
+          await startEmbeddedRelay(null)
         }
       })()
+      try {
+        await iosRemoteStartPromise
+      } finally {
+        iosRemoteStartPromise = null
+      }
+    }
+
+    const restartIosRemoteBridge = async (reason: string): Promise<void> => {
+      await stopIosRemoteBridge()
+      await startIosRemoteBridge(reason)
+    }
+
+    if (iosRemoteResolution.shouldRun) {
+      void startIosRemoteBridge('startup')
     }
 
     const subscribeBridgeRunEvents = (_daemon: BridgeDaemonClient): void => {
@@ -23251,13 +23308,6 @@ if (isGeminiMcpBridgeProcess) {
     // reverse-proxies (WebSocket-aware) to the relay's loopback port. The
     // pairing QR then advertises wss://<dnsName>, which iOS ATS accepts
     // off-LAN — the only way a cellular phone can reach the bridge.
-    const packagedDebugBuild = [app.getName(), process.execPath, process.resourcesPath]
-      .join(' ')
-      .toLowerCase()
-      .includes('debug')
-    const defaultIosRelayPort = (): number => (app.isPackaged && !packagedDebugBuild ? 8787 : 8788)
-    const defaultIosServeHttpsPort = (): number =>
-      app.isPackaged && !packagedDebugBuild ? 443 : 8443
     const iosRemoteRelayPort = (): number =>
       Number(process.env.TASKWRAITH_RELAY_PORT || defaultIosRelayPort())
     // Front-door HTTPS port for `tailscale serve`. Release owns :443; a dev build
@@ -23265,10 +23315,6 @@ if (isGeminiMcpBridgeProcess) {
     // of clobbering one shared :443 mapping (which silently broke release pairing).
     const iosRemoteServeHttpsPort = (): number =>
       Number(process.env.TASKWRAITH_SERVE_HTTPS_PORT || defaultIosServeHttpsPort())
-    // Advertised wss:// URL: :443 stays implicit (wss://<dns>) so existing release
-    // QRs are unchanged; a non-443 dev door must carry its port (wss://<dns>:8443).
-    const serveWssUrl = (dnsName: string, httpsPort: number): string =>
-      httpsPort === 443 ? `wss://${dnsName}` : `wss://${dnsName}:${httpsPort}`
     const iosRemoteTailscaleStatus = async (): Promise<Record<string, unknown>> => {
       const tailscale = await detectTailscale()
       const relayPort = iosRemoteRelayPort()
@@ -23331,6 +23377,7 @@ if (isGeminiMcpBridgeProcess) {
       AppStore.updateSettings({
         iosRemoteRelayUrl: serveWssUrl(dnsName, iosRemoteServeHttpsPort())
       })
+      await restartIosRemoteBridge('tailscale enable')
       return { ok: true, message: result.message ?? null, status: await iosRemoteTailscaleStatus() }
     })
     ipcMain.handle('ios-remote-tailscale-disable', async () => {
@@ -23409,7 +23456,7 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle('ios-remote-tailscale-oauth-status', () => tailscaleOAuthStatus())
     ipcMain.handle(
       'set-ios-remote-config',
-      (_, config: { enabled?: boolean; relayUrl?: string; openAtLogin?: boolean }) => {
+      async (_, config: { enabled?: boolean; relayUrl?: string; openAtLogin?: boolean }) => {
         if (typeof config?.openAtLogin === 'boolean') {
           app.setLoginItemSettings({ openAtLogin: config.openAtLogin })
         }
@@ -23424,13 +23471,16 @@ if (isGeminiMcpBridgeProcess) {
           next.iosRemoteEnabled === true,
           process.env.IOS_REMOTE_TRUE
         )
+        if (resolution.shouldRun) {
+          await restartIosRemoteBridge('settings change')
+        } else {
+          await stopIosRemoteBridge()
+        }
         return {
           enabled: next.iosRemoteEnabled === true,
           relayUrl: next.iosRemoteRelayUrl || '',
           effectiveEnabled: resolution.shouldRun,
           envOverride: resolution.envOverride,
-          // The runtime is constructed at startup; a toggle takes effect
-          // on the next launch (restart prompt in the panel).
           runtimeActive: iosRemoteRuntime !== null,
           runtimeError: iosRemoteRuntimeError,
           openAtLogin: app.getLoginItemSettings().openAtLogin
@@ -23460,11 +23510,14 @@ if (isGeminiMcpBridgeProcess) {
       'bridge-begin-pairing',
       async (_, displayName?: string, options?: { force?: boolean }) => {
         if (!iosRemoteRuntime) {
+          await startIosRemoteBridge('pairing request')
+        }
+        if (!iosRemoteRuntime) {
           return {
             ok: false,
             error:
-              'Remote iOS pairing is not available in this build. ' +
-              'Enable the iOS remote bridge in Settings → Devices, then restart TaskWraith.'
+              (iosRemoteRuntimeError || 'Remote iOS pairing could not start.') +
+              ' Check Settings → Devices → iOS remote bridge and try again.'
           }
         }
         // T69/T70 — never hand the QR a dead door. When the self-hosted
