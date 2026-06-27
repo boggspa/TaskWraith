@@ -772,7 +772,8 @@ export function userMcpServerMatchesQuery(
     ...Object.keys(server.env ?? {}),
     ...Object.keys(server.headers ?? {}),
     server.bearerTokenEnvVar || '',
-    userMcpServerRuntimeLabel(server)
+    userMcpServerRuntimeLabel(server),
+    ...userMcpServerProviderExportLabels(server)
   ]
     .join(' ')
     .toLowerCase()
@@ -1390,6 +1391,14 @@ function isCursorExportableUserMcpServer(server: UserMcpServerConfig): boolean {
   return server.transport === 'stdio'
     ? Boolean(server.command?.trim())
     : Boolean(server.url?.trim())
+}
+
+export function userMcpServerProviderExportLabels(server: UserMcpServerConfig): string[] {
+  const labels: string[] = []
+  if (isCodexExportableUserMcpServer(server)) labels.push('Codex TOML')
+  if (isClaudeExportableUserMcpServer(server)) labels.push('Claude JSON')
+  if (isCursorExportableUserMcpServer(server)) labels.push('Cursor mcp.json')
+  return labels
 }
 
 function userMcpServerProviderEntry(
@@ -6660,6 +6669,7 @@ export function SettingsPanel({
                       server.transport === 'stdio'
                         ? server.command || 'No command'
                         : server.url || 'No URL'
+                    const exportLabels = userMcpServerProviderExportLabels(server)
                     return (
                       <article key={server.id} className="settings-user-mcp-row">
                         <div className="settings-user-mcp-main">
@@ -6679,6 +6689,9 @@ export function SettingsPanel({
                             )}
                             {server.bearerTokenEnvVar && <span>bearer env</span>}
                             <span>{userMcpServerRuntimeLabel(server)}</span>
+                            {exportLabels.map((label) => (
+                              <span key={label}>{label}</span>
+                            ))}
                           </div>
                           <details className="settings-user-mcp-config">
                             <summary>Audit JSON</summary>

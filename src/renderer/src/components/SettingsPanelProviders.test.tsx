@@ -9,6 +9,7 @@ import {
   formatUserMcpServersAuditJson,
   hasUserMcpServerNameConflict,
   parseUserMcpServersImportJson,
+  userMcpServerProviderExportLabels,
   userMcpServerMatchesQuery
 } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
@@ -283,6 +284,9 @@ describe('SettingsPanel provider cards', () => {
     )
     expect(html).toContain('runtime: Codex + Claude + Cursor')
     expect(html).toContain('runtime: Claude')
+    expect(html).toContain('Codex TOML')
+    expect(html).toContain('Claude JSON')
+    expect(html).toContain('Cursor mcp.json')
     expect(html).toContain('Audit JSON')
     expect(html).toContain('All servers audit JSON')
     expect(html).toContain('Copy audit JSON')
@@ -483,6 +487,36 @@ describe('parseUserMcpServersImportJson', () => {
 })
 
 describe('user MCP server name/audit helpers', () => {
+  it('labels per-server provider export compatibility', () => {
+    expect(
+      userMcpServerProviderExportLabels({
+        id: 'filesystem',
+        name: 'filesystem',
+        enabled: true,
+        transport: 'stdio',
+        command: 'npx'
+      })
+    ).toEqual(['Codex TOML', 'Claude JSON', 'Cursor mcp.json'])
+    expect(
+      userMcpServerProviderExportLabels({
+        id: 'legacy',
+        name: 'legacy',
+        enabled: true,
+        transport: 'sse',
+        url: 'https://example.test/sse'
+      })
+    ).toEqual(['Claude JSON'])
+    expect(
+      userMcpServerProviderExportLabels({
+        id: 'disabled',
+        name: 'disabled',
+        enabled: false,
+        transport: 'http',
+        url: 'https://example.test/mcp'
+      })
+    ).toEqual([])
+  })
+
   it('matches user MCP server searches against safe management fields', () => {
     const server = {
       id: 'server-docs',
@@ -502,6 +536,7 @@ describe('user MCP server name/audit helpers', () => {
     expect(userMcpServerMatchesQuery(server, 'example.test')).toBe(true)
     expect(userMcpServerMatchesQuery(server, 'authorization')).toBe(true)
     expect(userMcpServerMatchesQuery(server, 'DOCS_TOKEN')).toBe(true)
+    expect(userMcpServerMatchesQuery(server, 'claude json')).toBe(true)
     expect(userMcpServerMatchesQuery(server, 'Bearer')).toBe(false)
     expect(userMcpServerMatchesQuery(server, 'filesystem')).toBe(false)
   })
