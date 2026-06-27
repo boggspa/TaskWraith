@@ -755,6 +755,30 @@ function userMcpServerRuntimeLabel(server: Pick<UserMcpServerConfig, 'transport'
   return providers.length > 0 ? `runtime: ${providers.join(' + ')}` : 'saved only'
 }
 
+export function userMcpServerMatchesQuery(
+  server: UserMcpServerConfig,
+  query: string
+): boolean {
+  const search = query.trim().toLowerCase()
+  if (!search) return true
+  const haystack = [
+    server.name,
+    server.description || '',
+    server.transport,
+    server.enabled ? 'enabled' : 'disabled',
+    server.command || '',
+    server.url || '',
+    ...(server.args ?? []),
+    ...Object.keys(server.env ?? {}),
+    ...Object.keys(server.headers ?? {}),
+    server.bearerTokenEnvVar || '',
+    userMcpServerRuntimeLabel(server)
+  ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(search)
+}
+
 function makeUserMcpServerId(name: string): string {
   const slug =
     name
@@ -2607,6 +2631,7 @@ export function SettingsPanel({
   const [installedFontStatus, setInstalledFontStatus] = useState('')
   const [composerPreviewText, setComposerPreviewText] = useState('')
   const [mcpToolQuery, setMcpToolQuery] = useState('')
+  const [mcpServerQuery, setMcpServerQuery] = useState('')
   const [mcpServerFormMode, setMcpServerFormMode] = useState<'hidden' | 'create' | 'edit'>(
     'hidden'
   )
@@ -3118,6 +3143,10 @@ export function SettingsPanel({
   const cursorExportableUserMcpServerCount = userMcpServers.filter(
     isCursorExportableUserMcpServer
   ).length
+  const mcpServerSearch = mcpServerQuery.trim().toLowerCase()
+  const filteredUserMcpServers = userMcpServers.filter((server) =>
+    userMcpServerMatchesQuery(server, mcpServerSearch)
+  )
   const mcpToolSearch = mcpToolQuery.trim().toLowerCase()
   const filteredMcpToolCatalog = MCP_TOOL_CATALOG.filter((tool) => {
     if (!mcpToolSearch) return true
@@ -6585,6 +6614,34 @@ export function SettingsPanel({
                   Codex, Claude, and Cursor provider launch paths; SSE is available to Claude.
                 </p>
               </div>
+              {userMcpServers.length > 0 && (
+                <div className="settings-audit-toolbar">
+                  <label className="settings-audit-search">
+                    <span className="sr-only">Search user MCP servers</span>
+                    <input
+                      className="settings-select"
+                      value={mcpServerQuery}
+                      onChange={(event) => setMcpServerQuery(event.target.value)}
+                      aria-label="Search user MCP servers"
+                      placeholder="Search names, transports, commands, URLs"
+                    />
+                  </label>
+                  <div className="settings-audit-toolbar-meta">
+                    <span>
+                      {filteredUserMcpServers.length} of {userMcpServers.length} servers
+                    </span>
+                    {mcpServerSearch && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => setMcpServerQuery('')}
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {userMcpServers.length === 0 ? (
                 <div className="settings-user-mcp-empty">
@@ -6594,9 +6651,11 @@ export function SettingsPanel({
                     Add server
                   </button>
                 </div>
+              ) : filteredUserMcpServers.length === 0 ? (
+                <div className="settings-audit-empty">No MCP servers match that search.</div>
               ) : (
                 <div className="settings-user-mcp-list">
-                  {userMcpServers.map((server) => {
+                  {filteredUserMcpServers.map((server) => {
                     const endpoint =
                       server.transport === 'stdio'
                         ? server.command || 'No command'

@@ -8,7 +8,8 @@ import {
   formatUserMcpServersCursorJson,
   formatUserMcpServersAuditJson,
   hasUserMcpServerNameConflict,
-  parseUserMcpServersImportJson
+  parseUserMcpServersImportJson,
+  userMcpServerMatchesQuery
 } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
 import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
@@ -262,6 +263,8 @@ describe('SettingsPanel provider cards', () => {
 
     expect(html).toContain('MCP servers')
     expect(html).toContain('filesystem')
+    expect(html).toContain('Search user MCP servers')
+    expect(html).toContain('3 of 3 servers')
     expect(html).toContain('2 args')
     expect(html).toContain('1 env var')
     expect(html).toContain('1 header')
@@ -480,6 +483,29 @@ describe('parseUserMcpServersImportJson', () => {
 })
 
 describe('user MCP server name/audit helpers', () => {
+  it('matches user MCP server searches against safe management fields', () => {
+    const server = {
+      id: 'server-docs',
+      name: 'Docs Search',
+      description: 'Project reference docs',
+      enabled: true,
+      transport: 'http' as const,
+      url: 'https://example.test/mcp',
+      headers: {
+        Authorization: 'Bearer ${DOCS_TOKEN}'
+      },
+      bearerTokenEnvVar: 'DOCS_TOKEN'
+    }
+
+    expect(userMcpServerMatchesQuery(server, 'docs search')).toBe(true)
+    expect(userMcpServerMatchesQuery(server, 'http')).toBe(true)
+    expect(userMcpServerMatchesQuery(server, 'example.test')).toBe(true)
+    expect(userMcpServerMatchesQuery(server, 'authorization')).toBe(true)
+    expect(userMcpServerMatchesQuery(server, 'DOCS_TOKEN')).toBe(true)
+    expect(userMcpServerMatchesQuery(server, 'Bearer')).toBe(false)
+    expect(userMcpServerMatchesQuery(server, 'filesystem')).toBe(false)
+  })
+
   it('detects manual name conflicts case-insensitively while allowing the edited server', () => {
     const servers = [
       {
