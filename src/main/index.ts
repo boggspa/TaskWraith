@@ -2816,6 +2816,30 @@ function canonicalPath(value: string): string {
   return resolve(expandHomePath(value))
 }
 
+function canonicalExternalGrantPath(value: string): string | null {
+  let cursor = canonicalPath(value)
+  const missingSegments: string[] = []
+  while (true) {
+    try {
+      const real = fsSync.realpathSync.native(cursor)
+      return resolve(real, ...missingSegments)
+    } catch {
+      const parent = dirname(cursor)
+      if (parent === cursor) return null
+      missingSegments.unshift(basename(cursor))
+      cursor = parent
+    }
+  }
+}
+
+function isSymlinkPath(value: string): boolean {
+  try {
+    return fsSync.lstatSync(value).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
 function chatScope(chat: Pick<ChatRecord, 'scope'> | null | undefined): ChatScope {
   return chat?.scope === 'global' ? 'global' : 'workspace'
 }
@@ -3379,9 +3403,10 @@ function signExternalPathGrant(
 function issueExternalPathGrant(
   grant: Omit<ExternalPathGrant, 'issuedBy' | 'signature'>
 ): ExternalPathGrant {
+  const canonicalGrantPath = canonicalExternalGrantPath(grant.path) || canonicalPath(grant.path)
   const normalizedGrant: ExternalPathGrant = {
     ...grant,
-    path: canonicalPath(grant.path),
+    path: canonicalGrantPath,
     issuedBy: 'main',
     signature: ''
   }
@@ -6571,6 +6596,7 @@ async function requestAgenticServiceApproval(
       runId: request.runId,
       externalPathDetection,
       requestOnly,
+      allowedActions: actions,
       resolve: resolveApproval
     })
     runManager.registerApproval(request.runId, approvalId)
@@ -6656,11 +6682,13 @@ async function requestMainApproval(
   if (!sender || sender.isDestroyed()) return false
   const routed = routeWithRunId(provider, route)
   const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
+  const actions: AgentApprovalAction[] = request.actions || ['accept', 'decline', 'cancel']
   return new Promise((resolveApproval) => {
     approvalService?.registerMain(approvalId, {
       provider,
       workspacePath: request.workspacePath,
       runId: routed.appRunId,
+      allowedActions: actions,
       resolveAction: request.resolveAction,
       resolve: resolveApproval
     })
@@ -6672,7 +6700,6 @@ async function requestMainApproval(
       isMainAuthority: true,
       kind: request.method
     })
-    const actions: AgentApprovalAction[] = request.actions || ['accept', 'decline', 'cancel']
     const approvalPayload = {
       provider,
       appRunId: routed.appRunId,
@@ -6779,9 +6806,12 @@ function hasExternalPathGrantForTarget(
     ...(context.externalPathGrants || []),
     ...externalPathGrantsForProvider(context.appChatId, provider)
   ]).filter((grant) => grant.provider === provider)
-  const target = resolve(targetPath).replace(/\/+$/, '')
+  const target = (canonicalExternalGrantPath(targetPath) || resolve(targetPath)).replace(/\/+$/, '')
   return grants.some((grant) => {
-    const grantPath = resolve(grant.path).replace(/\/+$/, '')
+    const grantPath = (canonicalExternalGrantPath(grant.path) || resolve(grant.path)).replace(
+      /\/+$/,
+      ''
+    )
     const coversPath =
       target === grantPath || (grant.kind === 'directory' && target.startsWith(grantPath + sep))
     if (!coversPath) return false
@@ -11097,6 +11127,7 @@ async function runKimiWireProvider(
                 service: kimiGateService || undefined,
                 workspacePath: workspacePathForKimiApproval,
                 runId: route.appRunId,
+                allowedActions: actions,
                 externalPathDetection
               })
               runManager.registerApproval(route.appRunId, approvalId)
@@ -11928,7 +11959,9 @@ function normalizeExternalPathGrants(grants?: ExternalPathGrant[]): ExternalPath
     if (!isMainIssuedExternalPathGrant(grant)) continue
     const grantPath = grant.path.trim()
     if (!grantPath || !isAbsolute(grantPath)) continue
-    const resolvedPath = resolve(grantPath)
+    if (isSymlinkPath(grantPath)) continue
+    const resolvedPath = canonicalExternalGrantPath(grantPath)
+    if (!resolvedPath) continue
     normalized.push({
       ...grant,
       path: resolvedPath,
@@ -12895,6 +12928,7 @@ function handleCodexServerRequest(message: any) {
     service: gateService,
     workspacePath: workspacePathForCodexApproval,
     runId: state.appRunId,
+    allowedActions: actions,
     externalPathDetection
   })
   runManager.registerApproval(state.appRunId, approvalId)
@@ -12999,6 +13033,7 @@ function maybeRequestCodexHostRerun(
     model: state.model,
     appRunId: state.appRunId,
     appChatId: state.appChatId,
+    allowedActions: ['accept', 'decline', 'cancel'],
     reason,
     output
   })
@@ -22465,6 +22500,7 @@ if (isGeminiMcpBridgeProcess) {
         try {
           const handle = await createRelayServer({
             port,
+            host: '127.0.0.1',
             hostInfo: relayHostInfoProvider,
             beginPair: relayBeginPairProvider
           })
@@ -25564,15 +25600,66 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
 
-    const gitPayloadPath = (payload?: { workspacePath?: string; repoPath?: string }) =>
-      typeof payload?.repoPath === 'string' && payload.repoPath.trim()
-        ? payload.repoPath
-        : payload?.workspacePath || ''
+    type GitIpcPayload = { workspacePath?: string; repoPath?: string }
+    type GitIpcScope = 'registered-workspace' | 'registered-or-granted-read'
+
+    const allSignedExternalPathGrants = (): ExternalPathGrant[] =>
+      normalizeExternalPathGrants(
+        AppStore.getChats().flatMap((chat) => externalPathGrantMetadataLists(chat))
+      )
+
+    const externalGrantCoversPath = (
+      targetPath: string,
+      grants: ExternalPathGrant[],
+      access: 'read' | 'write'
+    ): boolean => {
+      const target = (canonicalExternalGrantPath(targetPath) || resolve(targetPath)).replace(/\/+$/, '')
+      return grants.some((grant) => {
+        const grantPath = (canonicalExternalGrantPath(grant.path) || resolve(grant.path)).replace(
+          /\/+$/,
+          ''
+        )
+        const coversPath =
+          target === grantPath || (grant.kind === 'directory' && target.startsWith(grantPath + sep))
+        if (!coversPath) return false
+        return access === 'read' || grant.access === 'write'
+      })
+    }
+
+    const gitPayloadPath = (
+      payload: GitIpcPayload | undefined,
+      scope: GitIpcScope
+    ): { ok: true; path: string } | { ok: false; error: string } => {
+      const raw =
+        typeof payload?.repoPath === 'string' && payload.repoPath.trim()
+          ? payload.repoPath
+          : payload?.workspacePath || ''
+      const normalized = canonicalExternalGrantPath(raw) || canonicalPath(raw)
+      if (!normalized.trim()) {
+        return { ok: false, error: 'Repository path is required.' }
+      }
+      if (findRegisteredWorkspace(normalized)) return { ok: true, path: normalized }
+      if (
+        scope === 'registered-or-granted-read' &&
+        externalGrantCoversPath(normalized, allSignedExternalPathGrants(), 'read')
+      ) {
+        return { ok: true, path: normalized }
+      }
+      return {
+        ok: false,
+        error:
+          scope === 'registered-or-granted-read'
+            ? 'Git inspection is limited to registered workspaces or signed external path grants.'
+            : 'Git actions are limited to registered workspaces.'
+      }
+    }
 
     ipcMain.handle(
       'git:snapshot',
-      async (_event, payload?: { workspacePath?: string; repoPath?: string }) =>
-        gitService.snapshot(gitPayloadPath(payload))
+      async (_event, payload?: { workspacePath?: string; repoPath?: string }) => {
+        const repo = gitPayloadPath(payload, 'registered-or-granted-read')
+        return repo.ok ? gitService.snapshot(repo.path) : repo
+      }
     )
 
     ipcMain.handle(
@@ -25587,14 +25674,17 @@ if (isGeminiMcpBridgeProcess) {
           update?: boolean
           patch?: string
         }
-      ) =>
-        gitService.stage({
-          repoPath: gitPayloadPath(payload),
+      ) => {
+        const repo = gitPayloadPath(payload, 'registered-workspace')
+        if (!repo.ok) return repo
+        return gitService.stage({
+          repoPath: repo.path,
           paths: payload?.paths,
           all: payload?.all,
           update: payload?.update,
           patch: payload?.patch
         })
+      }
     )
 
     ipcMain.handle(
@@ -25606,11 +25696,14 @@ if (isGeminiMcpBridgeProcess) {
           repoPath?: string
           paths?: string[]
         }
-      ) =>
-        gitService.unstage({
-          repoPath: gitPayloadPath(payload),
+      ) => {
+        const repo = gitPayloadPath(payload, 'registered-workspace')
+        if (!repo.ok) return repo
+        return gitService.unstage({
+          repoPath: repo.path,
           paths: payload?.paths
         })
+      }
     )
 
     ipcMain.handle(
@@ -25622,11 +25715,14 @@ if (isGeminiMcpBridgeProcess) {
           repoPath?: string
           message?: string
         }
-      ) =>
-        gitService.commit({
-          repoPath: gitPayloadPath(payload),
+      ) => {
+        const repo = gitPayloadPath(payload, 'registered-workspace')
+        if (!repo.ok) return repo
+        return gitService.commit({
+          repoPath: repo.path,
           message: payload?.message || ''
         })
+      }
     )
 
     ipcMain.handle(
@@ -25639,24 +25735,31 @@ if (isGeminiMcpBridgeProcess) {
           setUpstream?: boolean
           remote?: string
         }
-      ) =>
-        gitService.push({
-          repoPath: gitPayloadPath(payload),
+      ) => {
+        const repo = gitPayloadPath(payload, 'registered-workspace')
+        if (!repo.ok) return repo
+        return gitService.push({
+          repoPath: repo.path,
           setUpstream: payload?.setUpstream,
           remote: payload?.remote
         })
+      }
     )
 
     ipcMain.handle(
       'github:pr-status',
-      async (_event, payload?: { workspacePath?: string; repoPath?: string }) =>
-        gitService.pullRequestStatus(gitPayloadPath(payload))
+      async (_event, payload?: { workspacePath?: string; repoPath?: string }) => {
+        const repo = gitPayloadPath(payload, 'registered-workspace')
+        return repo.ok ? gitService.pullRequestStatus(repo.path) : repo
+      }
     )
 
     ipcMain.handle(
       'github:pr-readiness',
-      async (_event, payload?: { workspacePath?: string; repoPath?: string }) =>
-        gitService.pullRequestReadiness(gitPayloadPath(payload))
+      async (_event, payload?: { workspacePath?: string; repoPath?: string }) => {
+        const repo = gitPayloadPath(payload, 'registered-workspace')
+        return repo.ok ? gitService.pullRequestReadiness(repo.path) : repo
+      }
     )
 
     ipcMain.handle(
@@ -25672,8 +25775,10 @@ if (isGeminiMcpBridgeProcess) {
           openInBrowser?: boolean
         }
       ) => {
+        const repo = gitPayloadPath(payload, 'registered-workspace')
+        if (!repo.ok) return repo
         const result = await gitService.createPullRequest({
-          repoPath: gitPayloadPath(payload),
+          repoPath: repo.path,
           title: payload?.title,
           body: payload?.body,
           draft: payload?.draft

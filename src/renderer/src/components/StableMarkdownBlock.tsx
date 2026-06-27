@@ -65,9 +65,11 @@ function MarkdownCodeBlock({ content, language }: { content: string; language?: 
  * a stable reference helps ReactMarkdown's internal memoisation too.
  *
  * Behaviour intentionally identical to the pre-L1a `MarkdownMessage`:
- *   - `a` routes through `classifyMarkdownLink` + the preload bridge
- *     instead of letting the BrowserWindow navigate (Phase K1 fix);
- *     `agent://` hrefs render as `<AgentMention>` chips.
+ *   - `a` routes external links through `classifyMarkdownLink` + the
+ *     preload bridge instead of letting the BrowserWindow navigate
+ *     (Phase K1 fix); `agent://` hrefs render as `<AgentMention>`
+ *     chips, and local/path-like hrefs are visible but inert because
+ *     transcript markdown is agent-authored content.
  *   - `pre` is collapsed — the `code` override owns the shell.
  *   - block `code` (any fenced or multi-line code) renders inside a
  *     `MarkdownCodeBlock` shell (header + copy + wrap toggle).
@@ -327,7 +329,7 @@ const MARKDOWN_COMPONENTS: Components = {
     const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
       event.preventDefault()
       event.stopPropagation()
-      if (classification.kind === 'unknown') return
+      if (classification.kind !== 'external') return
       const api = (
         window as unknown as { api?: { openExternalOrPath?: (h: string) => Promise<unknown> } }
       ).api
@@ -354,6 +356,7 @@ const MARKDOWN_COMPONENTS: Components = {
         href={typeof href === 'string' ? href : '#'}
         onClick={handleClick}
         data-link-kind={classification.kind}
+        data-link-openable="false"
       >
         {children}
       </a>

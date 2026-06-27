@@ -7,6 +7,7 @@ import type {
   RunEventRecord,
   RunEventReplay
 } from './store/types'
+import { redactSecrets } from '../shared/secretRedaction'
 
 export const RUN_EVENT_SCHEMA_VERSION = 1
 export const MAX_RUN_EVENT_SUMMARY_CHARS = 500
@@ -82,15 +83,7 @@ function inferToolCallId(payload: unknown): string | undefined {
 }
 
 function redactSensitiveText(value: string): string {
-  return value
-    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
-    .replace(/\b(sk-[A-Za-z0-9_-]{16,})\b/g, '[REDACTED_API_KEY]')
-    .replace(/\b(gh[pousr]_[A-Za-z0-9_]{20,})\b/g, '[REDACTED_GITHUB_TOKEN]')
-    .replace(/\b(xox[baprs]-[A-Za-z0-9-]{16,})\b/g, '[REDACTED_SLACK_TOKEN]')
-    .replace(
-      /((?:password|passwd|pwd|token|secret|api[_-]?key)\s*[:=]\s*)("[^"]+"|'[^']+'|[^\s,;}]+)/gi,
-      '$1[REDACTED]'
-    )
+  return redactSecrets(value)
 }
 
 export function prepareRunEventPayload(
@@ -101,10 +94,11 @@ export function prepareRunEventPayload(
   const text = payloadToText(payload)
   const byteLength = Buffer.byteLength(text, 'utf8')
 
-  if (options.rawProviderPayload && options.storeRawPayload === false) {
+  if (options.rawProviderPayload) {
     return {
       redacted: true,
       byteLength,
+      rawStored: false,
       preview: truncate(redactSensitiveText(text), MAX_REDACTED_PROVIDER_PREVIEW_CHARS)
     }
   }
@@ -113,7 +107,7 @@ export function prepareRunEventPayload(
     return {
       truncated: true,
       byteLength,
-      preview: truncate(text, MAX_RUN_EVENT_PAYLOAD_CHARS)
+      preview: truncate(redactSensitiveText(text), MAX_RUN_EVENT_PAYLOAD_CHARS)
     }
   }
 

@@ -113,6 +113,10 @@ export interface AppMessage {
   msgId: number
   method: string
   params?: unknown
+  /** Authenticated copy of the sender's receive high-water mark. The legacy
+   * EncryptedFrame.ack field remains on the wire for compatibility, but peers
+   * must trust only this decrypted value when trimming replay buffers. */
+  ack?: number | null
 }
 
 export const TRANSPORT_PING = 'transport.ping'

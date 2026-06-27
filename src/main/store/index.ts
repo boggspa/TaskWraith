@@ -2,6 +2,7 @@ import { app } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
+import { redactSecrets } from '../../shared/secretRedaction'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import {
   AppSettings,
@@ -1107,7 +1108,7 @@ function appendRunStreamArtifact(
     `${stream.stream}.log`
   )
   const artifactPath = path.join(runArtifactsDir, artifactRelativePath)
-  const bytes = Buffer.from(stream.text, 'utf8')
+  const bytes = Buffer.from(redactSecrets(stream.text), 'utf8')
   fs.mkdirSync(path.dirname(artifactPath), { recursive: true })
   fs.appendFileSync(artifactPath, bytes)
   return [

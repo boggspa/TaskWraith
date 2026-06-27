@@ -45,13 +45,15 @@ export function registerPtyHandlers(deps: PtyHandlerDeps): void {
   // PTY for Trust Assistant
   const ptyProcesses = new Map<string, pty.IPty>()
   const stoppedPtySessions = new Set<string>()
+  const ptySessionKey = (senderId: number, sessionId: string): string => `${senderId}:${sessionId}`
 
   ipcMain.handle(
     'start-pty',
     async (event, workspacePath: string, sessionId: string = 'default') => {
       const registeredWorkspace = requireRegisteredWorkspace(workspacePath)
       const ptySessionId = optionalString(sessionId) || 'default'
-      stoppedPtySessions.delete(ptySessionId)
+      const sessionKey = ptySessionKey(event.sender.id, ptySessionId)
+      stoppedPtySessions.delete(sessionKey)
       const allowed = await requestAgenticServiceApproval(
         event.sender,
         'gemini',
@@ -77,15 +79,15 @@ export function registerPtyHandlers(deps: PtyHandlerDeps): void {
         event.sender.send('pty-exit', -1, ptySessionId)
         return
       }
-      if (stoppedPtySessions.delete(ptySessionId)) {
+      if (stoppedPtySessions.delete(sessionKey)) {
         event.sender.send('pty-exit', null, ptySessionId)
         return
       }
 
-      const existing = ptyProcesses.get(ptySessionId)
+      const existing = ptyProcesses.get(sessionKey)
       if (existing) {
         existing.kill()
-        ptyProcesses.delete(ptySessionId)
+        ptyProcesses.delete(sessionKey)
       }
 
       const shellCommand =
@@ -98,7 +100,7 @@ export function registerPtyHandlers(deps: PtyHandlerDeps): void {
         cwd: registeredWorkspace,
         env: process.env as Record<string, string>
       })
-      ptyProcesses.set(ptySessionId, ptyProcess)
+      ptyProcesses.set(sessionKey, ptyProcess)
 
       ptyProcess.onData((data) => {
         event.sender.send('pty-data', data, ptySessionId)
@@ -106,33 +108,36 @@ export function registerPtyHandlers(deps: PtyHandlerDeps): void {
 
       ptyProcess.onExit((e) => {
         event.sender.send('pty-exit', e.exitCode, ptySessionId)
-        if (ptyProcesses.get(ptySessionId) === ptyProcess) {
-          ptyProcesses.delete(ptySessionId)
+        if (ptyProcesses.get(sessionKey) === ptyProcess) {
+          ptyProcesses.delete(sessionKey)
         }
       })
     }
   )
 
-  ipcMain.handle('stop-pty', (_, sessionId: string = 'default') => {
+  ipcMain.handle('stop-pty', (event, sessionId: string = 'default') => {
     const ptySessionId = optionalString(sessionId) || 'default'
-    const ptyProcess = ptyProcesses.get(ptySessionId)
+    const sessionKey = ptySessionKey(event.sender.id, ptySessionId)
+    const ptyProcess = ptyProcesses.get(sessionKey)
     if (ptyProcess) {
       ptyProcess.kill()
-      ptyProcesses.delete(ptySessionId)
+      ptyProcesses.delete(sessionKey)
     } else {
-      stoppedPtySessions.add(ptySessionId)
+      stoppedPtySessions.add(sessionKey)
     }
   })
 
-  ipcMain.handle('pty-write', (_, data: string, sessionId: string = 'default') => {
-    const ptyProcess = ptyProcesses.get(optionalString(sessionId) || 'default')
+  ipcMain.handle('pty-write', (event, data: string, sessionId: string = 'default') => {
+    const ptySessionId = optionalString(sessionId) || 'default'
+    const ptyProcess = ptyProcesses.get(ptySessionKey(event.sender.id, ptySessionId))
     if (ptyProcess) {
       ptyProcess.write(data)
     }
   })
 
-  ipcMain.handle('pty-resize', (_, cols: number, rows: number, sessionId: string = 'default') => {
-    const ptyProcess = ptyProcesses.get(optionalString(sessionId) || 'default')
+  ipcMain.handle('pty-resize', (event, cols: number, rows: number, sessionId: string = 'default') => {
+    const ptySessionId = optionalString(sessionId) || 'default'
+    const ptyProcess = ptyProcesses.get(ptySessionKey(event.sender.id, ptySessionId))
     if (ptyProcess) {
       ptyProcess.resize(cols, rows)
     }

@@ -24,7 +24,7 @@ afterEach(() => {
 describe('FaviconService', () => {
   it('fetches a declared favicon through the main-process cache', async () => {
     const fetchImpl = vi.fn(async (url: string) => {
-      if (url === 'https://example.com') {
+      if (url === 'https://example.com/') {
         return new Response(
           '<html><head><title>Example Site</title><link rel="icon" href="/icon.png"></head></html>',
           { headers: { 'content-type': 'text/html' } }
@@ -59,7 +59,7 @@ describe('FaviconService', () => {
 
   it('serves a cached favicon without refetching', async () => {
     const fetchImpl = vi.fn(async (url: string) => {
-      if (url === 'https://example.com') {
+      if (url === 'https://example.com/') {
         return new Response('<link rel="icon" href="/icon.png">', {
           headers: { 'content-type': 'text/html' }
         })
@@ -110,7 +110,7 @@ describe('FaviconService', () => {
     const service = new FaviconService({
       cacheDir: makeCacheDir(),
       fetchImpl: vi.fn(async (url: string) => {
-        if (url === 'https://example.com') {
+        if (url === 'https://example.com/') {
           return new Response('<link rel="icon" href="/favicon.svg">', {
             headers: { 'content-type': 'text/html' }
           })
@@ -126,5 +126,65 @@ describe('FaviconService', () => {
       ok: false,
       error: 'No supported favicon found.'
     })
+  })
+
+  it('does not follow public favicon redirects to localhost/private targets', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === 'https://example.com/') {
+        return new Response('<link rel="icon" href="/icon.png">', {
+          headers: { 'content-type': 'text/html' }
+        })
+      }
+      if (url === 'https://example.com/icon.png') {
+        return new Response('', {
+          status: 302,
+          headers: { location: 'http://127.0.0.1:3000/secret.png' }
+        })
+      }
+      return new Response('', { status: 404 })
+    })
+    const service = new FaviconService({
+      cacheDir: makeCacheDir(),
+      fetchImpl,
+      resolveHost: async (host) =>
+        host === 'example.com' ? ['93.184.216.34'] : ['127.0.0.1']
+    })
+
+    await expect(service.getForUrl('https://example.com')).resolves.toMatchObject({
+      ok: false,
+      error: 'No supported favicon found.'
+    })
+    expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain(
+      'http://127.0.0.1:3000/secret.png'
+    )
+  })
+
+  it('does not follow page metadata redirects to link-local metadata services', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === 'https://example.com/') {
+        return new Response('', {
+          status: 302,
+          headers: { location: 'http://169.254.169.254/latest/meta-data/' }
+        })
+      }
+      if (url === 'https://example.com/favicon.ico') {
+        return new Response(PNG_BYTES, { headers: { 'content-type': 'image/png' } })
+      }
+      return new Response('', { status: 404 })
+    })
+    const service = new FaviconService({
+      cacheDir: makeCacheDir(),
+      fetchImpl,
+      resolveHost: async (host) =>
+        host === 'example.com' ? ['93.184.216.34'] : ['169.254.169.254']
+    })
+
+    await expect(service.getForUrl('https://example.com')).resolves.toMatchObject({
+      ok: true,
+      iconUrl: 'https://example.com/favicon.ico'
+    })
+    expect(fetchImpl.mock.calls.map(([url]) => url)).not.toContain(
+      'http://169.254.169.254/latest/meta-data/'
+    )
   })
 })

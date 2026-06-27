@@ -14,6 +14,7 @@ import { createRelayServer, type RelayOptions } from './server'
 import { createApnsGateway } from './apnsGateway'
 
 const port = Number(process.env.PORT || 8787)
+const host = process.env.HOST || undefined
 
 // cli.ts is the ONLY place a Tier-2 APNs gateway is ever constructed — the
 // embedded relay (Electron main) never does, so the project .p8 + gateway impl
@@ -21,7 +22,7 @@ const port = Number(process.env.PORT || 8787)
 // deployment. The P0 scaffold takes no key and 501s owned paths; later phases
 // load the .p8 here from a runtime secret (KMS / mounted file). See
 // docs/ios-push-gateway-design.md §4.
-const options: RelayOptions = { port }
+const options: RelayOptions = { port, ...(host ? { host } : {}) }
 if (process.env.TASKWRAITH_RELAY_APNS_GATEWAY === '1') {
   options.apnsGateway = createApnsGateway({
     // eslint-disable-next-line no-console
@@ -34,7 +35,7 @@ if (process.env.TASKWRAITH_RELAY_APNS_GATEWAY === '1') {
 void createRelayServer(options)
   .then((handle) => {
     // eslint-disable-next-line no-console
-    console.log(`[taskwraith-relay] listening on :${handle.port}`)
+    console.log(`[taskwraith-relay] listening on ${host || '*'}:${handle.port}`)
   })
   .catch((err: unknown) => {
     // eslint-disable-next-line no-console

@@ -8,6 +8,7 @@ import {
   CURSOR_MCP_SERVER_NAME,
   CURSOR_WEB_FETCH_MCP_SERVER_SOURCE,
   buildCursorMcpServerEntry,
+  isReservedCursorMcpServerName,
   mergeCursorAllowRules,
   mergeCursorMcpConfig
 } from './CursorMcpBridge'
@@ -20,11 +21,18 @@ import {
 // string escaping is easy to get wrong).
 
 describe('CURSOR_MCP_ALLOW_RULES', () => {
-  it('covers Cursor colon and hyphen MCP tool name spellings', () => {
-    expect(CURSOR_MCP_ALLOW_RULES).toEqual([
-      `Mcp(${CURSOR_MCP_SERVER_NAME}:*)`,
-      `Mcp(${CURSOR_MCP_SERVER_NAME}-*)`
-    ])
+  it('covers Cursor colon namespace and exact hyphen MCP tool name spellings', () => {
+    expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`)
+    expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-run_shell_command)`)
+    expect(CURSOR_MCP_ALLOW_RULES).toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-apply_patch)`)
+    expect(CURSOR_MCP_ALLOW_RULES).not.toContain(`Mcp(${CURSOR_MCP_SERVER_NAME}-*)`)
+  })
+
+  it('reserves the TaskWraith server prefix for brokered tools only', () => {
+    expect(isReservedCursorMcpServerName('taskwraith')).toBe(true)
+    expect(isReservedCursorMcpServerName('taskwraith-evil')).toBe(true)
+    expect(isReservedCursorMcpServerName('taskwraith_backup')).toBe(false)
+    expect(isReservedCursorMcpServerName('user_taskwraith')).toBe(false)
   })
 })
 
@@ -87,19 +95,40 @@ describe('mergeCursorMcpConfig', () => {
     }
     expect(merged.mcpServers.taskwraith.command).toBe('node')
   })
+
+  it('drops reserved taskwraith-prefixed servers before adding the real broker', () => {
+    const existing = {
+      mcpServers: {
+        other: { command: 'foo', args: [] },
+        taskwraith: { command: 'stale', args: ['old'] },
+        'taskwraith-evil': { command: 'malware', args: [] }
+      }
+    }
+    const entry = buildCursorMcpServerEntry({ command: 'node', args: ['/tmp/new.cjs'] })
+    const merged = mergeCursorMcpConfig(existing, entry) as {
+      mcpServers: Record<string, unknown>
+    }
+    expect(merged.mcpServers.other).toEqual({ command: 'foo', args: [] })
+    expect(merged.mcpServers.taskwraith).toEqual({ command: 'node', args: ['/tmp/new.cjs'] })
+    expect(merged.mcpServers['taskwraith-evil']).toBeUndefined()
+  })
 })
 
 describe('mergeCursorAllowRules', () => {
   it('adds the allow rule into an empty config (with an empty deny)', () => {
-    expect(mergeCursorAllowRules(null, CURSOR_MCP_ALLOW_RULES)).toEqual({
-      permissions: { allow: ['Mcp(taskwraith:*)', 'Mcp(taskwraith-*)'], deny: [] }
-    })
+    const merged = mergeCursorAllowRules(null, CURSOR_MCP_ALLOW_RULES)
+    expect(merged.permissions.allow).toContain('Mcp(taskwraith:*)')
+    expect(merged.permissions.allow).toContain('Mcp(taskwraith-run_shell_command)')
+    expect(merged.permissions.allow).not.toContain('Mcp(taskwraith-*)')
+    expect(merged.permissions.deny).toEqual([])
   })
 
   it('preserves existing deny rules (e.g. the write-mode Shell deny) + dedups allow', () => {
     const existing = { permissions: { allow: ['Mcp(taskwraith:*)'], deny: ['Shell(**)'] } }
     const merged = mergeCursorAllowRules(existing, CURSOR_MCP_ALLOW_RULES)
-    expect(merged.permissions.allow).toEqual(['Mcp(taskwraith:*)', 'Mcp(taskwraith-*)'])
+    expect(merged.permissions.allow).toContain('Mcp(taskwraith:*)')
+    expect(merged.permissions.allow).toContain('Mcp(taskwraith-run_shell_command)')
+    expect(merged.permissions.allow).not.toContain('Mcp(taskwraith-*)')
     expect(merged.permissions.deny).toEqual(['Shell(**)'])
   })
 

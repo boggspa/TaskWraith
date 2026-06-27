@@ -88,15 +88,17 @@ describe('RunEventStore', () => {
     expect(parseRunEventLine(JSON.stringify({ runId: 'run-1' }))).toBeNull()
   })
 
-  it('redacts raw provider payloads when raw persistence is disabled', () => {
+  it('always redacts raw provider payloads before durable persistence', () => {
     const payload = prepareRunEventPayload(
       { data: 'secret-ish provider stream token=abc1234567890' },
-      { rawProviderPayload: true, storeRawPayload: false }
-    ) as { redacted: boolean; preview: string; byteLength: number }
+      { rawProviderPayload: true, storeRawPayload: true }
+    ) as { redacted: boolean; preview: string; byteLength: number; rawStored: boolean }
 
     expect(payload.redacted).toBe(true)
+    expect(payload.rawStored).toBe(false)
     expect(payload.preview).toContain('secret-ish provider stream')
-    expect(payload.preview).toContain('token=[REDACTED]')
+    expect(payload.preview).toContain('token=[redacted]')
+    expect(payload.preview).not.toContain('abc1234567890')
     expect(payload.byteLength).toBeGreaterThan(0)
   })
 

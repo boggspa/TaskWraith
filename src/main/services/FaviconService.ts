@@ -48,6 +48,7 @@ interface CachedFaviconMeta {
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_ICON_BYTES = 256 * 1024
 const FETCH_TIMEOUT_MS = 4000
+const MAX_REDIRECTS = 5
 const ALLOWED_IMAGE_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -199,7 +200,7 @@ export class FaviconService {
   }
 
   private async fetchPageMetadata(origin: string): Promise<{ iconHrefs: string[]; title?: string }> {
-    const response = await this.fetchWithTimeout(origin, {
+    const response = await this.fetchPublicWithRedirects(origin, {
       headers: { Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1' }
     }).catch(() => null)
     const contentType = response?.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
@@ -215,7 +216,7 @@ export class FaviconService {
     if (!normalized.ok) return null
     const safety = await this.assertPublicHost(normalized.url.hostname)
     if (!safety.ok) return null
-    const response = await this.fetchWithTimeout(normalized.url.toString(), {
+    const response = await this.fetchPublicWithRedirects(normalized.url.toString(), {
       headers: { Accept: 'image/avif,image/webp,image/png,image/jpeg,image/x-icon,image/*;q=0.8' }
     }).catch(() => null)
     if (!response?.ok) return null
@@ -235,13 +236,38 @@ export class FaviconService {
     return { bytes, contentType }
   }
 
+  private async fetchPublicWithRedirects(
+    url: string,
+    init: RequestInit = {},
+    redirects = 0
+  ): Promise<Response | null> {
+    if (redirects > MAX_REDIRECTS) return null
+    const normalized = normalizeFaviconTarget(url)
+    if (!normalized.ok) return null
+    const safety = await this.assertPublicHost(normalized.url.hostname)
+    if (!safety.ok) return null
+    const response = await this.fetchWithTimeout(normalized.url.toString(), init)
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location')
+      if (!location) return null
+      let nextUrl: string
+      try {
+        nextUrl = new URL(location, normalized.url).toString()
+      } catch {
+        return null
+      }
+      return this.fetchPublicWithRedirects(nextUrl, init, redirects + 1)
+    }
+    return response
+  }
+
   private async fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
     try {
       return await this.fetchImpl(url, {
         ...init,
-        redirect: 'follow',
+        redirect: 'manual',
         credentials: 'omit',
         signal: controller.signal
       })

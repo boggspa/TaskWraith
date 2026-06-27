@@ -24,6 +24,8 @@ interface Room {
 
 export interface RelayOptions {
   port?: number
+  /** Optional listen host. Omit to preserve the standalone/LAN default. */
+  host?: string
   /** Max frame size; a frame larger than this closes the socket. */
   maxFrameBytes?: number
   /** Drop an idle room after this long with no traffic. */
@@ -316,7 +318,7 @@ export function createRelayServer(options: RelayOptions = {}): Promise<RelayServ
       clearInterval(sweeper)
       reject(err)
     })
-    http.listen(options.port ?? 0, () => {
+    http.listen(options.port ?? 0, options.host, () => {
       const addr = http.address()
       const port = typeof addr === 'object' && addr ? addr.port : 0
       resolve({

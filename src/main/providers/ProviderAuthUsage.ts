@@ -108,6 +108,7 @@ interface ClaudeOAuthCredential {
 
 let inMemoryCodexUsageCredential: CodexUsageCredential | null = null
 const geminiOAuthLoginRuns = new Map<string, GeminiOAuthLoginRun>()
+let retiredGeminiOAuthStoragePurged = false
 
 export const DEFAULT_GEMINI_MCP_SERVER_NAME = 'TaskWraith'
 
@@ -259,16 +260,28 @@ export function getStoredKimiApiKey(): string | null {
 }
 
 export function sanitizeGeminiAuthProfileKind(value: unknown): GeminiAuthProfileKind {
-  return value === 'vertex-ai' || value === 'google-oauth' ? value : 'api-key'
+  return value === 'vertex-ai' ? value : 'api-key'
 }
 
 export function getGeminiAuthProfiles(): GeminiAuthProfile[] {
   const profiles = AppStore.getSettings().geminiAuthProfiles
-  return Array.isArray(profiles)
-    ? profiles.filter((profile): profile is GeminiAuthProfile =>
-        Boolean(profile && typeof profile.id === 'string')
-      )
-    : []
+  if (!Array.isArray(profiles)) return []
+  const validProfiles = profiles.filter((profile): profile is GeminiAuthProfile =>
+    Boolean(profile && typeof profile.id === 'string')
+  )
+  const activeProfiles = validProfiles.filter((profile) => profile.kind !== 'google-oauth')
+  if (activeProfiles.length !== validProfiles.length) {
+    const activeIds = new Set(activeProfiles.map((profile) => profile.id))
+    const currentDefault = optionalStringOrNull(AppStore.getSettings().defaultGeminiAuthProfileId)
+    AppStore.updateSettings({
+      geminiAuthProfiles: activeProfiles,
+      defaultGeminiAuthProfileId: currentDefault && activeIds.has(currentDefault)
+        ? currentDefault
+        : activeProfiles[0]?.id || null
+    })
+  }
+  purgeRetiredGeminiOAuthStorageSync()
+  return activeProfiles
 }
 
 export function geminiAuthProfileDirName(profileId: string): string {
@@ -297,6 +310,16 @@ export function geminiOAuthProfileCredentialsPath(profileId: string): string {
 
 export function geminiOAuthProfileAccountsPath(profileId: string): string {
   return join(geminiOAuthProfileGeminiDir(profileId), 'google_accounts.json')
+}
+
+function purgeRetiredGeminiOAuthStorageSync(): void {
+  if (retiredGeminiOAuthStoragePurged) return
+  retiredGeminiOAuthStoragePurged = true
+  try {
+    fsSync.rmSync(geminiOAuthProfilesRoot(), { recursive: true, force: true })
+  } catch {
+    // Best-effort retirement cleanup. API-key and Vertex profiles live in settings.
+  }
 }
 
 function readJsonFileSync(filePath: string): any | null {
@@ -388,15 +411,8 @@ export async function getGeminiAuthStatusSnapshot(
     summarizeGeminiAuthProfile(profile, defaultProfileId)
   )
   const activeProfile = profiles.find((profile) => profile.id === defaultProfileId)
-  const localOauthConfigured = await readGeminiOAuthCredentials()
-    .then(Boolean)
-    .catch(() => false)
   const apiKeyConfigured = Boolean(activeProfile?.configured && activeProfile.kind === 'api-key')
-  const authState = activeProfile
-    ? activeProfile.authState
-    : localOauthConfigured
-      ? 'google-oauth'
-      : 'unknown'
+  const authState = activeProfile ? activeProfile.authState : 'unknown'
   const version = resolved.binaryPath
     ? await deps.readResolvedCliVersion(resolved).catch(() => undefined)
     : undefined
@@ -515,127 +531,11 @@ export function markGeminiAuthProfileUsed(profileId?: string | null): void {
 }
 
 export async function startGeminiOAuthLogin(
-  input: unknown,
-  deps: GeminiAuthUsageDeps
+  _input: unknown,
+  _deps: GeminiAuthUsageDeps
 ): Promise<GeminiOAuthLoginStatus> {
-  const source =
-    input && typeof input === 'object' && !Array.isArray(input)
-      ? (input as Record<string, unknown>)
-      : {}
-  const requestedId = optionalString(source.profileId) || optionalString(source.id)
-  const profiles = getGeminiAuthProfiles()
-  let profile = requestedId ? profiles.find((candidate) => candidate.id === requestedId) : undefined
-  if (profile && profile.kind !== 'google-oauth') {
-    throw new Error('Selected Gemini auth profile is not a Google login profile.')
-  }
-  if (!profile) {
-    const saved = saveGeminiAuthProfile({
-      id: requestedId,
-      label: optionalString(source.label) || 'Google login',
-      kind: 'google-oauth',
-      makeDefault: source.makeDefault !== false
-    })
-    profile = getGeminiAuthProfiles().find((candidate) => candidate.id === saved.id)
-  } else if (source.makeDefault !== false) {
-    AppStore.updateSettings({ defaultGeminiAuthProfileId: profile.id })
-  }
-  if (!profile) {
-    throw new Error('Gemini Google login profile could not be created.')
-  }
-
-  const activeRun = geminiOAuthLoginRuns.get(profile.id)
-  if (activeRun?.status === 'running') {
-    return publicGeminiOAuthLoginStatus(activeRun)
-  }
-
-  const resolved = await deps.resolveCliProviderBinary('gemini')
-  if (!resolved.binaryPath) {
-    throw new Error(resolved.error || 'Gemini CLI is not configured.')
-  }
-
-  await ensureGeminiOAuthProfileSettings(profile.id)
-  const startedAt = new Date().toISOString()
-  const run: GeminiOAuthLoginRun = {
-    profileId: profile.id,
-    status: 'running',
-    startedAt,
-    message: 'Opening Google login in the browser.',
-    output: ''
-  }
-  geminiOAuthLoginRuns.set(profile.id, run)
-
-  const child = spawn(resolved.binaryPath, ['--list-sessions'], {
-    cwd: app.getPath('home'),
-    shell: false,
-    env: deps.createCliEnv(
-      {
-        ...GEMINI_AUTH_CLEAR_ENV,
-        FORCE_COLOR: '0',
-        NO_COLOR: '1',
-        GEMINI_CLI_HOME: geminiOAuthProfileHome(profile.id),
-        GEMINI_DEFAULT_AUTH_TYPE: 'oauth-personal',
-        GOOGLE_APPLICATION_CREDENTIALS: '',
-        GOOGLE_GENAI_USE_GCA: 'true',
-        TASKWRAITH_GEMINI_AUTH_PROFILE_ID: profile.id
-      },
-      resolved.binaryPath
-    )
-  })
-  run.child = child
-
-  const capture = (chunk: Buffer | string): void => {
-    const text = chunk.toString()
-    run.output = `${run.output || ''}${text}`.slice(-12_000)
-    const urlMatch = text.match(/https:\/\/accounts\.google\.com\/[^\s]+/)
-    if (urlMatch) {
-      run.authUrl = urlMatch[0]
-      run.message = 'Google login is waiting for browser approval.'
-    }
-  }
-
-  child.stdout?.on('data', capture)
-  child.stderr?.on('data', capture)
-  child.stdin?.write('y\n')
-  child.stdin?.end()
-  child.on('error', (error) => {
-    geminiOAuthLoginRuns.set(profile!.id, {
-      ...run,
-      child: undefined,
-      status: 'error',
-      finishedAt: new Date().toISOString(),
-      message: `Failed to start Gemini Google login: ${error.message}`
-    })
-  })
-  child.on('close', (code) => {
-    const credentials = readGeminiOAuthProfileCredentialsSync(profile!.id)
-    const email = readGeminiOAuthProfileEmail(profile!.id)
-    const finishedAt = new Date().toISOString()
-    if (credentials) {
-      geminiOAuthLoginRuns.set(profile!.id, {
-        ...run,
-        child: undefined,
-        status: 'success',
-        finishedAt,
-        exitCode: code,
-        message: email ? `Signed in as ${email}.` : 'Google login completed.'
-      })
-      markGeminiAuthProfileUsed(profile!.id)
-      return
-    }
-    const output = (run.output || '').trim()
-    geminiOAuthLoginRuns.set(profile!.id, {
-      ...run,
-      child: undefined,
-      status: code === null ? 'cancelled' : 'error',
-      finishedAt,
-      exitCode: code,
-      message: output
-        ? output.split(/\r?\n/).slice(-4).join(' ').slice(0, 500)
-        : `Gemini Google login exited with code ${code ?? 'unknown'} before credentials were saved.`
-    })
-  })
-
-  return publicGeminiOAuthLoginStatus(run)
+  purgeRetiredGeminiOAuthStorageSync()
+  throw new Error('Gemini Google login has been retired and OAuth CLI credentials were removed.')
 }
 
 export function getGeminiOAuthLoginStatus(profileId: unknown): GeminiOAuthLoginStatus | null {
@@ -759,11 +659,13 @@ export async function ensureGeminiAuthProfileMaterialized(
   profileId?: string | null,
   options: GeminiOAuthProfileSettingsOptions = {}
 ): Promise<void> {
+  void options
+  purgeRetiredGeminiOAuthStorageSync()
   const id = optionalStringOrNull(profileId) || getDefaultGeminiAuthProfileId()
   if (!id) return
   const profile = getGeminiAuthProfiles().find((candidate) => candidate.id === id)
   if (!profile || profile.kind !== 'google-oauth') return
-  await ensureGeminiOAuthProfileSettings(profile.id, options)
+  await removeGeminiOAuthProfileFiles(profile.id)
 }
 
 export const GEMINI_AUTH_CLEAR_ENV: Record<string, string> = {

@@ -113,6 +113,7 @@ export class E2eeSession {
   private awaitingClientAuth = false
   private peerResumeReceived = false
   private peerResumeLastAcked = 0
+  private peerResumeEpoch: string | null = null
   private currentConnectionFirstOutboundMsgId = 1
 
   // Cross-reconnect app-message state.
@@ -179,6 +180,7 @@ export class E2eeSession {
     this.awaitingClientAuth = false
     this.peerResumeReceived = false
     this.peerResumeLastAcked = 0
+    this.peerResumeEpoch = null
     this.currentConnectionFirstOutboundMsgId = this.nextOutboundMsgId
   }
 
@@ -365,7 +367,7 @@ export class E2eeSession {
     if (this.peerResumeReceived) {
       // Synchronous transport: the peer's resume already landed mid-handshake.
       this.awaitingPeerResume = false
-      this.replayUnacked(this.peerResumeLastAcked)
+      this.applyPeerResume(this.peerResumeLastAcked, this.peerResumeEpoch)
     } else {
       this.awaitingPeerResume = true
     }
@@ -386,14 +388,25 @@ export class E2eeSession {
   sendApp(method: string, params?: unknown): void {
     if (!this.established) throw new Error('session not established')
     const msgId = this.nextOutboundMsgId++
-    const plaintext = Buffer.from(JSON.stringify({ msgId, method, params } as AppMessage), 'utf8')
+    const plaintext = Buffer.from(
+      JSON.stringify({ msgId, method, params, ack: this.lastDeliveredInboundMsgId || null } as AppMessage),
+      'utf8'
+    )
     this.bufferOutbound({ msgId, plaintext })
     if (!this.awaitingPeerResume) this.encryptAndSend(plaintext)
   }
 
   /** Transport control message (ping/pong/resume) — not buffered, no msgId. */
   private sendControl(method: string, params?: unknown): void {
-    const plaintext = Buffer.from(JSON.stringify({ msgId: 0, method, params } as AppMessage), 'utf8')
+    const plaintext = Buffer.from(
+      JSON.stringify({
+        msgId: 0,
+        method,
+        params,
+        ack: this.lastDeliveredInboundMsgId || null
+      } as AppMessage),
+      'utf8'
+    )
     this.encryptAndSend(plaintext)
   }
 
@@ -447,11 +460,14 @@ export class E2eeSession {
       tag: b64.decode(frame.tag)
     })
     this.lastRecvSeq = frame.seq
-    // Peer's ack trims our replay buffer.
-    if (typeof frame.ack === 'number') this.trimReplayBuffer(frame.ack)
 
     const msg = JSON.parse(plaintext.toString('utf8')) as AppMessage
     if (typeof msg.method !== 'string') return
+    // Peer's ACK trims our replay buffer only after it has been decrypted.
+    // The legacy EncryptedFrame.ack field is relay-visible metadata and is
+    // deliberately ignored here so a relay cannot forge high-water marks and
+    // make us drop replayable app messages.
+    if (typeof msg.ack === 'number') this.trimReplayBuffer(msg.ack)
     if (msg.method.startsWith('transport.')) {
       // Control frames (ping/pong/resume) ride pre-establishment by design:
       // the peer's resume legitimately arrives before THIS side finishes its
@@ -484,8 +500,25 @@ export class E2eeSession {
       this.sendControl(TRANSPORT_PONG)
     } else if (msg.method === TRANSPORT_RESUME) {
       const params = msg.params as { lastAckedMsgId?: number; epoch?: string } | undefined
-      const lastAcked = Number(params?.lastAckedMsgId ?? 0)
+      const rawLastAcked = Number(params?.lastAckedMsgId ?? 0)
+      const lastAcked = Number.isFinite(rawLastAcked) && rawLastAcked > 0 ? Math.floor(rawLastAcked) : 0
       const epoch = typeof params?.epoch === 'string' ? params.epoch : null
+      this.peerResumeReceived = true
+      this.peerResumeLastAcked = lastAcked
+      this.peerResumeEpoch = epoch
+      if (!this.established) {
+        // Keys exist before identity proof, so a peer can send encrypted
+        // transport frames during the handshake. Store the resume hint for
+        // markEstablished(), but do not trim, reset, or replay until the
+        // authenticated handshake has completed.
+        return
+      }
+      this.applyPeerResume(lastAcked, epoch)
+    }
+    // TRANSPORT_PONG: keepalive ack, nothing to do here (caller tracks liveness).
+  }
+
+  private applyPeerResume(lastAcked: number, epoch: string | null): void {
       // FRESH PEER EPOCH: a relaunched app is a new session object — its
       // msgId counter restarts at 1, so a long-lived listening session that
       // kept its inbound watermark across the re-handshake silently dropped
@@ -499,8 +532,6 @@ export class E2eeSession {
       // resume semantics.
       const freshPeer = epoch !== null && this.peerEpoch !== null && epoch !== this.peerEpoch
       if (epoch !== null) this.peerEpoch = epoch
-      this.peerResumeReceived = true
-      this.peerResumeLastAcked = lastAcked
       if (freshPeer) {
         this.lastDeliveredInboundMsgId = 0
         this.dropReplayBefore(this.currentConnectionFirstOutboundMsgId)
@@ -516,8 +547,6 @@ export class E2eeSession {
         // Peer re-resumed mid-connection (defensive) — replay what it lacks.
         this.replayUnacked(lastAcked)
       }
-    }
-    // TRANSPORT_PONG: keepalive ack, nothing to do here (caller tracks liveness).
   }
 
   private trimReplayBuffer(ackMsgId: number): void {

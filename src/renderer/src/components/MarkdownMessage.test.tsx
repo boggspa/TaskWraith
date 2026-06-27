@@ -130,6 +130,8 @@ describe('MarkdownMessage', () => {
     )
     expect(html).not.toContain('markdown-open-in-canvas')
     expect(html).not.toContain('favicon-link')
+    expect(html).toContain('data-link-kind="path"')
+    expect(html).toContain('data-link-openable="false"')
   })
 
   it('renders identically across calls and matches block-by-block output (append-only contract)', () => {

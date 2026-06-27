@@ -16,19 +16,26 @@
 // rule. The Electron-side lifecycle (write temp server, write mcp.json, merge
 // allow, pass --approve-mcps, restore) lives in index.ts / CursorWorkspaceConfig.
 
+import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
 import type { CursorCliConfig } from './CursorWorkspaceConfig'
 
 /** Allow rules that pre-approve every tool from the `taskwraith` MCP server.
  *  Cursor has reported brokered denials under both `taskwraith:<tool>` and
- *  `taskwraith-<tool>` names, so keep both spellings allowed. This does NOT
- *  touch the native Shell/Write deny rules. */
+ *  `taskwraith-<tool>` names. Keep the colon wildcard for the real server
+ *  namespace, but enumerate the hyphen spelling per tool so a workspace MCP
+ *  server named `taskwraith-evil` cannot ride a broad `Mcp(taskwraith-*)`
+ *  allow rule. This does NOT touch the native Shell/Write deny rules. */
 export const CURSOR_MCP_ALLOW_RULES: readonly string[] = [
   'Mcp(taskwraith:*)',
-  'Mcp(taskwraith-*)'
+  ...TASKWRAITH_MCP_TOOLS.map((tool) => `Mcp(taskwraith-${tool})`)
 ]
 
 /** The MCP server name (the `taskwraith` in `Mcp(taskwraith:*)` + the mcp.json key). */
 export const CURSOR_MCP_SERVER_NAME = 'taskwraith'
+
+export function isReservedCursorMcpServerName(name: string): boolean {
+  return name === CURSOR_MCP_SERVER_NAME || name.startsWith(`${CURSOR_MCP_SERVER_NAME}-`)
+}
 
 /**
  * The web_fetch MCP server, embedded as source so the caller can drop it to a
@@ -200,7 +207,12 @@ export function mergeCursorMcpConfig(
   serverEntry: Record<string, unknown>
 ): Record<string, unknown> {
   const base = asRecord(existing)
-  const servers = { ...asRecord(base.mcpServers), ...serverEntry }
+  const existingServers = asRecord(base.mcpServers)
+  const servers: Record<string, unknown> = {}
+  for (const [name, value] of Object.entries(existingServers)) {
+    if (!isReservedCursorMcpServerName(name)) servers[name] = value
+  }
+  Object.assign(servers, serverEntry)
   return { ...base, mcpServers: servers }
 }
 

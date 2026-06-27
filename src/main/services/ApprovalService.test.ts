@@ -443,6 +443,30 @@ describe('ApprovalService — resolve dispatch', () => {
     expect(resolveFn).toHaveBeenCalledWith(true)
   })
 
+  it('rejects renderer-submitted actions that were not offered for the approval', async () => {
+    const { deps, spies } = makeDeps()
+    const svc = new ApprovalService(deps)
+    const resolveFn = vi.fn()
+    svc.registerGeminiTool('g-request-only', {
+      provider: 'codex',
+      service: 'shellCommands',
+      workspacePath: '/ws',
+      runId: 'r-1',
+      requestOnly: true,
+      allowedActions: ['accept', 'decline', 'cancel'],
+      resolve: resolveFn
+    })
+
+    const ok = await svc.resolve('g-request-only', 'acceptForWorkspace')
+
+    expect(ok).toBe(false)
+    expect(resolveFn).not.toHaveBeenCalled()
+    expect(spies.permissionService.applyApprovalDecision).not.toHaveBeenCalled()
+    expect(spies.resolveApprovalLedger).not.toHaveBeenCalled()
+    expect(svc.has('g-request-only')).toBe(true)
+    expect(spies.log).toHaveBeenCalledWith(expect.stringContaining('rejected invalid approval action'))
+  })
+
   it('HostCommand accept: invokes runApprovedHostCommand and does NOT clear the registry', async () => {
     const { deps, spies } = makeDeps()
     spies.runApprovedHostCommand.mockResolvedValue(true)

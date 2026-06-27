@@ -36,7 +36,7 @@ describe('AppStore run events', () => {
     )
   })
 
-  it('persists provider stream artifacts when raw events are enabled', () => {
+  it('persists redacted provider stream artifacts when raw events are enabled', () => {
     AppStore.updateSettings({ storeRawEvents: true })
 
     const record = AppStore.appendRunEvent({
@@ -45,7 +45,7 @@ describe('AppStore run events', () => {
       kind: 'provider_raw',
       phase: 'raw',
       source: 'provider',
-      payload: { data: 'provider stream persisted\n' }
+      payload: { data: 'provider stream token=abc1234567890 persisted\n' }
     })
 
     expect(record.artifacts).toHaveLength(1)
@@ -55,7 +55,8 @@ describe('AppStore run events', () => {
     })
     expect(
       fs.readFileSync(join(userDataPath, 'run-artifacts', 'run-raw-on', 'stdout.log'), 'utf8')
-    ).toBe('provider stream persisted\n')
+    ).toBe('provider stream token=[redacted] persisted\n')
+    expect(JSON.stringify(record.payload)).not.toContain('abc1234567890')
   })
 
   it('scopes a {chatId} query to the chat own run files — never the full-dir sweep', async () => {

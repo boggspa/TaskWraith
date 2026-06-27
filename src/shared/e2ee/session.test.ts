@@ -19,6 +19,7 @@ function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
   const macCodes: string[] = []
   const iphoneCodes: string[] = []
   const framesToIphone: E2eeFrame[] = []
+  const framesToMac: E2eeFrame[] = []
   const framesFromMac: E2eeFrame[] = []
   const macErrors: Error[] = []
   let queue: Array<() => Promise<void>> = []
@@ -44,7 +45,10 @@ function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
     sessionId: 'sess-1',
     identityKeyPair: iphoneIdentity,
     peerIdentityPublicKey: macIdentity.publicKey, // learned from the QR bootstrap
-    send: (f: E2eeFrame) => queue.push(() => mac.handleFrame(f)),
+    send: (f: E2eeFrame) => {
+      framesToMac.push(f)
+      queue.push(() => mac.handleFrame(f))
+    },
     onAppMessage: (method, params) => iphoneReceived.push({ method, params }),
     onConfirmCode: (c) => iphoneCodes.push(c)
   })
@@ -67,7 +71,10 @@ function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
       sessionId: 'sess-1',
       identityKeyPair: iphoneIdentity,
       peerIdentityPublicKey: macIdentity.publicKey,
-      send: (f: E2eeFrame) => queue.push(() => mac.handleFrame(f)),
+      send: (f: E2eeFrame) => {
+        framesToMac.push(f)
+        queue.push(() => mac.handleFrame(f))
+      },
       onAppMessage: (method, params) => iphoneReceived.push({ method, params }),
       onConfirmCode: (c) => iphoneCodes.push(c)
     })
@@ -92,6 +99,7 @@ function wire(opts?: { trustPeer?: boolean; macPinsIphone?: boolean }) {
     establish,
     swapIphone,
     framesFromMac,
+    framesToMac,
     macErrors
   }
 }
@@ -167,6 +175,27 @@ describe('E2eeSession reconnect + replay', () => {
     w.iphone.reconnect()
     await w.pump()
     expect(w.iphoneReceived.filter((m) => m.method === 'bridge.runEvent')).toHaveLength(1)
+  })
+
+  it('ignores relay-tampered plaintext frame ACKs when trimming replay buffers', async () => {
+    const w = wire()
+    await w.establish()
+    w.mac.sendApp('bridge.runEvent', { n: 'lost-before-delivery' })
+    w.drop() // the outbound app frame is lost but remains in the mac replay buffer
+
+    w.iphone.ping()
+    const pingFrame = w.framesToMac.at(-1)
+    if (!pingFrame || pingFrame.t !== 'enc') throw new Error('expected encrypted ping frame')
+    pingFrame.ack = 999_999 // malicious relay-visible metadata tamper
+    await w.pump()
+
+    w.drop()
+    w.mac.reconnect()
+    w.iphone.reconnect()
+    await w.pump()
+    expect(w.iphoneReceived).toEqual([
+      { method: 'bridge.runEvent', params: { n: 'lost-before-delivery' } }
+    ])
   })
 
   it('re-handshakes when ONLY the iphone reconnects (relay kept the Mac socket alive)', async () => {

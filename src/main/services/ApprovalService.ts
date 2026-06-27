@@ -76,6 +76,7 @@ export interface PendingMainApproval {
   provider: ProviderId
   workspacePath?: string
   runId?: string
+  allowedActions?: AgentApprovalAction[]
   resolveAction?: (action: AgentApprovalAction) => void
   resolve: (allowed: boolean) => void
 }
@@ -87,6 +88,7 @@ export interface PendingGeminiToolApproval {
   runId?: string
   externalPathDetection?: PendingExternalPathDetection
   requestOnly?: boolean
+  allowedActions?: AgentApprovalAction[]
   resolve: (allowed: boolean) => void
 }
 
@@ -105,6 +107,7 @@ export interface PendingCodexApproval {
   service?: AgenticServiceId
   workspacePath?: string
   runId?: string
+  allowedActions?: AgentApprovalAction[]
   /**
    * Slice 5 of the external-path-redesign arc. Populated by the
    * registration site (`main/index.ts` Codex elicitation handler)
@@ -123,6 +126,7 @@ export interface PendingKimiApproval {
   service?: AgenticServiceId
   workspacePath?: string
   runId?: string
+  allowedActions?: AgentApprovalAction[]
   externalPathDetection?: PendingExternalPathDetection
 }
 
@@ -137,6 +141,7 @@ export interface PendingHostCommandApproval {
   model: string
   appRunId?: string
   appChatId?: string
+  allowedActions?: AgentApprovalAction[]
   reason: string
   output: string
 }
@@ -591,12 +596,13 @@ export class ApprovalService {
   ): Promise<boolean> {
     const decisionSource = options?.decisionSource ?? 'user'
     const extraMetadata = options?.extraMetadata ?? {}
-    // Cancel the auto-deny timer the moment any decision lands.
-    this.scheduler?.cancel(requestId)
 
     // ── Main authority approval ─────────────────────────────────
     const pendingMain = this.pendingMain.get(requestId)
     if (pendingMain) {
+      if (!this.actionAllowed(requestId, action, pendingMain.allowedActions)) return false
+      // Cancel the auto-deny timer the moment a valid decision lands.
+      this.scheduler?.cancel(requestId)
       const session =
         this.deps.runManager.resolveApproval(requestId) ||
         this.deps.runManager.get(pendingMain.runId)
@@ -632,6 +638,8 @@ export class ApprovalService {
     // ── Gemini tool approval ────────────────────────────────────
     const pendingGeminiTool = this.pendingGeminiTool.get(requestId)
     if (pendingGeminiTool) {
+      if (!this.actionAllowed(requestId, action, pendingGeminiTool.allowedActions)) return false
+      this.scheduler?.cancel(requestId)
       const resolvedAction =
         pendingGeminiTool.requestOnly &&
         (action === 'acceptForSession' || action === 'acceptForWorkspace')
@@ -682,6 +690,8 @@ export class ApprovalService {
     // ── Host command rerun approval ─────────────────────────────
     const pendingHostCommand = this.pendingHostCommand.get(requestId)
     if (pendingHostCommand) {
+      if (!this.actionAllowed(requestId, action, pendingHostCommand.allowedActions)) return false
+      this.scheduler?.cancel(requestId)
       this.deps.appendDurableRunEventForRoute(
         pendingHostCommand.provider,
         { appRunId: pendingHostCommand.appRunId, appChatId: pendingHostCommand.appChatId },
@@ -728,6 +738,8 @@ export class ApprovalService {
     // ── Kimi wire approval ──────────────────────────────────────
     const pendingKimi = this.pendingKimi.get(requestId)
     if (pendingKimi) {
+      if (!this.actionAllowed(requestId, action, pendingKimi.allowedActions)) return false
+      this.scheduler?.cancel(requestId)
       const session =
         this.deps.runManager.resolveApproval(requestId) ||
         this.deps.runManager.get(pendingKimi.runId)
@@ -788,6 +800,8 @@ export class ApprovalService {
     if (!pending || !codexClient) {
       return false
     }
+    if (!this.actionAllowed(requestId, action, pending.allowedActions)) return false
+    this.scheduler?.cancel(requestId)
     const session =
       this.deps.runManager.resolveApproval(requestId) || this.deps.runManager.get(pending.runId)
     this.deps.appendDurableRunEventForRoute(
@@ -928,6 +942,19 @@ export class ApprovalService {
         `[ApprovalService] approval run-event publish failed for ${approvalId}: ${err instanceof Error ? err.message : String(err)}`
       )
     }
+  }
+
+  private actionAllowed(
+    approvalId: string,
+    action: AgentApprovalAction,
+    allowedActions: AgentApprovalAction[] | undefined
+  ): boolean {
+    if (!allowedActions || allowedActions.length === 0) return true
+    if (allowedActions.includes(action)) return true
+    this.deps.log(
+      `[ApprovalService] rejected invalid approval action "${action}" for ${approvalId}; allowed=${allowedActions.join(',')}`
+    )
+    return false
   }
 }
 
