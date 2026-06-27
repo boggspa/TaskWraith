@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { UsageWindowAggregate } from '../App'
+import type { UsageWindowAggregate } from './usageAggregateTypes'
 import {
   computeQuotaPace,
   paceColorHex,

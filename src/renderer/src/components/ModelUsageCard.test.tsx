@@ -5,7 +5,7 @@ import {
   ModelUsageCard,
   type ModelUsageApiSpendOptions
 } from './ModelUsageCard'
-import type { ModelUsageAggregate } from '../App'
+import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import { buildApiSpendByProvider } from '../lib/apiSpendAggregation'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import type { UsageRecord } from '../../../main/store/types'

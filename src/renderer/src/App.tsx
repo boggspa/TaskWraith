@@ -93,11 +93,6 @@ import type {
   UsageWindowAggregate,
   UsageBalanceAggregate
 } from './lib/usageAggregateTypes'
-export type {
-  ModelUsageAggregate,
-  UsageWindowAggregate,
-  UsageBalanceAggregate
-} from './lib/usageAggregateTypes'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
 import { toDateTimeLocalValue, formatScheduledRunTime } from './lib/dateTimeFormat'
 import { buildReviewCurrentDiffPrompt } from './lib/reviewDiffPrompt'

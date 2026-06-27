@@ -106,7 +106,7 @@ import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
-import type { ModelUsageAggregate } from '../App'
+import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import {
   MEDIA_EDITING_TOOLS,
   TASKWRAITH_MCP_TOOLS,

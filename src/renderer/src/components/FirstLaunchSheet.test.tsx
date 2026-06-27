@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { FirstLaunchSheet } from './FirstLaunchSheet'
 import type { ProviderApiKeyStatus } from '../../../main/store/types'
-import type { ModelUsageAggregate } from '../App'
+import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 
 /**
  * Server-rendered smoke tests for FirstLaunchSheet. The component

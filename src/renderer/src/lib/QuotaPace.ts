@@ -15,7 +15,7 @@
  * Pure module — no React, no DOM. Easy to unit-test.
  */
 
-import type { UsageWindowAggregate } from '../App'
+import type { UsageWindowAggregate } from './usageAggregateTypes'
 
 export type QuotaPaceState = 'ahead' | 'onTrack' | 'behind'
 

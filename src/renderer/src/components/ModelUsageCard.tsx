@@ -29,7 +29,7 @@ import {
   type PointerEvent as ReactPointerEvent
 } from 'react'
 import type { ProviderId, UsageRecord, ChatRecord } from '../../../main/store/types'
-import type { ModelUsageAggregate, UsageWindowAggregate } from '../App'
+import type { ModelUsageAggregate, UsageWindowAggregate } from '../lib/usageAggregateTypes'
 import {
   API_SPEND_WINDOW_ORDER,
   buildApiSpendByProvider,

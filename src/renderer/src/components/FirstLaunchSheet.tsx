@@ -20,8 +20,8 @@ import { CommittedDraftField } from './CommittedDraftField'
 import { ComposerShellPreview } from './ComposerShellPreview'
 // 1.0.7-EW — onboarding "out of usage" card state. ModelUsageAggregate is the
 // same per-provider quota shape the sidebar Model Usage card consumes; type-only
-// import so there's no runtime cycle with App.tsx (mirrors ModelUsageCard).
-import type { ModelUsageAggregate } from '../App'
+// import from the shared usage aggregate type module.
+import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import { formatResetShort } from '../lib/UsageFormat'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
