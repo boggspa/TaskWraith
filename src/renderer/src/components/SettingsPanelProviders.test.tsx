@@ -156,6 +156,18 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('settings-mcp-server-card provider-claude')
   })
 
+  it('offers direct MCP server management actions from Provider Tools', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
+    )
+
+    expect(html).toContain('Provider tools and TaskWraith bridge')
+    expect(html).toContain('User-managed MCP servers live in the')
+    expect(html).toContain('Import config')
+    expect(html).toContain('Add server')
+    expect(html).toContain('Open MCP Servers')
+  })
+
   it('renders SVG tool icons in the MCP tool catalog instead of text badges', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />

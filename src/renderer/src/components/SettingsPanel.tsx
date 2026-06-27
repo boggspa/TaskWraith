@@ -2834,6 +2834,8 @@ export function SettingsPanel({
   }
 
   const startCreateMcpServer = (): void => {
+    setMcpImportOpen(false)
+    setMcpImportError('')
     setMcpServerFormMode('create')
     setEditingMcpServerId(null)
     setMcpServerForm(emptyUserMcpServerForm())
@@ -2841,8 +2843,19 @@ export function SettingsPanel({
   }
 
   const startImportMcpServers = (): void => {
+    resetMcpServerForm()
     setMcpImportOpen(true)
     setMcpImportError('')
+  }
+
+  const openCreateMcpServerPage = (): void => {
+    startCreateMcpServer()
+    setActiveTab('mcp-servers')
+  }
+
+  const openImportMcpServersPage = (): void => {
+    startImportMcpServers()
+    setActiveTab('mcp-servers')
   }
 
   const cancelImportMcpServers = (): void => {
@@ -6227,7 +6240,14 @@ export function SettingsPanel({
                   <button
                     type="button"
                     className="btn btn-sm btn-ghost"
-                    onClick={() => setActiveTab('mcp-servers')}
+                    onClick={openImportMcpServersPage}
+                  >
+                    Import config
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={openCreateMcpServerPage}
                   >
                     Add server
                   </button>
