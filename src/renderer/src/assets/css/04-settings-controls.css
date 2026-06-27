@@ -3178,6 +3178,27 @@
   white-space: pre;
 }
 
+.settings-user-mcp-snippet-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.settings-user-mcp-snippet-list section {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-user-mcp-snippet-list strong {
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.settings-user-mcp-snippet-list pre {
+  margin-top: 0;
+}
+
 .settings-user-mcp-actions,
 .settings-user-mcp-footer {
   display: flex;

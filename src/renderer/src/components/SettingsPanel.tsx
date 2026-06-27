@@ -6709,6 +6709,49 @@ export function SettingsPanel({
                               <code>{formatUserMcpServerAuditJson(server)}</code>
                             </pre>
                           </details>
+                          {exportLabels.length > 0 && (
+                            <details className="settings-user-mcp-config">
+                              <summary>Provider config snippets</summary>
+                              <div className="settings-user-mcp-snippet-list">
+                                {isClaudeExportableUserMcpServer(server) && (
+                                  <section>
+                                    <strong>Claude JSON</strong>
+                                    <pre>
+                                      <code>
+                                        {formatUserMcpServersClaudeJson([server], {
+                                          redactValues: true
+                                        })}
+                                      </code>
+                                    </pre>
+                                  </section>
+                                )}
+                                {isCursorExportableUserMcpServer(server) && (
+                                  <section>
+                                    <strong>Cursor mcp.json</strong>
+                                    <pre>
+                                      <code>
+                                        {formatUserMcpServersCursorJson([server], {
+                                          redactValues: true
+                                        })}
+                                      </code>
+                                    </pre>
+                                  </section>
+                                )}
+                                {isCodexExportableUserMcpServer(server) && (
+                                  <section>
+                                    <strong>Codex TOML</strong>
+                                    <pre>
+                                      <code>
+                                        {formatUserMcpServersCodexToml([server], {
+                                          redactValues: true
+                                        })}
+                                      </code>
+                                    </pre>
+                                  </section>
+                                )}
+                              </div>
+                            </details>
+                          )}
                         </div>
                         <div className="settings-user-mcp-actions">
                           <label className="settings-user-mcp-toggle">

@@ -288,6 +288,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Claude JSON')
     expect(html).toContain('Cursor mcp.json')
     expect(html).toContain('Audit JSON')
+    expect(html).toContain('Provider config snippets')
     expect(html).toContain('All servers audit JSON')
     expect(html).toContain('Copy audit JSON')
     expect(html).toContain('Copy Claude JSON')
