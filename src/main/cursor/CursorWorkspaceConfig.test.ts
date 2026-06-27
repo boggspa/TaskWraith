@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   applyCursorWriteModeConfig,
+  cursorWriteModeSetupFailureMessage,
   CURSOR_WRITE_MODE_DENY_RULES,
   mergeCursorDenyRules,
   type CursorConfigFs
@@ -31,6 +32,16 @@ describe('mergeCursorDenyRules', () => {
   it('does not duplicate an already-present deny rule', () => {
     const existing = { permissions: { allow: [], deny: ['Shell(**)'] } }
     expect(mergeCursorDenyRules(existing, ['Shell(**)']).permissions.deny).toEqual(['Shell(**)'])
+  })
+})
+
+describe('cursorWriteModeSetupFailureMessage', () => {
+  it('explains that Cursor write mode is falling back to read-only plan mode', () => {
+    const message = cursorWriteModeSetupFailureMessage(new Error('Bridge unavailable'))
+
+    expect(message).toContain('Cursor write-mode MCP setup failed')
+    expect(message).toContain('falling back to read-only plan mode')
+    expect(message).toContain('Bridge unavailable')
   })
 })
 

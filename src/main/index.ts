@@ -775,7 +775,10 @@ import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokSt
 import { cursorDebugEnabled } from './cursorGate'
 import { buildCursorProviderCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
 import { cursorEventToRunEvents, type NormalizedCursorRunEvent } from './cursor/CursorStreamJson'
-import { applyCursorWriteModeConfig } from './cursor/CursorWorkspaceConfig'
+import {
+  applyCursorWriteModeConfig,
+  cursorWriteModeSetupFailureMessage
+} from './cursor/CursorWorkspaceConfig'
 import {
   buildCursorMcpServerEntry,
   CURSOR_MCP_ALLOW_RULES,
@@ -10117,7 +10120,20 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         )
       )
       cursorTaskWraithMcpActive = true
-    } catch {
+    } catch (error) {
+      restoreCursorConfig?.()
+      sendAgentCompatLine(
+        event.sender,
+        'cursor',
+        {
+          type: 'progress',
+          title: 'Cursor write mode fell back to read-only',
+          summary: cursorWriteModeSetupFailureMessage(error),
+          severity: 'warning',
+          provider: 'cursor'
+        },
+        route
+      )
       restoreCursorConfig = undefined
       cursorTaskWraithMcpActive = false
     }

@@ -88,6 +88,16 @@ export interface CursorMcpBridgeOptions {
   serverEntry?: Record<string, unknown>
 }
 
+export function cursorWriteModeSetupFailureMessage(error: unknown): string {
+  const reason =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string' && error.trim()
+        ? error.trim()
+        : 'Unknown setup error.'
+  return `Cursor write-mode MCP setup failed; TaskWraith is falling back to read-only plan mode for this run. ${reason}`
+}
+
 interface CapturedFile {
   existed: boolean
   original: string | null
