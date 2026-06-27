@@ -1010,11 +1010,25 @@ function parseTomlString(value: string): string | undefined {
   return undefined
 }
 
+function formatTomlBasicString(value: string): string {
+  return `"${value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')}"`
+}
+
 function parseTomlKey(value: string): string | undefined {
   const trimmed = value.trim()
   const quoted = parseTomlString(trimmed)
   if (quoted !== undefined) return quoted
   return /^[A-Za-z0-9_-]+$/.test(trimmed) ? trimmed : undefined
+}
+
+function formatTomlKeyComponent(value: string): string {
+  const trimmed = value.trim()
+  return /^[A-Za-z0-9_-]+$/.test(trimmed) ? trimmed : formatTomlBasicString(trimmed)
 }
 
 function parseTomlDottedPath(value: string): string[] | undefined {
@@ -1029,6 +1043,10 @@ function parseTomlStringArray(value: string): string[] | undefined {
   if (!inner) return []
   const values = splitTomlTopLevel(inner).map(parseTomlString)
   return values.every((entry): entry is string => typeof entry === 'string') ? values : undefined
+}
+
+function formatTomlStringArray(values: readonly string[]): string {
+  return `[${values.map(formatTomlBasicString).join(', ')}]`
 }
 
 function parseTomlStringInlineTable(value: string): Record<string, string> | undefined {
@@ -1046,6 +1064,19 @@ function parseTomlStringInlineTable(value: string): Record<string, string> | und
     table[key] = val
   }
   return table
+}
+
+function formatTomlStringInlineTable(
+  value: Record<string, string>,
+  options: { redactValues?: boolean } = {}
+): string {
+  const entries = Object.keys(value)
+    .sort()
+    .map((key) => {
+      const rawValue = options.redactValues ? '[stored in TaskWraith settings]' : value[key]
+      return `${formatTomlKeyComponent(key)} = ${formatTomlBasicString(rawValue ?? '')}`
+    })
+  return `{ ${entries.join(', ')} }`
 }
 
 function parseTomlBoolean(value: string): boolean | undefined {
@@ -1287,6 +1318,48 @@ export function formatUserMcpServersAuditJson(servers: readonly UserMcpServerCon
     null,
     2
   )
+}
+
+function isCodexExportableUserMcpServer(server: UserMcpServerConfig): boolean {
+  if (!server.enabled) return false
+  if (server.transport === 'sse') return false
+  return server.transport === 'stdio'
+    ? Boolean(server.command?.trim())
+    : Boolean(server.url?.trim())
+}
+
+export function formatUserMcpServersCodexToml(
+  servers: readonly UserMcpServerConfig[],
+  options: { redactValues?: boolean } = {}
+): string {
+  const usedKeys = new Set<string>()
+  const entries: string[] = []
+  for (const server of servers) {
+    if (!isCodexExportableUserMcpServer(server)) continue
+    const tableKey = formatTomlKeyComponent(uniqueUserMcpServerAuditKey(server, usedKeys))
+    const lines = [`[mcp_servers.${tableKey}]`]
+    if (server.transport === 'stdio') {
+      lines.push(`command = ${formatTomlBasicString(server.command?.trim() || '')}`)
+      if (server.args && server.args.length > 0) {
+        lines.push(`args = ${formatTomlStringArray(server.args)}`)
+      }
+      if (server.env && Object.keys(server.env).length > 0) {
+        lines.push(`env = ${formatTomlStringInlineTable(server.env, options)}`)
+      }
+    } else {
+      lines.push(`url = ${formatTomlBasicString(server.url?.trim() || '')}`)
+      if (server.bearerTokenEnvVar) {
+        lines.push(`bearer_token_env_var = ${formatTomlBasicString(server.bearerTokenEnvVar)}`)
+      }
+      if (server.headers && Object.keys(server.headers).length > 0) {
+        lines.push(`http_headers = ${formatTomlStringInlineTable(server.headers, options)}`)
+      }
+    }
+    entries.push(lines.join('\n'))
+  }
+  return entries.length > 0
+    ? entries.join('\n\n')
+    : '# No enabled Codex-compatible MCP servers.'
 }
 
 const AUDIT_ARTIFACT_PROVIDER_OPTIONS: Array<{
@@ -2387,6 +2460,7 @@ export function SettingsPanel({
   const [mcpImportError, setMcpImportError] = useState('')
   const [copiedMcpServerId, setCopiedMcpServerId] = useState<string | null>(null)
   const [copiedMcpServersJson, setCopiedMcpServersJson] = useState(false)
+  const [copiedMcpServersCodexToml, setCopiedMcpServersCodexToml] = useState(false)
   const [keyCommandQuery, setKeyCommandQuery] = useState('')
   const [recordingKeyCommandId, setRecordingKeyCommandId] = useState<KeyCommandId | null>(null)
   const [keyCommandRecordError, setKeyCommandRecordError] = useState('')
@@ -2552,6 +2626,23 @@ export function SettingsPanel({
       .then(() => {
         setCopiedMcpServersJson(true)
         window.setTimeout(() => setCopiedMcpServersJson(false), 1600)
+      })
+      .catch(() => undefined)
+  }
+
+  const copyAllMcpServersCodexToml = (): void => {
+    if (
+      !userMcpServers.some(isCodexExportableUserMcpServer) ||
+      typeof navigator === 'undefined' ||
+      !navigator.clipboard?.writeText
+    ) {
+      return
+    }
+    void navigator.clipboard
+      .writeText(formatUserMcpServersCodexToml(userMcpServers))
+      .then(() => {
+        setCopiedMcpServersCodexToml(true)
+        window.setTimeout(() => setCopiedMcpServersCodexToml(false), 1600)
       })
       .catch(() => undefined)
   }
@@ -2822,6 +2913,9 @@ export function SettingsPanel({
   ).length
   const enabledUserMcpServerCount = userMcpServers.filter((server) => server.enabled).length
   const userMcpTransportCount = new Set(userMcpServers.map((server) => server.transport)).size
+  const codexExportableUserMcpServerCount = userMcpServers.filter(
+    isCodexExportableUserMcpServer
+  ).length
   const mcpToolSearch = mcpToolQuery.trim().toLowerCase()
   const filteredMcpToolCatalog = MCP_TOOL_CATALOG.filter((tool) => {
     if (!mcpToolSearch) return true
@@ -6106,6 +6200,14 @@ export function SettingsPanel({
                   <button
                     type="button"
                     className="btn btn-sm btn-ghost"
+                    onClick={copyAllMcpServersCodexToml}
+                    disabled={codexExportableUserMcpServerCount === 0}
+                  >
+                    {copiedMcpServersCodexToml ? 'Copied TOML' : 'Copy Codex TOML'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
                     onClick={startImportMcpServers}
                   >
                     Import config
@@ -6149,6 +6251,14 @@ export function SettingsPanel({
                   <summary>All servers audit JSON</summary>
                   <pre>
                     <code>{formatUserMcpServersAuditJson(userMcpServers)}</code>
+                  </pre>
+                </details>
+              )}
+              {codexExportableUserMcpServerCount > 0 && (
+                <details className="settings-user-mcp-config settings-user-mcp-config-all">
+                  <summary>Codex config TOML</summary>
+                  <pre>
+                    <code>{formatUserMcpServersCodexToml(userMcpServers, { redactValues: true })}</code>
                   </pre>
                 </details>
               )}

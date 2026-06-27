@@ -3,6 +3,7 @@ import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
 import {
   SettingsPanel,
+  formatUserMcpServersCodexToml,
   formatUserMcpServersAuditJson,
   hasUserMcpServerNameConflict,
   parseUserMcpServersImportJson
@@ -271,6 +272,8 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Audit JSON')
     expect(html).toContain('All servers audit JSON')
     expect(html).toContain('Copy all JSON')
+    expect(html).toContain('Copy Codex TOML')
+    expect(html).toContain('Codex config TOML')
     expect(html).toContain('Copy JSON')
     expect(html).toContain('&quot;command&quot;: &quot;npx&quot;')
     expect(html).toContain('&quot;PROJECT_ROOT&quot;: &quot;[stored in TaskWraith settings]&quot;')
@@ -468,5 +471,79 @@ describe('user MCP server name/audit helpers', () => {
     expect(audit.mcpServers.docs.command).toBe('node')
     expect(audit.mcpServers['docs 2'].url).toBe('https://example.test/mcp')
     expect(audit.taskwraith.servers).toHaveLength(2)
+  })
+
+  it('formats enabled Codex-compatible servers as TOML and skips disabled or SSE entries', () => {
+    const toml = formatUserMcpServersCodexToml([
+      {
+        id: 'filesystem',
+        name: 'filesystem',
+        enabled: true,
+        transport: 'stdio',
+        command: 'npx',
+        args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+        env: { PROJECT_ROOT: '/repo' }
+      },
+      {
+        id: 'docs',
+        name: 'docs remote',
+        enabled: true,
+        transport: 'http',
+        url: 'https://example.test/mcp',
+        headers: {
+          Authorization: 'Bearer ${DOCS_TOKEN}',
+          'X-Region': 'eu'
+        },
+        bearerTokenEnvVar: 'DOCS_TOKEN'
+      },
+      {
+        id: 'legacy',
+        name: 'legacy',
+        enabled: true,
+        transport: 'sse',
+        url: 'https://example.test/sse'
+      },
+      {
+        id: 'disabled',
+        name: 'disabled',
+        enabled: false,
+        transport: 'stdio',
+        command: 'node'
+      }
+    ])
+
+    expect(toml).toContain('[mcp_servers.filesystem]')
+    expect(toml).toContain('command = "npx"')
+    expect(toml).toContain('args = ["@modelcontextprotocol/server-filesystem", "/repo"]')
+    expect(toml).toContain('env = { PROJECT_ROOT = "/repo" }')
+    expect(toml).toContain('[mcp_servers."docs remote"]')
+    expect(toml).toContain('url = "https://example.test/mcp"')
+    expect(toml).toContain('bearer_token_env_var = "DOCS_TOKEN"')
+    expect(toml).toContain(
+      'http_headers = { Authorization = "Bearer ${DOCS_TOKEN}", X-Region = "eu" }'
+    )
+    expect(toml).not.toContain('legacy')
+    expect(toml).not.toContain('disabled')
+  })
+
+  it('redacts values in Codex TOML preview mode', () => {
+    const toml = formatUserMcpServersCodexToml(
+      [
+        {
+          id: 'docs',
+          name: 'docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          headers: {
+            Authorization: 'Bearer ${DOCS_TOKEN}'
+          }
+        }
+      ],
+      { redactValues: true }
+    )
+
+    expect(toml).toContain('Authorization = "[stored in TaskWraith settings]"')
+    expect(toml).not.toContain('Bearer ${DOCS_TOKEN}')
   })
 })
