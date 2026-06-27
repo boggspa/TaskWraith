@@ -652,6 +652,15 @@ function normalizeKeyCommandBindings(
   return normalized
 }
 
+function isValidUserMcpRemoteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
   if (!Array.isArray(value)) return []
   const seen = new Set<string>()
@@ -696,7 +705,8 @@ function normalizeUserMcpServers(value: unknown): UserMcpServerConfig[] {
         )
       : {}
     const command = typeof record.command === 'string' ? record.command.trim() : ''
-    const url = typeof record.url === 'string' ? record.url.trim() : ''
+    const rawUrl = typeof record.url === 'string' ? record.url.trim() : ''
+    const url = rawUrl && isValidUserMcpRemoteUrl(rawUrl) ? rawUrl : ''
     const bearerTokenEnvVar =
       typeof record.bearerTokenEnvVar === 'string' &&
       /^[A-Za-z_][A-Za-z0-9_]*$/.test(record.bearerTokenEnvVar.trim())

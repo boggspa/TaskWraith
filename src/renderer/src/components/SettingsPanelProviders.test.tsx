@@ -565,6 +565,13 @@ describe('user MCP server name/audit helpers', () => {
         transport: 'sse'
       })
     ).toBe('needs URL')
+    expect(
+      userMcpServerStatusLabel({
+        enabled: true,
+        transport: 'http',
+        url: 'ftp://example.test/mcp'
+      })
+    ).toBe('needs valid URL')
   })
 
   it('labels per-server provider export compatibility', () => {

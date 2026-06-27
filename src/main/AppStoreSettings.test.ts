@@ -49,4 +49,41 @@ describe('AppStore settings defaults', () => {
       }
     })
   })
+
+  it('normalizes persisted user MCP remote URLs on load', () => {
+    AppStore.updateSettings({
+      userMcpServers: [
+        {
+          id: 'docs',
+          name: ' docs ',
+          enabled: true,
+          transport: 'http',
+          url: ' https://example.test/mcp '
+        },
+        {
+          id: 'bad',
+          name: ' bad ',
+          enabled: true,
+          transport: 'http',
+          url: ' ftp://example.test/mcp '
+        }
+      ]
+    })
+
+    expect(AppStore.getSettings().userMcpServers).toEqual([
+      {
+        id: 'docs',
+        name: 'docs',
+        enabled: true,
+        transport: 'http',
+        url: 'https://example.test/mcp'
+      },
+      {
+        id: 'bad',
+        name: 'bad',
+        enabled: false,
+        transport: 'http'
+      }
+    ])
+  })
 })

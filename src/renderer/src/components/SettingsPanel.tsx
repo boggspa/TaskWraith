@@ -754,9 +754,9 @@ function isValidUserMcpRemoteUrl(value: string): boolean {
 function hasRunnableUserMcpEndpoint(
   server: Pick<UserMcpServerConfig, 'transport' | 'command' | 'url'>
 ): boolean {
-  return server.transport === 'stdio'
-    ? Boolean(server.command?.trim())
-    : Boolean(server.url?.trim())
+  if (server.transport === 'stdio') return Boolean(server.command?.trim())
+  const url = server.url?.trim()
+  return Boolean(url && isValidUserMcpRemoteUrl(url))
 }
 
 function userMcpServerRuntimeLabel(server: Pick<UserMcpServerConfig, 'transport'>): string {
@@ -768,7 +768,8 @@ export function userMcpServerStatusLabel(
   server: Pick<UserMcpServerConfig, 'enabled' | 'transport' | 'command' | 'url'>
 ): string {
   if (!hasRunnableUserMcpEndpoint(server)) {
-    return server.transport === 'stdio' ? 'needs command' : 'needs URL'
+    if (server.transport === 'stdio') return 'needs command'
+    return server.url?.trim() ? 'needs valid URL' : 'needs URL'
   }
   return server.enabled ? 'enabled' : 'disabled'
 }
@@ -2993,7 +2994,9 @@ export function SettingsPanel({
       setMcpServerFormError(
         server.transport === 'stdio'
           ? 'Add a command before enabling this stdio MCP server.'
-          : 'Add a URL before enabling this MCP server.'
+          : server.url?.trim()
+            ? 'Use an http:// or https:// URL before enabling this MCP server.'
+            : 'Add a URL before enabling this MCP server.'
       )
       return
     }
