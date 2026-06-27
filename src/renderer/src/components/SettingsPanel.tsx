@@ -1387,25 +1387,15 @@ export function formatUserMcpServersAuditJson(servers: readonly UserMcpServerCon
 }
 
 function isCodexExportableUserMcpServer(server: UserMcpServerConfig): boolean {
-  if (!server.enabled) return false
-  if (server.transport === 'sse') return false
-  return server.transport === 'stdio'
-    ? Boolean(server.command?.trim())
-    : Boolean(server.url?.trim())
+  return server.enabled && server.transport !== 'sse' && hasRunnableUserMcpEndpoint(server)
 }
 
 function isClaudeExportableUserMcpServer(server: UserMcpServerConfig): boolean {
-  if (!server.enabled) return false
-  return server.transport === 'stdio'
-    ? Boolean(server.command?.trim())
-    : Boolean(server.url?.trim())
+  return server.enabled && hasRunnableUserMcpEndpoint(server)
 }
 
 function isCursorExportableUserMcpServer(server: UserMcpServerConfig): boolean {
-  if (!server.enabled || server.transport === 'sse') return false
-  return server.transport === 'stdio'
-    ? Boolean(server.command?.trim())
-    : Boolean(server.url?.trim())
+  return server.enabled && server.transport !== 'sse' && hasRunnableUserMcpEndpoint(server)
 }
 
 export function userMcpServerProviderExportLabels(server: UserMcpServerConfig): string[] {

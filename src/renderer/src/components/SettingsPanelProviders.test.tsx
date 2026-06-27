@@ -602,6 +602,15 @@ describe('user MCP server name/audit helpers', () => {
         url: 'https://example.test/mcp'
       })
     ).toEqual([])
+    expect(
+      userMcpServerProviderExportLabels({
+        id: 'bad-remote',
+        name: 'bad remote',
+        enabled: true,
+        transport: 'http',
+        url: 'ftp://example.test/mcp'
+      })
+    ).toEqual([])
   })
 
   it('matches user MCP server searches against safe management fields', () => {
@@ -668,6 +677,32 @@ describe('user MCP server name/audit helpers', () => {
     expect(audit.mcpServers.docs.command).toBe('node')
     expect(audit.mcpServers['docs 2'].url).toBe('https://example.test/mcp')
     expect(audit.taskwraith.servers).toHaveLength(2)
+  })
+
+  it('skips invalid remote URLs from provider config exports', () => {
+    const servers: UserMcpServerConfig[] = [
+      {
+        id: 'bad-remote',
+        name: 'bad remote',
+        enabled: true,
+        transport: 'http',
+        url: 'ftp://example.test/mcp'
+      },
+      {
+        id: 'docs',
+        name: 'docs',
+        enabled: true,
+        transport: 'http',
+        url: 'https://example.test/mcp'
+      }
+    ]
+
+    expect(formatUserMcpServersClaudeJson(servers)).toContain('"user_docs"')
+    expect(formatUserMcpServersClaudeJson(servers)).not.toContain('bad_remote')
+    expect(formatUserMcpServersCursorJson(servers)).toContain('"user_docs"')
+    expect(formatUserMcpServersCursorJson(servers)).not.toContain('bad_remote')
+    expect(formatUserMcpServersCodexToml(servers)).toContain('[mcp_servers.user_docs]')
+    expect(formatUserMcpServersCodexToml(servers)).not.toContain('bad_remote')
   })
 
   it('formats enabled Codex-compatible servers as TOML and skips disabled or SSE entries', () => {
