@@ -457,6 +457,24 @@ describe('TranscriptVirtualWindow', () => {
       expect(loose.endIndex).toBeGreaterThanOrEqual(tight.endIndex)
     })
 
+    it('force-mounts a requested row for programmatic transcript jumps', () => {
+      const heights = uniformHeights(100, 100)
+      const normal = selectWindow({ scrollTop: 0, viewportHeight: 240, heights, overscanPx: 0 })
+      const forced = selectWindow({
+        scrollTop: 0,
+        viewportHeight: 240,
+        heights,
+        overscanPx: 0,
+        forceIndex: 50
+      })
+
+      expect(normal.startIndex).toBe(0)
+      expect(normal.endIndex).toBeLessThanOrEqual(3)
+      expect(forced.startIndex).toBeLessThanOrEqual(50)
+      expect(forced.endIndex).toBeGreaterThan(50)
+      expect(forced.topSpacerPx).toBe(sumHeights(heights, 0, forced.startIndex))
+    })
+
     it('defaults to DEFAULT_OVERSCAN_PX when overscan is omitted', () => {
       const heights = uniformHeights(40, 100) // total 4000
       const w = selectWindow({ scrollTop: 2000, viewportHeight: 400, heights })

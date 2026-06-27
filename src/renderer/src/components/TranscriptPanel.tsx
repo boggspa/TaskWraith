@@ -332,6 +332,7 @@ function useTranscriptVirtualization(params: {
   contentRef?: React.RefObject<HTMLDivElement | null>
   autoFollowRef?: React.MutableRefObject<boolean>
   compactDensity: boolean
+  forcedRowIndex?: number | null
   /**
    * 1.0.6-TV2 — row ids whose tool stack currently has something
    * expanded. Folded into the measurement-cache key (the geometry bit)
@@ -346,8 +347,16 @@ function useTranscriptVirtualization(params: {
   heights: readonly number[]
   syncScrollPosition: (scrollTop: number) => void
 } {
-  const { enabled, rows, scrollRef, contentRef, autoFollowRef, compactDensity, expandedRowIds } =
-    params
+  const {
+    enabled,
+    rows,
+    scrollRef,
+    contentRef,
+    autoFollowRef,
+    compactDensity,
+    forcedRowIndex,
+    expandedRowIds
+  } = params
 
   const measurementsRef = useRef<Map<string, number>>(new Map())
   const scrollTopRef = useRef(0)
@@ -487,7 +496,8 @@ function useTranscriptVirtualization(params: {
         scrollTop: effectiveScrollTop,
         viewportHeight: viewportRef.current,
         heights: windowHeights,
-        overscanPx: DEFAULT_OVERSCAN_PX
+        overscanPx: DEFAULT_OVERSCAN_PX,
+        forceIndex: forcedRowIndex
       })
     : { startIndex: 0, endIndex: rows.length, topSpacerPx: 0, bottomSpacerPx: 0 }
 
@@ -1034,6 +1044,35 @@ export const TranscriptPanel = memo(
       () => projectRows(displayMessages, displayRunBoundaryIds),
       [displayMessages, displayRunBoundaryIds]
     )
+    const [pendingFocusTarget, setPendingFocusTarget] = useState<{
+      messageId: string
+      rowKey?: string
+      attempt: number
+    } | null>(null)
+    const findProjectedRowForMessage = useCallback(
+      (messageId: string, rowKey?: string) => {
+        if (rowKey) {
+          const byRowKey = projectedRows.find((candidate) => candidate.rowKey === rowKey)
+          if (byRowKey) return byRowKey
+        }
+        return (
+          projectedRows.find((candidate) => candidate.id === messageId) ||
+          projectedRows.find((candidate) => {
+            const message = displayMessages[candidate.index]
+            const groupedIds = message?.metadata?.groupedToolMessageIds
+            return Array.isArray(groupedIds) && groupedIds.includes(messageId)
+          })
+        )
+      },
+      [displayMessages, projectedRows]
+    )
+    const pendingFocusRowIndex = useMemo(() => {
+      if (!pendingFocusTarget) return null
+      const row = findProjectedRowForMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
+      if (!row) return null
+      const rowPosition = projectedRows.findIndex((candidate) => candidate.rowKey === row.rowKey)
+      return rowPosition >= 0 ? rowPosition : null
+    }, [findProjectedRowForMessage, pendingFocusTarget, projectedRows])
     const virtualRows = virtualizeEnabled ? projectedRows : EMPTY_VIRTUAL_ROWS
     const {
       window: virtualWindow,
@@ -1048,6 +1087,7 @@ export const TranscriptPanel = memo(
       contentRef,
       autoFollowRef,
       compactDensity,
+      forcedRowIndex: pendingFocusRowIndex,
       expandedRowIds
     })
     const userGutterMarkers = useMemo(
@@ -1062,11 +1102,6 @@ export const TranscriptPanel = memo(
     const [highlightedMessageTarget, setHighlightedMessageTarget] = useState<{
       messageId: string
       rowKey?: string
-    } | null>(null)
-    const [pendingFocusTarget, setPendingFocusTarget] = useState<{
-      messageId: string
-      rowKey?: string
-      attempt: number
     } | null>(null)
     const highlightTimerRef = useRef<number | null>(null)
     const chatId = currentChat?.appChatId ?? null
@@ -1085,23 +1120,6 @@ export const TranscriptPanel = memo(
         highlightTimerRef.current = null
       }
     }, [chatId])
-    const findProjectedRowForMessage = useCallback(
-      (messageId: string, rowKey?: string) => {
-        if (rowKey) {
-          const byRowKey = projectedRows.find((candidate) => candidate.rowKey === rowKey)
-          if (byRowKey) return byRowKey
-        }
-        return (
-          projectedRows.find((candidate) => candidate.id === messageId) ||
-          projectedRows.find((candidate) => {
-            const message = displayMessages[candidate.index]
-            const groupedIds = message?.metadata?.groupedToolMessageIds
-            return Array.isArray(groupedIds) && groupedIds.includes(messageId)
-          })
-        )
-      },
-      [displayMessages, projectedRows]
-    )
     const prepareManualTranscriptJump = useCallback(() => {
       if (autoFollowRef) autoFollowRef.current = false
       onManualTranscriptJump?.()
@@ -1165,7 +1183,9 @@ export const TranscriptPanel = memo(
           virtualizeEnabled && virtualHeights.length === projectedRows.length
             ? virtualHeights
             : projectedRows.map((candidate) => candidate.estimatedHeight)
-        const estimatedTop = sumHeights([...rowHeights], 0, row.index)
+        const rowPosition = projectedRows.findIndex((candidate) => candidate.rowKey === row.rowKey)
+        if (rowPosition < 0) return
+        const estimatedTop = sumHeights([...rowHeights], 0, rowPosition)
         const nextScrollTop = Math.max(
           0,
           estimatedTop - Math.round(scroller.clientHeight * 0.35)

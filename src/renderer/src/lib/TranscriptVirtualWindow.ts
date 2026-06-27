@@ -324,6 +324,8 @@ export interface SelectWindowInput {
   heights: number[]
   /** Extra px mounted above + below the visible band. */
   overscanPx?: number
+  /** Force-mount one row for programmatic jump/focus requests. */
+  forceIndex?: number | null
 }
 
 /**
@@ -347,7 +349,6 @@ export function selectWindow(input: SelectWindowInput): VirtualWindow {
   const n = heights.length
   if (n === 0) return { startIndex: 0, endIndex: 0, topSpacerPx: 0, bottomSpacerPx: 0 }
 
-  const scrollTop = Number.isFinite(input.scrollTop) ? Math.max(0, input.scrollTop) : 0
   const viewportHeight = Number.isFinite(input.viewportHeight)
     ? Math.max(0, input.viewportHeight)
     : 0
@@ -355,6 +356,19 @@ export function selectWindow(input: SelectWindowInput): VirtualWindow {
     Number.isFinite(input.overscanPx) && (input.overscanPx as number) >= 0
       ? (input.overscanPx as number)
       : DEFAULT_OVERSCAN_PX
+  const forceIndex =
+    typeof input.forceIndex === 'number' &&
+    Number.isInteger(input.forceIndex) &&
+    input.forceIndex >= 0 &&
+    input.forceIndex < n
+      ? input.forceIndex
+      : null
+
+  let scrollTop = Number.isFinite(input.scrollTop) ? Math.max(0, input.scrollTop) : 0
+  if (forceIndex !== null) {
+    const forcedRowTop = sumHeights(heights, 0, forceIndex)
+    scrollTop = Math.max(0, forcedRowTop - Math.round(viewportHeight * 0.35))
+  }
 
   const windowTop = scrollTop - overscan
   const windowBottom = scrollTop + viewportHeight + overscan
@@ -378,6 +392,10 @@ export function selectWindow(input: SelectWindowInput): VirtualWindow {
   }
   if (startIndex === -1) startIndex = n // everything is above the window
   if (endIndex < startIndex) endIndex = startIndex
+  if (forceIndex !== null && (forceIndex < startIndex || forceIndex >= endIndex)) {
+    startIndex = forceIndex
+    endIndex = Math.min(n, forceIndex + 1)
+  }
 
   return {
     startIndex,
