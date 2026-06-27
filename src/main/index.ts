@@ -108,6 +108,7 @@ import { normalizeRunRoute, createFallbackRunId, routeWithRunId } from './run/Ru
 import {
   codexSandboxForMode,
   buildCodexUserInput,
+  codexGitMetadataRootsForWorkspace,
   normalizeCodexTurnStatus
 } from './codex/CodexRunPolicy'
 import {
@@ -12064,16 +12065,22 @@ function codexSandboxPolicyForMode(
   scope: ChatScope = 'workspace'
 ) {
   const grants = normalizeExternalPathGrants(externalPathGrants)
-  const hostRoot = parse(resolve(workspace)).root || sep
+  const workspaceRoot = resolve(workspace)
+  const hostRoot = parse(workspaceRoot).root || sep
+  const gitMetadataRoots =
+    scope === 'global' ? [] : codexGitMetadataRootsForWorkspace(workspaceRoot)
   const readableRoots =
-    scope === 'global' ? [hostRoot] : [workspace, ...grants.map((grant) => grant.path)]
+    scope === 'global'
+      ? [hostRoot]
+      : uniqueRoots([workspaceRoot, ...gitMetadataRoots, ...grants.map((grant) => grant.path)])
   const writableRoots =
     scope === 'global'
       ? [hostRoot]
-      : [
-          workspace,
+      : uniqueRoots([
+          workspaceRoot,
+          ...gitMetadataRoots,
           ...grants.filter((grant) => grant.access === 'write').map((grant) => grant.path)
-        ]
+        ])
   if (approvalMode === 'plan') {
     return { type: 'readOnly', readableRoots, networkAccess: false }
   }
@@ -12085,6 +12092,10 @@ function codexSandboxPolicyForMode(
     excludeTmpdirEnvVar: false,
     excludeSlashTmp: false
   }
+}
+
+function uniqueRoots(roots: string[]): string[] {
+  return [...new Set(roots.map((root) => resolve(root)))]
 }
 
 
