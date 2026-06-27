@@ -280,16 +280,6 @@ function escapeDomSelectorValue(value: string): string {
     : value.replace(/["\\]/g, '\\$&')
 }
 
-function shouldUseReducedMotion(): boolean {
-  if (typeof document !== 'undefined' && document.documentElement.dataset.reduceMotion === 'true') {
-    return true
-  }
-  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  }
-  return false
-}
-
 /**
  * 1.0.6-TV1 — In-house transcript windowing glue (renderer side).
  *
@@ -353,6 +343,7 @@ function useTranscriptVirtualization(params: {
   blockRef: (el: HTMLDivElement | null) => void
   spacerBottomRef: React.RefObject<HTMLDivElement | null>
   heights: readonly number[]
+  syncScrollPosition: (scrollTop: number) => void
 } {
   const { enabled, rows, scrollRef, contentRef, autoFollowRef, compactDensity, expandedRowIds } =
     params
@@ -410,6 +401,7 @@ function useTranscriptVirtualization(params: {
   // after it, the window tracks the actual scroll position so scroll-up
   // loads older rows.
   const hasScrolledRef = useRef(false)
+  const skipNextAnchorCorrectionRef = useRef(false)
 
   // Re-render signals. State (not refs) so a change forces a recompute;
   // the heavy work is gone (only the small window mounts) so a per-frame
@@ -418,6 +410,24 @@ function useTranscriptVirtualization(params: {
   const [measureTick, setMeasureTick] = useState(0)
   const bumpScroll = useCallback(() => setScrollTick((t) => (t + 1) % 0x7fffffff), [])
   const bumpMeasure = useCallback(() => setMeasureTick((t) => (t + 1) % 0x7fffffff), [])
+  const syncScrollPosition = useCallback(
+    (nextScrollTop: number): void => {
+      if (!enabled) return
+      const scroller = scrollRef.current
+      const scrollTop = Number.isFinite(nextScrollTop) ? Math.max(0, nextScrollTop) : 0
+      scrollTopRef.current = scrollTop
+      if (scroller) {
+        viewportRef.current = scroller.clientHeight
+        const widthEl = contentRef?.current ?? scroller
+        bucketRef.current = widthBucket(widthEl.clientWidth)
+      }
+      hasScrolledRef.current = true
+      anchorRef.current = null
+      skipNextAnchorCorrectionRef.current = true
+      bumpScroll()
+    },
+    [bumpScroll, contentRef, enabled, scrollRef]
+  )
 
   // Slot heights (measured-or-estimated, gap folded in). Recomputed only
   // when the rows change or a measurement/bucket/density signal fires —
@@ -617,7 +627,9 @@ function useTranscriptVirtualization(params: {
     // bottom where the App machinery owns scrollTop.
     const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
     const atBottom = distanceFromBottom <= 24
-    if (measureConvergedRef.current && !atBottom && anchorRef.current) {
+    const skipAnchorCorrection = skipNextAnchorCorrectionRef.current
+    skipNextAnchorCorrectionRef.current = false
+    if (!skipAnchorCorrection && measureConvergedRef.current && !atBottom && anchorRef.current) {
       const anchor = anchorRef.current
       const idx = rowsRef.current.findIndex((r) => r.rowKey === anchor.rowKey)
       if (idx >= 0) {
@@ -710,7 +722,7 @@ function useTranscriptVirtualization(params: {
     observerRef.current?.observe(el)
   }, [])
 
-  return { window: virtualWindow, blockRef, spacerBottomRef, heights }
+  return { window: virtualWindow, blockRef, spacerBottomRef, heights, syncScrollPosition }
 }
 /* eslint-enable react-hooks/refs */
 
@@ -1025,7 +1037,8 @@ export const TranscriptPanel = memo(
       window: virtualWindow,
       blockRef: virtualBlockRef,
       spacerBottomRef,
-      heights: virtualHeights
+      heights: virtualHeights,
+      syncScrollPosition: syncVirtualizerScrollPosition
     } = useTranscriptVirtualization({
       enabled: virtualizeEnabled,
       rows: virtualRows,
@@ -1082,10 +1095,13 @@ export const TranscriptPanel = memo(
               `[data-message-id="${escapeDomSelectorValue(messageId)}"]`
             )
         if (!target) return false
-        target.scrollIntoView({
-          behavior: shouldUseReducedMotion() ? 'auto' : 'smooth',
-          block: 'center'
-        })
+        const targetRect = target.getBoundingClientRect()
+        const scrollerRect = scroller.getBoundingClientRect()
+        const targetTop = scroller.scrollTop + targetRect.top - scrollerRect.top
+        const topOffset = Math.max(56, Math.round(scroller.clientHeight * 0.22))
+        const nextScrollTop = Math.max(0, targetTop - topOffset)
+        scroller.scrollTo({ top: nextScrollTop, behavior: 'auto' })
+        syncVirtualizerScrollPosition(nextScrollTop)
         setHighlightedMessageTarget({ messageId, rowKey })
         setPendingFocusTarget((current) =>
           current?.messageId === messageId && current?.rowKey === rowKey ? null : current
@@ -1101,7 +1117,7 @@ export const TranscriptPanel = memo(
         }, 1800)
         return true
       },
-      [scrollRef]
+      [scrollRef, syncVirtualizerScrollPosition]
     )
 
     const estimateScrollToMessage = useCallback(
@@ -1123,9 +1139,16 @@ export const TranscriptPanel = memo(
           estimatedTop - Math.round(scroller.clientHeight * 0.35)
         )
         scroller.scrollTop = nextScrollTop
-        scroller.dispatchEvent(new Event('scroll'))
+        syncVirtualizerScrollPosition(nextScrollTop)
       },
-      [autoFollowRef, projectedRows, scrollRef, virtualHeights, virtualizeEnabled]
+      [
+        autoFollowRef,
+        projectedRows,
+        scrollRef,
+        syncVirtualizerScrollPosition,
+        virtualHeights,
+        virtualizeEnabled
+      ]
     )
 
     const scrollToMessage = useCallback(
