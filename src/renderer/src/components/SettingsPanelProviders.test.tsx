@@ -365,6 +365,13 @@ describe('SettingsPanel provider cards', () => {
               enabled: false,
               transport: 'stdio',
               command: 'node'
+            },
+            {
+              id: 'server-bad',
+              name: 'bad',
+              enabled: true,
+              transport: 'http',
+              url: 'ftp://example.test/mcp'
             }
           ]
         })}
@@ -372,7 +379,7 @@ describe('SettingsPanel provider cards', () => {
     )
 
     expect(html).toContain('User MCP servers')
-    expect(html).toContain('1 enabled definitions')
+    expect(html).toContain('1 active definitions')
     expect(html).toContain('Provider tool surfaces')
     expect(html).toContain('Open Provider Tools')
     expect(html).toContain('User-managed MCP servers')

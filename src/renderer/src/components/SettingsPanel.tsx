@@ -3276,7 +3276,9 @@ export function SettingsPanel({
   const connectedMcpProviderCount = providerMcpSummaries.filter(
     (entry) => entry.available || entry.enabled
   ).length
-  const enabledUserMcpServerCount = userMcpServers.filter((server) => server.enabled).length
+  const activeUserMcpServerCount = userMcpServers.filter(
+    (server) => server.enabled && hasRunnableUserMcpEndpoint(server)
+  ).length
   const userMcpTransportCount = new Set(userMcpServers.map((server) => server.transport)).size
   const codexExportableUserMcpServerCount = userMcpServers.filter(
     isCodexExportableUserMcpServer
@@ -6634,7 +6636,7 @@ export function SettingsPanel({
                 </article>
                 <article className="settings-mcp-summary-card">
                   <span>Enabled</span>
-                  <strong>{enabledUserMcpServerCount}</strong>
+                  <strong>{activeUserMcpServerCount}</strong>
                   <small>active definitions</small>
                 </article>
                 <article className="settings-mcp-summary-card">
@@ -7436,7 +7438,7 @@ export function SettingsPanel({
                 <article className="settings-safety-summary-card">
                   <span>User MCP servers</span>
                   <strong>{userMcpServers.length}</strong>
-                  <small>{enabledUserMcpServerCount} enabled definitions</small>
+                  <small>{activeUserMcpServerCount} active definitions</small>
                 </article>
                 {isSettingsTabVisible('pairing') && (
                   <article className="settings-safety-summary-card">
