@@ -1268,7 +1268,14 @@ export class EnsembleOrchestrator {
     if (!prompt) return { status: 'ignored' }
     const imageAttachments = normalizeEnsembleImageAttachments(input.imageAttachments)
     const imageThumbnails = normalizeEnsembleImageThumbnails(input.imageThumbnails)
-    const existing = this.roundsByChatId.get(input.chatId)
+    let existing = this.roundsByChatId.get(input.chatId)
+    if (existing) {
+      const persistedRound = this.deps.getChat(input.chatId)?.ensemble?.activeRound
+      if (persistedRound?.roundId !== existing.roundId || persistedRound.status !== 'running') {
+        this.roundsByChatId.delete(input.chatId)
+        existing = undefined
+      }
+    }
     if (existing && !existing.cancelled) {
       this.cancelWakeupsOnUserInput(existing)
       if (input.mode === 'steer') {
@@ -1426,7 +1433,36 @@ export class EnsembleOrchestrator {
 
   async cancelRound(chatId: string, reason = 'cancelled'): Promise<boolean> {
     const runtime = this.roundsByChatId.get(chatId)
-    if (!runtime) return false
+    if (!runtime) {
+      const chat = this.deps.getChat(chatId)
+      const round = chat?.ensemble?.activeRound
+      if (!round || round.status !== 'running') return false
+      const endedAt = this.deps.nowIso()
+      this.updateChatRound(chatId, (current) =>
+        current?.roundId === round.roundId
+          ? {
+              ...current,
+              status: 'cancelled',
+              queuedPrompt: undefined,
+              queuedPrompts: [],
+              activeParticipantId: undefined,
+              endedAt,
+              participants: current.participants.map((participant) =>
+                participant.status === 'idle' || participant.status === 'running'
+                  ? {
+                      ...participant,
+                      status: 'cancelled',
+                      reason,
+                      endedAt
+                    }
+                  : participant
+              )
+            }
+          : current
+      )
+      this.completeCheckpoint(chatId, round.roundId, 'cancelled')
+      return true
+    }
     runtime.cancelled = true
     runtime.queuedPrompts = []
     this.cancelWakeupsForRuntime(runtime, reason)
