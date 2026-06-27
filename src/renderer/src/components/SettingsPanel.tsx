@@ -887,7 +887,7 @@ function userMcpServerAuditKey(server: UserMcpServerConfig): string {
   return server.name.trim() || server.id
 }
 
-function formatUserMcpServerAuditJson(server: UserMcpServerConfig): string {
+function userMcpServerAuditEntry(server: UserMcpServerConfig): Record<string, unknown> {
   const env =
     server.env && Object.keys(server.env).length > 0
       ? Object.fromEntries(
@@ -909,15 +909,37 @@ function formatUserMcpServerAuditJson(server: UserMcpServerConfig): string {
           url: server.url || '',
           ...(env ? { env } : {})
         }
+  return entry
+}
 
+function formatUserMcpServerAuditJson(server: UserMcpServerConfig): string {
   return JSON.stringify(
     {
       mcpServers: {
-        [userMcpServerAuditKey(server)]: entry
+        [userMcpServerAuditKey(server)]: userMcpServerAuditEntry(server)
       },
       taskwraith: {
         id: server.id,
         enabled: server.enabled
+      }
+    },
+    null,
+    2
+  )
+}
+
+function formatUserMcpServersAuditJson(servers: readonly UserMcpServerConfig[]): string {
+  return JSON.stringify(
+    {
+      mcpServers: Object.fromEntries(
+        servers.map((server) => [userMcpServerAuditKey(server), userMcpServerAuditEntry(server)])
+      ),
+      taskwraith: {
+        servers: servers.map((server) => ({
+          id: server.id,
+          name: server.name,
+          enabled: server.enabled
+        }))
       }
     },
     null,
@@ -2011,6 +2033,7 @@ export function SettingsPanel({
   const [mcpImportText, setMcpImportText] = useState('')
   const [mcpImportError, setMcpImportError] = useState('')
   const [copiedMcpServerId, setCopiedMcpServerId] = useState<string | null>(null)
+  const [copiedMcpServersJson, setCopiedMcpServersJson] = useState(false)
   const [keyCommandQuery, setKeyCommandQuery] = useState('')
   const [recordingKeyCommandId, setRecordingKeyCommandId] = useState<KeyCommandId | null>(null)
   const [keyCommandRecordError, setKeyCommandRecordError] = useState('')
@@ -2155,6 +2178,23 @@ export function SettingsPanel({
         window.setTimeout(() => {
           setCopiedMcpServerId((current) => (current === server.id ? null : current))
         }, 1600)
+      })
+      .catch(() => undefined)
+  }
+
+  const copyAllMcpServersAuditJson = (): void => {
+    if (
+      userMcpServers.length === 0 ||
+      typeof navigator === 'undefined' ||
+      !navigator.clipboard?.writeText
+    ) {
+      return
+    }
+    void navigator.clipboard
+      .writeText(formatUserMcpServersAuditJson(userMcpServers))
+      .then(() => {
+        setCopiedMcpServersJson(true)
+        window.setTimeout(() => setCopiedMcpServersJson(false), 1600)
       })
       .catch(() => undefined)
   }
@@ -5697,6 +5737,14 @@ export function SettingsPanel({
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    onClick={copyAllMcpServersAuditJson}
+                    disabled={userMcpServers.length === 0}
+                  >
+                    {copiedMcpServersJson ? 'Copied all' : 'Copy all JSON'}
+                  </button>
                   <button
                     type="button"
                     className="btn btn-sm btn-ghost"
