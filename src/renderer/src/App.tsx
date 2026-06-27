@@ -228,7 +228,7 @@ import {
   type ExternalPathGrantGap
 } from './lib/externalPathGrantPreflight'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../main/services/GitService'
-import { Sidebar } from './components/Sidebar'
+import { Sidebar, type SharedChatCreateVariant } from './components/Sidebar'
 import { Inspector } from './components/Inspector'
 import {
   SETTINGS_TABS,
@@ -1619,16 +1619,6 @@ function App(): React.JSX.Element {
     if (!chatId) return
     void shareChatIdAndCopyInvite(chatId)
   }, [currentChat?.appChatId, shareChatIdAndCopyInvite])
-  // "New Shared Chat" (+ New menu / Shared section "+"): create a fresh global
-  // chat, select it, then share it + copy the invite.
-  const handleStartSharedChat = useCallback(async () => {
-    if (typeof window.api.createGlobalChat !== 'function') return
-    const newChat = await window.api.createGlobalChat()
-    setChats((prev) => mergeChatRecord(prev, newChat))
-    await selectGlobalChat(newChat)
-    reapAbandonedChatsAfterCreate(newChat.appChatId)
-    await shareChatIdAndCopyInvite(newChat.appChatId)
-  }, [shareChatIdAndCopyInvite])
   // Host-side "Stop sharing": revoke every enabled share on the current chat
   // (audit finding L6-1 — the revoke bridge existed with no renderer caller).
   // Confirm first, then revoke each enabled share and re-derive the shared set.
@@ -6565,7 +6555,7 @@ function App(): React.JSX.Element {
       .catch(() => {})
   }
 
-  const handleNewChat = async (wsId: string, wsPath: string) => {
+  const handleNewChat = async (wsId: string, wsPath: string): Promise<ChatRecord> => {
     const newChat = await window.api.createChat(wsId, wsPath)
     const provider = getChatProvider(newChat)
     setSideChatId(null)
@@ -6601,6 +6591,7 @@ function App(): React.JSX.Element {
       requestUsageSummaryRefresh(wsId, provider)
     })
     reapAbandonedChatsAfterCreate(newChat.appChatId)
+    return newChat
   }
 
   const clearWorkspaceOnlyUiState = () => {
@@ -6695,8 +6686,8 @@ function App(): React.JSX.Element {
     reapAbandonedChatsAfterCreate(newChat.appChatId)
   }
 
-  const handleNewEnsemble = async () => {
-    if (settings?.ensembleModeEnabled === false) return
+  const handleNewEnsemble = async (): Promise<ChatRecord | null> => {
+    if (settings?.ensembleModeEnabled === false) return null
     const workspace =
       currentWorkspace ||
       (currentChat?.scope === 'workspace' ? getWorkspaceForChat(currentChat) : null)
@@ -6727,6 +6718,37 @@ function App(): React.JSX.Element {
     // 1.0.3 — no setup modal. EnsembleParticipantsAboveRow renders
     // inline once `setCurrentChat(newChat)` above lands the chat in
     // view; the user edits per-participant settings via chip flyouts.
+    return newChat
+  }
+
+  // Shared beta launcher: preserve the user's chosen chat kind instead of
+  // always dropping into a General chat before creating the collaborator share.
+  const handleStartSharedChat = async (
+    variant: SharedChatCreateVariant = 'global'
+  ): Promise<void> => {
+    let sharedChat: ChatRecord | null = null
+    if (variant === 'workspace') {
+      const workspace =
+        currentWorkspace ||
+        (currentChat?.scope === 'workspace' ? getWorkspaceForChat(currentChat) : null)
+      if (!workspace?.id || !workspace.path) {
+        window.alert('Open a workspace first to create a shared workspace chat.')
+        return
+      }
+      sharedChat = await handleNewChat(workspace.id, workspace.path)
+    } else if (variant === 'ensemble') {
+      sharedChat = await handleNewEnsemble()
+    } else {
+      if (typeof window.api.createGlobalChat !== 'function') return
+      const newChat = await window.api.createGlobalChat()
+      setChats((prev) => mergeChatRecord(prev, newChat))
+      await selectGlobalChat(newChat)
+      reapAbandonedChatsAfterCreate(newChat.appChatId)
+      sharedChat = newChat
+    }
+    if (sharedChat) {
+      await shareChatIdAndCopyInvite(sharedChat.appChatId)
+    }
   }
 
   const handleWelcomeSuggestion = (suggestion: string) => {

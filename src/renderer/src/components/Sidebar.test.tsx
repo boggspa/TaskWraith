@@ -5,7 +5,9 @@ import {
   Sidebar,
   DevicesFooterPopover,
   ApprovalsFooterPopover,
-  SharesFooterPopover
+  SharesFooterPopover,
+  getSharedChatCreateOptions,
+  type SharedChatCreateVariant
 } from './Sidebar'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
@@ -25,7 +27,8 @@ const SIDEBAR_SECTION_IDS = [
   'recents',
   'ensembles',
   'workspaces',
-  'chats'
+  'chats',
+  'shared'
 ] as const
 function collapseSectionsExcept(...expanded: string[]): string {
   return JSON.stringify(SIDEBAR_SECTION_IDS.filter((id) => !expanded.includes(id)))
@@ -126,6 +129,7 @@ function renderSidebar(
     ensembleModeEnabled?: boolean
     workflows?: WorkflowDefinition[]
     onCreateWorkflow?: () => void
+    onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
     collaboratingChatIds?: Set<string>
     pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
     hasConnectedCollaborator?: boolean
@@ -155,6 +159,7 @@ function renderSidebar(
       onSelectChat={() => {}}
       onOpenSettings={() => {}}
       onCreateWorkflow={options.onCreateWorkflow}
+      onCreateSharedChat={options.onCreateSharedChat}
     />
   )
 }
@@ -238,6 +243,41 @@ describe('Sidebar workflows', () => {
     expect(html).toContain('Every 15m')
     expect(html).toContain('Queued')
     expect(html).toContain('provider-codex')
+  })
+})
+
+describe('Sidebar shared chat create options', () => {
+  it('offers explicit shared chat variants with availability constraints', () => {
+    expect(
+      getSharedChatCreateOptions({ hasWorkspace: true, ensembleModeEnabled: true }).map(
+        ({ variant, label, disabled }) => ({ variant, label, disabled })
+      )
+    ).toEqual([
+      { variant: 'global', label: 'General Chat - Shared', disabled: false },
+      { variant: 'workspace', label: 'Workspace Chat - Shared', disabled: false },
+      { variant: 'ensemble', label: 'Ensemble Chat - Shared', disabled: false }
+    ])
+
+    expect(
+      getSharedChatCreateOptions({ hasWorkspace: false, ensembleModeEnabled: false }).map(
+        ({ variant, disabled }) => ({ variant, disabled })
+      )
+    ).toEqual([
+      { variant: 'global', disabled: false },
+      { variant: 'workspace', disabled: true },
+      { variant: 'ensemble', disabled: true }
+    ])
+  })
+
+  it('renders the Shared section launcher as a variant chooser', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('shared')
+    })
+
+    const html = renderSidebar([], { onCreateSharedChat: () => {} })
+
+    expect(html).toContain('sidebar-shared-section')
+    expect(html).toContain('aria-label="Choose shared chat type"')
   })
 })
 

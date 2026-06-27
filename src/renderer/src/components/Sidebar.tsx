@@ -52,6 +52,48 @@ import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 
+export type SharedChatCreateVariant = 'global' | 'workspace' | 'ensemble'
+
+export interface SharedChatCreateOption {
+  variant: SharedChatCreateVariant
+  label: string
+  title: string
+  disabled: boolean
+}
+
+export function getSharedChatCreateOptions({
+  hasWorkspace,
+  ensembleModeEnabled
+}: {
+  hasWorkspace: boolean
+  ensembleModeEnabled: boolean
+}): SharedChatCreateOption[] {
+  return [
+    {
+      variant: 'global',
+      label: 'General Chat - Shared',
+      title: 'Create a shared general chat',
+      disabled: false
+    },
+    {
+      variant: 'workspace',
+      label: 'Workspace Chat - Shared',
+      title: hasWorkspace
+        ? 'Create a shared workspace chat'
+        : 'Open a workspace first to create a shared workspace chat',
+      disabled: !hasWorkspace
+    },
+    {
+      variant: 'ensemble',
+      label: 'Ensemble Chat - Shared',
+      title: ensembleModeEnabled
+        ? 'Create a shared ensemble chat'
+        : 'Enable Ensemble mode to create a shared ensemble chat',
+      disabled: !ensembleModeEnabled
+    }
+  ]
+}
+
 const ageTickListeners = new Set<() => void>()
 if (typeof window !== 'undefined') {
   window.setInterval(() => {
@@ -185,7 +227,7 @@ interface SidebarProps {
   onInspectRun?: (runId: string, chatId: string | undefined) => void
   onCreateWorkflow?: () => void
   /** Start a new shared chat + copy a collaborator invite (People feature). */
-  onCreateSharedChat?: () => void
+  onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
   /** Join someone else's shared chat by pasting their invite (People feature). */
   onJoinSharedChat?: () => void
   onRunWorkflowNow?: (workflowId: string) => void
@@ -1898,6 +1940,7 @@ export function Sidebar({
 }: SidebarProps) {
   const [hoveredWorkspace, setHoveredWorkspace] = useState<string | null>(null)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
+  const [sharedCreateMenuOpen, setSharedCreateMenuOpen] = useState(false)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [settingsMenuPane, setSettingsMenuPane] = useState<SidebarSettingsMenuPane>('root')
   // Footer control-row popovers (Approvals / Shares / Devices). At most one is
@@ -1967,6 +2010,7 @@ export function Sidebar({
   // rest of the app uses for floating menus (overflow menus, slash
   // menu portal, etc.).
   const newMenuWrapRef = useRef<HTMLDivElement | null>(null)
+  const sharedCreateMenuWrapRef = useRef<HTMLDivElement | null>(null)
   const settingsMenuWrapRef = useRef<HTMLDivElement | null>(null)
   // One wrap around the whole footer control cluster (Approvals/Shares/Devices
   // buttons + their popovers) so a single outside-click/Escape listener
@@ -2351,6 +2395,16 @@ export function Sidebar({
     expandSidebarSection('workflows')
     onCreateWorkflow?.()
   }
+  const sharedChatCreateOptions = getSharedChatCreateOptions({
+    hasWorkspace: Boolean(currentWorkspace),
+    ensembleModeEnabled
+  })
+  const handleCreateSharedChat = (variant: SharedChatCreateVariant) => {
+    setNewMenuOpen(false)
+    setSharedCreateMenuOpen(false)
+    expandSidebarSection('shared')
+    onCreateSharedChat?.(variant)
+  }
 
   // Outside-click + Escape dismiss for the `+ New` popover. Mounts
   // global mousedown / keydown listeners only while the menu is open
@@ -2378,6 +2432,27 @@ export function Sidebar({
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [newMenuOpen])
+
+  useEffect(() => {
+    if (!sharedCreateMenuOpen) return
+    const handleMouseDown = (event: globalThis.MouseEvent) => {
+      const wrap = sharedCreateMenuWrapRef.current
+      if (!wrap) return
+      if (event.target instanceof Node && wrap.contains(event.target)) return
+      setSharedCreateMenuOpen(false)
+    }
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSharedCreateMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [sharedCreateMenuOpen])
 
   useEffect(() => {
     if (!settingsMenuOpen) return
@@ -3011,7 +3086,10 @@ export function Sidebar({
             <button
               type="button"
               className="sidebar-primary-action"
-              onClick={() => setNewMenuOpen((current) => !current)}
+              onClick={() => {
+                setSharedCreateMenuOpen(false)
+                setNewMenuOpen((current) => !current)
+              }}
               title="Create"
               aria-label="Create"
               aria-expanded={newMenuOpen}
@@ -3073,20 +3151,22 @@ export function Sidebar({
                   </button>
                 )}
                 {onCreateSharedChat && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="sidebar-new-menu-item"
-                    onClick={() => {
-                      setNewMenuOpen(false)
-                      expandSidebarSection('shared')
-                      onCreateSharedChat()
-                    }}
-                    title="New shared chat — invite people to follow along"
-                  >
-                    <PeopleSymbolIcon />
-                    <span className="sidebar-new-menu-item-label">New Shared Chat</span>
-                  </button>
+                  <>
+                    {sharedChatCreateOptions.map((option) => (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        key={option.variant}
+                        className="sidebar-new-menu-item"
+                        onClick={() => handleCreateSharedChat(option.variant)}
+                        disabled={option.disabled}
+                        title={option.title}
+                      >
+                        <PeopleSymbolIcon />
+                        <span className="sidebar-new-menu-item-label">{option.label}</span>
+                      </button>
+                    ))}
+                  </>
                 )}
                 {onJoinSharedChat && (
                   <button
@@ -4216,18 +4296,41 @@ export function Sidebar({
                   <h4 className="sidebar-section-title">Shared</h4>
                 </button>
                 {onCreateSharedChat && (
-                  <button
-                    type="button"
-                    className="sidebar-section-header-action sidebar-shared-create"
-                    onClick={() => {
-                      expandSidebarSection('shared')
-                      onCreateSharedChat()
-                    }}
-                    title="New shared chat — invite people to follow along"
-                    aria-label="New shared chat"
-                  >
-                    <PlusSymbolIcon />
-                  </button>
+                  <div className="sidebar-new-menu-wrap" ref={sharedCreateMenuWrapRef}>
+                    <button
+                      type="button"
+                      className="sidebar-section-header-action sidebar-shared-create"
+                      onClick={() => {
+                        setNewMenuOpen(false)
+                        expandSidebarSection('shared')
+                        setSharedCreateMenuOpen((current) => !current)
+                      }}
+                      title="Choose shared chat type"
+                      aria-label="Choose shared chat type"
+                      aria-expanded={sharedCreateMenuOpen}
+                      aria-haspopup="menu"
+                    >
+                      <PlusSymbolIcon />
+                    </button>
+                    {sharedCreateMenuOpen && (
+                      <div className="sidebar-new-menu" role="menu" onKeyDown={moveMenuFocus}>
+                        {sharedChatCreateOptions.map((option) => (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            key={option.variant}
+                            className="sidebar-new-menu-item"
+                            onClick={() => handleCreateSharedChat(option.variant)}
+                            disabled={option.disabled}
+                            title={option.title}
+                          >
+                            <PeopleSymbolIcon />
+                            <span className="sidebar-new-menu-item-label">{option.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
               {!isSectionCollapsed('shared') && (
