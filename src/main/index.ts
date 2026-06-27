@@ -832,6 +832,7 @@ import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
 import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandlers'
 import { registerWorkspaceFileEditorHandlers } from './ipc/workspaceFileEditorHandlers'
+import { registerWorkspaceDiffSnapshotHandlers } from './ipc/workspaceDiffSnapshotHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -23810,6 +23811,7 @@ if (isGeminiMcpBridgeProcess) {
       recordWorkspaceEditorChange: (input) => AppStore.recordWorkspaceEditorChange(input),
       scheduleRemoteGitSnapshotRefresh
     })
+    registerWorkspaceDiffSnapshotHandlers({ requireRegisteredWorkspace })
 
     registerChatHandlers({
       chatService,
@@ -28250,10 +28252,6 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
 
-    ipcMain.handle('get-diff', async (_, workspace: string) => {
-      return getWorkspaceDiff(requireRegisteredWorkspace(workspace))
-    })
-
     ipcMain.handle('open-workspace-popout', async (_, input: unknown) => {
       return openWorkspacePopout(input)
     })
@@ -28269,10 +28267,6 @@ if (isGeminiMcpBridgeProcess) {
 
     ipcMain.handle('get-workspace-change-sets', async (_, filter?: WorkspaceChangeFilter) => {
       return AppStore.getWorkspaceChangeSets(filter || {})
-    })
-
-    ipcMain.handle('capture-snapshot', async (_, workspace: string) => {
-      return captureWorkspaceSnapshot(requireRegisteredWorkspace(workspace))
     })
 
     ipcMain.handle(
