@@ -103,6 +103,64 @@ describe('detectTailscale', () => {
     expect(result.reason).not.toContain('JSON parse failed')
   })
 
+  it('retries transient macOS GUI CLI failures before reporting unavailable', async () => {
+    const sleepCalls: number[] = []
+    const execFn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('The Tailscale GUI failed to start: Tailscale.CLIError error 3.'))
+      .mockResolvedValueOnce({ stdout: JSON.stringify(SAMPLE_RUNNING), stderr: '' })
+
+    const result = await detectTailscale({
+      cliPath: '/fake/tailscale',
+      execFn,
+      retryDelayMs: 15,
+      sleep: async (ms) => {
+        sleepCalls.push(ms)
+      }
+    })
+
+    expect(result.available).toBe(true)
+    expect(result.tailnetIPv4).toBe('100.64.10.20')
+    expect(execFn).toHaveBeenCalledTimes(2)
+    expect(sleepCalls).toEqual([15])
+  })
+
+  it('retries transient non-JSON readiness output before reporting unavailable', async () => {
+    const execFn = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: 'The Tailscale GUI failed to start: Tailscale.CLIError error 3.\n',
+        stderr: ''
+      })
+      .mockResolvedValueOnce({ stdout: JSON.stringify(SAMPLE_RUNNING), stderr: '' })
+
+    const result = await detectTailscale({
+      cliPath: '/fake/tailscale',
+      execFn,
+      retryDelayMs: 0
+    })
+
+    expect(result.available).toBe(true)
+    expect(execFn).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns the final retry failure reason when status never becomes ready', async () => {
+    const execFn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('first failure'))
+      .mockRejectedValueOnce(new Error('second failure'))
+
+    const result = await detectTailscale({
+      cliPath: '/fake/tailscale',
+      execFn,
+      retryDelayMs: 0
+    })
+
+    expect(result.available).toBe(false)
+    expect(result.reason).toContain('second failure')
+    expect(execFn).toHaveBeenCalledTimes(2)
+  })
+
   it('truncates very long human-readable messages to 240 chars', async () => {
     const result = await detectTailscale({
       cliPath: '/fake/tailscale',

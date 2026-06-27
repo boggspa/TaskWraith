@@ -100,6 +100,89 @@ export interface DetectTailscaleOptions {
    * the filesystem probe and the PATH search. Pass `null` to force
    * "not found". */
   cliPath?: string | null
+  /** Number of extra status attempts after the first one. Default 1
+   * because the macOS GUI helper can briefly reject status requests
+   * while the Network Extension is waking up. */
+  statusRetries?: number
+  /** Delay between status attempts. Default 300ms. */
+  retryDelayMs?: number
+  /** Inject sleep for tests. */
+  sleep?: (ms: number) => Promise<void>
+}
+
+type StatusProbeResult =
+  | { ok: true; raw: TailscaleStatusRaw }
+  | { ok: false; reason: string }
+
+const DEFAULT_STATUS_RETRIES = 1
+const DEFAULT_RETRY_DELAY_MS = 300
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function probeTailscaleStatus(
+  cliPath: string,
+  exec: (cmd: string, args: string[]) => Promise<{ stdout: string; stderr: string }>
+): Promise<StatusProbeResult> {
+  try {
+    const { stdout } = await exec(cliPath, ['status', '--json'])
+    // The CLI returns a human-readable message (e.g. "The Tailscale
+    // daemon is not running. Run 'sudo tailscale up'…") instead of
+    // JSON when the daemon isn't ready. Detect that shape and surface
+    // the message verbatim rather than vomiting "Unexpected token 'T'"
+    // at the user. Only fall through to JSON.parse when the stdout
+    // actually looks like a JSON object.
+    const trimmedStdout = stdout.trim()
+    if (!trimmedStdout.startsWith('{')) {
+      const firstLine = trimmedStdout.split('\n')[0].slice(0, 240)
+      return {
+        ok: false,
+        reason: firstLine || 'Tailscale CLI returned no status output.'
+      }
+    }
+    try {
+      return { ok: true, raw: JSON.parse(stdout) as TailscaleStatusRaw }
+    } catch (parseErr) {
+      // Reached only when stdout starts with `{` but isn't valid JSON
+      // — genuinely malformed CLI output, worth flagging as a parse
+      // problem rather than a daemon-state problem.
+      return {
+        ok: false,
+        reason: `Tailscale status JSON parse failed: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`
+      }
+    }
+  } catch (err) {
+    const errMessage = err instanceof Error ? err.message : String(err)
+    return {
+      ok: false,
+      reason: `Tailscale CLI invocation failed: ${errMessage}`
+    }
+  }
+}
+
+async function probeTailscaleStatusWithRetry(
+  cliPath: string,
+  exec: (cmd: string, args: string[]) => Promise<{ stdout: string; stderr: string }>,
+  options: Pick<DetectTailscaleOptions, 'statusRetries' | 'retryDelayMs' | 'sleep'>
+): Promise<StatusProbeResult> {
+  const retries = Math.max(0, options.statusRetries ?? DEFAULT_STATUS_RETRIES)
+  const attempts = retries + 1
+  const delayMs = Math.max(0, options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS)
+  const sleepFn = options.sleep ?? sleep
+  let lastResult: StatusProbeResult | undefined
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    lastResult = await probeTailscaleStatus(cliPath, exec)
+    if (lastResult.ok) {
+      return lastResult
+    }
+    if (attempt < attempts - 1 && delayMs > 0) {
+      await sleepFn(delayMs)
+    }
+  }
+
+  return lastResult ?? { ok: false, reason: 'Tailscale CLI returned no status output.' }
 }
 
 export async function detectTailscale(
@@ -129,45 +212,18 @@ export async function detectTailscale(
     }
   }
 
-  // Run `tailscale status --json`.
-  let raw: TailscaleStatusRaw
-  try {
-    const { stdout } = await exec(cliPath, ['status', '--json'])
-    // The CLI returns a human-readable message (e.g. "The Tailscale
-    // daemon is not running. Run 'sudo tailscale up'…") instead of
-    // JSON when the daemon isn't ready. Detect that shape and surface
-    // the message verbatim rather than vomiting "Unexpected token 'T'"
-    // at the user. Only fall through to JSON.parse when the stdout
-    // actually looks like a JSON object.
-    const trimmedStdout = stdout.trim()
-    if (!trimmedStdout.startsWith('{')) {
-      const firstLine = trimmedStdout.split('\n')[0].slice(0, 240)
-      return {
-        available: false,
-        cliPath,
-        reason: firstLine || 'Tailscale CLI returned no status output.'
-      }
-    }
-    try {
-      raw = JSON.parse(stdout) as TailscaleStatusRaw
-    } catch (parseErr) {
-      // Reached only when stdout starts with `{` but isn't valid JSON
-      // — genuinely malformed CLI output, worth flagging as a parse
-      // problem rather than a daemon-state problem.
-      return {
-        available: false,
-        cliPath,
-        reason: `Tailscale status JSON parse failed: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`
-      }
-    }
-  } catch (err) {
-    const errMessage = err instanceof Error ? err.message : String(err)
+  // Run `tailscale status --json`. The macOS GUI app can briefly
+  // reject CLI probes while its helper/Network Extension wakes up, so
+  // retry once before declaring the installed app unavailable.
+  const statusProbe = await probeTailscaleStatusWithRetry(cliPath, exec, options)
+  if (!statusProbe.ok) {
     return {
       available: false,
       cliPath,
-      reason: `Tailscale CLI invocation failed: ${errMessage}`
+      reason: statusProbe.reason
     }
   }
+  const raw = statusProbe.raw
 
   // Parse the relevant fields.
   const version = typeof raw.Version === 'string' ? raw.Version : undefined
