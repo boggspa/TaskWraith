@@ -8474,16 +8474,6 @@
   font-weight: 400;
 }
 
-.composer-combined-picker-trigger[data-provider="claude"][data-selected-reasoning="ultracode"] {
-  border-color: color-mix(in srgb, #ff4fd8 58%, #7c3cff 42%);
-  background:
-    linear-gradient(135deg, rgba(124, 60, 255, 0.18), rgba(255, 79, 216, 0.13)),
-    color-mix(in srgb, var(--panel-bg) 92%, transparent);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, #ff4fd8 18%, transparent),
-    0 0 18px color-mix(in srgb, #b24dff 34%, transparent);
-}
-
 .composer-combined-picker-trigger[data-provider="claude"][data-selected-reasoning="ultracode"]
   .composer-combined-picker-trigger-suffix {
   color: color-mix(in srgb, #ff7fe5 72%, #ffffff 28%);
