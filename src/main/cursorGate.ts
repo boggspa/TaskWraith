@@ -41,7 +41,7 @@ export function cursorDebugEnabled(): boolean {
  * tools, so it's write-mode only). BUT MCP approval is PER WORKSPACE and headless
  * `--approve-mcps` proved persistently unreliable (`User rejected MCP: …,
  * isReadonly:false`). The reliable recipe (proven 4/4) is: the user registers our
- * read-only server ONCE in global `~/.cursor/mcp.json` (Tools & MCPs → Add Custom
+ * read-only server ONCE in global `~/.cursor/mcp.json` (Settings → MCP Servers),
  * MCP), then each workspace is approved via `cursor-agent mcp enable taskwraith`.
  *
  * When enabled AND that global server is registered, TaskWraith (per the maintainer's "B"

@@ -118,6 +118,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain(
       'settings-provider-auth-status-dot settings-provider-auth-status-dot-signed-in'
     )
+    expect(html).toContain('Provider tools')
     expect(html).not.toContain('TASKWRAITH_DISABLE_CURSOR')
     expect(html).not.toContain('TASKWRAITH_DISABLE_GROK')
   })
@@ -372,6 +373,8 @@ describe('SettingsPanel provider cards', () => {
 
     expect(html).toContain('User MCP servers')
     expect(html).toContain('1 enabled definitions')
+    expect(html).toContain('Provider tool surfaces')
+    expect(html).toContain('Open Provider Tools')
     expect(html).toContain('User-managed MCP servers')
     expect(html).toContain('External MCP server commands, URLs, env vars, and headers')
     expect(html).toContain('Open MCP Servers')

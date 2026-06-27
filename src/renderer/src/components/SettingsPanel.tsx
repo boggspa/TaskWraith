@@ -3375,12 +3375,13 @@ export function SettingsPanel({
     },
     {
       id: 'mcp',
-      label: 'MCP and tools',
+      label: 'Provider tools',
       scope: 'Provider',
       value: agenticServices.mcpTools,
       display: agenticPolicyLabel(agenticServices.mcpTools),
       tone: policyTone(agenticServices.mcpTools),
-      description: 'TaskWraith MCP tools expose workspace, audit, editor, and app-control surfaces.'
+      description:
+        'TaskWraith provider tools expose workspace, audit, editor, and app-control surfaces.'
     },
     {
       id: 'subthread',
@@ -3462,11 +3463,11 @@ export function SettingsPanel({
     },
     {
       id: 'mcp',
-      label: 'MCP tools and connector surfaces',
+      label: 'Provider tool surfaces',
       scope: 'Provider',
       detail:
         'The TaskWraith MCP bridge exposes workspace, audit, editor, and orchestration tools according to the active service policies.',
-      action: 'Open Tools',
+      action: 'Open Provider Tools',
       tab: 'mcp'
     },
     {
@@ -5459,7 +5460,7 @@ export function SettingsPanel({
                   </label>
 
                   <label className="settings-service-row">
-                    <span>MCP and tools</span>
+                    <span>Provider tools</span>
                     <select
                       className="settings-select"
                       value={agenticServices.mcpTools}
