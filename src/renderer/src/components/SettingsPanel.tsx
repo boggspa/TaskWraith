@@ -2012,8 +2012,16 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
       'connectors',
       'codex mcp',
       'codex toml',
+      'claude mcp',
+      'claude json',
+      'cursor mcp',
+      'cursor json',
+      'mcp json',
+      'user mcp',
+      'user-managed mcp',
       'toml',
-      'import mcp'
+      'import mcp',
+      'import json'
     ],
     scope: 'global'
   },
