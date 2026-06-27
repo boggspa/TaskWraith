@@ -1051,6 +1051,7 @@ export const TranscriptPanel = memo(
     const [pendingFocusTarget, setPendingFocusTarget] = useState<{
       messageId: string
       rowKey?: string
+      attempt: number
     } | null>(null)
     const highlightTimerRef = useRef<number | null>(null)
     const chatId = currentChat?.appChatId ?? null
@@ -1103,25 +1104,39 @@ export const TranscriptPanel = memo(
       [scrollRef]
     )
 
-    const scrollToMessage = useCallback(
+    const estimateScrollToMessage = useCallback(
       (messageId: string, rowKey?: string): void => {
-        if (focusMessageBlock(messageId, rowKey)) return
-
         const scroller = scrollRef.current
         if (!scroller) return
         const row =
           (rowKey ? projectedRows.find((candidate) => candidate.rowKey === rowKey) : undefined) ||
           projectedRows.find((candidate) => candidate.id === messageId)
         if (!row) return
-        setPendingFocusTarget({ messageId, rowKey })
+        if (autoFollowRef) autoFollowRef.current = false
         const rowHeights =
           virtualizeEnabled && virtualHeights.length === projectedRows.length
             ? virtualHeights
             : projectedRows.map((candidate) => candidate.estimatedHeight)
         const estimatedTop = sumHeights([...rowHeights], 0, row.index)
-        scroller.scrollTop = Math.max(0, estimatedTop - Math.round(scroller.clientHeight * 0.35))
+        const nextScrollTop = Math.max(
+          0,
+          estimatedTop - Math.round(scroller.clientHeight * 0.35)
+        )
+        scroller.scrollTop = nextScrollTop
+        scroller.dispatchEvent(new Event('scroll'))
       },
-      [focusMessageBlock, projectedRows, scrollRef, virtualHeights, virtualizeEnabled]
+      [autoFollowRef, projectedRows, scrollRef, virtualHeights, virtualizeEnabled]
+    )
+
+    const scrollToMessage = useCallback(
+      (messageId: string, rowKey?: string): void => {
+        if (autoFollowRef) autoFollowRef.current = false
+        if (focusMessageBlock(messageId, rowKey)) return
+
+        setPendingFocusTarget({ messageId, rowKey, attempt: 0 })
+        estimateScrollToMessage(messageId, rowKey)
+      },
+      [autoFollowRef, estimateScrollToMessage, focusMessageBlock]
     )
 
     useEffect(() => {
@@ -1160,8 +1175,21 @@ export const TranscriptPanel = memo(
 
     useLayoutEffect(() => {
       if (!pendingFocusTarget) return
-      focusMessageBlock(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
-    }, [focusMessageBlock, pendingFocusTarget, renderedRows])
+      if (focusMessageBlock(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)) return
+      if (pendingFocusTarget.attempt >= 10) return
+
+      estimateScrollToMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
+      const frame = window.requestAnimationFrame(() => {
+        setPendingFocusTarget((current) =>
+          current?.messageId === pendingFocusTarget.messageId &&
+          current?.rowKey === pendingFocusTarget.rowKey &&
+          current?.attempt === pendingFocusTarget.attempt
+            ? { ...current, attempt: current.attempt + 1 }
+            : current
+        )
+      })
+      return () => window.cancelAnimationFrame(frame)
+    }, [estimateScrollToMessage, focusMessageBlock, pendingFocusTarget, renderedRows])
 
     return (
       <div

@@ -73,7 +73,8 @@ export function buildTranscriptUserGutterMarkers(
     if (!message || message.role !== 'user') continue
 
     const rowTop = sumHeights(heights, 0, row.index)
-    const midpoint = rowTop + Math.max(0, row.estimatedHeight) / 2
+    const rowHeight = heights[row.index] ?? row.estimatedHeight
+    const midpoint = rowTop + Math.max(0, rowHeight) / 2
     const topPercent = Math.max(0, Math.min(100, (midpoint / totalHeight) * 100))
     const ordinal = markers.length + 1
     markers.push({

@@ -56,7 +56,9 @@ describe('TranscriptUserMessageGutter model', () => {
     const measuredMarkers = buildTranscriptUserGutterMarkers(messages, rows, [40, 800, 40])
 
     expect(measuredMarkers[0].topPercent).toBeLessThan(estimatedMarkers[0].topPercent)
+    expect(measuredMarkers[0].topPercent).toBeCloseTo((20 / 880) * 100, 5)
     expect(measuredMarkers[1].topPercent).toBeGreaterThan(estimatedMarkers[1].topPercent)
+    expect(measuredMarkers[1].topPercent).toBeCloseTo((860 / 880) * 100, 5)
   })
 
   it('creates compact titles and previews for blank and long prompts', () => {
