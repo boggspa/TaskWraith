@@ -289,6 +289,41 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Add server')
   })
 
+  it('surfaces user-managed MCP servers in Safety & Privacy', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'safety-privacy',
+          userMcpServers: [
+            {
+              id: 'server-docs',
+              name: 'docs',
+              enabled: true,
+              transport: 'http',
+              url: 'https://example.test/mcp',
+              headers: {
+                Authorization: 'Bearer ${DOCS_TOKEN}'
+              }
+            },
+            {
+              id: 'server-disabled',
+              name: 'disabled',
+              enabled: false,
+              transport: 'stdio',
+              command: 'node'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('User MCP servers')
+    expect(html).toContain('1 enabled definitions')
+    expect(html).toContain('User-managed MCP servers')
+    expect(html).toContain('External MCP server commands, URLs, env vars, and headers')
+    expect(html).toContain('Open MCP Servers')
+  })
+
   it('renders the General auto-update checkbox enabled by default', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior' })} />

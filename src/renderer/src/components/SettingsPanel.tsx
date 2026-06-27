@@ -3297,6 +3297,15 @@ export function SettingsPanel({
       tab: 'mcp'
     },
     {
+      id: 'mcp-servers',
+      label: 'User-managed MCP servers',
+      scope: 'Global',
+      detail:
+        'External MCP server commands, URLs, env vars, and headers are stored in TaskWraith settings and attached to supported provider launches.',
+      action: 'Open MCP Servers',
+      tab: 'mcp-servers'
+    },
+    {
       id: 'devices',
       label: 'Paired iOS device visibility',
       scope: 'Device',
@@ -7067,6 +7076,11 @@ export function SettingsPanel({
                       ? `of ${providerMcpSummaries.length} provider surfaces reporting`
                       : 'disabled'}
                   </small>
+                </article>
+                <article className="settings-safety-summary-card">
+                  <span>User MCP servers</span>
+                  <strong>{userMcpServers.length}</strong>
+                  <small>{enabledUserMcpServerCount} enabled definitions</small>
                 </article>
                 {isSettingsTabVisible('pairing') && (
                   <article className="settings-safety-summary-card">
