@@ -136,7 +136,7 @@ describe('taskwraith-relay round-trip', () => {
     // Per-socket liveness: lastActivity is room-wide, so a live mac's pongs
     // used to keep a dead iphone socket unswept forever. autoPong:false
     // simulates the no-FIN zombie (kernel ACKs, application never pongs).
-    relay = await createRelayServer({ heartbeatMs: 100 })
+    relay = await createRelayServer({ heartbeatMs: 300 })
     const url = `ws://127.0.0.1:${relay.port}/v1/session/${SESSION_ID}`
     const mac = new WebSocket(url, { headers: { 'x-taskwraith-role': 'mac' } })
     openSockets.push(mac)

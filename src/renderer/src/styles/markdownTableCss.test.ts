@@ -3,7 +3,10 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const readCss = (): string =>
-  readFileSync(join(process.cwd(), 'src/renderer/src/assets/css/05-polish-fx-layouts.css'), 'utf8')
+  readFileSync(
+    join(process.cwd(), 'src/renderer/src/assets/css/05-polish-fx-layouts.css'),
+    'utf8'
+  ).replace(/\r\n/g, '\n')
 
 const cssBlockStartingAt = (source: string, selector: string): string => {
   const start = source.indexOf(selector)
