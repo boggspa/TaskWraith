@@ -832,6 +832,7 @@ import { installIpcValidation } from './IpcValidation'
 import { registerPtyHandlers } from './ipc/ptyHandlers'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { registerLocalServersHandlers } from './ipc/localServersHandlers'
+import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -23880,115 +23881,12 @@ if (isGeminiMcpBridgeProcess) {
       broadcastWorkspaceList()
     })
 
-    // Chats
-    ipcMain.handle('get-chats', (_, workspaceId?: string) => chatService.getChats(workspaceId))
-    ipcMain.handle('get-chat-list', (_, workspaceId?: string) =>
-      chatService.getChatList(workspaceId)
-    )
-    ipcMain.handle('get-pinned-messages', (_, workspaceId?: string) =>
-      chatService.getPinnedMessages(workspaceId)
-    )
-    ipcMain.handle('get-chat', (_, chatId: string) => chatService.getChat(chatId))
-    ipcMain.handle('create-chat', (_, workspaceId: string, workspacePath: string) => {
-      const chat = chatService.createChat(workspaceId, workspacePath)
-      broadcastThreadUpdate(chat?.appChatId)
-      return chat
-    })
-    ipcMain.handle('create-global-chat', () => {
-      const chat = chatService.createGlobalChat()
-      broadcastThreadUpdate(chat?.appChatId)
-      return chat
-    })
-    ipcMain.handle(
-      'create-ensemble-chat',
-      async (_, args?: { workspaceId?: string; workspacePath?: string }) => {
-        if (AppStore.getSettings().ensembleModeEnabled === false) {
-          throw new Error('Ensemble Mode is disabled.')
-        }
-        const configuredProviders = await detectConfiguredProviders(AppStore.getSettings())
-        const chat = chatService.createEnsembleChat(args, configuredProviders)
-        broadcastThreadUpdate(chat?.appChatId)
-        return chat
-      }
-    )
-    // Phase F1: sub-thread creation. The renderer passes the parent chat
-    // id plus user choices (provider, delegation prompt, return-result
-    // flag). AppStore enforces max-depth-1; we surface any error so the
-    // renderer can show it.
-    ipcMain.handle(
-      'create-sub-thread',
-      (
-        _,
-        args: {
-          parentChatId: string
-          provider: ProviderId
-          delegationPrompt: string
-          returnResultToParent: boolean
-          workspaceId?: string
-          workspacePath?: string
-        }
-      ) => {
-        const chat = chatService.createSubThread(args)
-        broadcastThreadUpdate(chat?.appChatId)
-        return chat
-      }
-    )
-    ipcMain.handle('get-sub-threads', (_, parentChatId: string) =>
-      chatService.getSubThreads(parentChatId)
-    )
-    ipcMain.handle(
-      'create-side-chat',
-      (
-        _,
-        args: {
-          parentChatId: string
-          chatKind?: ChatRecord['chatKind']
-          provider?: ProviderId
-          title?: string
-          originMessageId?: string
-          originRunId?: string
-          sideChatMode?: 'ensembleClone' | 'singleProvider' | 'fanOut' | 'guestParticipant'
-        }
-      ) => {
-        const chat = chatService.createSideChat(args)
-        broadcastThreadUpdate(chat?.appChatId)
-        return chat
-      }
-    )
-    ipcMain.handle('get-side-chats', (_, parentChatId: string) =>
-      chatService.getSideChats(parentChatId)
-    )
-    ipcMain.handle(
-      'set-guest-participant',
-      (
-        _,
-        args: {
-          parentChatId: string
-          provider: ProviderId
-          selectedModelType?: string
-          customModel?: string
-          codexReasoningEffort?: string | null
-          codexServiceTier?: string | null
-          claudeReasoningEffort?: string | null
-          claudeFastMode?: boolean | null
-          kimiThinkingEnabled?: boolean
-        }
-      ) => {
-        const result = chatService.setGuestParticipant(args)
-        broadcastChatPopoutUpdate(result.parent)
-        broadcastChatPopoutUpdate(result.guest)
-        broadcastThreadUpdate(result.parent.appChatId)
-        broadcastThreadUpdate(result.guest.appChatId)
-        return result
-      }
-    )
-    ipcMain.handle('remove-guest-participant', (_, parentChatId: string) => {
-      const result = chatService.removeGuestParticipant(parentChatId)
-      broadcastChatPopoutUpdate(result.parent)
-      if (result.guest) broadcastChatPopoutUpdate(result.guest)
-      broadcastThreadUpdate(result.parent.appChatId)
-      if (result.guest) broadcastThreadUpdate(result.guest.appChatId)
-      return result
+    registerChatHandlers({
+      chatService,
+      getSettings: () => AppStore.getSettings(),
+      detectConfiguredProviders,
+      broadcastThreadUpdate,
+      broadcastChatPopoutUpdate
     })
     const broadcastHumanCollaborationUpdate = (chatId: string): void => {
       mainWindow?.webContents.send('human-collaboration-updated', { chatId })
