@@ -635,8 +635,8 @@ const USER_MCP_TRANSPORT_OPTIONS: Array<{ value: UserMcpServerTransport; label: 
   { value: 'sse', label: 'SSE' }
 ]
 const USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT: Record<UserMcpServerTransport, readonly string[]> = {
-  stdio: ['Codex', 'Claude', 'Cursor'],
-  http: ['Codex', 'Claude', 'Cursor'],
+  stdio: ['Codex', 'Claude', 'Cursor write mode'],
+  http: ['Codex', 'Claude', 'Cursor write mode'],
   sse: ['Claude']
 }
 const USER_MCP_STDIO_HTTP_RUNTIME_LABEL = USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT.stdio.join(' + ')
@@ -6582,9 +6582,10 @@ export function SettingsPanel({
                   </div>
                   <p className="settings-hint">
                     Manage external MCP server definitions TaskWraith owns. Enabled stdio and HTTP
-                    servers attach to Codex, Claude, and Cursor launches; SSE attaches to Claude.
-                    Remote headers are stored locally and redacted in audit JSON. Cursor uses
-                    temporary workspace-local MCP config that TaskWraith restores after the run.
+                    servers attach to Codex and Claude launches; Cursor-compatible entries attach
+                    during contained Cursor write-mode runs. SSE attaches to Claude. Remote headers
+                    are stored locally and redacted in audit JSON. Cursor uses temporary
+                    workspace-local MCP config that TaskWraith restores after the run.
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
@@ -6652,7 +6653,7 @@ export function SettingsPanel({
                 <article className="settings-mcp-summary-card">
                   <span>Runtime</span>
                   <strong>{USER_MCP_STDIO_HTTP_RUNTIME_LABEL}</strong>
-                  <small>stdio and HTTP launch support</small>
+                  <small>stdio/HTTP; Cursor write-mode support</small>
                 </article>
                 <article className="settings-mcp-summary-card">
                   <span>Codex export</span>
@@ -6776,7 +6777,8 @@ export function SettingsPanel({
                 </h4>
                 <p className="settings-hint">
                   These records are stored by TaskWraith. Stdio and HTTP servers are available to
-                  Codex, Claude, and Cursor provider launch paths; SSE is available to Claude.
+                  Codex and Claude provider launch paths, plus contained Cursor write-mode runs; SSE
+                  is available to Claude.
                 </p>
               </div>
               {userMcpServers.length > 0 && (

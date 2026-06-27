@@ -290,8 +290,8 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('1 header')
     expect(html).toContain('bearer env')
     expect(html).toContain('Import config')
-    expect(html).toContain('Codex + Claude + Cursor')
-    expect(html).toContain('stdio and HTTP launch support')
+    expect(html).toContain('Codex + Claude + Cursor write mode')
+    expect(html).toContain('stdio/HTTP; Cursor write-mode support')
     expect(html).toContain('<span>Active</span><strong>3</strong><small>active definitions</small>')
     expect(html).toContain(
       '<span>Codex export</span><strong>2</strong><small>config-ready TOML entries</small>'
@@ -302,7 +302,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain(
       '<span>Cursor export</span><strong>2</strong><small>mcp.json entries</small>'
     )
-    expect(html).toContain('runtime: Codex + Claude + Cursor')
+    expect(html).toContain('runtime: Codex + Claude + Cursor write mode')
     expect(html).toContain('runtime: Claude')
     expect(html).toContain('Codex TOML')
     expect(html).toContain('Claude JSON')
