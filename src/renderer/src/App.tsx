@@ -464,6 +464,13 @@ import {
   toggleChatMessagePin
 } from './lib/pinnedMessages'
 import {
+  buildRightDockTabs,
+  resolveActiveRightDockTab,
+  RIGHT_DOCK_PANEL_IDS,
+  shouldShowRightDock,
+  type RightDockTab
+} from './lib/rightDockState'
+import {
   shouldRebindCurrentChatOnWorkspaceSelect,
   type WorkspaceSelectIntent
 } from './lib/workspaceSelection'
@@ -640,7 +647,6 @@ type SideChatTypePickerOption = {
   chatId?: string
   agentIdentity?: ReturnType<typeof assignAgentIdentityFromSeed>
 }
-type RightDockTab = 'run' | 'chat' | 'inspector' | 'files' | 'media' | 'pins' | 'terminal'
 type InspectorRightTab =
   | 'diff'
   | 'raw'
@@ -17508,30 +17514,29 @@ function App(): React.JSX.Element {
     [currentChat?.ensemble?.blackboard]
   )
   const isTerminalDockAvailable = showGeminiTerminal && currentProvider === 'gemini' && hasWorkspaceContext
-  const rightDockTabs = [
-    { id: 'run' as const, label: 'Run', available: showCockpit },
-    {
-      id: 'chat' as const,
-      label: 'Chat',
-      available: Boolean(sideChat) && isSideChatDockPanelOpen
-    },
-    { id: 'inspector' as const, label: 'Inspect', available: appearance.showInspector },
-    { id: 'files' as const, label: 'Files', available: showFileEditor && hasWorkspaceContext },
-    { id: 'media' as const, label: 'Media', available: isChatMediaPanelOpen },
-    { id: 'pins' as const, label: 'Notes', available: isPinnedMessagesPanelOpen },
-    { id: 'terminal' as const, label: 'Term', available: isTerminalDockAvailable }
-  ].filter((tab) => tab.available)
-  const rightDockVisible = !isChatPopoutWindow && !showSettings && rightDockTabs.length > 0
+  const rightDockTabs = buildRightDockTabs({
+    showCockpit,
+    hasSideChat: Boolean(sideChat),
+    isSideChatDockPanelOpen,
+    showInspector: appearance.showInspector,
+    showFileEditor,
+    hasWorkspaceContext,
+    isChatMediaPanelOpen,
+    isPinnedMessagesPanelOpen,
+    isTerminalDockAvailable
+  })
+  const rightDockVisible = shouldShowRightDock({
+    isChatPopoutWindow,
+    showSettings,
+    availableTabCount: rightDockTabs.length
+  })
   // Animated open/close: keep each panel mounted through a short exit
   // transition instead of snapping in/out. `mounted` gates rendering;
   // `className` drives the slide/fade (see 13-panel-transitions.css).
   const sidebarShown = showWorkspaceSidebar && !isChatPopoutWindow
   const sidebarPresence = usePanelPresence(sidebarShown)
   const dockPresence = usePanelPresence(rightDockVisible)
-  const activeRightDockTab: RightDockTab =
-    rightDockTabs.some((tab) => tab.id === rightDockTab)
-      ? rightDockTab
-      : rightDockTabs[0]?.id || 'run'
+  const activeRightDockTab = resolveActiveRightDockTab(rightDockTabs, rightDockTab)
   // Canonical dock tab strip (1.4.1) — all six dock views are always
   // rendered as icon tabs in the dock header (matching the main-pane
   // rim-highlight row), so switching no longer requires bouncing back to
@@ -17629,15 +17634,7 @@ function App(): React.JSX.Element {
   const activateRightDockTab = (id: RightDockTab) => {
     // Exclusive dock lifecycle: opening/switching to a tab closes every
     // other panel's open flag so rim-highlight actives don't stack up.
-    for (const panelId of [
-      'chat',
-      'run',
-      'media',
-      'pins',
-      'files',
-      'inspector',
-      'terminal'
-    ] as const) {
+    for (const panelId of RIGHT_DOCK_PANEL_IDS) {
       if (panelId !== id) closeRightDockPanel(panelId)
     }
     openRightDockPanel(id)
