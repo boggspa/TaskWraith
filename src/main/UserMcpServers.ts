@@ -18,6 +18,10 @@ export interface UserMcpRemoteLaunchServer {
 
 export type UserMcpLaunchServer = UserMcpStdioLaunchServer | UserMcpRemoteLaunchServer
 
+function hasAuthorizationHeader(headers: Record<string, string> | undefined): boolean {
+  return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === 'authorization')
+}
+
 function slugForMcpServer(value: string): string {
   return (
     value
@@ -117,6 +121,21 @@ export function buildUserMcpLaunchServers(
   return launchServers
 }
 
+export function buildUserMcpRemoteHeaders(
+  server: Pick<UserMcpRemoteLaunchServer, 'headers' | 'bearerTokenEnvVar'>
+): Record<string, string> | undefined {
+  const headers = server.headers ? { ...server.headers } : {}
+  const bearerTokenEnvVar = server.bearerTokenEnvVar?.trim()
+  if (
+    bearerTokenEnvVar &&
+    /^[A-Za-z_][A-Za-z0-9_]*$/.test(bearerTokenEnvVar) &&
+    !hasAuthorizationHeader(headers)
+  ) {
+    headers.Authorization = `Bearer \${${bearerTokenEnvVar}}`
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined
+}
+
 export function buildUserMcpStdioLaunchServers(
   servers: readonly UserMcpServerConfig[] | undefined
 ): UserMcpStdioLaunchServer[] {
@@ -129,19 +148,26 @@ export function buildUserMcpCursorServerEntry(
   servers: readonly UserMcpLaunchServer[]
 ): Record<string, unknown> {
   return Object.fromEntries(
-    servers.map((server) => [
-      server.serverName,
-      server.transport === 'stdio'
-        ? {
+    servers.map((server) => {
+      if (server.transport === 'stdio') {
+        return [
+          server.serverName,
+          {
             command: server.command,
             args: [...server.args],
             ...(server.env ? { env: { ...server.env } } : {})
           }
-        : {
-            url: server.url,
-            ...(server.headers ? { headers: { ...server.headers } } : {})
-          }
-    ])
+        ]
+      }
+      const headers = buildUserMcpRemoteHeaders(server)
+      return [
+        server.serverName,
+        {
+          url: server.url,
+          ...(headers ? { headers } : {})
+        }
+      ]
+    })
   )
 }
 

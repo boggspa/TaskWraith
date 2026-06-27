@@ -821,6 +821,44 @@ describe('user MCP server name/audit helpers', () => {
     })
   })
 
+  it('derives Claude and Cursor Authorization headers from bearer token env vars', () => {
+    const servers: UserMcpServerConfig[] = [
+      {
+        id: 'docs',
+        name: 'docs',
+        enabled: true,
+        transport: 'http',
+        url: 'https://example.test/mcp',
+        bearerTokenEnvVar: 'DOCS_TOKEN'
+      }
+    ]
+
+    expect(JSON.parse(formatUserMcpServersClaudeJson(servers))).toEqual({
+      mcpServers: {
+        user_docs: {
+          type: 'http',
+          url: 'https://example.test/mcp',
+          headers: {
+            Authorization: 'Bearer ${DOCS_TOKEN}'
+          }
+        }
+      }
+    })
+    expect(JSON.parse(formatUserMcpServersCursorJson(servers))).toEqual({
+      mcpServers: {
+        user_docs: {
+          url: 'https://example.test/mcp',
+          headers: {
+            Authorization: 'Bearer ${DOCS_TOKEN}'
+          }
+        }
+      }
+    })
+    expect(formatUserMcpServersClaudeJson(servers, { redactValues: true })).toContain(
+      '"Authorization": "[stored in TaskWraith settings]"'
+    )
+  })
+
   it('redacts values in Claude JSON preview mode', () => {
     const json = formatUserMcpServersClaudeJson(
       [

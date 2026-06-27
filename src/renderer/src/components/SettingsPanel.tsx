@@ -1406,6 +1406,34 @@ export function userMcpServerProviderExportLabels(server: UserMcpServerConfig): 
   return labels
 }
 
+function hasUserMcpAuthorizationHeader(headers: Record<string, string> | undefined): boolean {
+  return Object.keys(headers ?? {}).some((key) => key.toLowerCase() === 'authorization')
+}
+
+function userMcpServerRemoteHeaders(
+  server: UserMcpServerConfig,
+  options: { redactValues?: boolean } = {}
+): Record<string, string> | undefined {
+  const headers: Record<string, string> =
+    server.headers && Object.keys(server.headers).length > 0
+      ? Object.fromEntries(
+          Object.keys(server.headers)
+            .sort()
+            .map((key) => [
+              key,
+              options.redactValues ? '[stored in TaskWraith settings]' : server.headers?.[key] || ''
+            ])
+        )
+      : {}
+  const bearerTokenEnvVar = server.bearerTokenEnvVar?.trim()
+  if (bearerTokenEnvVar && !hasUserMcpAuthorizationHeader(server.headers)) {
+    headers.Authorization = options.redactValues
+      ? '[stored in TaskWraith settings]'
+      : `Bearer \${${bearerTokenEnvVar}}`
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined
+}
+
 function userMcpServerProviderEntry(
   server: UserMcpServerConfig,
   options: { redactValues?: boolean } = {}
@@ -1429,17 +1457,7 @@ function userMcpServerProviderEntry(
       ...(env ? { env } : {})
     }
   }
-  const headers =
-    server.headers && Object.keys(server.headers).length > 0
-      ? Object.fromEntries(
-          Object.keys(server.headers)
-            .sort()
-            .map((key) => [
-              key,
-              options.redactValues ? '[stored in TaskWraith settings]' : server.headers?.[key] || ''
-            ])
-        )
-      : undefined
+  const headers = userMcpServerRemoteHeaders(server, options)
   return {
     type: server.transport,
     url: server.url?.trim() || '',
@@ -1517,17 +1535,7 @@ function userMcpServerCursorEntry(
       ...(env ? { env } : {})
     }
   }
-  const headers =
-    server.headers && Object.keys(server.headers).length > 0
-      ? Object.fromEntries(
-          Object.keys(server.headers)
-            .sort()
-            .map((key) => [
-              key,
-              options.redactValues ? '[stored in TaskWraith settings]' : server.headers?.[key] || ''
-            ])
-        )
-      : undefined
+  const headers = userMcpServerRemoteHeaders(server, options)
   return {
     url: server.url?.trim() || '',
     ...(headers ? { headers } : {})

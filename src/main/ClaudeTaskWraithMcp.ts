@@ -20,7 +20,7 @@
 // directly against fixed inputs.
 
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
-import type { UserMcpLaunchServer } from './UserMcpServers'
+import { buildUserMcpRemoteHeaders, type UserMcpLaunchServer } from './UserMcpServers'
 
 /**
  * TaskWraith MCP tool name list. Re-exported under the Claude-specific name
@@ -136,10 +136,11 @@ export function buildClaudeTaskWraithMcpServers(
         env: { ...(server.env ?? {}) }
       }
     } else {
+      const headers = buildUserMcpRemoteHeaders(server)
       servers[server.serverName] = {
         type: server.transport,
         url: server.url,
-        ...(server.headers ? { headers: { ...server.headers } } : {})
+        ...(headers ? { headers } : {})
       }
     }
   }

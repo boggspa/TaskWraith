@@ -156,6 +156,7 @@ describe('buildUserMcpStdioLaunchServers', () => {
       user_docs: {
         url: 'https://example.test/mcp',
         headers: {
+          Authorization: 'Bearer ${DOCS_TOKEN}',
           'X-Region': 'eu'
         }
       }

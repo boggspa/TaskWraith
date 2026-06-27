@@ -139,7 +139,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
           transport: 'http',
           url: 'https://example.test/mcp',
           headers: {
-            Authorization: 'Bearer ${DOCS_TOKEN}'
+            'X-Region': 'eu'
           },
           bearerTokenEnvVar: 'DOCS_TOKEN'
         },
@@ -158,7 +158,8 @@ describe('buildClaudeTaskWraithMcpServers', () => {
       type: 'http',
       url: 'https://example.test/mcp',
       headers: {
-        Authorization: 'Bearer ${DOCS_TOKEN}'
+        Authorization: 'Bearer ${DOCS_TOKEN}',
+        'X-Region': 'eu'
       }
     })
     expect(servers?.user_legacy_sse).toEqual({
