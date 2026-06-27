@@ -114,8 +114,9 @@ type StatusProbeResult =
   | { ok: true; raw: TailscaleStatusRaw }
   | { ok: false; reason: string }
 
-const DEFAULT_STATUS_RETRIES = 1
-const DEFAULT_RETRY_DELAY_MS = 300
+const DEFAULT_STATUS_RETRIES = 3
+const DEFAULT_RETRY_DELAY_MS = 750
+const STATUS_ARGS = ['status', '--json', '--peers=false']
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -126,7 +127,7 @@ async function probeTailscaleStatus(
   exec: (cmd: string, args: string[]) => Promise<{ stdout: string; stderr: string }>
 ): Promise<StatusProbeResult> {
   try {
-    const { stdout } = await exec(cliPath, ['status', '--json'])
+    const { stdout, stderr } = await exec(cliPath, STATUS_ARGS)
     // The CLI returns a human-readable message (e.g. "The Tailscale
     // daemon is not running. Run 'sudo tailscale up'…") instead of
     // JSON when the daemon isn't ready. Detect that shape and surface
@@ -135,7 +136,8 @@ async function probeTailscaleStatus(
     // actually looks like a JSON object.
     const trimmedStdout = stdout.trim()
     if (!trimmedStdout.startsWith('{')) {
-      const firstLine = trimmedStdout.split('\n')[0].slice(0, 240)
+      const diagnostic = trimmedStdout || stderr.trim()
+      const firstLine = diagnostic.split('\n')[0].slice(0, 240)
       return {
         ok: false,
         reason: firstLine || 'Tailscale CLI returned no status output.'
@@ -153,10 +155,19 @@ async function probeTailscaleStatus(
       }
     }
   } catch (err) {
-    const errMessage = err instanceof Error ? err.message : String(err)
+    const anyErr = err as Error & { stdout?: string | Buffer; stderr?: string | Buffer; code?: unknown }
+    const stderr = anyErr.stderr != null ? String(anyErr.stderr).trim() : ''
+    const stdout = anyErr.stdout != null ? String(anyErr.stdout).trim() : ''
+    const baseMessage = err instanceof Error ? err.message : String(err)
+    const code =
+      anyErr.code !== undefined && anyErr.code !== null && String(anyErr.code).trim()
+        ? `exit ${String(anyErr.code)}`
+        : ''
+    const detail = (stderr || stdout || baseMessage || code).split('\n')[0].slice(0, 360)
+    const suffix = code && !detail.includes(code) ? ` (${code})` : ''
     return {
       ok: false,
-      reason: `Tailscale CLI invocation failed: ${errMessage}`
+      reason: `Tailscale CLI invocation failed: ${detail}${suffix}`
     }
   }
 }

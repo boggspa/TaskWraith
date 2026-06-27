@@ -149,6 +149,8 @@ describe('detectTailscale', () => {
       .fn()
       .mockRejectedValueOnce(new Error('first failure'))
       .mockRejectedValueOnce(new Error('second failure'))
+      .mockRejectedValueOnce(new Error('third failure'))
+      .mockRejectedValueOnce(new Error('fourth failure'))
 
     const result = await detectTailscale({
       cliPath: '/fake/tailscale',
@@ -157,8 +159,8 @@ describe('detectTailscale', () => {
     })
 
     expect(result.available).toBe(false)
-    expect(result.reason).toContain('second failure')
-    expect(execFn).toHaveBeenCalledTimes(2)
+    expect(result.reason).toContain('fourth failure')
+    expect(execFn).toHaveBeenCalledTimes(4)
   })
 
   it('truncates very long human-readable messages to 240 chars', async () => {
@@ -200,6 +202,26 @@ describe('detectTailscale', () => {
     })
     expect(result.available).toBe(false)
     expect(result.reason).toContain('command not found')
+  })
+
+  it('prefers CLI stderr over the generic execFile message on invocation failure', async () => {
+    const result = await detectTailscale({
+      cliPath: '/fake/tailscale',
+      statusRetries: 0,
+      execFn: async () => {
+        const err = new Error('Command failed: /fake/tailscale status --json') as Error & {
+          stderr?: string
+          code?: number
+        }
+        err.stderr = 'The Tailscale GUI failed to start: Tailscale.CLIError error 3.\n'
+        err.code = 3
+        throw err
+      }
+    })
+    expect(result.available).toBe(false)
+    expect(result.reason).toContain('Tailscale.CLIError error 3')
+    expect(result.reason).toContain('exit 3')
+    expect(result.reason).not.toContain('Command failed: /fake/tailscale')
   })
 
   it('handles missing Self.TailscaleIPs by falling back to top-level TailscaleIPs', async () => {
@@ -258,6 +280,6 @@ describe('detectTailscale', () => {
     await detectTailscale({ cliPath: '/fake/tailscale', execFn })
     expect(execFn).toHaveBeenCalledTimes(1)
     expect(capturedCmd).toBe('/fake/tailscale')
-    expect(capturedArgs).toEqual(['status', '--json'])
+    expect(capturedArgs).toEqual(['status', '--json', '--peers=false'])
   })
 })
