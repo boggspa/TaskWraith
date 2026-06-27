@@ -146,11 +146,11 @@ import {
   getPendingSideChatHiddenContextPrompt,
   getSideChatLifecycleState,
   getSideChatMode,
-  getSideChatSelectedParticipantId,
   isTerminatedSideChat,
   isTopLevelWorkspaceChat,
   type SideChatCreateMode
 } from './lib/sideChatLifecycle'
+import { findReusableSideChat } from './lib/sideChatReuse'
 import {
   CODEX_DEFAULT_MODELS,
   CODEX_DEFAULT_MODEL,
@@ -10956,28 +10956,6 @@ function App(): React.JSX.Element {
     }
   }
 
-  const findReusableSideChatForCurrentChat = (
-    mode?: SideChatCreateMode,
-    provider?: ProviderId,
-    selectedParticipantId?: string
-  ): ChatRecord | null => {
-    if (!currentChat?.appChatId) return null
-    const linked = chats
-      .filter(
-        (chat) =>
-          !chat.archived &&
-          !isTerminatedSideChat(chat) &&
-          chat.parentChatId === currentChat.appChatId &&
-          chat.parentChatRelation === 'sideChat' &&
-          (!mode || getSideChatMode(chat) === mode) &&
-          (!provider || getChatProvider(chat) === provider) &&
-          (!selectedParticipantId ||
-            getSideChatSelectedParticipantId(chat) === selectedParticipantId)
-      )
-      .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
-    return linked[0] || null
-  }
-
   const openLinkedChatInSidePanel = (
     chat: ChatRecord,
     presentation: SidePanelPresentation = 'split',
@@ -11054,11 +11032,11 @@ function App(): React.JSX.Element {
         : null
     const selectedSideProvider = selectedSideParticipant?.provider
     const selectedSideParticipantId = selectedSideParticipant?.id
-    const existing = findReusableSideChatForCurrentChat(
-      sideChatMode,
-      selectedSideProvider,
-      selectedSideParticipantId
-    )
+    const existing = findReusableSideChat(currentChat.appChatId, chats, {
+      mode: sideChatMode,
+      provider: selectedSideProvider,
+      selectedParticipantId: selectedSideParticipantId
+    })
     if (existing) {
       if (presentInline) {
         openLinkedChatInSidePanel(existing, presentation)
