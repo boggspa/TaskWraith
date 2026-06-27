@@ -1335,6 +1335,13 @@ function isClaudeExportableUserMcpServer(server: UserMcpServerConfig): boolean {
     : Boolean(server.url?.trim())
 }
 
+function isCursorExportableUserMcpServer(server: UserMcpServerConfig): boolean {
+  if (!server.enabled || server.transport === 'sse') return false
+  return server.transport === 'stdio'
+    ? Boolean(server.command?.trim())
+    : Boolean(server.url?.trim())
+}
+
 function userMcpServerProviderEntry(
   server: UserMcpServerConfig,
   options: { redactValues?: boolean } = {}
@@ -1388,6 +1395,61 @@ export function formatUserMcpServersClaudeJson(
       .map((server) => [
         uniqueUserMcpServerAuditKey(server, usedKeys),
         userMcpServerProviderEntry(server, options)
+      ])
+  )
+  return JSON.stringify({ mcpServers }, null, 2)
+}
+
+function userMcpServerCursorEntry(
+  server: UserMcpServerConfig,
+  options: { redactValues?: boolean } = {}
+): Record<string, unknown> {
+  if (server.transport === 'stdio') {
+    const env =
+      server.env && Object.keys(server.env).length > 0
+        ? Object.fromEntries(
+            Object.keys(server.env)
+              .sort()
+              .map((key) => [
+                key,
+                options.redactValues ? '[stored in TaskWraith settings]' : server.env?.[key] || ''
+              ])
+          )
+        : undefined
+    return {
+      command: server.command?.trim() || '',
+      args: [...(server.args ?? [])],
+      ...(env ? { env } : {})
+    }
+  }
+  const headers =
+    server.headers && Object.keys(server.headers).length > 0
+      ? Object.fromEntries(
+          Object.keys(server.headers)
+            .sort()
+            .map((key) => [
+              key,
+              options.redactValues ? '[stored in TaskWraith settings]' : server.headers?.[key] || ''
+            ])
+        )
+      : undefined
+  return {
+    url: server.url?.trim() || '',
+    ...(headers ? { headers } : {})
+  }
+}
+
+export function formatUserMcpServersCursorJson(
+  servers: readonly UserMcpServerConfig[],
+  options: { redactValues?: boolean } = {}
+): string {
+  const usedKeys = new Set<string>()
+  const mcpServers = Object.fromEntries(
+    servers
+      .filter(isCursorExportableUserMcpServer)
+      .map((server) => [
+        uniqueUserMcpServerAuditKey(server, usedKeys),
+        userMcpServerCursorEntry(server, options)
       ])
   )
   return JSON.stringify({ mcpServers }, null, 2)
@@ -2526,6 +2588,7 @@ export function SettingsPanel({
   const [copiedMcpServerId, setCopiedMcpServerId] = useState<string | null>(null)
   const [copiedMcpServersJson, setCopiedMcpServersJson] = useState(false)
   const [copiedMcpServersClaudeJson, setCopiedMcpServersClaudeJson] = useState(false)
+  const [copiedMcpServersCursorJson, setCopiedMcpServersCursorJson] = useState(false)
   const [copiedMcpServersCodexToml, setCopiedMcpServersCodexToml] = useState(false)
   const [keyCommandQuery, setKeyCommandQuery] = useState('')
   const [recordingKeyCommandId, setRecordingKeyCommandId] = useState<KeyCommandId | null>(null)
@@ -2726,6 +2789,23 @@ export function SettingsPanel({
       .then(() => {
         setCopiedMcpServersClaudeJson(true)
         window.setTimeout(() => setCopiedMcpServersClaudeJson(false), 1600)
+      })
+      .catch(() => undefined)
+  }
+
+  const copyAllMcpServersCursorJson = (): void => {
+    if (
+      !userMcpServers.some(isCursorExportableUserMcpServer) ||
+      typeof navigator === 'undefined' ||
+      !navigator.clipboard?.writeText
+    ) {
+      return
+    }
+    void navigator.clipboard
+      .writeText(formatUserMcpServersCursorJson(userMcpServers))
+      .then(() => {
+        setCopiedMcpServersCursorJson(true)
+        window.setTimeout(() => setCopiedMcpServersCursorJson(false), 1600)
       })
       .catch(() => undefined)
   }
@@ -3001,6 +3081,9 @@ export function SettingsPanel({
   ).length
   const claudeExportableUserMcpServerCount = userMcpServers.filter(
     isClaudeExportableUserMcpServer
+  ).length
+  const cursorExportableUserMcpServerCount = userMcpServers.filter(
+    isCursorExportableUserMcpServer
   ).length
   const mcpToolSearch = mcpToolQuery.trim().toLowerCase()
   const filteredMcpToolCatalog = MCP_TOOL_CATALOG.filter((tool) => {
@@ -6294,6 +6377,14 @@ export function SettingsPanel({
                   <button
                     type="button"
                     className="btn btn-sm btn-ghost"
+                    onClick={copyAllMcpServersCursorJson}
+                    disabled={cursorExportableUserMcpServerCount === 0}
+                  >
+                    {copiedMcpServersCursorJson ? 'Copied Cursor' : 'Copy Cursor JSON'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
                     onClick={copyAllMcpServersCodexToml}
                     disabled={codexExportableUserMcpServerCount === 0}
                   >
@@ -6354,6 +6445,16 @@ export function SettingsPanel({
                   <pre>
                     <code>
                       {formatUserMcpServersClaudeJson(userMcpServers, { redactValues: true })}
+                    </code>
+                  </pre>
+                </details>
+              )}
+              {cursorExportableUserMcpServerCount > 0 && (
+                <details className="settings-user-mcp-config settings-user-mcp-config-all">
+                  <summary>Cursor config JSON</summary>
+                  <pre>
+                    <code>
+                      {formatUserMcpServersCursorJson(userMcpServers, { redactValues: true })}
                     </code>
                   </pre>
                 </details>

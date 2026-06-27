@@ -5,6 +5,7 @@ import {
   SettingsPanel,
   formatUserMcpServersClaudeJson,
   formatUserMcpServersCodexToml,
+  formatUserMcpServersCursorJson,
   formatUserMcpServersAuditJson,
   hasUserMcpServerNameConflict,
   parseUserMcpServersImportJson
@@ -275,6 +276,8 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Copy all JSON')
     expect(html).toContain('Copy Claude JSON')
     expect(html).toContain('Claude config JSON')
+    expect(html).toContain('Copy Cursor JSON')
+    expect(html).toContain('Cursor config JSON')
     expect(html).toContain('Copy Codex TOML')
     expect(html).toContain('Codex config TOML')
     expect(html).toContain('Copy JSON')
@@ -610,6 +613,78 @@ describe('user MCP server name/audit helpers', () => {
 
     expect(json).toContain('"PROJECT_ROOT": "[stored in TaskWraith settings]"')
     expect(json).not.toContain('/repo')
+  })
+
+  it('formats enabled Cursor-compatible servers as mcp.json and skips SSE', () => {
+    const json = JSON.parse(
+      formatUserMcpServersCursorJson([
+        {
+          id: 'filesystem',
+          name: 'filesystem',
+          enabled: true,
+          transport: 'stdio',
+          command: 'npx',
+          args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+          env: { PROJECT_ROOT: '/repo' }
+        },
+        {
+          id: 'docs',
+          name: 'docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          headers: {
+            Authorization: 'Bearer ${DOCS_TOKEN}'
+          },
+          bearerTokenEnvVar: 'DOCS_TOKEN'
+        },
+        {
+          id: 'legacy',
+          name: 'legacy',
+          enabled: true,
+          transport: 'sse',
+          url: 'https://example.test/sse'
+        }
+      ])
+    )
+
+    expect(json).toEqual({
+      mcpServers: {
+        filesystem: {
+          command: 'npx',
+          args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+          env: { PROJECT_ROOT: '/repo' }
+        },
+        docs: {
+          url: 'https://example.test/mcp',
+          headers: {
+            Authorization: 'Bearer ${DOCS_TOKEN}'
+          }
+        }
+      }
+    })
+    expect(json.mcpServers).not.toHaveProperty('legacy')
+  })
+
+  it('redacts values in Cursor JSON preview mode', () => {
+    const json = formatUserMcpServersCursorJson(
+      [
+        {
+          id: 'docs',
+          name: 'docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          headers: {
+            Authorization: 'Bearer ${DOCS_TOKEN}'
+          }
+        }
+      ],
+      { redactValues: true }
+    )
+
+    expect(json).toContain('"Authorization": "[stored in TaskWraith settings]"')
+    expect(json).not.toContain('Bearer ${DOCS_TOKEN}')
   })
 
   it('redacts values in Codex TOML preview mode', () => {
