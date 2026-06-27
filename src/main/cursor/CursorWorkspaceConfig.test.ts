@@ -135,6 +135,7 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     expect(cli.permissions.deny).toContain('Shell(**)')
     expect(cli.permissions.deny).toContain('Write(**)')
     expect(cli.permissions.allow).toContain('Mcp(taskwraith:*)')
+    expect(cli.permissions.allow).toContain('Mcp(taskwraith-*)')
 
     const mcp = JSON.parse(files.get(MCP)!)
     expect(mcp.mcpServers.taskwraith.command).toBe('/x/electron')
@@ -157,7 +158,7 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
 
     const cli = JSON.parse(files.get(CONFIG)!)
     expect(cli.permissions.deny).toEqual(['Write(.env)', 'Shell(**)', 'Write(**)'])
-    expect(cli.permissions.allow).toEqual(['Mcp(taskwraith:*)'])
+    expect(cli.permissions.allow).toEqual(['Mcp(taskwraith:*)', 'Mcp(taskwraith-*)'])
 
     const mcp = JSON.parse(files.get(MCP)!)
     // Other registered servers survive; taskwraith is added.
@@ -209,6 +210,7 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
 
     const cli = JSON.parse(files.get(CONFIG)!)
     expect(cli.permissions.allow).toContain('Mcp(taskwraith:*)')
+    expect(cli.permissions.allow).toContain('Mcp(taskwraith-*)')
     expect(cli.permissions.allow).toContain('Mcp(user_filesystem:*)')
     expect(cli.permissions.allow).toContain('Mcp(user_docs:*)')
 
@@ -237,6 +239,7 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     expect(cli.permissions.deny).toContain('Shell(**)')
     expect(cli.permissions.deny).toContain('Write(**)')
     expect(cli.permissions.allow).toContain('Mcp(taskwraith:*)')
+    expect(cli.permissions.allow).toContain('Mcp(taskwraith-*)')
     // The per-run workspace mcp.json must NOT be written in B mode.
     expect(files.has(MCP)).toBe(false)
 

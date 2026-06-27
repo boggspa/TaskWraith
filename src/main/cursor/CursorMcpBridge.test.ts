@@ -20,8 +20,11 @@ import {
 // string escaping is easy to get wrong).
 
 describe('CURSOR_MCP_ALLOW_RULES', () => {
-  it('is exactly the taskwraith MCP wildcard (matches the server name)', () => {
-    expect(CURSOR_MCP_ALLOW_RULES).toEqual([`Mcp(${CURSOR_MCP_SERVER_NAME}:*)`])
+  it('covers Cursor colon and hyphen MCP tool name spellings', () => {
+    expect(CURSOR_MCP_ALLOW_RULES).toEqual([
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:*)`,
+      `Mcp(${CURSOR_MCP_SERVER_NAME}-*)`
+    ])
   })
 })
 
@@ -89,14 +92,14 @@ describe('mergeCursorMcpConfig', () => {
 describe('mergeCursorAllowRules', () => {
   it('adds the allow rule into an empty config (with an empty deny)', () => {
     expect(mergeCursorAllowRules(null, CURSOR_MCP_ALLOW_RULES)).toEqual({
-      permissions: { allow: ['Mcp(taskwraith:*)'], deny: [] }
+      permissions: { allow: ['Mcp(taskwraith:*)', 'Mcp(taskwraith-*)'], deny: [] }
     })
   })
 
   it('preserves existing deny rules (e.g. the write-mode Shell deny) + dedups allow', () => {
     const existing = { permissions: { allow: ['Mcp(taskwraith:*)'], deny: ['Shell(**)'] } }
     const merged = mergeCursorAllowRules(existing, CURSOR_MCP_ALLOW_RULES)
-    expect(merged.permissions.allow).toEqual(['Mcp(taskwraith:*)'])
+    expect(merged.permissions.allow).toEqual(['Mcp(taskwraith:*)', 'Mcp(taskwraith-*)'])
     expect(merged.permissions.deny).toEqual(['Shell(**)'])
   })
 

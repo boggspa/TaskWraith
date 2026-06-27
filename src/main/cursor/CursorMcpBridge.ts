@@ -18,10 +18,14 @@
 
 import type { CursorCliConfig } from './CursorWorkspaceConfig'
 
-/** Allow rule that pre-approves every tool from the `taskwraith` MCP server. This
- *  is what lifts the headless approval gate for the bridge's tools (paired with
- *  `--approve-mcps`); it does NOT touch the Shell/Write deny rules. */
-export const CURSOR_MCP_ALLOW_RULES: readonly string[] = ['Mcp(taskwraith:*)']
+/** Allow rules that pre-approve every tool from the `taskwraith` MCP server.
+ *  Cursor has reported brokered denials under both `taskwraith:<tool>` and
+ *  `taskwraith-<tool>` names, so keep both spellings allowed. This does NOT
+ *  touch the native Shell/Write deny rules. */
+export const CURSOR_MCP_ALLOW_RULES: readonly string[] = [
+  'Mcp(taskwraith:*)',
+  'Mcp(taskwraith-*)'
+]
 
 /** The MCP server name (the `taskwraith` in `Mcp(taskwraith:*)` + the mcp.json key). */
 export const CURSOR_MCP_SERVER_NAME = 'taskwraith'
