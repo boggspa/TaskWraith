@@ -584,8 +584,7 @@ describe('user MCP server name/audit helpers', () => {
           url: 'https://example.test/mcp',
           headers: {
             Authorization: 'Bearer ${DOCS_TOKEN}'
-          },
-          bearer_token_env_var: 'DOCS_TOKEN'
+          }
         },
         legacy: {
           type: 'sse',

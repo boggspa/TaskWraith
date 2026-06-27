@@ -1379,8 +1379,7 @@ function userMcpServerProviderEntry(
   return {
     type: server.transport,
     url: server.url?.trim() || '',
-    ...(headers ? { headers } : {}),
-    ...(server.bearerTokenEnvVar ? { bearer_token_env_var: server.bearerTokenEnvVar } : {})
+    ...(headers ? { headers } : {})
   }
 }
 
