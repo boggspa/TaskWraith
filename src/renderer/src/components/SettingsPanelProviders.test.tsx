@@ -3,6 +3,7 @@ import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
 import {
   SettingsPanel,
+  formatUserMcpServersClaudeJson,
   formatUserMcpServersCodexToml,
   formatUserMcpServersAuditJson,
   hasUserMcpServerNameConflict,
@@ -272,6 +273,8 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Audit JSON')
     expect(html).toContain('All servers audit JSON')
     expect(html).toContain('Copy all JSON')
+    expect(html).toContain('Copy Claude JSON')
+    expect(html).toContain('Claude config JSON')
     expect(html).toContain('Copy Codex TOML')
     expect(html).toContain('Codex config TOML')
     expect(html).toContain('Copy JSON')
@@ -524,6 +527,89 @@ describe('user MCP server name/audit helpers', () => {
     )
     expect(toml).not.toContain('legacy')
     expect(toml).not.toContain('disabled')
+  })
+
+  it('formats enabled Claude-compatible servers as provider JSON including SSE', () => {
+    const json = JSON.parse(
+      formatUserMcpServersClaudeJson([
+        {
+          id: 'filesystem',
+          name: 'filesystem',
+          enabled: true,
+          transport: 'stdio',
+          command: 'npx',
+          args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+          env: { PROJECT_ROOT: '/repo' }
+        },
+        {
+          id: 'docs',
+          name: 'docs',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.test/mcp',
+          headers: {
+            Authorization: 'Bearer ${DOCS_TOKEN}'
+          },
+          bearerTokenEnvVar: 'DOCS_TOKEN'
+        },
+        {
+          id: 'legacy',
+          name: 'legacy',
+          enabled: true,
+          transport: 'sse',
+          url: 'https://example.test/sse'
+        },
+        {
+          id: 'disabled',
+          name: 'disabled',
+          enabled: false,
+          transport: 'stdio',
+          command: 'node'
+        }
+      ])
+    )
+
+    expect(json).toEqual({
+      mcpServers: {
+        filesystem: {
+          type: 'stdio',
+          command: 'npx',
+          args: ['@modelcontextprotocol/server-filesystem', '/repo'],
+          env: { PROJECT_ROOT: '/repo' }
+        },
+        docs: {
+          type: 'http',
+          url: 'https://example.test/mcp',
+          headers: {
+            Authorization: 'Bearer ${DOCS_TOKEN}'
+          },
+          bearer_token_env_var: 'DOCS_TOKEN'
+        },
+        legacy: {
+          type: 'sse',
+          url: 'https://example.test/sse'
+        }
+      }
+    })
+  })
+
+  it('redacts values in Claude JSON preview mode', () => {
+    const json = formatUserMcpServersClaudeJson(
+      [
+        {
+          id: 'filesystem',
+          name: 'filesystem',
+          enabled: true,
+          transport: 'stdio',
+          command: 'npx',
+          env: { PROJECT_ROOT: '/repo' }
+        }
+      ],
+      { redactValues: true }
+    )
+
+    expect(json).toContain('"PROJECT_ROOT": "[stored in TaskWraith settings]"')
+    expect(json).not.toContain('/repo')
   })
 
   it('redacts values in Codex TOML preview mode', () => {
