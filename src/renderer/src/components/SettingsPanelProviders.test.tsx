@@ -10,7 +10,8 @@ import {
   hasUserMcpServerNameConflict,
   parseUserMcpServersImportJson,
   userMcpServerProviderExportLabels,
-  userMcpServerMatchesQuery
+  userMcpServerMatchesQuery,
+  userMcpServerStatusLabel
 } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
 import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
@@ -266,6 +267,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('filesystem')
     expect(html).toContain('Search user MCP servers')
     expect(html).toContain('3 of 3 servers')
+    expect(html).toContain('<span>enabled</span><span>stdio</span><span>npx</span>')
     expect(html).toContain('2 args')
     expect(html).toContain('1 env var')
     expect(html).toContain('1 header')
@@ -499,6 +501,35 @@ describe('parseUserMcpServersImportJson', () => {
 })
 
 describe('user MCP server name/audit helpers', () => {
+  it('labels user MCP server launch readiness', () => {
+    expect(
+      userMcpServerStatusLabel({
+        enabled: true,
+        transport: 'stdio',
+        command: 'npx'
+      })
+    ).toBe('enabled')
+    expect(
+      userMcpServerStatusLabel({
+        enabled: false,
+        transport: 'http',
+        url: 'https://example.test/mcp'
+      })
+    ).toBe('disabled')
+    expect(
+      userMcpServerStatusLabel({
+        enabled: true,
+        transport: 'stdio'
+      })
+    ).toBe('needs command')
+    expect(
+      userMcpServerStatusLabel({
+        enabled: true,
+        transport: 'sse'
+      })
+    ).toBe('needs URL')
+  })
+
   it('labels per-server provider export compatibility', () => {
     expect(
       userMcpServerProviderExportLabels({

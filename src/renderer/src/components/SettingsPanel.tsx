@@ -755,6 +755,15 @@ function userMcpServerRuntimeLabel(server: Pick<UserMcpServerConfig, 'transport'
   return providers.length > 0 ? `runtime: ${providers.join(' + ')}` : 'saved only'
 }
 
+export function userMcpServerStatusLabel(
+  server: Pick<UserMcpServerConfig, 'enabled' | 'transport' | 'command' | 'url'>
+): string {
+  if (!hasRunnableUserMcpEndpoint(server)) {
+    return server.transport === 'stdio' ? 'needs command' : 'needs URL'
+  }
+  return server.enabled ? 'enabled' : 'disabled'
+}
+
 export function userMcpServerMatchesQuery(
   server: UserMcpServerConfig,
   query: string
@@ -765,7 +774,7 @@ export function userMcpServerMatchesQuery(
     server.name,
     server.description || '',
     server.transport,
-    server.enabled ? 'enabled' : 'disabled',
+    userMcpServerStatusLabel(server),
     server.command || '',
     server.url || '',
     ...(server.args ?? []),
@@ -6686,6 +6695,7 @@ export function SettingsPanel({
                           <strong>{server.name}</strong>
                           <span>{server.description || endpoint}</span>
                           <div className="settings-mcp-server-meta">
+                            <span>{userMcpServerStatusLabel(server)}</span>
                             <span>{server.transport}</span>
                             <span>{endpoint}</span>
                             {server.args && server.args.length > 0 && (
