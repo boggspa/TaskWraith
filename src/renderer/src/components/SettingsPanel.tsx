@@ -6785,20 +6785,29 @@ export function SettingsPanel({
                         ? server.command || 'No command'
                         : server.url || 'No URL'
                     const exportLabels = userMcpServerProviderExportLabels(server)
-                    const claudeSnippet = isClaudeExportableUserMcpServer(server)
+                    const claudeSnippetPreview = isClaudeExportableUserMcpServer(server)
                       ? formatUserMcpServerClaudeJsonSnippet(userMcpServers, server, {
                           redactValues: true
                         })
                       : ''
-                    const cursorSnippet = isCursorExportableUserMcpServer(server)
+                    const claudeSnippetCopy = claudeSnippetPreview
+                      ? formatUserMcpServerClaudeJsonSnippet(userMcpServers, server)
+                      : ''
+                    const cursorSnippetPreview = isCursorExportableUserMcpServer(server)
                       ? formatUserMcpServerCursorJsonSnippet(userMcpServers, server, {
                           redactValues: true
                         })
                       : ''
-                    const codexSnippet = isCodexExportableUserMcpServer(server)
+                    const cursorSnippetCopy = cursorSnippetPreview
+                      ? formatUserMcpServerCursorJsonSnippet(userMcpServers, server)
+                      : ''
+                    const codexSnippetPreview = isCodexExportableUserMcpServer(server)
                       ? formatUserMcpServerCodexTomlSnippet(userMcpServers, server, {
                           redactValues: true
                         })
+                      : ''
+                    const codexSnippetCopy = codexSnippetPreview
+                      ? formatUserMcpServerCodexTomlSnippet(userMcpServers, server)
                       : ''
                     return (
                       <article key={server.id} className="settings-user-mcp-row">
@@ -6834,7 +6843,7 @@ export function SettingsPanel({
                             <details className="settings-user-mcp-config">
                               <summary>Provider config snippets</summary>
                               <div className="settings-user-mcp-snippet-list">
-                                {claudeSnippet && (
+                                {claudeSnippetPreview && (
                                   <section>
                                     <div className="settings-user-mcp-snippet-heading">
                                       <strong>Claude JSON</strong>
@@ -6845,7 +6854,7 @@ export function SettingsPanel({
                                           copyMcpServerProviderSnippet(
                                             server.id,
                                             'claude',
-                                            claudeSnippet
+                                            claudeSnippetCopy
                                           )
                                         }
                                       >
@@ -6855,11 +6864,11 @@ export function SettingsPanel({
                                       </button>
                                     </div>
                                     <pre>
-                                      <code>{claudeSnippet}</code>
+                                      <code>{claudeSnippetPreview}</code>
                                     </pre>
                                   </section>
                                 )}
-                                {cursorSnippet && (
+                                {cursorSnippetPreview && (
                                   <section>
                                     <div className="settings-user-mcp-snippet-heading">
                                       <strong>Cursor mcp.json</strong>
@@ -6870,7 +6879,7 @@ export function SettingsPanel({
                                           copyMcpServerProviderSnippet(
                                             server.id,
                                             'cursor',
-                                            cursorSnippet
+                                            cursorSnippetCopy
                                           )
                                         }
                                       >
@@ -6880,11 +6889,11 @@ export function SettingsPanel({
                                       </button>
                                     </div>
                                     <pre>
-                                      <code>{cursorSnippet}</code>
+                                      <code>{cursorSnippetPreview}</code>
                                     </pre>
                                   </section>
                                 )}
-                                {codexSnippet && (
+                                {codexSnippetPreview && (
                                   <section>
                                     <div className="settings-user-mcp-snippet-heading">
                                       <strong>Codex TOML</strong>
@@ -6895,7 +6904,7 @@ export function SettingsPanel({
                                           copyMcpServerProviderSnippet(
                                             server.id,
                                             'codex',
-                                            codexSnippet
+                                            codexSnippetCopy
                                           )
                                         }
                                       >
@@ -6905,7 +6914,7 @@ export function SettingsPanel({
                                       </button>
                                     </div>
                                     <pre>
-                                      <code>{codexSnippet}</code>
+                                      <code>{codexSnippetPreview}</code>
                                     </pre>
                                   </section>
                                 )}

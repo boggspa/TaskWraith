@@ -872,6 +872,41 @@ describe('user MCP server name/audit helpers', () => {
     )
   })
 
+  it('supports redacted previews and unredacted per-server copy snippets', () => {
+    const servers: UserMcpServerConfig[] = [
+      {
+        id: 'server-docs',
+        name: 'Docs',
+        enabled: true,
+        transport: 'http',
+        url: 'https://example.test/mcp',
+        headers: {
+          Authorization: 'Bearer ${DOCS_TOKEN}'
+        },
+        bearerTokenEnvVar: 'DOCS_TOKEN'
+      }
+    ]
+
+    expect(
+      formatUserMcpServerClaudeJsonSnippet(servers, servers[0], { redactValues: true })
+    ).toContain('"Authorization": "[stored in TaskWraith settings]"')
+    expect(formatUserMcpServerClaudeJsonSnippet(servers, servers[0])).toContain(
+      '"Authorization": "Bearer ${DOCS_TOKEN}"'
+    )
+    expect(
+      formatUserMcpServerCursorJsonSnippet(servers, servers[0], { redactValues: true })
+    ).toContain('"Authorization": "[stored in TaskWraith settings]"')
+    expect(formatUserMcpServerCursorJsonSnippet(servers, servers[0])).toContain(
+      '"Authorization": "Bearer ${DOCS_TOKEN}"'
+    )
+    expect(
+      formatUserMcpServerCodexTomlSnippet(servers, servers[0], { redactValues: true })
+    ).toContain('Authorization = "[stored in TaskWraith settings]"')
+    expect(formatUserMcpServerCodexTomlSnippet(servers, servers[0])).toContain(
+      'Authorization = "Bearer ${DOCS_TOKEN}"'
+    )
+  })
+
   it('redacts values in Cursor JSON preview mode', () => {
     const json = formatUserMcpServersCursorJson(
       [
