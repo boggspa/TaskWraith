@@ -834,6 +834,7 @@ import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandle
 import { registerWorkspaceFileEditorHandlers } from './ipc/workspaceFileEditorHandlers'
 import { registerWorkspaceDiffSnapshotHandlers } from './ipc/workspaceDiffSnapshotHandlers'
 import { registerTrustHandlers } from './ipc/trustHandlers'
+import { registerUpdateHandlers } from './ipc/updateHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -23255,29 +23256,11 @@ if (isGeminiMcpBridgeProcess) {
       humanCollaborationHostTransport.attachRuntime(humanCollaborationRuntime)
       return humanCollaborationRuntime
     }
-    ipcMain.handle('update-snapshot', () => updateService.snapshot())
-    ipcMain.handle('check-for-updates', async () => {
-      await updateService.checkForUpdates()
-      return updateService.snapshot()
-    })
-    ipcMain.handle('download-update', async () => {
-      await updateService.downloadUpdate()
-      return updateService.snapshot()
-    })
-    ipcMain.handle('install-update-on-quit', () => {
-      updateService.installOnQuit()
-      return updateService.snapshot()
-    })
-    ipcMain.handle('install-update-now', () => {
-      updateService.quitAndInstall()
-      return updateService.snapshot()
-    })
-    ipcMain.handle('changelog-snapshot', () => changelogSnapshot())
-    ipcMain.handle('mark-changelog-seen', (_, version: string) => {
-      const normalizedVersion = typeof version === 'string' ? version.trim() : ''
-      if (!normalizedVersion) return changelogSnapshot()
-      AppStore.updateSettings({ lastSeenChangelogVersion: normalizedVersion })
-      return changelogSnapshot()
+    registerUpdateHandlers({
+      updateService,
+      changelogSnapshot,
+      updateLastSeenChangelogVersion: (version) =>
+        AppStore.updateSettings({ lastSeenChangelogVersion: version })
     })
     if (updateService.snapshot().enabled) {
       setTimeout(() => {
