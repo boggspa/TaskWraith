@@ -6635,7 +6635,7 @@ export function SettingsPanel({
                   <small>user-managed definitions</small>
                 </article>
                 <article className="settings-mcp-summary-card">
-                  <span>Enabled</span>
+                  <span>Active</span>
                   <strong>{activeUserMcpServerCount}</strong>
                   <small>active definitions</small>
                 </article>

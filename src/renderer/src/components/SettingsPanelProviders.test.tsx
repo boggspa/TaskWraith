@@ -292,6 +292,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Import config')
     expect(html).toContain('Codex + Claude + Cursor')
     expect(html).toContain('stdio and HTTP launch support')
+    expect(html).toContain('<span>Active</span><strong>3</strong><small>active definitions</small>')
     expect(html).toContain(
       '<span>Codex export</span><strong>2</strong><small>config-ready TOML entries</small>'
     )
