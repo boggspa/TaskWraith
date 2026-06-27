@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord } from '../../../main/store/types'
 import {
+  buildIsolatedSideChatContextSeed,
   buildHiddenSideChatInitialPrompt,
-  buildSideChatRunResultSeedPrompt
+  buildSideChatRunResultSeedPrompt,
+  formatSideChatParentContextMessage
 } from './SideChatRunSeed'
 
 function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
@@ -94,5 +96,121 @@ describe('buildSideChatRunResultSeedPrompt', () => {
     expect(prompt).toContain('Run status: failed')
     expect(prompt).toContain('Latest assistant response:')
     expect(prompt).toContain('Latest available answer')
+  })
+})
+
+describe('side-chat context seed helpers', () => {
+  it('formats parent transcript messages for isolated side-chat context', () => {
+    expect(
+      formatSideChatParentContextMessage(
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'Please inspect the failing test.',
+          timestamp: '2026-06-27T12:00:00.000Z'
+        },
+        'codex'
+      )
+    ).toBe('User: Please inspect the failing test.')
+
+    expect(
+      formatSideChatParentContextMessage(
+        {
+          id: 'm2',
+          role: 'assistant',
+          content: 'I found the issue.',
+          timestamp: '2026-06-27T12:01:00.000Z'
+        },
+        'codex'
+      )
+    ).toBe('Codex parent agent: I found the issue.')
+
+    expect(
+      formatSideChatParentContextMessage(
+        {
+          id: 'm3',
+          role: 'system',
+          content: 'Child result',
+          timestamp: '2026-06-27T12:02:00.000Z',
+          metadata: { kind: 'guestParticipantReply', guestProvider: 'claude' }
+        },
+        'codex'
+      )
+    ).toBe('Claude guest: Child result')
+
+    expect(
+      formatSideChatParentContextMessage(
+        {
+          id: 'm4',
+          role: 'tool',
+          content: 'Sub-thread answer',
+          timestamp: '2026-06-27T12:03:00.000Z',
+          metadata: { kind: 'subThreadReturn' }
+        },
+        'codex'
+      )
+    ).toBe('Returned sub-thread: Sub-thread answer')
+
+    expect(
+      formatSideChatParentContextMessage(
+        {
+          id: 'm5',
+          role: 'tool',
+          content: 'Ignored tool output',
+          timestamp: '2026-06-27T12:04:00.000Z'
+        },
+        'codex'
+      )
+    ).toBeNull()
+  })
+
+  it('builds a bounded isolated side-chat context snapshot', () => {
+    const seed = buildIsolatedSideChatContextSeed(
+      makeChat({
+        messages: [
+          {
+            id: 'ignored',
+            role: 'tool',
+            content: 'plain tool output',
+            timestamp: '2026-06-27T12:00:00.000Z'
+          },
+          {
+            id: 'user',
+            role: 'user',
+            content: 'What changed in the renderer?',
+            timestamp: '2026-06-27T12:01:00.000Z'
+          },
+          {
+            id: 'assistant',
+            role: 'assistant',
+            content: 'The scroll hook moved.',
+            timestamp: '2026-06-27T12:02:00.000Z'
+          }
+        ]
+      })
+    )
+
+    expect(seed).toContain('Use this lightweight parent context snapshot as background')
+    expect(seed).toContain('Parent context snapshot:')
+    expect(seed).toContain('User: What changed in the renderer?')
+    expect(seed).toContain('Codex parent agent: The scroll hook moved.')
+    expect(seed).not.toContain('plain tool output')
+  })
+
+  it('returns an empty seed when no context messages are eligible', () => {
+    expect(
+      buildIsolatedSideChatContextSeed(
+        makeChat({
+          messages: [
+            {
+              id: 'tool',
+              role: 'tool',
+              content: 'plain tool output',
+              timestamp: '2026-06-27T12:00:00.000Z'
+            }
+          ]
+        })
+      )
+    ).toBe('')
   })
 })

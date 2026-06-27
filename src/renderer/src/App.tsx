@@ -105,6 +105,7 @@ import { normalizeExternalPathGrants } from './lib/normalizeExternalPathGrants'
 import type { SideSlashCommand } from './lib/SideSlashCommand'
 import { selectVisibleAuditRun } from './lib/auditRunVisibility'
 import {
+  buildIsolatedSideChatContextSeed,
   buildHiddenSideChatInitialPrompt,
   buildSideChatRunResultSeedPrompt
 } from './lib/SideChatRunSeed'
@@ -689,9 +690,6 @@ const GUEST_PARTICIPANT_STEERING_PREAMBLE =
 const GUEST_PARENT_CONTEXT_TURN_LIMIT = 20
 const GUEST_PARENT_CONTEXT_CHAR_LIMIT = 12000
 const GUEST_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT = 1800
-const SIDE_CHAT_PARENT_CONTEXT_TURN_LIMIT = 8
-const SIDE_CHAT_PARENT_CONTEXT_CHAR_LIMIT = 5000
-const SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT = 700
 
 function renderPlanImportItems(items: readonly string[], emptyText = 'None detected'): ReactNode {
   if (items.length === 0) {
@@ -834,64 +832,6 @@ function buildGuestParentTranscriptContext(parentChat: ChatRecord): string {
     remaining -= next.length + 2
   }
   return `${heading}\n${lines.join('\n\n')}`
-}
-
-function formatSideChatParentContextMessage(
-  message: ChatMessage,
-  parentProvider: ProviderId
-): string | null {
-  const content = message.content?.trim()
-  if (!content) return null
-  if (message.role === 'user') {
-    return `User: ${truncateGuestContextText(content, SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT)}`
-  }
-  if (message.role === 'assistant') {
-    return `${getProviderLabel(parentProvider)} parent agent: ${truncateGuestContextText(
-      content,
-      SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
-    )}`
-  }
-  if (message.role === 'system' && message.metadata?.kind === 'guestParticipantReply') {
-    const provider =
-      typeof message.metadata.guestProvider === 'string'
-        ? getProviderLabel(message.metadata.guestProvider as ProviderId)
-        : 'Guest'
-    return `${provider} guest: ${truncateGuestContextText(
-      content,
-      SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
-    )}`
-  }
-  if (
-    (message.role === 'system' || message.role === 'tool') &&
-    message.metadata?.kind === 'subThreadReturn'
-  ) {
-    return `Returned sub-thread: ${truncateGuestContextText(
-      content,
-      SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
-    )}`
-  }
-  return null
-}
-
-function buildIsolatedSideChatContextSeed(parentChat: ChatRecord): string {
-  const parentProvider = getChatProvider(parentChat)
-  const turns = (parentChat.messages || [])
-    .map((message) => formatSideChatParentContextMessage(message, parentProvider))
-    .filter((entry): entry is string => Boolean(entry))
-    .slice(-SIDE_CHAT_PARENT_CONTEXT_TURN_LIMIT)
-  if (turns.length === 0) return ''
-  const heading =
-    'Use this lightweight parent context snapshot as background for this isolated side chat. It was copied when the side chat was created and will not update automatically.'
-  const lines: string[] = []
-  let remaining = SIDE_CHAT_PARENT_CONTEXT_CHAR_LIMIT - heading.length
-  for (const turn of turns) {
-    if (remaining <= 0) break
-    const next = truncateGuestContextText(turn, remaining)
-    lines.push(next)
-    remaining -= next.length + 2
-  }
-  if (lines.length === 0) return ''
-  return [heading, '', 'Parent context snapshot:', ...lines].join('\n')
 }
 
 function permissionPresetToApprovalMode(preset?: string): string {
