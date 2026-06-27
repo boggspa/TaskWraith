@@ -17,6 +17,19 @@ export interface LaunchHandlerDeps {
 export function registerLaunchHandlers(deps: LaunchHandlerDeps): void {
   ipcMain.handle('launch-attempts-snapshot', () => deps.launchManager.snapshot())
 
+  ipcMain.handle('launch-targets-snapshot', (_event, workspacePath) => {
+    if (typeof workspacePath !== 'string') {
+      throw new Error('Workspace path is required.')
+    }
+    const registeredWorkspacePath = deps.requireRegisteredWorkspace(workspacePath, 'Workspace')
+    return discoverLaunchTargets({
+      workspacePath: registeredWorkspacePath,
+      workspaceId: deps.findWorkspaceId(registeredWorkspacePath),
+      localServers: deps.localServersSnapshot().servers,
+      platform: deps.platform
+    })
+  })
+
   ipcMain.handle('launch-start', async (event, input: unknown) => {
     const parsed = parseLaunchStartInput(input)
     const workspacePath = deps.requireRegisteredWorkspace(parsed.workspacePath, 'Workspace')

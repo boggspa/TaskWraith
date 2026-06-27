@@ -305,7 +305,6 @@ import {
 import { LocalServersService } from './LocalServersService'
 import { LaunchAttemptStore } from './launch/LaunchAttemptStore'
 import { LaunchManager, type LaunchLifecycleRecord } from './launch/LaunchManager'
-import { discoverLaunchTargets } from './launchTargets/discovery'
 import { SpawnRegistry } from './localServers/SpawnRegistry'
 import { getNativeCapabilitySnapshot } from './NativeCapabilities'
 import { AuditService } from './services/AuditService'
@@ -831,6 +830,7 @@ import {
 import { installIpcValidation } from './IpcValidation'
 import { registerPtyHandlers } from './ipc/ptyHandlers'
 import { registerLaunchHandlers } from './ipc/launchHandlers'
+import { registerLocalServersHandlers } from './ipc/localServersHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -22928,12 +22928,7 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
     localServersService.start()
-    ipcMain.handle('local-servers-snapshot', () => localServersService.snapshot())
-    ipcMain.handle('local-servers-refresh', () => localServersService.refreshNow())
-    ipcMain.handle('local-servers-stop', (_event, pid) =>
-      localServersService.stopServer(Number(pid))
-    )
-    ipcMain.handle('local-servers-stop-all', () => localServersService.stopAll())
+    registerLocalServersHandlers({ localServersService })
     const launchManager = new LaunchManager({
       store: new LaunchAttemptStore(join(app.getPath('userData'), 'launch-attempts.json')),
       platform: process.platform,
@@ -22957,19 +22952,6 @@ if (isGeminiMcpBridgeProcess) {
       findWorkspaceId: (workspacePath) => findRegisteredWorkspace(workspacePath)?.id,
       localServersSnapshot: () => localServersService.snapshot(),
       platform: process.platform
-    })
-    ipcMain.handle('launch-targets-snapshot', (_event, workspacePath) => {
-      if (typeof workspacePath !== 'string') {
-        throw new Error('Workspace path is required.')
-      }
-      const registeredWorkspacePath = requireRegisteredWorkspace(workspacePath, 'Workspace')
-      const workspace = findRegisteredWorkspace(registeredWorkspacePath)
-      return discoverLaunchTargets({
-        workspacePath: registeredWorkspacePath,
-        workspaceId: workspace?.id,
-        localServers: localServersService.snapshot().servers,
-        platform: process.platform
-      })
     })
 
     const updateSnapshotToChangelog = (
