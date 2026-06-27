@@ -159,7 +159,7 @@ baseline.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
-Current source version: **v1.6.5**. See [CHANGELOG.md](CHANGELOG.md) for release
+Current source version: **v1.6.6**. See [CHANGELOG.md](CHANGELOG.md) for release
 notes. Release artifacts are published from matching GitHub tags; if the GitHub
 Releases page shows an older version, treat newer source changes as
 release-candidate work until a matching tag and release artifacts are published.

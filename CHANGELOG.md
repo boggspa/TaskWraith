@@ -4,6 +4,40 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.6.6 - 2026-06-27
+
+### Added
+- **Decomposition groundwork.** App and main-process orchestration have started
+  moving out of the large root files into focused helper, hook, and IPC modules,
+  making future changes easier to review without changing user-facing behavior.
+- **Sidebar workspace path actions.** Workspace path controls are easier to reach
+  from the sidebar during local project work.
+
+### Changed
+- **More robust iOS remote access.** Dev and release builds recover Tailscale /
+  relay routing more reliably, retry transient status probes, prefer recently
+  successful relay doors on reconnect, and restart the embedded bridge on demand
+  when pairing needs it.
+- **Smoother desktop transcript streaming.** Electron transcript reveal and scroll
+  ownership now stay active during provider output so streamed text feels less
+  chunky and long-running replies do not fight the user's scroll position.
+- **Navigable app notices.** Welcome / first-launch notification cards can now be
+  dismissed permanently and moved through with explicit carousel controls.
+
+### Fixed
+- **Ensemble orchestration reliability.** Role and Bossman mention routing now
+  takes priority over ambiguous provider tags, stale round lifecycle state
+  recovers cleanly, and shared-chat invite joins are harder to trip up.
+- **Cursor MCP bridge compatibility.** Cursor and compatible runtimes can use the
+  brokered TaskWraith MCP tool names that include hyphens while reserved
+  TaskWraith tool namespaces remain protected from repo-provided collisions.
+- **Security hardening.** Release 1.6.6 tightens agent trust boundaries across
+  approval actions, Cursor MCP allowlisting, favicon fetching, external path
+  grants, raw provider event persistence, PTY session ownership, git IPC scope,
+  transcript local-link opening, relay connection caps, and encrypted relay
+  resume/ACK handling. Retired Gemini OAuth profile material is purged instead of
+  being recreated.
+
 ## 1.6.5 - 2026-06-27
 
 ### Added
