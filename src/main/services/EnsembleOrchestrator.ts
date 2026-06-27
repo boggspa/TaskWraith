@@ -499,6 +499,18 @@ function dedupeParticipants(participants: EnsembleParticipant[]): EnsemblePartic
   return out
 }
 
+function participantDisplayName(participant: EnsembleParticipant): string {
+  return participant.role || providerLabel(participant.provider)
+}
+
+function participantProviderGroupLabel(participants: EnsembleParticipant[]): string {
+  const providers = new Set(participants.map((participant) => participant.provider))
+  if (providers.size === 1) {
+    return `${providerLabel(participants[0].provider)} participant`
+  }
+  return 'participant'
+}
+
 /**
  * Minimal tool-activity builders for the orchestrator. The renderer's
  * `ToolParser.ts` has richer extraction (file-path heuristics, diff
@@ -3813,20 +3825,38 @@ export class EnsembleOrchestrator {
           )
 
       if (tagMatches.length > 0) {
+        const bossmanParticipantId =
+          runtime.bossmanParticipantId ||
+          chat.ensemble?.activeRound?.bossmanParticipantId ||
+          chat.ensemble?.bossmanParticipantId
+        const bossmanMatch = bossmanParticipantId
+          ? tagMatches.find((tagMatch) => tagMatch.participant.id === bossmanParticipantId)
+          : undefined
+        const routeableTagMatches =
+          bossmanMatch && tagMatches.some((tagMatch) => tagMatch.participant.id !== bossmanMatch.participant.id)
+            ? [bossmanMatch]
+            : tagMatches
+        if (bossmanMatch && routeableTagMatches.length !== tagMatches.length) {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            `@-mention: ${participantDisplayName(bossmanMatch.participant)} is Bossman and takes routing priority over advisory participant mentions.`
+          )
+        }
         const seenTagged = new Set<string>()
         const mentionedParticipants: EnsembleParticipant[] = []
         const ambiguityWarnings: string[] = []
-        for (const tagMatch of tagMatches) {
+        for (const tagMatch of routeableTagMatches) {
           let tagged = tagMatch.participant
           if (tagMatch.ambiguousAmong && tagMatch.ambiguousAmong.length > 0) {
             const candidates = [tagMatch.participant, ...tagMatch.ambiguousAmong]
-            const preferred = candidates.find((p) => remaining.some((r) => r.id === p.id))
-            if (preferred) tagged = preferred
+            const candidateLabels = candidates.map((p) => participantDisplayName(p)).join(', ')
+            const providerGroupLabel = participantProviderGroupLabel(candidates)
             ambiguityWarnings.push(
-              `@-mention: \`@${tagMatch.text}\` was ambiguous (${candidates.length} ${providerLabel(tagged.provider)} participants). ` +
-                `Routed to ${tagged.role || tagged.provider} (next in rotation). ` +
-                `Use @<role> or @<model> for explicit targeting.`
+              `@-mention: \`@${tagMatch.text}\` was ambiguous (${candidates.length} ${providerGroupLabel}s: ${candidateLabels}). ` +
+                'No route changed. Use @<role> or @<model> for explicit targeting.'
             )
+            continue
           }
           if (seenTagged.has(tagged.id)) continue
           seenTagged.add(tagged.id)

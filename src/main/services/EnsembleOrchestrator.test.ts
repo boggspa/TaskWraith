@@ -4440,12 +4440,10 @@ Next action:
   })
 
   // 1.0.4 — same-provider disambiguation. Two Codex participants
-  // both claim the `codex` alias; when Kimi writes `@codex`, the
-  // resolver picks the ensemble-first Codex but the orchestrator
-  // must surface a system note explaining the ambiguity AND prefer
-  // a candidate still in the remaining rotation (next-in-rotation
-  // that hasn't spoken).
-  it('emits a system warning and re-picks rotation-aware when @<provider> is ambiguous', async () => {
+  // both claim the `codex` alias; when another participant writes
+  // bare `@codex`, the orchestrator must surface a system note and
+  // refuse to route. Exact role/model tags still route normally.
+  it('emits a system warning and does not reroute when @<provider> is ambiguous', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.maxParticipants = 6
     harness.chat.ensemble!.participants = [
@@ -4460,12 +4458,22 @@ Next action:
         permissionPresetId: 'workspace_write'
       },
       {
+        id: 'ensemble-claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Planner',
+        instructions: 'Plan.',
+        order: 2,
+        model: 'claude-sonnet-4-7',
+        permissionPresetId: 'read_only'
+      },
+      {
         id: 'ensemble-codex-brodex',
         provider: 'codex',
         enabled: true,
         role: 'Brodex',
         instructions: 'Implement.',
-        order: 2,
+        order: 3,
         model: 'gpt-5.5',
         permissionPresetId: 'workspace_write'
       },
@@ -4475,7 +4483,7 @@ Next action:
         enabled: true,
         role: 'Chodex #2',
         instructions: 'Review.',
-        order: 3,
+        order: 4,
         model: 'gpt-5.4-mini',
         permissionPresetId: 'read_only'
       }
@@ -4503,13 +4511,13 @@ Next action:
     })
 
     // Both Codex participants are still in `remaining` after Kimi
-    // finishes. The resolver picks Brodex (ensemble-first), and
-    // the orchestrator's rotation-aware re-pick keeps Brodex (also
-    // the next-in-rotation). Either way, Brodex speaks next.
+    // finishes, so bare `@codex` is ambiguous. The orchestrator
+    // warns and leaves the default rotation intact: Claude/Planner
+    // remains next instead of a Codex lane being promoted.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.dispatched[1].provider).toBe('claude')
     expect(harness.dispatched[1].ensembleRun).toMatchObject({
-      participantId: 'ensemble-codex-brodex'
+      participantId: 'ensemble-claude'
     })
 
     // System message announcing the ambiguity.
@@ -4520,7 +4528,85 @@ Next action:
           typeof content === 'string' &&
           content.includes('was ambiguous') &&
           content.includes('Codex participants') &&
-          content.includes('Brodex')
+          content.includes('Brodex') &&
+          content.includes('No route changed')
+      )
+    ).toBe(true)
+  })
+
+  it('routes Bossman before advisory worker mentions in the same assistant output', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex-lead'
+    harness.chat.ensemble!.maxParticipants = 6
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'ensemble-grok',
+        provider: 'grok',
+        enabled: true,
+        role: 'Grok Recon',
+        instructions: 'Recon.',
+        order: 1,
+        model: 'grok-build',
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'ensemble-codex-main',
+        provider: 'codex',
+        enabled: true,
+        role: 'Codex Main Work',
+        instructions: 'Implement.',
+        order: 2,
+        model: 'gpt-5.5',
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'ensemble-codex-lead',
+        provider: 'codex',
+        enabled: true,
+        role: 'Codex Lead',
+        instructions: 'Orchestrate.',
+        order: 3,
+        model: 'gpt-5.5',
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Coordinate the slice.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun).toMatchObject({
+      participantId: 'ensemble-grok'
+    })
+
+    const grokRoute = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('grok', grokRoute, {
+      type: 'content',
+      text:
+        'The main IPC worker is ready. @Codex Main Work can implement once @Codex Lead assigns it.'
+    })
+    harness.orchestrator.handleProviderOutput('grok', grokRoute, {
+      type: 'result',
+      status: 'success',
+      stats: { total_tokens: 10 }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun).toMatchObject({
+      participantId: 'ensemble-codex-lead'
+    })
+    const messages = harness.chat.messages.map((m) => m.content)
+    expect(
+      messages.some(
+        (content) =>
+          typeof content === 'string' &&
+          content.includes('Bossman') &&
+          content.includes('takes routing priority')
       )
     ).toBe(true)
   })
