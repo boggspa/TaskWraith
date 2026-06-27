@@ -54,6 +54,8 @@ describe('NotificationZone', () => {
     const dotMatches = html.match(/notification-zone-dot/g) ?? []
     expect(dotMatches.length).toBeGreaterThanOrEqual(2)
     expect(html).toContain('notification-zone-dot is-active')
+    expect(html).toContain('Show previous notification')
+    expect(html).toContain('Show next notification')
   })
 
   it('omits the dismiss button for a non-dismissible notice', () => {

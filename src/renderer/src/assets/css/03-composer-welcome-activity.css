@@ -10578,28 +10578,77 @@ button.diff-file-row {
   color: var(--text-primary, inherit);
 }
 
+.notification-zone-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-bg) 84%, transparent);
+  color: var(--text-secondary);
+  box-shadow: 0 8px 18px color-mix(in srgb, #000 18%, transparent);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition:
+    opacity 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+.notification-zone:hover .notification-zone-nav,
+.notification-zone:focus-within .notification-zone-nav {
+  opacity: 0.9;
+}
+.notification-zone-nav:hover {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--panel-border));
+  background: color-mix(in srgb, var(--panel-bg) 96%, var(--accent) 8%);
+}
+.notification-zone-nav--prev {
+  left: 8px;
+}
+.notification-zone-nav--next {
+  right: 8px;
+}
+
 .notification-zone-dots {
   display: flex;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   margin-top: 8px;
 }
 .notification-zone-dot {
   appearance: none;
   border: none;
-  padding: 0;
+  padding: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    transform 160ms ease;
+}
+.notification-zone-dot::before {
+  content: "";
+  display: block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--text-primary) 22%, transparent);
-  cursor: pointer;
-  transition:
-    background 160ms ease,
-    transform 160ms ease;
+  transition: background 160ms ease;
 }
 .notification-zone-dot.is-active {
-  background: var(--accent);
   transform: scale(1.25);
+}
+.notification-zone-dot.is-active::before {
+  background: var(--accent);
 }
 
 /* ── General (global) chats — quiet ensemble chrome ──────────────────────

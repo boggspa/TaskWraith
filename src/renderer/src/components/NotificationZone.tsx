@@ -70,7 +70,12 @@ function NotificationCard({
         <button
           type="button"
           className="notification-card-dismiss"
-          onClick={() => onDismiss(notification.id)}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onDismiss(notification.id)
+          }}
           aria-label={`Dismiss notification: ${notification.title}`}
           title="Dismiss"
         >
@@ -126,6 +131,14 @@ export function NotificationZone({
   )
 
   const count = active.length
+  const goRelative = useCallback(
+    (delta: 1 | -1): void => {
+      if (count <= 1) return
+      const nextIndex = (Math.min(activeIndex, count - 1) + delta + count) % count
+      goTo(nextIndex, delta > 0 ? 'next' : 'prev')
+    },
+    [activeIndex, count, goTo]
+  )
 
   // Auto-rotate every 90s while more than one notice is active. activeIndex is
   // in the dep array (like the welcome heatmap) so a manual jump resets the timer.
@@ -171,6 +184,20 @@ export function NotificationZone({
   return (
     <div className="notification-zone">
       <div className="notification-zone--rotating">
+        <button
+          type="button"
+          className="notification-zone-nav notification-zone-nav--prev"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            goRelative(-1)
+          }}
+          aria-label="Show previous notification"
+          title="Previous notification"
+        >
+          ‹
+        </button>
         {outgoing && (
           <div
             className={`notification-zone-pane is-outgoing ${
@@ -190,6 +217,20 @@ export function NotificationZone({
         >
           <NotificationCard notification={current} onDismiss={dismiss} />
         </div>
+        <button
+          type="button"
+          className="notification-zone-nav notification-zone-nav--next"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            goRelative(1)
+          }}
+          aria-label="Show next notification"
+          title="Next notification"
+        >
+          ›
+        </button>
       </div>
       <div className="notification-zone-dots" role="group" aria-label="Notifications">
         {active.map((notification, index) => (
