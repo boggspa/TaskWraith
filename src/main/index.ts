@@ -736,11 +736,7 @@ import {
   mcpToolCallResponseFromBrokerResult as mcpBridgeToolCallResponseFromBrokerResult,
   startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
 } from './mcp/McpBridgeRuntime'
-import {
-  createGeminiDiscoveryHelpers,
-  type GeminiCommandDiscoveryRecord,
-  type GeminiMemoryDiscoveryRecord
-} from './gemini/GeminiDiscovery'
+import { createGeminiDiscoveryHelpers } from './gemini/GeminiDiscovery'
 import { TrustStatusService } from './TrustStatusService'
 import {
   getWorkspaceDiff,
@@ -832,6 +828,7 @@ import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
 import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandlers'
 import { registerWorkspaceFileEditorHandlers } from './ipc/workspaceFileEditorHandlers'
+import { registerWorkspaceGeminiDiscoveryHandlers } from './ipc/workspaceGeminiDiscoveryHandlers'
 import { registerWorkspaceDiffSnapshotHandlers } from './ipc/workspaceDiffSnapshotHandlers'
 import { registerTrustHandlers } from './ipc/trustHandlers'
 import { registerUpdateHandlers } from './ipc/updateHandlers'
@@ -25429,19 +25426,11 @@ if (isGeminiMcpBridgeProcess) {
       return probeExternalPath(absolutePath)
     })
 
-    ipcMain.handle(
-      'discover-gemini-commands',
-      async (_, workspace: string): Promise<GeminiCommandDiscoveryRecord[]> => {
-        return discoverGeminiCommands(requireRegisteredWorkspace(workspace))
-      }
-    )
-
-    ipcMain.handle(
-      'discover-gemini-memory',
-      async (_, workspace: string): Promise<GeminiMemoryDiscoveryRecord[]> => {
-        return discoverGeminiMemory(requireRegisteredWorkspace(workspace))
-      }
-    )
+    registerWorkspaceGeminiDiscoveryHandlers({
+      requireRegisteredWorkspace,
+      discoverGeminiCommands,
+      discoverGeminiMemory
+    })
 
     ipcMain.handle('get-agent-status', async (_, provider: ProviderId) => {
       return getAgentStatusSnapshot(assertProviderId(provider))
