@@ -515,8 +515,6 @@ import {
   ProductChangelogSnapshot,
   ProductUpdateChangelog,
   RuntimeProfile,
-  HandoffCard,
-  HandoffCardFilter,
   GeminiAuthStatus,
   GeminiOAuthLoginStatus,
   UsageRecord,
@@ -832,6 +830,7 @@ import { registerWorkspaceGeminiDiscoveryHandlers } from './ipc/workspaceGeminiD
 import { registerWorkspaceDiffSnapshotHandlers } from './ipc/workspaceDiffSnapshotHandlers'
 import { registerTrustHandlers } from './ipc/trustHandlers'
 import { registerUpdateHandlers } from './ipc/updateHandlers'
+import { registerSettingsHandlers } from './ipc/settingsHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -23787,21 +23786,33 @@ if (isGeminiMcpBridgeProcess) {
 	    )
 
     // Settings
-    ipcMain.handle('get-settings', () => settingsService.getSettings())
-    ipcMain.handle('update-settings', (_, partial: Partial<AppSettings>) =>
-      settingsService.updateSettings(partial)
-    )
-    ipcMain.handle('set-bridge-daemon-enabled', async (_, enabled: boolean) => {
-      settingsService.updateSettings({ bridgeDaemonEnabled: Boolean(enabled) })
-      const now = Date.now()
-      if (!cachedTailscaleStatus || now - cachedTailscaleAt > TAILSCALE_CACHE_TTL_MS) {
-        cachedTailscaleStatus = await detectTailscale()
-        cachedTailscaleAt = now
-      }
-      return {
-        lan: bridgeDaemonStatus(),
-        tailscale: cachedTailscaleStatus
-      }
+    registerSettingsHandlers({
+      settingsService,
+      setBridgeDaemonEnabled: async (enabled) => {
+        settingsService.updateSettings({ bridgeDaemonEnabled: Boolean(enabled) })
+        const now = Date.now()
+        if (!cachedTailscaleStatus || now - cachedTailscaleAt > TAILSCALE_CACHE_TTL_MS) {
+          cachedTailscaleStatus = await detectTailscale()
+          cachedTailscaleAt = now
+        }
+        return {
+          lan: bridgeDaemonStatus(),
+          tailscale: cachedTailscaleStatus
+        }
+      },
+      getRuntimeProfiles: (provider) => AppStore.getRuntimeProfiles(provider),
+      saveRuntimeProfile: (profile) => AppStore.saveRuntimeProfile(profile),
+      deleteRuntimeProfile: (id) => AppStore.deleteRuntimeProfile(id),
+      getHandoffCards: (filter) => AppStore.getHandoffCards(filter),
+      saveHandoffCard: (card) => AppStore.saveHandoffCard(card),
+      updateHandoffCard: (id, partial) => AppStore.updateHandoffCard(id, partial),
+      deleteHandoffCard: (id) => AppStore.deleteHandoffCard(id),
+      assertProviderId,
+      requireNonEmptyString,
+      sanitizeRuntimeProfileForSave,
+      sanitizeHandoffCardForSave,
+      sanitizeHandoffCardPatch,
+      sanitizeHandoffCardFilter
     })
     ipcMain.handle(
       'upsert-agentic-workspace-grant',
@@ -23829,44 +23840,6 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle('discord-context:list-targets', () => discordContextService.listTargets())
     ipcMain.handle('discord-context:read-channel', (_, input: unknown) =>
       discordContextService.readChannel(input)
-    )
-
-    // Runtime profiles
-    ipcMain.handle('get-runtime-profiles', (_, provider?: ProviderId) => {
-      return AppStore.getRuntimeProfiles(provider ? assertProviderId(provider) : undefined)
-    })
-    ipcMain.handle(
-      'save-runtime-profile',
-      (_, profile: Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'>) => {
-        return AppStore.saveRuntimeProfile(sanitizeRuntimeProfileForSave(profile))
-      }
-    )
-    ipcMain.handle('delete-runtime-profile', (_, id: string) =>
-      AppStore.deleteRuntimeProfile(requireNonEmptyString(id, 'Runtime profile id'))
-    )
-
-    // User-mediated handoffs
-    ipcMain.handle('get-handoff-cards', (_, filter?: HandoffCardFilter) =>
-      AppStore.getHandoffCards(sanitizeHandoffCardFilter(filter))
-    )
-    ipcMain.handle(
-      'save-handoff-card',
-      (
-        _,
-        card: Partial<HandoffCard> &
-          Pick<HandoffCard, 'sourceChatId' | 'sourceProvider' | 'summary' | 'finalPrompt'>
-      ) => {
-        return AppStore.saveHandoffCard(sanitizeHandoffCardForSave(card))
-      }
-    )
-    ipcMain.handle('update-handoff-card', (_, id: string, partial: Partial<HandoffCard>) => {
-      return AppStore.updateHandoffCard(
-        requireNonEmptyString(id, 'Handoff card id'),
-        sanitizeHandoffCardPatch(partial)
-      )
-    })
-    ipcMain.handle('delete-handoff-card', (_, id: string) =>
-      AppStore.deleteHandoffCard(requireNonEmptyString(id, 'Handoff card id'))
     )
 
     registerWorkspaceHandlers({
