@@ -269,6 +269,15 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Import config')
     expect(html).toContain('Codex + Claude + Cursor')
     expect(html).toContain('stdio and HTTP launch support')
+    expect(html).toContain(
+      '<span>Codex export</span><strong>2</strong><small>config-ready TOML entries</small>'
+    )
+    expect(html).toContain(
+      '<span>Claude export</span><strong>3</strong><small>config-ready JSON entries</small>'
+    )
+    expect(html).toContain(
+      '<span>Cursor export</span><strong>2</strong><small>mcp.json entries</small>'
+    )
     expect(html).toContain('runtime: Codex + Claude + Cursor')
     expect(html).toContain('runtime: Claude')
     expect(html).toContain('Audit JSON')

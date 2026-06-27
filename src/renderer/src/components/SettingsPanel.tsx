@@ -6467,6 +6467,21 @@ export function SettingsPanel({
                   <small>stdio and HTTP launch support</small>
                 </article>
                 <article className="settings-mcp-summary-card">
+                  <span>Codex export</span>
+                  <strong>{codexExportableUserMcpServerCount}</strong>
+                  <small>config-ready TOML entries</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Claude export</span>
+                  <strong>{claudeExportableUserMcpServerCount}</strong>
+                  <small>config-ready JSON entries</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Cursor export</span>
+                  <strong>{cursorExportableUserMcpServerCount}</strong>
+                  <small>mcp.json entries</small>
+                </article>
+                <article className="settings-mcp-summary-card">
                   <span>TaskWraith bridge</span>
                   <strong>{geminiMcpBridgeEnabled ? 'On' : 'Off'}</strong>
                   <small>built-in provider tools stay separate</small>
