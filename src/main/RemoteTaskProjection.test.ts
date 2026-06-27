@@ -13,6 +13,7 @@ import {
   buildRemoteTaskFeedSnapshot
 } from './RemoteTaskProjection'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
+import { buildRemoteDraftChat } from './remote/RemoteDraftChats'
 
 const NOW = Date.UTC(2026, 4, 30, 12, 0, 0)
 const ISO = new Date(NOW).toISOString()
@@ -261,6 +262,23 @@ describe('RemoteTaskProjection', () => {
     expect(card.isShared).toBe(true)
     expect(card.sharedMode).toBe('comments')
     expect(buildRemoteTaskCard(chat()).isShared).toBeUndefined()
+  })
+
+  it('projects remote draft variants for welcome-screen continuity', () => {
+    const workflowDraft = buildRemoteDraftChat({
+      id: 'ios-workflow',
+      now: NOW,
+      target: {
+        variant: 'workflow',
+        provider: 'codex',
+        workspaceId: 'ws-1',
+        workspacePath: '/repo'
+      }
+    })
+    const card = buildRemoteTaskCard(workflowDraft)
+
+    expect(card.isDraft).toBe(true)
+    expect(card.draftVariant).toBe('workflow')
   })
 
   it('projects bounded full task-card titles without UI ellipses', () => {

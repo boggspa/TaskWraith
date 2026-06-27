@@ -21,7 +21,7 @@ import type {
 } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
 import { collectExternalPathGrantsFromMetadata } from './store/ExternalPathGrants'
-import { isContentlessRemoteDraftChat } from './remote/RemoteDraftChats'
+import { isContentlessRemoteDraftChat, remoteDraftVariant } from './remote/RemoteDraftChats'
 import { computeMergedTodosByLane, TODO_SOLO_LANE, type TodoStatus } from './TodoList'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
 
@@ -196,6 +196,7 @@ export interface RemoteTaskCard {
    * the card so an in-progress welcome screen still resolves, but hide it from
    * chat LISTS — it isn't a real conversation yet. */
   isDraft?: boolean
+  draftVariant?: string
   /** Active People/collaboration share. Remote clients derive their Shared
    * section from this flag; invite creation remains Mac-only. */
   isShared?: boolean
@@ -843,6 +844,7 @@ export function buildRemoteTaskCard(
 ): RemoteTaskCard {
   const latestRun = latestChatRun(chat)
   const agentIdentity = options.agentIdentity
+  const draftVariant = remoteDraftVariant(chat)
   const pendingQuestionCount = Math.max(0, Math.floor(options.pendingQuestionCount ?? 0))
   const pendingApprovalCount = Math.max(0, Math.floor(options.pendingApprovalCount ?? 0))
   const preview = previewForChat(chat, options.previewMaxChars ?? DEFAULT_PREVIEW_MAX)
@@ -861,6 +863,7 @@ export function buildRemoteTaskCard(
       : {}),
     ...(chat.chatKind ? { chatKind: chat.chatKind } : {}),
     ...(isContentlessRemoteDraftChat(chat) ? { isDraft: true } : {}),
+    ...(draftVariant ? { draftVariant } : {}),
     ...(options.isShared ? { isShared: true } : {}),
     ...(isString(options.sharedMode) ? { sharedMode: options.sharedMode } : {}),
     ...(chat.archived ? { archived: true } : {}),

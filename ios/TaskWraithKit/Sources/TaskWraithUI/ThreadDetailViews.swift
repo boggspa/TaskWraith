@@ -1914,7 +1914,16 @@ struct ThreadEmptyWelcomeCanvas: View {
     private var workspaceName: String {
         model.workspaceName(for: card.workspaceId) ?? "this workspace"
     }
-    private var draftVariant: String { card.isEnsemble ? "ensemble" : "workspace" }
+    private var workflowForCard: RemoteWorkflow? {
+        model.workflows.first { workflow in
+            workflow.threadId == card.id || workflow.threadId == card.threadId
+        }
+    }
+    private var isWorkflowWelcome: Bool { card.isWorkflowDraft || workflowForCard != nil }
+    private var draftVariant: String {
+        if card.isWorkflowDraft { return "workflow" }
+        return card.isEnsemble ? "ensemble" : "workspace"
+    }
     private var currentDraftProvider: String? {
         let provider = draftProvider.trimmingCharacters(in: .whitespacesAndNewlines)
         return provider.isEmpty ? card.provider : provider
@@ -1932,7 +1941,7 @@ struct ThreadEmptyWelcomeCanvas: View {
                 // iPhone (compact width) drops the bottom heatmap so the dashboard
                 // above the ghost fits without a scroll screen — the dashboard's
                 // Workspaces / Providers tabs already cover that activity. iPad keeps it.
-                if !isCompactWidth && !isGlobal {
+                if !isCompactWidth && !isGlobal && !isWorkflowWelcome {
                     activityFooter
                         .padding(.top, 8)
                 }
@@ -1948,8 +1957,15 @@ struct ThreadEmptyWelcomeCanvas: View {
 
     private var hero: some View {
         VStack(spacing: 10) {
-            GhostMonolineMarkView(size: 46)
-                .shadow(color: accent.opacity(0.45), radius: 18)
+            if isWorkflowWelcome {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 38, weight: .semibold))
+                    .foregroundStyle(accent)
+                    .shadow(color: accent.opacity(0.45), radius: 18)
+            } else {
+                GhostMonolineMarkView(size: 46)
+                    .shadow(color: accent.opacity(0.45), radius: 18)
+            }
             Group {
                 switch titleParts {
                 case .scoped(let prefix, let name):
@@ -1991,6 +2007,12 @@ struct ThreadEmptyWelcomeCanvas: View {
     }
 
     private var titleParts: TitleParts {
+        if card.isWorkflowDraft {
+            return .scoped(prefix: "New workflow for ", name: workspaceName)
+        }
+        if let workflow = workflowForCard {
+            return .plain(workflow.name ?? "Workflow")
+        }
         if card.isEnsemble {
             return .scoped(prefix: "New ensemble for ", name: workspaceName)
         }
@@ -2006,6 +2028,15 @@ struct ThreadEmptyWelcomeCanvas: View {
     }
 
     private var blurb: String {
+        if card.isWorkflowDraft {
+            return "Describe the recurring task. Your Mac saves it as a workflow instead of starting a one-off run."
+        }
+        if let workflow = workflowForCard {
+            if let schedule = workflow.schedule, !schedule.isEmpty {
+                return "\(schedule) — runs will appear here."
+            }
+            return "Runs from your Mac. Workflow activity will appear here."
+        }
         if card.isEnsemble {
             return "Participants take turns on your Mac. Send a prompt to start a round."
         }
@@ -2078,7 +2109,7 @@ struct ThreadEmptyWelcomeCanvas: View {
             variant: draftVariant,
             provider: currentDraftProvider,
             threadId: card.threadId ?? card.id,
-            title: card.title ?? "New Chat")
+            title: card.isWorkflowDraft ? "New Workflow" : (card.title ?? "New Chat"))
     }
 
     // CS-DASH — the Electron 4-tab welcome stats dashboard, ported to iOS. Sits
@@ -2087,7 +2118,7 @@ struct ThreadEmptyWelcomeCanvas: View {
     // Slice A renders the fixture; slice C swaps in `model.welcomeDashboard` (live).
     @ViewBuilder private var dashboardCard: some View {
         // Omitted on General chats — the stripped welcome is greeting + composer.
-        if !isGlobal, let data = model.welcomeDashboard, data.lifetimeHasActivity {
+        if !isWorkflowWelcome, !isGlobal, let data = model.welcomeDashboard, data.lifetimeHasActivity {
             WelcomeUsageDashboardCard(dashboard: data, accent: accent)
         }
     }

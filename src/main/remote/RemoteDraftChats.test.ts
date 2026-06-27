@@ -5,7 +5,9 @@ import {
   buildRemoteDraftChat,
   findReusableRemoteDraft,
   isContentlessRemoteDraftChat,
+  isRemoteWorkflowDraftChat,
   isUnstartedRemoteDraftChat,
+  remoteDraftVariant,
   remoteDraftIdsToDelete
 } from './RemoteDraftChats'
 
@@ -142,6 +144,31 @@ describe('RemoteDraftChats', () => {
         workspacePath: '/repo'
       })?.appChatId
     ).toBe('ios-new')
+  })
+
+  it('preserves workflow draft intent distinctly from generic workspace drafts', () => {
+    const draft = buildRemoteDraftChat({
+      id: 'ios-workflow',
+      now: NOW,
+      target: {
+        variant: 'workflow',
+        provider: 'codex',
+        workspaceId: 'ws-1',
+        workspacePath: '/repo'
+      }
+    })
+
+    expect(draft.title).toBe('New Workflow')
+    expect(remoteDraftVariant(draft)).toBe('workflow')
+    expect(isRemoteWorkflowDraftChat(draft)).toBe(true)
+    expect(
+      findReusableRemoteDraft([draft], {
+        variant: 'workflow',
+        provider: 'claude',
+        workspaceId: 'ws-1',
+        workspacePath: '/repo'
+      })?.appChatId
+    ).toBe('ios-workflow')
   })
 
   it('returns only unstarted remote draft ids for cleanup', () => {

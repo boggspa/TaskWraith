@@ -2,7 +2,7 @@ import type { ChatRecord, EnsembleConfig, ProviderId } from '../store/types'
 
 export const REMOTE_DRAFT_METADATA_KEY = 'remoteDraft'
 
-export type RemoteDraftVariant = 'workspace' | 'global' | 'ensemble'
+export type RemoteDraftVariant = 'workspace' | 'global' | 'ensemble' | 'workflow'
 
 export interface RemoteDraftTarget {
   variant: RemoteDraftVariant
@@ -28,6 +28,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function normalizeRemoteDraftVariant(variant: string): RemoteDraftVariant {
   if (variant === 'global') return 'global'
   if (variant === 'ensemble') return 'ensemble'
+  if (variant === 'workflow') return 'workflow'
   return 'workspace'
 }
 
@@ -64,6 +65,17 @@ export function isUnstartedRemoteDraftChat(chat: ChatRecord | null | undefined):
   return true
 }
 
+export function remoteDraftVariant(chat: ChatRecord | null | undefined): RemoteDraftVariant | null {
+  if (!chat) return null
+  return readRemoteDraftMetadata(chat)?.variant ?? null
+}
+
+export function isRemoteWorkflowDraftChat(
+  chat: ChatRecord | null | undefined
+): chat is ChatRecord {
+  return isUnstartedRemoteDraftChat(chat) && remoteDraftVariant(chat) === 'workflow'
+}
+
 export function remoteDraftMatchesTarget(chat: ChatRecord, target: RemoteDraftTarget): boolean {
   if (!isUnstartedRemoteDraftChat(chat)) return false
   const chatKind = chat.chatKind || 'single'
@@ -72,6 +84,9 @@ export function remoteDraftMatchesTarget(chat: ChatRecord, target: RemoteDraftTa
   }
   if (target.variant === 'ensemble') {
     return chat.scope !== 'global' && chatKind === 'ensemble' && chat.workspaceId === target.workspaceId
+  }
+  if (target.variant === 'workflow') {
+    return chat.scope !== 'global' && chatKind === 'single' && chat.workspaceId === target.workspaceId
   }
   return chat.scope !== 'global' && chatKind === 'single' && chat.workspaceId === target.workspaceId
 }
@@ -115,7 +130,12 @@ export function buildRemoteDraftChat(input: {
     [REMOTE_DRAFT_METADATA_KEY]: remoteDraftMetadata(existing, target, now)
   }
   const title =
-    target.title?.trim() || (target.variant === 'ensemble' ? 'New Ensemble' : 'New Chat')
+    target.title?.trim() ||
+    (target.variant === 'ensemble'
+      ? 'New Ensemble'
+      : target.variant === 'workflow'
+        ? 'New Workflow'
+        : 'New Chat')
   const base: ChatRecord = {
     appChatId: id,
     scope: target.variant === 'global' ? 'global' : 'workspace',

@@ -250,6 +250,19 @@ describe('decodeBridgeActionPayload', () => {
       if (legacySingle.kind === 'createThread') {
         expect(legacySingle.variant).toBe('single')
       }
+      const workflow = decodeBridgeActionPayload(
+        encode({
+          kind: 'createThread',
+          actionId: 'a-create-workflow',
+          workspaceId: 'ws-1',
+          variant: 'workflow',
+          title: 'New Workflow'
+        })
+      ).payload
+      expect(workflow.kind).toBe('createThread')
+      if (workflow.kind === 'createThread') {
+        expect(workflow.variant).toBe('workflow')
+      }
 
       const expand = decodeBridgeActionPayload(
         encode({

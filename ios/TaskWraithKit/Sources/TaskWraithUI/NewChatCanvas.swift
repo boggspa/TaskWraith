@@ -18,7 +18,7 @@ struct NewChatBootstrapView: View {
         switch mode {
         case .global:
             return "global"
-        case .workspace, .ensemble:
+        case .workspace, .ensemble, .workflow:
             if let initialWorkspaceId, !initialWorkspaceId.isEmpty {
                 return initialWorkspaceId
             }
@@ -31,6 +31,7 @@ struct NewChatBootstrapView: View {
         case .workspace: return "workspace"
         case .ensemble: return "ensemble"
         case .global: return "global"
+        case .workflow: return "workflow"
         }
     }
 
@@ -86,6 +87,9 @@ struct NewChatBootstrapView: View {
                 ? "Syncing workspaces from your Mac…" : "Creating ensemble…"
         case .global:
             return "Creating general chat…"
+        case .workflow:
+            return targetWorkspaceId == nil
+                ? "Syncing workspaces from your Mac…" : "Creating workflow…"
         }
     }
 
@@ -124,6 +128,7 @@ struct NewChatBootstrapView: View {
         case .workspace: return "Couldn't start this chat"
         case .ensemble: return "Couldn't start this ensemble"
         case .global: return "Couldn't start a general chat"
+        case .workflow: return "Couldn't start this workflow"
         }
     }
 
@@ -136,7 +141,7 @@ struct NewChatBootstrapView: View {
         model.createEmptyThread(
             workspaceId: workspaceId,
             variant: variant,
-            title: "New Chat"
+            title: mode == .workflow ? "New Workflow" : "New Chat"
         ) { threadId in
             guard let threadId else {
                 // Mac declined (or the request failed) — stop spinning, surface

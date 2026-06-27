@@ -532,6 +532,7 @@ public struct RemoteTaskCard: Codable, Sendable {
     /// the in-progress welcome screen resolves, but filtered out of list
     /// sections (HomeListViews) — it isn't a real chat yet.
     public let isDraft: Bool?
+    public let draftVariant: String?
     /// Active People/collaboration share. iOS derives its read-only Shared
     /// section from visible task cards with this flag; invite creation remains
     /// Mac-only.
@@ -582,6 +583,7 @@ public struct RemoteTaskCard: Codable, Sendable {
     }
 
     public var isEnsemble: Bool { chatKind == "ensemble" }
+    public var isWorkflowDraft: Bool { draftVariant == "workflow" }
     /// Scope-global chats carry no workspace. The Mac strips / null-collapses the
     /// workspaceId for scope:'global' (its canonical signal isn't on the card
     /// wire), so absence ⇒ global. Also treat a literal "global" sentinel as

@@ -120,7 +120,10 @@ struct HomeView: View {
     /// stays in `model.taskCards` so its in-progress welcome screen still
     /// resolves, but it must never appear as a real chat row in any list section.
     private var listedCards: [RemoteTaskCard] {
-        model.taskCards.filter { !($0.isDraft ?? false) && !($0.archived ?? false) }
+        let workflowThreadIds = Set(model.workflows.compactMap(\.threadId))
+        return model.taskCards.filter {
+            !($0.isDraft ?? false) && !($0.archived ?? false) && !workflowThreadIds.contains($0.id)
+        }
     }
     private var cardsByWorkspace: [String: [RemoteTaskCard]] {
         Dictionary(grouping: listedCards.filter { $0.parentChatId == nil }) {
@@ -196,6 +199,8 @@ struct HomeView: View {
                     // a General chat ("New chat") does not, so it stays
                     // enabled even on a fresh phone with no workspaces synced.
                     Button("New workspace chat") { openCanvas(.workspace) }
+                        .disabled(model.workspaces.isEmpty)
+                    Button("New workflow") { openCanvas(.workflow) }
                         .disabled(model.workspaces.isEmpty)
                     Button("New ensemble") { openCanvas(.ensemble) }
                         .disabled(model.workspaces.isEmpty)

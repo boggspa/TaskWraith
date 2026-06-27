@@ -234,8 +234,10 @@ import {
   abandonedRemoteDraftIdsToDelete,
   buildRemoteDraftChat,
   findReusableRemoteDraft,
+  isRemoteWorkflowDraftChat,
   isUnstartedRemoteDraftChat,
   normalizeRemoteDraftVariant,
+  REMOTE_DRAFT_METADATA_KEY,
   remoteDraftIdsToDelete,
   type RemoteDraftTarget
 } from './remote/RemoteDraftChats'
@@ -20214,6 +20216,8 @@ if (isGeminiMcpBridgeProcess) {
           const requestedTitle = normalizeThreadTitle(action.title, 'New Chat')
           const requestedEnsembleTitle =
             requestedTitle && requestedTitle !== 'New Chat' ? requestedTitle : 'New Ensemble'
+          const requestedWorkflowTitle =
+            requestedTitle && requestedTitle !== 'New Chat' ? requestedTitle : 'New Workflow'
           const createOrReuseRemoteDraft = (target: RemoteDraftTarget): ChatRecord => {
             const reusable =
               requestedChat ||
@@ -20333,7 +20337,7 @@ if (isGeminiMcpBridgeProcess) {
           const chat = createOrReuseRemoteDraft({
             variant: normalizeRemoteDraftVariant(action.variant),
             provider,
-            title: requestedTitle,
+            title: action.variant === 'workflow' ? requestedWorkflowTitle : requestedTitle,
             workspaceId: workspaceRecord.id,
             workspacePath: workspaceRecord.path
           })
@@ -20842,6 +20846,91 @@ if (isGeminiMcpBridgeProcess) {
               }
             }
             if (extra.path !== workspaceRecord?.path) extraWorkspacePaths.push(extra.path)
+          }
+          const existingChatForPrompt = AppStore.getChat(action.threadId)
+          if (isRemoteWorkflowDraftChat(existingChatForPrompt)) {
+            if (isGlobalScope || !workspaceRecord) {
+              return {
+                dispatched: false,
+                appRunId: null,
+                reason: 'Workflows must belong to an allowlisted workspace'
+              }
+            }
+            if (action.extraWorkspaceIds?.length) {
+              return {
+                dispatched: false,
+                appRunId: null,
+                reason: 'Workflow creation from iOS does not support secondary workspaces yet'
+              }
+            }
+            if (action.imageAttachments?.length) {
+              return {
+                dispatched: false,
+                appRunId: null,
+                reason: 'Workflow creation from iOS does not support image attachments yet'
+              }
+            }
+            const prompt = action.text.trim()
+            if (!prompt) {
+              return {
+                dispatched: false,
+                appRunId: null,
+                reason: 'Workflow prompt is empty'
+              }
+            }
+            const derivedName = prompt.slice(0, 48) || 'New workflow'
+            const providerMetadata = { ...(existingChatForPrompt.providerMetadata || {}) }
+            delete providerMetadata[REMOTE_DRAFT_METADATA_KEY]
+            const workflowChat: ChatRecord = {
+              ...existingChatForPrompt,
+              provider,
+              title: derivedName,
+              updatedAt: Date.now(),
+              providerMetadata
+            }
+            if (Object.keys(providerMetadata).length === 0) {
+              delete workflowChat.providerMetadata
+            }
+            AppStore.saveChat(workflowChat)
+            const savedChat = AppStore.getChat(workflowChat.appChatId) ?? workflowChat
+            AppStore.saveWorkflowDefinition({
+              name: derivedName,
+              workspaceId: workspaceRecord.id,
+              workspacePath: workspaceRecord.path,
+              enabled: true,
+              trigger: { kind: 'manual' },
+              template: {
+                workspaceId: workspaceRecord.id,
+                workspacePath: workspaceRecord.path,
+                chatId: savedChat.appChatId,
+                provider,
+                prompt,
+                displayPrompt: prompt,
+                selectedModelType: action.model || 'default',
+                customModel: '',
+                approvalMode: effectiveApprovalMode || 'default',
+                sessionTrust: false,
+                imageAttachments: [],
+                ...(action.reasoningEffort !== undefined
+                  ? { codexReasoningEffort: action.reasoningEffort }
+                  : {}),
+                ...(action.claudeReasoningEffort !== undefined
+                  ? { claudeReasoningEffort: action.claudeReasoningEffort }
+                  : {}),
+                kind: 'single'
+              },
+              missedRunPolicy: 'skip',
+              concurrencyPolicy: 'skip',
+              limits: { maxRunsPerDay: 24, maxConsecutiveFailures: 3 }
+            })
+            mainWindow?.webContents.send(
+              'workflow-definitions-changed',
+              AppStore.getWorkflowDefinitions()
+            )
+            broadcastChatUpdated(savedChat)
+            broadcastThreadUpdate(savedChat.appChatId)
+            bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+            return { dispatched: true, appRunId: null }
           }
           // Phone-attached images → temp files → the SAME imagePaths lane the
           // desktop composer uses (adapters forward per provider). Temp dir

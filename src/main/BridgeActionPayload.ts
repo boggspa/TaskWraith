@@ -326,7 +326,7 @@ export interface BridgeCreateThreadParticipant {
 export interface BridgeCreateThreadAction extends BridgeActionMetadata {
   kind: 'createThread'
   workspaceId: string
-  variant: 'workspace' | 'single' | 'ensemble' | 'global'
+  variant: 'workspace' | 'single' | 'ensemble' | 'global' | 'workflow'
   /** Optional client-minted id (e.g. `ios-<uuid>`). When omitted the Mac
    * generates one. */
   threadId?: string
@@ -1301,6 +1301,7 @@ function isCreateThread(v: Record<string, unknown>): boolean {
     (v.variant === 'workspace' ||
       v.variant === 'single' ||
       v.variant === 'ensemble' ||
+      v.variant === 'workflow' ||
       v.variant === 'global') &&
     (v.threadId === undefined || typeof v.threadId === 'string') &&
     (v.provider === undefined || typeof v.provider === 'string') &&

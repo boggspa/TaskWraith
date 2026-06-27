@@ -1613,6 +1613,7 @@ public final class RemoteSessionModel: ObservableObject {
         let newId = "demo-new-" + UUID().uuidString.prefix(8).lowercased()
         let isEnsemble = variant == "ensemble"
         let isGlobal = variant == "global"
+        let isWorkflow = variant == "workflow"
         let prov = provider ?? "claude"
         let ws = isGlobal ? "global" : workspaceId
 
@@ -1620,6 +1621,10 @@ public final class RemoteSessionModel: ObservableObject {
             "id": newId, "title": title, "workspaceId": ws, "threadId": newId,
             "status": "idle", "chatKind": isEnsemble ? "ensemble" : "single",
         ]
+        if isWorkflow {
+            cardDict["isDraft"] = true
+            cardDict["draftVariant"] = "workflow"
+        }
         if !isEnsemble { cardDict["provider"] = prov }
         let snapDict: [String: Any] = [
             "threadId": newId, "workspaceId": ws, "provider": prov,
