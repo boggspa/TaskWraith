@@ -35,6 +35,8 @@ const ITEM_TRANSITION_SEPARATOR = '\n\n---\n\n'
 export interface AssistantDeltaInput {
   /** Incoming delta / snapshot text (the provider's `content`). */
   incoming: string
+  /** App run id for the live turn, used by the renderer to keep reveal active. */
+  runId?: string
   /** True when main tagged this as a full-turn cumulative restatement. */
   cumulative?: boolean
   /** Codex `itemId`, when present — drives the inter-item `---` separator. */
@@ -57,6 +59,7 @@ export function applyAssistantDelta(
 ): ChatMessage[] {
   const incomingItemIdStr =
     typeof input.itemId === 'string' && input.itemId ? input.itemId : undefined
+  const incomingRunIdStr = typeof input.runId === 'string' && input.runId ? input.runId : undefined
   const providerModelMetadata = input.providerModelMetadata
 
   const mergeAssistantMetadata = (
@@ -87,6 +90,7 @@ export function applyAssistantDelta(
       role: 'assistant',
       content: deltaTarget.text,
       timestamp: deps.now(),
+      ...(incomingRunIdStr ? { runId: incomingRunIdStr } : {}),
       ...(metadata ? { metadata } : {})
     }
     return [...messages, appended]
@@ -100,6 +104,7 @@ export function applyAssistantDelta(
     const replaced: ChatMessage = {
       ...target,
       content: deltaTarget.text,
+      ...(incomingRunIdStr ? { runId: target.runId ?? incomingRunIdStr } : {}),
       ...(nextMetadata ? { metadata: nextMetadata } : {})
     }
     return [...messages.slice(0, idx), replaced, ...messages.slice(idx + 1)]
@@ -125,6 +130,7 @@ export function applyAssistantDelta(
       const replaced: ChatMessage = {
         ...target,
         content: merge.content,
+        ...(incomingRunIdStr ? { runId: target.runId ?? incomingRunIdStr } : {}),
         ...(nextMetadata ? { metadata: nextMetadata } : {})
       }
       return [...messages.slice(0, idx), replaced, ...messages.slice(idx + 1)]
@@ -145,6 +151,7 @@ export function applyAssistantDelta(
     const appended: ChatMessage = {
       ...target,
       content: target.content + separator + input.incoming,
+      ...(incomingRunIdStr ? { runId: target.runId ?? incomingRunIdStr } : {}),
       ...(nextMetadata ? { metadata: nextMetadata } : {})
     }
     return [...messages.slice(0, idx), appended, ...messages.slice(idx + 1)]
@@ -157,6 +164,7 @@ export function applyAssistantDelta(
     role: 'assistant',
     content: input.incoming,
     timestamp: deps.now(),
+    ...(incomingRunIdStr ? { runId: incomingRunIdStr } : {}),
     ...(metadata ? { metadata } : {})
   }
   return [...messages, appended]

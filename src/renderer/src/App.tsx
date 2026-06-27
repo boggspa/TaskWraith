@@ -9967,6 +9967,7 @@ function App(): React.JSX.Element {
               updated.messages,
               {
                 incoming: event.content,
+                runId: currentRunId,
                 cumulative: event.cumulative === true,
                 itemId: incomingItemIdStr,
                 providerModelMetadata
@@ -10018,7 +10019,7 @@ function App(): React.JSX.Element {
                   completeTarget.action === 'replaceText' ? completeTarget.text : event.content
                 updated.messages = [
                   ...updated.messages.slice(0, completeTargetIdx),
-                  { ...completeTargetMsg, content: nextContent },
+                  { ...completeTargetMsg, content: nextContent, runId: completeTargetMsg.runId ?? currentRunId },
                   ...updated.messages.slice(completeTargetIdx + 1)
                 ]
               } else {
@@ -10030,6 +10031,7 @@ function App(): React.JSX.Element {
                     id: newCompleteMessageId,
                     role: 'assistant',
                     content,
+                    runId: currentRunId,
                     timestamp: new Date().toISOString()
                   }
                 ]

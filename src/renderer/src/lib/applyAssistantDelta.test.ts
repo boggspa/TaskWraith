@@ -31,11 +31,12 @@ const trailingAssistant = (messages: ChatMessage[]) =>
 
 describe('applyAssistantDelta — basic accumulation', () => {
   it('opens a fresh assistant bubble for the first delta', () => {
-    const out = applyAssistantDelta([msg('user', 'q')], { incoming: 'Hello' }, deps)
+    const out = applyAssistantDelta([msg('user', 'q')], { incoming: 'Hello', runId: 'run-1' }, deps)
     expect(out).toHaveLength(2)
     expect(trailing(out).role).toBe('assistant')
     expect(trailing(out).content).toBe('Hello')
     expect(trailing(out).id).toBe('gen-1')
+    expect(trailing(out).runId).toBe('run-1')
   })
 
   it('appends a genuine increment onto the trailing assistant bubble (byte-exact)', () => {
@@ -54,6 +55,21 @@ describe('applyAssistantDelta — basic accumulation', () => {
     expect(trailing(m).content).toBe(parts.join(''))
     // exactly one assistant bubble was produced for the whole turn
     expect(m.filter((x) => x.role === 'assistant')).toHaveLength(1)
+  })
+
+  it('stamps and preserves the live run id across streamed replacements', () => {
+    let m = [msg('user', 'q')]
+    m = applyAssistantDelta(m, { incoming: 'Hello', runId: 'run-live' }, deps)
+    m = applyAssistantDelta(m, { incoming: 'Hello world', runId: 'run-live' }, deps)
+    expect(trailingAssistant(m)?.content).toBe('Hello world')
+    expect(trailingAssistant(m)?.runId).toBe('run-live')
+  })
+
+  it('keeps an existing assistant run id when a later delta omits run metadata', () => {
+    const m0 = [msg('user', 'q'), { ...msg('assistant', 'Hello'), runId: 'run-existing' }]
+    const m1 = applyAssistantDelta(m0, { incoming: ' world' }, deps)
+    expect(trailingAssistant(m1)?.content).toBe('Hello world')
+    expect(trailingAssistant(m1)?.runId).toBe('run-existing')
   })
 
   it('does not mutate the input array', () => {
