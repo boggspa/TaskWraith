@@ -79,6 +79,29 @@ export function shouldDisengageAutoFollow(distanceFromBottom: number): boolean {
 }
 
 /**
+ * Detect a user-owned upward scroll directly from scrollTop movement.
+ *
+ * Wheel/touch/key intent listeners catch the common paths before the browser
+ * emits `scroll`, but scrollbar drags and some platform-native scroll gestures
+ * can produce only a scroll event. The scroll listener itself is rAF-coalesced
+ * for layout-thrash reasons, so this cheap direction check lets callers drop
+ * auto-follow synchronously before the next streamed message layout effect can
+ * snap the viewport back to the bottom.
+ */
+export function shouldTreatScrollAsUserScrollAway(input: {
+  previousScrollTop: number
+  nextScrollTop: number
+  isProgrammatic: boolean
+}): boolean {
+  if (input.isProgrammatic) return false
+  if (!Number.isFinite(input.previousScrollTop) || !Number.isFinite(input.nextScrollTop)) {
+    return false
+  }
+  if (input.previousScrollTop <= 0) return false
+  return input.nextScrollTop < input.previousScrollTop - 0.5
+}
+
+/**
  * Decide whether a post-frame re-pin should fire after a messages
  * update. Re-pinning is only valuable when auto-follow is still
  * engaged _and_ we have not observed a deliberate user scroll-away

@@ -5,7 +5,6 @@ import { useStableMarkdownMediaValue } from './MarkdownMessage'
 import { StableMarkdownBlock } from './StableMarkdownBlock'
 import { splitMarkdownIntoBlocks, type MarkdownBlockType } from '../lib/MarkdownBlockSplit'
 import { advanceReveal, graphemeCount, sliceGraphemes } from '../lib/advanceReveal'
-import { REVEAL_PARAMS } from '../../../shared/revealParams'
 import { useRevealClock } from '../lib/useRevealClock'
 import type { ChatMediaRef } from './ChatMediaPanel'
 import type { ChatRecord } from '../../../main/store/types'
@@ -91,11 +90,10 @@ function RevealingMarkdownMessageImpl({
   const reduced = reduceMotion ?? prefersReducedMotion()
   const animate = isLive && !reduced && !isCode
 
-  // Cursor (graphemes into the tail). Cold-snap a large pre-existing tail at
-  // mount so enabling the reveal mid-stream doesn't re-type everything.
-  const [revealedLen, setRevealedLen] = useState(() =>
-    targetLen > REVEAL_PARAMS.coldSnapChars ? targetLen : 0
-  )
+  // Cursor (graphemes into the tail). A live row must start behind the target
+  // even if the first renderer-visible chunk is large; otherwise a coalesced
+  // provider flush mounts as a whole row. Non-live mounts render fully below.
+  const [revealedLen, setRevealedLen] = useState(() => (isLive ? 0 : targetLen))
   const revealedRef = useRef(revealedLen)
   revealedRef.current = revealedLen
   const targetRawRef = useRef(tailRaw)

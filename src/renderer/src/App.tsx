@@ -433,6 +433,7 @@ import {
 import {
   shouldEngageAutoFollow,
   shouldDisengageAutoFollow,
+  shouldTreatScrollAsUserScrollAway,
   shouldRepinAfterFrame,
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterTranscriptResize,
@@ -2388,6 +2389,7 @@ function App(): React.JSX.Element {
   // avoid re-renders.
   const autoFollowRef = useRef(true)
   const sideAutoFollowRef = useRef(true)
+  const lastSideTranscriptScrollTopRef = useRef(0)
   // Set true immediately before the side-chat panel's programmatic snap so its
   // evaluate listener doesn't mistake the app's own write for the user
   // returning to the live edge and re-engage follow. Mirrors the main
@@ -2402,6 +2404,7 @@ function App(): React.JSX.Element {
   // Holds the rAF id for the pending post-frame re-pin so consecutive
   // streaming updates can coalesce into a single re-pin write per frame.
   const repinRafIdRef = useRef<number | null>(null)
+  const lastTranscriptScrollTopRef = useRef(0)
   // Set true immediately before each programmatic snap-to-bottom write so
   // the auto-follow `evaluate` listener can distinguish the app's OWN scroll
   // from a genuine user scroll. Without it, a snap landed the scroll at the
@@ -2859,6 +2862,7 @@ function App(): React.JSX.Element {
       rafId = null
       if (sideProgrammaticScrollRef.current) {
         sideProgrammaticScrollRef.current = false
+        lastSideTranscriptScrollTopRef.current = scroller.scrollTop
         return
       }
       const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
@@ -2867,11 +2871,22 @@ function App(): React.JSX.Element {
       } else if (shouldDisengageAutoFollow(distanceFromBottom)) {
         sideAutoFollowRef.current = false
       }
+      lastSideTranscriptScrollTopRef.current = scroller.scrollTop
     }
     const onScroll = () => {
+      if (
+        shouldTreatScrollAsUserScrollAway({
+          previousScrollTop: lastSideTranscriptScrollTopRef.current,
+          nextScrollTop: scroller.scrollTop,
+          isProgrammatic: sideProgrammaticScrollRef.current
+        })
+      ) {
+        sideAutoFollowRef.current = false
+      }
       if (rafId !== null) return
       rafId = requestAnimationFrame(evaluate)
     }
+    lastSideTranscriptScrollTopRef.current = scroller.scrollTop
 
     const handleUpwardIntent = (deltaY: number) => {
       if (deltaY >= 0) return
@@ -7252,6 +7267,7 @@ function App(): React.JSX.Element {
       // code already knows the follow intent of its own write.)
       if (programmaticScrollRef.current) {
         programmaticScrollRef.current = false
+        lastTranscriptScrollTopRef.current = scroller.scrollTop
         return
       }
       const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
@@ -7276,11 +7292,23 @@ function App(): React.JSX.Element {
       } else if (shouldDisengageAutoFollow(distanceFromBottom)) {
         autoFollowRef.current = false
       }
+      lastTranscriptScrollTopRef.current = scroller.scrollTop
     }
     const onScroll = () => {
+      if (
+        shouldTreatScrollAsUserScrollAway({
+          previousScrollTop: lastTranscriptScrollTopRef.current,
+          nextScrollTop: scroller.scrollTop,
+          isProgrammatic: programmaticScrollRef.current
+        })
+      ) {
+        userScrolledAwayInFrameRef.current = true
+        autoFollowRef.current = false
+      }
       if (rafId !== null) return
       rafId = requestAnimationFrame(evaluate)
     }
+    lastTranscriptScrollTopRef.current = scroller.scrollTop
     scroller.addEventListener('scroll', onScroll, { passive: true })
     return () => {
       scroller.removeEventListener('scroll', onScroll)

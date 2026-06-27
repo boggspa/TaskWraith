@@ -363,6 +363,56 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Run cancelled')
   })
 
+  it('uses the reveal renderer for every assistant segment in the active run', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'old-assistant',
+              role: 'assistant',
+              content: 'settled assistant text',
+              timestamp: '2026-01-01T00:00:00.000Z',
+              runId: 'old-run'
+            },
+            {
+              id: 'active-assistant-1',
+              role: 'assistant',
+              content: 'active segment before tool',
+              timestamp: '2026-01-01T00:00:01.000Z',
+              runId: 'active-run'
+            },
+            {
+              id: 'tool-row',
+              role: 'tool',
+              content: 'tool completed',
+              timestamp: '2026-01-01T00:00:02.000Z',
+              runId: 'active-run'
+            },
+            {
+              id: 'active-assistant-2',
+              role: 'assistant',
+              content: 'active segment after tool',
+              timestamp: '2026-01-01T00:00:03.000Z',
+              runId: 'active-run'
+            }
+          ],
+          currentChat: {
+            appChatId: 'chat-active',
+            runs: [{ runId: 'active-run', startedAt: '2026-01-01T00:00:01.000Z' }]
+          },
+          currentRun: { runId: 'active-run', startedAt: '2026-01-01T00:00:01.000Z' },
+          runningChatIds: ['chat-active']
+        })}
+      />
+    )
+
+    expect(html).toContain('settled assistant text')
+    expect(html).not.toContain('active segment before tool')
+    expect(html).not.toContain('active segment after tool')
+  })
+
   it('suppresses run-complete summary when runCompleteNotice requests suppression', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel

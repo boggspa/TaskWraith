@@ -4,6 +4,7 @@ import {
   STICK_DISENGAGE_PX,
   shouldEngageAutoFollow,
   shouldDisengageAutoFollow,
+  shouldTreatScrollAsUserScrollAway,
   shouldRepinAfterFrame,
   shouldRepinAfterCodeBlockResize,
   shouldRepinAfterTranscriptResize,
@@ -63,6 +64,45 @@ describe('TranscriptScroll', () => {
     it('rejects non-finite inputs defensively', () => {
       expect(shouldDisengageAutoFollow(Number.NaN)).toBe(false)
       expect(shouldDisengageAutoFollow(Number.POSITIVE_INFINITY)).toBe(false)
+    })
+  })
+
+  describe('shouldTreatScrollAsUserScrollAway', () => {
+    it('detects upward scrollTop movement as an immediate scroll-away signal', () => {
+      expect(
+        shouldTreatScrollAsUserScrollAway({
+          previousScrollTop: 320,
+          nextScrollTop: 260,
+          isProgrammatic: false
+        })
+      ).toBe(true)
+    })
+
+    it('ignores downward movement and top-edge jitter', () => {
+      expect(
+        shouldTreatScrollAsUserScrollAway({
+          previousScrollTop: 260,
+          nextScrollTop: 320,
+          isProgrammatic: false
+        })
+      ).toBe(false)
+      expect(
+        shouldTreatScrollAsUserScrollAway({
+          previousScrollTop: 0,
+          nextScrollTop: 0,
+          isProgrammatic: false
+        })
+      ).toBe(false)
+    })
+
+    it('does not treat app-owned scroll writes as user intent', () => {
+      expect(
+        shouldTreatScrollAsUserScrollAway({
+          previousScrollTop: 320,
+          nextScrollTop: 260,
+          isProgrammatic: true
+        })
+      ).toBe(false)
     })
   })
 

@@ -1009,19 +1009,22 @@ export const TranscriptPanel = memo(
     const virtualizeEnabled = virtualize ?? TRANSCRIPT_VIRTUALIZATION_ENABLED
     const displayMessages = useMemo(() => groupAdjacentToolMessages(visibleMessages), [visibleMessages])
 
-    // Phase 3 — type-out reveal (Variant B), behind a flag (default OFF). The
+    // Phase 3 — type-out reveal (Variant B), default ON. The
     // live last-assistant bubble of a running chat reveals progressively via
     // RevealingMarkdownMessage; everything else stays the plain MarkdownMessage.
+    // Keep the old localStorage flag as an escape hatch for debugging:
+    // `taskwraith.experimentalReveal=false` restores the plain renderer.
     const revealEnabled = useMemo(() => {
       try {
-        return localStorage.getItem('taskwraith.experimentalReveal') === 'true'
+        return localStorage.getItem('taskwraith.experimentalReveal') !== 'false'
       } catch {
-        return false
+        return true
       }
     }, [])
     const revealChatId = currentChat?.appChatId ?? null
     const revealChatIsRunning =
       revealChatId != null && Array.isArray(runningChatIds) && runningChatIds.includes(revealChatId)
+    const revealRunId = currentRun?.runId ?? currentChat?.runs?.find((run) => !run.endedAt)?.runId
     const lastDisplayedMessageId =
       displayMessages.length > 0 ? displayMessages[displayMessages.length - 1].id : null
     const displayRunBoundaryByMessageId = useMemo(() => {
@@ -1721,7 +1724,8 @@ export const TranscriptPanel = memo(
                             {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
                               revealEnabled &&
                               revealChatIsRunning &&
-                              msg.id === lastDisplayedMessageId ? (
+                              (msg.id === lastDisplayedMessageId ||
+                                (Boolean(revealRunId) && msg.runId === revealRunId)) ? (
                                 <RevealingMarkdownMessage
                                   content={msg.content}
                                   chat={currentChat || undefined}
