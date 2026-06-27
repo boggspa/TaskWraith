@@ -405,7 +405,6 @@ import type {
   GitRepositorySnapshot
 } from './services/GitService'
 import { AppShellStatsService } from './services/AppShellStatsService'
-import { getWorkspaceActivitySnapshot } from './WorkspaceActivityService'
 import { getCurrentFxRates, refreshFxRates, startFxRateScheduler } from './services/FxRateService'
 import { getCachedHostWeather } from './services/HostWeatherService'
 import {
@@ -834,6 +833,7 @@ import { registerLaunchHandlers } from './ipc/launchHandlers'
 import { registerLocalServersHandlers } from './ipc/localServersHandlers'
 import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
+import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -23805,6 +23805,7 @@ if (isGeminiMcpBridgeProcess) {
       broadcastWorkspaceUpdate,
       broadcastWorkspaceList
     })
+    registerWorkspaceActivityHandlers({ requireRegisteredWorkspace })
 
     registerChatHandlers({
       chatService,
@@ -24380,10 +24381,6 @@ if (isGeminiMcpBridgeProcess) {
     setInterval(() => {
       void getExternalUsageCached({ maxAgeMs: 0 }).then(() => broadcastUsageRollupToRemote())
     }, 2 * 60 * 60 * 1000).unref?.()
-    ipcMain.handle('get-workspace-activity', (_, workspacePath: string, dayCount?: number) =>
-      getWorkspaceActivitySnapshot(requireRegisteredWorkspace(workspacePath), dayCount)
-    )
-
     // Scheduled tasks
     ipcMain.handle('get-scheduled-tasks', (_, workspaceId?: string) =>
       AppStore.getScheduledTasks(workspaceId)
