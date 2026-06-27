@@ -48,11 +48,10 @@ export function deriveChatIsRunning(input: DeriveChatIsRunningInput): boolean {
 }
 
 /**
- * Per-chat "last run completed" card payload. Byte-identical mirror of
- * `deriveRunCompleteNotice` in App.tsx:1098 — kept in sync by the drift-guard
- * test. Returns null while the chat is running (the card hides for the live
- * run and reappears when the next run completes) or when there is no finished
- * run to describe. Failed / cancelled runs still surface via `exitCode`.
+ * Per-chat "last run completed" card payload. Returns null while the chat is
+ * running (the card hides for the live run and reappears when the next run
+ * completes) or when there is no finished run to describe. Failed / cancelled
+ * runs still surface via `exitCode`.
  */
 export function deriveChatRunCompleteNotice(
   chat: ChatRecord,

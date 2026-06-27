@@ -893,37 +893,6 @@ interface LiveToolFileSummaryState {
   summaries: DiffFileSummary[]
 }
 
-/**
- * Derive the per-thread run-complete card from a chat's PERSISTED last run
- * so the "Task complete" notice survives chat switches (the card is otherwise
- * driven by ephemeral `runCompleteNotice` state that handleSelectChat wiped).
- *
- * Returns null while the chat is currently running (the card hides for the
- * live run and reappears when the next run completes) or when there is no
- * finished run to describe. Failed / cancelled runs still surface — the
- * `exitCode` carries the outcome and the card copy reflects it, matching the
- * live setRunCompleteNotice call sites. Shape mirrors RunCompleteNotice.
- */
-function deriveRunCompleteNotice(
-  chat: ChatRecord,
-  isRunning: boolean
-): RunCompleteNotice | null {
-  if (isRunning) return null
-  const runs = chat.runs
-  if (!Array.isArray(runs) || runs.length === 0) return null
-  const lastRun = runs[runs.length - 1]
-  // A run with no endedAt is still in flight (or never recorded an end) — no
-  // completed outcome to show. Guards the "last run running" edge case even
-  // if the running set hasn't caught up yet.
-  if (!lastRun || !lastRun.endedAt) return null
-  return {
-    timestamp: lastRun.endedAt,
-    exitCode: lastRun.exitCode ?? 0,
-    startedAt: lastRun.startedAt || undefined,
-    suppressRunSummary: Boolean(lastRun.suppressRunSummary)
-  }
-}
-
 function auditRunTimeKey(run: AuditRunRecord): string {
   return run.updatedAt || run.endedAt || run.startedAt || run.createdAt || ''
 }
@@ -3718,7 +3687,7 @@ function App(): React.JSX.Element {
             setCurrentChat(hydrated)
             applyChatComposerSelection(hydrated, provider)
             setRunCompleteNotice(
-              deriveRunCompleteNotice(hydrated, runningChatIds.has(hydrated.appChatId))
+              deriveChatRunCompleteNotice(hydrated, runningChatIds.has(hydrated.appChatId))
             )
             setRawLogs(rawLogsByChatIdRef.current.get(hydrated.appChatId) || [])
             syncThinkingForChat(hydrated)
@@ -6787,7 +6756,7 @@ function App(): React.JSX.Element {
       // reappears/updates when its next run completes (a new run clears it at
       // start via isRunVisibleAtStart / the ensemble round effect).
       setRunCompleteNotice(
-        deriveRunCompleteNotice(selectedChat, runningChatIds.has(selectedChat.appChatId))
+        deriveChatRunCompleteNotice(selectedChat, runningChatIds.has(selectedChat.appChatId))
       )
       setRawLogs(rawLogsByChatIdRef.current.get(selectedChat.appChatId) || [])
       syncThinkingForChat(selectedChat)
@@ -15101,7 +15070,7 @@ function App(): React.JSX.Element {
         ? 'Running'
         : 'Ready'
   const sideRunCompleteNotice = sideChat
-    ? deriveRunCompleteNotice(sideChat, isSideChatRunning)
+    ? deriveChatRunCompleteNotice(sideChat, isSideChatRunning)
     : null
   const sideThinkingOllamaModel =
     sideProvider === 'ollama'
@@ -18891,7 +18860,7 @@ function App(): React.JSX.Element {
       startTransition(() => {
         setCurrentChat(viewerChat)
         setRunCompleteNotice(
-          deriveRunCompleteNotice(viewerChat, runningChatIds.has(viewerChat.appChatId))
+          deriveChatRunCompleteNotice(viewerChat, runningChatIds.has(viewerChat.appChatId))
         )
         setRawLogs(rawLogsByChatIdRef.current.get(viewerChat.appChatId) || [])
         syncThinkingForChat(viewerChat)
