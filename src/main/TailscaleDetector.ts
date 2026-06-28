@@ -100,6 +100,10 @@ export interface DetectTailscaleOptions {
    * the filesystem probe and the PATH search. Pass `null` to force
    * "not found". */
   cliPath?: string | null
+  /** Inject known-location existence checks for tests. */
+  existsFn?: (path: string) => boolean
+  /** Inject PATH lookup for tests. */
+  whichFn?: (name: string) => Promise<string | null>
   /** Number of extra status attempts after the first one. Default 3
    * because the macOS GUI helper can briefly reject status requests
    * while the Network Extension is waking up. */
@@ -196,6 +200,18 @@ async function probeTailscaleStatusWithRetry(
   return lastResult ?? { ok: false, reason: 'Tailscale CLI returned no status output.' }
 }
 
+async function findTailscaleOnPath(
+  exec: (cmd: string, args: string[]) => Promise<{ stdout: string; stderr: string }>
+): Promise<string | null> {
+  try {
+    const { stdout } = await exec('/usr/bin/env', ['sh', '-lc', 'command -v tailscale'])
+    const first = stdout.trim().split('\n')[0]?.trim()
+    return first || null
+  } catch {
+    return null
+  }
+}
+
 export async function detectTailscale(
   options: DetectTailscaleOptions = {}
 ): Promise<TailscaleStatus> {
@@ -206,14 +222,22 @@ export async function detectTailscale(
       return { stdout: String(result.stdout), stderr: String(result.stderr) }
     })
 
-  // CLI discovery.
+  // CLI discovery. Prefer an explicit app-bundled binary on macOS because the
+  // GUI install usually does NOT put `tailscale` on PATH. Then fall back to
+  // Homebrew/system locations and PATH for standalone/package installs.
   let cliPath: string | undefined
   if (options.cliPath === null) {
     return { available: false, reason: 'Tailscale CLI not found (override)' }
   } else if (typeof options.cliPath === 'string') {
     cliPath = options.cliPath
   } else {
-    cliPath = TAILSCALE_CLI_LOCATIONS.find((path) => existsSync(path))
+    const exists = options.existsFn ?? existsSync
+    cliPath = TAILSCALE_CLI_LOCATIONS.find((path) => exists(path))
+    if (!cliPath) {
+      cliPath =
+        (await (options.whichFn ?? ((_name: string) => findTailscaleOnPath(exec)))('tailscale')) ??
+        undefined
+    }
   }
   if (!cliPath) {
     return {

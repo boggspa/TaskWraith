@@ -23459,9 +23459,10 @@ if (isGeminiMcpBridgeProcess) {
     // Front-door HTTPS port for `tailscale serve`. Release owns :443; a dev build
     // uses :8443 so the two coexist as SEPARATE serve handlers on one Mac instead
     // of clobbering one shared :443 mapping (which silently broke release pairing).
+    const liveIosRemoteRelayPort = (): number => selfHostedWssLane?.relayPort ?? iosRemoteRelayPort()
     const iosRemoteTailscaleStatus = async (): Promise<Record<string, unknown>> => {
       const tailscale = await detectTailscale()
-      const relayPort = iosRemoteRelayPort()
+      const relayPort = liveIosRemoteRelayPort()
       const httpsPort = iosRemoteServeHttpsPort()
       const serve =
         tailscale.cliPath
@@ -23501,32 +23502,75 @@ if (isGeminiMcpBridgeProcess) {
             'Tailscale is not available — install it and sign in to your tailnet first.'
         }
       }
-      const result = await enableTailscaleServe({
-        cliPath: tailscale.cliPath,
-        relayPort: iosRemoteRelayPort(),
-        httpsPort: iosRemoteServeHttpsPort()
-      })
-      if (!result.ok) {
-        return { ok: false, message: result.message || '`tailscale serve` failed.' }
+      if (!tailscale.available) {
+        return {
+          ok: false,
+          message:
+            tailscale.reason ||
+            'Tailscale is installed but not connected. Sign in to Tailscale and try again.',
+          status: await iosRemoteTailscaleStatus()
+        }
       }
-      const serve = await getTailscaleServeStatus({
-        cliPath: tailscale.cliPath,
-        relayPort: iosRemoteRelayPort(),
-        httpsPort: iosRemoteServeHttpsPort()
-      })
-      const dnsName = tailscale.dnsName ?? serve.dnsName
+      const dnsName = tailscale.dnsName
       if (!dnsName) {
         return {
           ok: false,
           message:
-            'Tailscale serve was enabled, but TaskWraith could not determine this Mac’s MagicDNS name.'
+            'Tailscale is connected, but TaskWraith could not determine this Mac’s MagicDNS name.'
         }
       }
+      const relayUrl = serveWssUrl(dnsName, iosRemoteServeHttpsPort())
       AppStore.updateSettings({
-        iosRemoteRelayUrl: serveWssUrl(dnsName, iosRemoteServeHttpsPort())
+        iosRemoteEnabled: true,
+        iosRemoteRelayUrl: relayUrl
       })
       await restartIosRemoteBridge('tailscale enable')
-      const relayUrl = serveWssUrl(dnsName, iosRemoteServeHttpsPort())
+
+      const lane = selfHostedWssLane
+      if (!lane || lane.wssUrl !== relayUrl || !embeddedRelayHandle) {
+        return {
+          ok: false,
+          message:
+            iosRemoteRuntimeError ||
+            'TaskWraith could not start its local iOS remote relay. Toggle iOS remote bridge off/on and try again.',
+          status: await iosRemoteTailscaleStatus(),
+          relayUrl,
+          reachable: false
+        }
+      }
+
+      const loopback = await probeRelayFrontDoor(`ws://127.0.0.1:${lane.relayPort}`)
+      if (!loopback.reachable) {
+        await disableTailscaleServe({
+          cliPath: tailscale.cliPath,
+          httpsPort: iosRemoteServeHttpsPort()
+        })
+        return {
+          ok: false,
+          message: `TaskWraith's local relay is not answering on ${lane.relayPort}: ${loopback.detail}`,
+          status: await iosRemoteTailscaleStatus(),
+          relayUrl,
+          reachable: false
+        }
+      }
+
+      const serve = await getTailscaleServeStatus({
+        cliPath: tailscale.cliPath,
+        relayPort: lane.relayPort,
+        httpsPort: iosRemoteServeHttpsPort()
+      })
+      let enableMessage: string | undefined
+      if (!serve.configured) {
+        const result = await enableTailscaleServe({
+          cliPath: tailscale.cliPath,
+          relayPort: lane.relayPort,
+          httpsPort: iosRemoteServeHttpsPort()
+        })
+        if (!result.ok) {
+          return { ok: false, message: result.message || '`tailscale serve` failed.' }
+        }
+        enableMessage = result.message
+      }
       const probe = await probeRelayFrontDoor(relayUrl)
       const status = await iosRemoteTailscaleStatus()
       if (!probe.reachable) {
@@ -23540,7 +23584,7 @@ if (isGeminiMcpBridgeProcess) {
       }
       return {
         ok: true,
-        message: result.message ?? 'Ready for cellular.',
+        message: enableMessage ?? 'Ready for cellular.',
         status,
         relayUrl,
         reachable: true

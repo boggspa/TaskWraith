@@ -55,6 +55,28 @@ describe('detectTailscale', () => {
     expect(result.reason).toBeUndefined()
   })
 
+  it('prefers the macOS app-bundled CLI when the user installed the GUI app', async () => {
+    const result = await detectTailscale({
+      existsFn: (path) => path === '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+      whichFn: async () => '/opt/homebrew/bin/tailscale',
+      execFn: async () => ({ stdout: JSON.stringify(SAMPLE_RUNNING), stderr: '' })
+    })
+
+    expect(result.available).toBe(true)
+    expect(result.cliPath).toBe('/Applications/Tailscale.app/Contents/MacOS/Tailscale')
+  })
+
+  it('falls back to PATH when no known Tailscale install location exists', async () => {
+    const result = await detectTailscale({
+      existsFn: () => false,
+      whichFn: async () => '/custom/bin/tailscale',
+      execFn: async () => ({ stdout: JSON.stringify(SAMPLE_RUNNING), stderr: '' })
+    })
+
+    expect(result.available).toBe(true)
+    expect(result.cliPath).toBe('/custom/bin/tailscale')
+  })
+
   it('strips the trailing dot Tailscale appends to DNSName', async () => {
     const sample = JSON.parse(JSON.stringify(SAMPLE_RUNNING))
     sample.Self.DNSName = 'chris-mac.tail-abc.ts.net.'
