@@ -52,6 +52,27 @@ public enum TransportError: Error, Sendable {
     case badIdentity
 }
 
+extension TransportError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .invalidRelayUrl:
+            return "Invalid relay URL — refresh the QR and try again."
+        case .notScanned:
+            return "No pairing code has been scanned yet."
+        case .resolveFailed(let status):
+            return "The Mac's relay could not resolve this paired device (HTTP \(status))."
+        case .resolveNoSession:
+            return "The Mac is not advertising an active session for this device."
+        case .timeout(let stage):
+            return "Timed out during \(stage)."
+        case .badBootstrap(let reason):
+            return "Invalid pairing code: \(reason)."
+        case .badIdentity:
+            return "This device's pairing identity could not be loaded."
+        }
+    }
+}
+
 public actor RelayTransportClient {
     private let identity: Curve25519.Signing.PrivateKey
     private let identityPubKeyB64: String

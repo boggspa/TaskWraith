@@ -1024,11 +1024,14 @@ public final class RemoteSessionModel: ObservableObject {
         cancelAutoReconnect(resetAttempts: false)
         // T70 — walk every door the pairing record knows. Wi-Fi stays LAN
         // first; cellular/expensive paths try the WSS front door first.
+        let remoteFirst = preferRemoteRelayFirst(
+            relayUrls: record.relayUrls, fallback: record.relayUrl)
+        let preferredRelay =
+            remoteFirst && RelayCandidates.isLocalCandidate(record.relayUrl) ? nil : record.relayUrl
         let candidates = RelayCandidates.ordered(
             from: record.relayUrls, fallback: record.relayUrl,
-            preferRemoteFirst: preferRemoteRelayFirst(
-                relayUrls: record.relayUrls, fallback: record.relayUrl),
-            preferredFirst: record.relayUrl)
+            preferRemoteFirst: remoteFirst,
+            preferredFirst: preferredRelay)
         cancelSocketHealthCheck()
         teardown()
         macDisplayName = Self.sanitizedMacName(record.macDisplayName)

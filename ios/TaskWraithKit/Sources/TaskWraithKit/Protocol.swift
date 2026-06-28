@@ -222,7 +222,8 @@ public enum RelayCandidates {
         let remote = cleaned.filter { !isLocalCandidate($0) }
         let ordered = preferRemoteFirst ? remote + local : local + remote
         guard let preferred = preferredFirst?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !preferred.isEmpty
+            !preferred.isEmpty,
+            !(preferRemoteFirst && isLocalCandidate(preferred))
         else {
             return ordered
         }

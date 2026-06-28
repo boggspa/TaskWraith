@@ -3,6 +3,7 @@ import os from 'os'
 import {
   embeddedRelayUrl,
   isLocalPlainRelayUrl,
+  isPlainTailscaleRelayUrl,
   mergeRelayUrls,
   normalizeManualRelayUrl,
   pickRelayAdvertiseHost
@@ -115,6 +116,15 @@ describe('normalizeManualRelayUrl', () => {
     expect(normalizeManualRelayUrl('', 8787)).toBeNull()
     expect(normalizeManualRelayUrl('not a host', 8787)).toBeNull()
     expect(normalizeManualRelayUrl('file:///tmp/relay.sock', 8787)).toBeNull()
+  })
+})
+
+describe('isPlainTailscaleRelayUrl', () => {
+  it('flags cleartext Tailscale IP relay doors that iOS cannot use off-LAN', () => {
+    expect(isPlainTailscaleRelayUrl('ws://100.99.131.73:8787')).toBe(true)
+    expect(isPlainTailscaleRelayUrl('wss://100.99.131.73:8787')).toBe(false)
+    expect(isPlainTailscaleRelayUrl('ws://192.168.1.50:8787')).toBe(false)
+    expect(isPlainTailscaleRelayUrl('wss://studio.example.ts.net')).toBe(false)
   })
 })
 

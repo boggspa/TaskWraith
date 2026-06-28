@@ -69,6 +69,15 @@ struct TransportErrorCopyTests {
         #expect(message == "Pairing code expired — refresh on the Mac.")
     }
 
+    @Test("transport bootstrap failures surface the reason instead of Swift error codes")
+    func transportBootstrapFailureUsesReason() {
+        let message = TransportErrorCopy.friendlyMessage(
+            for: TransportError.badBootstrap("pairing code expired"),
+            relayUrl: "wss://mac.tailnet.ts.net")
+        #expect(message.contains("pairing code expired"))
+        #expect(!message.contains("TransportError error 2"))
+    }
+
     @Test("unmapped NSURLError codes keep the system description, not the debug dump")
     func unmappedCodeUsesLocalizedDescription() {
         let message = TransportErrorCopy.friendlyMessage(

@@ -36,6 +36,16 @@ struct RelayCandidatesTests {
         #expect(ordered == ["wss://mac.tailnet.ts.net", "ws://192.168.0.147:8787"])
     }
 
+    @Test("remote-first does not promote a stale local preferred door")
+    func remoteFirstIgnoresLocalPreferredDoor() {
+        let ordered = RelayCandidates.ordered(
+            from: ["ws://192.168.0.147:8787", "wss://mac.tailnet.ts.net"],
+            fallback: "ws://192.168.0.147:8787",
+            preferRemoteFirst: true,
+            preferredFirst: "ws://192.168.0.147:8787")
+        #expect(ordered == ["wss://mac.tailnet.ts.net", "ws://192.168.0.147:8787"])
+    }
+
     @Test("includes a preferred door missing from the stored candidate list")
     func preferredDoorMissingFromList() {
         let ordered = RelayCandidates.ordered(

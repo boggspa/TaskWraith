@@ -120,6 +120,16 @@ export function normalizeManualRelayUrl(input: string, defaultPort: number): str
   return parsed.toString().replace(/\/$/, '')
 }
 
+export function isPlainTailscaleRelayUrl(relayUrl: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(relayUrl)
+  } catch {
+    return false
+  }
+  return parsed.protocol === 'ws:' && isTailscaleAddress(parsed.hostname)
+}
+
 export function mergeRelayUrls(...groups: Array<Array<string | null | undefined>>): string[] {
   const seen = new Set<string>()
   const merged: string[] = []

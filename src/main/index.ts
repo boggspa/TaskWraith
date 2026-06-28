@@ -246,6 +246,7 @@ import { RemotePairingStore } from './remote/RemotePairingStore'
 import { wsTransportSocketFactory } from './remote/wsTransportSocket'
 import {
   isLocalPlainRelayUrl,
+  isPlainTailscaleRelayUrl,
   mergeRelayUrls,
   normalizeManualRelayUrl,
   pickRelayAdvertiseHost
@@ -22460,6 +22461,46 @@ if (isGeminiMcpBridgeProcess) {
         return fallbackPort
       }
     }
+      const advertisableManualRelayUrl = (relayPort: number): string | null => {
+        const manualRelayUrl = configuredManualRelayUrl(relayPort)
+        if (!manualRelayUrl) return null
+        if (isPlainTailscaleRelayUrl(manualRelayUrl)) {
+          console.warn(
+            `[remote-bridge] manual relay ${manualRelayUrl} is a cleartext Tailscale IP; not advertising it to iOS. Use the MagicDNS wss:// door for cellular/off-LAN access.`
+          )
+          return null
+        }
+        return manualRelayUrl
+      }
+      const resolveTailscaleWssLane = async (
+        preferredUrl: string | null
+      ): Promise<{ wssUrl: string; dnsName: string; cliPath: string | null } | null> => {
+        const tailscale = await detectTailscale()
+        const relayPort = embeddedPort(null)
+        const httpsPort = defaultIosServeHttpsPort()
+        let dnsName = tailscale.dnsName?.toLowerCase()
+        if (!dnsName && tailscale.cliPath) {
+          const serve = await getTailscaleServeStatus({
+            cliPath: tailscale.cliPath,
+            relayPort,
+            httpsPort
+          })
+          dnsName = serve.dnsName?.toLowerCase()
+        }
+        if (!dnsName) return null
+        let wssUrl = serveWssUrl(dnsName, httpsPort)
+        if (preferredUrl) {
+          try {
+            const parsed = new URL(preferredUrl)
+            if (parsed.protocol === 'wss:' && parsed.hostname.toLowerCase() === dnsName) {
+              wssUrl = serveWssUrl(dnsName, httpsPort)
+            }
+          } catch {
+            // Ignore malformed preferred URLs and use the discovered lane.
+          }
+        }
+        return { wssUrl, dnsName, cliPath: tailscale.cliPath ?? null }
+      }
       const relayOriginWithPort = (relayUrl: string, port: number): string => {
         try {
           const parsed = new URL(relayUrl)
@@ -22524,7 +22565,7 @@ if (isGeminiMcpBridgeProcess) {
           const relayUrl = advertiseRelayUrl
             ? relayOriginWithPort(advertiseRelayUrl, handle.port)
             : `ws://${advertised?.host ?? '127.0.0.1'}:${handle.port}`
-          const manualRelayUrl = configuredManualRelayUrl(handle.port)
+          const manualRelayUrl = advertisableManualRelayUrl(handle.port)
           const relayCandidates = mergeRelayUrls([relayUrl], [manualRelayUrl])
           if (advertised?.kind === 'loopback') {
             console.warn(
@@ -22547,11 +22588,12 @@ if (isGeminiMcpBridgeProcess) {
       }
       // Self-hosted Tailscale TLS lane: a wss:// settings URL whose host is
       // THIS Mac's MagicDNS name means "embedded relay behind tailscale
-      // serve". The relay still runs in-process on loopback (serve's proxy
-      // target) and the Mac connects to it via ws://127.0.0.1 — only the
-      // QR advertises the wss:// front door, because iOS ATS blocks
-      // cleartext to anything off the local network (incl. Tailscale's
-      // 100.64/10). Enabled from Settings → Devices → Remote access.
+      // serve". The relay still runs in-process and answers on loopback for
+      // Tailscale Serve's proxy target, while also answering on LAN for the
+      // same-Wi-Fi fast path. The QR advertises the wss:// front door for
+      // off-LAN access because iOS ATS blocks cleartext to anything outside
+      // the local network (incl. Tailscale's 100.64/10). Enabled from
+      // Settings → Devices → Remote access.
       //
       // WATERTIGHT (T69): the lane self-heals + self-verifies. `tailscale
       // serve --bg` is meant to persist, but it can be lost (serve reset,
@@ -22574,7 +22616,6 @@ if (isGeminiMcpBridgeProcess) {
         try {
           const handle = await createRelayServer({
             port,
-            host: '127.0.0.1',
             hostInfo: relayHostInfoProvider,
             beginPair: relayBeginPairProvider
           })
@@ -22588,7 +22629,7 @@ if (isGeminiMcpBridgeProcess) {
               lanHost && lanHost.kind !== 'loopback'
                 ? `ws://${lanHost.host}:${handle.port}`
                 : null
-            const manualRelayUrl = configuredManualRelayUrl(handle.port)
+            const manualRelayUrl = advertisableManualRelayUrl(handle.port)
             const candidates = mergeRelayUrls([wssUrl], [lanCandidate], [manualRelayUrl])
             selfHostedWssLane = { wssUrl, cliPath, relayPort: handle.port, candidates }
             console.log(
@@ -22678,37 +22719,16 @@ if (isGeminiMcpBridgeProcess) {
         await stopIosRemoteBridge()
         const settingsRelayUrl = configuredSettingsRelayUrl()
         const configuredRelayUrl = envRelayUrl || settingsRelayUrl
-        const httpsPort = defaultIosServeHttpsPort()
         const startTailscaleLane = async (preferredUrl: string | null): Promise<boolean> => {
-          const tailscale = await detectTailscale()
-          let dnsName = tailscale.dnsName?.toLowerCase()
-          if (!dnsName && tailscale.cliPath) {
-            const serve = await getTailscaleServeStatus({
-              cliPath: tailscale.cliPath,
-              relayPort: embeddedPort(null),
-              httpsPort
-            })
-            dnsName = serve.dnsName?.toLowerCase()
-          }
-          if (!dnsName) return false
-          let wssUrl = serveWssUrl(dnsName, httpsPort)
-          if (preferredUrl) {
-            try {
-              const parsed = new URL(preferredUrl)
-              if (parsed.protocol === 'wss:' && parsed.hostname.toLowerCase() === dnsName) {
-                wssUrl = serveWssUrl(dnsName, httpsPort)
-              }
-            } catch {
-              // Ignore malformed preferred URLs and use the discovered lane.
-            }
-          }
-          if (settingsRelayUrl !== wssUrl && !envRelayUrl) {
-            AppStore.updateSettings({ iosRemoteRelayUrl: wssUrl })
+          const lane = await resolveTailscaleWssLane(preferredUrl)
+          if (!lane) return false
+          if (settingsRelayUrl !== lane.wssUrl && !envRelayUrl) {
+            AppStore.updateSettings({ iosRemoteRelayUrl: lane.wssUrl })
           }
           console.log(
-            `[remote-bridge] iOS remote transport enabled — self-hosted wss via tailscale serve (${wssUrl})`
+            `[remote-bridge] iOS remote transport enabled — self-hosted wss via tailscale serve (${lane.wssUrl})`
           )
-          await startSelfHostedWssRelay(wssUrl, dnsName, tailscale.cliPath ?? null)
+          await startSelfHostedWssRelay(lane.wssUrl, lane.dnsName, lane.cliPath)
           return iosRemoteRuntime !== null
         }
 
@@ -22747,6 +22767,19 @@ if (isGeminiMcpBridgeProcess) {
     const restartIosRemoteBridge = async (reason: string): Promise<void> => {
       await stopIosRemoteBridge()
       await startIosRemoteBridge(reason)
+    }
+
+    const maybeUpgradeIosRemoteToTailscaleLane = async (reason: string): Promise<void> => {
+      if (envRelayUrl || selfHostedWssLane || iosRemoteStartPromise) return
+      const lane = await resolveTailscaleWssLane(configuredSettingsRelayUrl() || null)
+      if (!lane) return
+      if (configuredSettingsRelayUrl() !== lane.wssUrl) {
+        AppStore.updateSettings({ iosRemoteRelayUrl: lane.wssUrl })
+      }
+      console.log(
+        `[remote-bridge] ${reason}: upgrading active relay advertisement to Tailscale WSS (${lane.wssUrl})`
+      )
+      await restartIosRemoteBridge(reason)
     }
 
     if (iosRemoteResolution.shouldRun) {
@@ -23629,6 +23662,9 @@ if (isGeminiMcpBridgeProcess) {
       async (_, displayName?: string, options?: { force?: boolean }) => {
         if (!iosRemoteRuntime) {
           await startIosRemoteBridge('pairing request')
+        }
+        if (iosRemoteRuntime && !selfHostedWssLane) {
+          await maybeUpgradeIosRemoteToTailscaleLane('pairing request')
         }
         if (!iosRemoteRuntime) {
           return {
