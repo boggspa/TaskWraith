@@ -4083,17 +4083,20 @@
  * the smooth text-shimmer band used by the old Thinking label).
  */
 .message-working-ghost {
-  position: relative;
-  display: inline-block;
-  width: 18px;
-  height: 18px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   isolation: isolate;
+  overflow: visible;
+  align-self: center;
 }
 
 .message-working-ghost-glow {
-  position: absolute;
-  inset: -3px;
+  grid-area: 1 / 1;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
   background: radial-gradient(
     circle,
@@ -4108,14 +4111,13 @@
 }
 
 .message-working-ghost-mark {
-  position: relative;
+  grid-area: 1 / 1;
   z-index: 1;
   display: block;
-  width: 100%;
-  height: 100%;
+  width: 14px;
+  height: 14px;
   color: rgba(255, 255, 255, 0.94);
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.22));
-  animation: working-ghost-pulse 0.85s ease-in-out infinite alternate;
 }
 
 .message-working-ghost-mark svg {
@@ -4123,6 +4125,8 @@
   width: 100%;
   height: 100%;
   overflow: visible;
+  transform: translateY(-0.5px);
+  animation: working-ghost-pulse 0.85s ease-in-out infinite alternate;
 }
 
 :is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .message-working-ghost-mark {
@@ -4325,7 +4329,7 @@
   }
 }
 
-[data-reduce-motion='true'] .message-working-ghost-mark {
+[data-reduce-motion='true'] .message-working-ghost-mark svg {
   animation: none;
   opacity: 1;
 }
