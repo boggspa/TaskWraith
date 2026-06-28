@@ -651,6 +651,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     workspaceDiffStats,
     workspaces
   } = props
+  const isTaskWraithNativeComposer = appearance.composerStyle === 'default'
   const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
 
   const hasVisibleScheduledCountdown =
@@ -4019,31 +4020,33 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         <span className="composer-send-cluster">
                           {isCurrentChatRunning ? (
                             <>
-                              <button
-                                className={`composer-action-btn run-btn queue ${isSendConfirming ? 'send-confirming' : ''}`}
-                                onClick={() => {
-                                  if (tryHandleSideSlashSubmit()) {
-                                    return
+                              {isTaskWraithNativeComposer && (
+                                <button
+                                  className={`composer-action-btn run-btn queue ${isSendConfirming ? 'send-confirming' : ''}`}
+                                  onClick={() => {
+                                    if (tryHandleSideSlashSubmit()) {
+                                      return
+                                    }
+                                    if (tryHandleActionSlashSubmit()) {
+                                      return
+                                    }
+                                    triggerSendConfirmation()
+                                    handleRun()
+                                  }}
+                                  disabled={
+                                    !currentChat ||
+                                    (!isCurrentGlobalChat && !currentWorkspace) ||
+                                    !prompt.trim() ||
+                                    (currentProvider === 'gemini' && !geminiWorkspaceTrustReady) ||
+                                    isSteerBusyForCurrentChat
                                   }
-                                  if (tryHandleActionSlashSubmit()) {
-                                    return
-                                  }
-                                  triggerSendConfirmation()
-                                  handleRun()
-                                }}
-                                disabled={
-                                  !currentChat ||
-                                  (!isCurrentGlobalChat && !currentWorkspace) ||
-                                  !prompt.trim() ||
-                                  (currentProvider === 'gemini' && !geminiWorkspaceTrustReady) ||
-                                  isSteerBusyForCurrentChat
-                                }
-                                title="Queue next run"
-                                aria-label="Queue next run"
-                                type="button"
-                              >
-                                <QueueSymbolIcon />
-                              </button>
+                                  title="Queue next run"
+                                  aria-label="Queue next run"
+                                  type="button"
+                                >
+                                  <QueueSymbolIcon />
+                                </button>
+                              )}
                               {/* Phase J3 (steer): sit Steer between Queue and Stop
                                *   - Queue waits passively for the chat's run to finish.
                                *   - Steer interrupts and dispatches immediately.
@@ -4051,7 +4054,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                * Only render when THIS chat is busy (per-chat busy
                                * predicate), so multi-chat parallel runs don't get a
                                * misleading Steer button in idle chats. */}
-                              {isCurrentChatBusyForSteer && (
+                              {isTaskWraithNativeComposer && isCurrentChatBusyForSteer && (
                                 <button
                                   className={`composer-action-btn steer-btn ${isSteerBusyForCurrentChat ? 'is-busy' : ''}`}
                                   onClick={() => void handleSteer()}

@@ -23031,37 +23031,41 @@ function App(): React.JSX.Element {
                               <StopSymbolIcon />
                             </button>
                           )}
-                          <button
-                            type="submit"
-                            className={`composer-action-btn run-btn${
-                              isSideChatRunning ? ' queue' : ''
-                            }`}
-                            disabled={!sideCanRun || !sidePrompt.trim()}
-                            title={
-                              sideCanRun
-                                ? isSideChatRunning
+                          {(!isSideChatRunning || appearance.composerStyle === 'default') && (
+                            <button
+                              type="submit"
+                              className={`composer-action-btn run-btn${
+                                isSideChatRunning ? ' queue' : ''
+                              }`}
+                              disabled={!sideCanRun || !sidePrompt.trim()}
+                              title={
+                                sideCanRun
+                                  ? isSideChatRunning
+                                    ? 'Queue linked chat prompt'
+                                    : 'Run linked chat prompt'
+                                  : 'Linked chat workspace is unavailable'
+                              }
+                              aria-label={
+                                isSideChatRunning
                                   ? 'Queue linked chat prompt'
                                   : 'Run linked chat prompt'
-                                : 'Linked chat workspace is unavailable'
-                            }
-                            aria-label={
-                              isSideChatRunning ? 'Queue linked chat prompt' : 'Run linked chat prompt'
-                            }
-                          >
-                            {isSideChatRunning ? (
-                              <QueueSymbolIcon />
-                            ) : appearance.composerStyle === 'claude' ? (
-                              <ClaudeReturnSymbolIcon />
-                            ) : appearance.composerStyle === 'codex' ||
-                              appearance.composerStyle === 'gemini' ||
-                              appearance.composerStyle === 'cursor' ||
-                              appearance.composerStyle === 'grok' ||
-                              appearance.composerStyle === 'kimi' ? (
-                              <ArrowUpSendIcon />
-                            ) : (
-                              <RunSymbolIcon />
-                            )}
-                          </button>
+                              }
+                            >
+                              {isSideChatRunning ? (
+                                <QueueSymbolIcon />
+                              ) : appearance.composerStyle === 'claude' ? (
+                                <ClaudeReturnSymbolIcon />
+                              ) : appearance.composerStyle === 'codex' ||
+                                appearance.composerStyle === 'gemini' ||
+                                appearance.composerStyle === 'cursor' ||
+                                appearance.composerStyle === 'grok' ||
+                                appearance.composerStyle === 'kimi' ? (
+                                <ArrowUpSendIcon />
+                              ) : (
+                                <RunSymbolIcon />
+                              )}
+                            </button>
+                          )}
                         </span>
                       </div>
                     </div>
