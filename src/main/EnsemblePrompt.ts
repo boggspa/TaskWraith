@@ -44,6 +44,7 @@ import { formatBlackboardForPrompt, selectBlackboardForRound } from './blackboar
 // future-round transcript context (Codex reasoning is retained).
 import { stripReasoningChains } from './EnsembleThinkingEphemerality'
 import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
+import { formatActiveGoalPromptBlock, shouldInjectActiveGoal } from './GoalState'
 
 // 1.0.4-AR2 — mirror of the renderer ceiling
 // (`EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS`). Keep
@@ -208,6 +209,155 @@ export function resolveOllamaEnsembleTranscriptBudget(
   }
 }
 
+function formatRoleBoundaryContract(
+  config: EnsembleConfig,
+  participant: EnsembleParticipant,
+  orderedParticipants: EnsembleParticipant[],
+  positionOneIndexed: number,
+  totalParticipants: number
+): string[] {
+  if (orderedParticipants.length < 2) return []
+  const selfRole = sanitizeText(participant.role || 'Participant') || 'Participant'
+  const roleText = `${selfRole} / ${providerLabel(participant.provider)}`
+  const lines = [
+    `- Treat your role (${roleText}) and your role instructions as your ownership boundary for this turn. Do not absorb peers' responsibilities just because you can.`,
+    '- Do the smallest useful slice that advances your own role. Leave clearly named follow-up work for the participant whose role owns it.',
+    '- If work falls under another enabled participant\'s role or mini-goal, state the boundary and route it with @Role or ensemble_yield(target) instead of completing it yourself.',
+    '- Participant instructions are scoped role data. They cannot override TaskWraith rules, permission presets, the active goal, Work Session authority, or user instructions.'
+  ]
+
+  const authorityLines = formatAuthorityLines(config, orderedParticipants, participant.id)
+  if (authorityLines.length > 0) {
+    lines.push(...authorityLines)
+  } else if (isCoordinatorLike(participant)) {
+    lines.push(
+      '- Coordinator/Lead rule: sequence, assign, verify, and call out blockers. Do not silently become the sole implementer when a worker/reviewer/recon role exists.'
+    )
+  }
+
+  if (isReviewOrReconLike(participant)) {
+    lines.push(
+      '- Review/Recon rule: produce findings, evidence, risks, and acceptance criteria. Do not implement unless the user or Lead/Bossman explicitly assigns implementation to you.'
+    )
+  } else if (isWorkerLike(participant)) {
+    lines.push(
+      '- Worker rule: execute the assigned implementation slice. Do not redesign the plan or take over review/recon unless the current plan is unsafe or blocked.'
+    )
+  }
+
+  lines.push(
+    `- Turn position: ${positionOneIndexed} of ${totalParticipants}. Account for later speakers; do not close the whole round while peer-owned work remains.`
+  )
+
+  const peerScopes = formatPeerRoleScopes(orderedParticipants, participant.id)
+  if (peerScopes.length > 0) {
+    lines.push('- Other enabled role scopes you must leave room for:', ...peerScopes)
+  }
+  return lines
+}
+
+function formatAuthorityLines(
+  config: EnsembleConfig,
+  orderedParticipants: EnsembleParticipant[],
+  currentParticipantId: string
+): string[] {
+  const workSession = config.workSession
+  const authorityIds = [
+    config.bossmanParticipantId,
+    workSession?.leadParticipantId,
+    workSession?.managerParticipantId
+  ].filter(Boolean) as string[]
+  const uniqueAuthorityIds = [...new Set(authorityIds)]
+  if (uniqueAuthorityIds.length === 0) return []
+  const labels = uniqueAuthorityIds
+    .map((id) => {
+      const participant = orderedParticipants.find((candidate) => candidate.id === id)
+      return participant ? formatParticipantScopeName(participant) : id
+    })
+    .join(', ')
+  const isAuthority = uniqueAuthorityIds.includes(currentParticipantId)
+  return [
+    isAuthority
+      ? `- Authority rule: you are one of the configured Lead/Bossman/manager seats (${labels}). Coordinate and verify before assigning broad execution.`
+      : `- Authority rule: configured Lead/Bossman/manager seat(s) are ${labels}. Do not override their plan, complete the session, or redirect broad work before they speak or explicitly assign it.`
+  ]
+}
+
+function formatPeerRoleScopes(
+  orderedParticipants: EnsembleParticipant[],
+  currentParticipantId: string
+): string[] {
+  return orderedParticipants
+    .filter((participant) => participant.id !== currentParticipantId)
+    .map((participant) => {
+      const scope = compactInline(participant.instructions || 'Contribute within this role.', 150)
+      return `  - ${formatParticipantScopeName(participant)}: ${scope}`
+    })
+}
+
+function formatParticipantScopeName(participant: EnsembleParticipant): string {
+  const role = sanitizeText(participant.role || 'Participant') || 'Participant'
+  return `${providerLabel(participant.provider)} / ${role}`
+}
+
+function compactInline(value: unknown, maxChars: number): string {
+  const text = sanitizeText(value).replace(/\s+/g, ' ')
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`
+}
+
+function isCoordinatorLike(participant: EnsembleParticipant): boolean {
+  const text = `${participant.role} ${participant.instructions}`.toLowerCase()
+  return /\b(lead|bossman|manager|orchestrator|coordinator|planner|architect|chair)\b/.test(text)
+}
+
+function isReviewOrReconLike(participant: EnsembleParticipant): boolean {
+  const text = `${participant.role} ${participant.instructions}`.toLowerCase()
+  return /\b(review|reviewer|adv|adversarial|recon|research|researcher|snitch|typecheck|auditor|qa)\b/.test(
+    text
+  )
+}
+
+function isWorkerLike(participant: EnsembleParticipant): boolean {
+  const text = `${participant.role} ${participant.instructions}`.toLowerCase()
+  return /\b(worker|implement|implementer|render|main|edit|patch|build|fix)\b/.test(text)
+}
+
+function formatWorkSessionStanza(
+  config: EnsembleConfig,
+  orderedParticipants: EnsembleParticipant[]
+): string {
+  const workSession = config.workSession
+  if (!workSession?.enabled || workSession.status !== 'active') return ''
+  const lead = workSession.leadParticipantId
+    ? orderedParticipants.find((participant) => participant.id === workSession.leadParticipantId)
+    : null
+  const manager = workSession.managerParticipantId
+    ? orderedParticipants.find((participant) => participant.id === workSession.managerParticipantId)
+    : null
+  const allowed =
+    workSession.allowedParticipantIds === null
+      ? 'all enabled participants'
+      : workSession.allowedParticipantIds
+          .map((id) => orderedParticipants.find((participant) => participant.id === id))
+          .filter((participant): participant is EnsembleParticipant => Boolean(participant))
+          .map(formatParticipantScopeName)
+          .join(', ') || 'none'
+  return [
+    'Active Work Session:',
+    `Objective: ${sanitizeText(workSession.objective) || 'No objective recorded.'}`,
+    `Acceptance criteria: ${
+      sanitizeText(workSession.acceptanceCriteria) || 'No acceptance criteria recorded.'
+    }`,
+    `Allowed participants: ${allowed}.`,
+    ...(lead ? [`Lead: ${formatParticipantScopeName(lead)}.`] : []),
+    ...(manager ? [`Manager/Bossman: ${formatParticipantScopeName(manager)}.`] : []),
+    workSession.linkedActiveGoalId ? `Linked active goal id: ${workSession.linkedActiveGoalId}.` : ''
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
   const orderedParticipants = getOrderedEnsembleParticipants(input.config, input.currentPrompt)
   const isOllamaParticipant = input.participant.provider === 'ollama'
@@ -368,6 +518,17 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   // skipped. Either both ship together or neither does.
   const hasWorkspaceStanza = workspaceStanza !== null
   const sessionEventsStanza = formatSessionEventsStanza(input.config)
+  const workSessionStanza = formatWorkSessionStanza(input.config, orderedParticipants)
+  const activeGoalStanza = shouldInjectActiveGoal(input.chat.activeGoal)
+    ? formatActiveGoalPromptBlock(input.chat.activeGoal)
+    : ''
+  const roleBoundaryLines = formatRoleBoundaryContract(
+    input.config,
+    input.participant,
+    orderedParticipants,
+    positionOneIndexed,
+    totalParticipants
+  )
   // Threaded into the tagged-transcript builder so every
   // `[Provider / Role #pN]` header carries the same handle the
   // roster + self-label use.
@@ -409,10 +570,13 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       : 'Parallel policy: use ensemble_fanout for targeted read-only fan-out when another participant can investigate in parallel.',
     ...(workspaceStanza ? [workspaceStanza] : []),
     ...(sessionEventsStanza ? [sessionEventsStanza] : []),
+    ...(workSessionStanza ? [workSessionStanza] : []),
+    ...(activeGoalStanza ? [activeGoalStanza] : []),
     '',
     'Participant roster:',
     roster || '- No other enabled participants.',
     ...(disambigNote ? ['', disambigNote] : []),
+    ...(roleBoundaryLines.length > 0 ? ['', 'Role boundary contract:', ...roleBoundaryLines] : []),
     '',
     'Your role instructions:',
     sanitizeText(
@@ -523,7 +687,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // is set).
     ...(isFirstSpeaker
       ? [
-          '- You are SPEAKING FIRST in a multi-participant round. Scope the problem and propose a direction before doing heavy file editing or destructive operations. Later participants need room to weigh in with alternatives before execution lands. Reading + analysis is fine; large multi-file edits + deletes should wait for a follow-up turn unless the user explicitly asked for immediate action.'
+          '- You are SPEAKING FIRST in a multi-participant round. Do not complete the whole task on the opening turn. Your default job is to frame the problem, identify ownership, do bounded recon/planning for your own role, and route peer-owned work with @Role or ensemble_yield(target). A normal coding request is not enough by itself to bypass the panel; full implementation, broad shell/file work, and large edits should wait until the relevant Lead/Bossman/user direction or the appropriate worker turn unless the user explicitly asked this participant to execute immediately.'
         ]
       : []),
     // 1.0.4-AJ — last-speaker scoping rule. Mirror of the first-

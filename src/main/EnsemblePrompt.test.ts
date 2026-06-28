@@ -285,6 +285,114 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('multiple participants from the same provider')
   })
 
+  it('adds a role boundary contract with peer-owned scopes in multi-participant rounds', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+
+    expect(prompt).toContain('Role boundary contract:')
+    expect(prompt).toContain('Treat your role (Worker / Codex)')
+    expect(prompt).toContain('Do not absorb peers')
+    expect(prompt).toContain('Other enabled role scopes you must leave room for:')
+    expect(prompt).toContain('Claude / Reviewer: Review risks.')
+    expect(prompt).toContain('Gemini / Researcher: Find broader context.')
+    expect(prompt).not.toContain('Codex / Worker: Implement changes.')
+  })
+
+  it('does not add a role boundary contract for solo-participant rounds', () => {
+    const soloEnsemble: EnsembleConfig = {
+      ...ensemble,
+      participants: [ensemble.participants[0]]
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: soloEnsemble,
+      participant: soloEnsemble.participants[0],
+      currentPrompt: 'Just you on this one.',
+      roundId: 'round-1'
+    })
+
+    expect(prompt).not.toContain('Role boundary contract:')
+    expect(prompt).not.toContain('Other enabled role scopes')
+  })
+
+  it('surfaces active Work Session objective and authority in participant prompts', () => {
+    const workSessionConfig: EnsembleConfig = {
+      ...ensemble,
+      bossmanParticipantId: 'claude',
+      workSession: {
+        enabled: true,
+        status: 'active',
+        objective: 'Decompose App.tsx without behavior changes.',
+        acceptanceCriteria: 'Typecheck passes and each slice is independently reviewable.',
+        allowedParticipantIds: ['claude', 'codex'],
+        leadParticipantId: 'claude',
+        managerParticipantId: 'claude',
+        linkedActiveGoalId: 'goal-1',
+        permissionPresetId: 'workspace_write',
+        maxRoundsPerProvider: 6,
+        maxDurationMs: 60_000,
+        enableScoutPass: true,
+        roundsUsed: {
+          gemini: 0,
+          codex: 0,
+          claude: 0,
+          kimi: 0,
+          grok: 0,
+          cursor: 0,
+          ollama: 0
+        },
+        totalRoundsUsed: 0
+      }
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: workSessionConfig,
+      participant: workSessionConfig.participants[1],
+      currentPrompt: 'Continue the session.',
+      roundId: 'round-1'
+    })
+
+    expect(prompt).toContain('Active Work Session:')
+    expect(prompt).toContain('Objective: Decompose App.tsx without behavior changes.')
+    expect(prompt).toContain(
+      'Acceptance criteria: Typecheck passes and each slice is independently reviewable.'
+    )
+    expect(prompt).toContain('Lead: Claude / Reviewer.')
+    expect(prompt).toContain('Manager/Bossman: Claude / Reviewer.')
+    expect(prompt).toContain('Authority rule: configured Lead/Bossman/manager seat(s) are Claude / Reviewer')
+  })
+
+  it('injects TaskWraith active goals into ensemble participant prompts', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: {
+        ...chat(),
+        activeGoal: {
+          id: 'goal-1',
+          objective: 'Keep participants inside their assigned roles.',
+          status: 'active',
+          mode: 'taskwraith_steered',
+          provider: 'codex',
+          createdAt: '2026-06-28T00:00:00.000Z',
+          updatedAt: '2026-06-28T00:00:00.000Z'
+        }
+      },
+      config: ensemble,
+      participant: ensemble.participants[0],
+      currentPrompt: 'Continue.',
+      roundId: 'round-1'
+    })
+
+    expect(prompt).toContain('<taskwraith_active_goal>')
+    expect(prompt).toContain('Keep participants inside their assigned roles.')
+    expect(prompt).toContain('Do not replace, clear, or silently reinterpret the objective')
+  })
+
   it('excludes unpromoted collaborator comments from participant context', () => {
     const shared = chat()
     shared.messages = [
@@ -480,8 +588,9 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Claude / Reviewer #p1 (you — first speaker)')
     // Scoping rule present in the Rules section
     expect(prompt).toContain('SPEAKING FIRST in a multi-participant round')
-    expect(prompt).toContain('Scope the problem and propose a direction')
-    expect(prompt).toContain('Reading + analysis is fine')
+    expect(prompt).toContain('Do not complete the whole task on the opening turn')
+    expect(prompt).toContain('route peer-owned work with @Role or ensemble_yield(target)')
+    expect(prompt).toContain('A normal coding request is not enough by itself')
   })
 
   it('does NOT emit the first-speaker rule for non-first speakers', () => {
