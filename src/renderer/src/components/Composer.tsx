@@ -84,7 +84,7 @@ import {
   CLAUDE_DEFAULT_MODELS,
   resolveClaudeDefaultReasoningEffort
 } from '../lib/providerModelDefaults'
-import { claudeReasoningDisplayLabel } from '../lib/composerChipFormat'
+import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from '../lib/composerChipFormat'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { createPortal } from 'react-dom'
 
@@ -3375,11 +3375,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               .filter((option) => option?.reasoningEffort)
                               .map((option) => ({
                                 value: option.reasoningEffort,
-                                label:
-                                  option.reasoningEffort === 'xhigh'
-                                    ? 'Extra High'
-                                    : option.reasoningEffort.charAt(0).toUpperCase() +
-                                      option.reasoningEffort.slice(1)
+                                label: codexReasoningDisplayLabel(option.reasoningEffort)
                               }))
                             combinedSelectedReasoning = effectiveCodexReasoning
                           } else if (effectiveProvider === 'claude') {

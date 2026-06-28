@@ -480,7 +480,7 @@ export interface EnsembleParticipant {
    * All optional; orchestrator dispatch falls back to provider
    * defaults when absent so existing ensemble chats remain valid.
    *
-   *   reasoningEffort  Codex: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+   *   reasoningEffort  Codex: 'minimal' | 'low'/'light' | 'medium' | 'high' | 'xhigh'
    *                    Claude: 'off' | 'low' | 'medium' | 'high'
    *   fastModeEnabled  Codex (serviceTier=fast) + Claude (claudeFastMode)
    *   thinkingEnabled  Kimi only — toggles K2 thinking mode

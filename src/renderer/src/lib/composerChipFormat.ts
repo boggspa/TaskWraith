@@ -21,7 +21,7 @@ export interface ComposerChipContext {
   modelId: string
   /** Human-readable model label as it appears in the existing model picker. */
   modelLabel: string
-  /** Codex reasoning effort token (e.g. "low" | "medium" | "high" | "xhigh"). */
+  /** Codex reasoning effort token (e.g. "low"/"light" | "medium" | "high" | "xhigh"). */
   codexReasoningEffort?: string
   /** Claude reasoning effort token (e.g. "low" | "medium" | "high" | "xhigh" | "max" | "ultracode"). */
   claudeReasoningEffort?: string
@@ -160,7 +160,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
 /**
  * Reasoning-level display per provider's product convention.
  *
- * Codex: `Low` / `Medium` / `High` / `Extra High` (xhigh → "Extra High")
+ * Codex: `Light` / `Medium` / `High` / `Extra High` (low/light → "Light"; xhigh → "Extra High")
  * Claude: `Low` / `Medium` / `High` / `Extra` / `Max` / `Ultracode`
  * Kimi: `Thinking` when on, empty when off
  * Gemini: no reasoning concept today — returns empty
@@ -171,13 +171,7 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   const { provider } = ctx
 
   if (provider === 'codex') {
-    const effort = (ctx.codexReasoningEffort || '').toLowerCase()
-    if (!effort) return ''
-    if (effort === 'xhigh') return 'Extra High'
-    if (effort === 'low') return 'Low'
-    if (effort === 'medium') return 'Medium'
-    if (effort === 'high') return 'High'
-    return effort.charAt(0).toUpperCase() + effort.slice(1)
+    return codexReasoningDisplayLabel(ctx.codexReasoningEffort)
   }
 
   if (provider === 'claude') {
@@ -189,6 +183,16 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   }
 
   return ''
+}
+
+export function codexReasoningDisplayLabel(effortValue?: string | null): string {
+  const effort = (effortValue || '').toLowerCase()
+  if (!effort || effort === 'off') return ''
+  if (effort === 'xhigh') return 'Extra High'
+  if (effort === 'low' || effort === 'light') return 'Light'
+  if (effort === 'medium') return 'Medium'
+  if (effort === 'high') return 'High'
+  return effort.charAt(0).toUpperCase() + effort.slice(1)
 }
 
 export function claudeReasoningDisplayLabel(effortValue?: string | null): string {

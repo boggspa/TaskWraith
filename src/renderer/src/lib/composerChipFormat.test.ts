@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  codexReasoningDisplayLabel,
   formatComposerModelChip,
   reasoningDisplayLabel,
   shortModelName
@@ -94,6 +95,20 @@ describe('reasoningDisplayLabel', () => {
         codexReasoningEffort: 'xhigh'
       })
     ).toBe('Extra High')
+  })
+
+  it('Codex low/light becomes Light', () => {
+    expect(codexReasoningDisplayLabel('low')).toBe('Light')
+    expect(codexReasoningDisplayLabel('light')).toBe('Light')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'codex',
+        composerStyle: 'codex',
+        modelId: 'gpt-5.4-mini',
+        modelLabel: 'GPT-5.4 Mini',
+        codexReasoningEffort: 'low'
+      })
+    ).toBe('Light')
   })
 
   it('Codex other levels capitalised', () => {

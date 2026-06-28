@@ -319,6 +319,7 @@ import { hasResolvedMention } from './lib/mentionHighlight'
 import { extractHttpUrls } from './lib/urlPresentation'
 import { useCopyFeedback } from './lib/useCopyFeedback'
 import {
+  codexReasoningDisplayLabel,
   claudeReasoningDisplayLabel,
   reasoningDisplayLabel,
   shortModelName
@@ -15149,10 +15150,7 @@ function App(): React.JSX.Element {
         ]
     sideComposerReasoningOptions = sourceOptions.map((option) => ({
       value: option.reasoningEffort,
-      label:
-        option.reasoningEffort === 'xhigh'
-          ? 'Extra High'
-          : option.reasoningEffort.charAt(0).toUpperCase() + option.reasoningEffort.slice(1)
+      label: codexReasoningDisplayLabel(option.reasoningEffort)
     }))
     sideComposerSelectedReasoning = sideCodexReasoning
   } else if (sideComposerProvider === 'claude') {
@@ -15936,10 +15934,7 @@ function App(): React.JSX.Element {
         ]
     guestComposerReasoningOptions = sourceOptions.map((option) => ({
       value: option.reasoningEffort,
-      label:
-        option.reasoningEffort === 'xhigh'
-          ? 'Extra High'
-          : option.reasoningEffort.charAt(0).toUpperCase() + option.reasoningEffort.slice(1)
+      label: codexReasoningDisplayLabel(option.reasoningEffort)
     }))
     guestComposerSelectedReasoning = guestCodexReasoning
   } else if (guestComposerProvider === 'claude') {

@@ -671,7 +671,7 @@
 }
 
 .sky-orb {
-  --sky-orb-gaussian-blur: 0.55px;
+  --sky-orb-gaussian-blur: 0.75px;
   --sky-sun-disc-background:
     radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 1) 0 13%, rgba(255, 248, 177, 0.98) 26%, rgba(255, 210, 71, 0.96) 58%, rgba(255, 151, 41, 0.78) 82%, rgba(255, 151, 41, 0) 84%);
   --sky-sun-disc-shadow:
@@ -734,7 +734,7 @@
 }
 
 .sky-night .sky-orb {
-  --sky-orb-gaussian-blur: 1.2px;
+  --sky-orb-gaussian-blur: 1.4px;
   width: 56px;
   height: 56px;
   right: clamp(58px, 13vw, 162px);
@@ -761,7 +761,7 @@
 .sky-day.sky-heavy_rain .sky-orb,
 .sky-day.sky-storm .sky-orb,
 .sky-day.sky-snow .sky-orb {
-  --sky-orb-gaussian-blur: 2px;
+  --sky-orb-gaussian-blur: 2.2px;
   opacity: 0.22;
   filter: blur(var(--sky-orb-gaussian-blur)) brightness(0.9);
 }

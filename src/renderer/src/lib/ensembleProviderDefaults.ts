@@ -26,7 +26,7 @@ import type {
   CombinedModelPickerReasoningOption
 } from '../components/CombinedModelPicker'
 import type { EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
-import { claudeReasoningDisplayLabel } from './composerChipFormat'
+import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from './composerChipFormat'
 
 export interface EnsembleModelDefaults {
   modelOptions: CombinedModelPickerModelOption[]
@@ -46,9 +46,9 @@ export interface EnsembleModelDefaults {
 }
 
 const CODEX_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'xhigh', label: 'Extra High' }
+  { value: 'medium', label: codexReasoningDisplayLabel('medium') },
+  { value: 'high', label: codexReasoningDisplayLabel('high') },
+  { value: 'xhigh', label: codexReasoningDisplayLabel('xhigh') }
 ]
 
 const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'
