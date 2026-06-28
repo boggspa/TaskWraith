@@ -4154,7 +4154,7 @@
   transform: translate(-50%, -50%);
 }
 
-.message-working-ghost-mark svg {
+.message-working-ghost-mark-svg {
   display: block;
   width: 100%;
   height: 100%;
@@ -4162,6 +4162,7 @@
   transform: translateY(-0.5px) scale(1.04);
   transform-origin: center;
   animation: working-ghost-pulse 0.85s ease-in-out infinite alternate;
+  vector-effect: non-scaling-stroke;
 }
 
 :is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .message-working-ghost-mark {
@@ -4171,7 +4172,7 @@
 
 .message-working-label {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   font-weight: 600;
   background-image:
     repeating-linear-gradient(
@@ -4214,10 +4215,28 @@
   isolation: isolate;
 }
 
+.message-working-text::before {
+  content: '';
+  position: absolute;
+  inset: -7px -14px -6px -8px;
+  z-index: 0;
+  border-radius: 999px;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      ellipse at 40% 50%,
+      color-mix(in srgb, var(--message-working-accent) 22%, transparent) 0%,
+      color-mix(in srgb, var(--message-working-accent) 10%, transparent) 46%,
+      transparent 78%
+    );
+  filter: blur(5px);
+  opacity: 0.76;
+}
+
 .message-working-sparkles {
   position: absolute;
   inset: -8px -16px -6px -8px;
-  z-index: 0;
+  z-index: 1;
   pointer-events: none;
   overflow: visible;
   --working-spec: color-mix(in srgb, var(--message-working-accent) 86%, white);
@@ -4419,7 +4438,7 @@
 
 .message-working .thinking-dots {
   position: relative;
-  z-index: 1;
+  z-index: 2;
 }
 
 .message-working .thinking-dot {

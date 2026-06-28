@@ -1,5 +1,3 @@
-import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
-
 export function SidebarCornerIcon({
   direction,
   isOpen
@@ -625,10 +623,26 @@ export function ThinkingIndicator() {
     <div className="message-bubble assistant message-working" aria-label="Working">
       <span className="message-working-ghost" aria-hidden>
         <span className="message-working-ghost-glow" />
-        <span
-          className="message-working-ghost-mark"
-          dangerouslySetInnerHTML={{ __html: taskwraithGhostMonolineSvg }}
-        />
+        <span className="message-working-ghost-mark">
+          <svg
+            className="message-working-ghost-mark-svg"
+            viewBox="32 24 72 88"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3.25"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            focusable="false"
+            aria-hidden
+          >
+            <path d="M56 30H80L92 36L98 48V84H92L86 90L80 84L74 96L68 84L56 96L50 84H38V48L44 36Z" />
+            <path d="M50 84V104" />
+            <path d="M68 84V104" />
+            <path d="M86 90V104" />
+            <rect x="51" y="54" width="10" height="14" />
+            <rect x="75" y="54" width="10" height="14" />
+          </svg>
+        </span>
       </span>
       <span className="message-working-text">
         <span className="message-working-sparkles" aria-hidden />
