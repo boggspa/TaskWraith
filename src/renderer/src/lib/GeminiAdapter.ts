@@ -1,3 +1,5 @@
+import { coerceRunItemEvents, type RunItemEvent } from '../../../shared/runItemEvents'
+
 export type NormalizedEvent =
   | {
       type: 'run_started'
@@ -23,6 +25,7 @@ export type NormalizedEvent =
     }
   | { type: 'assistant_media_refs'; mediaRefs: any[] }
   | { type: 'assistant_message_complete'; content: string; itemId?: string }
+  | { type: 'run_item_event'; event: RunItemEvent }
   | {
       type: 'tool_event'
       name: string
@@ -70,6 +73,9 @@ export class GeminiStreamAdapter {
   private parseLine(line: string) {
     try {
       const parsed = JSON.parse(line)
+      for (const event of coerceRunItemEvents(parsed?.runItemEvents)) {
+        this.onEvent({ type: 'run_item_event', event })
+      }
       this.normalizeEvent(parsed)
       this.onEvent({ type: 'raw_event', data: parsed })
     } catch {

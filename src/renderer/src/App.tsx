@@ -22,6 +22,11 @@ import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/
 import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../shared/retiredProviders'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
+import {
+  recordRunFlushMetric,
+  recordRunItemMetric,
+  type RunStreamMetrics
+} from '../../shared/runStreamMetrics'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { formatCost, setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
@@ -1230,6 +1235,8 @@ function App(): React.JSX.Element {
   // cancellation because Stop should still surface its stopped feedback.
   const steerSuppressedSummaryRunIdsRef = useRef<Set<string>>(new Set())
   const queuedSteerInFlightRunIdsRef = useRef<Set<string>>(new Set())
+  const runStreamMetricsByRunIdRef = useRef<Map<string, RunStreamMetrics>>(new Map())
+  const pendingStreamFlushCharsByRunIdRef = useRef<Map<string, number>>(new Map())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
   const [guestDispatchPendingParentChatIds, setGuestDispatchPendingParentChatIds] = useState<
@@ -3251,6 +3258,17 @@ function App(): React.JSX.Element {
       const updated = byId.get(prev.appChatId)
       return updated && updated !== prev ? updated : prev
     })
+    const pendingFlushChars = pendingStreamFlushCharsByRunIdRef.current
+    if (pendingFlushChars.size > 0) {
+      const nowMs = Date.now()
+      for (const [runId, chars] of pendingFlushChars) {
+        runStreamMetricsByRunIdRef.current.set(
+          runId,
+          recordRunFlushMetric(runStreamMetricsByRunIdRef.current.get(runId), runId, chars, nowMs)
+        )
+      }
+      pendingFlushChars.clear()
+    }
   }, [])
 
   // Cancel any scheduled rAF and flush immediately. Used by the non-coalesced
@@ -9745,12 +9763,14 @@ function App(): React.JSX.Element {
       const isVisibleRunChat = () => currentChatIdRef.current === runChatId
       const runContext = {} as ActiveRunContext
       const durableKindForAdapterEvent = (event: NormalizedEvent): RunEventInput['kind'] => {
+        if (event.type === 'run_item_event') return 'timeline'
         if (event.type === 'tool_event') return 'tool'
         if (event.type === 'assistant_message_complete') return 'final_message'
         if (event.type === 'run_started' || event.type === 'run_finished') return 'lifecycle'
         return 'timeline'
       }
       const durableSummaryForAdapterEvent = (event: NormalizedEvent): string => {
+        if (event.type === 'run_item_event') return `Run item event: ${event.event.kind}`
         if (event.type === 'tool_event')
           return `Tool ${event.isResult ? 'result' : 'event'}: ${event.name || event.data?.tool_name || event.data?.toolName || 'unknown'}`
         if (event.type === 'assistant_message_complete') return 'Assistant final message'
@@ -9768,6 +9788,9 @@ function App(): React.JSX.Element {
         return event.type
       }
       const durablePayloadForAdapterEvent = (event: NormalizedEvent): unknown => {
+        if (event.type === 'run_item_event') {
+          return { runItemEvent: event.event }
+        }
         if (event.type === 'raw_event') {
           return {
             type: event.data?.type,
@@ -9794,6 +9817,18 @@ function App(): React.JSX.Element {
           summary: durableSummaryForAdapterEvent(event),
           payload: durablePayloadForAdapterEvent(event)
         })
+
+        if (event.type === 'run_item_event') {
+          runStreamMetricsByRunIdRef.current.set(
+            event.event.runId,
+            recordRunItemMetric(
+              runStreamMetricsByRunIdRef.current.get(event.event.runId),
+              event.event,
+              Date.now()
+            )
+          )
+          return
+        }
 
         if (event.type === 'raw_event') {
           const redacted = redactLog(JSON.stringify(event.data, null, 2))
@@ -9963,6 +9998,13 @@ function App(): React.JSX.Element {
               },
               { createMessageId, now: () => new Date().toISOString() }
             )
+            if (currentRunId && event.content) {
+              pendingStreamFlushCharsByRunIdRef.current.set(
+                currentRunId,
+                (pendingStreamFlushCharsByRunIdRef.current.get(currentRunId) || 0) +
+                  event.content.length
+              )
+            }
           } else if (event.type === 'assistant_message_complete') {
             if (isVisibleRunChat() && updated.chatKind !== 'ensemble') setIsThinking(false)
             const isPlanMode = updated.runs?.[updated.runs.length - 1]?.approvalMode === 'plan'
@@ -10131,6 +10173,10 @@ function App(): React.JSX.Element {
           } else if (event.type === 'run_finished') {
             if (isVisibleRunChat()) setIsThinking(false)
             const runs = [...(updated.runs || [])]
+            const streamMetrics = runStreamMetricsByRunIdRef.current.get(currentRunId)
+            const finishedStats = streamMetrics
+              ? { ...(event.stats || {}), streamMetrics }
+              : event.stats
             const finishedSessionId = normalizeGeminiResumeTarget(event.providerThreadId)
             if (finishedSessionId && effectiveRunProvider !== 'gemini') {
               updated.linkedProviderSessionId = finishedSessionId
@@ -10142,13 +10188,13 @@ function App(): React.JSX.Element {
                   'unknown'
                 : 'unknown'
             const runUsageEntries = extractModelUsageEntriesFromStats(
-              event.stats || {},
+              finishedStats || {},
               resolvedRunModel
             )
 
             if (runs.length > 0) {
               runs[runs.length - 1].status = event.status
-              runs[runs.length - 1].stats = event.stats
+              runs[runs.length - 1].stats = finishedStats
               runs[runs.length - 1].endedAt = new Date().toISOString()
               if (finishedSessionId && effectiveRunProvider !== 'gemini') {
                 runs[runs.length - 1].providerThreadId = finishedSessionId
@@ -10183,10 +10229,10 @@ function App(): React.JSX.Element {
 
             const runDurationMs = Math.max(
               0,
-              extractUsageCount(event.stats, [['duration_ms'], ['durationMs']])
+              extractUsageCount(finishedStats, [['duration_ms'], ['durationMs']])
             )
 
-            const usageAlreadyRecorded = Boolean(event.stats?._taskwraith_usage_recorded)
+            const usageAlreadyRecorded = Boolean(finishedStats?._taskwraith_usage_recorded)
             const usageRecordPromises = usageAlreadyRecorded
               ? []
               : runUsageEntries.map((usageEntry) => {

@@ -108,6 +108,12 @@ import {
   type NativeApprovalPreflight
 } from './NativeApprovalPolicy'
 import { normalizeRunRoute, createFallbackRunId, routeWithRunId } from './run/RunRoute'
+import { RunItemEventCompatMapper, type CompatRunItemIdentity } from './run/RunItemEventCompat'
+import {
+  runItemEventSummary,
+  type RunItemEvent,
+  type RunItemEventDraft
+} from '../shared/runItemEvents'
 import {
   codexSandboxForMode,
   buildCodexUserInput,
@@ -6094,13 +6100,6 @@ function materializeBridgeRunProviderOutput(
     return
   }
   if (payload?.type === 'content' || payload?.type === 'token') {
-    // `cumulative: true` marks the trailing full-turn restatement the CLI
-    // emits when its envelope diverged from the streamed deltas. The
-    // desktop renderer REPLACES its bubble with it; appending here doubled
-    // the whole turn in the transcript. The deltas are already accumulated
-    // (interleaved with tool parts) — skip the restatement unless nothing
-    // streamed at all (envelope-only runs).
-    if (payload.cumulative === true && state.content.trim().length > 0) return
     const text =
       (typeof payload.text === 'string' && payload.text) ||
       (typeof payload.content === 'string' && payload.content) ||
@@ -6110,7 +6109,15 @@ function materializeBridgeRunProviderOutput(
         // Chain link 2/3 (see registerBridgeRunTranscript).
         console.log(`[bridge-run] first delta run=${runId} (+${text.length} chars)`)
       }
-      appendBridgeRunText(state, text)
+      if (payload.cumulative === true && state.content.trim().length > 0) {
+        const fold = foldBridgeRunText(state.content, text)
+        if (fold.kind === 'skip') return
+        if (fold.kind === 'append') return
+        state.content = text
+        appendBridgeRunTextFragment(state, fold.tail)
+      } else {
+        appendBridgeRunText(state, text)
+      }
       if (!state.flushedOnce) flushBridgeRunTranscript(runId)
       else scheduleBridgeRunFlush(runId)
     }
@@ -6259,6 +6266,8 @@ function appendDurableRunEvent(input: RunEventInput): void {
   getRunRepository().appendRunEvent(input)
 }
 
+const runItemEventCompatMapper = new RunItemEventCompatMapper()
+
 const runEventChatMetadataCache = new Map<
   string,
   { workspaceId?: string; workspacePath?: string }
@@ -6309,6 +6318,76 @@ function appendDurableRunEventForRoute(
     summary,
     payload
   })
+}
+
+function runItemIdentityForRoute(
+  provider: ProviderId,
+  route: AgentRunRoute | null | undefined
+): CompatRunItemIdentity | null {
+  const session = runManager.get(route?.appRunId) || getRuntimeSession(provider, route)
+  const runId = route?.appRunId || session?.runId
+  const chatId = route?.appChatId || session?.appChatId
+  if (!runId || !chatId) return null
+  return {
+    runId,
+    chatId,
+    provider,
+    ...(session?.providerSessionId ? { providerSessionId: session.providerSessionId } : {}),
+    ...(session?.providerRunId ? { providerRunId: session.providerRunId } : {}),
+    ...((session?.state as { turnId?: string } | undefined)?.turnId
+      ? { turnId: (session?.state as { turnId?: string }).turnId }
+      : {})
+  }
+}
+
+function appendDurableRunItemEvents(events: RunItemEvent[]): void {
+  for (const event of events) {
+    if (event.kind === 'item/delta' || event.kind === 'tool/outputDelta') continue
+    const chatMetadata = getRunEventChatMetadata(event.chatId)
+    appendDurableRunEvent({
+      runId: event.runId,
+      chatId: event.chatId,
+      workspaceId: chatMetadata.workspaceId,
+      workspacePath: chatMetadata.workspacePath,
+      provider: event.provider as ProviderId,
+      providerSessionId: event.providerSessionId,
+      providerRunId: event.providerRunId,
+      spanId: event.itemId,
+      parentSpanId: event.parentItemId,
+      toolCallId: event.kind === 'tool/progress' ? event.toolCallId : undefined,
+      kind: 'timeline',
+      phase: 'normalized',
+      source: 'main',
+      summary: runItemEventSummary(event),
+      payload: { runItemEvent: event }
+    })
+  }
+}
+
+function runItemEventsForCompatPayload(
+  provider: ProviderId,
+  routed: AgentRunRoute,
+  payload: unknown
+): RunItemEvent[] {
+  const identity = runItemIdentityForRoute(provider, routed)
+  if (!identity) return []
+  return runItemEventCompatMapper.createEvents(identity, payload)
+}
+
+function runItemEventsForDrafts(
+  provider: ProviderId,
+  route: AgentRunRoute | null | undefined,
+  drafts: RunItemEventDraft[]
+): RunItemEvent[] {
+  if (drafts.length === 0) return []
+  const identity = runItemIdentityForRoute(provider, route)
+  if (!identity) return []
+  return runItemEventCompatMapper.createDraftEvents(identity, drafts)
+}
+
+function cleanupRunItemEventState(runId: string | undefined): void {
+  if (!runId) return
+  runItemEventCompatMapper.completeRun(runId)
 }
 
 /**
@@ -9086,10 +9165,20 @@ function applyCursorRunEvent(state: CliProviderStreamState, evt: NormalizedCurso
   if (evt.sessionId) updateCliProviderSession(state, evt.sessionId)
   if (evt.type === 'content' && evt.text) {
     state.assistantText = `${state.assistantText || ''}${evt.text}`
+    const rawRecord =
+      evt.raw && typeof evt.raw === 'object' && !Array.isArray(evt.raw)
+        ? (evt.raw as Record<string, unknown>)
+        : null
+    const isCursorSnapshot = rawRecord?.type === 'assistant'
     sendAgentCompatLine(
       state.sender,
       'cursor',
-      { type: 'content', text: evt.text, provider: 'cursor' },
+      {
+        type: 'content',
+        text: evt.text,
+        provider: 'cursor',
+        ...(isCursorSnapshot ? { runItemCumulative: true } : {})
+      },
       state
     )
   } else if (evt.type === 'thinking' && evt.text) {
@@ -12015,6 +12104,12 @@ function sendAgentCompatLine(
   route?: AgentRunRoute | null
 ) {
   const routed = enrichAgentPayload(provider, payload, route)
+  const runItemEvents = runItemEventsForCompatPayload(provider, routed, payload)
+  if (runItemEvents.length > 0) {
+    appendDurableRunItemEvents(runItemEvents)
+  }
+  const routedForWire =
+    runItemEvents.length > 0 ? { ...routed, runItemEvents } : routed
   // Some provider internals are useful for the raw run ledger but too noisy
   // for the chat transcript. Keep those durable, then stop before renderer /
   // bridge / ensemble materialization can turn them into visible tool rows.
@@ -12043,7 +12138,7 @@ function sendAgentCompatLine(
   // Audit completion bridge — settles a tracked audit role-run on its terminal
   // `result` event (lifting token/cost/duration). No-ops for non-audit runs.
   auditRunTracker.handleProviderOutput(routed.appRunId, payload)
-  const line = `${JSON.stringify(routed)}\n`
+  const line = `${JSON.stringify(routedForWire)}\n`
   const outputPayload = {
     provider,
     data: line,
@@ -12111,6 +12206,22 @@ function sendAgentCompatExit(
     exitStats ? { code, stats: exitStats } : { code },
     route
   )
+  const exitRunItemEvents = runItemEventsForDrafts(provider, routed, [
+    {
+      kind: 'run/completed',
+      itemKind: 'run',
+      itemId: routed.appRunId ? `${routed.appRunId}:run` : undefined,
+      status: (code ?? -1) === 0 ? 'success' : 'failed',
+      exitCode: code,
+      ...(exitStats ? { stats: exitStats } : {}),
+      source: 'taskwraith'
+    }
+  ])
+  if (exitRunItemEvents.length > 0) {
+    appendDurableRunItemEvents(exitRunItemEvents)
+  }
+  const routedForWire =
+    exitRunItemEvents.length > 0 ? { ...routed, runItemEvents: exitRunItemEvents } : routed
   appendDurableRunEventForRoute(
     provider,
     routed,
@@ -12188,10 +12299,11 @@ function sendAgentCompatExit(
       recordWorkflowRunHarvest(soloScheduledTaskId, routed.appRunId, route)
     }
   }
-  publishRunEvent('agent-exit', provider, routed, sender)
+  publishRunEvent('agent-exit', provider, routedForWire, sender)
   if (provider === 'gemini') {
-    publishRunEvent('gemini-exit', provider, routed, sender)
+    publishRunEvent('gemini-exit', provider, routedForWire, sender)
   }
+  cleanupRunItemEventState(routed.appRunId)
 }
 
 
@@ -12632,6 +12744,16 @@ function handleCodexNotification(message: any) {
     state.turnId = params.turn?.id || params.turnId || state.turnId
     if (state.appRunId && state.turnId) {
       runManager.registerProviderRun(state.appRunId, state.turnId)
+    }
+    if (state.turnId) {
+      const turnEvents = runItemEventsForDrafts('codex', state, [
+        {
+          kind: 'turn/started',
+          turnId: state.turnId,
+          source: 'provider'
+        }
+      ])
+      if (turnEvents.length > 0) appendDurableRunItemEvents(turnEvents)
     }
     // Residual 1 — a cancel/budget-kill that fired before this turn started
     // recorded the threadId; now that we have a turnId, interrupt immediately.

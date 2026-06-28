@@ -49,6 +49,49 @@ describe('GeminiStreamAdapter', () => {
     })
   })
 
+  it('emits run item sidecars before the legacy normalized event', () => {
+    const onEvent = vi.fn()
+    const adapter = new GeminiStreamAdapter(onEvent)
+
+    adapter.appendChunk(
+      JSON.stringify({
+        type: 'content',
+        text: 'Hi',
+        itemId: 'item-1',
+        runItemEvents: [
+          {
+            protocolVersion: 1,
+            kind: 'item/delta',
+            chatId: 'chat-1',
+            runId: 'run-1',
+            provider: 'codex',
+            itemId: 'item-1',
+            itemKind: 'assistant_message',
+            channel: 'assistant',
+            delta: 'Hi',
+            sequence: 2,
+            createdAt: '2026-06-29T00:00:00.000Z'
+          }
+        ]
+      }) + '\n'
+    )
+
+    expect(onEvent.mock.calls[0][0]).toMatchObject({
+      type: 'run_item_event',
+      event: {
+        kind: 'item/delta',
+        runId: 'run-1',
+        itemId: 'item-1',
+        sequence: 2
+      }
+    })
+    expect(onEvent.mock.calls[1][0]).toMatchObject({
+      type: 'assistant_message_delta',
+      content: 'Hi',
+      itemId: 'item-1'
+    })
+  })
+
   it('buffers and parses chunks split across multiple calls', () => {
     const onEvent = vi.fn()
     const adapter = new GeminiStreamAdapter(onEvent)
