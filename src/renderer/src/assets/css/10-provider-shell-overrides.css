@@ -1135,7 +1135,15 @@
   border-color: rgba(18, 21, 27, 0.12) !important;
 }
 
-[data-theme="dark"][data-composer-style="codex"]
+[data-composer-style="codex"]:not(
+    :is(
+      [data-theme="light"],
+      [data-theme="citrus"],
+      [data-theme="mist"],
+      [data-theme="sage"],
+      [data-theme="alabaster"]
+    )
+  )
   .app-transcript
   :is(
     .composer-above-bar-stack:has(.ensemble-above-row),
@@ -1149,16 +1157,38 @@
   background-image: none !important;
 }
 
-[data-theme="dark"][data-composer-style="codex"]
+[data-composer-style="codex"]:not(
+    :is(
+      [data-theme="light"],
+      [data-theme="citrus"],
+      [data-theme="mist"],
+      [data-theme="sage"],
+      [data-theme="alabaster"]
+    )
+  )
   .app-transcript
   .composer-area.interface-codex
   > .composer-surface
   > .composer-inner-module {
-  background: #252525 !important;
+  background: #2d2d2d !important;
   background-image: none !important;
+  box-shadow:
+    0 8px 16px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 1px 0 0 rgba(255, 255, 255, 0.035),
+    inset -1px 0 0 rgba(255, 255, 255, 0.035),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.28) !important;
 }
 
-[data-theme="dark"][data-composer-style="codex"]
+[data-composer-style="codex"]:not(
+    :is(
+      [data-theme="light"],
+      [data-theme="citrus"],
+      [data-theme="mist"],
+      [data-theme="sage"],
+      [data-theme="alabaster"]
+    )
+  )
   .app-transcript
   :is(
     .composer-above-bar,
@@ -1167,7 +1197,15 @@
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::before,
-[data-theme="dark"][data-composer-style="codex"]
+[data-composer-style="codex"]:not(
+    :is(
+      [data-theme="light"],
+      [data-theme="citrus"],
+      [data-theme="mist"],
+      [data-theme="sage"],
+      [data-theme="alabaster"]
+    )
+  )
   .app-transcript
   :is(
     .composer-above-bar,
