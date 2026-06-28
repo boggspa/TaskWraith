@@ -64,7 +64,7 @@ export function embeddedRelayUrl(port: number, interfaces?: InterfaceMap): strin
   return `ws://${host}:${port}`
 }
 
-function isTailscaleDnsName(host: string): boolean {
+export function isTailscaleDnsName(host: string): boolean {
   const normalized = host.trim().toLowerCase().replace(/\.$/, '')
   return normalized.endsWith('.ts.net') || normalized.endsWith('.beta.tailscale.net')
 }
@@ -128,6 +128,19 @@ export function isPlainTailscaleRelayUrl(relayUrl: string): boolean {
     return false
   }
   return parsed.protocol === 'ws:' && isTailscaleAddress(parsed.hostname)
+}
+
+export function parseTailscaleWssRelayUrl(relayUrl: string): { dnsName: string } | null {
+  let parsed: URL
+  try {
+    parsed = new URL(relayUrl.trim())
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'wss:') return null
+  const dnsName = parsed.hostname.trim().toLowerCase().replace(/\.$/, '')
+  if (!isTailscaleDnsName(dnsName)) return null
+  return { dnsName }
 }
 
 export function mergeRelayUrls(...groups: Array<Array<string | null | undefined>>): string[] {

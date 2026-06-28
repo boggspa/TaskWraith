@@ -258,6 +258,7 @@ import {
   isPlainTailscaleRelayUrl,
   mergeRelayUrls,
   normalizeManualRelayUrl,
+  parseTailscaleWssRelayUrl,
   pickRelayAdvertiseHost
 } from './remote/relayAdvertise'
 import { createRelayServer, type RelayServerHandle } from '../../relay/src/server'
@@ -22785,6 +22786,21 @@ if (isGeminiMcpBridgeProcess) {
       httpsPort === 443 ? `wss://${dnsName}` : `wss://${dnsName}:${httpsPort}`
     const configuredManualRelayUrl = (relayPort: number): string | null =>
       normalizeManualRelayUrl(configuredManualRelayInput(), relayPort)
+    const tailscaleWssCandidateFromUrl = (
+      relayUrl: string | null | undefined,
+      httpsPort: number
+    ): { dnsName: string; wssUrl: string } | null => {
+      if (!relayUrl) return null
+      const parsed = parseTailscaleWssRelayUrl(relayUrl)
+      if (!parsed) return null
+      return { dnsName: parsed.dnsName, wssUrl: serveWssUrl(parsed.dnsName, httpsPort) }
+    }
+    const configuredTailscaleWssCandidate = (
+      relayPort: number,
+      httpsPort: number
+    ): { dnsName: string; wssUrl: string } | null =>
+      tailscaleWssCandidateFromUrl(configuredSettingsRelayUrl(), httpsPort) ??
+      tailscaleWssCandidateFromUrl(configuredManualRelayUrl(relayPort), httpsPort)
     const embeddedPort = (relayUrl: string | null): number => {
       // Dev defaults to 8788 so a dev build + a release build can run at the
       // same time without colliding on the embedded relay port (8787) — the
@@ -22816,6 +22832,8 @@ if (isGeminiMcpBridgeProcess) {
         const tailscale = await detectTailscale()
         const relayPort = iosRemoteRelayPort()
         const httpsPort = iosRemoteServeHttpsPort()
+        const preferred = tailscaleWssCandidateFromUrl(preferredUrl, httpsPort)
+        const configured = configuredTailscaleWssCandidate(relayPort, httpsPort)
         let dnsName = tailscale.dnsName?.toLowerCase()
         if (!dnsName && tailscale.cliPath) {
           const serve = await getTailscaleServeStatus({
@@ -22825,6 +22843,7 @@ if (isGeminiMcpBridgeProcess) {
           })
           dnsName = serve.dnsName?.toLowerCase()
         }
+        dnsName ??= preferred?.dnsName ?? configured?.dnsName
         if (!dnsName) return null
         let wssUrl = serveWssUrl(dnsName, httpsPort)
         if (preferredUrl) {
@@ -23428,16 +23447,22 @@ if (isGeminiMcpBridgeProcess) {
     // refresh clicks don't re-run the CLI on every keystroke).
     let cachedTailscaleStatus: Awaited<ReturnType<typeof detectTailscale>> | null = null
     let cachedTailscaleAt = 0
-    const TAILSCALE_CACHE_TTL_MS = 5_000
-    ipcMain.handle('bridge-networking-status', async () => {
+    const TAILSCALE_SUCCESS_CACHE_TTL_MS = 5_000
+    const bridgeNetworkingTailscaleStatus = async (): Promise<
+      Awaited<ReturnType<typeof detectTailscale>>
+    > => {
       const now = Date.now()
-      if (!cachedTailscaleStatus || now - cachedTailscaleAt > TAILSCALE_CACHE_TTL_MS) {
+      const ttl = cachedTailscaleStatus?.available ? TAILSCALE_SUCCESS_CACHE_TTL_MS : 0
+      if (!cachedTailscaleStatus || now - cachedTailscaleAt > ttl) {
         cachedTailscaleStatus = await detectTailscale()
         cachedTailscaleAt = now
       }
+      return cachedTailscaleStatus
+    }
+    ipcMain.handle('bridge-networking-status', async () => {
       return {
         lan: bridgeDaemonStatus(),
-        tailscale: cachedTailscaleStatus
+        tailscale: await bridgeNetworkingTailscaleStatus()
       }
     })
 
@@ -23783,20 +23808,32 @@ if (isGeminiMcpBridgeProcess) {
       const tailscale = await detectTailscale()
       const relayPort = liveIosRemoteRelayPort()
       const httpsPort = iosRemoteServeHttpsPort()
+      const currentRelayUrl = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
+      const manualRelayInput = configuredManualRelayInput()
+      const manualRelayUrl = normalizeManualRelayUrl(manualRelayInput, relayPort)
+      const configuredCandidate =
+        tailscaleWssCandidateFromUrl(currentRelayUrl, httpsPort) ??
+        tailscaleWssCandidateFromUrl(manualRelayUrl, httpsPort)
       const serve =
         tailscale.cliPath
           ? await getTailscaleServeStatus({ cliPath: tailscale.cliPath, relayPort, httpsPort })
           : { configured: false as const }
-      const dnsName = tailscale.dnsName ?? ('dnsName' in serve ? serve.dnsName : undefined)
+      const dnsName =
+        tailscale.dnsName ?? ('dnsName' in serve ? serve.dnsName : undefined) ?? configuredCandidate?.dnsName
       const suggestedUrl = dnsName ? serveWssUrl(dnsName, httpsPort) : null
-      const currentRelayUrl = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
-      const manualRelayInput = configuredManualRelayInput()
-      const manualRelayUrl = normalizeManualRelayUrl(manualRelayInput, relayPort)
       const relayUrlMatches = Boolean(suggestedUrl && currentRelayUrl === suggestedUrl)
+      const usingSavedRelayFallback = Boolean(
+        configuredCandidate && !tailscale.available && !(serve.configured && dnsName)
+      )
       return {
-        tailscaleAvailable: tailscale.available || Boolean(serve.configured && dnsName),
+        tailscaleAvailable:
+          tailscale.available || Boolean(serve.configured && dnsName) || usingSavedRelayFallback,
         tailscaleReason:
-          tailscale.available || (serve.configured && dnsName) ? null : (tailscale.reason ?? null),
+          tailscale.available || (serve.configured && dnsName)
+            ? null
+            : usingSavedRelayFallback
+              ? `${tailscale.reason ?? 'Tailscale status is not ready.'} Using the saved relay door for Copy/Test.`
+              : (tailscale.reason ?? null),
         dnsName: dnsName ?? null,
         suggestedUrl,
         relayPort,
@@ -23807,12 +23844,16 @@ if (isGeminiMcpBridgeProcess) {
         manualRelayInput,
         manualRelayUrl,
         active: relayUrlMatches && serve.configured,
-        runtimeActive: iosRemoteRuntime !== null
+        runtimeActive: iosRemoteRuntime !== null,
+        usingSavedRelayFallback
       }
     }
     ipcMain.handle('ios-remote-tailscale-status', () => iosRemoteTailscaleStatus())
     ipcMain.handle('ios-remote-tailscale-enable', async () => {
       const tailscale = await detectTailscale()
+      const relayPort = liveIosRemoteRelayPort()
+      const httpsPort = iosRemoteServeHttpsPort()
+      const configuredCandidate = configuredTailscaleWssCandidate(relayPort, httpsPort)
       if (!tailscale.cliPath) {
         return {
           ok: false,
@@ -23821,7 +23862,7 @@ if (isGeminiMcpBridgeProcess) {
             'Tailscale is not available — install it and sign in to your tailnet first.'
         }
       }
-      if (!tailscale.available) {
+      if (!tailscale.available && !configuredCandidate) {
         return {
           ok: false,
           message:
@@ -23830,7 +23871,7 @@ if (isGeminiMcpBridgeProcess) {
           status: await iosRemoteTailscaleStatus()
         }
       }
-      const dnsName = tailscale.dnsName
+      const dnsName = tailscale.dnsName ?? configuredCandidate?.dnsName
       if (!dnsName) {
         return {
           ok: false,
@@ -23838,7 +23879,7 @@ if (isGeminiMcpBridgeProcess) {
             'Tailscale is connected, but TaskWraith could not determine this Mac’s MagicDNS name.'
         }
       }
-      const relayUrl = serveWssUrl(dnsName, iosRemoteServeHttpsPort())
+      const relayUrl = serveWssUrl(dnsName, httpsPort)
       AppStore.updateSettings({
         iosRemoteEnabled: true,
         iosRemoteRelayUrl: relayUrl
@@ -23862,7 +23903,7 @@ if (isGeminiMcpBridgeProcess) {
       if (!loopback.reachable) {
         await disableTailscaleServe({
           cliPath: tailscale.cliPath,
-          httpsPort: iosRemoteServeHttpsPort()
+          httpsPort
         })
         return {
           ok: false,
@@ -23876,14 +23917,14 @@ if (isGeminiMcpBridgeProcess) {
       const serve = await getTailscaleServeStatus({
         cliPath: tailscale.cliPath,
         relayPort: lane.relayPort,
-        httpsPort: iosRemoteServeHttpsPort()
+        httpsPort
       })
       let enableMessage: string | undefined
       if (!serve.configured) {
         const result = await enableTailscaleServe({
           cliPath: tailscale.cliPath,
           relayPort: lane.relayPort,
-          httpsPort: iosRemoteServeHttpsPort()
+          httpsPort
         })
         if (!result.ok) {
           return { ok: false, message: result.message || '`tailscale serve` failed.' }
@@ -24389,14 +24430,9 @@ if (isGeminiMcpBridgeProcess) {
       settingsService,
       setBridgeDaemonEnabled: async (enabled) => {
         settingsService.updateSettings({ bridgeDaemonEnabled: Boolean(enabled) })
-        const now = Date.now()
-        if (!cachedTailscaleStatus || now - cachedTailscaleAt > TAILSCALE_CACHE_TTL_MS) {
-          cachedTailscaleStatus = await detectTailscale()
-          cachedTailscaleAt = now
-        }
         return {
           lan: bridgeDaemonStatus(),
-          tailscale: cachedTailscaleStatus
+          tailscale: await bridgeNetworkingTailscaleStatus()
         }
       },
       getRuntimeProfiles: (provider) => AppStore.getRuntimeProfiles(provider),

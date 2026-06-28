@@ -6,6 +6,7 @@ import {
   isPlainTailscaleRelayUrl,
   mergeRelayUrls,
   normalizeManualRelayUrl,
+  parseTailscaleWssRelayUrl,
   pickRelayAdvertiseHost
 } from './relayAdvertise'
 
@@ -125,6 +126,23 @@ describe('isPlainTailscaleRelayUrl', () => {
     expect(isPlainTailscaleRelayUrl('wss://100.99.131.73:8787')).toBe(false)
     expect(isPlainTailscaleRelayUrl('ws://192.168.1.50:8787')).toBe(false)
     expect(isPlainTailscaleRelayUrl('wss://studio.example.ts.net')).toBe(false)
+  })
+})
+
+describe('parseTailscaleWssRelayUrl', () => {
+  it('extracts normalized MagicDNS hosts from saved Tailscale relay doors', () => {
+    expect(parseTailscaleWssRelayUrl('wss://Studio.Example.ts.net:8443/path')?.dnsName).toBe(
+      'studio.example.ts.net'
+    )
+    expect(parseTailscaleWssRelayUrl('wss://studio.example.beta.tailscale.net.')?.dnsName).toBe(
+      'studio.example.beta.tailscale.net'
+    )
+  })
+
+  it('rejects cleartext, IP, and non-Tailscale relay URLs', () => {
+    expect(parseTailscaleWssRelayUrl('ws://studio.example.ts.net:8787')).toBeNull()
+    expect(parseTailscaleWssRelayUrl('wss://100.99.131.73:8443')).toBeNull()
+    expect(parseTailscaleWssRelayUrl('wss://relay.example.com')).toBeNull()
   })
 })
 

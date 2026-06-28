@@ -55,6 +55,7 @@ export function BridgeNetworkingPanel(): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [savingDaemon, setSavingDaemon] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [iosRemoteRefreshSignal, setIosRemoteRefreshSignal] = useState(0)
 
   const refresh = useCallback(async () => {
     try {
@@ -62,6 +63,7 @@ export function BridgeNetworkingPanel(): React.JSX.Element {
       setError(null)
       const result = (await window.api.bridgeNetworkingStatus()) as BridgeNetworkingStatus
       setStatus(result)
+      setIosRemoteRefreshSignal((value) => value + 1)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -152,7 +154,7 @@ export function BridgeNetworkingPanel(): React.JSX.Element {
         </div>
       </section>
 
-      <IosRemoteBridgeSection />
+      <IosRemoteBridgeSection refreshSignal={iosRemoteRefreshSignal} />
 
       <section className="bridge-networking-section">
         <header className="bridge-networking-section-header">
@@ -283,6 +285,7 @@ interface IosRemoteTailscaleStatus {
   manualRelayUrl: string | null
   active: boolean
   runtimeActive: boolean
+  usingSavedRelayFallback?: boolean
 }
 
 interface TailscaleOAuthStatus {
@@ -294,7 +297,11 @@ interface TailscaleOAuthStatus {
 /** iOS remote bridge (relay + E2EE) — settings-first gating so login-item
  * launches keep the bridge alive without shell env. Runtime constructs at
  * startup, so changes prompt a restart. */
-function IosRemoteBridgeSection(): React.JSX.Element {
+function IosRemoteBridgeSection({
+  refreshSignal
+}: {
+  refreshSignal: number
+}): React.JSX.Element {
   const [config, setConfig] = useState<IosRemoteConfig | null>(null)
   const [saving, setSaving] = useState(false)
   const [needsRestart, setNeedsRestart] = useState(false)
@@ -345,7 +352,7 @@ function IosRemoteBridgeSection(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [refreshSignal])
 
   const useDetectedTailscaleRelay = async (): Promise<void> => {
     try {
@@ -539,6 +546,9 @@ function IosRemoteBridgeSection(): React.JSX.Element {
               : !tailscale.tailscaleAvailable
                 ? tailscale.tailscaleReason ||
                   'Tailscale not detected — install it and sign in to enable off-LAN access.'
+                : tailscale.usingSavedRelayFallback
+                  ? tailscale.tailscaleReason ||
+                    'Using the saved Tailscale relay door while TaskWraith rechecks Tailscale.'
                 : tailscale.active
                   ? 'Ready for cellular when the phone has Tailscale connected.'
                   : 'Use this for off-LAN iOS pairing. TaskWraith will configure Tailscale Serve and test the WSS front door.'}

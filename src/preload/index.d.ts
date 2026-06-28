@@ -887,6 +887,7 @@ declare global {
         manualRelayInput: string
         active: boolean
         runtimeActive: boolean
+        usingSavedRelayFallback?: boolean
       }>
       iosRemoteTailscaleEnable: () => Promise<{
         ok: boolean

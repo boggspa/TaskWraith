@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { existsSync } from 'fs'
 import { promisify } from 'util'
+import { isTailscaleDnsName } from './remote/relayAdvertise'
 
 const execFileAsync = promisify(execFile)
 
@@ -81,6 +82,7 @@ interface TailscaleStatusRaw {
     TailscaleIPs?: string[]
   }
   MagicDNSSuffix?: string
+  CertDomains?: string[]
   CurrentTailnet?: {
     Name?: string
     MagicDNSEnabled?: boolean
@@ -121,6 +123,18 @@ type StatusProbeResult =
 const DEFAULT_STATUS_RETRIES = 3
 const DEFAULT_RETRY_DELAY_MS = 750
 const STATUS_ARGS = ['status', '--json', '--peers=false']
+const STATUS_ARGS_COMPAT = ['status', '--json']
+
+function looksLikeUnsupportedPeersFlag(reason: string): boolean {
+  const normalized = reason.toLowerCase()
+  return (
+    normalized.includes('peers') &&
+    (normalized.includes('flag') ||
+      normalized.includes('unknown') ||
+      normalized.includes('provided but not defined') ||
+      normalized.includes('usage:'))
+  )
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -128,10 +142,11 @@ function sleep(ms: number): Promise<void> {
 
 async function probeTailscaleStatus(
   cliPath: string,
-  exec: (cmd: string, args: string[]) => Promise<{ stdout: string; stderr: string }>
+  exec: (cmd: string, args: string[]) => Promise<{ stdout: string; stderr: string }>,
+  args: string[] = STATUS_ARGS
 ): Promise<StatusProbeResult> {
   try {
-    const { stdout, stderr } = await exec(cliPath, STATUS_ARGS)
+    const { stdout, stderr } = await exec(cliPath, args)
     // The CLI returns a human-readable message (e.g. "The Tailscale
     // daemon is not running. Run 'sudo tailscale up'…") instead of
     // JSON when the daemon isn't ready. Detect that shape and surface
@@ -189,6 +204,9 @@ async function probeTailscaleStatusWithRetry(
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     lastResult = await probeTailscaleStatus(cliPath, exec)
+    if (!lastResult.ok && looksLikeUnsupportedPeersFlag(lastResult.reason)) {
+      lastResult = await probeTailscaleStatus(cliPath, exec, STATUS_ARGS_COMPAT)
+    }
     if (lastResult.ok) {
       return lastResult
     }
@@ -267,7 +285,8 @@ export async function detectTailscale(
   const tailnetIPv6 = selfIPs.find((ip) => /:/.test(ip))
   const hostname = raw.Self?.HostName
   // Tailscale reports DNSName with a trailing dot ("host.tail-abc.ts.net.").
-  const dnsName = raw.Self?.DNSName?.replace(/\.$/, '') || undefined
+  const certDnsName = raw.CertDomains?.find((domain) => isTailscaleDnsName(domain))
+  const dnsName = (raw.Self?.DNSName || certDnsName)?.replace(/\.$/, '') || undefined
   const tailnetName = raw.CurrentTailnet?.Name
   const magicDNSEnabled = raw.CurrentTailnet?.MagicDNSEnabled
 

@@ -87,6 +87,18 @@ describe('detectTailscale', () => {
     expect(result.dnsName).toBe('chris-mac.tail-abc.ts.net')
   })
 
+  it('falls back to CertDomains when Self.DNSName is missing', async () => {
+    const sample = JSON.parse(JSON.stringify(SAMPLE_RUNNING))
+    delete sample.Self.DNSName
+    sample.CertDomains = ['chris-mac.tail-abc.ts.net']
+    const result = await detectTailscale({
+      cliPath: '/fake/tailscale',
+      execFn: async () => ({ stdout: JSON.stringify(sample), stderr: '' })
+    })
+    expect(result.available).toBe(true)
+    expect(result.dnsName).toBe('chris-mac.tail-abc.ts.net')
+  })
+
   it('treats NeedsLogin as unavailable with a sign-in hint', async () => {
     const result = await detectTailscale({
       cliPath: '/fake/tailscale',
@@ -164,6 +176,33 @@ describe('detectTailscale', () => {
 
     expect(result.available).toBe(true)
     expect(execFn).toHaveBeenCalledTimes(2)
+  })
+
+  it('falls back to plain status JSON when an older CLI rejects --peers=false', async () => {
+    const execFn = vi.fn(async (_cmd: string, args: string[]) => {
+      if (args.includes('--peers=false')) {
+        const err = new Error('exit 1') as Error & { stderr?: string; code?: number }
+        err.stderr = 'flag provided but not defined: -peers\nUsage: tailscale status --json\n'
+        err.code = 1
+        throw err
+      }
+      return { stdout: JSON.stringify(SAMPLE_RUNNING), stderr: '' }
+    })
+
+    const result = await detectTailscale({
+      cliPath: '/fake/tailscale',
+      execFn,
+      retryDelayMs: 0
+    })
+
+    expect(result.available).toBe(true)
+    expect(result.dnsName).toBe('chris-mac.tail-abc.ts.net')
+    expect(execFn).toHaveBeenNthCalledWith(1, '/fake/tailscale', [
+      'status',
+      '--json',
+      '--peers=false'
+    ])
+    expect(execFn).toHaveBeenNthCalledWith(2, '/fake/tailscale', ['status', '--json'])
   })
 
   it('returns the final retry failure reason when status never becomes ready', async () => {
