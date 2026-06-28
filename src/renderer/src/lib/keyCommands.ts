@@ -5,6 +5,7 @@ export type KeyCommandId =
   | 'settings'
   | 'close-overlays'
   | 'run-prompt'
+  | 'search-current-chat'
   | 'search-workspaces'
   | 'new-chat'
   | 'stop-run'
@@ -103,6 +104,14 @@ export const KEY_COMMAND_DEFINITIONS: KeyCommandDefinition[] = [
     command: 'Search workspaces and threads',
     description: 'Focus the workspace sidebar search field.',
     defaultBinding: { key: 'F', modifiers: [PRIMARY_MODIFIER, SHIFT_MODIFIER] },
+    allowWhenEditable: true
+  },
+  {
+    id: 'search-current-chat',
+    group: 'Chat',
+    command: 'Search current chat',
+    description: 'Open the current thread search bar.',
+    defaultBinding: { key: 'F', modifiers: [PRIMARY_MODIFIER] },
     allowWhenEditable: true
   },
   {

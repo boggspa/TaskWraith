@@ -122,6 +122,11 @@ import {
   type KeyCommandId
 } from './lib/keyCommands'
 import {
+  buildCurrentChatSearchTargets,
+  findCurrentChatSearchMatches
+} from './lib/currentChatSearch'
+import { groupAdjacentToolMessages } from './lib/transcriptToolMessageGrouping'
+import {
   MIN_RIGHT_PANEL_WIDTH,
   MAX_RIGHT_PANEL_WIDTH,
   MIN_WORKSPACE_SIDEBAR_WIDTH,
@@ -547,6 +552,7 @@ import {
 } from './components/LiveThreadTokenTally'
 import { WelcomeUsageDashboard } from './components/WelcomeUsageDashboard'
 import { TranscriptPanel } from './components/TranscriptPanel'
+import { ThreadSearchBar } from './components/ThreadSearchBar'
 import { AuditRunCard } from './components/AuditRunCard'
 import { AuditRunNotice } from './components/AuditRunNotice'
 import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
@@ -1644,6 +1650,11 @@ function App(): React.JSX.Element {
     requestId: number
   } | null>(null)
   const transcriptJumpRequestIdRef = useRef(0)
+  const [threadSearchOpen, setThreadSearchOpen] = useState(false)
+  const [threadSearchChatId, setThreadSearchChatId] = useState<string | null>(null)
+  const [threadSearchQuery, setThreadSearchQuery] = useState('')
+  const [threadSearchActiveIndex, setThreadSearchActiveIndex] = useState(0)
+  const [threadSearchFocusRequestId, setThreadSearchFocusRequestId] = useState(0)
   const [settingsPinnedMessageGroups, setSettingsPinnedMessageGroups] = useState<
     PinnedMessageGroup[]
   >([])
@@ -14079,7 +14090,15 @@ function App(): React.JSX.Element {
     [settings?.keyCommandBindings]
   )
   const workspaceSearchShortcutHint = useMemo(
-    () => compactShortcutHint(formatKeyCommandBinding(resolvedKeyCommandBindings['search-workspaces'])),
+    () =>
+      compactShortcutHint(formatKeyCommandBinding(resolvedKeyCommandBindings['search-workspaces'])),
+    [resolvedKeyCommandBindings]
+  )
+  const threadSearchShortcutHint = useMemo(
+    () =>
+      compactShortcutHint(
+        formatKeyCommandBinding(resolvedKeyCommandBindings['search-current-chat'])
+      ),
     [resolvedKeyCommandBindings]
   )
 
@@ -14133,6 +14152,13 @@ function App(): React.JSX.Element {
 
       const runKeyCommand = (commandId: KeyCommandId): boolean => {
         if (commandId === 'close-overlays') {
+          if (threadSearchOpen) {
+            setThreadSearchOpen(false)
+            setThreadSearchChatId(null)
+            setThreadSearchQuery('')
+            setThreadSearchActiveIndex(0)
+            return true
+          }
           if (showSettings) {
             setShowSettings(false)
             return true
@@ -14166,6 +14192,14 @@ function App(): React.JSX.Element {
         if (commandId === 'settings') {
           if (isChatPopoutWindow) return false
           setShowSettings(true)
+          return true
+        }
+        if (commandId === 'search-current-chat') {
+          const chatId = currentChat?.appChatId
+          if (showSettings || !chatId) return false
+          setThreadSearchOpen(true)
+          setThreadSearchChatId(chatId)
+          setThreadSearchFocusRequestId((requestId) => requestId + 1)
           return true
         }
         if (commandId === 'search-workspaces') {
@@ -14237,11 +14271,13 @@ function App(): React.JSX.Element {
   }, [
     appearance,
     currentProvider,
+    currentChat?.appChatId,
     lastNonCustomModelType,
     permissionRequestPaths.length,
     resolvedKeyCommandBindings,
     selectedModelType,
     showSettings,
+    threadSearchOpen,
     hasWorkspaceContext,
     isChatPopoutWindow
   ])
@@ -17169,6 +17205,71 @@ function App(): React.JSX.Element {
       }),
     [currentChat, transcriptMessages, isCurrentChatRunning]
   )
+  const threadSearchTargets = useMemo(
+    () =>
+      buildCurrentChatSearchTargets(
+        isWelcomeChat ? EMPTY_CHAT_MESSAGES : groupAdjacentToolMessages(transcriptMessages)
+      ),
+    [isWelcomeChat, transcriptMessages]
+  )
+  const threadSearchMatches = useMemo(
+    () => findCurrentChatSearchMatches(threadSearchTargets, threadSearchQuery),
+    [threadSearchQuery, threadSearchTargets]
+  )
+  const activeThreadSearchIndex =
+    threadSearchMatches.length > 0
+      ? Math.min(threadSearchActiveIndex, threadSearchMatches.length - 1)
+      : 0
+  const threadSearchVisible =
+    threadSearchOpen &&
+    Boolean(currentChat?.appChatId) &&
+    threadSearchChatId === currentChat?.appChatId
+  const jumpToThreadSearchMatch = useCallback(
+    (index: number): void => {
+      const chatId = currentChat?.appChatId
+      if (!chatId) return
+      const match = threadSearchMatches[index]
+      if (!match) return
+      jumpToTranscriptMessage(chatId, match.messageId, match.rowKey)
+    },
+    [currentChat?.appChatId, jumpToTranscriptMessage, threadSearchMatches]
+  )
+  const selectThreadSearchMatch = useCallback(
+    (index: number): void => {
+      if (threadSearchMatches.length === 0) return
+      const nextIndex =
+        ((index % threadSearchMatches.length) + threadSearchMatches.length) %
+        threadSearchMatches.length
+      setThreadSearchActiveIndex(nextIndex)
+      jumpToThreadSearchMatch(nextIndex)
+    },
+    [jumpToThreadSearchMatch, threadSearchMatches.length]
+  )
+  const closeThreadSearch = useCallback((): void => {
+    setThreadSearchOpen(false)
+    setThreadSearchChatId(null)
+    setThreadSearchQuery('')
+    setThreadSearchActiveIndex(0)
+  }, [])
+  useEffect(() => {
+    setThreadSearchActiveIndex(0)
+  }, [currentChat?.appChatId, threadSearchQuery])
+  useEffect(() => {
+    if (!threadSearchVisible || !threadSearchQuery.trim()) return
+    if (threadSearchMatches.length === 0) return
+    if (threadSearchActiveIndex !== activeThreadSearchIndex) {
+      setThreadSearchActiveIndex(activeThreadSearchIndex)
+      return
+    }
+    jumpToThreadSearchMatch(activeThreadSearchIndex)
+  }, [
+    activeThreadSearchIndex,
+    jumpToThreadSearchMatch,
+    threadSearchActiveIndex,
+    threadSearchMatches.length,
+    threadSearchVisible,
+    threadSearchQuery
+  ])
   // Welcome L7 — fixed 30D rolling window. The toggle is gone; the
   // dashboard always reports against the same 30-day cutoff the
   // sidebar UsageHeatmap uses, so the two surfaces stay coherent.
@@ -22438,6 +22539,23 @@ function App(): React.JSX.Element {
                   )}
                 </div>
               )}
+              <ThreadSearchBar
+                open={threadSearchVisible}
+                query={threadSearchQuery}
+                matchCount={threadSearchMatches.length}
+                activeMatchNumber={
+                  threadSearchMatches.length > 0 ? activeThreadSearchIndex + 1 : 0
+                }
+                shortcutHint={threadSearchShortcutHint}
+                focusRequestId={threadSearchFocusRequestId}
+                onQueryChange={(query) => {
+                  setThreadSearchQuery(query)
+                  setThreadSearchActiveIndex(0)
+                }}
+                onNext={() => selectThreadSearchMatch(activeThreadSearchIndex + 1)}
+                onPrevious={() => selectThreadSearchMatch(activeThreadSearchIndex - 1)}
+                onClose={closeThreadSearch}
+              />
               <TranscriptPanel
                 key={isWelcomeChat ? 'welcome' : 'transcript'}
                 scrollRef={transcriptScrollRef}

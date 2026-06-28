@@ -1,0 +1,129 @@
+.app-transcript {
+  position: relative;
+}
+
+.thread-search-bar {
+  position: absolute;
+  top: 62px;
+  right: 16px;
+  z-index: 12;
+  width: min(360px, calc(100% - 32px));
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-bg-elevated) 88%, transparent);
+  color: var(--text-secondary);
+  box-shadow:
+    0 18px 36px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 color-mix(in srgb, white 10%, transparent);
+  backdrop-filter: blur(20px) saturate(1.14);
+  -webkit-backdrop-filter: blur(20px) saturate(1.14);
+}
+
+.thread-search-glyph {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+}
+
+.thread-search-glyph svg {
+  width: 16px;
+  height: 16px;
+}
+
+.thread-search-bar input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.thread-search-bar input::placeholder {
+  color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
+}
+
+.thread-search-bar input::-webkit-search-decoration,
+.thread-search-bar input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.thread-search-shortcut,
+.thread-search-count {
+  justify-self: end;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: color-mix(in srgb, var(--text-secondary) 78%, transparent);
+}
+
+.thread-search-count.is-empty {
+  color: color-mix(in srgb, var(--danger, #e54d4d) 78%, var(--text-secondary));
+}
+
+.thread-search-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-left: 1px solid color-mix(in srgb, var(--panel-border) 54%, transparent);
+  padding-left: 5px;
+}
+
+.thread-search-icon-btn {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 86%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.thread-search-icon-btn .sf-symbol-icon,
+.thread-search-icon-btn .sf-symbol-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.thread-search-icon-btn:hover:not(:disabled),
+.thread-search-icon-btn:focus-visible:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text-primary);
+}
+
+.thread-search-icon-btn:disabled {
+  cursor: default;
+  opacity: 0.36;
+}
+
+.thread-search-close {
+  color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
+}
+
+@media (max-width: 720px) {
+  .thread-search-bar {
+    top: 58px;
+    right: 10px;
+    left: 10px;
+    width: auto;
+  }
+}

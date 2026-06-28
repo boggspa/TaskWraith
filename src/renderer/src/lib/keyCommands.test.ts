@@ -43,6 +43,7 @@ describe('key command bindings', () => {
       expect.arrayContaining([
         'new-chat',
         'stop-run',
+        'search-current-chat',
         'search-workspaces',
         'copy-transcript',
         'review-current-diff',
@@ -55,6 +56,9 @@ describe('key command bindings', () => {
     )
     expect(getKeyCommandForEvent(keyEvent({ key: '.', ctrlKey: true }), bindings)?.id).toBe(
       'stop-run'
+    )
+    expect(getKeyCommandForEvent(keyEvent({ key: 'f', metaKey: true }), bindings)?.id).toBe(
+      'search-current-chat'
     )
     expect(
       getKeyCommandForEvent(keyEvent({ key: 'f', metaKey: true, shiftKey: true }), bindings)?.id
