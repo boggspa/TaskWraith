@@ -1733,7 +1733,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   workspacePath={currentWorkspace?.path}
                                   open={diffActionMenuOpen}
                                   hasReviewableDiff={hasReviewableDiff}
-                                  onReviewChanges={() => openInspectorTab('diff')}
+                                  onReviewChanges={() => {
+                                    if (!currentWorkspace?.path) {
+                                      openInspectorTab('diff')
+                                      return
+                                    }
+                                    void window.api.openWorkspacePopout({
+                                      kind: 'diff-studio',
+                                      workspacePath: currentWorkspace.path
+                                    })
+                                  }}
                                   onClose={() => setDiffActionMenuOpen(false)}
                                   onCreatePr={() =>
                                     void handleCreateGithubPr(currentWorkspace?.path)

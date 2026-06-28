@@ -1392,8 +1392,10 @@
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  min-width: 184px;
-  padding: 6px;
+  box-sizing: border-box;
+  width: min(294px, calc(100vw - 28px));
+  min-width: min(248px, calc(100vw - 28px));
+  padding: 8px;
   border: 1px solid color-mix(in srgb, var(--composer-border) 86%, var(--text-primary) 10%);
   border-radius: 12px;
   background:
@@ -1404,14 +1406,17 @@
     0 16px 38px rgba(0, 0, 0, 0.36);
   color: color-mix(in srgb, #ffffff 88%, transparent);
   display: grid;
-  gap: 3px;
+  gap: 7px;
+  overflow: hidden;
   z-index: 30;
 }
 
 .composer-diff-action-menu button {
   appearance: none;
   -webkit-appearance: none;
+  box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -1465,13 +1470,15 @@
  * ============================================================ */
 .composer-git-controls {
   display: grid;
-  gap: 6px;
-  min-width: 232px;
+  gap: 7px;
+  min-width: 0;
+  width: 100%;
 }
 .composer-git-status {
   display: grid;
   gap: 2px;
-  padding: 2px 9px 6px;
+  min-width: 0;
+  padding: 2px 8px 7px;
   border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 9%, transparent);
   margin-bottom: 1px;
 }
@@ -1480,8 +1487,12 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
+  min-width: 0;
   font-size: var(--font-size-xs);
   line-height: 1.35;
+}
+.composer-git-status-line > * {
+  min-width: 0;
 }
 .composer-git-status-line.is-muted {
   color: color-mix(in srgb, var(--text-secondary) 64%, transparent);
@@ -1510,7 +1521,9 @@
 .composer-git-menu-item {
   appearance: none;
   -webkit-appearance: none;
+  box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -1521,6 +1534,9 @@
   text-align: left;
   padding: 7px 9px;
   transition: background 0.16s, color 0.16s;
+}
+.composer-git-menu-item + .composer-git-menu-item {
+  margin-top: -2px;
 }
 .composer-git-menu-item:hover:not(:disabled),
 .composer-git-menu-item:focus-visible:not(:disabled) {
@@ -1546,13 +1562,17 @@
  * borrows the above-bar action's pill chrome so it reads as part of the
  * same control family. */
 .composer-git-commit {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
-  align-items: center;
-  padding: 1px 4px 0;
+  min-width: 0;
+  padding: 7px 0;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 .composer-git-commit-input {
-  flex: 1 1 auto;
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
   appearance: none;
   -webkit-appearance: none;
@@ -1578,9 +1598,12 @@
   cursor: not-allowed;
 }
 .composer-git-commit-button {
-  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 100%;
   margin-left: 0;
-  white-space: nowrap;
+  justify-content: center;
+  text-align: center;
+  white-space: normal;
 }
 .composer-git-feedback {
   padding: 0 9px 1px;
@@ -1601,6 +1624,8 @@
 .composer-git-pr {
   display: grid;
   gap: 1px;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
+  padding-top: 8px;
 }
 .composer-git-pr-reason {
   font-size: calc(var(--font-size-xs) - 1px);
