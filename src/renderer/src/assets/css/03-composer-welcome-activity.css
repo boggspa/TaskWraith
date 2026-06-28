@@ -364,6 +364,12 @@
   font-size: var(--font-size-md);
   line-height: 1.2;
 }
+.ensemble-roster-preset-dialog-copy {
+  margin: 0;
+  color: var(--text-secondary, var(--text-muted));
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
 .ensemble-roster-preset-dialog-close {
   appearance: none;
   -webkit-appearance: none;

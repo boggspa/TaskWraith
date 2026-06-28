@@ -32,6 +32,12 @@ type PresetNameDialogState =
       error: string | null
     }
 
+export function rosterPresetApplyConfirmationMessage(preset: EnsembleRosterPreset): string {
+  const count = preset.participants.length
+  const participantLabel = count === 1 ? 'participant' : 'participants'
+  return `This replaces the current ensemble roster with "${preset.name}" (${count} ${participantLabel}). Unsaved participant edits in this chat will be lost.`
+}
+
 export function EnsembleRosterPresetPicker({
   ensemble,
   disabled = false,
@@ -42,11 +48,13 @@ export function EnsembleRosterPresetPicker({
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
   const [presetNameDialog, setPresetNameDialog] = useState<PresetNameDialogState | null>(null)
+  const [applyConfirmPreset, setApplyConfirmPreset] = useState<EnsembleRosterPreset | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const presetNameInputRef = useRef<HTMLInputElement | null>(null)
   const presetNameInputId = useId()
   const presetNameTitleId = useId()
+  const applyConfirmTitleId = useId()
 
   const refreshPresets = (): void => {
     setPresets(listEnsembleRosterPresets())
@@ -129,10 +137,34 @@ export function EnsembleRosterPresetPicker({
     }
   }, [presetDialogOpen])
 
+  useEffect(() => {
+    if (!applyConfirmPreset) return
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setApplyConfirmPreset(null)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [applyConfirmPreset])
+
   const handleSaveCurrent = (): void => {
     if (!ensemble || disabled) return
     setPopoverOpen(false)
     setPresetNameDialog({ mode: 'save', name: 'Ensemble roster', error: null })
+  }
+
+  const requestApplyPreset = (preset: EnsembleRosterPreset): void => {
+    if (disabled) return
+    setPopoverOpen(false)
+    setApplyConfirmPreset(preset)
+  }
+
+  const confirmApplyPreset = (): void => {
+    if (!applyConfirmPreset || disabled) return
+    const preset = applyConfirmPreset
+    setApplyConfirmPreset(null)
+    onApplyPreset(preset)
   }
 
   const handleRename = (preset: EnsembleRosterPreset): void => {
@@ -213,7 +245,7 @@ export function EnsembleRosterPresetPicker({
             type="button"
             className="ensemble-roster-preset-picker-chip"
             disabled={disabled}
-            onClick={() => onApplyPreset(preset)}
+            onClick={() => requestApplyPreset(preset)}
             title={`Recall ${preset.participants.length} participants in saved order`}
           >
             <span className="ensemble-roster-preset-picker-chip-name">{preset.name}</span>
@@ -255,8 +287,7 @@ export function EnsembleRosterPresetPicker({
                       className="ensemble-roster-preset-popover-row-main-action"
                       disabled={disabled}
                       onClick={() => {
-                        onApplyPreset(preset)
-                        setPopoverOpen(false)
+                        requestApplyPreset(preset)
                       }}
                     >
                       <span className="ensemble-roster-preset-popover-row-name">{preset.name}</span>
@@ -350,6 +381,56 @@ export function EnsembleRosterPresetPicker({
                 </button>
               </div>
             </form>
+          </div>,
+          document.body
+        )}
+      {applyConfirmPreset &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="ensemble-roster-preset-dialog-backdrop"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setApplyConfirmPreset(null)
+            }}
+          >
+            <div
+              className="ensemble-roster-preset-dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby={applyConfirmTitleId}
+            >
+              <div className="ensemble-roster-preset-dialog-header">
+                <h2 id={applyConfirmTitleId}>Are you sure?</h2>
+                <button
+                  type="button"
+                  className="ensemble-roster-preset-dialog-close"
+                  onClick={() => setApplyConfirmPreset(null)}
+                  aria-label="Close roster preset confirmation"
+                >
+                  ×
+                </button>
+              </div>
+              <p className="ensemble-roster-preset-dialog-copy">
+                {rosterPresetApplyConfirmationMessage(applyConfirmPreset)}
+              </p>
+              <div className="ensemble-roster-preset-dialog-actions">
+                <button
+                  type="button"
+                  className="ensemble-roster-preset-dialog-button"
+                  onClick={() => setApplyConfirmPreset(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="ensemble-roster-preset-dialog-button ensemble-roster-preset-dialog-button-primary"
+                  onClick={confirmApplyPreset}
+                  disabled={disabled}
+                >
+                  Apply preset
+                </button>
+              </div>
+            </div>
           </div>,
           document.body
         )}
