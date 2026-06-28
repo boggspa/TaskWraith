@@ -4,7 +4,7 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
-## 1.6.9 - Unreleased
+## 1.6.9 - 2026-06-28
 
 ### Added
 - **Ornith local Ollama models.** Local / Ollama now includes Ornith 1.0
@@ -24,7 +24,9 @@ history, and workspace state stay on your machine throughout.
   sends, and the AntiGravity policy notice instead of older Gemini/Grok cards.
 - **Composer shell polish.** Queue and Steer controls stay out of non-native
   composer shells, review popovers open within the visible area, Claude action
-  glyphs are adjusted, and Codex reasoning now uses the current "Light" label.
+  glyphs are adjusted, Codex reasoning now uses the current "Light" label, dark
+  Codex / Claude shell surfaces use matched neutral fills, and Ultracode effort
+  labels have clearer purple sparkle treatment.
 - **Visual and attachment polish.** PDF attachments can render as image previews,
   composer image placeholders are more useful, sky effects are softer, and the
   optional weather UFO flyby is present in the renderer layer.
