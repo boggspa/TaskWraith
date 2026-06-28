@@ -13,7 +13,16 @@ interface ComposerTextareaContextMenuProps {
   onValueChange: (value: string) => void
   isValueTargetCurrent?: () => boolean
   onPasteClipboardAttachment?: () => Promise<boolean>
+  onOpenFromElectron?: (
+    point: { x: number; y: number },
+    spellcheckContext: ComposerSpellcheckContext | null
+  ) => void
   onClose: () => void
+}
+
+interface ComposerSpellcheckContextMenuPayload {
+  point: { x: number; y: number }
+  spellcheckContext: ComposerSpellcheckContext | null
 }
 
 interface MenuButtonItem {
@@ -59,6 +68,40 @@ function hasSelection(textarea: HTMLTextAreaElement): boolean {
   return textarea.selectionStart !== textarea.selectionEnd
 }
 
+function normalizeSpellcheckContext(
+  context: ComposerSpellcheckContext | null | undefined
+): ComposerSpellcheckContext | null {
+  if (!context?.misspelledWord) return null
+  return {
+    misspelledWord: context.misspelledWord,
+    dictionarySuggestions: Array.isArray(context.dictionarySuggestions)
+      ? context.dictionarySuggestions
+      : []
+  }
+}
+
+function pointTargetsTextarea(
+  textarea: HTMLTextAreaElement,
+  point: { x: number; y: number }
+): boolean {
+  const rect = textarea.getBoundingClientRect()
+  const inside =
+    point.x >= rect.left &&
+    point.x <= rect.right &&
+    point.y >= rect.top &&
+    point.y <= rect.bottom
+  if (!inside) return false
+  return document.elementFromPoint(point.x, point.y) === textarea
+}
+
+function pointsAreNear(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  delta = 2
+): boolean {
+  return Math.abs(a.x - b.x) <= delta && Math.abs(a.y - b.y) <= delta
+}
+
 function syncTextareaValueFromDom(
   textarea: HTMLTextAreaElement,
   onValueChange: (value: string) => void,
@@ -96,19 +139,48 @@ export function useComposerTextareaContextMenu(): {
   anchor: { x: number; y: number } | null
   spellcheckContext: ComposerSpellcheckContext | null
   setAnchor: (anchor: { x: number; y: number } | null) => void
+  openContextMenu: (
+    point: { x: number; y: number },
+    spellcheckContext?: ComposerSpellcheckContext | null
+  ) => void
   handleContextMenu: (event: MouseEvent<HTMLTextAreaElement>) => void
 } {
   const [anchor, setAnchorState] = useState<{ x: number; y: number } | null>(null)
   const [spellcheckContext, setSpellcheckContext] = useState<ComposerSpellcheckContext | null>(null)
   const spellcheckRequestIdRef = useRef(0)
+  const electronOpenRef = useRef<{ point: { x: number; y: number }; openedAt: number } | null>(null)
+  const fallbackTimerRef = useRef<number | null>(null)
+
+  const clearPendingFallback = useCallback((): void => {
+    if (fallbackTimerRef.current === null) return
+    window.clearTimeout(fallbackTimerRef.current)
+    fallbackTimerRef.current = null
+  }, [])
 
   const setAnchor = useCallback((nextAnchor: { x: number; y: number } | null): void => {
     setAnchorState(nextAnchor)
     if (!nextAnchor) {
+      clearPendingFallback()
       spellcheckRequestIdRef.current += 1
       setSpellcheckContext(null)
     }
-  }, [])
+  }, [clearPendingFallback])
+
+  const openContextMenu = useCallback(
+    (
+      point: { x: number; y: number },
+      context: ComposerSpellcheckContext | null = null
+    ): void => {
+      clearPendingFallback()
+      electronOpenRef.current = { point, openedAt: performance.now() }
+      spellcheckRequestIdRef.current += 1
+      setAnchorState(point)
+      setSpellcheckContext(normalizeSpellcheckContext(context))
+    },
+    [clearPendingFallback]
+  )
+
+  useEffect(() => clearPendingFallback, [clearPendingFallback])
 
   const requestSpellcheckContext = useCallback((point: { x: number; y: number }): void => {
     const requestId = ++spellcheckRequestIdRef.current
@@ -121,10 +193,7 @@ export function useComposerTextareaContextMenu(): {
             setSpellcheckContext(null)
             return
           }
-          setSpellcheckContext({
-            misspelledWord: context.misspelledWord,
-            dictionarySuggestions: context.dictionarySuggestions || []
-          })
+          setSpellcheckContext(normalizeSpellcheckContext(context))
         })
         .catch(() => {
           if (spellcheckRequestIdRef.current === requestId) {
@@ -137,15 +206,27 @@ export function useComposerTextareaContextMenu(): {
   }, [])
 
   const handleContextMenu = (event: MouseEvent<HTMLTextAreaElement>): void => {
-    event.preventDefault()
     event.stopPropagation()
     const point = { x: event.clientX, y: event.clientY }
-    setAnchorState(point)
-    setSpellcheckContext(null)
-    requestSpellcheckContext(point)
+    clearPendingFallback()
+    fallbackTimerRef.current = window.setTimeout(() => {
+      fallbackTimerRef.current = null
+      const electronOpen = electronOpenRef.current
+      if (
+        electronOpen &&
+        performance.now() - electronOpen.openedAt < 250 &&
+        pointsAreNear(electronOpen.point, point)
+      ) {
+        return
+      }
+      spellcheckRequestIdRef.current += 1
+      setAnchorState(point)
+      setSpellcheckContext(null)
+      requestSpellcheckContext(point)
+    }, 50)
   }
 
-  return { anchor, spellcheckContext, setAnchor, handleContextMenu }
+  return { anchor, spellcheckContext, setAnchor, openContextMenu, handleContextMenu }
 }
 
 export function ComposerTextareaContextMenu({
@@ -155,9 +236,19 @@ export function ComposerTextareaContextMenu({
   onValueChange,
   isValueTargetCurrent,
   onPasteClipboardAttachment,
+  onOpenFromElectron,
   onClose
 }: ComposerTextareaContextMenuProps): React.JSX.Element | null {
   const menuRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!onOpenFromElectron) return undefined
+    return window.api.onSpellcheckContextMenu((payload: ComposerSpellcheckContextMenuPayload) => {
+      const textarea = textareaRef.current
+      if (!textarea || !pointTargetsTextarea(textarea, payload.point)) return
+      onOpenFromElectron(payload.point, normalizeSpellcheckContext(payload.spellcheckContext))
+    })
+  }, [onOpenFromElectron, textareaRef])
 
   useEffect(() => {
     if (!anchor) return

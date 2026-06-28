@@ -18094,6 +18094,15 @@ function attachSpellcheckContextTracking(targetWindow: BrowserWindow): void {
     } else {
       latestSpellcheckContextByWebContentsId.delete(webContents.id)
     }
+    if (params.isEditable && Number.isFinite(params.x) && Number.isFinite(params.y)) {
+      webContents.send('spellcheck:context-menu', {
+        point: {
+          x: Math.max(0, Math.round(params.x)),
+          y: Math.max(0, Math.round(params.y))
+        },
+        spellcheckContext: snapshot
+      })
+    }
   })
   webContents.on('destroyed', () => {
     latestSpellcheckContextByWebContentsId.delete(webContents.id)

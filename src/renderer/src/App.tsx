@@ -2167,7 +2167,6 @@ function App(): React.JSX.Element {
   // handleImportPlanSlashCommand) all live in <Composer> now. App-level slash
   // `run()` closures that need to read or mutate the composer receive a
   // SlashCommandRunContext at dispatch time instead of reaching into globals.
-  const composerContextMenu = useComposerTextareaContextMenu()
   const [welcomeParticipantOverflow, setWelcomeParticipantOverflow] = useState<{
     participantId: string
     anchor: HTMLElement
@@ -20481,7 +20480,6 @@ function App(): React.JSX.Element {
       codexModels,
       composerAboveBarStackAuraClass,
       composerAgentAuraClass,
-      composerContextMenu,
       composerSlashCommands,
       contextLabel,
       contextMeter,
@@ -20616,7 +20614,6 @@ function App(): React.JSX.Element {
       codexModels,
       composerAboveBarStackAuraClass,
       composerAgentAuraClass,
-      composerContextMenu,
       composerSlashCommands,
       contextLabel,
       contextMeter,
@@ -23052,6 +23049,7 @@ function App(): React.JSX.Element {
                   spellcheckContext={sideComposerContextMenu.spellcheckContext}
                   textareaRef={sideComposerTextareaRef}
                   onValueChange={(value) => setChatPromptDraft(sideChat.appChatId, value)}
+                  onOpenFromElectron={sideComposerContextMenu.openContextMenu}
                   onClose={() => sideComposerContextMenu.setAnchor(null)}
                 />
                 <ComposerLinkPreviewStrip text={sidePrompt} />

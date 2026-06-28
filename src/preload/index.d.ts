@@ -343,6 +343,14 @@ interface SpellcheckContextResult {
   createdAt: number
 }
 
+interface SpellcheckContextMenuPayload {
+  point: {
+    x: number
+    y: number
+  }
+  spellcheckContext: SpellcheckContextResult | null
+}
+
 interface WorkspaceFileListOptions {
   path?: string
   query?: string
@@ -392,6 +400,9 @@ declare global {
       addWordToSpellCheckerDictionary: (payload: {
         point: { x: number; y: number }
       }) => Promise<{ ok: boolean; reason?: string }>
+      onSpellcheckContextMenu: (
+        callback: (payload: SpellcheckContextMenuPayload) => void
+      ) => () => void
       sidebarShowWorkspaceInFinder: (workspaceId: string) => Promise<SidebarPathActionResult>
       sidebarCopyWorkspaceDirectory: (workspaceId: string) => Promise<SidebarPathActionResult>
       sidebarShowChatWorkspaceInFinder: (chatId: string) => Promise<SidebarPathActionResult>

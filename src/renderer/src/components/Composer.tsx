@@ -21,7 +21,10 @@ import { ComposerPlusPicker } from '../components/ComposerPlusPicker'
 import type { ComposerPlusPickerSection } from '../components/ComposerPlusPicker'
 import { ComposerProviderPicker } from '../components/ComposerProviderPicker'
 import { ComposerSlashMenu } from '../components/ComposerSlashMenu'
-import { ComposerTextareaContextMenu } from '../components/ComposerTextareaContextMenu'
+import {
+  ComposerTextareaContextMenu,
+  useComposerTextareaContextMenu
+} from '../components/ComposerTextareaContextMenu'
 import { ComposerCumulativeTimecode, ComposerRunTimecode } from '../components/ComposerTimecodes'
 import { ComposerWorkspaceSwitcher } from '../components/ComposerWorkspaceSwitcher'
 import { ContinuousHopsLimitChip } from '../components/ContinuousHopsLimitChip'
@@ -137,7 +140,6 @@ export interface ComposerProps {
   composerAgentAuraClass: any
   composerAreaRef: any
   composerAriaLabel: any
-  composerContextMenu: any
   composerFileAttachments: any
   composerImageAttachments: any
   composerPlaceholder: any
@@ -414,7 +416,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     composerAgentAuraClass,
     composerAreaRef,
     composerAriaLabel,
-    composerContextMenu,
     composerFileAttachments,
     composerImageAttachments,
     composerPlaceholder,
@@ -728,6 +729,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   // instance. Used by the caret-restore layout effect, the mention/slash
   // popovers (anchor), the context menu, and the slash-token machinery.
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const composerContextMenu = useComposerTextareaContextMenu()
   // Slash-command picker state. Same shape as the mention menu — visibility
   // flag, current filter substring (what comes after the leading `/`), and an
   // anchor index pointing at the `/` we'll later replace on pick. Mutually
@@ -2296,6 +2298,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     }
                     return true
                   }}
+                  onOpenFromElectron={composerContextMenu.openContextMenu}
                   onClose={() => composerContextMenu.setAnchor(null)}
                 />
                 <ComposerSlashMenu

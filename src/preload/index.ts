@@ -66,6 +66,23 @@ const api = {
     ipcRenderer.invoke('spellcheck:replace-misspelling', payload),
   addWordToSpellCheckerDictionary: (payload: { point: { x: number; y: number } }) =>
     ipcRenderer.invoke('spellcheck:add-word-to-dictionary', payload),
+  onSpellcheckContextMenu: (
+    callback: (payload: {
+      point: { x: number; y: number }
+      spellcheckContext: {
+        x: number
+        y: number
+        misspelledWord: string
+        dictionarySuggestions: string[]
+        createdAt: number
+      } | null
+    }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: Parameters<typeof callback>[0]) =>
+      callback(payload)
+    ipcRenderer.on('spellcheck:context-menu', wrapped)
+    return () => ipcRenderer.removeListener('spellcheck:context-menu', wrapped)
+  },
   sidebarShowWorkspaceInFinder: (workspaceId: string) =>
     ipcRenderer.invoke('sidebar:show-workspace-in-finder', workspaceId),
   sidebarCopyWorkspaceDirectory: (workspaceId: string) =>
@@ -1413,6 +1430,7 @@ const api = {
     ipcRenderer.removeAllListeners('agent-approval-request')
     ipcRenderer.removeAllListeners('agent-approval-timeout')
     ipcRenderer.removeAllListeners('agent-approval-resolved')
+    ipcRenderer.removeAllListeners('spellcheck:context-menu')
     ipcRenderer.removeAllListeners('update-status-changed')
     ipcRenderer.removeAllListeners('scheduled-task-due')
     ipcRenderer.removeAllListeners('scheduled-tasks-changed')
