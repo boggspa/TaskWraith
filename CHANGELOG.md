@@ -4,6 +4,44 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.6.9 - Unreleased
+
+### Added
+- **Ornith local Ollama models.** Local / Ollama now includes Ornith 1.0
+  (9B Param) and Ornith 1.0 (35B Param), with model labels, context-window
+  estimates, setup hints, preflight checks, run profiles, rate estimates, and
+  iOS companion metadata wired through the desktop and companion surfaces.
+- **Model usage workspace matrix.** Settings -> Model Usage now adds a
+  provider/model by workspace matrix for the busiest workspaces, showing diffs,
+  tokens, and cost estimates alongside the existing aggregate table.
+- **Current-chat search and transcript jump controls.** Threads now have a
+  current-chat search surface and compact transcript gutter controls for moving
+  between user prompts in long conversations.
+
+### Changed
+- **Cleaner welcome notices.** Welcome / first-launch notices are dismissible and
+  swipeable, with the carousel now focused on Ornith local models, scheduled
+  sends, and the AntiGravity policy notice instead of older Gemini/Grok cards.
+- **Composer shell polish.** Queue and Steer controls stay out of non-native
+  composer shells, review popovers open within the visible area, Claude action
+  glyphs are adjusted, and Codex reasoning now uses the current "Light" label.
+- **Visual and attachment polish.** PDF attachments can render as image previews,
+  composer image placeholders are more useful, sky effects are softer, and the
+  optional weather UFO flyby is present in the renderer layer.
+
+### Fixed
+- **Ollama reliability.** Ollama transport failures are handled more cleanly, and
+  local-model routing now carries Ornith-specific context, memory, retrieval, and
+  preflight behavior instead of falling through generic defaults.
+- **Collaboration, sharing, and remote access.** Share hosts can recopy
+  collaborator invites, ensemble handoffs and role boundaries are stricter,
+  ensemble timestamps preserve their original transcript times, and Tailscale
+  cellular setup can repair the detected relay door.
+- **Desktop workflow fixes.** Sidebar rename editing is scoped to the active row,
+  spellcheck suggestions appear in editable context menus, current workspace
+  search moved to key commands, and composer plan state stays fresh after todo
+  changes.
+
 ## 1.6.8 - 2026-06-28
 
 ### Added
