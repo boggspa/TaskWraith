@@ -29,7 +29,9 @@ history, and workspace state stay on your machine throughout.
   labels have clearer purple sparkle treatment.
 - **Visual and attachment polish.** PDF attachments can render as image previews,
   composer image placeholders are more useful, sky effects are softer, and the
-  optional weather UFO flyby is present in the renderer layer.
+  optional weather UFO flyby is present in the renderer layer. The Electron
+  transcript Working indicator now uses the monoline TaskWraith ghost with a
+  softer provider glow and ambient sparkle treatment.
 
 ### Fixed
 - **Ollama reliability.** Ollama transport failures are handled more cleanly, and
