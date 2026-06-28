@@ -3498,6 +3498,95 @@ function issueExternalPathGrant(
   return normalizedGrant
 }
 
+const RUN_NATIVE_IMAGE_ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
+
+function runAttachmentPath(rawPath: unknown): string | null {
+  if (typeof rawPath !== 'string') return null
+  const trimmed = rawPath.trim()
+  if (!trimmed) return null
+  if (trimmed.startsWith('file://')) {
+    try {
+      const filePath = fileURLToPath(trimmed)
+      return isAbsolute(filePath) ? filePath : null
+    } catch {
+      return null
+    }
+  }
+  return isAbsolute(trimmed) ? trimmed : null
+}
+
+function isNativeImageRunAttachment(rawPath: unknown): boolean {
+  const attachmentPath = runAttachmentPath(rawPath)
+  return attachmentPath ? RUN_NATIVE_IMAGE_ATTACHMENT_EXT.test(attachmentPath) : false
+}
+
+function isPathInsideRoot(rootPath: string | undefined, candidatePath: string): boolean {
+  if (!rootPath) return false
+  const root = resolve(rootPath)
+  const candidate = resolve(candidatePath)
+  const rel = relative(root, candidate)
+  return rel === '' || (Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel))
+}
+
+function ensembleExternalGrantProviders(chat: ChatRecord): ProviderId[] {
+  if (chat.chatKind !== 'ensemble' || !chat.ensemble?.participants?.length) return []
+  const seen = new Set<ProviderId>()
+  const providers: ProviderId[] = []
+  for (const participant of chat.ensemble.participants) {
+    if (!participant.enabled) continue
+    if (!isExternalPathGrantDispatchProvider(participant.provider)) continue
+    if (seen.has(participant.provider)) continue
+    seen.add(participant.provider)
+    providers.push(participant.provider)
+  }
+  return providers
+}
+
+function issueRunScopedExternalGrantsForNonImageAttachments(
+  chat: ChatRecord,
+  attachments: Array<{ path?: string; name?: string }>,
+  existingGrants: ExternalPathGrant[] = []
+): ExternalPathGrant[] {
+  if (chat.scope === 'global' || !chat.workspacePath || attachments.length === 0) return []
+  const providers = ensembleExternalGrantProviders(chat)
+  if (providers.length === 0) return []
+  const seen = new Set(
+    normalizeExternalPathGrants(existingGrants).map((grant) => `${grant.provider}:${grant.path}`)
+  )
+  const grants: ExternalPathGrant[] = []
+  const now = Date.now()
+  for (const attachment of attachments) {
+    const attachmentPath = runAttachmentPath(attachment?.path)
+    if (!attachmentPath || isNativeImageRunAttachment(attachmentPath)) continue
+    if (isPathInsideRoot(chat.workspacePath, attachmentPath)) continue
+    let kind: ExternalPathGrant['kind'] = 'file'
+    try {
+      const stat = fsSync.statSync(attachmentPath)
+      kind = stat.isDirectory() ? 'directory' : 'file'
+    } catch {
+      continue
+    }
+    for (const provider of providers) {
+      const grant = issueExternalPathGrant({
+        id: `attachment-${now}-${provider}-${randomBytes(4).toString('hex')}`,
+        provider,
+        workspaceId: chat.workspaceId,
+        chatId: chat.appChatId,
+        path: attachmentPath,
+        kind,
+        access: 'read',
+        duration: 'thisRun',
+        createdAt: new Date(now).toISOString()
+      })
+      const key = `${grant.provider}:${grant.path}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      grants.push(grant)
+    }
+  }
+  return grants
+}
+
 function isMainIssuedExternalPathGrant(grant: ExternalPathGrant): boolean {
   if (!grant || grant.issuedBy !== 'main' || typeof grant.signature !== 'string') return false
   const expected = Buffer.from(signExternalPathGrant(grant), 'hex')
@@ -7687,13 +7776,29 @@ function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): void {
     // P2 — honor a verified unattended elevation (HMAC + current); null => the
     // orchestrator clamps every participant read-only (P1b).
     const elevation = resolveUnattendedElevation(task.id)
+    const scheduledImageAttachments = imageAttachmentSnapshots(task.imageAttachments)
+    const scheduledExternalPathGrants = normalizeExternalPathGrants(task.externalPathGrants)
+    const dispatchChat = AppStore.getChat(task.chatId) || chat
+    const scheduledAttachmentExternalPathGrants =
+      issueRunScopedExternalGrantsForNonImageAttachments(
+        dispatchChat,
+        scheduledImageAttachments,
+        scheduledExternalPathGrants
+      )
+    const roundExternalPathGrants = normalizeExternalPathGrants([
+      ...scheduledExternalPathGrants,
+      ...scheduledAttachmentExternalPathGrants
+    ])
     const started = orchestrator.startRound({
       chatId: task.chatId,
       prompt: task.prompt,
       event: { sender: headlessRunSender },
       mode: 'normal',
-      imageAttachments: imageAttachmentSnapshots(task.imageAttachments),
+      imageAttachments: scheduledImageAttachments,
       unattended: true,
+      ...(roundExternalPathGrants.length > 0
+        ? { externalPathGrants: roundExternalPathGrants }
+        : {}),
       ...(elevation ? { unattendedElevationLevel: elevation.ack.level } : {})
     })
     if (started.roundId) {
@@ -28195,20 +28300,25 @@ if (isGeminiMcpBridgeProcess) {
         }
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
         const prompt = requireNonEmptyString(payload?.prompt, 'Ensemble prompt')
+        const chat = AppStore.getChat(chatId)
+        const imageAttachments = imageAttachmentSnapshots(payload?.imageAttachments)
         // 1.0.4-AT4 — normalize the renderer-supplied grants the
         // same way solo-run dispatch does. Drops malformed entries
         // and produces an [] when nothing is granted.
         const externalPathGrants = Array.isArray(payload?.externalPathGrants)
-          ? (payload!.externalPathGrants as ExternalPathGrant[]).filter(
-              (grant): grant is ExternalPathGrant =>
-                Boolean(
-                  grant &&
-                  typeof grant.path === 'string' &&
-                  grant.path.length > 0 &&
-                  typeof grant.provider === 'string'
-                )
+          ? normalizeExternalPathGrants(payload!.externalPathGrants as ExternalPathGrant[])
+          : []
+        const attachmentExternalPathGrants = chat
+          ? issueRunScopedExternalGrantsForNonImageAttachments(
+              chat,
+              imageAttachments,
+              externalPathGrants
             )
           : []
+        const roundExternalPathGrants = normalizeExternalPathGrants([
+          ...externalPathGrants,
+          ...attachmentExternalPathGrants
+        ])
         const discordContextSnapshots = Array.isArray(payload?.discordContextSnapshots)
           ? payload.discordContextSnapshots
           : []
@@ -28226,12 +28336,14 @@ if (isGeminiMcpBridgeProcess) {
           ...(payload?.concurrentMode !== undefined
             ? { concurrentMode: Boolean(payload.concurrentMode) }
             : {}),
-          imageAttachments: imageAttachmentSnapshots(payload?.imageAttachments),
+          imageAttachments,
           ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
           ...(payload?.dmTargetParticipantId
             ? { dmTargetParticipantId: payload.dmTargetParticipantId }
             : {}),
-          ...(externalPathGrants.length > 0 ? { externalPathGrants } : {}),
+          ...(roundExternalPathGrants.length > 0
+            ? { externalPathGrants: roundExternalPathGrants }
+            : {}),
           // P1b — a scheduled occurrence is unattended; the orchestrator
           // clamps every participant to a read-only posture so an
           // unattended round can't auto-accept edits.
