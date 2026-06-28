@@ -229,6 +229,74 @@ describe('Sidebar active chat override', () => {
   })
 })
 
+describe('Sidebar chat row markup', () => {
+  it('keeps chat rows out of native buttons so rename inputs are valid in every section', () => {
+    stubSidebarStorage({
+      [EXPANDED_WORKSPACES_STORAGE_KEY]: JSON.stringify(['ws-1']),
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept(
+        'pinned',
+        'recents',
+        'ensembles',
+        'workspaces',
+        'chats',
+        'shared'
+      )
+    })
+
+    const html = renderSidebar(
+      [
+        makeChat({ appChatId: 'workspace-1', title: 'Workspace thread', updatedAt: 10 }),
+        makeChat({
+          appChatId: 'pinned-1',
+          title: 'Pinned thread',
+          pinned: true,
+          updatedAt: 9
+        }),
+        makeChat({
+          appChatId: 'ensemble-1',
+          chatKind: 'ensemble',
+          title: 'Ensemble thread',
+          provider: 'codex',
+          updatedAt: 8
+        }),
+        makeChat({
+          appChatId: 'global-1',
+          scope: 'global',
+          title: 'Global thread',
+          workspaceId: undefined,
+          workspacePath: undefined,
+          updatedAt: 7
+        }),
+        makeChat({
+          appChatId: 'shared-1',
+          title: 'Shared thread',
+          updatedAt: 6
+        }),
+        makeChat({
+          appChatId: 'child-1',
+          title: 'Child thread',
+          parentChatId: 'workspace-1',
+          updatedAt: 5
+        })
+      ],
+      {
+        collaboratingChatIds: new Set(['shared-1']),
+        onRenameChat: () => {},
+        onTogglePinChat: () => {}
+      }
+    )
+
+    expect(html).not.toMatch(/<button[^>]*class="[^"]*sidebar-chat-item/)
+    expect(html).toMatch(/<div role="button"[^>]*class="[^"]*sidebar-chat-item/)
+    expect(html).toContain('Workspace thread')
+    expect(html).toContain('Pinned thread')
+    expect(html).toContain('Ensemble thread')
+    expect(html).toContain('Global thread')
+    expect(html).toContain('Shared thread')
+    expect(html).toContain('Child thread')
+  })
+})
+
 describe('Sidebar workflows', () => {
   it('renders an enabled quick-create button beside the Workflows header', () => {
     stubSidebarStorage({})

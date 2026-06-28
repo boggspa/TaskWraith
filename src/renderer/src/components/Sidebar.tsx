@@ -2928,6 +2928,17 @@ export function Sidebar({
     onRenameChat?.(chat.appChatId, trimmed)
   }
 
+  const handleChatRowKeyDown = (
+    event: KeyboardEvent<HTMLDivElement>,
+    chat: ChatRecord
+  ): void => {
+    if (event.target !== event.currentTarget) return
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      onSelectChat(chat)
+    }
+  }
+
   /**
    * Workspace tile overflow items. Wraps the existing pin / new-chat /
    * remove handlers so the tile's primary affordance set lives in one
@@ -3000,8 +3011,9 @@ export function Sidebar({
       : []
     const subProviderColor = `var(--provider-${subChat.provider || 'gemini'}-color)`
     return (
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         key={subChat.appChatId}
         className={`sidebar-item sidebar-chat-item sidebar-sub-thread ${
           subIsSideChat ? 'sidebar-side-chat-child' : ''
@@ -3009,6 +3021,7 @@ export function Sidebar({
           selectedChatId === subChat.appChatId ? 'active' : ''
         } ${subRunning ? 'running' : ''}`}
         onClick={() => onSelectChat(subChat)}
+        onKeyDown={(event) => handleChatRowKeyDown(event, subChat)}
       >
         <span className="sidebar-sub-thread-prefix" aria-hidden>
           {subIsSideChat ? '⇄' : '↳'}
@@ -3067,7 +3080,7 @@ export function Sidebar({
           triggerLabel={`${subKindLabel} actions`}
           items={buildChatMenuItems(subChat)}
         />
-      </button>
+      </div>
     )
   }
 
@@ -3849,10 +3862,12 @@ export function Sidebar({
                         : !collapsedSubThreadParentIds.has(chat.appChatId)
                       return (
                         <div key={`ensemble-${chat.appChatId}`} className="sidebar-chat-family">
-                          <button
-                            type="button"
+                          <div
+                            role="button"
+                            tabIndex={0}
                             className={`sidebar-item sidebar-chat-item sidebar-ensemble-item provider-ensemble ${selectedChatId === chat.appChatId ? 'active' : ''} ${isRunning ? 'running' : ''}`}
                             onClick={() => onSelectChat(chat)}
+                            onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
                             {...getChatTileDragProps(chat)}
                           >
                             {subThreads.length > 0 && (
@@ -3935,7 +3950,7 @@ export function Sidebar({
                               triggerLabel="Ensemble actions"
                               items={buildChatMenuItems(chat)}
                             />
-                          </button>
+                          </div>
                           {subThreads.length > 0 && subThreadsExpanded && (
                             <div className="sidebar-chat-children">
                               {subThreads.map(renderLinkedChildChat)}
@@ -4146,10 +4161,12 @@ export function Sidebar({
                               const branchedBadgeTone = liveSubThreadCount > 0 ? 'active' : 'dim'
                               return (
                                 <div key={chat.appChatId} className="sidebar-chat-family">
-                                  <button
-                                    type="button"
+                                  <div
+                                    role="button"
+                                    tabIndex={0}
                                     className={`sidebar-item sidebar-chat-item provider-${chat.provider || 'gemini'} ${selectedChatId === chat.appChatId ? 'active' : ''} ${isChatRunning ? 'running' : ''}`}
                                     onClick={() => onSelectChat(chat)}
+                                    onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
                                   >
                                     {subThreadCount > 0 && (
                                       <span
@@ -4244,7 +4261,7 @@ export function Sidebar({
                                       triggerLabel="Chat actions"
                                       items={buildChatMenuItems(chat)}
                                     />
-                                  </button>
+                                  </div>
                                   {subThreads.length > 0 && subThreadsExpanded && (
                                     <div className="sidebar-chat-children">
                                       {subThreads.map(renderLinkedChildChat)}
@@ -4301,11 +4318,13 @@ export function Sidebar({
                     const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     const lastRunStatus = getLastRunStatus(chat)
                     return (
-                      <button
-                        type="button"
+                      <div
+                        role="button"
+                        tabIndex={0}
                         key={chat.appChatId}
                         className={`sidebar-item sidebar-chat-item sidebar-global-chat-item provider-${chat.provider || 'gemini'} ${selectedChatId === chat.appChatId ? 'active' : ''} ${isChatRunning ? 'running' : ''}`}
                         onClick={() => onSelectChat(chat)}
+                        onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
                       >
                         <span className="sidebar-chat-copy" title={chat.title}>
                           <span className="sidebar-chat-title-line">
@@ -4347,7 +4366,7 @@ export function Sidebar({
                           triggerLabel="Chat actions"
                           items={buildChatMenuItems(chat)}
                         />
-                      </button>
+                      </div>
                     )
                   })}
                   {visibleGlobalChats.length === 0 && !isSidebarSearchActive && (
@@ -4424,8 +4443,9 @@ export function Sidebar({
                     const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     const lastRunStatus = getLastRunStatus(chat)
                     return (
-                      <button
-                        type="button"
+                      <div
+                        role="button"
+                        tabIndex={0}
                         key={chat.appChatId}
                         className={`sidebar-item sidebar-chat-item sidebar-shared-chat-item provider-${
                           chat.provider || 'gemini'
@@ -4433,6 +4453,7 @@ export function Sidebar({
                           isChatRunning ? ' running' : ''
                         }`}
                         onClick={() => onSelectChat(chat)}
+                        onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
                         title={chat.title || 'Shared chat'}
                       >
                         <span className="sidebar-chat-copy" title={chat.title || 'Shared chat'}>
@@ -4481,7 +4502,7 @@ export function Sidebar({
                           triggerLabel="Shared chat actions"
                           items={buildChatMenuItems(chat)}
                         />
-                      </button>
+                      </div>
                     )
                   })}
                   {visibleSharedChats.length === 0 && !isSidebarSearchActive && (
