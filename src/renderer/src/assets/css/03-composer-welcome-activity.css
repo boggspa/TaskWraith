@@ -10610,10 +10610,23 @@ button.diff-file-row {
   max-width: 640px;
   margin: 20px auto;
   position: relative;
+  pointer-events: auto;
+  touch-action: pan-y;
+}
+.notification-zone.is-swipe-enabled {
+  max-width: 704px;
 }
 .notification-zone--rotating {
   position: relative;
   overflow: hidden;
+  padding: 0 32px;
+}
+.notification-zone.is-swipe-enabled .notification-zone--rotating {
+  cursor: grab;
+}
+.notification-zone.is-dragging .notification-zone--rotating {
+  cursor: grabbing;
+  user-select: none;
 }
 .notification-zone-pane {
   min-width: 0;
@@ -10626,7 +10639,7 @@ button.diff-file-row {
 }
 .notification-zone-pane.is-outgoing {
   position: absolute;
-  inset: 0;
+  inset: 0 32px;
   z-index: 1;
   pointer-events: none;
 }
@@ -10759,6 +10772,8 @@ button.diff-file-row {
 }
 .notification-card-dismiss {
   flex: 0 0 auto;
+  position: relative;
+  z-index: 3;
   appearance: none;
   border: none;
   background: transparent;
@@ -10807,10 +10822,10 @@ button.diff-file-row {
   background: color-mix(in srgb, var(--panel-bg) 96%, var(--accent) 8%);
 }
 .notification-zone-nav--prev {
-  left: 8px;
+  left: 0;
 }
 .notification-zone-nav--next {
-  right: 8px;
+  right: 0;
 }
 
 .notification-zone-dots {

@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import {
   APP_NOTIFICATIONS,
   activeAppNotifications,
@@ -23,6 +24,9 @@ import {
 
 const SWIPE_MS = 320
 const ROTATE_MS = 90_000
+const DRAG_THRESHOLD_PX = 48
+const DRAG_AXIS_RATIO = 1.15
+const DISMISSED_EVENT = 'taskwraith:app-notification-dismissed'
 
 const KIND_ICON: Record<AppNotificationKind, string> = {
   deprecation: 'ⓘ',
@@ -50,6 +54,32 @@ function readDismissed(notifications: readonly AppNotification[]): Set<string> {
   return dismissed
 }
 
+function isInteractiveSwipeTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  return Boolean(
+    target.closest('button, a, input, textarea, select, [role="button"], [data-swipe-ignore="true"]')
+  )
+}
+
+export function notificationDirectionForDrag(
+  deltaX: number,
+  deltaY: number,
+  thresholdPx = DRAG_THRESHOLD_PX
+): 'next' | 'prev' | null {
+  const absX = Math.abs(deltaX)
+  const absY = Math.abs(deltaY)
+  if (absX < thresholdPx || absX < absY * DRAG_AXIS_RATIO) return null
+  return deltaX < 0 ? 'prev' : 'next'
+}
+
+interface NotificationDragState {
+  pointerId: number
+  startX: number
+  startY: number
+  lastX: number
+  lastY: number
+}
+
 function NotificationCard({
   notification,
   onDismiss
@@ -70,6 +100,7 @@ function NotificationCard({
         <button
           type="button"
           className="notification-card-dismiss"
+          data-swipe-ignore="true"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.preventDefault()
@@ -95,28 +126,89 @@ export function NotificationZone({
   const [activeIndex, setActiveIndex] = useState(0)
   const [outgoingIndex, setOutgoingIndex] = useState<number | null>(null)
   const [direction, setDirection] = useState<'next' | 'prev'>('next')
+  const [isDragging, setIsDragging] = useState(false)
+  const [now] = useState(() => Date.now())
+  const dragStateRef = useRef<NotificationDragState | null>(null)
+
+  const refreshDismissed = useCallback((): void => {
+    setDismissedIds(readDismissed(notifications))
+  }, [notifications])
+
+  useEffect(() => {
+    refreshDismissed()
+  }, [refreshDismissed])
+
+  useEffect(() => {
+    const legacyDismissKeys = new Set(
+      notifications
+        .map((notification) => notification.legacyDismissKey)
+        .filter((key): key is string => Boolean(key))
+    )
+    const handleDismissed = (event: Event): void => {
+      const id = event instanceof CustomEvent ? event.detail?.id : null
+      if (typeof id !== 'string') {
+        refreshDismissed()
+        return
+      }
+      setDismissedIds((prev) => {
+        if (prev.has(id)) return prev
+        const next = new Set(prev)
+        next.add(id)
+        return next
+      })
+      setOutgoingIndex(null)
+      setActiveIndex(0)
+      setIsDragging(false)
+      dragStateRef.current = null
+    }
+    const handleStorage = (event: StorageEvent): void => {
+      if (!event.key) return
+      if (
+        event.key.startsWith('taskwraith.appNotification.') ||
+        legacyDismissKeys.has(event.key)
+      ) {
+        refreshDismissed()
+      }
+    }
+    window.addEventListener(DISMISSED_EVENT, handleDismissed)
+    window.addEventListener('storage', handleStorage)
+    return () => {
+      window.removeEventListener(DISMISSED_EVENT, handleDismissed)
+      window.removeEventListener('storage', handleStorage)
+    }
+  }, [notifications, refreshDismissed])
 
   const active = activeAppNotifications({
     notifications,
     isDismissed: (notification) => dismissedIds.has(notification.id),
-    now: Date.now()
+    now
   })
 
-  const dismiss = useCallback((id: string): void => {
-    try {
-      localStorage.setItem(appNotificationDismissKey(id), '1')
-    } catch {
-      // Cosmetic notice — acceptable if dismissal can't persist.
-    }
-    setDismissedIds((prev) => {
-      const next = new Set(prev)
-      next.add(id)
-      return next
-    })
-    // The active list just shrank — collapse any in-flight swipe and re-anchor.
-    setOutgoingIndex(null)
-    setActiveIndex(0)
-  }, [])
+  const dismiss = useCallback(
+    (id: string): void => {
+      const notification = notifications.find((candidate) => candidate.id === id)
+      try {
+        localStorage.setItem(appNotificationDismissKey(id), '1')
+        if (notification?.legacyDismissKey) {
+          localStorage.setItem(notification.legacyDismissKey, '1')
+        }
+      } catch {
+        // Cosmetic notice — acceptable if dismissal can't persist.
+      }
+      setDismissedIds((prev) => {
+        const next = new Set(prev)
+        next.add(id)
+        return next
+      })
+      // The active list just shrank — collapse any in-flight swipe and re-anchor.
+      setOutgoingIndex(null)
+      setActiveIndex(0)
+      setIsDragging(false)
+      dragStateRef.current = null
+      window.dispatchEvent(new CustomEvent(DISMISSED_EVENT, { detail: { id } }))
+    },
+    [notifications]
+  )
 
   const goTo = useCallback(
     (target: number, dir: 'next' | 'prev'): void => {
@@ -157,6 +249,81 @@ export function NotificationZone({
     return () => window.clearTimeout(id)
   }, [outgoingIndex])
 
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      if (count <= 1) return
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      if (isInteractiveSwipeTarget(event.target)) return
+      dragStateRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        lastX: event.clientX,
+        lastY: event.clientY
+      }
+      setIsDragging(false)
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // Best-effort only: pointer capture may be unavailable in older WebViews.
+      }
+    },
+    [count]
+  )
+
+  const handlePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      const drag = dragStateRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      drag.lastX = event.clientX
+      drag.lastY = event.clientY
+      if (
+        !isDragging &&
+        notificationDirectionForDrag(drag.lastX - drag.startX, drag.lastY - drag.startY, 12)
+      ) {
+        setIsDragging(true)
+      }
+    },
+    [isDragging]
+  )
+
+  const clearPointerDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragStateRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return null
+    dragStateRef.current = null
+    setIsDragging(false)
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    } catch {
+      // Pointer capture release is best-effort for the same reason as capture.
+    }
+    return drag
+  }, [])
+
+  const handlePointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      const drag = clearPointerDrag(event)
+      if (!drag) return
+      const nextDirection = notificationDirectionForDrag(
+        drag.lastX - drag.startX,
+        drag.lastY - drag.startY
+      )
+      if (!nextDirection) return
+      event.preventDefault()
+      goRelative(nextDirection === 'next' ? 1 : -1)
+    },
+    [clearPointerDrag, goRelative]
+  )
+
+  const handlePointerCancel = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>): void => {
+      clearPointerDrag(event)
+    },
+    [clearPointerDrag]
+  )
+
   // Re-anchor if the active list shrank out from under activeIndex without a
   // dismiss (e.g. a timed notice expired). safeIndex already clamps the render;
   // this keeps activeIndex itself valid so the rotation tick can't no-op.
@@ -182,11 +349,20 @@ export function NotificationZone({
       : null
 
   return (
-    <div className="notification-zone">
-      <div className="notification-zone--rotating">
+    <div
+      className={`notification-zone is-swipe-enabled${isDragging ? ' is-dragging' : ''}`}
+    >
+      <div
+        className="notification-zone--rotating"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+      >
         <button
           type="button"
           className="notification-zone-nav notification-zone-nav--prev"
+          data-swipe-ignore="true"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.preventDefault()
@@ -220,6 +396,7 @@ export function NotificationZone({
         <button
           type="button"
           className="notification-zone-nav notification-zone-nav--next"
+          data-swipe-ignore="true"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.preventDefault()
@@ -238,6 +415,7 @@ export function NotificationZone({
             key={notification.id}
             type="button"
             className={`notification-zone-dot ${index === safeIndex ? 'is-active' : ''}`}
+            data-swipe-ignore="true"
             aria-current={index === safeIndex ? 'true' : undefined}
             aria-label={`Show notification ${index + 1} of ${count}`}
             onClick={() => goTo(index, index > safeIndex ? 'next' : 'prev')}

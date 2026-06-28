@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { NotificationZone } from './NotificationZone'
+import { NotificationZone, notificationDirectionForDrag } from './NotificationZone'
 import type { AppNotification } from '../../../shared/appNotifications'
 
 /**
@@ -25,6 +25,13 @@ const addition: AppNotification = {
 }
 
 describe('NotificationZone', () => {
+  it('maps horizontal drags to carousel directions', () => {
+    expect(notificationDirectionForDrag(-64, 4)).toBe('prev')
+    expect(notificationDirectionForDrag(64, 4)).toBe('next')
+    expect(notificationDirectionForDrag(20, 2)).toBeNull()
+    expect(notificationDirectionForDrag(64, 80)).toBeNull()
+  })
+
   it('renders nothing when there are no active notifications', () => {
     expect(renderToStaticMarkup(<NotificationZone notifications={[]} />)).toBe('')
   })
@@ -48,6 +55,7 @@ describe('NotificationZone', () => {
       <NotificationZone notifications={[deprecation, addition]} />
     )
     expect(html).toContain('notification-zone--rotating')
+    expect(html).toContain('is-swipe-enabled')
     // First notice is the visible card.
     expect(html).toContain('Gemini has been retired.')
     // One dot per notice; first is active.
@@ -56,6 +64,7 @@ describe('NotificationZone', () => {
     expect(html).toContain('notification-zone-dot is-active')
     expect(html).toContain('Show previous notification')
     expect(html).toContain('Show next notification')
+    expect(html).toContain('data-swipe-ignore="true"')
   })
 
   it('omits the dismiss button for a non-dismissible notice', () => {
