@@ -17014,6 +17014,11 @@ async function executeGeminiMcpTool(
       if (!validated.ok) {
         text = mcpJson({ ok: false, error: validated.error })
       } else {
+        const todoFollowupHint =
+          validated.todos.length > 0 &&
+          validated.todos.every((todo) => todo.status === 'completed' || todo.status === 'cancelled')
+            ? 'Checklist has no active step. If more work remains or new work was discovered, call todo_write again with merge:true and add pending/in_progress items.'
+            : undefined
         const chatId = String(context.appChatId || '').trim()
         // Re-read the chat (clobber-safe under the concurrent last-write-wins
         // model) and persist the plan per-LANE — so concurrent ensemble
@@ -17027,7 +17032,8 @@ async function executeGeminiMcpTool(
             ok: true,
             tool: 'todo_write',
             merge: validated.merge,
-            todos: validated.todos
+            todos: validated.todos,
+            ...(todoFollowupHint ? { guidance: todoFollowupHint } : {})
           })
         } else {
           const laneId =
@@ -17049,7 +17055,8 @@ async function executeGeminiMcpTool(
             tool: 'todo_write',
             merge: validated.merge,
             lane: laneId,
-            todos: nextByLane[laneId]
+            todos: nextByLane[laneId],
+            ...(todoFollowupHint ? { guidance: todoFollowupHint } : {})
           })
         }
       }

@@ -1611,6 +1611,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         'Use this to break multi-step work into trackable items the user can follow in the transcript. ' +
         'Each todo needs a stable `id`, human-readable `content`, and `status` (`pending`, `in_progress`, `completed`, or `cancelled`). ' +
         'Keep exactly one item `in_progress` when actively working. ' +
+        'When follow-up work appears after earlier steps complete, call this again with `merge: true` and add new `pending`/`in_progress` items instead of leaving the checklist all-complete. ' +
         'Set `merge: true` to patch existing steps by `id`; omit or set `merge: false` to replace the whole list. ' +
         'Prefer this over prose bullet lists when executing a plan with 3+ steps.',
       annotations: {

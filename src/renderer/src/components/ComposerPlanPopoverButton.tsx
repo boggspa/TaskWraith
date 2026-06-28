@@ -95,6 +95,9 @@ function buildPersistedTodoLanes(chat?: ChatRecord | null): ComposerPlanLane[] {
 }
 
 export function buildComposerPlanLanes(chat?: ChatRecord | null): ComposerPlanLane[] {
+  const persistedLanes = buildPersistedTodoLanes(chat)
+  if (persistedLanes.length > 0) return persistedLanes
+
   const activities: ToolActivity[] = []
   for (const message of chat?.messages ?? []) {
     for (const activity of message.toolActivities ?? []) {
@@ -102,7 +105,7 @@ export function buildComposerPlanLanes(chat?: ChatRecord | null): ComposerPlanLa
       activities.push(activity)
     }
   }
-  if (activities.length === 0) return buildPersistedTodoLanes(chat)
+  if (activities.length === 0) return []
   const byLane = computeMergedTodosByLane(
     activities,
     (activity) =>
@@ -115,7 +118,7 @@ export function buildComposerPlanLanes(chat?: ChatRecord | null): ComposerPlanLa
     .filter(([, todos]) => todos.length > 0)
     .map(([lane, todos]) => buildLane(chat, lane, todos))
     .sort(compareLanes)
-  return activityLanes.length > 0 ? activityLanes : buildPersistedTodoLanes(chat)
+  return activityLanes
 }
 
 export function computeComposerPlanPopoverPosition(

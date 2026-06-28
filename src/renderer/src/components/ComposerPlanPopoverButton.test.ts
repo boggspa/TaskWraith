@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, ToolActivity } from '../../../main/store/types'
+import { TODO_SOLO_LANE } from '../../../main/TodoList'
 import {
   buildComposerPlanLanes,
   composerPlanLaneLabel,
@@ -92,6 +93,46 @@ describe('ComposerPlanPopoverButton helpers', () => {
 
     expect(lanes).toHaveLength(2)
     expect(lanes.map((lane) => lane.lane)).toEqual(['codex-reviewer', 'codex-builder'])
+  })
+
+  it('prefers persisted chatTodos over reconstructed transcript activity state', () => {
+    const record = chat({
+      chatTodos: {
+        [TODO_SOLO_LANE]: [
+          { id: '1', content: 'Re-check the follow-up work', status: 'in_progress' },
+          { id: '2', content: 'Run focused verification', status: 'pending' }
+        ]
+      },
+      messages: [
+        {
+          id: 'm1',
+          role: 'tool',
+          content: '',
+          timestamp: '2026-06-26T00:00:00.000Z',
+          toolActivities: [
+            {
+              id: 'stale',
+              toolName: 'todo_write',
+              displayName: 'todo_write',
+              category: 'task',
+              status: 'success',
+              parameters: {
+                merge: false,
+                todos: [{ id: '1', content: 'Old completed step', status: 'completed' }]
+              }
+            } as ToolActivity
+          ]
+        }
+      ]
+    })
+
+    const lanes = buildComposerPlanLanes(record)
+
+    expect(lanes).toHaveLength(1)
+    expect(lanes[0].todos.map((todo) => [todo.content, todo.status])).toEqual([
+      ['Re-check the follow-up work', 'in_progress'],
+      ['Run focused verification', 'pending']
+    ])
   })
 
   it('flips below when a top-pane trigger lacks room above', () => {
