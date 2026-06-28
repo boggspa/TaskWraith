@@ -12,7 +12,7 @@ export type ImageAttachment = {
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
-export const MAX_IMAGE_ATTACHMENTS = 5
+export const MAX_IMAGE_ATTACHMENTS = 15
 
 export const sanitizeImagePath = (value: string): string =>
   sanitizeLocalPath(value)
