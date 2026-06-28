@@ -259,6 +259,7 @@ export function BridgeNetworkingPanel(): React.JSX.Element {
 interface IosRemoteConfig {
   enabled: boolean
   relayUrl: string
+  manualRelayUrl: string
   effectiveEnabled: boolean
   envOverride: string | null
   runtimeActive: boolean
@@ -278,6 +279,8 @@ interface IosRemoteTailscaleStatus {
   serveHttpsPort: number | null
   serveError: string | null
   relayUrlMatches: boolean
+  manualRelayInput: string
+  manualRelayUrl: string | null
   active: boolean
   runtimeActive: boolean
 }
@@ -414,6 +417,7 @@ function IosRemoteBridgeSection(): React.JSX.Element {
   const save = async (patch: {
     enabled?: boolean
     relayUrl?: string
+    manualRelayUrl?: string
     openAtLogin?: boolean
   }): Promise<void> => {
     try {
@@ -423,6 +427,10 @@ function IosRemoteBridgeSection(): React.JSX.Element {
       if (result) {
         setConfig(result)
         setNeedsRestart(result.effectiveEnabled !== result.runtimeActive)
+        const ts = (await window.api.iosRemoteTailscaleStatus?.()) as
+          | IosRemoteTailscaleStatus
+          | undefined
+        if (ts) setTailscale(ts)
       }
     } catch (err) {
       setSectionError(err instanceof Error ? err.message : String(err))
@@ -492,6 +500,34 @@ function IosRemoteBridgeSection(): React.JSX.Element {
           onBlur={(event) => {
             if ((config?.relayUrl ?? '') !== event.target.value.trim()) {
               void save({ relayUrl: event.target.value })
+            }
+          }}
+        />
+      </label>
+      <label className="settings-service-row">
+        <span>
+          Manual tailnet relay door
+          <small>
+            Optional fallback advertised alongside LAN. Enter this computer&apos;s tailnet host/IP
+            or a full ws(s):// URL, never the phone&apos;s address. For cellular iOS, wss:// is the
+            reliable path; raw 100.x tailnet IPs are cleartext candidates and may be skipped by
+            iOS.
+            {tailscale?.manualRelayInput && tailscale.manualRelayUrl
+              ? ` Current candidate: ${tailscale.manualRelayUrl}.`
+              : tailscale?.manualRelayInput
+                ? ' The current value could not be parsed as a relay URL.'
+                : ''}
+          </small>
+        </span>
+        <input
+          type="text"
+          className="settings-text-input"
+          placeholder="wss://your-mac.tailnet.ts.net or 100.x.y.z"
+          defaultValue={config?.manualRelayUrl ?? ''}
+          disabled={saving || config === null}
+          onBlur={(event) => {
+            if ((config?.manualRelayUrl ?? '') !== event.target.value.trim()) {
+              void save({ manualRelayUrl: event.target.value })
             }
           }}
         />

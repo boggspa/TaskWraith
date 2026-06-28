@@ -591,7 +591,12 @@ const api = {
   setBridgeDaemonEnabled: (enabled: boolean) =>
     ipcRenderer.invoke('set-bridge-daemon-enabled', enabled),
   getIosRemoteConfig: () => ipcRenderer.invoke('get-ios-remote-config'),
-  setIosRemoteConfig: (config: { enabled?: boolean; relayUrl?: string; openAtLogin?: boolean }) =>
+  setIosRemoteConfig: (config: {
+    enabled?: boolean
+    relayUrl?: string
+    manualRelayUrl?: string
+    openAtLogin?: boolean
+  }) =>
     ipcRenderer.invoke('set-ios-remote-config', config),
   iosRemoteTailscaleStatus: () => ipcRenderer.invoke('ios-remote-tailscale-status'),
   iosRemoteTailscaleEnable: () => ipcRenderer.invoke('ios-remote-tailscale-enable'),

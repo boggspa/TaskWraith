@@ -842,6 +842,7 @@ declare global {
       getIosRemoteConfig: () => Promise<{
         enabled: boolean
         relayUrl: string
+        manualRelayUrl: string
         effectiveEnabled: boolean
         envOverride: 'force-on' | 'force-off' | null
         runtimeActive: boolean
@@ -850,10 +851,12 @@ declare global {
       setIosRemoteConfig: (config: {
         enabled?: boolean
         relayUrl?: string
+        manualRelayUrl?: string
         openAtLogin?: boolean
       }) => Promise<{
         enabled: boolean
         relayUrl: string
+        manualRelayUrl: string
         effectiveEnabled: boolean
         envOverride: 'force-on' | 'force-off' | null
         runtimeActive: boolean
@@ -869,6 +872,8 @@ declare global {
         serveHttpsPort: number | null
         serveError: string | null
         relayUrlMatches: boolean
+        manualRelayUrl: string | null
+        manualRelayInput: string
         active: boolean
         runtimeActive: boolean
       }>

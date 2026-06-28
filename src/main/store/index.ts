@@ -584,6 +584,7 @@ const defaultSettings: AppSettings = {
   approvalModeElevationAcknowledgements: {},
   bridgeDaemonEnabled: true,
   iosRemoteEnabled: true,
+  iosRemoteManualRelayUrl: '',
   messageBridgeEnabled: false,
   messageBridgePollIntervalMs: 30_000,
   codexSandboxFallback: 'ask_rerun',

@@ -1710,6 +1710,9 @@ export interface AppSettings {
   iosRemoteEnabled?: boolean
   /** External relay URL (ws:// or wss://). Empty = embedded relay. */
   iosRemoteRelayUrl?: string
+  /** Optional user-specified relay door advertised alongside the automatic LAN /
+   * Tailscale candidates. Accepts a host/IP or ws(s):// URL; normalized at use. */
+  iosRemoteManualRelayUrl?: string
   /** Local Servers — run agent shell commands in their own process group so the
    * Local Servers panel can group-kill the whole tree on Stop. Off by default. */
   localServersDetachSpawns?: boolean

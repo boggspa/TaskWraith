@@ -244,7 +244,12 @@ import {
 import { RemoteIdentityStore } from './remote/RemoteIdentityStore'
 import { RemotePairingStore } from './remote/RemotePairingStore'
 import { wsTransportSocketFactory } from './remote/wsTransportSocket'
-import { isLocalPlainRelayUrl, pickRelayAdvertiseHost } from './remote/relayAdvertise'
+import {
+  isLocalPlainRelayUrl,
+  mergeRelayUrls,
+  normalizeManualRelayUrl,
+  pickRelayAdvertiseHost
+} from './remote/relayAdvertise'
 import { createRelayServer, type RelayServerHandle } from '../../relay/src/server'
 import {
   type BridgeApnsPusher,
@@ -22428,6 +22433,8 @@ if (isGeminiMcpBridgeProcess) {
     const envRelayUrl = (process.env.TASKWRAITH_RELAY_URL || '').trim()
     const configuredSettingsRelayUrl = (): string =>
       (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
+    const configuredManualRelayInput = (): string =>
+      (AppStore.getSettings().iosRemoteManualRelayUrl || '').trim()
     const packagedDebugBuild = [app.getName(), process.execPath, process.resourcesPath]
       .join(' ')
       .toLowerCase()
@@ -22437,6 +22444,8 @@ if (isGeminiMcpBridgeProcess) {
       app.isPackaged && !packagedDebugBuild ? 443 : 8443
     const serveWssUrl = (dnsName: string, httpsPort: number): string =>
       httpsPort === 443 ? `wss://${dnsName}` : `wss://${dnsName}:${httpsPort}`
+    const configuredManualRelayUrl = (relayPort: number): string | null =>
+      normalizeManualRelayUrl(configuredManualRelayInput(), relayPort)
     const embeddedPort = (relayUrl: string | null): number => {
       // Dev defaults to 8788 so a dev build + a release build can run at the
       // same time without colliding on the embedded relay port (8787) — the
@@ -22515,15 +22524,17 @@ if (isGeminiMcpBridgeProcess) {
           const relayUrl = advertiseRelayUrl
             ? relayOriginWithPort(advertiseRelayUrl, handle.port)
             : `ws://${advertised?.host ?? '127.0.0.1'}:${handle.port}`
+          const manualRelayUrl = configuredManualRelayUrl(handle.port)
+          const relayCandidates = mergeRelayUrls([relayUrl], [manualRelayUrl])
           if (advertised?.kind === 'loopback') {
             console.warn(
               '[remote-bridge] no Tailscale/LAN address found — the pairing QR will only be reachable from this machine'
             )
           }
           console.log(
-            `[remote-bridge] embedded relay listening on :${handle.port} — advertising ${relayUrl} (${advertised?.kind ?? 'configured-local'})`
+            `[remote-bridge] embedded relay listening on :${handle.port} — advertising ${relayCandidates.join(' → ')} (${advertised?.kind ?? 'configured-local'})`
           )
-          startRuntime(relayUrl)
+          startRuntime(relayUrl, undefined, relayCandidates)
           reopenCollaborationRooms()
         } catch (err: unknown) {
           iosRemoteRuntimeError = err instanceof Error ? err.message : String(err)
@@ -22577,7 +22588,8 @@ if (isGeminiMcpBridgeProcess) {
               lanHost && lanHost.kind !== 'loopback'
                 ? `ws://${lanHost.host}:${handle.port}`
                 : null
-            const candidates = [wssUrl, ...(lanCandidate ? [lanCandidate] : [])]
+            const manualRelayUrl = configuredManualRelayUrl(handle.port)
+            const candidates = mergeRelayUrls([wssUrl], [lanCandidate], [manualRelayUrl])
             selfHostedWssLane = { wssUrl, cliPath, relayPort: handle.port, candidates }
             console.log(
               `[remote-bridge] embedded relay on :${handle.port} behind tailscale serve — Mac via loopback, phones via ${candidates.join(' → ')} (${dnsName})`
@@ -23383,6 +23395,7 @@ if (isGeminiMcpBridgeProcess) {
       return {
         enabled: settings.iosRemoteEnabled === true,
         relayUrl: settings.iosRemoteRelayUrl || '',
+        manualRelayUrl: settings.iosRemoteManualRelayUrl || '',
         effectiveEnabled: resolution.shouldRun,
         envOverride: resolution.envOverride,
         runtimeActive: iosRemoteRuntime !== null,
@@ -23415,6 +23428,8 @@ if (isGeminiMcpBridgeProcess) {
       const dnsName = tailscale.dnsName ?? ('dnsName' in serve ? serve.dnsName : undefined)
       const suggestedUrl = dnsName ? serveWssUrl(dnsName, httpsPort) : null
       const currentRelayUrl = (AppStore.getSettings().iosRemoteRelayUrl || '').trim()
+      const manualRelayInput = configuredManualRelayInput()
+      const manualRelayUrl = normalizeManualRelayUrl(manualRelayInput, relayPort)
       const relayUrlMatches = Boolean(suggestedUrl && currentRelayUrl === suggestedUrl)
       return {
         tailscaleAvailable: tailscale.available || Boolean(serve.configured && dnsName),
@@ -23427,6 +23442,8 @@ if (isGeminiMcpBridgeProcess) {
         serveHttpsPort: 'httpsPort' in serve ? (serve.httpsPort ?? null) : null,
         serveError: 'error' in serve ? (serve.error ?? null) : null,
         relayUrlMatches,
+        manualRelayInput,
+        manualRelayUrl,
         active: relayUrlMatches && serve.configured,
         runtimeActive: iosRemoteRuntime !== null
       }
@@ -23545,7 +23562,15 @@ if (isGeminiMcpBridgeProcess) {
     ipcMain.handle('ios-remote-tailscale-oauth-status', () => tailscaleOAuthStatus())
     ipcMain.handle(
       'set-ios-remote-config',
-      async (_, config: { enabled?: boolean; relayUrl?: string; openAtLogin?: boolean }) => {
+      async (
+        _,
+        config: {
+          enabled?: boolean
+          relayUrl?: string
+          manualRelayUrl?: string
+          openAtLogin?: boolean
+        }
+      ) => {
         if (typeof config?.openAtLogin === 'boolean') {
           app.setLoginItemSettings({ openAtLogin: config.openAtLogin })
         }
@@ -23553,6 +23578,9 @@ if (isGeminiMcpBridgeProcess) {
           ...(typeof config?.enabled === 'boolean' ? { iosRemoteEnabled: config.enabled } : {}),
           ...(typeof config?.relayUrl === 'string'
             ? { iosRemoteRelayUrl: config.relayUrl.trim() }
+            : {}),
+          ...(typeof config?.manualRelayUrl === 'string'
+            ? { iosRemoteManualRelayUrl: config.manualRelayUrl.trim() }
             : {})
         })
         const next = AppStore.getSettings()
@@ -23568,6 +23596,7 @@ if (isGeminiMcpBridgeProcess) {
         return {
           enabled: next.iosRemoteEnabled === true,
           relayUrl: next.iosRemoteRelayUrl || '',
+          manualRelayUrl: next.iosRemoteManualRelayUrl || '',
           effectiveEnabled: resolution.shouldRun,
           envOverride: resolution.envOverride,
           runtimeActive: iosRemoteRuntime !== null,

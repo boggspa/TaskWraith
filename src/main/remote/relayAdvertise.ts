@@ -64,6 +64,76 @@ export function embeddedRelayUrl(port: number, interfaces?: InterfaceMap): strin
   return `ws://${host}:${port}`
 }
 
+function isTailscaleDnsName(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/\.$/, '')
+  return normalized.endsWith('.ts.net') || normalized.endsWith('.beta.tailscale.net')
+}
+
+function isPlainIpv4(host: string): boolean {
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)
+}
+
+function isBareHost(input: string): boolean {
+  return !/^[a-z][a-z0-9+.-]*:\/\//i.test(input)
+}
+
+export function normalizeManualRelayUrl(input: string, defaultPort: number): string | null {
+  const trimmed = input.trim()
+  if (!trimmed || /[\s\0]/.test(trimmed)) return null
+
+  const withScheme =
+    isBareHost(trimmed) && isTailscaleDnsName(trimmed)
+      ? `wss://${trimmed}`
+      : isBareHost(trimmed)
+        ? `ws://${trimmed}`
+        : trimmed
+
+  let parsed: URL
+  try {
+    parsed = new URL(withScheme)
+  } catch {
+    return null
+  }
+
+  const protocol = parsed.protocol.toLowerCase()
+  if (protocol === 'http:') parsed.protocol = 'ws:'
+  else if (protocol === 'https:') parsed.protocol = 'wss:'
+  else if (protocol !== 'ws:' && protocol !== 'wss:') return null
+
+  if (!parsed.hostname) return null
+  parsed.username = ''
+  parsed.password = ''
+  parsed.pathname = ''
+  parsed.search = ''
+  parsed.hash = ''
+
+  if (!parsed.port && parsed.protocol === 'ws:') {
+    parsed.port = String(defaultPort)
+  }
+
+  // Bare MagicDNS names default to Tailscale Serve's HTTPS front door. Bare IPs
+  // stay ws:// because certificates do not validate against tailnet IP literals.
+  if (!parsed.port && parsed.protocol === 'wss:' && isPlainIpv4(parsed.hostname)) {
+    parsed.port = String(defaultPort)
+  }
+
+  return parsed.toString().replace(/\/$/, '')
+}
+
+export function mergeRelayUrls(...groups: Array<Array<string | null | undefined>>): string[] {
+  const seen = new Set<string>()
+  const merged: string[] = []
+  for (const group of groups) {
+    for (const value of group) {
+      const url = value?.trim()
+      if (!url || seen.has(url)) continue
+      seen.add(url)
+      merged.push(url)
+    }
+  }
+  return merged
+}
+
 function normaliseHost(host: string): string {
   return host.trim().toLowerCase().replace(/^\[/, '').replace(/\]$/, '')
 }

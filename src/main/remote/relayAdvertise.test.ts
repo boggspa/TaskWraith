@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import os from 'os'
-import { embeddedRelayUrl, isLocalPlainRelayUrl, pickRelayAdvertiseHost } from './relayAdvertise'
+import {
+  embeddedRelayUrl,
+  isLocalPlainRelayUrl,
+  mergeRelayUrls,
+  normalizeManualRelayUrl,
+  pickRelayAdvertiseHost
+} from './relayAdvertise'
 
 function iface(address: string, internal = false): os.NetworkInterfaceInfo {
   return {
@@ -76,5 +82,53 @@ describe('isLocalPlainRelayUrl', () => {
     expect(isLocalPlainRelayUrl('wss://100.99.131.73:8787', { utun4: [iface('100.99.131.73')] })).toBe(
       false
     )
+  })
+})
+
+describe('normalizeManualRelayUrl', () => {
+  it('normalizes bare LAN or tailnet IPs to the embedded relay port', () => {
+    expect(normalizeManualRelayUrl('100.99.131.73', 8787)).toBe('ws://100.99.131.73:8787')
+    expect(normalizeManualRelayUrl('192.168.1.50:8787', 8788)).toBe(
+      'ws://192.168.1.50:8787'
+    )
+  })
+
+  it('defaults bare Tailscale DNS names to the wss front door', () => {
+    expect(normalizeManualRelayUrl('studio.example.ts.net', 8787)).toBe(
+      'wss://studio.example.ts.net'
+    )
+    expect(normalizeManualRelayUrl('studio.example.beta.tailscale.net.', 8787)).toBe(
+      'wss://studio.example.beta.tailscale.net.'
+    )
+  })
+
+  it('accepts explicit websocket/http schemes and strips path material', () => {
+    expect(normalizeManualRelayUrl('https://studio.example.ts.net/path?x=1#frag', 8787)).toBe(
+      'wss://studio.example.ts.net'
+    )
+    expect(normalizeManualRelayUrl('http://192.168.1.50:8787/status', 8788)).toBe(
+      'ws://192.168.1.50:8787'
+    )
+  })
+
+  it('rejects empty, malformed, or non-websocket relay values', () => {
+    expect(normalizeManualRelayUrl('', 8787)).toBeNull()
+    expect(normalizeManualRelayUrl('not a host', 8787)).toBeNull()
+    expect(normalizeManualRelayUrl('file:///tmp/relay.sock', 8787)).toBeNull()
+  })
+})
+
+describe('mergeRelayUrls', () => {
+  it('dedupes candidates while preserving caller order', () => {
+    expect(
+      mergeRelayUrls(
+        ['wss://studio.example.ts.net', 'ws://192.168.1.50:8787'],
+        ['ws://192.168.1.50:8787', null, ' ws://100.99.131.73:8787 ']
+      )
+    ).toEqual([
+      'wss://studio.example.ts.net',
+      'ws://192.168.1.50:8787',
+      'ws://100.99.131.73:8787'
+    ])
   })
 })
