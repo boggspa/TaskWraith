@@ -1967,10 +1967,9 @@
 .composer-claude-chip svg:first-child { opacity: 0.85; }
 .composer-claude-chip > svg:last-child  { opacity: 0.55; }
 
-/* YOLO/Trust-mode chip — collapsed state of the dismissed
- * .provider-yolo banner. Sits inline in the composer's action
- * row so the user has a persistent reminder that auto-approve
- * is on, without the full banner shoving the composer down. */
+/* YOLO/Trust-mode chip — compact session trust indicator. Sits inline
+ * in the composer's action row so auto-approve is visible without a
+ * warning banner shoving the composer down. */
 .composer-yolo-chip {
   display: inline-flex;
   align-items: center;
@@ -1998,10 +1997,6 @@
 .composer-yolo-chip-icon {
   font-size: 12px;
   line-height: 1;
-}
-
-.composer-yolo-banner-dismiss {
-  margin-left: auto;
 }
 
 /* Inside provider chips, the leading icon may be wrapped in

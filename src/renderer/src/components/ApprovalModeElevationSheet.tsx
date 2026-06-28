@@ -111,12 +111,22 @@ export function ApprovalModeElevationSheet({
         )}
 
         <footer className="creative-approval-modal-actions">
-          <button type="button" className="creative-approval-modal-reject" onClick={onCancel}>
+          <button
+            type="button"
+            className="creative-approval-modal-reject"
+            title="Keep the current safer permission mode."
+            onClick={onCancel}
+          >
             Cancel
           </button>
           <button
             type="button"
             className="creative-approval-modal-approve-once"
+            title={
+              isFull
+                ? `Let ${name} create, edit, run, and delete files in ${where} without per-step prompts until you lower the mode.`
+                : `Let ${name} edit files in ${where}; individual risky actions can still be reviewed.`
+            }
             onClick={onConfirm}
             disabled={!canConfirm}
           >

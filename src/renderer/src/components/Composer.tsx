@@ -350,7 +350,6 @@ export interface ComposerProps {
   setShowWorkSessionSheet: any
   setWelcomeParticipantOverflow: any
   setWorkflowDraft: any
-  setYoloBannerDismissed: any
   settings: any
   shouldShowGhostCompanion: any
   shouldShowWelcomeStandaloneHeatmaps: any
@@ -376,7 +375,6 @@ export interface ComposerProps {
   workflowIntervalMinutes: any
   workspaceDiffStats: any
   workspaces: any
-  yoloBannerDismissed: any
 }
 
 function ComposerInner(props: ComposerProps): React.JSX.Element {
@@ -627,7 +625,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setShowWorkSessionSheet,
     setWelcomeParticipantOverflow,
     setWorkflowDraft,
-    setYoloBannerDismissed,
     settings,
     shouldShowGhostCompanion,
     shouldShowWelcomeStandaloneHeatmaps,
@@ -652,8 +649,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     workflowForCurrentChat,
     workflowIntervalMinutes,
     workspaceDiffStats,
-    workspaces,
-    yoloBannerDismissed
+    workspaces
   } = props
   const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
 
@@ -2718,54 +2714,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         </div>
                       </div>
                     )}
-                    {/* Phase J3: session-scoped YOLO indicator. Visible when the
-                      user has clicked "Trust this session" — every subsequent
-                      approval auto-allows. Includes a one-click disable.
-                      Slice A: dismissible via the inline ✕ button; the
-                      collapsed state is represented by `.composer-yolo-chip`
-                      in the action row below. */}
-                    {sessionYoloMode.enabled && !yoloBannerDismissed && (
-                      <div
-                        className="composer-permission-card provider-yolo"
-                        style={{
-                          background: 'rgba(244, 162, 97, 0.12)',
-                          borderColor: 'rgba(244, 162, 97, 0.5)'
-                        }}
-                      >
-                        <div className="composer-permission-title">
-                          <span>Trust mode active — every approval auto-allowed</span>
-                          <span className="composer-permission-source">YOLO</span>
-                        </div>
-                        <div className="composer-permission-message">
-                          Approval modals will be skipped for the rest of this app session. Global
-                          Deny policies still apply. Restart the app to revert, or disable here.
-                        </div>
-                        <div className="composer-permission-actions">
-                          <button
-                            className="btn btn-sm btn-ghost"
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                await window.api.agenticYoloSet(false)
-                              } catch (error) {
-                                console.error('Failed to disable YOLO session mode', error)
-                              }
-                            }}
-                          >
-                            Disable trust mode
-                          </button>
-                          <button
-                            className="btn btn-sm btn-ghost composer-yolo-banner-dismiss"
-                            type="button"
-                            onClick={() => setYoloBannerDismissed(true)}
-                            title="Hide this banner (trust mode stays on)"
-                            aria-label="Dismiss trust mode banner"
-                          >
-                            ✕ Dismiss
-                          </button>
-                        </div>
-                      </div>
-                    )}
                     {pendingAgentApproval && (
                       <div
                         className={`composer-permission-card provider-${pendingAgentApproval.provider}`}
@@ -2836,6 +2784,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               className="btn btn-sm"
                               type="button"
+                              title={
+                                pendingAgentApproval.method === 'hostCommand/rerun'
+                                  ? 'Rerun this request outside the current sandbox once. This does not grant future approvals.'
+                                  : 'Allow only this approval request. Future similar requests will still ask.'
+                              }
                               onClick={() =>
                                 void handleAgentApprovalAction(pendingAgentApproval.id, 'accept')
                               }
@@ -2849,6 +2802,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               className="btn btn-sm"
                               type="button"
+                              title="Use the provider CLI or SDK native approval flow for this request instead of TaskWraith handling it."
                               onClick={() =>
                                 void handleAgentApprovalAction(
                                   pendingAgentApproval.id,
@@ -2863,6 +2817,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               className="btn btn-sm btn-ghost"
                               type="button"
+                              title="Move this work into a TaskWraith sub-thread so it can continue with isolated context and its own approval handling."
                               onClick={() =>
                                 void handleAgentApprovalAction(
                                   pendingAgentApproval.id,
@@ -2877,6 +2832,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               className="btn btn-sm btn-ghost"
                               type="button"
+                              title="Allow this kind of request for this workspace. The grant persists until revoked in Approvals & Grants."
                               onClick={() =>
                                 void handleAgentApprovalAction(
                                   pendingAgentApproval.id,
@@ -2893,6 +2849,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               className="btn btn-sm btn-ghost"
                               type="button"
+                              title="Allow matching requests for the rest of this app session. Restarting the app clears the grant."
                               onClick={() =>
                                 void handleAgentApprovalAction(
                                   pendingAgentApproval.id,
@@ -2932,6 +2889,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               className="btn btn-sm btn-ghost"
                               type="button"
+                              title="Deny this request and let the current run continue or fail according to the provider."
                               onClick={() =>
                                 void handleAgentApprovalAction(pendingAgentApproval.id, 'decline')
                               }
@@ -2943,6 +2901,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               className="btn btn-sm btn-ghost"
                               type="button"
+                              title="Cancel the run that is waiting on this approval."
                               onClick={() =>
                                 void handleAgentApprovalAction(pendingAgentApproval.id, 'cancel')
                               }
@@ -2962,6 +2921,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               className="btn btn-sm btn-primary"
                               type="button"
+                              title="Grant read-only access to the detected external path for this request."
                               onClick={() =>
                                 void handleAgentApprovalAction(
                                   pendingAgentApproval.id,
@@ -2978,6 +2938,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               className="btn btn-sm"
                               type="button"
+                              title="Grant edit access to the detected external path for this request."
                               onClick={() =>
                                 void handleAgentApprovalAction(
                                   pendingAgentApproval.id,
@@ -2992,6 +2953,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <button
                               className="btn btn-sm btn-ghost"
                               type="button"
+                              title="Deny this external path request once. The agent may ask again if it still needs the path."
                               onClick={() =>
                                 void handleAgentApprovalAction(
                                   pendingAgentApproval.id,
@@ -3950,18 +3912,23 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           )
                         })()}
 
-                        {/* Slice A: collapsed-state chip for the dismissed
-                          YOLO banner. Sits adjacent to the permissions
-                          picker because YOLO is conceptually a permission
-                          override. Clicking re-summons the full banner. */}
-                        {sessionYoloMode.enabled && yoloBannerDismissed && (
+                        {/* Session-scoped YOLO indicator. Kept compact so
+                          trust mode reads as an active permission posture,
+                          not as an error or warning banner. */}
+                        {sessionYoloMode.enabled && (
                           <button
                             type="button"
                             className="composer-yolo-chip"
                             data-composer-control="permission"
-                            onClick={() => setYoloBannerDismissed(false)}
-                            title="Trust mode is active — every approval auto-allowed. Click to show details."
-                            aria-label="Trust mode active — show details"
+                            onClick={async () => {
+                              try {
+                                await window.api.agenticYoloSet(false)
+                              } catch (error) {
+                                console.error('Failed to disable YOLO session mode', error)
+                              }
+                            }}
+                            title="YOLO trust mode is active: approval prompts auto-allow for this app session unless a global deny policy applies. Click to turn it off."
+                            aria-label="YOLO trust mode active. Click to turn it off."
                           >
                             <span className="composer-yolo-chip-icon" aria-hidden>
                               ⚠

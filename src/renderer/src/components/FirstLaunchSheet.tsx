@@ -969,6 +969,11 @@ function ProviderCard({
             className={`btn btn-sm ${row.cloudSignIn ? 'btn-ghost' : 'btn-primary'}`}
             onClick={() => onProviderLogin(row.id)}
             aria-label={row.cloudSignIn ? `Sign in to ${row.label} Cloud` : `Sign in to ${row.label}`}
+            title={
+              row.cloudSignIn
+                ? `Open the ${row.label} cloud sign-in flow. Local ${row.label} runs still work without this.`
+                : `Open the ${row.label} sign-in flow used by TaskWraith runs. Credentials stay with the provider CLI or service.`
+            }
           >
             {row.cloudSignIn ? 'Sign in to Cloud' : 'Sign in'}
           </button>
@@ -979,6 +984,7 @@ function ProviderCard({
             className="btn btn-sm btn-ghost"
             onClick={() => onProviderLogout(row.id)}
             aria-label={`Sign out of ${row.label}`}
+            title={`Open the ${row.label} sign-out flow. Future runs may require signing in again.`}
           >
             Sign out
           </button>
@@ -988,6 +994,7 @@ function ProviderCard({
           className="btn btn-sm"
           onClick={onOpenSettings}
           aria-label={`Open settings for ${row.label}`}
+          title={`Open provider settings for ${row.label}, including auth, model, and permission controls.`}
         >
           {row.variant === 'signed-in' ? 'Manage in Settings' : 'Open Settings'}
         </button>

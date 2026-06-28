@@ -949,24 +949,6 @@ function App(): React.JSX.Element {
     enabledAt: null
   })
 
-  // Slice A: full YOLO banner is dismissible. When dismissed, a compact
-  // inline chip replaces it in the composer's action row so the user
-  // still has a persistent reminder that auto-approve is on. Toggling
-  // YOLO off and back on resets the dismissed flag so the user
-  // re-acknowledges the warning each fresh activation.
-  const [yoloBannerDismissed, setYoloBannerDismissed] = useState(false)
-  const previousYoloEnabledRef = useRef(sessionYoloMode.enabled)
-  useEffect(() => {
-    const wasEnabled = previousYoloEnabledRef.current
-    const isEnabled = sessionYoloMode.enabled
-    if (!wasEnabled && isEnabled) {
-      // Fresh enable — show the full banner again so the user
-      // re-acknowledges the trust mode.
-      setYoloBannerDismissed(false)
-    }
-    previousYoloEnabledRef.current = isEnabled
-  }, [sessionYoloMode.enabled])
-
   // Push roster presets (renderer localStorage = source of truth) up to main on
   // mount + on every change, so the bridge can project them to paired iOS
   // devices (the Roster page). The same subscription fires when an iOS-driven
@@ -20475,7 +20457,6 @@ function App(): React.JSX.Element {
       setShowWorkSessionSheet,
       setWelcomeParticipantOverflow,
       setWorkflowDraft,
-      setYoloBannerDismissed,
       settings,
       showComposerChips,
       steerIndicatorMessage,
@@ -20493,7 +20474,6 @@ function App(): React.JSX.Element {
       workflowIntervalMinutes,
       workspaceDiffStats,
       workspaces,
-      yoloBannerDismissed,
       // Composer Ollama Tier-4 ack trigger (stable useCallback → no memo churn).
       onRequestOllamaTier4Ack: requestOllamaComposerTier4Ack,
     }),
@@ -20607,7 +20587,6 @@ function App(): React.JSX.Element {
       setShowWorkSessionSheet,
       setWelcomeParticipantOverflow,
       setWorkflowDraft,
-      setYoloBannerDismissed,
       settings,
       showComposerChips,
       steerIndicatorMessage,
@@ -20625,7 +20604,6 @@ function App(): React.JSX.Element {
       workflowIntervalMinutes,
       workspaceDiffStats,
       workspaces,
-      yoloBannerDismissed,
       requestOllamaComposerTier4Ack,
     ]
   )
@@ -23525,6 +23503,7 @@ function App(): React.JSX.Element {
               <button
                 type="button"
                 className="creative-approval-modal-reject"
+                title="Leave Ollama on its current limited tool tier."
                 onClick={() => setOllamaComposerParityAck(null)}
               >
                 Cancel
@@ -23532,6 +23511,7 @@ function App(): React.JSX.Element {
               <button
                 type="button"
                 className="creative-approval-modal-approve-once"
+                title="Enable full TaskWraith tools for Ollama in this workspace; workspace boundaries, approval policy, and audit events still apply."
                 onClick={confirmOllamaComposerTier4}
                 disabled={!ollamaComposerParityAck.workspacePath}
               >
@@ -23590,6 +23570,7 @@ function App(): React.JSX.Element {
               <button
                 type="button"
                 className="creative-approval-modal-reject"
+                title="Keep unattended workflow runs at the safer current permission level."
                 onClick={() => setPendingUnattendedElevation(null)}
               >
                 Cancel
@@ -23597,6 +23578,11 @@ function App(): React.JSX.Element {
               <button
                 type="button"
                 className="creative-approval-modal-approve-once"
+                title={
+                  pendingUnattendedElevation.level === 'full_access'
+                    ? 'Allow future scheduled workflow runs to auto-accept workspace-bounded full-access actions until the workflow approval mode changes.'
+                    : 'Allow future scheduled workflow runs to use default permissions until the workflow approval mode changes.'
+                }
                 onClick={() => void confirmUnattendedElevation()}
               >
                 {pendingUnattendedElevation.level === 'full_access'
