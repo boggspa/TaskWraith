@@ -623,11 +623,13 @@ export function ThinkingIndicator() {
   // This bubble mirrors iOS LiveActivityAnchor: ghost + glow + "Working" + dots.
   return (
     <div className="message-bubble assistant message-working" aria-label="Working">
-      <span
-        className="message-working-ghost"
-        aria-hidden
-        dangerouslySetInnerHTML={{ __html: taskwraithGhostMonolineSvg }}
-      />
+      <span className="message-working-ghost" aria-hidden>
+        <span className="message-working-ghost-glow" />
+        <span
+          className="message-working-ghost-mark"
+          dangerouslySetInnerHTML={{ __html: taskwraithGhostMonolineSvg }}
+        />
+      </span>
       <span className="message-working-label">Working</span>
       <span className="thinking-dots" aria-hidden>
         <span className="thinking-dot" />
