@@ -1004,16 +1004,35 @@ function SidebarChatTitleEditable({
 }): React.JSX.Element {
   const [draft, setDraft] = useState(chat.title)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const draftRef = useRef(chat.title)
+  const editClosedRef = useRef(true)
   const wasEditingRef = useRef(false)
+  const closeWithSubmit = useCallback(
+    (nextValue?: string): void => {
+      if (editClosedRef.current) return
+      editClosedRef.current = true
+      onSubmit(nextValue ?? draftRef.current)
+    },
+    [onSubmit]
+  )
+  const closeWithCancel = useCallback((): void => {
+    if (editClosedRef.current) return
+    editClosedRef.current = true
+    onCancel()
+  }, [onCancel])
+
   // Seed the draft when edit mode opens. Once the user is typing, keep
   // incoming chat updates from clobbering the in-progress rename.
   useEffect(() => {
     if (!isEditing) {
       wasEditingRef.current = false
+      editClosedRef.current = true
       return
     }
     if (wasEditingRef.current) return
     wasEditingRef.current = true
+    editClosedRef.current = false
+    draftRef.current = chat.title
     setDraft(chat.title)
   }, [isEditing, chat.appChatId, chat.title])
 
@@ -1034,23 +1053,23 @@ function SidebarChatTitleEditable({
           autoFocus
           className="sidebar-chat-title-input"
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => onSubmit(draft)}
+          onChange={(event) => {
+            draftRef.current = event.target.value
+            setDraft(event.target.value)
+          }}
+          onBlur={(event) => closeWithSubmit(event.currentTarget.value)}
           onClick={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
-            if (event.key === 'Enter') {
+            if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
               event.preventDefault()
               event.stopPropagation()
-              // Blur to trigger onSubmit through the unified path —
-              // means the same commit code runs whether the user pressed
-              // Enter or clicked away.
-              event.currentTarget.blur()
+              closeWithSubmit(event.currentTarget.value)
             } else if (event.key === 'Escape') {
               event.preventDefault()
               event.stopPropagation()
-              onCancel()
+              closeWithCancel()
             }
           }}
           aria-label="Rename chat"
