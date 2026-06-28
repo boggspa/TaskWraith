@@ -364,8 +364,8 @@ describe('Ensemble prompt composition', () => {
       'Acceptance criteria: Typecheck passes and each slice is independently reviewable.'
     )
     expect(prompt).toContain('Lead: Claude / Reviewer.')
-    expect(prompt).toContain('Manager/Bossman: Claude / Reviewer.')
-    expect(prompt).toContain('Authority rule: configured Lead/Bossman/manager seat(s) are Claude / Reviewer')
+    expect(prompt).toContain('Manager/Boss: Claude / Reviewer.')
+    expect(prompt).toContain('Authority rule: configured Lead/Boss/manager seat(s) are Claude / Reviewer')
   })
 
   it('injects TaskWraith active goals into ensemble participant prompts', () => {

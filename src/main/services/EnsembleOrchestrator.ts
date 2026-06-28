@@ -197,7 +197,7 @@ export interface EnsembleOrchestratorDeps {
   ) => void
   releaseWriteIntentsForLane?: (laneId: string) => unknown
   /**
-   * Record a non-Bossman attempt to drive `ensemble_bossman_control` into the
+   * Record a non-Boss attempt to drive `ensemble_bossman_control` into the
    * durable approval/audit ledger (the orchestrator has no direct AuditService
    * handle). Optional so the unit-test harness can omit it (auditing is then a
    * no-op). The transcript status line is appended regardless.
@@ -1648,7 +1648,7 @@ export class EnsembleOrchestrator {
         ok: false,
         tool: 'ensemble_bossman_control',
         action,
-        message: 'No active Ensemble participant run matches this Bossman control call.',
+        message: 'No active Ensemble participant run matches this Boss control call.',
         error: 'no_active_run'
       }
     }
@@ -1668,7 +1668,7 @@ export class EnsembleOrchestrator {
         ok: false,
         tool: 'ensemble_bossman_control',
         action,
-        message: 'There is no active Ensemble round for this Bossman control call.',
+        message: 'There is no active Ensemble round for this Boss control call.',
         error: 'no_active_round'
       }
     }
@@ -1678,7 +1678,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action,
         roundId: runtime.roundId,
-        message: 'Bossman control rejected: roundId is no longer active.',
+        message: 'Boss control rejected: roundId is no longer active.',
         error: 'stale_round'
       }
     }
@@ -1692,7 +1692,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action,
         roundId: runtime.roundId,
-        message: 'Bossman control rejected: no Bossman is assigned for this Ensemble.',
+        message: 'Boss control rejected: no Boss is assigned for this Ensemble.',
         error: 'bossman_not_configured'
       }
     }
@@ -1700,7 +1700,7 @@ export class EnsembleOrchestrator {
       this.appendRoundStatus(
         caller.chatId,
         runtime.roundId,
-        `Bossman control rejected from ${caller.participant.role || caller.participant.provider}: only the assigned Bossman may use ensemble_bossman_control.`
+        `Boss control rejected from ${caller.participant.role || caller.participant.provider}: only the assigned Boss may use ensemble_bossman_control.`
       )
       // An impostor control attempt is a security-relevant event — record it to
       // the durable audit ledger, not just the transcript.
@@ -1726,7 +1726,7 @@ export class EnsembleOrchestrator {
         action,
         roundId: runtime.roundId,
         participantId: caller.participant.id,
-        message: 'Bossman control rejected: caller is not the assigned Bossman participant.',
+        message: 'Boss control rejected: caller is not the assigned Boss participant.',
         error: 'not_bossman'
       }
     }
@@ -1740,7 +1740,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action,
         roundId: runtime.roundId,
-        message: 'Bossman control rejected: targetParticipantId is not part of the active round.',
+        message: 'Boss control rejected: targetParticipantId is not part of the active round.',
         error: 'stale_target'
       }
     }
@@ -1757,20 +1757,20 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action,
         roundId: runtime.roundId,
-        message: 'Bossman control rejected: targetRunId is no longer active for that participant.',
+        message: 'Boss control rejected: targetRunId is no longer active for that participant.',
         error: 'stale_target_run'
       }
     }
 
     if (action === 'stop_round') {
-      const reason = input.reason || 'Stopped by Bossman.'
+      const reason = input.reason || 'Stopped by Boss.'
       const ok = await this.cancelRound(runtime.chatId, reason)
       return {
         ok,
         tool: 'ensemble_bossman_control',
         action,
         roundId: runtime.roundId,
-        message: ok ? `Bossman stopped the round: ${reason}` : 'Bossman stop failed: no active round.',
+        message: ok ? `Boss stopped the round: ${reason}` : 'Boss stop failed: no active round.',
         ...(ok ? {} : { error: 'no_active_round' as const })
       }
     }
@@ -1791,13 +1791,13 @@ export class EnsembleOrchestrator {
           tool: 'ensemble_bossman_control',
           action,
           roundId: runtime.roundId,
-          message: 'Bossman queue_followup requires a prompt.',
+          message: 'Boss queue_followup requires a prompt.',
           error: 'missing_prompt'
         }
       }
       const ok = this.enqueueWorkSessionContinuation(runtime.chatId, prompt)
       if (ok) {
-        this.appendRoundStatus(runtime.chatId, runtime.roundId, 'Bossman queued a follow-up round.')
+        this.appendRoundStatus(runtime.chatId, runtime.roundId, 'Boss queued a follow-up round.')
       }
       return {
         ok,
@@ -1805,8 +1805,8 @@ export class EnsembleOrchestrator {
         action,
         roundId: runtime.roundId,
         message: ok
-          ? 'Bossman queued a follow-up round.'
-          : 'Bossman queue_followup failed: no active runtime queue.',
+          ? 'Boss queued a follow-up round.'
+          : 'Boss queue_followup failed: no active runtime queue.',
         ...(ok ? {} : { error: 'queue_failed' as const })
       }
     }
@@ -1845,7 +1845,7 @@ export class EnsembleOrchestrator {
     input: EnsembleBossmanControlInput,
     targetRun?: ActiveParticipantRun
   ): EnsembleBossmanControlResult {
-    const reason = input.reason || 'Skipped by Bossman.'
+    const reason = input.reason || 'Skipped by Boss.'
     let active = targetRun
     if (!active && runtime.activeRunId) {
       const candidate = this.runsByRunId.get(runtime.activeRunId)
@@ -1867,7 +1867,7 @@ export class EnsembleOrchestrator {
         action: 'skip_participant',
         roundId: runtime.roundId,
         participantId: active.participant.id,
-        message: `Bossman skipped ${active.participant.role || active.participant.provider}.`
+        message: `Boss skipped ${active.participant.role || active.participant.provider}.`
       }
     }
 
@@ -1878,7 +1878,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action: 'skip_participant',
         roundId: runtime.roundId,
-        message: 'Bossman skip requires targetParticipantId or targetRunId.',
+        message: 'Boss skip requires targetParticipantId or targetRunId.',
         error: 'stale_target'
       }
     }
@@ -1891,7 +1891,7 @@ export class EnsembleOrchestrator {
         action: 'skip_participant',
         roundId: runtime.roundId,
         participantId: targetParticipantId,
-        message: 'Bossman skip rejected: target participant is no longer pending.',
+        message: 'Boss skip rejected: target participant is no longer pending.',
         error: 'stale_target'
       }
     }
@@ -1900,7 +1900,7 @@ export class EnsembleOrchestrator {
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      `Bossman skipped ${participant.role || participant.provider}. ${reason}`
+      `Boss skipped ${participant.role || participant.provider}. ${reason}`
     )
     return {
       ok: true,
@@ -1908,7 +1908,7 @@ export class EnsembleOrchestrator {
       action: 'skip_participant',
       roundId: runtime.roundId,
       participantId: participant.id,
-      message: `Bossman skipped pending participant ${participant.role || participant.provider}.`
+      message: `Boss skipped pending participant ${participant.role || participant.provider}.`
     }
   }
 
@@ -1924,7 +1924,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action: 'reorder_remaining',
         roundId: runtime.roundId,
-        message: 'Bossman reorder rejected: participantIds must name pending participants.',
+        message: 'Boss reorder rejected: participantIds must name pending participants.',
         error: 'stale_target'
       }
     }
@@ -1935,7 +1935,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action: 'reorder_remaining',
         roundId: runtime.roundId,
-        message: 'Bossman reorder rejected: active chat is no longer an Ensemble chat.',
+        message: 'Boss reorder rejected: active chat is no longer an Ensemble chat.',
         error: 'not_ensemble'
       }
     }
@@ -1947,7 +1947,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action: 'reorder_remaining',
         roundId: runtime.roundId,
-        message: 'Bossman reorder rejected: turn order can change once every two completed Ensemble rounds.',
+        message: 'Boss reorder rejected: turn order can change once every two completed Ensemble rounds.',
         error: 'reorder_cooldown'
       }
     }
@@ -2007,13 +2007,13 @@ export class EnsembleOrchestrator {
       },
       'participant-updated'
     )
-    this.appendRoundStatus(runtime.chatId, runtime.roundId, 'Bossman changed the remaining turn order.')
+    this.appendRoundStatus(runtime.chatId, runtime.roundId, 'Boss changed the remaining turn order.')
     return {
       ok: true,
       tool: 'ensemble_bossman_control',
       action: 'reorder_remaining',
       roundId: runtime.roundId,
-      message: 'Bossman changed the remaining turn order.'
+      message: 'Boss changed the remaining turn order.'
     }
   }
 
@@ -2030,15 +2030,15 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action,
         roundId: runtime.roundId,
-        message: 'Bossman Work Session control rejected: no active Work Session.',
+        message: 'Boss Work Session control rejected: no active Work Session.',
         error: 'no_active_work_session'
       }
     }
     const reason =
       reasonInput ||
       (action === 'complete_work_session'
-        ? 'Bossman marked the Work Session complete.'
-        : 'Bossman paused the Work Session.')
+        ? 'Boss marked the Work Session complete.'
+        : 'Boss paused the Work Session.')
     const nowIso = this.deps.nowIso()
     const status = action === 'complete_work_session' ? 'completed' : 'paused'
     // If this session was started from a linked active Goal and that goal is
@@ -2069,12 +2069,12 @@ export class EnsembleOrchestrator {
       },
       updatedAt: this.deps.now()
     })
-    this.appendRoundStatus(runtime.chatId, runtime.roundId, `Bossman ${status === 'completed' ? 'completed' : 'paused'} the Work Session. ${reason}`)
+    this.appendRoundStatus(runtime.chatId, runtime.roundId, `Boss ${status === 'completed' ? 'completed' : 'paused'} the Work Session. ${reason}`)
     if (completesLinkedGoal) {
       this.appendRoundStatus(
         runtime.chatId,
         runtime.roundId,
-        `Bossman completed the linked goal "${chat.activeGoal?.objective || linkedGoalId}".`
+        `Boss completed the linked goal "${chat.activeGoal?.objective || linkedGoalId}".`
       )
     }
     return {
@@ -2082,7 +2082,7 @@ export class EnsembleOrchestrator {
       tool: 'ensemble_bossman_control',
       action,
       roundId: runtime.roundId,
-      message: `Bossman ${status === 'completed' ? 'completed' : 'paused'} the Work Session.`
+      message: `Boss ${status === 'completed' ? 'completed' : 'paused'} the Work Session.`
     }
   }
 
@@ -2099,7 +2099,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action: 'replace_participant',
         roundId: runtime.roundId,
-        message: 'Bossman replace_participant requires targetParticipantId and replacement.provider.',
+        message: 'Boss replace_participant requires targetParticipantId and replacement.provider.',
         error: 'missing_replacement'
       }
     }
@@ -2110,7 +2110,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action: 'replace_participant',
         roundId: runtime.roundId,
-        message: 'Bossman replacement rejected: active chat is no longer an Ensemble chat.',
+        message: 'Boss replacement rejected: active chat is no longer an Ensemble chat.',
         error: 'not_ensemble'
       }
     }
@@ -2122,7 +2122,7 @@ export class EnsembleOrchestrator {
         action: 'replace_participant',
         roundId: runtime.roundId,
         participantId: targetParticipantId,
-        message: 'Bossman replacement rejected: target participant is not in the roster.',
+        message: 'Boss replacement rejected: target participant is not in the roster.',
         error: 'stale_target'
       }
     }
@@ -2132,7 +2132,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_bossman_control',
         action: 'replace_participant',
         roundId: runtime.roundId,
-        message: 'Bossman replacement rejected: provider health checks are unavailable.',
+        message: 'Boss replacement rejected: provider health checks are unavailable.',
         error: 'health_check_unavailable'
       }
     }
@@ -2172,7 +2172,7 @@ export class EnsembleOrchestrator {
         action: 'replace_participant',
         roundId: runtime.roundId,
         participantId: targetParticipantId,
-        message: `Bossman replacement rejected: ${health.reason || `${provider} is not reachable`}.`,
+        message: `Boss replacement rejected: ${health.reason || `${provider} is not reachable`}.`,
         error: 'replacement_unreachable'
       }
     }
@@ -2182,7 +2182,7 @@ export class EnsembleOrchestrator {
     // grew past the round's baseline participant count in the meantime,
     // swapping in the replacement would PERSIST a round larger than its
     // baseline. Adding a participant beyond the baseline is gated behind
-    // explicit user approval, not something the Bossman tool may grant, so we
+    // explicit user approval, not something the Boss tool may grant, so we
     // refuse rather than grow the round.
     const postProbeParticipants =
       this.deps.getChat(runtime.chatId)?.ensemble?.participants || []
@@ -2203,7 +2203,7 @@ export class EnsembleOrchestrator {
         roundId: runtime.roundId,
         participantId: targetParticipantId,
         message:
-          'Bossman replacement rejected: the roster changed during the health check and the replacement would add a participant beyond the round baseline. Adding beyond the baseline requires explicit user approval.',
+          'Boss replacement rejected: the roster changed during the health check and the replacement would add a participant beyond the round baseline. Adding beyond the baseline requires explicit user approval.',
         error: 'baseline_exceeded'
       }
     }
@@ -2221,7 +2221,7 @@ export class EnsembleOrchestrator {
         action: 'replace_participant',
         roundId: runtime.roundId,
         participantId: targetParticipantId,
-        message: 'Bossman replacement rejected: target participant is no longer active or pending.',
+        message: 'Boss replacement rejected: target participant is no longer active or pending.',
         error: 'stale_target'
       }
     }
@@ -2232,7 +2232,7 @@ export class EnsembleOrchestrator {
         targetRun ||
         (runtime.activeRunId ? this.runsByRunId.get(runtime.activeRunId) : undefined)
       if (activeRun) {
-        this.finalizeRun(activeRun, 'skipped', input.reason || 'Replaced by Bossman.')
+        this.finalizeRun(activeRun, 'skipped', input.reason || 'Replaced by Boss.')
         if (runtime.activeRunId === activeRun.runId) runtime.activeRunId = undefined
         runtime.activeScoutRunIds?.delete(activeRun.runId)
         void this.deps.cancelRun(activeRun.participant.provider, activeRun.runId).catch(() => undefined)
@@ -2242,7 +2242,7 @@ export class EnsembleOrchestrator {
 
     const latestChat = this.deps.getChat(runtime.chatId) || chat
     const latestEnsemble = latestChat.ensemble || chat.ensemble
-    const replaceReason = input.reason || 'Replaced by Bossman.'
+    const replaceReason = input.reason || 'Replaced by Boss.'
     const nextParticipants = latestEnsemble.participants
       .filter((participant) => participant.id !== targetParticipantId)
       .concat(replacement)
@@ -2298,7 +2298,7 @@ export class EnsembleOrchestrator {
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      `Bossman replaced ${target.role || target.provider} with ${replacement.role || replacement.provider}.`
+      `Boss replaced ${target.role || target.provider} with ${replacement.role || replacement.provider}.`
     )
     return {
       ok: true,
@@ -2306,7 +2306,7 @@ export class EnsembleOrchestrator {
       action: 'replace_participant',
       roundId: runtime.roundId,
       participantId: replacement.id,
-      message: `Bossman replaced ${target.role || target.provider} with ${replacement.role || replacement.provider}.`
+      message: `Boss replaced ${target.role || target.provider} with ${replacement.role || replacement.provider}.`
     }
   }
 
@@ -2387,7 +2387,7 @@ export class EnsembleOrchestrator {
         tool: 'ensemble_fanout',
         mode,
         message:
-          'ensemble_fanout: broad fan-out requires the configured Bossman/Lead/manager, or an active Work Session with an explicit participant scope. Use explicit targets for a narrow peer handoff.',
+          'ensemble_fanout: broad fan-out requires the configured Boss/Lead/manager, or an active Work Session with an explicit participant scope. Use explicit targets for a narrow peer handoff.',
         error: 'not_authorized'
       }
     }
@@ -3898,7 +3898,7 @@ export class EnsembleOrchestrator {
           this.appendRoundStatus(
             runtime.chatId,
             runtime.roundId,
-            `@-mention: ${participantDisplayName(bossmanMatch.participant)} is Bossman and takes routing priority over advisory participant mentions.`
+            `@-mention: ${participantDisplayName(bossmanMatch.participant)} is Boss and takes routing priority over advisory participant mentions.`
           )
         }
         const seenTagged = new Set<string>()

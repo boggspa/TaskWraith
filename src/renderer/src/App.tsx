@@ -14740,7 +14740,7 @@ function App(): React.JSX.Element {
         (config.allowedParticipantIds === null ||
           config.allowedParticipantIds.includes(bossmanParticipantId as string))
       // Link the goal that is active at session start (if any). When the
-      // Bossman later completes the session and this is still the chat's active
+      // Boss later completes the session and this is still the chat's active
       // goal, that goal is completed too. Unrelated goals are untouched.
       const linkedActiveGoalId =
         currentChat.activeGoal && currentChat.activeGoal.status !== 'completed'

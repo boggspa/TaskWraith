@@ -101,11 +101,11 @@ describe('evaluateBossmanAutoApproval', () => {
     ).toBeNull()
   })
 
-  it('returns null when no Bossman is configured', () => {
+  it('returns null when no Boss is configured', () => {
     expect(evaluateBossmanAutoApproval(makeContext({ bossmanParticipantId: undefined }))).toBeNull()
   })
 
-  it('returns null when the Bossman is no longer in the roster (stale id)', () => {
+  it('returns null when the Boss is no longer in the roster (stale id)', () => {
     expect(
       evaluateBossmanAutoApproval(makeContext({ participantIds: ['worker'] }))
     ).toBeNull()

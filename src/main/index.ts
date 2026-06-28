@@ -27570,7 +27570,7 @@ if (isGeminiMcpBridgeProcess) {
         }
       },
       releaseWriteIntentsForLane: (laneId) => workspaceWriteIntentRegistry.releaseAllForLane(laneId),
-      // A non-Bossman participant that tries to drive `ensemble_bossman_control`
+      // A non-Boss participant that tries to drive `ensemble_bossman_control`
       // is an attempted control escalation — record it to the durable approval
       // ledger (as a policy auto-deny), not just the transcript. Classified under
       // `mcpTools` since the rejected call IS an MCP tool invocation.
@@ -27582,8 +27582,8 @@ if (isGeminiMcpBridgeProcess) {
           rejection.workspacePath,
           {
             method: 'ensemble_bossman_control',
-            title: 'Ensemble Bossman control rejected',
-            body: 'A non-Bossman participant attempted to use ensemble_bossman_control.'
+            title: 'Ensemble Boss control rejected',
+            body: 'A non-Boss participant attempted to use ensemble_bossman_control.'
           },
           'autoDeny',
           'policy',

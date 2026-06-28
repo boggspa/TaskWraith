@@ -33,7 +33,7 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
     .filter((index) => index >= 0)
 
   if (markedIndexes.length > 1) {
-    return { ok: false, error: 'Only one participant may be marked as Bossman.' }
+    return { ok: false, error: 'Only one participant may be marked as Boss.' }
   }
 
   const markedBossmanParticipantId =

@@ -135,7 +135,7 @@ export function useStableMarkdownMediaValue(
  * name + `--provider-*` tint — NOT the per-participant `tokenTotals`/status,
  * which churn on every IPC broadcast). Compared BY VALUE so a no-op broadcast is
  * skipped but a chip refreshes the instant its identity, role, or provider
- * changes (e.g. a Bossman replace/reorder or a roster edit mid-stream).
+ * changes (e.g. a Boss replace/reorder or a roster edit mid-stream).
  *
  * This single predicate gates BOTH `propsAreEqual` and the `ctxRef` swap below,
  * so they can never diverge — a divergence would either skip a render while the

@@ -88,7 +88,7 @@ history, and workspace state stay on your machine throughout.
   dismissed permanently and moved through with explicit carousel controls.
 
 ### Fixed
-- **Ensemble orchestration reliability.** Role and Bossman mention routing now
+- **Ensemble orchestration reliability.** Role and Boss mention routing now
   takes priority over ambiguous provider tags, stale round lifecycle state
   recovers cleanly, and shared-chat invite joins are harder to trip up.
 - **Cursor MCP bridge compatibility.** Cursor and compatible runtimes can use the
@@ -120,9 +120,9 @@ history, and workspace state stay on your machine throughout.
 - **iOS thread rename parity.** Chat renames from the iOS companion sync back to
   the Mac, full titles are preserved across the bridge, and headers/sidebar rows
   avoid unnecessary truncation in rename fields and wide-enough title areas.
-- **iOS Bossman removal.** Roster updates from the iOS companion now distinguish
-  old clients that omit the Bossman marker from current clients explicitly sending
-  `isBossman: false`, so turning Bossman off clears the Mac-side assignment and
+- **iOS Boss removal.** Roster updates from the iOS companion now distinguish
+  old clients that omit the Boss marker from current clients explicitly sending
+  `isBossman: false`, so turning Boss off clears the Mac-side assignment and
   removes the crown instead of preserving the previous participant.
 - **Transcript jump stability.** Message jump targets now converge more reliably
   through virtualized transcript rendering and stay anchored when navigating to a
@@ -245,7 +245,7 @@ history, and workspace state stay on your machine throughout.
   in the transcript, run waveform-backed audio analysis and native single-frame
   video decode, and generate images with a bring-your-own image-API-key UI — all
   over an un-forgeable trusted media channel.
-- **Bossman — ensemble manager.** An opt-in manager that can reorder or replace
+- **Boss — ensemble manager.** An opt-in manager that can reorder or replace
   ensemble participants and drive a shared goal, gated by an auto-approval policy
   with a full audit ledger.
 

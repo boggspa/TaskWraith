@@ -169,7 +169,7 @@ describe('AuditService', () => {
     })
   })
 
-  it('records Bossman auto approvals as request-scoped ledger decisions with participant metadata', () => {
+  it('records Boss auto approvals as request-scoped ledger decisions with participant metadata', () => {
     const { records } = makeDeps()
     const service = new AuditService(
       makeDeps({ recordApprovalLedgerDecision: (input) => records.push(input) }).deps

@@ -1,7 +1,7 @@
 import type { AgenticServiceId } from './store/types'
 
 /**
- * Pure decision core for Bossman Auto Approvals.
+ * Pure decision core for Boss Auto Approvals.
  *
  * Extracted from `index.ts`'s `bossmanAutoApprovalMetadata` so the
  * security-critical gate can be unit-tested in isolation (the index.ts
@@ -31,7 +31,7 @@ export interface BossmanAutoApprovalContext {
   forcePrompt: boolean
   /** The request touches an out-of-workspace path (external-path escape). */
   hasExternalPathDetection: boolean
-  /** The Ensemble's configured Bossman participant id (if any). */
+  /** The Ensemble's configured Boss participant id (if any). */
   bossmanParticipantId: string | undefined
   /** The opt-in auto-approval consent recorded on the ensemble config. */
   autoApprovals: { enabled?: boolean; mode?: string; confirmedAt?: string } | undefined
@@ -45,7 +45,7 @@ export interface BossmanAutoApprovalContext {
 }
 
 /**
- * Returns ledger metadata when a Bossman-managed Ensemble may auto-resolve a
+ * Returns ledger metadata when a Boss-managed Ensemble may auto-resolve a
  * single, preset-limited approval for the requesting participant — or `null`
  * to fall through to a human prompt.
  *
@@ -57,7 +57,7 @@ export interface BossmanAutoApprovalContext {
  *  - only the `shellCommands`/`fileChanges` action classes are in scope
  *    (so MCP-tool / sub-thread / canvas grants are NEVER auto-allowed);
  *  - requires explicit, mode-correct user consent;
- *  - requires both Bossman and the requesting participant to be live roster
+ *  - requires both Boss and the requesting participant to be live roster
  *    members.
  * The returned grant is always request-scoped (the caller passes `'request'`).
  */
@@ -71,10 +71,10 @@ export function evaluateBossmanAutoApproval(
   if (ctx.neverAutoAllow) return null
   // A forced prompt or an external-path escape always reaches the human.
   if (ctx.forcePrompt || ctx.hasExternalPathDetection) return null
-  // Read-only is a ceiling Bossman cannot lift.
+  // Read-only is a ceiling Boss cannot lift.
   if (ctx.readOnly) return null
   // Only file/shell action classes are in scope. MCP-tool, sub-thread, and
-  // canvas grants are deliberately excluded so Bossman can never touch the
+  // canvas grants are deliberately excluded so Boss can never touch the
   // MCP auto-allow surface or YOLO.
   if (ctx.service !== 'shellCommands' && ctx.service !== 'fileChanges') return null
 
@@ -82,7 +82,7 @@ export function evaluateBossmanAutoApproval(
   // Explicit, current user consent is mandatory.
   if (!bossmanParticipantId || autoApprovals?.enabled !== true) return null
   if (autoApprovals.mode !== 'permission_preset_once') return null
-  // Both the Bossman and the acting participant must be live roster members —
+  // Both the Boss and the acting participant must be live roster members —
   // a stale id (replaced/removed mid-round) revokes the grant.
   if (!ctx.participantIds.includes(bossmanParticipantId)) return null
   if (!ctx.targetParticipantId || !ctx.participantIds.includes(ctx.targetParticipantId)) {
@@ -100,6 +100,6 @@ export function evaluateBossmanAutoApproval(
     roundId: ctx.roundId,
     actionClass: ctx.service,
     rationale:
-      'Bossman Auto Approvals enabled by the user; request-scoped approval within participant permission preset and workspace policy.'
+      'Boss Auto Approvals enabled by the user; request-scoped approval within participant permission preset and workspace policy.'
   }
 }

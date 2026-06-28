@@ -603,7 +603,7 @@ export interface EnsembleRoundState {
   orchestrationMode?: EnsembleOrchestrationMode
   continuationHops?: number
   maxContinuationHops?: number
-  /** Bossman captured at round start. Event-bound control commands must
+  /** Boss captured at round start. Event-bound control commands must
    * resolve against this id rather than mutable role/provider labels. */
   bossmanParticipantId?: string
   /** Participant ids present at the start of the round. Used to detect
@@ -856,7 +856,7 @@ export interface EnsembleConfig {
    */
   ensembleContextChars?: number
   participants: EnsembleParticipant[]
-  /** Optional user-designated Ensemble manager. No Bossman is assigned by
+  /** Optional user-designated Ensemble manager. No Boss is assigned by
    * default; controls are rejected unless the active run belongs to this id. */
   bossmanParticipantId?: string
   /** Opt-in auto-approval preference. The current runtime only records and
@@ -995,11 +995,11 @@ export interface WorkSessionConfig {
   /** Designated lead — gets the first speaker slot of every round.
    * Optional; absent = roster-order. */
   leadParticipantId?: string
-  /** Captured from the Ensemble Bossman when a Work Session starts. When set,
+  /** Captured from the Ensemble Boss when a Work Session starts. When set,
    * only this participant may advance or complete the autonomous loop. */
   managerParticipantId?: string
   /** Id of the chat's active Goal at the moment this Work Session was started,
-   * if any. When the Bossman marks the session complete and this still matches
+   * if any. When the Boss marks the session complete and this still matches
    * the chat's current `activeGoal`, that goal is completed too. Unrelated
    * goals (id mismatch, or none) are left untouched. */
   linkedActiveGoalId?: string

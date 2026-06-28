@@ -238,7 +238,7 @@ function formatRoleBoundaryContract(
 
   if (isReviewOrReconLike(participant)) {
     lines.push(
-      '- Review/Recon rule: produce findings, evidence, risks, and acceptance criteria. Do not implement unless the user or Lead/Bossman explicitly assigns implementation to you.'
+      '- Review/Recon rule: produce findings, evidence, risks, and acceptance criteria. Do not implement unless the user or Lead/Boss explicitly assigns implementation to you.'
     )
   } else if (isWorkerLike(participant)) {
     lines.push(
@@ -279,8 +279,8 @@ function formatAuthorityLines(
   const isAuthority = uniqueAuthorityIds.includes(currentParticipantId)
   return [
     isAuthority
-      ? `- Authority rule: you are one of the configured Lead/Bossman/manager seats (${labels}). Coordinate and verify before assigning broad execution.`
-      : `- Authority rule: configured Lead/Bossman/manager seat(s) are ${labels}. Do not override their plan, complete the session, or redirect broad work before they speak or explicitly assign it.`
+      ? `- Authority rule: you are one of the configured Lead/Boss/manager seats (${labels}). Coordinate and verify before assigning broad execution.`
+      : `- Authority rule: configured Lead/Boss/manager seat(s) are ${labels}. Do not override their plan, complete the session, or redirect broad work before they speak or explicitly assign it.`
   ]
 }
 
@@ -352,7 +352,7 @@ function formatWorkSessionStanza(
     }`,
     `Allowed participants: ${allowed}.`,
     ...(lead ? [`Lead: ${formatParticipantScopeName(lead)}.`] : []),
-    ...(manager ? [`Manager/Bossman: ${formatParticipantScopeName(manager)}.`] : []),
+    ...(manager ? [`Manager/Boss: ${formatParticipantScopeName(manager)}.`] : []),
     workSession.linkedActiveGoalId ? `Linked active goal id: ${workSession.linkedActiveGoalId}.` : ''
   ]
     .filter(Boolean)
@@ -688,7 +688,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // is set).
     ...(isFirstSpeaker
       ? [
-          '- You are SPEAKING FIRST in a multi-participant round. Do not complete the whole task on the opening turn. Your default job is to frame the problem, identify ownership, do bounded recon/planning for your own role, and route peer-owned work with @Role or ensemble_yield(target). A normal coding request is not enough by itself to bypass the panel; full implementation, broad shell/file work, and large edits should wait until the relevant Lead/Bossman/user direction or the appropriate worker turn unless the user explicitly asked this participant to execute immediately.'
+          '- You are SPEAKING FIRST in a multi-participant round. Do not complete the whole task on the opening turn. Your default job is to frame the problem, identify ownership, do bounded recon/planning for your own role, and route peer-owned work with @Role or ensemble_yield(target). A normal coding request is not enough by itself to bypass the panel; full implementation, broad shell/file work, and large edits should wait until the relevant Lead/Boss/user direction or the appropriate worker turn unless the user explicitly asked this participant to execute immediately.'
         ]
       : []),
     // 1.0.4-AJ — last-speaker scoping rule. Mirror of the first-

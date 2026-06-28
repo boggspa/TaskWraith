@@ -1261,7 +1261,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_fanout',
       description:
-        'In Ensemble Mode, ask multiple participants to run in parallel lanes and wait for their results. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Bossman/Lead/manager, or an active Work Session with an explicit participant scope. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES and routes writer-capable lanes through workspace write locks.',
+        'In Ensemble Mode, ask multiple participants to run in parallel lanes and wait for their results. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager, or an active Work Session with an explicit participant scope. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES and routes writer-capable lanes through workspace write locks.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1299,7 +1299,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_bossman_control',
       description:
-        'In Ensemble Mode, allows the assigned Bossman participant to make event-bound orchestration decisions: skip/stop participants, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-Bossman callers and stale round/run/participant ids are rejected and audited.',
+        'In Ensemble Mode, allows the assigned Boss participant to make event-bound orchestration decisions: skip/stop participants, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-Boss callers and stale round/run/participant ids are rejected and audited.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,

@@ -525,7 +525,7 @@ export function EnsembleParticipantsAboveRow({
     if (isRoundRunning || !chat.ensemble?.bossmanParticipantId) return
     if (enabled) {
       const confirmed = window.confirm(
-        'Allow Bossman Auto Approvals for this Ensemble? Bossman can only resolve one-shot approvals within the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
+        'Allow Boss Auto Approvals for this Ensemble? Boss can only resolve one-shot approvals within the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
       )
       if (!confirmed) return
     }
@@ -1348,8 +1348,8 @@ function ParticipantChip({
       // participant's detail popover to see linkage state.
       title={
         participant.linkedProviderSessionId
-          ? `${isBossman ? 'Bossman · ' : ''}${getProviderName(participant.provider)} — ${participant.role || 'Participant'} · Linked session: ${participant.linkedProviderSessionId}`
-          : `${isBossman ? 'Bossman · ' : ''}${getProviderName(participant.provider)} — ${participant.role || 'Participant'}`
+          ? `${isBossman ? 'Boss · ' : ''}${getProviderName(participant.provider)} — ${participant.role || 'Participant'} · Linked session: ${participant.linkedProviderSessionId}`
+          : `${isBossman ? 'Boss · ' : ''}${getProviderName(participant.provider)} — ${participant.role || 'Participant'}`
       }
     >
       {/*
@@ -1366,7 +1366,7 @@ function ParticipantChip({
         role="button"
         tabIndex={0}
         aria-pressed={isSelected}
-        aria-label={`${isBossman ? 'Bossman ' : ''}${participant.role || getProviderName(participant.provider)}`}
+        aria-label={`${isBossman ? 'Boss ' : ''}${participant.role || getProviderName(participant.provider)}`}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
@@ -1389,7 +1389,7 @@ function ParticipantChip({
           className="ensemble-above-chip-role"
           title={
             isBossman
-              ? `Bossman — ${participant.role || getProviderName(participant.provider)}`
+              ? `Boss — ${participant.role || getProviderName(participant.provider)}`
               : participant.role || getProviderName(participant.provider)
           }
         >
@@ -1648,7 +1648,7 @@ export function EnsembleParticipantOverflowPopover({
         transform: 'translateY(-100%)'
       }}
       role="dialog"
-      aria-label={`Edit ${isBossman ? 'Bossman ' : ''}${getProviderName(participant.provider)} role and enabled state`}
+      aria-label={`Edit ${isBossman ? 'Boss ' : ''}${getProviderName(participant.provider)} role and enabled state`}
     >
       <label className="ensemble-above-overflow-enable">
         <input
@@ -1668,15 +1668,15 @@ export function EnsembleParticipantOverflowPopover({
         />
         <span className="ensemble-above-overflow-bossman-label">
           <BossmanCrownIcon className="ensemble-above-overflow-crown" />
-          Bossman
+          Boss
         </span>
       </label>
       <label
         className={`ensemble-above-overflow-auto-approval${!isBossman ? ' is-disabled' : ''}`}
         title={
           isBossman
-            ? 'Allow Bossman to resolve preset-limited one-shot approvals.'
-            : 'Assign this participant as Bossman before enabling auto approvals.'
+            ? 'Allow Boss to resolve preset-limited one-shot approvals.'
+            : 'Assign this participant as Boss before enabling auto approvals.'
         }
       >
         <input

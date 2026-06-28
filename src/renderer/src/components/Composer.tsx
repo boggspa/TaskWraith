@@ -1416,7 +1416,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     if (!currentChat.ensemble?.bossmanParticipantId) return
                                     if (enabled) {
                                       const confirmed = window.confirm(
-                                        'Allow Bossman Auto Approvals for this Ensemble? Bossman can only resolve one-shot approvals within the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
+                                        'Allow Boss Auto Approvals for this Ensemble? Boss can only resolve one-shot approvals within the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
                                       )
                                       if (!confirmed) return
                                     }

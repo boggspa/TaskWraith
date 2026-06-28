@@ -4,7 +4,7 @@ import { resolveRosterUpdateBossmanAssignment } from './EnsembleRosterUpdate'
 const participants = [{ id: 'claude' }, { id: 'codex' }, { id: 'kimi' }]
 
 describe('resolveRosterUpdateBossmanAssignment', () => {
-  it('clears an existing Bossman when the roster explicitly sends all false markers', () => {
+  it('clears an existing Boss when the roster explicitly sends all false markers', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [{ isBossman: false }, { isBossman: false }, { isBossman: false }],
       participants,
@@ -21,7 +21,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     expect(result).toEqual({ ok: true })
   })
 
-  it('preserves an existing Bossman when a legacy roster omits the marker entirely', () => {
+  it('preserves an existing Boss when a legacy roster omits the marker entirely', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [{}, {}, {}],
       participants,
@@ -42,7 +42,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     })
   })
 
-  it('moves Bossman to the single true marker and drops stale auto-approval consent', () => {
+  it('moves Boss to the single true marker and drops stale auto-approval consent', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [{ isBossman: false }, { isBossman: true }, { isBossman: false }],
       participants,
@@ -63,7 +63,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     })
   })
 
-  it('rejects multiple Bossman markers', () => {
+  it('rejects multiple Boss markers', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [{ isBossman: true }, { isBossman: true }, { isBossman: false }],
       participants,
@@ -72,7 +72,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
 
     expect(result).toEqual({
       ok: false,
-      error: 'Only one participant may be marked as Bossman.'
+      error: 'Only one participant may be marked as Boss.'
     })
   })
 })

@@ -4459,7 +4459,7 @@ struct RosterChipEditor: View {
                     Toggle("Enabled in ensemble rounds", isOn: $entry.enabled)
                         .tint(TWTheme.providerAccent(entry.provider))
                     Toggle(isOn: $entry.isBossman) {
-                        Label("Bossman", systemImage: entry.isBossman ? "crown.fill" : "crown")
+                        Label("Boss", systemImage: entry.isBossman ? "crown.fill" : "crown")
                     }
                     .tint(.yellow)
                 }

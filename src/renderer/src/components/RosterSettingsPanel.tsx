@@ -365,10 +365,10 @@ function RosterParticipantRow({
             type="button"
             className={`settings-roster-bossman${isBossman ? ' is-active' : ''}`}
             onClick={() => onSetBossman(isBossman ? undefined : participant.id)}
-            title={isBossman ? 'Clear Bossman' : 'Set as Bossman'}
+            title={isBossman ? 'Clear Boss' : 'Set as Boss'}
             aria-pressed={isBossman}
           >
-            Bossman
+            Boss
           </button>
           <button
             type="button"

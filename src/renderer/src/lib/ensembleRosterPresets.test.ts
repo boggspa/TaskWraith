@@ -166,7 +166,7 @@ describe('ensembleRosterPresets — capture + materialize', () => {
     )
   })
 
-  it('round-trips exactly one Bossman marker through snapshot materialization', () => {
+  it('round-trips exactly one Boss marker through snapshot materialization', () => {
     const preset = buildEnsembleRosterPresetFromConfig(
       'Boss panel',
       {

@@ -180,7 +180,7 @@ export function handleEnsembleContinue(
     return {
       ok: false,
       status: 'active',
-      message: `ensemble_continue: this Work Session is managed by Bossman participant ${workSession.managerParticipantId}. Other participants may report findings, but cannot advance or complete the autonomous loop.`,
+      message: `ensemble_continue: this Work Session is managed by Boss participant ${workSession.managerParticipantId}. Other participants may report findings, but cannot advance or complete the autonomous loop.`,
       queued: false,
       error: 'work_session_manager_required'
     }

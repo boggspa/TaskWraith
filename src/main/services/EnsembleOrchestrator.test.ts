@@ -2581,7 +2581,7 @@ Next action:
     expect(skipMessage?.metadata?.ensembleProvider).toBe('claude')
   })
 
-  it('lets Bossman skip a pending participant without dispatching them', async () => {
+  it('lets Boss skip a pending participant without dispatching them', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     const harness = makeHarness({ initialChat })
@@ -2618,7 +2618,7 @@ Next action:
     expect(harness.dispatched).toHaveLength(1)
   })
 
-  it('rejects Bossman control from non-Bossman callers and stale round ids', async () => {
+  it('rejects Boss control from non-Boss callers and stale round ids', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     const harness = makeHarness({ initialChat })
@@ -2657,7 +2657,7 @@ Next action:
     expect(rejected.error).toBe('not_bossman')
   })
 
-  it('audits a non-Bossman control attempt to the durable ledger', async () => {
+  it('audits a non-Boss control attempt to the durable ledger', async () => {
     const rejections: Array<{ metadata: Record<string, unknown> }> = []
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
@@ -2870,7 +2870,7 @@ Next action:
     expect(second.error).toBe('reorder_cooldown')
   })
 
-  it('completes a linked active goal when Bossman completes the managed Work Session', async () => {
+  it('completes a linked active goal when Boss completes the managed Work Session', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.workSession = buildWorkSession({
@@ -4818,7 +4818,7 @@ Next action:
     })
   })
 
-  it('routes Bossman before advisory worker mentions in the same assistant output', async () => {
+  it('routes Boss before advisory worker mentions in the same assistant output', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex-lead'
@@ -4889,7 +4889,7 @@ Next action:
       messages.some(
         (content) =>
           typeof content === 'string' &&
-          content.includes('Bossman') &&
+          content.includes('Boss') &&
           content.includes('takes routing priority')
       )
     ).toBe(true)
@@ -5638,7 +5638,7 @@ Next action:
     expect(result.laneIds).toHaveLength(2)
   })
 
-  it('1.0.8: ensemble_fanout allows broad fanout from Bossman', async () => {
+  it('1.0.8: ensemble_fanout allows broad fanout from Boss', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.bossmanParticipantId = 'codex'
     harness.chat.ensemble!.participants = [

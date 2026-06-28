@@ -462,7 +462,7 @@ export interface BridgeRosterParticipant {
   fastModeEnabled?: boolean
   /** Kimi K2 thinking toggle. */
   thinkingEnabled?: boolean
-  /** Optional per-roster marker. Exactly one true value assigns Bossman. */
+  /** Optional per-roster marker. Exactly one true value assigns Boss. */
   isBossman?: boolean
 }
 

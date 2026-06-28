@@ -312,10 +312,10 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('Add Ensemble participant')
   })
 
-  // Bossman — a gold crown renders before the assigned participant's role,
-  // and "Bossman" is woven into the chip's accessible name/title. The crown
+  // Boss — a gold crown renders before the assigned participant's role,
+  // and "Boss" is woven into the chip's accessible name/title. The crown
   // glyph itself is decorative (aria-hidden).
-  it('renders a Bossman crown on the assigned participant only', () => {
+  it('renders a Boss crown on the assigned participant only', () => {
     const chat = makeChat([
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
       makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })
@@ -329,16 +329,16 @@ describe('EnsembleParticipantsAboveRow', () => {
         onChatChange={() => undefined}
       />
     )
-    // Exactly one crown, on the Bossman chip.
+    // Exactly one crown, on the Boss chip.
     const crownHits = html.match(/ensemble-above-chip-crown/g) || []
     expect(crownHits.length).toBe(1)
-    // "Bossman" appears in the accessible name (aria-label) of the chip.
-    expect(html).toContain('aria-label="Bossman Explorer"')
+    // "Boss" appears in the accessible name (aria-label) of the chip.
+    expect(html).toContain('aria-label="Boss Explorer"')
     // The crown glyph is decorative.
     expect(html).toContain('aria-hidden="true"')
   })
 
-  it('renders no crown when no Bossman is assigned', () => {
+  it('renders no crown when no Boss is assigned', () => {
     const chat = makeChat([
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
       makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })
@@ -352,6 +352,6 @@ describe('EnsembleParticipantsAboveRow', () => {
       />
     )
     expect(html).not.toContain('ensemble-above-chip-crown')
-    expect(html).not.toContain('Bossman')
+    expect(html).not.toContain('Boss')
   })
 })
