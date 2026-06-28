@@ -78,6 +78,23 @@ describe('SharesPanelView', () => {
     expect(html).toContain('Stop sharing')
   })
 
+  it('renders a copy invite control when a handler is supplied', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare()]}
+        chatTitles={{ 'chat-1': 'Design review' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        onCopyInvite={() => {}}
+        now={NOW}
+      />
+    )
+    expect(html).toContain('shares-panel-copy-invite')
+    expect(html).toContain('Copy invite')
+    expect(html).toContain('aria-label="Copy a fresh invite for Design review"')
+  })
+
   it('marks a share as live when its chat has a connected collaborator session', () => {
     const html = renderToStaticMarkup(
       <SharesPanelView

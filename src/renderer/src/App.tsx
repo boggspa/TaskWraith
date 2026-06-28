@@ -11,6 +11,7 @@ import { readComposerDrafts, writeComposerDrafts } from './lib/composerDraftStor
 import { resolveSessionLinkRouting } from './lib/participantSessionLink'
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
 import { resolveSlashParticipantForChat } from './lib/resolveSlashParticipant'
+import { buildHumanCollaborationInvitePayload } from './lib/humanCollaborationInvitePayload'
 import {
   applyScheduledEnsembleSnapshot,
   buildScheduledEnsembleSnapshot
@@ -1071,42 +1072,22 @@ function App(): React.JSX.Element {
   // out-of-band invite payload. Used by both "Share this chat" (current chat)
   // and "New Shared Chat" (a freshly-created chat).
   const shareChatIdAndCopyInvite = useCallback(
-    async (chatId: string): Promise<void> => {
+    async (
+      chatId: string,
+      options: {
+        mode?: HumanCollaborationShare['mode']
+        actionLabel?: 'created' | 'refreshed'
+      } = {}
+    ): Promise<void> => {
       if (typeof window.api.humanCollaborationCreateShare !== 'function') return
       try {
-        const result = await window.api.humanCollaborationCreateShare({ chatId, mode: 'comments' })
+        const result = await window.api.humanCollaborationCreateShare({
+          chatId,
+          mode: options.mode || 'comments'
+        })
         refreshHumanCollaborationShares()
-        const relayUrls = Array.from(
-          new Set(
-            [
-              ...(Array.isArray(result.relayUrls) ? result.relayUrls : []),
-              result.relayUrl
-            ].filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
-          )
-        )
-        const invitePayload = JSON.stringify(
-          {
-            type: 'taskwraith-human-collaboration-invite',
-            v: 1,
-            protocol: 'taskwraith-human-collaboration-v1',
-            shareId: result.share.shareId,
-            chatId: result.share.chatId,
-            inviteId: result.invite.inviteId,
-            inviteToken: result.inviteToken,
-            mode: result.share.mode,
-            createdAt: result.invite.createdAt,
-            requiresOutOfBandSas: true,
-            expiresAt: result.invite.expiresAt,
-            // Transport coordinates the collaborator dials, + the host identity
-            // key to pin (Crypto-F2). relayUrl is '' when remote access is off.
-            relayUrl: result.relayUrl,
-            relayUrls,
-            roomId: result.roomId,
-            hostIdentityPubKeyB64: result.hostIdentityPubKeyB64
-          },
-          null,
-          2
-        )
+        const { payload: invitePayload, relayUrls, relayWarning } =
+          buildHumanCollaborationInvitePayload(result)
         let copied = false
         let copyError: unknown = null
         if (typeof window.api.humanCollaborationCopyInvite === 'function') {
@@ -1123,15 +1104,16 @@ function App(): React.JSX.Element {
           }
           await navigator.clipboard.writeText(invitePayload)
         }
-        const relayWarning =
-          typeof result.relayWarning === 'string' && result.relayWarning.trim().length > 0
-            ? `\n\n${result.relayWarning.trim()}`
-            : ''
+        const warningSuffix = relayWarning ? `\n\n${relayWarning}` : ''
+        const successPrefix =
+          options.actionLabel === 'refreshed'
+            ? 'Fresh People invite copied.'
+            : 'People invite copied.'
         window.alert(
           (relayUrls.length > 0
-            ? 'People invite copied. Share it out of band with the collaborator.'
-            : 'People invite copied — but remote access is OFF, so collaborators cannot connect yet. Enable remote access in Settings, then create a new invite.') +
-            relayWarning
+            ? `${successPrefix} Share it out of band with the collaborator.`
+            : `${successPrefix} Remote access is OFF, so collaborators cannot connect yet. Enable remote access in Settings, then create a new invite.`) +
+            warningSuffix
         )
       } catch (error) {
         console.error('[human-collaboration] create share failed', error)
@@ -1141,11 +1123,28 @@ function App(): React.JSX.Element {
     },
     [refreshHumanCollaborationShares]
   )
+  const currentChatHumanCollaborationShare = useMemo(() => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return null
+    return (
+      humanCollaborationShares.find(
+        (share) => share?.enabled !== false && share.chatId === chatId
+      ) || null
+    )
+  }, [currentChat?.appChatId, humanCollaborationShares])
   const handleCreateHumanCollaborationShare = useCallback(() => {
     const chatId = currentChat?.appChatId
     if (!chatId) return
     void shareChatIdAndCopyInvite(chatId)
   }, [currentChat?.appChatId, shareChatIdAndCopyInvite])
+  const handleCopyCurrentHumanCollaborationInvite = useCallback(() => {
+    const share = currentChatHumanCollaborationShare
+    if (!share) return
+    void shareChatIdAndCopyInvite(share.chatId, {
+      mode: share.mode,
+      actionLabel: 'refreshed'
+    })
+  }, [currentChatHumanCollaborationShare, shareChatIdAndCopyInvite])
   // Host-side "Stop sharing": revoke every enabled share on the current chat
   // (audit finding L6-1 — the revoke bridge existed with no renderer caller).
   // Confirm first, then revoke each enabled share and re-derive the shared set.
@@ -22381,6 +22380,17 @@ function App(): React.JSX.Element {
                       <span className="human-collaboration-live-dot" aria-label="Shared" />
                     )}
                   </button>
+                  {currentChatHumanCollaborationShare && (
+                    <button
+                      type="button"
+                      className="human-collaboration-people-btn"
+                      onClick={handleCopyCurrentHumanCollaborationInvite}
+                      title="Copy a fresh collaborator invite"
+                      style={{ marginInlineStart: 6 }}
+                    >
+                      Copy invite
+                    </button>
+                  )}
                   {collaboratingChatIds.has(currentChat.appChatId) && (
                     <button
                       type="button"

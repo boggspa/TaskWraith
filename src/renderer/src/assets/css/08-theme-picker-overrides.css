@@ -890,6 +890,25 @@
   cursor: pointer;
   transition: background 100ms ease;
 }
+.shares-panel-copy-invite {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: color-mix(in srgb, var(--accent) 86%, var(--text-primary));
+  font: inherit;
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 5px 11px;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.shares-panel-copy-invite:hover,
+.shares-panel-copy-invite:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  outline: none;
+}
 .shares-panel-revoke:hover,
 .shares-panel-revoke:focus-visible {
   background: color-mix(in srgb, var(--danger, #e2554f) 20%, transparent);

@@ -3,6 +3,7 @@ import type {
   HumanCollaborationShare,
   HumanCollaboratorParticipant
 } from '../../../main/collaboration/HumanCollaborationStore'
+import { buildHumanCollaborationInvitePayload } from '../lib/humanCollaborationInvitePayload'
 
 /**
  * SharesPanel — Settings → Shares.
@@ -39,6 +40,7 @@ export function SharesPanelView({
   error,
   connectedChatIds,
   onRevoke,
+  onCopyInvite,
   onRevokeParticipant,
   now
 }: {
@@ -48,6 +50,7 @@ export function SharesPanelView({
   error: string | null
   connectedChatIds?: Set<string>
   onRevoke: (shareId: string) => void
+  onCopyInvite?: (share: HumanCollaborationShare) => void
   onRevokeParticipant?: (shareId: string, collaboratorId: string) => void
   // The "current time" for open-invite expiry, supplied by the container so the
   // view stays a pure function of its props (no clock read during render).
@@ -108,6 +111,16 @@ export function SharesPanelView({
                     {shareModeLabel(share.mode)} · {isConnected ? 'Live' : 'Not connected'}
                   </span>
                 </div>
+                {onCopyInvite && (
+                  <button
+                    type="button"
+                    className="shares-panel-copy-invite"
+                    onClick={() => onCopyInvite(share)}
+                    aria-label={`Copy a fresh invite for ${title}`}
+                  >
+                    Copy invite
+                  </button>
+                )}
                 <button
                   type="button"
                   className="shares-panel-revoke"
@@ -273,6 +286,50 @@ export function SharesPanel() {
     [refresh]
   )
 
+  const handleCopyInvite = useCallback(
+    (share: HumanCollaborationShare) => {
+      if (typeof window.api.humanCollaborationCreateShare !== 'function') return
+      void window.api
+        .humanCollaborationCreateShare({ chatId: share.chatId, mode: share.mode })
+        .then(async (result) => {
+          const { payload, relayUrls, relayWarning } =
+            buildHumanCollaborationInvitePayload(result)
+          let copied = false
+          let copyError: unknown = null
+          if (typeof window.api.humanCollaborationCopyInvite === 'function') {
+            try {
+              await window.api.humanCollaborationCopyInvite({ invite: payload })
+              copied = true
+            } catch (error) {
+              copyError = error
+            }
+          }
+          if (!copied) {
+            if (!navigator.clipboard?.writeText) {
+              throw copyError instanceof Error
+                ? copyError
+                : new Error('Clipboard is not available.')
+            }
+            await navigator.clipboard.writeText(payload)
+          }
+          const warningSuffix = relayWarning ? `\n\n${relayWarning}` : ''
+          window.alert(
+            (relayUrls.length > 0
+              ? 'Fresh People invite copied. Share it out of band with the collaborator.'
+              : 'Fresh People invite copied. Remote access is OFF, so collaborators cannot connect yet. Enable remote access in Devices, then create a new invite.') +
+              warningSuffix
+          )
+          refresh()
+        })
+        .catch((error) => {
+          console.error('[human-collaboration] copy invite failed', error)
+          setError('Could not copy invite.')
+          refresh()
+        })
+    },
+    [refresh]
+  )
+
   return (
     <SharesPanelView
       shares={shares}
@@ -280,6 +337,7 @@ export function SharesPanel() {
       loading={loading}
       error={error}
       onRevoke={handleRevoke}
+      onCopyInvite={handleCopyInvite}
       onRevokeParticipant={handleRevokeParticipant}
       connectedChatIds={connectedChatIds}
       now={now}
