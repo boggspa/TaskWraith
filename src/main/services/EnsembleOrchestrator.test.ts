@@ -219,6 +219,7 @@ function makeHarness(
     cancelWakeupTimer?: (wakeupId: string) => void
     persistSessionCheckpoint?: (chat: ChatRecord, reason: string) => void
     completeSessionCheckpoint?: (chatId: string, roundId: string, status: string) => void
+    nowIso?: () => string
     recordUsage?: (entry: Omit<UsageRecord, 'id' | 'timestamp'>) => void
     recordBossmanControlRejection?: (rejection: {
       provider: string
@@ -252,7 +253,7 @@ function makeHarness(
     cancelRun,
     createRunId: (provider) => `${provider}-run-${++counter}`,
     now: () => counter,
-    nowIso: () => `2026-05-24T00:00:0${counter}.000Z`,
+    nowIso: options.nowIso ?? (() => `2026-05-24T00:00:0${counter}.000Z`),
     ...(probeParticipant ? { probeParticipant } : {}),
     ...(options.scheduleWakeupTimer ? { scheduleWakeupTimer: options.scheduleWakeupTimer } : {}),
     ...(options.cancelWakeupTimer ? { cancelWakeupTimer: options.cancelWakeupTimer } : {}),
@@ -3399,6 +3400,55 @@ Next action:
     expect(participantMessages.map((m) => m.role)).toEqual(['assistant', 'tool', 'assistant'])
     expect(participantMessages[0].content).toContain('Let me read the file first.')
     expect(participantMessages[2].content).toContain('Found it')
+  })
+
+  it('preserves ensemble transcript row timestamps across streaming re-flushes', async () => {
+    let tick = 0
+    const harness = makeHarness({
+      nowIso: () => new Date(Date.UTC(2026, 4, 24, 0, 0, tick++)).toISOString()
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Stream a growing answer.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const route = {
+      appRunId: harness.dispatched[0].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: 'First chunk.'
+    })
+    await vi.waitFor(() => {
+      expect(
+        harness.chat.messages.find(
+          (message) => message.id === `ensemble-content-${route.appRunId}-0`
+        )?.content
+      ).toContain('First chunk.')
+    })
+    const first = harness.chat.messages.find(
+      (message) => message.id === `ensemble-content-${route.appRunId}-0`
+    )
+    expect(first?.timestamp).toBeTruthy()
+
+    harness.orchestrator.handleProviderOutput('claude', route, {
+      type: 'content',
+      text: ' Second chunk.'
+    })
+    await vi.waitFor(() => {
+      expect(
+        harness.chat.messages.find(
+          (message) => message.id === `ensemble-content-${route.appRunId}-0`
+        )?.content
+      ).toContain('Second chunk.')
+    })
+    const updated = harness.chat.messages.find(
+      (message) => message.id === `ensemble-content-${route.appRunId}-0`
+    )
+    expect(updated?.timestamp).toBe(first?.timestamp)
   })
 
   it('persists real write_file line stats for ensemble tool activities', async () => {

@@ -4696,6 +4696,7 @@ export class EnsembleOrchestrator {
     if (!chat?.ensemble) return
     const timestamp = this.deps.nowIso()
     let messages = [...chat.messages]
+    const existingMessageById = new Map(messages.map((message) => [message.id, message]))
 
     // Timeline-driven materialisation. Each entry in `run.timeline`
     // becomes a message in the transcript, preserving the speak →
@@ -4720,11 +4721,12 @@ export class EnsembleOrchestrator {
         desiredIds.add(id)
         const content = stripPseudoSystemYieldLines(entry.text)
         if (!content.trim()) continue
+        const previous = existingMessageById.get(id)
         desiredMessages.push({
           id,
           role: 'assistant',
           content,
-          timestamp,
+          timestamp: previous?.timestamp || timestamp,
           runId: run.runId,
           metadata: {
             kind: 'ensembleParticipant',
@@ -4757,11 +4759,12 @@ export class EnsembleOrchestrator {
         desiredIds.add(id)
         const activity = run.toolActivities?.find((a) => a.id === entry.toolId)
         if (!activity) continue
+        const previous = existingMessageById.get(id)
         desiredMessages.push({
           id,
           role: 'tool',
           content: '',
-          timestamp,
+          timestamp: previous?.timestamp || timestamp,
           runId: run.runId,
           toolActivities: [activity],
           metadata: {
@@ -4816,11 +4819,12 @@ export class EnsembleOrchestrator {
       if (!stamped) {
         const id = timelineMessageId(run.runId, timeline.length, 'content')
         desiredIds.add(id)
+        const previous = existingMessageById.get(id)
         desiredMessages.push({
           id,
           role: 'assistant',
           content: '',
-          timestamp,
+          timestamp: previous?.timestamp || timestamp,
           runId: run.runId,
           metadata: {
             kind: 'ensembleParticipant',
@@ -4889,11 +4893,12 @@ export class EnsembleOrchestrator {
       // (defensive — we filtered timeline messages above but the
       // status card has its own id namespace).
       const existingStatusIdx = messages.findIndex((m) => m.id === statusId)
+      const previousStatus = existingStatusIdx >= 0 ? messages[existingStatusIdx] : null
       const statusMsg: ChatMessage = {
         id: statusId,
         role: 'system',
         content: statusLine,
-        timestamp,
+        timestamp: previousStatus?.timestamp || timestamp,
         runId: run.runId,
         metadata: {
           kind: 'ensembleParticipantStatus',
