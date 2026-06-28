@@ -25151,7 +25151,14 @@ if (isGeminiMcpBridgeProcess) {
         if (!authorizedImagePreviewPaths.has(real)) return null
         const stat = await fs.lstat(real)
         if (!stat.isFile() || stat.size > IMAGE_PREVIEW_MAX_BYTES) return null
-        const img = nativeImage.createFromPath(real)
+        let img = nativeImage.createFromPath(real)
+        if (img.isEmpty()) {
+          try {
+            img = nativeImage.createFromBuffer(await fs.readFile(real))
+          } catch {
+            return null
+          }
+        }
         if (img.isEmpty()) return null
         // Downscale tall images so a big screenshot isn't a multi-MB base64.
         const thumb = img.getSize().height > 320 ? img.resize({ height: 320 }) : img

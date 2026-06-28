@@ -5375,6 +5375,33 @@
   border: 0;
 }
 
+.composer-image-thumb-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.025)),
+    color-mix(in srgb, var(--panel-bg) 82%, transparent);
+  color: var(--text-secondary);
+}
+
+.composer-image-thumb-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.18);
+  color: color-mix(in srgb, var(--text-primary) 76%, var(--text-secondary));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
 .composer-attachment-icon {
   width: 24px;
   height: 24px;

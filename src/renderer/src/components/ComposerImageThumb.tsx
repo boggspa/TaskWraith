@@ -11,6 +11,12 @@ interface ComposerImageThumbProps {
   name: string
 }
 
+const fallbackLabelForImage = (name: string, path: string): string => {
+  const value = name || path
+  const match = /\.([a-z0-9]{2,5})(?:[?#].*)?$/i.exec(value)
+  return (match?.[1] || 'IMG').slice(0, 5).toUpperCase()
+}
+
 /**
  * Thumbnail for a composer image attachment. The renderer can't show a raw
  * `file://` path (non-file origin + webSecurity blocks it — the old
@@ -44,14 +50,18 @@ export function ComposerImageThumb({ path, name }: ComposerImageThumbProps): Rea
   }, [path])
 
   if (!src) {
-    // Neutral fill while the data URL loads (or if the format can't be decoded).
+    // Visible placeholder while the data URL loads, or when native preview
+    // decoding can't handle the user's format (common for phone-origin HEIC).
     return (
       <span
-        className="composer-image-thumb"
-        style={{ background: 'rgba(127, 127, 127, 0.18)' }}
+        className="composer-image-thumb composer-image-thumb-fallback"
         role="img"
         aria-label={name}
-      />
+      >
+        <span className="composer-image-thumb-glyph" aria-hidden="true">
+          {fallbackLabelForImage(name, path)}
+        </span>
+      </span>
     )
   }
   return <img src={src} alt={name} className="composer-image-thumb" draggable={false} />
