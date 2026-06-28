@@ -379,25 +379,14 @@
 }
 
 /* ──────────────────────────────────────────────────────────────
- * 1.0.4-AQ4 — per-message Copy + Delete action chip
+ * 1.0.4-AQ4 / 1.6.7 — per-message action chip
  *
- * Hover-revealed group anchored to the top-right of each bubble.
- * Two icon-only buttons; Copy = clipboard write, Delete = remove
- * from transcript (host gates with confirm()).
- *
- * Sits at the bubble corner via `position: absolute` over the
- * existing `position: relative` bubble base. Hidden by default
- * (`opacity: 0` + `pointer-events: none`) and revealed when the
- * bubble itself is hovered or any child is focused — keeps the
- * resting transcript clean while remaining discoverable.
- *
- * The user-bubble variant rounds its corner to follow the bubble
- * tail; the assistant variant gets a neutral pill.
+ * Icon-only action group used by transcript footers and a handful of
+ * structured cards. It is intentionally static/inline now; the old
+ * absolute bubble overlay made long assistant messages feel crowded and
+ * hid the affordance until hover.
  * ────────────────────────────────────────────────────────────── */
 .message-actions-chip {
-  position: absolute;
-  top: 6px;
-  right: 6px;
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -405,15 +394,13 @@
   background: color-mix(in srgb, var(--surface-1, rgba(0, 0, 0, 0.6)) 88%, transparent);
   border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
   border-radius: 999px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease, transform 120ms ease;
+  opacity: 0.72;
+  pointer-events: auto;
+  transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease;
   z-index: 2;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
 }
-.message-bubble:hover .message-actions-chip,
-.message-bubble:focus-within .message-actions-chip,
 .provider-run-failure-card:hover .message-actions-chip,
 .provider-run-failure-card:focus-within .message-actions-chip,
 .subthread-return-card:hover .message-actions-chip,
@@ -421,7 +408,6 @@
 .message-actions-chip:hover,
 .message-actions-chip:focus-within {
   opacity: 1;
-  pointer-events: auto;
 }
 .message-actions-chip-button {
   display: inline-flex;

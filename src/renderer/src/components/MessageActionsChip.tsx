@@ -1,8 +1,7 @@
 /**
- * 1.0.4-AQ4 — small Copy + Delete action group rendered inside
- * each message bubble. Visible only on hover via CSS
- * (`.message-bubble:hover .message-actions-chip`). Two icon-only
- * buttons:
+ * 1.0.4-AQ4 — small message action group. Initially rendered as a
+ * hover-only bubble overlay; now used as the inline footer action row
+ * under transcript messages too. Icon-only buttons:
  *   • Copy — writes the bubble's content to the clipboard via the
  *     `onCopy` callback (host calls `navigator.clipboard.writeText`).
  *   • Delete — calls the `onDelete` callback (host gates with

@@ -583,8 +583,8 @@
 
 /* --- Raw events: Copy/Clear pill (1.4.1) ----------------------------- */
 /* Reuses the transcript `message-actions-chip-button` visual language,
- * but the container is statically positioned and always visible (the
- * message chip is absolute + hover-revealed). */
+ * with its own container because raw-events actions sit in the inspector
+ * chrome rather than the transcript message footer. */
 .app-inspector .raw-events-actions-chip {
   display: inline-flex;
   align-items: center;

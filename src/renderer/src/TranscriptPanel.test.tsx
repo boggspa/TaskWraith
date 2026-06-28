@@ -313,6 +313,38 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(countBlocks(html)).toBeLessThan(40)
   })
 
+  it('renders timestamps and message actions in a footer below each standard bubble', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'user-footer',
+              role: 'user',
+              content: 'Footer source text',
+              timestamp: '2026-01-01T14:25:00.000Z'
+            }
+          ],
+          onTogglePinMessage: () => {},
+          onOpenSideChatFromMessage: () => {}
+        })}
+      />
+    )
+
+    const bubbleIndex = html.indexOf('message-bubble user')
+    const footerIndex = html.indexOf('message-footer message-footer-end')
+
+    expect(bubbleIndex).toBeGreaterThan(-1)
+    expect(footerIndex).toBeGreaterThan(bubbleIndex)
+    expect(html).toContain('class="message-footer-time"')
+    expect(html).toContain('2026-01-01T14:25:00.000Z')
+    expect(html).toContain('Copy user message content')
+    expect(html).toContain('Pin user message')
+    expect(html).toContain('Open side chat from user message')
+    expect(html).toContain('Delete user message')
+  })
+
   it('renders a run-result side chat action when the current run is complete', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel

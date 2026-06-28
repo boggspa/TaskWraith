@@ -281,6 +281,82 @@ function escapeDomSelectorValue(value: string): string {
     : value.replace(/["\\]/g, '\\$&')
 }
 
+function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
+  dateTime: string
+  label: string
+  title: string
+} | null {
+  const raw = typeof timestamp === 'string' ? timestamp.trim() : ''
+  if (!raw) return null
+  const date = new Date(raw)
+  if (!Number.isFinite(date.getTime())) return null
+
+  return {
+    dateTime: raw,
+    label: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    title: date.toLocaleString([], {
+      dateStyle: 'medium',
+      timeStyle: 'medium'
+    })
+  }
+}
+
+function TranscriptMessageFooter({
+  message,
+  label,
+  copyContent,
+  align,
+  onCopyMessage,
+  onTogglePinMessage,
+  onDeleteMessage,
+  onOpenSideChatFromMessage,
+  pinned,
+  copied
+}: {
+  message: ChatMessage
+  label: string
+  copyContent?: string
+  align: 'start' | 'end'
+  onCopyMessage: (messageId: string, content: string) => void
+  onTogglePinMessage?: (messageId: string) => void
+  onDeleteMessage?: (messageId: string) => void
+  onOpenSideChatFromMessage?: (message: ChatMessage) => void
+  pinned: boolean
+  copied: boolean
+}): React.JSX.Element | null {
+  const timestamp = formatTranscriptMessageFooterTime(message.timestamp)
+  const hasActionContent = copyContent !== undefined
+
+  if (!timestamp && !hasActionContent) return null
+
+  return (
+    <div className={`message-footer message-footer-${align}`}>
+      {hasActionContent && (
+        <MessageActionsChip
+          onCopy={() => onCopyMessage(message.id, copyContent)}
+          onTogglePin={onTogglePinMessage ? () => onTogglePinMessage(message.id) : undefined}
+          onDelete={onDeleteMessage ? () => onDeleteMessage(message.id) : undefined}
+          onOpenSideChat={
+            onOpenSideChatFromMessage ? () => onOpenSideChatFromMessage(message) : undefined
+          }
+          pinned={pinned}
+          copied={copied}
+          label={label}
+        />
+      )}
+      {timestamp && (
+        <time
+          className="message-footer-time"
+          dateTime={timestamp.dateTime}
+          title={timestamp.title}
+        >
+          {timestamp.label}
+        </time>
+      )}
+    </div>
+  )
+}
+
 /**
  * 1.0.6-TV1 — In-house transcript windowing glue (renderer side).
  *
@@ -1301,12 +1377,34 @@ export const TranscriptPanel = memo(
             const isReturnCard = isSubThreadReturnMessage(msg)
             const isGuestReply = isGuestParticipantReplyMessage(msg)
             const isCollaboratorComment = isHumanCollaboratorComment(msg)
+            const isToolActivityStack = msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0
+            const isParticipantHealth = msg.metadata?.kind === 'ensembleParticipantHealth'
+            const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
             const collaboratorMeta = isCollaboratorComment ? humanCollaboratorMetadata(msg) : null
             const boundaryRun = displayRunBoundaryByMessageId.get(msg.id)
             const isSideChatSeedMessage = Boolean(
               sideChatSeedMessageId && msg.id === sideChatSeedMessageId
             )
             const isPinned = typeof msg.metadata?.pinnedAt === 'number'
+            const footerCopyContent =
+              !isDelegationCard &&
+              !isReturnCard &&
+              !isToolActivityStack &&
+              !isParticipantHealth &&
+              !isProviderRunFailure &&
+              typeof msg.content === 'string'
+                ? msg.content
+                : undefined
+            const footerLabel =
+              msg.role === 'user'
+                ? 'user message'
+                : isGuestReply
+                  ? 'guest participant message'
+                  : isCollaboratorComment
+                    ? 'collaborator message'
+                    : msg.role === 'tool'
+                      ? 'tool message'
+                      : `${msg.role} message`
             const isPinnedMessageTarget = highlightedMessageTarget
               ? highlightedMessageTarget.rowKey
                 ? highlightedMessageTarget.rowKey === rowKey
@@ -1381,7 +1479,7 @@ export const TranscriptPanel = memo(
                       />
                     )}
                   </div>
-                ) : msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0 ? (
+                ) : isToolActivityStack ? (
                   <ActivityStack
                     key={msg.id}
                     activities={msg.toolActivities || []}
@@ -1411,24 +1509,9 @@ export const TranscriptPanel = memo(
                       ) : (
                         <span>Tool event recorded without displayable details.</span>
                       )}
-                      <MessageActionsChip
-                        onCopy={() => onCopyMessage(msg.id, msg.content || '')}
-                        onTogglePin={
-                          onTogglePinMessage ? () => onTogglePinMessage(msg.id) : undefined
-                        }
-                        onDelete={() => onDeleteMessage(msg.id)}
-                        onOpenSideChat={
-                          onOpenSideChatFromMessage
-                            ? () => onOpenSideChatFromMessage(msg)
-                            : undefined
-                        }
-                        pinned={isPinned}
-                        copied={copiedId === msg.id}
-                        label="tool message"
-                      />
                     </div>
                   </div>
-                ) : msg.metadata?.kind === 'ensembleParticipantHealth' ? (
+                ) : isParticipantHealth ? (
                   /*
                     1.0.5-EW29 — Structured participant-health pre-flight
                     summary. Rendered as a chip-strip card instead of a
@@ -1439,7 +1522,7 @@ export const TranscriptPanel = memo(
                     older transcripts / exports.
                   */
                   <ParticipantHealthCard key={msg.id} message={msg} />
-                ) : msg.metadata?.kind === 'providerRunFailure' ? (
+                ) : isProviderRunFailure ? (
                   <ProviderRunFailureCard
                     key={msg.id}
                     message={msg}
@@ -1663,26 +1746,6 @@ export const TranscriptPanel = memo(
                                 {isExpanded ? 'Show less' : 'Show more'}
                               </button>
                             )}
-                            {/* 1.0.4-AQ4 — hover-only Copy + Delete actions.
-                                Visible only when hovering the bubble (CSS),
-                                so the resting transcript stays clean. Copy
-                                writes msg.content verbatim; Delete confirms
-                                before removing from the transcript. */}
-                            <MessageActionsChip
-                              onCopy={() => onCopyMessage(msg.id, msg.content)}
-                              onTogglePin={
-                                onTogglePinMessage ? () => onTogglePinMessage(msg.id) : undefined
-                              }
-                              onDelete={() => onDeleteMessage(msg.id)}
-                              onOpenSideChat={
-                                onOpenSideChatFromMessage
-                                  ? () => onOpenSideChatFromMessage(msg)
-                                  : undefined
-                              }
-                              pinned={isPinned}
-                              copied={copiedId === msg.id}
-                              label="user message"
-                            />
                           </div>
                         )
                       })()
@@ -1771,28 +1834,6 @@ export const TranscriptPanel = memo(
                                 )}
                               </div>
                             )}
-                            {/* 1.0.4-AQ4 — Copy + Delete on hover. Both assistant
-                                and "other" role bubbles get the chip; for system
-                                bubbles (status notes etc.) the chip is harmless
-                                but rarely useful. */}
-                            {(msg.role === 'assistant' || msg.role === 'system' || isGuestReply) &&
-                              msg.content && (
-                              <MessageActionsChip
-                                onCopy={() => onCopyMessage(msg.id, msg.content)}
-                                onTogglePin={
-                                  onTogglePinMessage ? () => onTogglePinMessage(msg.id) : undefined
-                                }
-                                onDelete={() => onDeleteMessage(msg.id)}
-                                onOpenSideChat={
-                                  onOpenSideChatFromMessage
-                                    ? () => onOpenSideChatFromMessage(msg)
-                                    : undefined
-                                }
-                                pinned={isPinned}
-                                copied={copiedId === msg.id}
-                                label={`${isGuestReply ? 'guest participant' : msg.role} message`}
-                              />
-                            )}
                           </div>
                         )
                       })()
@@ -1840,6 +1881,18 @@ export const TranscriptPanel = memo(
                       ))}
                   </div>
                 )}
+                <TranscriptMessageFooter
+                  message={msg}
+                  label={footerLabel}
+                  copyContent={footerCopyContent}
+                  align={msg.role === 'user' ? 'end' : 'start'}
+                  onCopyMessage={onCopyMessage}
+                  onTogglePinMessage={onTogglePinMessage}
+                  onDeleteMessage={onDeleteMessage}
+                  onOpenSideChatFromMessage={onOpenSideChatFromMessage}
+                  pinned={isPinned}
+                  copied={copiedId === msg.id}
+                />
               </div>
             )
           })}
