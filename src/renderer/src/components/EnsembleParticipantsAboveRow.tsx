@@ -405,6 +405,21 @@ function resolveReorderDropTarget(
   return nearestId
 }
 
+function escapeSelectorAttributeValue(value: string): string {
+  return value.replace(/["\\]/g, '\\$&')
+}
+
+export function resolveParticipantSelectionAfterRemoval(
+  participants: EnsembleParticipant[],
+  removedId: string,
+  selectedParticipantId: string | null
+): string | null {
+  if (selectedParticipantId !== removedId) return selectedParticipantId
+  const removedIndex = participants.findIndex((participant) => participant.id === removedId)
+  if (removedIndex === -1) return null
+  return participants[removedIndex - 1]?.id ?? participants[removedIndex + 1]?.id ?? null
+}
+
 export function EnsembleParticipantsAboveRow({
   chat,
   selectedParticipantId,
@@ -421,12 +436,18 @@ export function EnsembleParticipantsAboveRow({
   animateEntrance = false
 }: EnsembleParticipantsAboveRowProps): React.JSX.Element | null {
   const chipsContainerRef = useRef<HTMLDivElement | null>(null)
+  const pendingFocusParticipantIdRef = useRef<string | null>(null)
   const [overflowOpenId, setOverflowOpenId] = useState<string | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [dragGhost, setDragGhost] = useState<ChipDragGhostState | null>(null)
   const [workSessionNow, setWorkSessionNow] = useState(() => Date.now())
 
+  const participants =
+    chat.chatKind === 'ensemble' && chat.ensemble
+      ? [...(chat.ensemble.participants || [])].sort((a, b) => a.order - b.order)
+      : []
+  const participantIdsKey = participants.map((participant) => participant.id).join('\u001f')
   const workSession = chat.chatKind === 'ensemble' ? chat.ensemble?.workSession : undefined
   const workSessionStatus = workSession?.status
   // Live = the session is still consuming its duration budget. Only
@@ -447,9 +468,17 @@ export function EnsembleParticipantsAboveRow({
     return () => window.clearInterval(handle)
   }, [showWorkSessionStrip, workSession?.startedAt, workSession?.maxDurationMs])
 
+  useEffect(() => {
+    const pendingParticipantId = pendingFocusParticipantIdRef.current
+    if (!pendingParticipantId || selectedParticipantId !== pendingParticipantId) return
+    pendingFocusParticipantIdRef.current = null
+    const selector = `[data-participant-id="${escapeSelectorAttributeValue(pendingParticipantId)}"] .ensemble-above-chip-body`
+    const focusTarget = chipsContainerRef.current?.querySelector<HTMLElement>(selector)
+    focusTarget?.focus({ preventScroll: true })
+  }, [participantIdsKey, selectedParticipantId])
+
   if (chat.chatKind !== 'ensemble' || !chat.ensemble) return null
 
-  const participants = [...(chat.ensemble.participants || [])].sort((a, b) => a.order - b.order)
   const activeRound = chat.ensemble.activeRound
   const isRoundRunning = activeRound?.status === 'running'
   const canAddParticipant = !isRoundRunning && participants.length < MAX_ENSEMBLE_PARTICIPANTS
@@ -606,10 +635,19 @@ export function EnsembleParticipantsAboveRow({
     // already renders the trash button disabled when at the floor;
     // this guard is the defense-in-depth for IPC-driven roster edits.
     if (isRoundRunning || participants.length <= MIN_ENSEMBLE_PARTICIPANTS) return
+    const nextSelectedParticipantId = resolveParticipantSelectionAfterRemoval(
+      participants,
+      id,
+      selectedParticipantId
+    )
     const next = participants.filter((participant) => participant.id !== id)
     persist(next)
-    if (selectedParticipantId === id && next[0]) {
-      onSelectParticipant(next[0].id)
+    if (selectedParticipantId === id && nextSelectedParticipantId) {
+      pendingFocusParticipantIdRef.current = nextSelectedParticipantId
+      onSelectParticipant(nextSelectedParticipantId)
+    }
+    if (overflowOpenId === id) {
+      setOverflowOpenId(null)
     }
   }
 

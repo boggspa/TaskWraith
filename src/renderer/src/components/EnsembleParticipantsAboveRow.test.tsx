@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { EnsembleParticipantsAboveRow } from './EnsembleParticipantsAboveRow'
+import {
+  EnsembleParticipantsAboveRow,
+  resolveParticipantSelectionAfterRemoval
+} from './EnsembleParticipantsAboveRow'
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
 
 function makeParticipant(overrides: Partial<EnsembleParticipant>): EnsembleParticipant {
@@ -40,6 +43,32 @@ function makeChat(participants: EnsembleParticipant[]): ChatRecord {
 }
 
 describe('EnsembleParticipantsAboveRow', () => {
+  describe('resolveParticipantSelectionAfterRemoval', () => {
+    const participants = [
+      makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Planner', order: 1 }),
+      makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Builder', order: 2 }),
+      makeParticipant({ id: 'ensemble-kimi', provider: 'kimi', role: 'Reviewer', order: 3 })
+    ]
+
+    it('selects the participant immediately before a selected removed chip', () => {
+      expect(
+        resolveParticipantSelectionAfterRemoval(participants, 'ensemble-kimi', 'ensemble-kimi')
+      ).toBe('ensemble-codex')
+    })
+
+    it('falls forward when the first selected participant is removed', () => {
+      expect(
+        resolveParticipantSelectionAfterRemoval(participants, 'ensemble-claude', 'ensemble-claude')
+      ).toBe('ensemble-codex')
+    })
+
+    it('preserves the current selection when another participant is removed', () => {
+      expect(
+        resolveParticipantSelectionAfterRemoval(participants, 'ensemble-codex', 'ensemble-kimi')
+      ).toBe('ensemble-kimi')
+    })
+  })
+
   it('returns null for non-ensemble chats', () => {
     const chat: ChatRecord = {
       appChatId: 'solo-chat',
