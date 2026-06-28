@@ -25260,6 +25260,36 @@ if (isGeminiMcpBridgeProcess) {
       return [filePath]
     })
 
+    const readImageViaMacImageServices = async (
+      real: string
+    ): Promise<ReturnType<typeof nativeImage.createEmpty> | null> => {
+      if (process.platform !== 'darwin') return null
+      const tempDir = await fs.mkdtemp(join(os.tmpdir(), 'taskwraith-image-preview-'))
+      const outPath = join(tempDir, 'preview.png')
+      try {
+        await new Promise<void>((resolvePromise, rejectPromise) => {
+          execFile(
+            '/usr/bin/sips',
+            ['-s', 'format', 'png', real, '--out', outPath],
+            { timeout: 15000, maxBuffer: 1024 * 1024 },
+            (error) => {
+              if (error) {
+                rejectPromise(error)
+                return
+              }
+              resolvePromise()
+            }
+          )
+        })
+        const img = nativeImage.createFromPath(outPath)
+        return img.isEmpty() ? null : img
+      } catch {
+        return null
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+      }
+    }
+
     // Composer attachment thumbnail. A raw file:// path can't be shown by the
     // renderer (non-file origin + webSecurity), so read the image here and hand
     // back a downscaled PNG data URL the <img> can actually load.
@@ -25284,12 +25314,23 @@ if (isGeminiMcpBridgeProcess) {
           try {
             img = nativeImage.createFromBuffer(await fs.readFile(real))
           } catch {
-            return null
+            img = nativeImage.createEmpty()
           }
         }
+        if (img.isEmpty()) {
+          img = (await readImageViaMacImageServices(real)) ?? nativeImage.createEmpty()
+        }
         if (img.isEmpty()) return null
-        // Downscale tall images so a big screenshot isn't a multi-MB base64.
-        const thumb = img.getSize().height > 320 ? img.resize({ height: 320 }) : img
+        // Downscale large images so a screenshot isn't a multi-MB base64.
+        const size = img.getSize()
+        const scale = Math.min(1, 640 / Math.max(1, size.width), 320 / Math.max(1, size.height))
+        const thumb =
+          scale < 1
+            ? img.resize({
+                width: Math.max(1, Math.round(size.width * scale)),
+                height: Math.max(1, Math.round(size.height * scale))
+              })
+            : img
         return thumb.toDataURL()
       } catch {
         return null
