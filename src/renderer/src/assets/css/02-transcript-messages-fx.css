@@ -4083,41 +4083,75 @@
  * the smooth text-shimmer band used by the old Thinking label).
  */
 .message-working-ghost {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
   flex-shrink: 0;
   isolation: isolate;
   overflow: visible;
   align-self: center;
 }
 
+.message-working-ghost::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 26px;
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+  --working-ghost-spec: color-mix(in srgb, var(--message-working-accent) 72%, white);
+  --working-ghost-spec-dim: color-mix(in srgb, var(--message-working-accent) 38%, transparent);
+  background-image:
+    radial-gradient(circle, var(--working-ghost-spec) 0.45px, transparent 0.6px),
+    radial-gradient(circle, var(--working-ghost-spec-dim) 0.5px, transparent 0.7px),
+    radial-gradient(circle, color-mix(in srgb, white 48%, var(--message-working-accent)) 0.4px, transparent 0.58px);
+  background-size: 7px 8px, 10px 9px, 8px 11px;
+  background-position: 0 0, 4px 3px, 8px 1px;
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 16%, transparent 74%);
+  mask-image: radial-gradient(circle at 50% 50%, #000 16%, transparent 74%);
+  opacity: 0.5;
+  transform: translate(-50%, -50%);
+  animation:
+    working-ghost-grain-drift 1.9s steps(9) infinite,
+    working-ghost-grain-flash 1.35s steps(6) infinite;
+}
+
 .message-working-ghost-glow {
-  grid-area: 1 / 1;
-  width: 20px;
-  height: 20px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
   border-radius: 999px;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--message-working-accent) 34%, transparent) 0%,
-    color-mix(in srgb, var(--message-working-accent) 16%, transparent) 46%,
+    color-mix(in srgb, var(--message-working-accent) 25%, transparent) 0%,
+    color-mix(in srgb, var(--message-working-accent) 10%, transparent) 48%,
     transparent 76%
   );
-  filter: blur(3px);
-  transform: scale(1.08);
+  filter: blur(2.4px);
+  transform: translate(-50%, -50%) scale(1.02);
   z-index: 0;
   pointer-events: none;
 }
 
 .message-working-ghost-mark {
-  grid-area: 1 / 1;
-  z-index: 1;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
   display: block;
-  width: 14px;
-  height: 14px;
+  width: 21px;
+  height: 21px;
   color: rgba(255, 255, 255, 0.94);
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.22));
+  transform: translate(-50%, -50%);
 }
 
 .message-working-ghost-mark svg {
@@ -4125,7 +4159,8 @@
   width: 100%;
   height: 100%;
   overflow: visible;
-  transform: translateY(-0.5px);
+  transform: translateY(-0.5px) scale(1.04);
+  transform-origin: center;
   animation: working-ghost-pulse 0.85s ease-in-out infinite alternate;
 }
 
@@ -4311,6 +4346,34 @@
   to { opacity: 1; }
 }
 
+@keyframes working-ghost-grain-drift {
+  0% {
+    background-position: 0 0, 4px 3px, 8px 1px;
+  }
+  100% {
+    background-position: 14px -10px, -8px 12px, 18px 7px;
+  }
+}
+
+@keyframes working-ghost-grain-flash {
+  0%,
+  100% {
+    opacity: 0.28;
+  }
+  20% {
+    opacity: 0.62;
+  }
+  40% {
+    opacity: 0.34;
+  }
+  60% {
+    opacity: 0.7;
+  }
+  80% {
+    opacity: 0.3;
+  }
+}
+
 @keyframes working-sparkle-noise {
   0% {
     background-position: 0 0, 0 0, 220% 0;
@@ -4332,6 +4395,11 @@
 [data-reduce-motion='true'] .message-working-ghost-mark svg {
   animation: none;
   opacity: 1;
+}
+
+[data-reduce-motion='true'] .message-working-ghost::before {
+  animation: none;
+  opacity: 0.32;
 }
 
 [data-reduce-motion='true'] .message-working-label {
