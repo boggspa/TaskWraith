@@ -17,6 +17,7 @@ import type {
   EnsembleConfig,
   EnsembleParticipant,
   EnsembleWakeupRecord,
+  ExternalPathGrant,
   TranscriptMediaRef,
   UsageRecord,
   WorkSessionConfig
@@ -99,6 +100,25 @@ function buildActiveGoal(id: string): ActiveGoal {
     provider: 'claude',
     createdAt: '2026-05-24T00:00:00.000Z',
     updatedAt: '2026-05-24T00:00:00.000Z'
+  }
+}
+
+function externalGrant(
+  provider: ExternalPathGrant['provider'],
+  path: string,
+  overrides: Partial<ExternalPathGrant> = {}
+): ExternalPathGrant {
+  return {
+    id: `${provider}-${path}`,
+    provider,
+    path,
+    kind: 'file',
+    access: 'read',
+    duration: 'thisRun',
+    issuedBy: 'main',
+    signature: 'signed',
+    createdAt: '2026-05-24T00:00:00.000Z',
+    ...overrides
   }
 }
 
@@ -1281,6 +1301,58 @@ describe('EnsembleOrchestrator', () => {
     expect(harness.dispatched[0].prompt).toContain('/tmp/ensemble-screenshot.png')
   })
 
+  it('keeps PDF attachments out of native image payloads and scopes external grant prompts per participant', async () => {
+    const harness = makeHarness()
+    const claudeGrant = externalGrant('claude', '/tmp/claude-notes.pdf')
+    const codexGrant = externalGrant('codex', '/tmp/codex-notes.pdf')
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review these files.',
+      imageAttachments: [
+        { id: 'img-1', path: '/tmp/screenshot.png', name: 'screenshot.png' },
+        { id: 'pdf-1', path: '/tmp/spec.pdf', name: 'spec.pdf' }
+      ],
+      externalPathGrants: [claudeGrant, codexGrant],
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.chat.messages[0]).toMatchObject({
+      metadata: {
+        imageAttachments: [
+          { id: 'img-1', path: '/tmp/screenshot.png', name: 'screenshot.png' },
+          { id: 'pdf-1', path: '/tmp/spec.pdf', name: 'spec.pdf' }
+        ],
+        imagePaths: ['/tmp/screenshot.png']
+      }
+    })
+    expect(harness.dispatched[0].provider).toBe('claude')
+    expect(harness.dispatched[0].imagePaths).toEqual(['/tmp/screenshot.png'])
+    expect(harness.dispatched[0].prompt).toContain('/tmp/spec.pdf')
+    expect(harness.dispatched[0].prompt).toContain('/tmp/claude-notes.pdf')
+    expect(harness.dispatched[0].prompt).not.toContain('/tmp/codex-notes.pdf')
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      {
+        appRunId: harness.dispatched[0].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      {
+        type: 'result',
+        status: 'success'
+      }
+    )
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.dispatched[1].imagePaths).toEqual(['/tmp/screenshot.png'])
+    expect(harness.dispatched[1].prompt).toContain('/tmp/spec.pdf')
+    expect(harness.dispatched[1].prompt).toContain('/tmp/codex-notes.pdf')
+    expect(harness.dispatched[1].prompt).not.toContain('/tmp/claude-notes.pdf')
+  })
+
   it('forwards Discord context to ensemble participants without persisting raw messages', async () => {
     const harness = makeHarness()
     const snapshot = makeDiscordSnapshot()
@@ -1634,6 +1706,47 @@ Next action:
     expect(harness.chat.messages.map((message) => message.content)).toContain(
       'Ensemble steered: interrupted the active speaker and started a queued prompt.'
     )
+  })
+
+  it('preserves queued prompt external grants when the queued ensemble round dispatches', async () => {
+    const harness = makeHarness()
+    const queuedGrant = externalGrant('claude', '/tmp/queued-spec.pdf')
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const queued = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Queued prompt',
+      imageAttachments: [
+        { id: 'pdf-queued', path: '/tmp/queued-spec.pdf', name: 'queued-spec.pdf' }
+      ],
+      externalPathGrants: [queuedGrant],
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue'
+    })
+    expect(queued.status).toBe('queued')
+
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      {
+        appRunId: harness.dispatched[0].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('claude')
+    expect(harness.dispatched[1].imagePaths).toEqual([])
+    expect(harness.dispatched[1].prompt).toContain('/tmp/queued-spec.pdf')
+    expect(harness.dispatched[1].prompt).toContain('User-approved external path grants')
+    expect(harness.dispatched[1].externalPathGrants).toMatchObject([
+      { provider: 'claude', path: '/tmp/queued-spec.pdf', access: 'read' }
+    ])
   })
 
   it('removes queued prompts from runtime state so deleted entries do not dispatch later', async () => {

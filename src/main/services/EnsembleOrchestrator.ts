@@ -105,6 +105,7 @@ const ENSEMBLE_GLOBAL_USAGE_WORKSPACE_ID = '__taskwraith_global_chats__'
 
 const DEFAULT_CONTINUATION_HOP_LIMIT = 6
 const MAX_CONTINUATION_HOP_LIMIT = 500
+const ENSEMBLE_IMAGE_ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
 
 export interface EnsembleDispatchEvent {
   sender: Electron.WebContents
@@ -1005,6 +1006,7 @@ interface QueuedRoundEntry {
   prompt: string
   imageAttachments: EnsembleImageAttachment[]
   imageThumbnails?: EnsembleImageThumbnail[]
+  externalPathGrants?: ExternalPathGrant[]
   discordContextSnapshots?: DiscordContextSnapshot[]
 }
 
@@ -1319,6 +1321,9 @@ export class EnsembleOrchestrator {
         prompt: promptWithAttachmentReferences(prompt, imageAttachments),
         imageAttachments,
         ...(imageThumbnails.length ? { imageThumbnails } : {}),
+        ...(input.externalPathGrants?.length
+          ? { externalPathGrants: [...input.externalPathGrants] }
+          : {}),
         discordContextSnapshots: normalizeDiscordContextSnapshots(input.discordContextSnapshots)
       })
       const nextQueuedPrompts = existing.queuedPrompts.map((entry) => entry.prompt)
@@ -1384,7 +1389,7 @@ export class EnsembleOrchestrator {
       selected.imageThumbnails ?? [],
       remainingQueue,
       false,
-      [],
+      selected.externalPathGrants ?? [],
       input.concurrentMode,
       selected.discordContextSnapshots
     )
@@ -3414,7 +3419,7 @@ export class EnsembleOrchestrator {
         ...(normalizedImageAttachments.length
           ? {
               imageAttachments: normalizedImageAttachments,
-              imagePaths: normalizedImageAttachments.map((attachment) => attachment.path)
+              imagePaths: imagePathsForEnsembleAttachments(normalizedImageAttachments)
             }
           : {}),
         ...(normalizedImageThumbnails.length ? { imageThumbnails: normalizedImageThumbnails } : {}),
@@ -3643,7 +3648,7 @@ export class EnsembleOrchestrator {
       })
       const promptWithDiscordContext = `${prompt}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
-      )}`
+      )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
       // Slice D (1.0.3) — per-participant reasoning + speed + thinking
       // settings flow through the same AgentRunPayload fields the
       // composer uses for solo runs. Provider adapters already accept
@@ -3675,7 +3680,7 @@ export class EnsembleOrchestrator {
         scope: chat.scope === 'global' ? 'global' : 'workspace',
         ...(chat.scope === 'global' ? {} : { workspace: chat.workspacePath || '' }),
         prompt: promptWithDiscordContext,
-        imagePaths: runtime.imageAttachments.map((attachment) => attachment.path),
+        imagePaths: imagePathsForEnsembleAttachments(runtime.imageAttachments),
         appRunId: run.runId,
         appChatId: chat.appChatId,
         model: participant.model || 'cli-default',
@@ -4092,7 +4097,7 @@ export class EnsembleOrchestrator {
         nextEntry.imageThumbnails ?? [],
         remainingQueue,
         false,
-        [],
+        nextEntry.externalPathGrants ?? [],
         undefined,
         nextEntry.discordContextSnapshots
       )
@@ -4349,7 +4354,7 @@ export class EnsembleOrchestrator {
       })
       const promptWithDiscordContext = `${promptText}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
-      )}`
+      )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
       // Mirror the serial path: thread per-participant reasoning/thinking into
       // the fan-out payload too, else a concurrent round silently runs every
       // participant at provider-default reasoning regardless of its config.
@@ -4372,7 +4377,7 @@ export class EnsembleOrchestrator {
         scope: chat.scope === 'global' ? 'global' : 'workspace',
         ...(chat.scope === 'global' ? {} : { workspace: chat.workspacePath || '' }),
         prompt: promptWithDiscordContext,
-        imagePaths: runtime.imageAttachments.map((attachment) => attachment.path),
+        imagePaths: imagePathsForEnsembleAttachments(runtime.imageAttachments),
         appRunId: run.runId,
         appChatId: chat.appChatId,
         model: participant.model || 'cli-default',
@@ -5655,6 +5660,16 @@ function normalizeEnsembleImageAttachments(
   return normalized
 }
 
+function isEnsembleImageAttachment(attachment: EnsembleImageAttachment): boolean {
+  return ENSEMBLE_IMAGE_ATTACHMENT_EXT.test(attachment.path)
+}
+
+function imagePathsForEnsembleAttachments(attachments: EnsembleImageAttachment[]): string[] {
+  return normalizeEnsembleImageAttachments(attachments)
+    .filter(isEnsembleImageAttachment)
+    .map((attachment) => attachment.path)
+}
+
 function normalizeEnsembleImageThumbnails(
   thumbnails: EnsembleImageThumbnail[] | undefined
 ): EnsembleImageThumbnail[] {
@@ -5692,6 +5707,19 @@ function promptWithAttachmentReferences(
       `${index + 1}. ${attachment.name ? `${attachment.name}: ` : ''}"${attachment.path}"`
   )
   return `${prompt}\n\nAttachment references for this request:\n${lines.join('\n')}`
+}
+
+function externalPathGrantPromptAppendix(grants: ExternalPathGrant[] | undefined): string {
+  if (!Array.isArray(grants) || grants.length === 0) return ''
+  const lines = grants
+    .filter((grant) => typeof grant?.path === 'string' && grant.path.trim())
+    .map((grant, index) => {
+      const access = grant.access === 'write' ? 'view and edit' : 'view'
+      const kind = grant.kind === 'directory' ? 'directory' : 'file'
+      return `${index + 1}. ${access} ${kind}: "${grant.path.trim().replace(/"/g, '\\"')}"`
+    })
+  if (lines.length === 0) return ''
+  return `\n\nUser-approved external path grants for this Ensemble participant:\n${lines.join('\n')}\nUse only these paths outside the workspace.`
 }
 
 function numericRunStat(stats: Record<string, unknown>, ...paths: Array<string | string[]>): number {
