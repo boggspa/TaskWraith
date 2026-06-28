@@ -5,6 +5,7 @@ export type KeyCommandId =
   | 'settings'
   | 'close-overlays'
   | 'run-prompt'
+  | 'search-workspaces'
   | 'new-chat'
   | 'stop-run'
   | 'copy-transcript'
@@ -94,6 +95,14 @@ export const KEY_COMMAND_DEFINITIONS: KeyCommandDefinition[] = [
     command: 'Run prompt',
     description: 'Submit the current composer prompt even when focus is inside the composer.',
     defaultBinding: { key: 'Enter', modifiers: [PRIMARY_MODIFIER] },
+    allowWhenEditable: true
+  },
+  {
+    id: 'search-workspaces',
+    group: 'Global',
+    command: 'Search workspaces and threads',
+    description: 'Focus the workspace sidebar search field.',
+    defaultBinding: { key: 'F', modifiers: [PRIMARY_MODIFIER, SHIFT_MODIFIER] },
     allowWhenEditable: true
   },
   {

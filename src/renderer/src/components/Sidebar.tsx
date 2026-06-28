@@ -116,6 +116,10 @@ interface SidebarProps {
   activeChatId?: string | null
   /** Open/close transition classes from `usePanelPresence` (App.tsx). */
   animationClassName?: string
+  /** Incremented by App.tsx when the editable workspace-search shortcut fires. */
+  focusSearchRequestId?: number
+  /** Compact display label for the currently configured workspace-search shortcut. */
+  searchShortcutHint?: string
   usageSummary: Array<{
     provider: ProviderId
     model: string
@@ -1916,6 +1920,8 @@ export function Sidebar({
   currentChat,
   activeChatId,
   animationClassName = '',
+  focusSearchRequestId,
+  searchShortcutHint = '⇧⌘F',
   usageSummary,
   runningChatIds = [],
   workflows = [],
@@ -2046,9 +2052,8 @@ export function Sidebar({
   // dismisses whichever popover is open. The popovers anchor to this cluster's
   // right edge, keeping them inside the sidebar regardless of which opened.
   const footerControlsWrapRef = useRef<HTMLDivElement | null>(null)
-  // Ref to the sidebar search <input> so the local Cmd/Ctrl+F shortcut
-  // (the "⌘F" hint next to the field) can focus it. Kept Sidebar-local —
-  // App.tsx owns no part of this binding.
+  // Ref to the sidebar search <input>. App.tsx owns the editable key command
+  // and bumps `focusSearchRequestId` when it should focus this field.
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const [sidebarSearch, setSidebarSearch] = useState('')
   const [remoteDeviceConnected, setRemoteDeviceConnected] = useState(false)
@@ -2571,34 +2576,19 @@ export function Sidebar({
     }
   }, [])
 
-  // Cmd/Ctrl+F focuses the sidebar search input — wires up the "⌘F"
-  // hint shown inside the field. Sidebar-local so App.tsx stays
-  // untouched. We ignore the shortcut while typing in another
-  // text field / contentEditable so we don't yank focus out from
-  // under the composer; the search input itself is allowed (re-pressing
-  // selects all). Mirrors the global-keydown listener pattern used by
-  // the menu effects above.
+  // Workspace search is now an editable app command (default Cmd/Ctrl+Shift+F).
+  // App.tsx handles the shortcut and this effect performs the actual focus
+  // after the sidebar is mounted or re-opened.
   useEffect(() => {
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'f' && event.key !== 'F') return
-      if (!(event.metaKey || event.ctrlKey)) return
+    if (!focusSearchRequestId) return
+    const frame = window.requestAnimationFrame(() => {
       const input = searchInputRef.current
       if (!input) return
-      const active = document.activeElement as HTMLElement | null
-      if (
-        active &&
-        active !== input &&
-        (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)
-      ) {
-        return
-      }
-      event.preventDefault()
       input.focus()
       input.select()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [])
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [focusSearchRequestId])
 
   useEffect(() => {
     const workspaceIds = new Set(workspaces.map((workspace) => workspace.id))
@@ -3320,7 +3310,9 @@ export function Sidebar({
               aria-label="Search workspaces and chats"
               spellCheck={false}
             />
-            {!isSidebarSearchActive && <span className="sidebar-search-hint">⌘F</span>}
+            {!isSidebarSearchActive && searchShortcutHint && (
+              <span className="sidebar-search-hint">{searchShortcutHint}</span>
+            )}
             {isSidebarSearchActive && (
               <>
                 <span className="sidebar-search-result-count">{sidebarSearchResultCount}</span>

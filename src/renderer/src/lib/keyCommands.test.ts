@@ -43,6 +43,7 @@ describe('key command bindings', () => {
       expect.arrayContaining([
         'new-chat',
         'stop-run',
+        'search-workspaces',
         'copy-transcript',
         'review-current-diff',
         'attach-files',
@@ -55,6 +56,9 @@ describe('key command bindings', () => {
     expect(getKeyCommandForEvent(keyEvent({ key: '.', ctrlKey: true }), bindings)?.id).toBe(
       'stop-run'
     )
+    expect(
+      getKeyCommandForEvent(keyEvent({ key: 'f', metaKey: true, shiftKey: true }), bindings)?.id
+    ).toBe('search-workspaces')
     expect(bindings['copy-transcript']).toBeNull()
     expect(bindings['review-current-diff']).toBeNull()
     expect(bindings['attach-files']).toBeNull()

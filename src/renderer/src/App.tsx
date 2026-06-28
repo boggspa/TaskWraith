@@ -116,6 +116,7 @@ import { handleSideChatComposerKeyDown } from './lib/sideChatComposer'
 import type { SettingsPanelUpdate } from './lib/settingsPanelUpdate'
 import { IOS_REMOTE_ENABLED } from './lib/featureFlags'
 import {
+  formatKeyCommandBinding,
   getKeyCommandForEvent,
   resolveKeyCommandBindings,
   type KeyCommandId
@@ -602,6 +603,18 @@ const WORKSPACE_ADD_POINTER_DURATION_MS = 6000
 // Per-provider palette CORE constants live in
 // src/renderer/src/lib/ComposerSlashCommands.ts and are resolved through
 // paletteCoreForProvider() so App routing stays aligned with the slash menu.
+
+function compactShortcutHint(keys: string[]): string {
+  if (keys.length === 0 || keys[0] === 'Unassigned') return ''
+  return keys
+    .map((key) => {
+      if (key === 'Cmd/Ctrl') return '⌘'
+      if (key === 'Shift') return '⇧'
+      if (key === 'Alt') return '⌥'
+      return key
+    })
+    .join('')
+}
 
 // sanitizeContextText moved to `src/main/PromptComposition.ts` and re-exported below.
 
@@ -1388,6 +1401,7 @@ function App(): React.JSX.Element {
   // EnsembleSetupSheet retired in 1.0.3 — no modal state required.
   // EnsembleParticipantsAboveRow handles configuration inline.
   const [showWorkspaceSidebar, setShowWorkspaceSidebar] = useState(() => !isChatPopoutWindow)
+  const [sidebarSearchFocusRequestId, setSidebarSearchFocusRequestId] = useState(0)
   const [workspaceSidebarWidth, setWorkspaceSidebarWidth] = useState(getStoredWorkspaceSidebarWidth)
   /**
    * First-launch onboarding hint visibility. Renders a faint
@@ -14060,6 +14074,15 @@ function App(): React.JSX.Element {
     return true
   }
 
+  const resolvedKeyCommandBindings = useMemo(
+    () => resolveKeyCommandBindings(settings?.keyCommandBindings),
+    [settings?.keyCommandBindings]
+  )
+  const workspaceSearchShortcutHint = useMemo(
+    () => compactShortcutHint(formatKeyCommandBinding(resolvedKeyCommandBindings['search-workspaces'])),
+    [resolvedKeyCommandBindings]
+  )
+
   const keyboardActionsRef = useRef({
     attachWindowFromKeyboard,
     clearImagePermissions,
@@ -14103,10 +14126,7 @@ function App(): React.JSX.Element {
         tagName === 'textarea' ||
         tagName === 'select'
       )
-      const command = getKeyCommandForEvent(
-        event,
-        resolveKeyCommandBindings(settings?.keyCommandBindings)
-      )
+      const command = getKeyCommandForEvent(event, resolvedKeyCommandBindings)
       if (!command || (isEditableTarget && !command.allowWhenEditable)) {
         return
       }
@@ -14146,6 +14166,13 @@ function App(): React.JSX.Element {
         if (commandId === 'settings') {
           if (isChatPopoutWindow) return false
           setShowSettings(true)
+          return true
+        }
+        if (commandId === 'search-workspaces') {
+          if (isChatPopoutWindow) return false
+          setShowSettings(false)
+          setShowWorkspaceSidebar(true)
+          setSidebarSearchFocusRequestId((requestId) => requestId + 1)
           return true
         }
         if (commandId === 'new-chat') {
@@ -14212,8 +14239,8 @@ function App(): React.JSX.Element {
     currentProvider,
     lastNonCustomModelType,
     permissionRequestPaths.length,
+    resolvedKeyCommandBindings,
     selectedModelType,
-    settings?.keyCommandBindings,
     showSettings,
     hasWorkspaceContext,
     isChatPopoutWindow
@@ -21364,6 +21391,8 @@ function App(): React.JSX.Element {
                 chats={chats}
                 currentChat={currentChat}
                 activeChatId={activeSidebarChatId}
+                focusSearchRequestId={sidebarSearchFocusRequestId}
+                searchShortcutHint={workspaceSearchShortcutHint}
                 usageSummary={usageSummary}
                 modelUsageApiSpend={{
                   providerRates,
