@@ -970,11 +970,8 @@ function XSymbolIcon() {
  * `SidebarChatTitleEditable` — renders a chat's title with two modes:
  *
  *   - Display: `<HighlightMatch>` for search-term highlighting. Double-
- *     clicking the title enters edit mode IFF the chat is currently
- *     selected (`isSelected`). The selected-gate is intentional —
- *     without it, an eager-clicker landing on an adjacent chat tile
- *     would fall into rename mode every time, which is a really easy
- *     way to mangle a chat list while just trying to navigate.
+ *     clicking the title enters edit mode. Plain row clicks still navigate,
+ *     so rename stays deliberate without requiring a prior selection click.
  *   - Edit: an `<input>` with the current title pre-filled. Enter
  *     submits, Escape cancels, blur submits (matches Finder rename UX).
  *     We stopPropagation on click/mousedown so clicks inside the input
@@ -990,7 +987,6 @@ function SidebarChatTitleEditable({
   chat,
   className,
   query,
-  isSelected,
   isEditing,
   onStartEdit,
   onSubmit,
@@ -999,13 +995,14 @@ function SidebarChatTitleEditable({
   chat: ChatRecord
   className: string
   query: string
-  isSelected: boolean
+  isSelected?: boolean
   isEditing: boolean
   onStartEdit: () => void
   onSubmit: (nextValue: string) => void
   onCancel: () => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState(chat.title)
+  const inputRef = useRef<HTMLInputElement | null>(null)
   const wasEditingRef = useRef(false)
   // Seed the draft when edit mode opens. Once the user is typing, keep
   // incoming chat updates from clobbering the in-progress rename.
@@ -1019,10 +1016,20 @@ function SidebarChatTitleEditable({
     setDraft(chat.title)
   }, [isEditing, chat.appChatId, chat.title])
 
+  useEffect(() => {
+    if (!isEditing) return
+    const frame = window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [isEditing, chat.appChatId])
+
   if (isEditing) {
     return (
       <span className={className}>
         <input
+          ref={inputRef}
           autoFocus
           className="sidebar-chat-title-input"
           value={draft}
@@ -1030,6 +1037,7 @@ function SidebarChatTitleEditable({
           onBlur={() => onSubmit(draft)}
           onClick={(event) => event.stopPropagation()}
           onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault()
@@ -1060,7 +1068,6 @@ function SidebarChatTitleEditable({
     <span
       className={className}
       onDoubleClick={(event) => {
-        if (!isSelected) return
         event.preventDefault()
         event.stopPropagation()
         onStartEdit()
@@ -2794,8 +2801,9 @@ export function Sidebar({
         onSelect: () => {
           // The menu Rename is unconditional — user explicitly chose it,
           // so we flip the chat into inline-edit mode regardless of
-          // current selection. The double-click path is the one that
-          // gates on selection (so an eager mouse can't fall into rename).
+          // current selection. Select the row too so header/subtitle
+          // context follows the title being edited.
+          onSelectChat(chat)
           setEditingChatId(chat.appChatId)
         }
       })
@@ -3002,7 +3010,6 @@ export function Sidebar({
               chat={subChat}
               className="sidebar-chat-title"
               query={sidebarSearchQuery}
-              isSelected={selectedChatId === subChat.appChatId}
               isEditing={editingChatId === subChat.appChatId}
               onStartEdit={() => setEditingChatId(subChat.appChatId)}
               onSubmit={(next) => commitChatRename(subChat, next)}
@@ -3640,7 +3647,6 @@ export function Sidebar({
                         chat={chat}
                         className="sidebar-pinned-label"
                         query={sidebarSearchQuery}
-                        isSelected={selectedChatId === chat.appChatId}
                         isEditing={editingChatId === chat.appChatId}
                         onStartEdit={() => setEditingChatId(chat.appChatId)}
                         onSubmit={(next) => commitChatRename(chat, next)}
@@ -3725,7 +3731,6 @@ export function Sidebar({
                           chat={chat}
                           className="sidebar-recents-label"
                           query={sidebarSearchQuery}
-                          isSelected={selectedChatId === chat.appChatId}
                           isEditing={editingChatId === chat.appChatId}
                           onStartEdit={() => setEditingChatId(chat.appChatId)}
                           onSubmit={(next) => commitChatRename(chat, next)}
@@ -3865,7 +3870,6 @@ export function Sidebar({
                                   chat={chat}
                                   className="sidebar-chat-title"
                                   query={sidebarSearchQuery}
-                                  isSelected={selectedChatId === chat.appChatId}
                                   isEditing={editingChatId === chat.appChatId}
                                   onStartEdit={() => setEditingChatId(chat.appChatId)}
                                   onSubmit={(next) => commitChatRename(chat, next)}
@@ -4161,7 +4165,6 @@ export function Sidebar({
                                           chat={chat}
                                           className="sidebar-chat-title"
                                           query={sidebarSearchQuery}
-                                          isSelected={selectedChatId === chat.appChatId}
                                           isEditing={editingChatId === chat.appChatId}
                                           onStartEdit={() => setEditingChatId(chat.appChatId)}
                                           onSubmit={(next) => commitChatRename(chat, next)}
@@ -4290,7 +4293,6 @@ export function Sidebar({
                               chat={chat}
                               className="sidebar-chat-title"
                               query={sidebarSearchQuery}
-                              isSelected={selectedChatId === chat.appChatId}
                               isEditing={editingChatId === chat.appChatId}
                               onStartEdit={() => setEditingChatId(chat.appChatId)}
                               onSubmit={(next) => commitChatRename(chat, next)}
@@ -4419,7 +4421,6 @@ export function Sidebar({
                               chat={chat}
                               className="sidebar-chat-title"
                               query={sidebarSearchQuery}
-                              isSelected={selectedChatId === chat.appChatId}
                               isEditing={editingChatId === chat.appChatId}
                               onStartEdit={() => setEditingChatId(chat.appChatId)}
                               onSubmit={(next) => commitChatRename(chat, next)}
