@@ -155,7 +155,19 @@ describe('buildRemoteFirstLaunchState', () => {
     })
 
     expect(state.notifications.map((notice) => notice.id)).toContain(
+      'ollama-ornith-models-2026-06-28'
+    )
+    expect(state.notifications.map((notice) => notice.id)).toContain(
+      'scheduled-composer-queue-2026-06-28'
+    )
+    expect(state.notifications.map((notice) => notice.id)).toContain(
       'antigravity-not-planned-2026-06-26'
+    )
+    expect(state.notifications.map((notice) => notice.id)).not.toContain(
+      'gemini-retirement-2026-06-18'
+    )
+    expect(state.notifications.map((notice) => notice.id)).not.toContain(
+      'grok-composer-2-5-fast-2026-06-19'
     )
     const antigravity = state.notifications.find(
       (notice) => notice.id === 'antigravity-not-planned-2026-06-26'

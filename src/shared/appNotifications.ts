@@ -21,7 +21,7 @@ export interface AppNotification {
    *  content (a returning id would resurrect a dismissed notice). */
   id: string
   kind: AppNotificationKind
-  /** Short bold lede, e.g. "Gemini has been retired." */
+  /** Short bold lede, e.g. "Local models are available." */
   title: string
   /** One or two sentences of plain copy. */
   body: string
@@ -71,20 +71,17 @@ export function activeAppNotifications(args: {
 
 export const APP_NOTIFICATIONS: readonly AppNotification[] = [
   {
-    id: 'gemini-retirement-2026-06-18',
-    kind: 'deprecation',
-    title: 'Gemini has been retired.',
-    body: 'Google ended the Gemini CLI sign-in, so Gemini is no longer available for new runs. Your existing Gemini chats, transcripts, and usage history are preserved.',
-    dismissible: true,
-    // Honour the original bespoke banner's key so users who already dismissed it
-    // don't see it again under the new notification system.
-    legacyDismissKey: 'taskwraith.geminiRetirementBannerDismissed.v1'
+    id: 'ollama-ornith-models-2026-06-28',
+    kind: 'addition',
+    title: 'Ornith local models are available.',
+    body: 'Ollama now includes Ornith 1.0 (9B Param) and Ornith 1.0 (35B Param), both 256K-context open-source models for agentic coding, in the model picker and setup commands.',
+    dismissible: true
   },
   {
-    id: 'grok-composer-2-5-fast-2026-06-19',
-    kind: 'addition',
-    title: 'Grok Composer 2.5 Fast is here.',
-    body: 'Grok now runs on Composer 2.5 Fast — a faster agentic coding model, and the new default for Grok runs. Pick it from the Grok model selector in the composer.',
+    id: 'scheduled-composer-queue-2026-06-28',
+    kind: 'feature',
+    title: 'Scheduled sends are visible now.',
+    body: 'Use the composer Schedule clock to queue a prompt for later; scheduled rows stay editable, show a live countdown, and dispatch when due.',
     dismissible: true
   },
   {

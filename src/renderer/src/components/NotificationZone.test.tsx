@@ -14,14 +14,14 @@ import type { AppNotification } from '../../../shared/appNotifications'
 const deprecation: AppNotification = {
   id: 'dep-1',
   kind: 'deprecation',
-  title: 'Gemini has been retired.',
+  title: 'Legacy provider retired.',
   body: 'No longer available for new runs.'
 }
 const addition: AppNotification = {
   id: 'add-1',
   kind: 'addition',
-  title: 'Grok Composer 2.5 Fast is here.',
-  body: 'A faster agentic coding model.'
+  title: 'Ornith local models are available.',
+  body: 'New local coding models are selectable.'
 }
 
 describe('NotificationZone', () => {
@@ -38,7 +38,7 @@ describe('NotificationZone', () => {
 
   it('renders a single card with no rotation wrapper or dots', () => {
     const html = renderToStaticMarkup(<NotificationZone notifications={[deprecation]} />)
-    expect(html).toContain('Gemini has been retired.')
+    expect(html).toContain('Legacy provider retired.')
     expect(html).toContain('notification-card--danger')
     expect(html).not.toContain('notification-zone--rotating')
     expect(html).not.toContain('notification-zone-dots')
@@ -57,7 +57,7 @@ describe('NotificationZone', () => {
     expect(html).toContain('notification-zone--rotating')
     expect(html).toContain('is-swipe-enabled')
     // First notice is the visible card.
-    expect(html).toContain('Gemini has been retired.')
+    expect(html).toContain('Legacy provider retired.')
     // One dot per notice; first is active.
     const dotMatches = html.match(/notification-zone-dot/g) ?? []
     expect(dotMatches.length).toBeGreaterThanOrEqual(2)

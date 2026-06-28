@@ -25,8 +25,8 @@ describe('appNotificationTone', () => {
 
 describe('appNotificationDismissKey', () => {
   it('builds a stable per-id key', () => {
-    expect(appNotificationDismissKey('gemini-retirement-2026-06-18')).toBe(
-      'taskwraith.appNotification.gemini-retirement-2026-06-18.dismissed'
+    expect(appNotificationDismissKey('ollama-ornith-models-2026-06-28')).toBe(
+      'taskwraith.appNotification.ollama-ornith-models-2026-06-28.dismissed'
     )
   })
 })
@@ -78,18 +78,34 @@ describe('APP_NOTIFICATIONS registry', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('seeds the Gemini deprecation (red) with its legacy dismiss key', () => {
-    const gemini = APP_NOTIFICATIONS.find((n) => n.id === 'gemini-retirement-2026-06-18')
-    expect(gemini).toBeDefined()
-    expect(gemini && appNotificationTone(gemini.kind)).toBe('danger')
-    expect(gemini?.legacyDismissKey).toBe('taskwraith.geminiRetirementBannerDismissed.v1')
+  it('does not keep stale Gemini or Grok carousel notices', () => {
+    expect(APP_NOTIFICATIONS.some((n) => n.id === 'gemini-retirement-2026-06-18')).toBe(false)
+    expect(APP_NOTIFICATIONS.some((n) => n.id === 'grok-composer-2-5-fast-2026-06-19')).toBe(
+      false
+    )
   })
 
-  it('seeds the Grok Composer 2.5 Fast addition (default card)', () => {
-    const grok = APP_NOTIFICATIONS.find((n) => n.kind === 'addition')
-    expect(grok).toBeDefined()
-    expect(grok && appNotificationTone(grok.kind)).toBe('default')
-    expect(grok?.title).toMatch(/Composer 2\.5 Fast/)
+  it('seeds the Ornith Ollama addition (default card)', () => {
+    const ornith = APP_NOTIFICATIONS.find((n) => n.id === 'ollama-ornith-models-2026-06-28')
+    expect(ornith).toBeDefined()
+    expect(ornith && appNotificationTone(ornith.kind)).toBe('default')
+    expect(ornith?.kind).toBe('addition')
+    expect(ornith?.title).toBe('Ornith local models are available.')
+    expect(ornith?.body).toContain('Ornith 1.0 (9B Param)')
+    expect(ornith?.body).toContain('Ornith 1.0 (35B Param)')
+    expect(ornith?.body).toContain('256K-context')
+    expect(ornith?.body).toContain('open-source models for agentic coding')
+  })
+
+  it('seeds scheduled composer sends as a headline feature card', () => {
+    const scheduled = APP_NOTIFICATIONS.find(
+      (n) => n.id === 'scheduled-composer-queue-2026-06-28'
+    )
+    expect(scheduled).toBeDefined()
+    expect(scheduled && appNotificationTone(scheduled.kind)).toBe('default')
+    expect(scheduled?.kind).toBe('feature')
+    expect(scheduled?.title).toBe('Scheduled sends are visible now.')
+    expect(scheduled?.body).toContain('Schedule clock')
   })
 
   it('seeds the AntiGravity policy notice as a neutral info card', () => {
