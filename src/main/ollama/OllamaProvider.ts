@@ -271,6 +271,13 @@ interface OllamaChatTurnThinkingCallbackInput {
   chunk: OllamaChatChunk
 }
 
+interface OllamaChatRetryCallbackInput {
+  attempt: number
+  maxAttempts: number
+  delayMs: number
+  error: string
+}
+
 export interface OllamaToolExecutionRequest {
   toolName: OllamaToolName
   arguments: Record<string, unknown>
@@ -294,6 +301,7 @@ export interface OllamaToolRequest {
 
 const OLLAMA_TOOL_LOOP_LIMIT = 8
 const OLLAMA_TOOL_RESULT_MAX_CHARS = 2400
+const OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS = [250, 750]
 
 // Consecutive non-progress turns (malformed JSON, tool-intent stub, empty /
 // reasoning-only, or degenerate) before a local run bails early to the
@@ -456,6 +464,69 @@ export function normalizeOllamaBaseUrl(value?: string | null): string {
 
 function endpoint(baseUrl: string | undefined | null, path: string): string {
   return `${normalizeOllamaBaseUrl(baseUrl)}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+function unknownErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : ''
+}
+
+function errorCauseCode(error: unknown): string {
+  const cause = recordFromUnknown((error as { cause?: unknown } | null)?.cause)
+  const code = cause && typeof cause.code === 'string' ? cause.code : ''
+  return code.toUpperCase()
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  return errorName(error) === 'AbortError' || errorCauseCode(error) === 'ABORT_ERR'
+}
+
+function isOllamaTransportError(error: unknown): boolean {
+  if (isAbortLikeError(error)) return false
+  const message = unknownErrorMessage(error).toLowerCase()
+  const causeCode = errorCauseCode(error)
+  return (
+    message.includes('fetch failed') ||
+    message.includes('terminated') ||
+    message.includes('socket') ||
+    message.includes('network') ||
+    ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_SOCKET'].includes(causeCode)
+  )
+}
+
+export function ollamaRunFailureMessage(error: unknown, baseUrl: string): string {
+  if (isOllamaTransportError(error)) {
+    return [
+      `Ollama connection dropped while talking to ${normalizeOllamaBaseUrl(baseUrl)}.`,
+      'TaskWraith retried the local chat request, but Ollama still closed or refused the connection.',
+      'Make sure the Ollama app/service is running, the model is pulled, and the model runner is not being killed by memory pressure.',
+      `Original error: ${unknownErrorMessage(error)}`
+    ].join(' ')
+  }
+  return unknownErrorMessage(error)
+}
+
+function waitForOllamaRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  return new Promise((resolve, reject) => {
+    let timer: NodeJS.Timeout | null = null
+    const cleanup = () => {
+      if (timer) clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+    }
+    const onAbort = () => {
+      cleanup()
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    timer = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, delayMs)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 export function humanizeOllamaModelId(model: string): string {
@@ -1433,6 +1504,45 @@ function shouldHoldOllamaContentForPublicStream(input: {
   return looksLikeOllamaToolIntent(trimmed, input.availableToolNames)
 }
 
+async function fetchOllamaChatResponseWithRetry(input: {
+  baseUrl: string
+  signal: AbortSignal
+  request: Record<string, unknown>
+  onRetry?: (input: OllamaChatRetryCallbackInput) => void
+}): Promise<Response> {
+  const maxAttempts = OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS.length + 1
+  let lastError: unknown
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fetch(endpoint(input.baseUrl, '/api/chat'), {
+        method: 'POST',
+        signal: input.signal,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input.request)
+      })
+    } catch (error) {
+      lastError = error
+      const retryDelay = OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS[attempt - 1]
+      if (
+        attempt >= maxAttempts ||
+        retryDelay === undefined ||
+        input.signal.aborted ||
+        !isOllamaTransportError(error)
+      ) {
+        throw error
+      }
+      input.onRetry?.({
+        attempt,
+        maxAttempts,
+        delayMs: retryDelay,
+        error: unknownErrorMessage(error)
+      })
+      await waitForOllamaRetry(retryDelay, input.signal)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError || 'Ollama fetch failed.'))
+}
+
 export function shouldReleaseOllamaContentDelta(input: {
   content: string
   pending: string
@@ -1499,6 +1609,7 @@ async function runOllamaChatTurn(input: {
   keepAlive?: string
   toolProtocolEnabled?: boolean
   availableToolNames?: string[]
+  onRetry?: (input: OllamaChatRetryCallbackInput) => void
   onContentDelta?: (input: OllamaChatTurnStreamCallbackInput) => void
   onThinkingUpdate?: (input: OllamaChatTurnThinkingCallbackInput) => void
 }): Promise<OllamaChatTurnResult> {
@@ -1511,11 +1622,11 @@ async function runOllamaChatTurn(input: {
   if (typeof input.numPredict === 'number' && Number.isFinite(input.numPredict)) {
     options.num_predict = Math.max(1, Math.trunc(input.numPredict))
   }
-  const response = await fetch(endpoint(input.baseUrl, '/api/chat'), {
-    method: 'POST',
+  const response = await fetchOllamaChatResponseWithRetry({
+    baseUrl: input.baseUrl,
     signal: input.signal,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
+    onRetry: input.onRetry,
+    request: {
       model: input.model,
       stream: true,
       messages: input.messages,
@@ -1524,7 +1635,7 @@ async function runOllamaChatTurn(input: {
       ...(input.think ? { think: input.think } : {}),
       ...(input.keepAlive ? { keep_alive: input.keepAlive } : {}),
       options
-    })
+    }
   })
 
   if (!response.ok || !response.body) {
@@ -1899,6 +2010,20 @@ export async function runOllamaProvider(
         ...(runProfile.keepAlive ? { keepAlive: runProfile.keepAlive } : {}),
         toolProtocolEnabled,
         availableToolNames,
+        onRetry: ({ attempt, maxAttempts, delayMs, error }) => {
+          deps.sendAgentCompatLine(
+            event.sender,
+            'ollama',
+            {
+              type: 'provider_warning',
+              id: 'ollama-chat-transport-retry',
+              severity: 'warning',
+              title: 'Retrying Ollama connection',
+              message: `Ollama dropped the local chat request (${error}). Retrying ${attempt + 1}/${maxAttempts} in ${delayMs}ms.`
+            },
+            route
+          )
+        },
         onContentDelta: ({ delta }) => {
           emitOllamaContent(delta)
         },
@@ -2367,9 +2492,7 @@ export async function runOllamaProvider(
     const aborted = controller.signal.aborted
     const message = aborted
       ? 'Ollama run cancelled.'
-      : error instanceof Error
-        ? error.message
-        : String(error)
+      : ollamaRunFailureMessage(error, baseUrl)
     deps.sendAgentCompatError(event.sender, 'ollama', message, route)
     deps.sendAgentCompatExit(event.sender, 'ollama', aborted ? 130 : 1, route)
     deps.runManager.finish(route.appRunId, aborted ? ('cancelled' as RunSessionStatus) : ('failed' as RunSessionStatus))
