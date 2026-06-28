@@ -221,10 +221,9 @@ interface SidebarProps {
    * destructive group so the user has to choose it deliberately. */
   onDeleteChat?: (chatId: string) => void
   /** Rename a chat thread to a user-chosen title (1.0.3). Surfaced via
-   * the overflow menu's "Rename" item AND via double-click on the title
-   * of the currently-selected chat. The selected-only double-click
-   * gate is intentional: an eager-clicker shouldn't accidentally fall
-   * into rename mode while just trying to navigate the sidebar. */
+   * the overflow menu's "Rename" item AND via double-click on a
+   * visible title. The editor is scoped to the specific rendered row
+   * so duplicate appearances of the same chat do not fight over focus. */
   onRenameChat?: (chatId: string, nextTitle: string) => void
   /** Phase K1 follow-up: when provided, clicking a row in the pinned
    * "Active runs" sidebar section navigates to the chat AND opens
@@ -2033,11 +2032,15 @@ export function Sidebar({
    */
   const [draggedChatId, setDraggedChatId] = useState<string | null>(null)
   const [pinDropActive, setPinDropActive] = useState(false)
-  // 1.0.3 sidebar rename — single source of "which chat is being
-  // edited right now". Helper component reads + writes via the start /
-  // commit / cancel callbacks below. Null when nothing is being
-  // edited (the common case).
-  const [editingChatId, setEditingChatId] = useState<string | null>(null)
+  // 1.0.3 sidebar rename — single source of "which chat row is being
+  // edited right now". Key by both chat id AND render surface: the same
+  // chat can appear in Recents, Workspaces, Pinned, and Shared at once.
+  // A chat-id-only edit flag mounts multiple inputs; their autofocus/blur
+  // handlers fight and can instantly cancel the rename.
+  const [editingChatTarget, setEditingChatTarget] = useState<{
+    chatId: string
+    surfaceId: string
+  } | null>(null)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
   // Wrap ref for the `+ New` menu so an outside-click / Escape listener
   // can dismiss the popover without each menu item having to remember
@@ -2294,7 +2297,7 @@ export function Sidebar({
     // being renamed, OR the chat is already pinned — pinned
     // chats have no useful drag-to-pin gesture (drop on Pinned
     // would be a no-op; drop reordering is future work).
-    if (!onTogglePinChat || editingChatId === chat.appChatId || chat.pinned) {
+    if (!onTogglePinChat || editingChatTarget?.chatId === chat.appChatId || chat.pinned) {
       return { draggable: false }
     }
     return {
@@ -2799,7 +2802,17 @@ export function Sidebar({
    * caller hasn't wired the corresponding handler — the trigger still
    * renders so layout stays stable.
    */
-  const buildChatMenuItems = (chat: ChatRecord): SidebarOverflowMenuItem[] => {
+  const startChatRename = (chat: ChatRecord, surfaceId: string): void => {
+    setEditingChatTarget({ chatId: chat.appChatId, surfaceId })
+  }
+
+  const isChatRenameTarget = (chat: ChatRecord, surfaceId: string): boolean =>
+    editingChatTarget?.chatId === chat.appChatId && editingChatTarget.surfaceId === surfaceId
+
+  const buildChatMenuItems = (
+    chat: ChatRecord,
+    surfaceId: string
+  ): SidebarOverflowMenuItem[] => {
     const items: SidebarOverflowMenuItem[] = []
     const hasWorkspaceDirectory =
       chat.scope !== 'global' && Boolean(chat.workspaceId || chat.workspacePath)
@@ -2810,11 +2823,9 @@ export function Sidebar({
         group: 'primary',
         onSelect: () => {
           // The menu Rename is unconditional — user explicitly chose it,
-          // so we flip the chat into inline-edit mode regardless of
-          // current selection. Select the row too so header/subtitle
-          // context follows the title being edited.
-          onSelectChat(chat)
-          setEditingChatId(chat.appChatId)
+          // so we flip this exact rendered row into inline-edit mode
+          // regardless of current selection.
+          startChatRename(chat, surfaceId)
         }
       })
     }
@@ -2913,7 +2924,7 @@ export function Sidebar({
   const commitChatRename = (chat: ChatRecord, nextValue: string): void => {
     const trimmed = normalizeThreadTitle(nextValue, '')
     const currentTitle = normalizeThreadTitle(chat.title, '')
-    setEditingChatId(null)
+    setEditingChatTarget(null)
     if (!trimmed || trimmed === currentTitle) return
     onRenameChat?.(chat.appChatId, trimmed)
   }
@@ -3000,6 +3011,7 @@ export function Sidebar({
         ].filter(Boolean)
       : []
     const subProviderColor = `var(--provider-${subChat.provider || 'gemini'}-color)`
+    const renameSurfaceId = `linked-${subChat.appChatId}`
     return (
       <div
         role="button"
@@ -3034,10 +3046,10 @@ export function Sidebar({
               chat={subChat}
               className="sidebar-chat-title"
               query={sidebarSearchQuery}
-              isEditing={editingChatId === subChat.appChatId}
-              onStartEdit={() => setEditingChatId(subChat.appChatId)}
+              isEditing={isChatRenameTarget(subChat, renameSurfaceId)}
+              onStartEdit={() => startChatRename(subChat, renameSurfaceId)}
               onSubmit={(next) => commitChatRename(subChat, next)}
-              onCancel={() => setEditingChatId(null)}
+              onCancel={() => setEditingChatTarget(null)}
             />
           </span>
           <span className="sidebar-chat-subline">
@@ -3068,7 +3080,7 @@ export function Sidebar({
         </span>
         <SidebarOverflowMenu
           triggerLabel={`${subKindLabel} actions`}
-          items={buildChatMenuItems(subChat)}
+          items={buildChatMenuItems(subChat, renameSurfaceId)}
         />
       </div>
     )
@@ -3652,38 +3664,41 @@ export function Sidebar({
                       />
                     </div>
                   ))}
-                  {visiblePinnedChats.map((chat) => (
-                    <div
-                      key={`pinned-chat-${chat.appChatId}`}
-                      role="button"
-                      tabIndex={0}
-                      className={`sidebar-pinned-item provider-${getChatProviderBadgeId(chat)} ${selectedChatId === chat.appChatId ? 'active' : ''}`}
-                      onClick={() => onSelectChat(chat)}
-                      onKeyDown={(event) => {
-                        if (event.target !== event.currentTarget) return
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          onSelectChat(chat)
-                        }
-                      }}
-                      title={chat.title}
-                    >
-                      {renderChatProviderBadge(chat)}
-                      <SidebarChatTitleEditable
-                        chat={chat}
-                        className="sidebar-pinned-label"
-                        query={sidebarSearchQuery}
-                        isEditing={editingChatId === chat.appChatId}
-                        onStartEdit={() => setEditingChatId(chat.appChatId)}
-                        onSubmit={(next) => commitChatRename(chat, next)}
-                        onCancel={() => setEditingChatId(null)}
-                      />
-                      <SidebarOverflowMenu
-                        triggerLabel="Chat actions"
-                        items={buildChatMenuItems(chat)}
-                      />
-                    </div>
-                  ))}
+                  {visiblePinnedChats.map((chat) => {
+                    const renameSurfaceId = `pinned-${chat.appChatId}`
+                    return (
+                      <div
+                        key={`pinned-chat-${chat.appChatId}`}
+                        role="button"
+                        tabIndex={0}
+                        className={`sidebar-pinned-item provider-${getChatProviderBadgeId(chat)} ${selectedChatId === chat.appChatId ? 'active' : ''}`}
+                        onClick={() => onSelectChat(chat)}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            onSelectChat(chat)
+                          }
+                        }}
+                        title={chat.title}
+                      >
+                        {renderChatProviderBadge(chat)}
+                        <SidebarChatTitleEditable
+                          chat={chat}
+                          className="sidebar-pinned-label"
+                          query={sidebarSearchQuery}
+                          isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                          onStartEdit={() => startChatRename(chat, renameSurfaceId)}
+                          onSubmit={(next) => commitChatRename(chat, next)}
+                          onCancel={() => setEditingChatTarget(null)}
+                        />
+                        <SidebarOverflowMenu
+                          triggerLabel="Chat actions"
+                          items={buildChatMenuItems(chat, renameSurfaceId)}
+                        />
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -3735,6 +3750,7 @@ export function Sidebar({
                 <div className="sidebar-recents-list">
                   {visibleRecentChats.map((chat) => {
                     const chatAgeTimestamp = chat.updatedAt || chat.createdAt
+                    const renameSurfaceId = `recent-${chat.appChatId}`
                     return (
                       <div
                         key={`recent-${chat.appChatId}`}
@@ -3757,15 +3773,15 @@ export function Sidebar({
                           chat={chat}
                           className="sidebar-recents-label"
                           query={sidebarSearchQuery}
-                          isEditing={editingChatId === chat.appChatId}
-                          onStartEdit={() => setEditingChatId(chat.appChatId)}
+                          isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                          onStartEdit={() => startChatRename(chat, renameSurfaceId)}
                           onSubmit={(next) => commitChatRename(chat, next)}
-                          onCancel={() => setEditingChatId(null)}
+                          onCancel={() => setEditingChatTarget(null)}
                         />
                         <ChatAgeLabel timestamp={chatAgeTimestamp} />
                         <SidebarOverflowMenu
                           triggerLabel="Chat actions"
-                          items={buildChatMenuItems(chat)}
+                          items={buildChatMenuItems(chat, renameSurfaceId)}
                         />
                       </div>
                     )
@@ -3852,6 +3868,7 @@ export function Sidebar({
                       const subThreadsExpanded = isSidebarSearchActive
                         ? true
                         : !collapsedSubThreadParentIds.has(chat.appChatId)
+                      const renameSurfaceId = `ensemble-${chat.appChatId}`
                       return (
                         <div key={`ensemble-${chat.appChatId}`} className="sidebar-chat-family">
                           <div
@@ -3898,10 +3915,10 @@ export function Sidebar({
                                   chat={chat}
                                   className="sidebar-chat-title"
                                   query={sidebarSearchQuery}
-                                  isEditing={editingChatId === chat.appChatId}
-                                  onStartEdit={() => setEditingChatId(chat.appChatId)}
+                                  isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                                  onStartEdit={() => startChatRename(chat, renameSurfaceId)}
                                   onSubmit={(next) => commitChatRename(chat, next)}
-                                  onCancel={() => setEditingChatId(null)}
+                                  onCancel={() => setEditingChatTarget(null)}
                                 />
                               </span>
                               <span className="sidebar-chat-subline">
@@ -3940,7 +3957,7 @@ export function Sidebar({
                             )}
                             <SidebarOverflowMenu
                               triggerLabel="Ensemble actions"
-                              items={buildChatMenuItems(chat)}
+                              items={buildChatMenuItems(chat, renameSurfaceId)}
                             />
                           </div>
                           {subThreads.length > 0 && subThreadsExpanded && (
@@ -4151,6 +4168,7 @@ export function Sidebar({
                                 0
                               )
                               const branchedBadgeTone = liveSubThreadCount > 0 ? 'active' : 'dim'
+                              const renameSurfaceId = `workspace-${ws.id}-${chat.appChatId}`
                               return (
                                 <div key={chat.appChatId} className="sidebar-chat-family">
                                   <div
@@ -4195,10 +4213,10 @@ export function Sidebar({
                                           chat={chat}
                                           className="sidebar-chat-title"
                                           query={sidebarSearchQuery}
-                                          isEditing={editingChatId === chat.appChatId}
-                                          onStartEdit={() => setEditingChatId(chat.appChatId)}
+                                          isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                                          onStartEdit={() => startChatRename(chat, renameSurfaceId)}
                                           onSubmit={(next) => commitChatRename(chat, next)}
-                                          onCancel={() => setEditingChatId(null)}
+                                          onCancel={() => setEditingChatTarget(null)}
                                         />
                                       </span>
                                       {(isChatRunning ||
@@ -4251,7 +4269,7 @@ export function Sidebar({
                                     )}
                                     <SidebarOverflowMenu
                                       triggerLabel="Chat actions"
-                                      items={buildChatMenuItems(chat)}
+                                      items={buildChatMenuItems(chat, renameSurfaceId)}
                                     />
                                   </div>
                                   {subThreads.length > 0 && subThreadsExpanded && (
@@ -4309,6 +4327,7 @@ export function Sidebar({
                     const chatAgeTimestamp = chat.updatedAt || chat.createdAt
                     const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     const lastRunStatus = getLastRunStatus(chat)
+                    const renameSurfaceId = `global-${chat.appChatId}`
                     return (
                       <div
                         role="button"
@@ -4325,10 +4344,10 @@ export function Sidebar({
                               chat={chat}
                               className="sidebar-chat-title"
                               query={sidebarSearchQuery}
-                              isEditing={editingChatId === chat.appChatId}
-                              onStartEdit={() => setEditingChatId(chat.appChatId)}
+                              isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                              onStartEdit={() => startChatRename(chat, renameSurfaceId)}
                               onSubmit={(next) => commitChatRename(chat, next)}
-                              onCancel={() => setEditingChatId(null)}
+                              onCancel={() => setEditingChatTarget(null)}
                             />
                           </span>
                           {(isChatRunning ||
@@ -4356,7 +4375,7 @@ export function Sidebar({
                         {!isChatRunning && <ChatAgeLabel timestamp={chatAgeTimestamp} />}
                         <SidebarOverflowMenu
                           triggerLabel="Chat actions"
-                          items={buildChatMenuItems(chat)}
+                          items={buildChatMenuItems(chat, renameSurfaceId)}
                         />
                       </div>
                     )
@@ -4434,6 +4453,7 @@ export function Sidebar({
                     const chatAgeTimestamp = chat.updatedAt || chat.createdAt
                     const isChatRunning = runningChatIdSet.has(chat.appChatId)
                     const lastRunStatus = getLastRunStatus(chat)
+                    const renameSurfaceId = `shared-${chat.appChatId}`
                     return (
                       <div
                         role="button"
@@ -4455,10 +4475,10 @@ export function Sidebar({
                               chat={chat}
                               className="sidebar-chat-title"
                               query={sidebarSearchQuery}
-                              isEditing={editingChatId === chat.appChatId}
-                              onStartEdit={() => setEditingChatId(chat.appChatId)}
+                              isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                              onStartEdit={() => startChatRename(chat, renameSurfaceId)}
                               onSubmit={(next) => commitChatRename(chat, next)}
-                              onCancel={() => setEditingChatId(null)}
+                              onCancel={() => setEditingChatTarget(null)}
                             />
                           </span>
                           {(isChatRunning ||
@@ -4492,7 +4512,7 @@ export function Sidebar({
                         {!isChatRunning && <ChatAgeLabel timestamp={chatAgeTimestamp} />}
                         <SidebarOverflowMenu
                           triggerLabel="Shared chat actions"
-                          items={buildChatMenuItems(chat)}
+                          items={buildChatMenuItems(chat, renameSurfaceId)}
                         />
                       </div>
                     )
