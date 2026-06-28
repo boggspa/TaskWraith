@@ -1417,7 +1417,7 @@
 /* Hide the same extra controls Gemini hides. */
 [data-composer-style="grok"] .composer-top-toggles,
 [data-composer-style="grok"] .composer-chips,
-[data-composer-style="grok"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+[data-composer-style="grok"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
@@ -1582,11 +1582,12 @@
   flex: 1;
 }
 [data-composer-style="grok"] [data-composer-control="attach"] { order: 0; }
-[data-composer-style="grok"] [data-composer-control="permission"] { order: 1; }
-[data-composer-style="grok"] [data-composer-control="ensemble-mode"] { order: 2; }
-[data-composer-style="grok"] [data-composer-control="provider"] { order: 3; }
-[data-composer-style="grok"] [data-composer-control="workspace"] { order: 4; }
-[data-composer-style="grok"] [data-composer-control="model"] { order: 5; margin-left: auto; }
+[data-composer-style="grok"] [data-composer-control="schedule"] { order: 1; }
+[data-composer-style="grok"] [data-composer-control="permission"] { order: 2; }
+[data-composer-style="grok"] [data-composer-control="ensemble-mode"] { order: 3; }
+[data-composer-style="grok"] [data-composer-control="provider"] { order: 4; }
+[data-composer-style="grok"] [data-composer-control="workspace"] { order: 5; }
+[data-composer-style="grok"] [data-composer-control="model"] { order: 6; margin-left: auto; }
 /* Ollama tier picker — Grok has no base `.composer-combined-picker-trigger`
  * rule to inherit, so style it explicitly as a bare-text monochrome control
  * (matching grok's permission/model chips) sitting beside the permission
@@ -2166,7 +2167,7 @@
 /* Hide the same extra controls Gemini hides. */
 [data-composer-style="cursor"] .composer-top-toggles,
 [data-composer-style="cursor"] .composer-chips,
-[data-composer-style="cursor"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+[data-composer-style="cursor"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
@@ -2389,10 +2390,11 @@
   /* load-bearing: the lifted [+]/[model] extend ABOVE this row. */
   overflow: visible;
 }
-[data-composer-style="cursor"] [data-composer-control="permission"] { order: 1; }
-[data-composer-style="cursor"] [data-composer-control="ensemble-mode"] { order: 2; }
-[data-composer-style="cursor"] [data-composer-control="provider"] { order: 3; }
-[data-composer-style="cursor"] [data-composer-control="workspace"] { order: 4; }
+[data-composer-style="cursor"] [data-composer-control="schedule"] { order: 1; }
+[data-composer-style="cursor"] [data-composer-control="permission"] { order: 2; }
+[data-composer-style="cursor"] [data-composer-control="ensemble-mode"] { order: 3; }
+[data-composer-style="cursor"] [data-composer-control="provider"] { order: 4; }
+[data-composer-style="cursor"] [data-composer-control="workspace"] { order: 5; }
 /* Ollama tier picker — Cursor styles triggers per-control-key (never the generic
  * `.composer-combined-picker-trigger` class), so style it explicitly with the
  * flat-gray `--cursor-shell-*` tokens (auto light/dark via the token flip).

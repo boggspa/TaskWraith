@@ -123,16 +123,50 @@ function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
 }
 
 function makeSanitizers(settings: AppSettings) {
+  const workspace: WorkspaceRecord = {
+    id: 'workspace-1',
+    path: '/tmp/taskwraith-workspace',
+    displayName: 'Workspace',
+    lastOpenedAt: 1,
+    createdAt: 1,
+    pinned: false
+  }
   return createMainSanitizers({
     getSettings: () => settings,
     getScheduledTasks: () => [],
     getWorkflowDefinitions: () => [],
-    findRegisteredWorkspace: () => undefined as WorkspaceRecord | undefined,
+    findRegisteredWorkspace: (workspacePath: string) =>
+      workspacePath === workspace.path ? workspace : undefined,
     requireRegisteredWorkspace: (workspacePath: string) => workspacePath,
     canonicalPath: (value: string) => value,
     normalizeExternalPathGrants: (grants: ExternalPathGrant[]) => grants
   })
 }
+
+describe('MainSanitizers scheduled tasks', () => {
+  it('rejects invalid or past run times before saving scheduled work', () => {
+    const { sanitizeScheduledTaskForSave } = makeSanitizers(makeSettings())
+    const baseTask = {
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/taskwraith-workspace',
+      chatId: 'chat-1',
+      provider: 'codex',
+      prompt: 'Run later',
+      runAt: new Date(Date.now() + 60_000).toISOString()
+    }
+
+    expect(() => sanitizeScheduledTaskForSave({ ...baseTask, runAt: 'not-a-date' })).toThrow(
+      'Scheduled task run time is invalid.'
+    )
+    expect(() =>
+      sanitizeScheduledTaskForSave({
+        ...baseTask,
+        runAt: new Date(Date.now() - 60_000).toISOString()
+      })
+    ).toThrow('Scheduled task run time must be in the future.')
+    expect(sanitizeScheduledTaskForSave(baseTask).runAt).toEqual(baseTask.runAt)
+  })
+})
 
 describe('MainSanitizers settings patches', () => {
   it('preserves General dashboard, heatmap, and approval timeout preferences', () => {

@@ -94,7 +94,7 @@ import type {
   UsageBalanceAggregate
 } from './lib/usageAggregateTypes'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
-import { toDateTimeLocalValue, formatScheduledRunTime } from './lib/dateTimeFormat'
+import { formatScheduledRunTime } from './lib/dateTimeFormat'
 import { buildReviewCurrentDiffPrompt } from './lib/reviewDiffPrompt'
 import { normalizeExternalPathGrants } from './lib/normalizeExternalPathGrants'
 import type { SideSlashCommand } from './lib/SideSlashCommand'
@@ -261,6 +261,7 @@ import { SubThreadCreator } from './components/SubThreadCreator'
 import { FirstLaunchSheet } from './components/FirstLaunchSheet'
 import { BugReportSheet, type BugReportSubmission } from './components/BugReportSheet'
 import { ChangelogSheet } from './components/ChangelogSheet'
+import { ComposerScheduleButton } from './components/ComposerScheduleButton'
 import { AppBootMask } from './components/AppBootMask'
 import {
   WorkSessionSetupSheet,
@@ -274,7 +275,6 @@ import {
   ChatMediaIcon,
   ChatPopoutIcon,
   ClaudeReturnSymbolIcon,
-  ClockSymbolIcon,
   DockDrawerIcon,
   EndSideChatIcon,
   ExclamationShieldIcon,
@@ -17561,37 +17561,24 @@ function App(): React.JSX.Element {
         </select>
       </label>
     ) : null
-  const scheduleControls = hasWorkspaceContext ? (
-    <span className="composer-scheduler-controls">
-      <label className="composer-schedule-label" title="Schedule this prompt">
-        <ClockSymbolIcon />
-        <input
-          className="composer-schedule-input"
-          type="datetime-local"
-          value={scheduleRunAt}
-          min={toDateTimeLocalValue(new Date(Date.now() + 60_000))}
-          onChange={(event) => setScheduleRunAt(event.target.value)}
-          disabled={!currentWorkspace || !currentChat || isCurrentComposerLocked}
-          aria-label="Scheduled run time"
-        />
-      </label>
-      <button
-        className="composer-picker-command composer-icon-command"
-        type="button"
-        onClick={() => void handleScheduleRun()}
-        disabled={
-          !currentWorkspace ||
-          !currentChat ||
-          !prompt.trim() ||
-          !scheduleRunAt ||
-          isCurrentComposerLocked
-        }
-        title="Schedule prompt"
-        aria-label="Schedule prompt"
-      >
-        <ClockSymbolIcon />
-      </button>
-    </span>
+  const scheduleDisabledReason = !hasWorkspaceContext
+    ? 'Scheduling requires a workspace-backed chat.'
+    : !currentChat
+      ? 'Open a chat to schedule a message.'
+      : isCurrentComposerLocked
+        ? 'Composer is locked while the current turn is running.'
+        : undefined
+  const scheduleControls = currentChat ? (
+    <ComposerScheduleButton
+      provider={currentProvider}
+      composerStyle={settings?.composerStyle || 'default'}
+      value={scheduleRunAt}
+      onChange={setScheduleRunAt}
+      onSchedule={handleScheduleRun}
+      hasPrompt={Boolean(prompt.trim())}
+      disabled={!hasWorkspaceContext || !currentWorkspace || !currentChat || isCurrentComposerLocked}
+      disabledReason={scheduleDisabledReason}
+    />
   ) : null
 
   // #272: one-click persistent workspace trust for Gemini. Writes the

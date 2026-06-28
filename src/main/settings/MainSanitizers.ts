@@ -503,12 +503,21 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
   ): Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'> &
     Partial<Pick<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'>> {
     const input = requireRecord(task, 'Scheduled task')
+    const runAt = requireNonEmptyString(input.runAt, 'Scheduled task run time')
+    const runAtMs = new Date(runAt).getTime()
+    if (!Number.isFinite(runAtMs)) {
+      throw new Error('Scheduled task run time is invalid.')
+    }
+    if (runAtMs <= Date.now()) {
+      throw new Error('Scheduled task run time must be in the future.')
+    }
     const workspace = assertScheduledTaskWorkspaceIdentity(
       requireNonEmptyString(input.workspacePath, 'Scheduled task workspace'),
       input.workspaceId
     )
     return {
       ...input,
+      runAt: new Date(runAtMs).toISOString(),
       workspaceId: workspace.id,
       workspacePath: deps.canonicalPath(workspace.path),
       provider: assertProviderId(input.provider),

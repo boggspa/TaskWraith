@@ -4017,7 +4017,8 @@
 .composer-icon-command,
 .composer-inline-actions,
 .composer-run-timecode,
-.composer-scheduler-controls {
+.composer-scheduler-controls,
+.composer-schedule-trigger {
   flex-shrink: 0;
 }
 
@@ -5041,6 +5042,159 @@
   border-color: transparent;
 }
 
+.composer-schedule-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 58%, transparent);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer-schedule-trigger:hover:not(:disabled),
+.composer-schedule-trigger[aria-expanded='true'] {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.composer-schedule-trigger.is-active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.composer-schedule-trigger:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.composer-schedule-trigger .composer-control-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.composer-schedule-popover {
+  min-width: 320px;
+  max-width: min(340px, calc(100vw - 16px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  pointer-events: auto;
+}
+
+.composer-schedule-popover-header,
+.composer-schedule-actions,
+.composer-schedule-presets {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-schedule-popover-header {
+  justify-content: space-between;
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.composer-schedule-popover-header span:last-child {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.composer-schedule-field {
+  display: grid;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.composer-schedule-field input {
+  width: 100%;
+  min-height: 34px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 85%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg) 82%, transparent);
+  color: var(--text-primary);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.composer-schedule-field input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.composer-schedule-presets {
+  flex-wrap: wrap;
+}
+
+.composer-schedule-presets button,
+.composer-schedule-actions button {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-bg) 70%, transparent);
+  color: var(--text-secondary);
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.composer-schedule-presets button:hover:not(:disabled),
+.composer-schedule-actions button:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.composer-schedule-presets button:disabled,
+.composer-schedule-actions button:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.composer-schedule-summary {
+  display: grid;
+  gap: 3px;
+  min-height: 18px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.composer-schedule-summary span:first-child {
+  color: var(--text-secondary);
+}
+
+.composer-schedule-actions {
+  justify-content: flex-end;
+}
+
+.composer-schedule-actions button.primary {
+  color: color-mix(in srgb, var(--accent) 94%, #ffffff);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  font-weight: 650;
+}
+
 .scheduled-task-strip {
   width: min(100%, 980px);
   display: flex;
@@ -5084,6 +5238,12 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduled-task-countdown {
+  color: color-mix(in srgb, var(--accent) 76%, var(--text-secondary));
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 

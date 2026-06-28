@@ -62,6 +62,7 @@ import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
 import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
+import { formatScheduledTaskCountdown } from '../lib/scheduledCountdown'
 import { buildParticipantToolGrantPatch, getParticipantToolGrantIds } from '../lib/ensembleParticipantToolGrants'
 import {
   getDefaultEnsembleParticipantConfig,
@@ -654,6 +655,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     workspaces,
     yoloBannerDismissed
   } = props
+  const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
+
+  const hasVisibleScheduledCountdown =
+    Array.isArray(visibleScheduledTasks) &&
+    visibleScheduledTasks.some((task: any) => task?.status === 'pending' || task?.status === 'due')
+
+  useEffect(() => {
+    if (!hasVisibleScheduledCountdown) return
+    const interval = window.setInterval(() => setScheduledNowMs(Date.now()), 1_000)
+    return () => window.clearInterval(interval)
+  }, [hasVisibleScheduledCountdown])
 
   // Per-chat Ollama tool-control tier + run profile for the composer picker.
   // Read this chat's choice out of providerMetadata (validated against the shared
@@ -1969,12 +1981,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 already visible in the sidebar's chat tile + active
                 tab indicator; permission mode is set via the
                 runtime-profile picker that stays in this row.
-                Schedule + runtime-profile controls remain — those
-                are genuinely actionable.
+                Runtime-profile controls remain here; Schedule moved to
+                the inline composer row as a first-class prompt modifier.
               */}
-              {!isCurrentEnsembleChat && (scheduleControls || runtimeProfileControl) && (
+              {runtimeProfileControl && (
                 <div className="composer-top-toggles">
-                  {scheduleControls}
                   {runtimeProfileControl}
                 </div>
               )}
@@ -3151,6 +3162,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             />
                           )
                         })()}
+                        {scheduleControls}
                         {/* 1.0.4-AS3 — the old name-pill (Application × ) is gone;
                         the attached-window affordance now lives in the
                         composer telemetry row as a Screen Watch icon
@@ -4546,6 +4558,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       <ClockSymbolIcon />
                       <span className="scheduled-task-copy" title={task.prompt}>
                         {getProviderLabel(task.provider)} · {formatScheduledRunTime(task.runAt)}
+                      </span>
+                      <span className="scheduled-task-countdown">
+                        {formatScheduledTaskCountdown(task, scheduledNowMs)}
                       </span>
                       <span className="scheduled-task-status">{task.status}</span>
                       {(task.status === 'pending' || task.status === 'due') && (
