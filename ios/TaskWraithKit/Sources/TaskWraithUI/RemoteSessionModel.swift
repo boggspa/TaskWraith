@@ -132,7 +132,7 @@ public final class RemoteSessionModel: ObservableObject {
     private var repliedApprovalToolCallIds: Set<String> = []
     private var repliedQuestionIds: Set<String> = []
     private static let threadTitleMaxCharacters = 160
-    private static let pendingThreadTitleRenameTTL: TimeInterval = 10
+    private static let pendingThreadTitleRenameTTL: TimeInterval = 60
     private struct PendingThreadTitleRename {
         let title: String
         let startedAt: Date

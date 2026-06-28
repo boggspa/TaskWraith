@@ -30,6 +30,7 @@ import type {
 } from '../../../main/store/types'
 import { selectRecentChats } from '../lib/recentChatsList'
 import { isContentlessRemoteDraftChat } from '../../../main/remote/RemoteDraftChats'
+import { normalizeThreadTitle } from '../../../shared/threadTitles'
 import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 import { ActiveRunsSection } from './ActiveRunsSection'
 import { LocalServersSection } from './LocalServersSection'
@@ -2901,9 +2902,10 @@ export function Sidebar({
    * whether the submit was meaningful.
    */
   const commitChatRename = (chat: ChatRecord, nextValue: string): void => {
-    const trimmed = nextValue.trim()
+    const trimmed = normalizeThreadTitle(nextValue, '')
+    const currentTitle = normalizeThreadTitle(chat.title, '')
     setEditingChatId(null)
-    if (!trimmed || trimmed === chat.title) return
+    if (!trimmed || trimmed === currentTitle) return
     onRenameChat?.(chat.appChatId, trimmed)
   }
 

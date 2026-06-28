@@ -10,8 +10,8 @@ export interface SpellcheckContextSnapshot {
 
 const MAX_WORD_LENGTH = 80
 const MAX_SUGGESTIONS = 8
-const MAX_CONTEXT_AGE_MS = 1500
-const MAX_COORDINATE_DELTA_PX = 28
+const MAX_CONTEXT_AGE_MS = 10_000
+const MAX_COORDINATE_DELTA_PX = 64
 
 function finiteCoordinate(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null

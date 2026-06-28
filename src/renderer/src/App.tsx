@@ -5865,11 +5865,7 @@ function App(): React.JSX.Element {
     if (!trimmed) return
     updateChatById(chatId, (source) => {
       if (source.title === trimmed) return source
-      const updated: ChatRecord = { ...source, title: trimmed, updatedAt: Date.now() }
-      void window.api.saveChat(updated).catch((err) => {
-        console.error('[renameChat] saveChat failed', err)
-      })
-      return updated
+      return { ...source, title: trimmed, updatedAt: Date.now() }
     })
   }
 

@@ -47,8 +47,9 @@ describe('SpellcheckContext', () => {
     )
 
     expect(spellcheckContextMatchesPoint(snapshot, { x: 110, y: 130 }, 2200)).toBe(true)
+    expect(spellcheckContextMatchesPoint(snapshot, { x: 160, y: 180 }, 2200)).toBe(true)
     expect(spellcheckContextMatchesPoint(snapshot, { x: 180, y: 130 }, 2200)).toBe(false)
-    expect(spellcheckContextMatchesPoint(snapshot, { x: 110, y: 130 }, 4000)).toBe(false)
+    expect(spellcheckContextMatchesPoint(snapshot, { x: 110, y: 130 }, 12_500)).toBe(false)
   })
 
   it('checks replacement suggestions against the captured dictionary list', () => {
