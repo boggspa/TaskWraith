@@ -4,6 +4,30 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.6.7 - 2026-06-28
+
+### Added
+- **Universal composer scheduling.** Workspace-backed single and Ensemble chats
+  now have a Schedule clock in the composer controls. It opens a glass date/time
+  picker with quick presets and uses the existing scheduled-task pipeline so
+  delayed prompts stay restart-safe and run through the same unattended-authority
+  guardrails.
+
+### Changed
+- **Scheduled task visibility.** Scheduled-task pills now show a live countdown
+  and switch to "due / waiting" when the timer has elapsed but the chat is still
+  busy.
+- **More flexible iOS relay pairing.** Device pairing can include a manually
+  configured relay door alongside LAN/Tailscale discovery, making release builds
+  less likely to get stuck on the wrong network path.
+
+### Fixed
+- **Sidebar rename reliability.** Inline chat rename fields focus and select
+  consistently, rename can be started deliberately from the row or menu, and
+  renamed titles avoid unnecessary truncation in edit fields.
+- **Scheduled-task validation.** The main process now rejects invalid or already
+  elapsed schedule times before saving delayed work.
+
 ## 1.6.6 - 2026-06-27
 
 ### Added
