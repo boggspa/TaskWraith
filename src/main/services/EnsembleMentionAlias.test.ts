@@ -149,6 +149,12 @@ describe('generateModelAliases', () => {
     expect(aliases).toContain('qwen')
     expect(aliases).toContain('qwen 3.5')
   })
+
+  it('ollama: supports Ornith as a branded mention alias', () => {
+    const aliases = generateModelAliases('ollama', 'ornith:35b')
+    expect(aliases).toContain('ornith 35b')
+    expect(aliases).toContain('ornith')
+  })
 })
 
 describe('getParticipantAliases', () => {

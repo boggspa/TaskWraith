@@ -107,6 +107,10 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'gemma4:12b-mlx-bf16': 'Gemma 4 (12B Param)',
   'gemma4:12b-mxfp8': 'Gemma 4 (12B Param)',
   'gemma4:12b-nvfp4': 'Gemma 4 (12B Param)',
+  ornith: 'Ornith 1.0 (9B Param)',
+  'ornith:latest': 'Ornith 1.0 (9B Param)',
+  'ornith:9b': 'Ornith 1.0 (9B Param)',
+  'ornith:35b': 'Ornith 1.0 (35B Param)',
   'gpt-oss': 'GPT OSS (20B Param)',
   'gpt-oss:20b': 'GPT OSS (20B Param)',
   'gpt-oss:latest': 'GPT OSS (20B Param)',
@@ -194,6 +198,9 @@ export function canonicalModelIdForProvider(
     if (key === 'qwen3.6:35b-a3b') {
       return 'qwen3.6:35b'
     }
+    if (key === 'ornith' || key === 'ornith:latest') {
+      return 'ornith:9b'
+    }
   }
   return trimmed
 }
@@ -223,6 +230,15 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('minicpm-v4.5:8b-')) {
     return 'MiniCPM-V 4.5 (8B Param)'
+  }
+  if (
+    provider === 'ollama' &&
+    (key === 'ornith' || key === 'ornith:latest' || key.startsWith('ornith:9b-'))
+  ) {
+    return 'Ornith 1.0 (9B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('ornith:35b-')) {
+    return 'Ornith 1.0 (35B Param)'
   }
   if (provider === 'ollama' && key.startsWith('granite4.1:3b-')) {
     return 'Granite 4.1 (3B Param)'

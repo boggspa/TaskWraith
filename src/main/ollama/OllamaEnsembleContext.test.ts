@@ -11,6 +11,8 @@ describe('OllamaEnsembleContext', () => {
   it('uses conservative defaults for unknown local models', () => {
     expect(resolveOllamaContextTokenLimit('unknown:7b')).toBe(4096)
     expect(resolveOllamaContextTokenLimit('gemma4:12b')).toBe(8192)
+    expect(resolveOllamaContextTokenLimit('ornith:9b')).toBe(8192)
+    expect(resolveOllamaContextTokenLimit('ornith:35b')).toBe(8192)
     expect(resolveOllamaContextTokenLimit('qwen3.6:35b')).toBe(8192)
     expect(resolveOllamaContextTokenLimit('granite4.1:30b')).toBe(8192)
     expect(resolveOllamaContextTokenLimit('nemotron3:33b')).toBe(8192)

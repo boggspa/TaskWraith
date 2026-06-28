@@ -202,6 +202,16 @@ const OLLAMA_DEFAULT_MODELS = [
     description: 'Google Gemma 4 12B via Ollama · 262k context'
   },
   {
+    id: 'ornith:9b',
+    label: 'Ornith 1.0 (9B Param)',
+    description: 'Ornith 1.0 9B via Ollama · 262k context · agentic coding'
+  },
+  {
+    id: 'ornith:35b',
+    label: 'Ornith 1.0 (35B Param)',
+    description: 'Ornith 1.0 35B via Ollama · 262k context · agentic coding'
+  },
+  {
     id: 'gpt-oss:20b',
     label: 'GPT OSS (20B Param)',
     description: 'OpenAI gpt-oss 20B via Ollama · 131k context'

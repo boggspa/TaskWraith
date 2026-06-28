@@ -44,6 +44,12 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines.join(' ')).toContain('escape backslashes')
   })
 
+  it('adds Ornith agentic-coding guidance', () => {
+    const lines = ollamaModelFamilyPromptLines('ornith:35b')
+    expect(lines.join(' ')).toContain('agentic coding')
+    expect(lines.join(' ')).toContain('verification gaps')
+  })
+
   it('keeps only tool-call discipline for conversational GPT-OSS turns', () => {
     const lines = ollamaModelFamilyPromptLines('gpt-oss:latest', 'conversational')
     expect(lines.join(' ')).toContain('tool-intent stub')
@@ -53,6 +59,7 @@ describe('ollamaModelFamilyPromptLines', () => {
 
   it('drops workflow scaffolding for conversational turns on other families', () => {
     expect(ollamaModelFamilyPromptLines('qwen3.5:9b', 'conversational')).toEqual([])
+    expect(ollamaModelFamilyPromptLines('ornith:35b', 'conversational')).toEqual([])
   })
 })
 
@@ -89,6 +96,7 @@ describe('ollamaLocalToolSystemPrompt', () => {
 describe('workflow hints', () => {
   it('documents scout-then-delegate workflow', () => {
     expect(ollamaScoutDelegateWorkflowHint('qwen3.5:9b')).toContain('delegate implementation')
+    expect(ollamaScoutDelegateWorkflowHint('ornith:35b')).toContain('delegate implementation')
   })
 
   it('documents approved patcher behavior without default delegation', () => {

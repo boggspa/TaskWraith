@@ -16,5 +16,8 @@ describe('resolveOllamaContextBudget', () => {
     expect(resolveOllamaContextBudget('nemotron3:33b').maxBlockChars).toBeGreaterThan(
       resolveOllamaContextBudget('gpt-oss:20b').maxBlockChars
     )
+    expect(resolveOllamaContextBudget('ornith:35b').maxBlockChars).toBeGreaterThan(
+      resolveOllamaContextBudget('ornith:9b').maxBlockChars
+    )
   })
 })

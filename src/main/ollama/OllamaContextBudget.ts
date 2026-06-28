@@ -44,8 +44,10 @@ export function resolveOllamaContextBudget(modelId?: string | null): ContextBudg
     case 'qwen3_4b':
       return OLLAMA_QWEN_4B_BUDGET
     case 'qwen3_5_9b':
+    case 'ornith_9b':
       return OLLAMA_QWEN_9B_BUDGET
     case 'qwen3_6_35b':
+    case 'ornith_35b':
     case 'granite4_1_30b':
     case 'nemotron3_33b':
       return OLLAMA_LARGE_REASONING_BUDGET

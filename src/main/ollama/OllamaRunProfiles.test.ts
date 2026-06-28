@@ -57,5 +57,11 @@ describe('OllamaRunProfiles', () => {
     expect(
       resolveOllamaThinkingLevel('qwen3.5:9b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBeUndefined()
+    expect(
+      resolveOllamaThinkingLevel('ornith:9b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+    ).toBe('medium')
+    expect(
+      resolveOllamaThinkingLevel('ornith:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+    ).toBe('medium')
   })
 })

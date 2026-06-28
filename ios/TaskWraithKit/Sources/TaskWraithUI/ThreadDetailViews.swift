@@ -2141,7 +2141,7 @@ struct ThreadEmptyWelcomeCanvas: View {
         String($0).trimmingCharacters(in: .whitespaces)
     }
     guard let head, !head.isEmpty else { return fallback }
-    let known = ["gemini", "codex", "claude", "kimi", "grok", "cursor", "ollama", "qwen"]
+    let known = ["gemini", "codex", "claude", "kimi", "grok", "cursor", "ollama", "qwen", "ornith"]
     guard known.contains(head.lowercased()) else { return fallback }
     return TWTheme.providerAccent(head.lowercased())
 }

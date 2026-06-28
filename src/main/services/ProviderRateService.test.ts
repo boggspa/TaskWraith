@@ -215,6 +215,10 @@ describe('BAKED_IN_RATES', () => {
     expect(BAKED_IN_RATES.ollama.models.map((model) => model.modelId)).toEqual(
       expect.arrayContaining([
         'qwen3.6:35b',
+        'ornith',
+        'ornith:latest',
+        'ornith:9b',
+        'ornith:35b',
         'minicpm-v4.5:8b',
         'granite4.1:3b',
         'granite4.1:30b',

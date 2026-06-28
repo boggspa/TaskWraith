@@ -58,6 +58,8 @@ export function resolveOllamaContextTokenLimit(
     family === 'minicpm_v45_8b' ||
     family === 'granite4_1_3b' ||
     family === 'granite4_1_30b' ||
+    family === 'ornith_9b' ||
+    family === 'ornith_35b' ||
     family === 'nemotron3_33b'
   ) return 8192
   if (family === 'qwen3_4b') return 4096

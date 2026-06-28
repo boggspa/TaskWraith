@@ -473,6 +473,8 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('ollama run minicpm-v4.5:8b')
     expect(html).toContain('ollama run granite4.1:30b')
     expect(html).toContain('ollama run nemotron3:33b')
+    expect(html).toContain('ollama run ornith:9b')
+    expect(html).toContain('ollama run ornith:35b')
     expect(html).toContain('ollama run qwen3.6:35b')
     expect(html).toContain('Official install commands')
   })

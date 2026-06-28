@@ -1029,6 +1029,11 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('qwen3.6:35b')).toBe('Qwen 3.6 (35B-A3B)')
     expect(humanizeOllamaModelId('gemma4:12b')).toBe('Gemma 4 (12B Param)')
     expect(humanizeOllamaModelId('gemma4:12b-it-q4_K_M')).toBe('Gemma 4 (12B Param)')
+    expect(humanizeOllamaModelId('ornith')).toBe('Ornith 1.0 (9B Param)')
+    expect(humanizeOllamaModelId('ornith:latest')).toBe('Ornith 1.0 (9B Param)')
+    expect(humanizeOllamaModelId('ornith:9b')).toBe('Ornith 1.0 (9B Param)')
+    expect(humanizeOllamaModelId('ornith:35b')).toBe('Ornith 1.0 (35B Param)')
+    expect(humanizeOllamaModelId('ornith:35b-q4_K_M')).toBe('Ornith 1.0 (35B Param)')
     expect(humanizeOllamaModelId('gpt-oss')).toBe('GPT OSS (20B Param)')
     expect(humanizeOllamaModelId('gpt-oss:20b')).toBe('GPT OSS (20B Param)')
     expect(humanizeOllamaModelId('gpt-oss:latest')).toBe('GPT OSS (20B Param)')
@@ -1063,6 +1068,8 @@ describe('normalizeOllamaModels', () => {
           { model: 'qwen3.5:9b' },
           { model: 'qwen3.6:35b' },
           { model: 'gemma4:12b' },
+          { model: 'ornith:9b' },
+          { model: 'ornith:35b' },
           { model: 'gpt-oss:20b' },
           { model: 'minicpm-v4.5:8b' },
           { model: 'granite4.1:3b' },
@@ -1074,7 +1081,7 @@ describe('normalizeOllamaModels', () => {
       'llama3.2:3b'
     )
 
-    expect(models).toHaveLength(10)
+    expect(models).toHaveLength(12)
     expect(models[0]).toMatchObject({
       id: 'qwen3:4b-instruct',
       label: 'Qwen 3 (4B Param)',
@@ -1107,34 +1114,54 @@ describe('normalizeOllamaModels', () => {
       isDefault: false
     })
     expect(models[4]).toMatchObject({
+      id: 'ornith:9b',
+      label: 'Ornith 1.0 (9B Param)',
+      isDefault: false
+    })
+    expect(models[5]).toMatchObject({
+      id: 'ornith:35b',
+      label: 'Ornith 1.0 (35B Param)',
+      isDefault: false
+    })
+    expect(models[6]).toMatchObject({
       id: 'gpt-oss:20b',
       label: 'GPT OSS (20B Param)',
       isDefault: false
     })
-    expect(models[5]).toMatchObject({
+    expect(models[7]).toMatchObject({
       id: 'minicpm-v4.5:8b',
       label: 'MiniCPM-V 4.5 (8B Param)',
       isDefault: false
     })
-    expect(models[6]).toMatchObject({
+    expect(models[8]).toMatchObject({
       id: 'granite4.1:3b',
       label: 'Granite 4.1 (3B Param)',
       isDefault: false
     })
-    expect(models[7]).toMatchObject({
+    expect(models[9]).toMatchObject({
       id: 'granite4.1:30b',
       label: 'Granite 4.1 (30B Param)',
       isDefault: false
     })
-    expect(models[8]).toMatchObject({
+    expect(models[10]).toMatchObject({
       id: 'nemotron3:33b',
       label: 'Nemotron 3 Nano Omni (33B Param)',
       isDefault: false
     })
-    expect(models[9]).toMatchObject({
+    expect(models[11]).toMatchObject({
       id: 'llama3.2:3b',
       isDefault: true
     })
+  })
+
+  it('treats the bare Ornith tag as the installed 9B model when selecting defaults', () => {
+    const models = normalizeOllamaModels(
+      { models: [{ model: 'ornith:9b' }, { model: 'ornith:35b' }] },
+      'ornith'
+    )
+
+    expect(models.find((model) => model.id === 'ornith:9b')?.isDefault).toBe(true)
+    expect(models.find((model) => model.id === 'ornith:35b')?.isDefault).toBe(false)
   })
 
   it('falls back to the first model when no default is configured', () => {

@@ -8,6 +8,7 @@ import {
 describe('OllamaRetrievalFirst', () => {
   it('blocks unfamiliar reads until workspace_search runs', () => {
     expect(ollamaEnforcesRetrievalFirst('gpt-oss:20b')).toBe(true)
+    expect(ollamaEnforcesRetrievalFirst('ornith:35b')).toBe(true)
     expect(ollamaReadFileExemptFromRetrievalFirst('README.md')).toBe(true)
     expect(ollamaReadFileExemptFromRetrievalFirst('src/main/Foo.ts')).toBe(false)
     expect(ollamaRetrievalFirstBlockedMessage('src/main/Foo.ts')).toContain('workspace_search')

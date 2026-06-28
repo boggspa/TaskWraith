@@ -116,6 +116,13 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'gemma4:12b-it-q4_K_M')).toBe(
         'Gemma 4 (12B Param)'
       )
+      expect(humaniseModelId('ollama', 'ornith')).toBe('Ornith 1.0 (9B Param)')
+      expect(humaniseModelId('ollama', 'ornith:latest')).toBe('Ornith 1.0 (9B Param)')
+      expect(humaniseModelId('ollama', 'ornith:9b')).toBe('Ornith 1.0 (9B Param)')
+      expect(humaniseModelId('ollama', 'ornith:35b')).toBe('Ornith 1.0 (35B Param)')
+      expect(humaniseModelId('ollama', 'ornith:35b-q4_K_M')).toBe(
+        'Ornith 1.0 (35B Param)'
+      )
       expect(humaniseModelId('ollama', 'gpt-oss')).toBe('GPT OSS (20B Param)')
       expect(humaniseModelId('ollama', 'gpt-oss:20b')).toBe('GPT OSS (20B Param)')
       expect(humaniseModelId('ollama', 'gpt-oss:latest')).toBe('GPT OSS (20B Param)')
@@ -214,6 +221,10 @@ describe('humaniseModelId', () => {
       expect(labels['qwen3.5:9b']).toBeDefined()
       expect(labels['qwen3.6:35b']).toBeDefined()
       expect(labels['gemma4:12b']).toBeDefined()
+      expect(labels['ornith']).toBeDefined()
+      expect(labels['ornith:latest']).toBeDefined()
+      expect(labels['ornith:9b']).toBeDefined()
+      expect(labels['ornith:35b']).toBeDefined()
       expect(labels['gpt-oss:20b']).toBeDefined()
       expect(labels['minicpm-v4.5:8b']).toBeDefined()
       expect(labels['granite4.1:30b']).toBeDefined()
@@ -239,6 +250,7 @@ describe('humaniseModelIdCompact', () => {
     expect(humaniseModelIdCompact('cursor', 'composer-2.5-fast')).toBe('Composer 2.5 Fast')
     expect(humaniseModelIdCompact('ollama', 'qwen3:4b-instruct')).toBe('Qwen 3 (4B Param)')
     expect(humaniseModelIdCompact('ollama', 'qwen3.6:35b-a3b')).toBe('Qwen 3.6 (35B-A3B)')
+    expect(humaniseModelIdCompact('ollama', 'ornith:9b')).toBe('Ornith 1.0 (9B Param)')
   })
 })
 

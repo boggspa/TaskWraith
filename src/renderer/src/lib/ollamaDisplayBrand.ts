@@ -42,6 +42,14 @@ export function resolveOllamaDisplayBrand(
     }
   }
 
+  if (includesAny(key, ['ornith'])) {
+    return {
+      providerLabel: 'Ornith',
+      providerClass: 'ornith',
+      modelLabel: label || 'Ornith 1.0 (9B Param)'
+    }
+  }
+
   return null
 }
 

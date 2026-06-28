@@ -235,7 +235,7 @@ export function generateModelAliases(provider: ProviderId, model: string | undef
       }
     }
   } else if (provider === 'ollama') {
-    // qwen3.5:9b, qwen3:4b-instruct, gemma4:12b, gpt-oss
+    // qwen3.5:9b, qwen3:4b-instruct, gemma4:12b, ornith:35b, gpt-oss
     const parts = id.replace(/[:/]+/g, '-').split('-').filter(Boolean)
     if (parts.length > 0) {
       push(parts.join(' '))
@@ -248,6 +248,7 @@ export function generateModelAliases(provider: ProviderId, model: string | undef
         if (tail) push(`qwen ${version} ${tail}`)
       }
       if (parts[0].startsWith('gemma')) push('gemma')
+      if (parts[0] === 'ornith') push('ornith')
       if (parts[0] === 'gpt' && parts[1] === 'oss') push('gpt oss')
     }
   }

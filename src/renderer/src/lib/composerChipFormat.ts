@@ -133,6 +133,17 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
       return 'Gemma 4 (12B Param)'
     }
     if (
+      id === 'ornith' ||
+      id === 'ornith:latest' ||
+      id === 'ornith:9b' ||
+      id.startsWith('ornith:9b-')
+    ) {
+      return 'Ornith 1.0 (9B Param)'
+    }
+    if (id === 'ornith:35b' || id.startsWith('ornith:35b-')) {
+      return 'Ornith 1.0 (35B Param)'
+    }
+    if (
       id === 'gpt-oss' ||
       id === 'gpt-oss:20b' ||
       id === 'gpt-oss:latest' ||

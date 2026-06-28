@@ -62,6 +62,16 @@ export function ollamaModelFamilyPromptLines(
         'Model profile (Gemma 4 12B): search narrowly, then read targeted files before editing.',
         'Use one tool at a time and summarize results instead of chaining many speculative calls.'
       ]
+    case 'ornith_9b':
+      return [
+        'Model profile (Ornith 1.0 9B): agentic coding model; search first, then make focused edits with explicit verification notes.',
+        'Keep tool payloads compact and stop with a handoff plan if the task becomes broad or multi-file.'
+      ]
+    case 'ornith_35b':
+      return [
+        'Model profile (Ornith 1.0 35B): agentic coding model; use its larger coding context for deeper review and focused implementation.',
+        'Read targeted files before editing, keep each tool call concrete, and call out verification gaps before release-sensitive changes.'
+      ]
     case 'granite4_1_3b':
       return [
         'Model profile (Granite 4.1 3B): use it as a fast local scout; list/search first and keep reads small.',
@@ -247,6 +257,8 @@ export function ollamaTierAwareWorkflowHint(
     family === 'qwen3_4b' ||
     family === 'minicpm_v45_8b' ||
     family === 'gemma4_12b' ||
+    family === 'ornith_9b' ||
+    family === 'ornith_35b' ||
     family === 'granite4_1_3b' ||
     family === 'granite4_1_30b' ||
     family === 'nemotron3_33b'

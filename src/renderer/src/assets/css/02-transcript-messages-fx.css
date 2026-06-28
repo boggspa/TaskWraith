@@ -3682,6 +3682,9 @@
 .message-meta.provider-openai {
   color: var(--provider-openai-color) !important;
 }
+.message-meta.provider-ornith {
+  color: var(--provider-ornith-color) !important;
+}
 
 .message-bubble {
   padding: var(--space-md) var(--space-lg);

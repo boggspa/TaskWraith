@@ -17,6 +17,11 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('qwen3:4b-instruct')).toBe('qwen3_4b')
     expect(resolveOllamaModelFamily('minicpm-v4.5:8b')).toBe('minicpm_v45_8b')
     expect(resolveOllamaModelFamily('gemma4:12b-it-q4_K_M')).toBe('gemma4_12b')
+    expect(resolveOllamaModelFamily('ornith')).toBe('ornith_9b')
+    expect(resolveOllamaModelFamily('ornith:latest')).toBe('ornith_9b')
+    expect(resolveOllamaModelFamily('ornith:9b')).toBe('ornith_9b')
+    expect(resolveOllamaModelFamily('ornith:35b')).toBe('ornith_35b')
+    expect(resolveOllamaModelFamily('ornith:35b-q4_K_M')).toBe('ornith_35b')
     expect(resolveOllamaModelFamily('granite4.1:3b')).toBe('granite4_1_3b')
     expect(resolveOllamaModelFamily('granite4.1:30b')).toBe('granite4_1_30b')
     expect(resolveOllamaModelFamily('nemotron3:33b')).toBe('nemotron3_33b')
@@ -44,6 +49,17 @@ describe('resolveOllamaModelFamily', () => {
         families: ['gptoss']
       })
     ).toBe('gpt_oss_20b')
+  })
+
+  it('detects Ornith from Ollama metadata', () => {
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'ornith',
+        parameterSize: '35B'
+      })
+    ).toBe('ornith_35b')
   })
 })
 

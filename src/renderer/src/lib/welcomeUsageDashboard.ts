@@ -442,7 +442,8 @@ const inferProviderFromModelName = (model: string): ProviderId => {
     normalized.includes('ollama') ||
     normalized.includes('qwen') ||
     normalized.includes('llama') ||
-    normalized.includes('gemma')
+    normalized.includes('gemma') ||
+    normalized.includes('ornith')
   ) {
     return 'ollama'
   }

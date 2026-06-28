@@ -193,6 +193,16 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "131k")
     }
 
+    @Test("ollama ornith:35b: 262_144 / 262k")
+    func ollamaOrnith35b() {
+        let groups = ModelContextLengths.buildGroups(includeOllama: true)
+        let row = groups.first { $0.provider == "ollama" }?
+            .models.first { $0.modelId == "ornith:35b" }
+        #expect(row?.label == "Ornith 1.0 (35B Param)")
+        #expect(row?.contextWindow == 262_144)
+        #expect(row?.formatted == "262k")
+    }
+
     // MARK: - excludeProviders
 
     @Test("excludeProviders: [\"gemini\"] drops gemini; codex & claude present")

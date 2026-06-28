@@ -6,6 +6,8 @@ export type OllamaModelFamily =
   | 'qwen3_5_9b'
   | 'qwen3_6_35b'
   | 'gemma4_12b'
+  | 'ornith_9b'
+  | 'ornith_35b'
   | 'gpt_oss_20b'
   | 'minicpm_v45_8b'
   | 'granite4_1_3b'
@@ -74,6 +76,15 @@ export function resolveOllamaModelFamily(
   if (key === 'qwen3.5:9b' || key.startsWith('qwen3.5:9b')) return 'qwen3_5_9b'
   if (key === 'gemma4:12b' || key.startsWith('gemma4:12b')) return 'gemma4_12b'
   if (
+    key === 'ornith' ||
+    key === 'ornith:latest' ||
+    key === 'ornith:9b' ||
+    key.startsWith('ornith:9b-')
+  ) {
+    return 'ornith_9b'
+  }
+  if (key === 'ornith:35b' || key.startsWith('ornith:35b-')) return 'ornith_35b'
+  if (
     key === 'gpt-oss' ||
     key === 'gpt-oss:20b' ||
     key === 'gpt-oss:latest' ||
@@ -86,6 +97,9 @@ export function resolveOllamaModelFamily(
   if (meta.includes('gptoss') || meta.includes('gpt-oss')) {
     return 'gpt_oss_20b'
   }
+  if (meta.includes('ornith') && meta.includes('35b')) return 'ornith_35b'
+  if (meta.includes('ornith') && meta.includes('9b')) return 'ornith_9b'
+  if (meta.includes('ornith')) return 'ornith_9b'
   if (meta.includes('qwen35moe') || meta.includes('qwen3.6')) return 'qwen3_6_35b'
   if (meta.includes('nemotron')) return 'nemotron3_33b'
   if (meta.includes('granite') && (meta.includes('3.4b') || meta.includes('3b'))) {
@@ -108,6 +122,11 @@ export function ollamaModelIdAliases(modelId: string): string[] {
     aliases.add('gpt-oss:20b')
     aliases.add('gpt-oss:latest')
     aliases.add('openai/gpt-oss-20b')
+  }
+  if (lower === 'ornith' || lower === 'ornith:latest' || lower === 'ornith:9b') {
+    aliases.add('ornith')
+    aliases.add('ornith:latest')
+    aliases.add('ornith:9b')
   }
   return [...aliases]
 }
@@ -194,6 +213,18 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'For large refactors or repo-wide test fixes, consider Codex or Claude for implementation.'
       }
+    case 'ornith_9b':
+      return {
+        guidance: `${modelLabel} is an agentic-coding local model; keep tasks scoped, search first, and verify generated edits carefully.`,
+        delegateHint:
+          'Use it for local planning and focused patches; delegate broad refactors or long test-fix loops to Codex or Claude.'
+      }
+    case 'ornith_35b':
+      return {
+        guidance: `${modelLabel} is a larger agentic-coding local model with a broad context window for deeper repo review and focused implementation.`,
+        delegateHint:
+          'For release-critical changes, pair it with Codex or Claude verification before landing broad edits.'
+      }
     case 'granite4_1_3b':
       return {
         guidance: `${modelLabel} is a lightweight tool-capable local model for fast reads and small planning tasks.`,
@@ -239,6 +270,10 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 8
     case 'gemma4_12b':
       return 12
+    case 'ornith_9b':
+      return 9
+    case 'ornith_35b':
+      return 35
     case 'granite4_1_3b':
       return 3
     case 'granite4_1_30b':

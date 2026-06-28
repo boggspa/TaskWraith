@@ -27120,6 +27120,16 @@ if (isGeminiMcpBridgeProcess) {
               description: 'Install with `ollama pull gemma4:12b`'
             },
             {
+              id: 'ornith:9b',
+              label: humanizeOllamaModelId('ornith:9b'),
+              description: 'Install with `ollama pull ornith:9b`'
+            },
+            {
+              id: 'ornith:35b',
+              label: humanizeOllamaModelId('ornith:35b'),
+              description: 'Install with `ollama pull ornith:35b`'
+            },
+            {
               id: 'gpt-oss:20b',
               label: humanizeOllamaModelId('gpt-oss:20b'),
               description: 'Install with `ollama pull gpt-oss:20b`'

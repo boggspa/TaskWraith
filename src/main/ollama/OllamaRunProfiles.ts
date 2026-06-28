@@ -164,6 +164,8 @@ export function resolveOllamaThinkingLevel(
   return family === 'gpt_oss_20b' ||
     family === 'qwen3_6_35b' ||
     family === 'minicpm_v45_8b' ||
+    family === 'ornith_9b' ||
+    family === 'ornith_35b' ||
     family === 'nemotron3_33b'
     ? profile.reasoningLevel || 'medium'
     : undefined

@@ -71,6 +71,21 @@ describe('formatAssistantMessageLabel', () => {
     })
   })
 
+  it('uses the Ornith brand for Ornith through Ollama', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'ornith:35b' }),
+        'Ollama',
+        'ollama'
+      )
+    ).toEqual({
+      label: 'Ornith',
+      provider: 'ollama',
+      providerClass: 'ornith',
+      modelBadge: 'Ornith 1.0 (35B Param)'
+    })
+  })
+
   it('keeps non-Ollama solo chats provider-labelled', () => {
     expect(formatAssistantMessageLabel(assistant(), 'Codex', 'codex')).toEqual({
       label: 'Codex',

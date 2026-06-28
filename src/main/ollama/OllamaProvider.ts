@@ -543,6 +543,17 @@ export function humanizeOllamaModelId(model: string): string {
     return 'Gemma 4 (12B Param)'
   }
   if (
+    key === 'ornith' ||
+    key === 'ornith:latest' ||
+    key === 'ornith:9b' ||
+    key.startsWith('ornith:9b-')
+  ) {
+    return 'Ornith 1.0 (9B Param)'
+  }
+  if (key === 'ornith:35b' || key.startsWith('ornith:35b-')) {
+    return 'Ornith 1.0 (35B Param)'
+  }
+  if (
     key === 'gpt-oss' ||
     key === 'gpt-oss:20b' ||
     key === 'gpt-oss:latest' ||
@@ -589,7 +600,9 @@ function ollamaModelIdsMatch(a: string, b: string): boolean {
   if (withoutLatest(left) === withoutLatest(right)) return true
   return (
     (left === 'gpt-oss' && (right === 'gpt-oss:latest' || right === 'gpt-oss:20b')) ||
-    (right === 'gpt-oss' && (left === 'gpt-oss:latest' || left === 'gpt-oss:20b'))
+    (right === 'gpt-oss' && (left === 'gpt-oss:latest' || left === 'gpt-oss:20b')) ||
+    ((left === 'ornith' || left === 'ornith:latest') && right === 'ornith:9b') ||
+    ((right === 'ornith' || right === 'ornith:latest') && left === 'ornith:9b')
   )
 }
 
@@ -1751,7 +1764,7 @@ export async function runOllamaProvider(
       deps.sendAgentCompatError(
         event.sender,
         'ollama',
-        'Ollama is reachable, but no local model is installed. Pull a model with `ollama pull qwen3:4b-instruct`, `ollama pull qwen3.5:9b`, `ollama pull gemma4:12b`, or `ollama pull gpt-oss`, then refresh models.',
+        'Ollama is reachable, but no local model is installed. Pull a model with `ollama pull qwen3:4b-instruct`, `ollama pull qwen3.5:9b`, `ollama pull gemma4:12b`, `ollama pull ornith:9b`, or `ollama pull gpt-oss`, then refresh models.',
         route
       )
       deps.sendAgentCompatExit(event.sender, 'ollama', 1, route)

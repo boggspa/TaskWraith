@@ -121,6 +121,8 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'qwen3.5:9b',
       'qwen3.6:35b',
       'gemma4:12b',
+      'ornith:9b',
+      'ornith:35b',
       'gpt-oss:20b',
       'minicpm-v4.5:8b',
       'granite4.1:3b',

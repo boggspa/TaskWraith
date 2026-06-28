@@ -150,6 +150,7 @@
   --provider-qwen-color: #D946EF;
   --provider-google-color: var(--provider-gemini-color);
   --provider-openai-color: var(--provider-codex-color);
+  --provider-ornith-color: #F59E0B;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill
