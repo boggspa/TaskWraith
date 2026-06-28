@@ -12,6 +12,8 @@ export interface RunStreamMetrics {
   flushes: number
   flushedChars: number
   maxCharsPerFlush: number
+  itemFlushes: number
+  maxCharsPerItemFlush: number
   sequenceGaps: number
   duplicateSequences: number
   maxSequenceGap: number
@@ -24,6 +26,8 @@ export interface RunStreamMetricRates {
   charsPerSecond: number
   flushesPerSecond: number
   averageCharsPerFlush: number
+  averageItemsPerFlush: number
+  averageCharsPerItemFlush: number
 }
 
 export function createRunStreamMetrics(runId: string, nowMs: number): RunStreamMetrics {
@@ -39,6 +43,8 @@ export function createRunStreamMetrics(runId: string, nowMs: number): RunStreamM
     flushes: 0,
     flushedChars: 0,
     maxCharsPerFlush: 0,
+    itemFlushes: 0,
+    maxCharsPerItemFlush: 0,
     sequenceGaps: 0,
     duplicateSequences: 0,
     maxSequenceGap: 0,
@@ -78,13 +84,21 @@ export function recordRunFlushMetric(
   metrics: RunStreamMetrics | undefined,
   runId: string,
   chars: number,
-  nowMs: number
+  nowMs: number,
+  itemChars: readonly number[] = []
 ): RunStreamMetrics {
   const next = metrics ? { ...metrics } : createRunStreamMetrics(runId, nowMs)
   next.updatedAtMs = nowMs
+  const positiveItemChars = itemChars
+    .map((count) => Math.max(0, count))
+    .filter((count) => count > 0)
   next.flushes += 1
   next.flushedChars += Math.max(0, chars)
   next.maxCharsPerFlush = Math.max(next.maxCharsPerFlush, Math.max(0, chars))
+  next.itemFlushes += positiveItemChars.length
+  for (const itemCharCount of positiveItemChars) {
+    next.maxCharsPerItemFlush = Math.max(next.maxCharsPerItemFlush, itemCharCount)
+  }
   return next
 }
 
@@ -95,6 +109,9 @@ export function runStreamMetricRates(metrics: RunStreamMetrics): RunStreamMetric
     deltasPerSecond: metrics.itemDeltas / elapsedSeconds,
     charsPerSecond: metrics.itemDeltaChars / elapsedSeconds,
     flushesPerSecond: metrics.flushes / elapsedSeconds,
-    averageCharsPerFlush: metrics.flushes > 0 ? metrics.flushedChars / metrics.flushes : 0
+    averageCharsPerFlush: metrics.flushes > 0 ? metrics.flushedChars / metrics.flushes : 0,
+    averageItemsPerFlush: metrics.flushes > 0 ? metrics.itemFlushes / metrics.flushes : 0,
+    averageCharsPerItemFlush:
+      metrics.itemFlushes > 0 ? metrics.flushedChars / metrics.itemFlushes : 0
   }
 }

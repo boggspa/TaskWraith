@@ -28,19 +28,23 @@ describe('runStreamMetrics', () => {
     let metrics = createRunStreamMetrics('run-1', 0)
     metrics = recordRunItemMetric(metrics, event({ sequence: 1, delta: 'hello' }), 500)
     metrics = recordRunItemMetric(metrics, event({ sequence: 2, delta: ' world' }), 1000)
-    metrics = recordRunFlushMetric(metrics, 'run-1', 11, 1000)
+    metrics = recordRunFlushMetric(metrics, 'run-1', 11, 1000, [5, 6])
 
     expect(metrics.itemEvents).toBe(2)
     expect(metrics.itemDeltas).toBe(2)
     expect(metrics.itemDeltaChars).toBe(11)
     expect(metrics.flushes).toBe(1)
     expect(metrics.maxCharsPerFlush).toBe(11)
+    expect(metrics.itemFlushes).toBe(2)
+    expect(metrics.maxCharsPerItemFlush).toBe(6)
     expect(runStreamMetricRates(metrics)).toMatchObject({
       eventsPerSecond: 2,
       deltasPerSecond: 2,
       charsPerSecond: 11,
       flushesPerSecond: 1,
-      averageCharsPerFlush: 11
+      averageCharsPerFlush: 11,
+      averageItemsPerFlush: 2,
+      averageCharsPerItemFlush: 5.5
     })
   })
 

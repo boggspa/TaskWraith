@@ -604,6 +604,17 @@ import {
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 
+const STREAM_FLUSH_ITEM_KEY_SEPARATOR = '\u0000'
+
+function streamFlushItemKey(runId: string, itemId?: string): string {
+  return `${runId}${STREAM_FLUSH_ITEM_KEY_SEPARATOR}${itemId || ''}`
+}
+
+function runIdFromStreamFlushItemKey(key: string): string {
+  const separatorIndex = key.indexOf(STREAM_FLUSH_ITEM_KEY_SEPARATOR)
+  return separatorIndex >= 0 ? key.slice(0, separatorIndex) : key
+}
+
 const FX_BURST_DURATION_MS = 1150
 const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
 /**
@@ -1241,6 +1252,7 @@ function App(): React.JSX.Element {
   const queuedSteerInFlightRunIdsRef = useRef<Set<string>>(new Set())
   const runStreamMetricsByRunIdRef = useRef<Map<string, RunStreamMetrics>>(new Map())
   const pendingStreamFlushCharsByRunIdRef = useRef<Map<string, number>>(new Map())
+  const pendingStreamFlushCharsByRunItemRef = useRef<Map<string, number>>(new Map())
   const projectedLegacyAssistantDeltaKeysRef = useRef<Set<string>>(new Set())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
@@ -3228,6 +3240,22 @@ function App(): React.JSX.Element {
     return null
   }
 
+  const recordPendingStreamFlush = useCallback(
+    (runId: string | undefined, itemId: string | undefined, chars: number) => {
+      if (!runId || chars <= 0) return
+      pendingStreamFlushCharsByRunIdRef.current.set(
+        runId,
+        (pendingStreamFlushCharsByRunIdRef.current.get(runId) || 0) + chars
+      )
+      const itemKey = streamFlushItemKey(runId, itemId)
+      pendingStreamFlushCharsByRunItemRef.current.set(
+        itemKey,
+        (pendingStreamFlushCharsByRunItemRef.current.get(itemKey) || 0) + chars
+      )
+    },
+    []
+  )
+
   // Commit every pending coalesced chat from the (authoritative) ref into
   // React state in one batch. Always reads chatByIdRef.current, so it commits
   // the latest byte-exact content and never a stale closed-over snapshot.
@@ -3264,15 +3292,30 @@ function App(): React.JSX.Element {
       return updated && updated !== prev ? updated : prev
     })
     const pendingFlushChars = pendingStreamFlushCharsByRunIdRef.current
+    const pendingItemFlushChars = pendingStreamFlushCharsByRunItemRef.current
     if (pendingFlushChars.size > 0) {
       const nowMs = Date.now()
+      const itemCharsByRunId = new Map<string, number[]>()
+      for (const [itemKey, chars] of pendingItemFlushChars) {
+        const runId = runIdFromStreamFlushItemKey(itemKey)
+        const itemChars = itemCharsByRunId.get(runId) || []
+        itemChars.push(chars)
+        itemCharsByRunId.set(runId, itemChars)
+      }
       for (const [runId, chars] of pendingFlushChars) {
         runStreamMetricsByRunIdRef.current.set(
           runId,
-          recordRunFlushMetric(runStreamMetricsByRunIdRef.current.get(runId), runId, chars, nowMs)
+          recordRunFlushMetric(
+            runStreamMetricsByRunIdRef.current.get(runId),
+            runId,
+            chars,
+            nowMs,
+            itemCharsByRunId.get(runId) || []
+          )
         )
       }
       pendingFlushChars.clear()
+      pendingItemFlushChars.clear()
     }
   }, [])
 
@@ -9869,10 +9912,10 @@ function App(): React.JSX.Element {
                 createMessageId,
                 now: () => new Date().toISOString()
               })
-              pendingStreamFlushCharsByRunIdRef.current.set(
+              recordPendingStreamFlush(
                 projection.runId,
-                (pendingStreamFlushCharsByRunIdRef.current.get(projection.runId) || 0) +
-                  projection.input.incoming.length
+                projection.itemId,
+                projection.input.incoming.length
               )
               projectedLegacyAssistantDeltaKeysRef.current.add(
                 legacyAssistantDeltaProjectionKey(
@@ -10054,11 +10097,7 @@ function App(): React.JSX.Element {
               { createMessageId, now: () => new Date().toISOString() }
             )
             if (currentRunId && event.content) {
-              pendingStreamFlushCharsByRunIdRef.current.set(
-                currentRunId,
-                (pendingStreamFlushCharsByRunIdRef.current.get(currentRunId) || 0) +
-                  event.content.length
-              )
+              recordPendingStreamFlush(currentRunId, incomingItemIdStr, event.content.length)
             }
           } else if (event.type === 'assistant_message_complete') {
             if (isVisibleRunChat() && updated.chatKind !== 'ensemble') setIsThinking(false)
