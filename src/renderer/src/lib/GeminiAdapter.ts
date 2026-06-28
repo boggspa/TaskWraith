@@ -22,6 +22,7 @@ export type NormalizedEvent =
       cumulative?: boolean
       model?: string
       modelLabel?: string
+      projectedFromRunItem?: boolean
     }
   | { type: 'assistant_media_refs'; mediaRefs: any[] }
   | { type: 'assistant_message_complete'; content: string; itemId?: string }
@@ -73,17 +74,25 @@ export class GeminiStreamAdapter {
   private parseLine(line: string) {
     try {
       const parsed = JSON.parse(line)
-      for (const event of coerceRunItemEvents(parsed?.runItemEvents)) {
+      const runItemEvents = coerceRunItemEvents(parsed?.runItemEvents)
+      const projectedAssistantDeltaFromRunItem = runItemEvents.some(
+        (event) =>
+          event.kind === 'item/delta' && event.channel === 'assistant' && event.delta.length > 0
+      )
+      for (const event of runItemEvents) {
         this.onEvent({ type: 'run_item_event', event })
       }
-      this.normalizeEvent(parsed)
+      this.normalizeEvent(parsed, { projectedAssistantDeltaFromRunItem })
       this.onEvent({ type: 'raw_event', data: parsed })
     } catch {
       this.onEvent({ type: 'malformed_json', text: line })
     }
   }
 
-  private normalizeEvent(parsed: any) {
+  private normalizeEvent(
+    parsed: any,
+    hints: { projectedAssistantDeltaFromRunItem?: boolean } = {}
+  ) {
     if (!parsed || typeof parsed !== 'object') return
 
     if (this.emitVisibleProgress(parsed)) {
@@ -130,7 +139,8 @@ export class GeminiStreamAdapter {
           // 1.0.6 dup-fix — main tags a cumulative full-turn re-statement
           // (Claude's divergent envelope) so the renderer REPLACES the
           // bubble instead of appending and doubling it.
-          ...(parsed.cumulative === true ? { cumulative: true } : {})
+          ...(parsed.cumulative === true ? { cumulative: true } : {}),
+          ...(hints.projectedAssistantDeltaFromRunItem ? { projectedFromRunItem: true } : {})
         })
         break
       }
@@ -153,7 +163,8 @@ export class GeminiStreamAdapter {
           if (parsed.delta) {
             this.onEvent({
               type: 'assistant_message_delta',
-              content: parsed.content || ''
+              content: parsed.content || '',
+              ...(hints.projectedAssistantDeltaFromRunItem ? { projectedFromRunItem: true } : {})
             })
           } else {
             this.onEvent({
@@ -192,7 +203,8 @@ export class GeminiStreamAdapter {
         if (parsed.type === 'token') {
           this.onEvent({
             type: 'assistant_message_delta',
-            content: parsed.content || ''
+            content: parsed.content || '',
+            ...(hints.projectedAssistantDeltaFromRunItem ? { projectedFromRunItem: true } : {})
           })
         } else {
           const isUse = parsed.type === 'tool_use' || parsed.type === 'tool_call'

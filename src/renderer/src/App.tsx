@@ -2,6 +2,10 @@ import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef,
 import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
+import {
+  legacyAssistantDeltaProjectionKey,
+  projectRunItemAssistantDelta
+} from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { messagesRenderEqual } from './lib/messagesRenderEqual'
 import { resolveAssistantDeltaTarget } from './lib/assistantDeltaTarget'
@@ -1237,6 +1241,7 @@ function App(): React.JSX.Element {
   const queuedSteerInFlightRunIdsRef = useRef<Set<string>>(new Set())
   const runStreamMetricsByRunIdRef = useRef<Map<string, RunStreamMetrics>>(new Map())
   const pendingStreamFlushCharsByRunIdRef = useRef<Map<string, number>>(new Map())
+  const projectedLegacyAssistantDeltaKeysRef = useRef<Set<string>>(new Set())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
   const [guestDispatchPendingParentChatIds, setGuestDispatchPendingParentChatIds] = useState<
@@ -9804,6 +9809,24 @@ function App(): React.JSX.Element {
         }
         return event
       }
+      const providerModelMetadataForAssistantDelta = (
+        updated: ChatRecord,
+        model?: string,
+        modelLabel?: string
+      ) => {
+        if (effectiveRunProvider !== 'ollama') return undefined
+        const resolvedModel =
+          model ||
+          updated.runs?.[updated.runs.length - 1]?.actualModel ||
+          updated.runs?.[updated.runs.length - 1]?.requestedModel ||
+          ''
+        const resolvedLabel = modelLabel || humaniseModelId('ollama', resolvedModel)
+        if (!resolvedModel && !resolvedLabel) return undefined
+        return {
+          ...(resolvedModel ? { providerModel: resolvedModel } : {}),
+          ...(resolvedLabel ? { providerModelLabel: resolvedLabel } : {})
+        }
+      }
       const adapter = new GeminiStreamAdapter((event: NormalizedEvent) => {
         appendDurableRunEvent({
           runId: currentRunId,
@@ -9819,14 +9842,48 @@ function App(): React.JSX.Element {
         })
 
         if (event.type === 'run_item_event') {
+          const itemEvent = event.event
           runStreamMetricsByRunIdRef.current.set(
-            event.event.runId,
+            itemEvent.runId,
             recordRunItemMetric(
-              runStreamMetricsByRunIdRef.current.get(event.event.runId),
-              event.event,
+              runStreamMetricsByRunIdRef.current.get(itemEvent.runId),
+              itemEvent,
               Date.now()
             )
           )
+          const sidecarProjection = projectRunItemAssistantDelta(itemEvent)
+          if (sidecarProjection && sidecarProjection.chatId === runChatId) {
+            updateChatById(runChatId, (source) => {
+              const updated = { ...source }
+              if (updated.chatKind === 'ensemble') return updated
+              if (steerSuppressionChatIdsRef.current.has(runChatId)) return updated
+              if (isVisibleRunChat()) setIsThinking(false)
+              const providerModelMetadata = providerModelMetadataForAssistantDelta(
+                updated,
+                itemEvent.kind === 'item/delta' ? itemEvent.model : undefined,
+                itemEvent.kind === 'item/delta' ? itemEvent.modelLabel : undefined
+              )
+              const projection = projectRunItemAssistantDelta(itemEvent, providerModelMetadata)
+              if (!projection) return updated
+              updated.messages = applyAssistantDelta(updated.messages, projection.input, {
+                createMessageId,
+                now: () => new Date().toISOString()
+              })
+              pendingStreamFlushCharsByRunIdRef.current.set(
+                projection.runId,
+                (pendingStreamFlushCharsByRunIdRef.current.get(projection.runId) || 0) +
+                  projection.input.incoming.length
+              )
+              projectedLegacyAssistantDeltaKeysRef.current.add(
+                legacyAssistantDeltaProjectionKey(
+                  projection.runId,
+                  projection.itemId,
+                  projection.input.incoming
+                )
+              )
+              return updated
+            }, { coalesce: true })
+          }
           return
         }
 
@@ -9915,6 +9972,19 @@ function App(): React.JSX.Element {
           applyAssistantMediaRefsToChat(runChatId, sanitizeRawProviderMediaRefs(event.mediaRefs))
           return
         }
+        if (event.type === 'assistant_message_delta' && event.projectedFromRunItem === true) {
+          const incomingItemId = (event as { itemId?: unknown }).itemId
+          const incomingItemIdStr =
+            typeof incomingItemId === 'string' && incomingItemId ? incomingItemId : undefined
+          const projectedKey = legacyAssistantDeltaProjectionKey(
+            currentRunId,
+            incomingItemIdStr,
+            event.content
+          )
+          if (projectedLegacyAssistantDeltaKeysRef.current.delete(projectedKey)) {
+            return
+          }
+        }
 
         updateChatById(runChatId, (source) => {
           const updated = { ...source }
@@ -9963,26 +10033,11 @@ function App(): React.JSX.Element {
               typeof incomingItemId === 'string' && incomingItemId ? incomingItemId : undefined
             // Ollama stamps the streaming bubble with its provider model so the
             // transcript can show which local model produced the text.
-            const providerModelMetadata =
-              effectiveRunProvider === 'ollama'
-                ? (() => {
-                    const model =
-                      typeof event.model === 'string' && event.model
-                        ? event.model
-                        : updated.runs?.[updated.runs.length - 1]?.actualModel ||
-                          updated.runs?.[updated.runs.length - 1]?.requestedModel ||
-                          ''
-                    const label =
-                      typeof event.modelLabel === 'string' && event.modelLabel
-                        ? event.modelLabel
-                        : humaniseModelId('ollama', model)
-                    if (!model && !label) return undefined
-                    return {
-                      ...(model ? { providerModel: model } : {}),
-                      ...(label ? { providerModelLabel: label } : {})
-                    }
-                  })()
-                : undefined
+            const providerModelMetadata = providerModelMetadataForAssistantDelta(
+              updated,
+              typeof event.model === 'string' && event.model ? event.model : undefined,
+              typeof event.modelLabel === 'string' && event.modelLabel ? event.modelLabel : undefined
+            )
             // Interleaving-preserving routing, idempotent increment-vs-
             // restatement merge, and Codex item separators all live in
             // lib/applyAssistantDelta (pure + unit-tested). It returns a new

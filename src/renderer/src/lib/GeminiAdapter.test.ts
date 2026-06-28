@@ -88,6 +88,40 @@ describe('GeminiStreamAdapter', () => {
     expect(onEvent.mock.calls[1][0]).toMatchObject({
       type: 'assistant_message_delta',
       content: 'Hi',
+      itemId: 'item-1',
+      projectedFromRunItem: true
+    })
+  })
+
+  it('does not mark legacy content as projected for non-assistant sidecars', () => {
+    const onEvent = vi.fn()
+    const adapter = new GeminiStreamAdapter(onEvent)
+
+    adapter.appendChunk(
+      JSON.stringify({
+        type: 'content',
+        text: 'Hi',
+        itemId: 'item-1',
+        runItemEvents: [
+          {
+            protocolVersion: 1,
+            kind: 'tool/progress',
+            chatId: 'chat-1',
+            runId: 'run-1',
+            provider: 'codex',
+            itemId: 'tool-1',
+            toolName: 'read_file',
+            status: 'running',
+            sequence: 2,
+            createdAt: '2026-06-29T00:00:00.000Z'
+          }
+        ]
+      }) + '\n'
+    )
+
+    expect(onEvent).toHaveBeenCalledWith({
+      type: 'assistant_message_delta',
+      content: 'Hi',
       itemId: 'item-1'
     })
   })
