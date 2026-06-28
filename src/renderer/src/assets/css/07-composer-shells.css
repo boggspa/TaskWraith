@@ -1390,7 +1390,7 @@
 
 .composer-diff-action-menu {
   position: absolute;
-  top: calc(100% + 8px);
+  bottom: calc(100% + 8px);
   right: 0;
   box-sizing: border-box;
   width: min(294px, calc(100vw - 28px));
