@@ -4,6 +4,38 @@ Notable changes to TaskWraith, the local-first macOS desktop workbench for runni
 and reviewing AI coding agents. Entries are user-facing highlights; execution,
 history, and workspace state stay on your machine throughout.
 
+## 1.6.8 - 2026-06-28
+
+### Added
+- **Scheduled messages in the visible queue.** The composer Schedule clock now
+  creates a timer-locked queued message instead of a separate hidden scheduled
+  task. Scheduled rows keep Edit/Delete, show a live countdown where Steer
+  usually appears, and dispatch automatically when due.
+- **Larger composer uploads.** Drag/drop, paste, and attachment picker flows now
+  keep up to 15 composer attachments.
+
+### Changed
+- **Cleaner trust-mode UX.** YOLO / Trust This Session now appears as a compact
+  composer chip with an explanatory tooltip and click-to-disable behavior,
+  replacing the warning-style banner.
+- **Clearer approval affordances.** Permission, elevation, unattended workflow,
+  Ollama parity, and provider sign-in actions now have tooltips that explain the
+  consequence and lifetime of each choice.
+- **Softer visual polish.** Sky visual effects have softer orb edges, and image
+  attachments show better placeholder behavior while previews load.
+
+### Fixed
+- **Share invite reliability.** Shared-chat invite copy and relay setup are more
+  robust, including stronger validation around collaborator join payloads.
+- **iOS relay pairing fallback.** Tailscale and relay pairing paths recover more
+  reliably when the initially advertised route is not usable, and release builds
+  honor the configured Tailscale Serve front-door port during startup and
+  self-heal.
+- **Desktop polish fixes.** Helper subprocesses no longer appear as extra app
+  icons, spellcheck context menus behave correctly in editable fields, thread
+  rename persistence is more reliable, and the sidebar rename editor is harder
+  to trip up.
+
 ## 1.6.7 - 2026-06-28
 
 ### Added
