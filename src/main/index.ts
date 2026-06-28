@@ -473,6 +473,14 @@ import {
   transcriptMediaAssetPath,
   TranscriptMediaAssetStore
 } from './services/TranscriptMediaAssetStore'
+import {
+  defaultPdfAttachmentRenderCacheDir,
+  isPdfAttachmentPath,
+  prunePdfAttachmentRenderCache,
+  renderPdfAttachmentPages,
+  type PdfAttachmentLike,
+  type PdfRenderedPageAttachment
+} from './services/PdfAttachmentRenderService'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
 import {
   clearStickyAppWatch,
@@ -3499,6 +3507,7 @@ function issueExternalPathGrant(
 }
 
 const RUN_NATIVE_IMAGE_ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
+let pdfAttachmentRenderCachePruned = false
 
 function runAttachmentPath(rawPath: unknown): string | null {
   if (typeof rawPath !== 'string') return null
@@ -3518,6 +3527,68 @@ function runAttachmentPath(rawPath: unknown): string | null {
 function isNativeImageRunAttachment(rawPath: unknown): boolean {
   const attachmentPath = runAttachmentPath(rawPath)
   return attachmentPath ? RUN_NATIVE_IMAGE_ATTACHMENT_EXT.test(attachmentPath) : false
+}
+
+function prunePdfAttachmentRenderCacheOnce(): void {
+  if (pdfAttachmentRenderCachePruned) return
+  pdfAttachmentRenderCachePruned = true
+  void prunePdfAttachmentRenderCache(getPdfAttachmentRenderCacheDir()).catch(() => undefined)
+}
+
+function compactPdfRenderedPageAttachment(page: PdfRenderedPageAttachment): {
+  id: string
+  path: string
+  name: string
+} {
+  return { id: page.id, path: page.path, name: page.name }
+}
+
+async function renderPdfPagesForAttachments(
+  attachments: PdfAttachmentLike[]
+): Promise<PdfRenderedPageAttachment[]> {
+  if (!attachments.some((attachment) => isPdfAttachmentPath(attachment?.path))) return []
+  prunePdfAttachmentRenderCacheOnce()
+  const result = await renderPdfAttachmentPages(attachments, {
+    cacheDir: getPdfAttachmentRenderCacheDir()
+  })
+  for (const skipped of result.skipped) {
+    console.warn(
+      `[pdf-attachments] skipped ${skipped.name || skipped.path}: ${skipped.reason}`
+    )
+  }
+  return result.rendered
+}
+
+async function expandPdfAttachmentsForDispatch<T extends PdfAttachmentLike>(
+  attachments: T[]
+): Promise<Array<T | { id: string; path: string; name: string }>> {
+  const rendered = await renderPdfPagesForAttachments(attachments)
+  if (rendered.length === 0) return attachments
+  return [...attachments, ...rendered.map(compactPdfRenderedPageAttachment)]
+}
+
+async function expandPdfImagePathsForPayload(payload: AgentRunPayload): Promise<void> {
+  const imagePaths = Array.isArray(payload.imagePaths) ? payload.imagePaths : []
+  const pdfPaths = imagePaths.filter((imagePath) => isPdfAttachmentPath(imagePath))
+  if (pdfPaths.length === 0) return
+  const rendered = await renderPdfPagesForAttachments(
+    pdfPaths.map((pdfPath, index) => ({
+      id: `pdf-image-path-${index + 1}`,
+      path: pdfPath,
+      name: basename(runAttachmentPath(pdfPath) || pdfPath)
+    }))
+  )
+  const nextPaths = [
+    ...imagePaths.filter((imagePath) => !isPdfAttachmentPath(imagePath)),
+    ...rendered.map((page) => page.path)
+  ]
+  const seen = new Set<string>()
+  payload.imagePaths = nextPaths.filter((imagePath) => {
+    const key = imagePath.trim()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function isPathInsideRoot(rootPath: string | undefined, candidatePath: string): boolean {
@@ -4615,6 +4686,10 @@ function getTranscriptMediaAssetStore(): TranscriptMediaAssetStore {
     )
   }
   return transcriptMediaAssetStore
+}
+
+function getPdfAttachmentRenderCacheDir(): string {
+  return defaultPdfAttachmentRenderCacheDir(app.getPath('userData'))
 }
 
 function writeTranscriptMediaAsset(input: {
@@ -7745,7 +7820,7 @@ function applyScheduledEnsembleSnapshotMain(
 // scheduledTaskIdByEnsembleRound[roundId] -> the orchestrator's round-settle hook
 // (completeSessionCheckpoint) marks the task terminal, the same path the
 // renderer-dispatched ensemble uses.
-function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): void {
+async function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): Promise<void> {
   const orchestrator = ensembleOrchestratorRef
   if (!orchestrator) return
   const failTask = (lastError: string): void => {
@@ -7777,6 +7852,7 @@ function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): void {
     // orchestrator clamps every participant read-only (P1b).
     const elevation = resolveUnattendedElevation(task.id)
     const scheduledImageAttachments = imageAttachmentSnapshots(task.imageAttachments)
+    const dispatchImageAttachments = await expandPdfAttachmentsForDispatch(scheduledImageAttachments)
     const scheduledExternalPathGrants = normalizeExternalPathGrants(task.externalPathGrants)
     const dispatchChat = AppStore.getChat(task.chatId) || chat
     const scheduledAttachmentExternalPathGrants =
@@ -7794,7 +7870,7 @@ function dispatchDueEnsembleScheduledTaskHeadless(task: ScheduledTask): void {
       prompt: task.prompt,
       event: { sender: headlessRunSender },
       mode: 'normal',
-      imageAttachments: scheduledImageAttachments,
+      imageAttachments: dispatchImageAttachments,
       unattended: true,
       ...(roundExternalPathGrants.length > 0
         ? { externalPathGrants: roundExternalPathGrants }
@@ -8139,7 +8215,7 @@ async function dispatchDueScheduledLoopHeadless(
 
 async function dispatchDueScheduledTaskHeadless(task: ScheduledTask): Promise<void> {
   if (task.kind === 'ensemble') {
-    dispatchDueEnsembleScheduledTaskHeadless(task)
+    await dispatchDueEnsembleScheduledTaskHeadless(task)
     return
   }
   const composer = composerServiceRef
@@ -25457,7 +25533,15 @@ if (isGeminiMcpBridgeProcess) {
         }
         if (!authorizedImagePreviewPaths.has(real)) return null
         const stat = await fs.lstat(real)
-        if (!stat.isFile() || stat.size > IMAGE_PREVIEW_MAX_BYTES) return null
+        if (!stat.isFile()) return null
+        if (isPdfAttachmentPath(real)) {
+          const rendered = await renderPdfPagesForAttachments([{ path: real, name: basename(real) }])
+          const firstPage = rendered[0]?.path
+          if (!firstPage) return null
+          real = firstPage
+        } else if (stat.size > IMAGE_PREVIEW_MAX_BYTES) {
+          return null
+        }
         let img = nativeImage.createFromPath(real)
         if (img.isEmpty()) {
           try {
@@ -27215,6 +27299,13 @@ if (isGeminiMcpBridgeProcess) {
           ? routedPayload.workspace
           : undefined
       await repairKnownStaleGeminiMcpBridgeConfigs(repairCwd).catch(() => {})
+      await expandPdfImagePathsForPayload(routedPayload).catch((error) => {
+        console.warn(
+          `[pdf-attachments] failed to expand PDF image paths: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      })
       // Per-occurrence SOLO-scheduled-run bookkeeping (completion mark + mid-run
       // budget kill) MUST be wired BEFORE dispatch. The default Claude (Agent SDK)
       // path consumes its stream INLINE and fires sendAgentCompatExit SYNCHRONOUSLY
@@ -28302,6 +28393,7 @@ if (isGeminiMcpBridgeProcess) {
         const prompt = requireNonEmptyString(payload?.prompt, 'Ensemble prompt')
         const chat = AppStore.getChat(chatId)
         const imageAttachments = imageAttachmentSnapshots(payload?.imageAttachments)
+        const dispatchImageAttachments = await expandPdfAttachmentsForDispatch(imageAttachments)
         // 1.0.4-AT4 — normalize the renderer-supplied grants the
         // same way solo-run dispatch does. Drops malformed entries
         // and produces an [] when nothing is granted.
@@ -28336,7 +28428,7 @@ if (isGeminiMcpBridgeProcess) {
           ...(payload?.concurrentMode !== undefined
             ? { concurrentMode: Boolean(payload.concurrentMode) }
             : {}),
-          imageAttachments,
+          imageAttachments: dispatchImageAttachments,
           ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
           ...(payload?.dmTargetParticipantId
             ? { dmTargetParticipantId: payload.dmTargetParticipantId }

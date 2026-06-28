@@ -72,7 +72,8 @@ import {
 import {
   MAX_IMAGE_ATTACHMENTS,
   collectClipboardAttachmentPaths,
-  collectDroppedAttachmentPaths
+  collectDroppedAttachmentPaths,
+  isPdfAttachmentPath
 } from '../lib/imageAttachments'
 import { ComposerImageThumb } from './ComposerImageThumb'
 import { CommittedDraftField } from './CommittedDraftField'
@@ -2012,35 +2013,42 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       </button>
                     </div>
                   ))}
-                  {composerFileAttachments.map((file) => (
-                    <div
-                      key={file.id}
-                      className="composer-image-item composer-file-card"
-                      title={file.path}
-                    >
-                      <span className="composer-attachment-icon" title={file.name}>
-                        <FileTypeIcon
-                          path={file.path}
-                          size={18}
-                          className="composer-attachment-icon-inner"
-                          workspacePath={currentWorkspace?.path}
-                        />
-                      </span>
-                      <span className="composer-image-name" title={file.path}>
-                        {file.name}
-                      </span>
-                      <button
-                        className="composer-image-remove"
-                        type="button"
-                        onClick={() => handleRemoveImageAttachment(file.id)}
-                        disabled={isCurrentComposerLocked}
-                        title="Remove attachment"
-                        aria-label={`Remove ${file.name}`}
+                  {composerFileAttachments.map((file) => {
+                    const isPdf = isPdfAttachmentPath(file.path)
+                    return (
+                      <div
+                        key={file.id}
+                        className={`composer-image-item composer-file-card${isPdf ? ' is-pdf' : ''}`}
+                        title={file.path}
                       >
-                        <XSymbolIcon />
-                      </button>
-                    </div>
-                  ))}
+                        <span className="composer-attachment-icon" title={file.name}>
+                          {isPdf ? (
+                            <ComposerImageThumb path={file.path} name={file.name} />
+                          ) : (
+                            <FileTypeIcon
+                              path={file.path}
+                              size={18}
+                              className="composer-attachment-icon-inner"
+                              workspacePath={currentWorkspace?.path}
+                            />
+                          )}
+                        </span>
+                        <span className="composer-image-name" title={file.path}>
+                          {file.name}
+                        </span>
+                        <button
+                          className="composer-image-remove"
+                          type="button"
+                          onClick={() => handleRemoveImageAttachment(file.id)}
+                          disabled={isCurrentComposerLocked}
+                          title="Remove attachment"
+                          aria-label={`Remove ${file.name}`}
+                        >
+                          <XSymbolIcon />
+                        </button>
+                      </div>
+                    )
+                  })}
                   {currentDiscordContextSelection && (
                     <div
                       className="composer-image-item composer-file-card composer-discord-context-card"

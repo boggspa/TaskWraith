@@ -4,6 +4,7 @@ import {
   dedupePaths,
   getImageName,
   getImagePreviewSrc,
+  isPdfAttachmentPath,
   mergeImageAttachments,
   sanitizeImagePath
 } from './imageAttachments'
@@ -23,6 +24,12 @@ describe('image attachment path helpers', () => {
     expect(dedupePaths(['C:/Temp/Capture.png', 'c:/temp/capture.png'])).toEqual([
       'C:/Temp/Capture.png'
     ])
+  })
+
+  it('detects PDFs separately from native image attachments', () => {
+    expect(isPdfAttachmentPath('/tmp/spec.pdf')).toBe(true)
+    expect(isPdfAttachmentPath('/tmp/spec.PDF?download=1')).toBe(true)
+    expect(isPdfAttachmentPath('/tmp/spec.png')).toBe(false)
   })
 
   it('keeps the newest 15 composer attachments', () => {

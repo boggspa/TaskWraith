@@ -12,6 +12,7 @@ export type ImageAttachment = {
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
+const PDF_EXT = /\.pdf(?:[?#].*)?$/i
 export const MAX_IMAGE_ATTACHMENTS = 15
 
 export const sanitizeImagePath = (value: string): string =>
@@ -22,6 +23,8 @@ export const getImageName = (value: string): string => {
 }
 
 export const isImageAttachmentPath = (path: string): boolean => IMAGE_EXT.test(path)
+
+export const isPdfAttachmentPath = (path: string): boolean => PDF_EXT.test(path)
 
 export const dedupePaths = (values: string[]): string[] => {
   const seen = new Set<string>()

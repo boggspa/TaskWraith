@@ -5415,6 +5415,12 @@
   flex-shrink: 0;
 }
 
+.composer-file-card.is-pdf .composer-attachment-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+}
+
 .composer-attachment-icon-inner {
   width: 16px;
   height: 16px;
