@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { UsageRecord } from '../../../main/store/types'
+import type { ChatRecord, UsageRecord } from '../../../main/store/types'
 import {
   MODEL_USAGE_WINDOW_MS,
   MODEL_USAGE_WINDOW_ORDER,
   buildModelUsageTable,
   buildModelUsageTableForSettings,
+  buildModelUsageWorkspaceMatrix,
   sumModelUsageProviderTotals,
   type ModelUsageTableOptions
 } from './modelUsageTable'
@@ -20,6 +21,24 @@ const RATES: RendererProviderRates = {
   codex: [{ modelId: 'gpt-5.5', inputUsdPerMillion: 1, outputUsdPerMillion: 10 }],
   claude: [{ modelId: 'opus', inputUsdPerMillion: 5, outputUsdPerMillion: 25 }],
   cursor: [{ modelId: 'composer-2.5-fast', inputUsdPerMillion: 3, outputUsdPerMillion: 15 }]
+}
+
+function makeChat(overrides: Partial<ChatRecord>): ChatRecord {
+  return {
+    id: overrides.appChatId || 'chat-1',
+    appChatId: overrides.appChatId || 'chat-1',
+    title: 'Chat',
+    provider: 'codex',
+    messages: [],
+    runs: [],
+    createdAt: 1,
+    updatedAt: 1,
+    scope: 'workspace',
+    chatKind: 'single',
+    workspaceId: 'ws-1',
+    workspacePath: '/repo/alpha',
+    ...overrides
+  } as ChatRecord
 }
 
 function makeRecord(overrides: Partial<UsageRecord> & { timestamp: number }): UsageRecord {
@@ -300,6 +319,97 @@ describe('buildModelUsageTable — cost math + token flooring', () => {
       NOW
     )
     expect(empty).toEqual([])
+  })
+})
+
+describe('buildModelUsageWorkspaceMatrix', () => {
+  it('selects the seven busiest workspaces and groups model rows by provider', () => {
+    const records = Array.from({ length: 8 }, (_, index) =>
+      makeRecord({
+        id: `r-${index}`,
+        workspaceId: `ws-${index}`,
+        chatId: `chat-${index}`,
+        runId: `run-${index}`,
+        timestamp: NOW - 1000,
+        inputTokens: (index + 1) * 1000,
+        outputTokens: 0
+      })
+    )
+    const chats = records.map((record) =>
+      makeChat({
+        appChatId: record.chatId,
+        workspaceId: record.workspaceId,
+        workspacePath: `/workspaces/project-${record.workspaceId}`
+      })
+    )
+    const matrix = buildModelUsageWorkspaceMatrix(records, [], chats, RATES, USD, NOW)
+
+    expect(matrix.workspaces).toHaveLength(7)
+    expect(matrix.workspaces.map((workspace) => workspace.workspaceId)).toEqual([
+      'ws-7',
+      'ws-6',
+      'ws-5',
+      'ws-4',
+      'ws-3',
+      'ws-2',
+      'ws-1'
+    ])
+    expect(matrix.workspaces[0].label).toBe('project-ws-7')
+    expect(matrix.groups.map((group) => group.provider)).toEqual(['codex'])
+    expect(matrix.groups[0].models[0].model).toBe('gpt-5.5')
+    expect(matrix.groups[0].models[0].workspaces['ws-7'].totalTokens).toBe(8000)
+  })
+
+  it('joins chat run diffs into changed-file counts for matching usage records', () => {
+    const records = [
+      makeRecord({
+        workspaceId: 'ws-alpha',
+        chatId: 'chat-alpha',
+        runId: 'run-alpha',
+        timestamp: NOW - 1000,
+        inputTokens: 1000,
+        outputTokens: 500
+      })
+    ]
+    const chats = [
+      makeChat({
+        appChatId: 'chat-alpha',
+        workspaceId: 'ws-alpha',
+        workspacePath: '/repo/alpha',
+        runs: [
+          {
+            runId: 'run-alpha',
+            startedAt: new Date(NOW - 2000).toISOString(),
+            runDiff: {
+              runId: 'run-alpha',
+              preSnapshot: { capturedAt: 't', isGitRepo: true },
+              createdFiles: [
+                { path: 'a.ts', status: 'created', previewKind: 'git_diff' }
+              ],
+              modifiedFiles: [
+                { path: 'b.ts', status: 'modified', previewKind: 'git_diff' }
+              ],
+              deletedFiles: [],
+              preExistingFiles: []
+            }
+          }
+        ]
+      })
+    ]
+
+    const matrix = buildModelUsageWorkspaceMatrix(records, [], chats, RATES, USD, NOW)
+    expect(matrix.workspaces[0]).toMatchObject({
+      workspaceId: 'ws-alpha',
+      label: 'alpha',
+      changedFiles: 2,
+      runs: 1,
+      totalTokens: 1500
+    })
+    expect(matrix.groups[0].models[0].workspaces['ws-alpha']).toMatchObject({
+      changedFiles: 2,
+      runs: 1,
+      totalTokens: 1500
+    })
   })
 })
 

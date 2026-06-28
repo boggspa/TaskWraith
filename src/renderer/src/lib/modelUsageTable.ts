@@ -39,7 +39,7 @@
  * quarter), and each shorter window is a strict subset of the wider ones.
  */
 
-import type { ProviderId, UsageRecord } from '../../../main/store/types'
+import type { ChatRecord, ProviderId, UsageRecord } from '../../../main/store/types'
 import { canonicalModelIdForProvider } from './modelDisplayName'
 import { estimateUsageRecordCostUsd, usageRecordInputTokens, type RendererProviderRates } from './providerRateEstimate'
 import { formatCost, type DisplayCurrency } from './formatCost'
@@ -151,6 +151,40 @@ export interface ModelUsageTableOptions extends ModelUsageCurrencyOptions {
   includeExternal?: boolean
 }
 
+export interface ModelUsageWorkspaceColumn {
+  workspaceId: string
+  label: string
+  totalTokens: number
+  runs: number
+  changedFiles: number
+  costUsd: number
+  costDisplay: string
+}
+
+export interface ModelUsageWorkspaceCell {
+  runs: number
+  changedFiles: number
+  totalTokens: number
+  costUsd: number
+  costDisplay: string
+}
+
+export interface ModelUsageWorkspaceModelRow {
+  model: string
+  workspaces: Record<string, ModelUsageWorkspaceCell>
+}
+
+export interface ModelUsageWorkspaceProviderGroup {
+  provider: ProviderId
+  models: ModelUsageWorkspaceModelRow[]
+  totals: Record<string, ModelUsageWorkspaceCell>
+}
+
+export interface ModelUsageWorkspaceMatrix {
+  workspaces: ModelUsageWorkspaceColumn[]
+  groups: ModelUsageWorkspaceProviderGroup[]
+}
+
 /** A mutable accumulator used while walking records. */
 interface UsageAccumulator {
   tokensIn: number
@@ -164,6 +198,14 @@ const emptyAccumulator = (): UsageAccumulator => ({
   tokensOut: 0,
   runs: 0,
   costUsd: 0
+})
+
+const emptyWorkspaceCell = (): ModelUsageWorkspaceCell => ({
+  runs: 0,
+  changedFiles: 0,
+  totalTokens: 0,
+  costUsd: 0,
+  costDisplay: ''
 })
 
 const emptyWindowSet = (): Record<ModelUsageWindowKey, UsageAccumulator> => ({
@@ -203,6 +245,53 @@ function modelKeyFor(record: UsageRecord): string {
   const raw = (record.model || '').trim()
   const canonical = canonicalModelIdForProvider(record.provider, raw)
   return canonical || raw || record.provider || 'unknown'
+}
+
+function workspaceKeyFor(record: UsageRecord): string {
+  const raw = (record.workspaceId || '').trim()
+  return raw || '__unknown_workspace__'
+}
+
+function workspaceBasename(value: string): string {
+  const trimmed = value.trim().replace(/[\\/]+$/, '')
+  if (!trimmed) return ''
+  const parts = trimmed.split(/[\\/]+/)
+  return parts[parts.length - 1] || trimmed
+}
+
+function workspaceLabelFor(workspaceId: string, chats: ChatRecord[]): string {
+  if (workspaceId === '__taskwraith_global_chats__') return 'Global'
+  if (workspaceId === '__unknown_workspace__') return 'Unknown'
+  const chat = chats.find((candidate) => candidate.workspaceId === workspaceId)
+  const path = typeof chat?.workspacePath === 'string' ? chat.workspacePath : ''
+  return workspaceBasename(path) || workspaceId
+}
+
+function runDiffFileCount(run: NonNullable<ChatRecord['runs']>[number] | undefined): number {
+  if (!run) return 0
+  const paths = new Set<string>()
+  const addFile = (path: unknown) => {
+    if (typeof path === 'string' && path.trim()) paths.add(path.trim())
+  }
+  for (const file of run.runDiff?.createdFiles || []) addFile(file.path)
+  for (const file of run.runDiff?.modifiedFiles || []) addFile(file.path)
+  for (const file of run.runDiff?.deletedFiles || []) addFile(file.path)
+  for (const file of run.runDiff?.preExistingFiles || []) addFile(file.path)
+  for (const files of Object.values(run.runDiffByPath || {})) {
+    for (const file of files || []) addFile(file.path)
+  }
+  return paths.size
+}
+
+function buildRunDiffFileCountMap(chats: ChatRecord[]): Map<string, number> {
+  const result = new Map<string, number>()
+  for (const chat of chats || []) {
+    for (const run of chat.runs || []) {
+      if (!run?.runId) continue
+      result.set(`${chat.appChatId}:${run.runId}`, runDiffFileCount(run))
+    }
+  }
+  return result
 }
 
 /** Materialise an accumulator into the public window totals shape, formatting
@@ -550,6 +639,173 @@ export function buildModelUsageTableForSettings(
   return MODEL_USAGE_PROVIDER_ORDER.map((provider) => byProvider.get(provider)).filter(
     (group): group is ModelUsageProviderGroup => Boolean(group)
   )
+}
+
+function modelUsageRecordsForSettingsMatrix(
+  internalRecords: UsageRecord[],
+  externalRecords: UsageRecord[],
+  options: ModelUsageTableOptions
+): UsageRecord[] {
+  if (options.includeExternal !== true) return internalRecords
+  const filteredExternal = dedupeCursorExternalAgainstInternal(internalRecords, externalRecords)
+  const supplemental = internalRecords.filter(
+    (record) =>
+      record?.provider === 'grok' ||
+      (record?.provider === 'cursor' &&
+        !filteredExternal.some((external) => {
+          if (external?.provider !== 'cursor') return false
+          const extTokens = external.totalTokens || external.inputTokens + external.outputTokens
+          const innerTokens = record.totalTokens || record.inputTokens + record.outputTokens
+          if (extTokens <= 0 || innerTokens <= 0) return false
+          if (Math.abs(external.timestamp - record.timestamp) > 120_000) return false
+          const ratio = innerTokens / extTokens
+          return ratio >= 0.75 && ratio <= 1.33
+        }))
+  )
+  return [...filteredExternal, ...supplemental]
+}
+
+export function buildModelUsageWorkspaceMatrix(
+  internalRecords: UsageRecord[],
+  externalRecords: UsageRecord[],
+  chats: ChatRecord[],
+  rates: RendererProviderRates,
+  options: ModelUsageTableOptions = {},
+  now: number = Date.now(),
+  limit: number = 7
+): ModelUsageWorkspaceMatrix {
+  const currency: DisplayCurrency = options.currency ?? 'USD'
+  const overestimatePercent = Number.isFinite(options.overestimatePercent)
+    ? (options.overestimatePercent as number)
+    : 0
+  const locale = options.locale
+  const cutoff = now - MODEL_USAGE_WINDOW_MS.d90
+  const allowed = new Set<ProviderId>(MODEL_USAGE_PROVIDER_ORDER)
+  const diffByRun = buildRunDiffFileCountMap(chats)
+  const records = modelUsageRecordsForSettingsMatrix(internalRecords, externalRecords, options)
+  const workspaceTotals = new Map<string, UsageAccumulator & { changedFiles: number }>()
+  const providerModelWorkspace = new Map<
+    ProviderId,
+    Map<string, Map<string, UsageAccumulator & { changedFiles: number }>>
+  >()
+
+  for (const record of records) {
+    if (!record || record.usageKind === 'reset_hint') continue
+    const provider = record.provider
+    if (!provider || !allowed.has(provider)) continue
+    const timestamp = Number(record.timestamp)
+    if (!Number.isFinite(timestamp) || timestamp > now || timestamp < cutoff) continue
+    const tokensIn = usageRecordInputTokens(record)
+    const tokensOut = toNonNegative(record.outputTokens)
+    const totalTokens = tokensIn + tokensOut
+    const costUsd = recordCostUsd(record, rates)
+    if (totalTokens === 0 && costUsd === 0) continue
+
+    const workspaceId = workspaceKeyFor(record)
+    const changedFiles = diffByRun.get(`${record.chatId}:${record.runId}`) ?? 0
+    const apply = (acc: UsageAccumulator & { changedFiles: number }) => {
+      acc.tokensIn += tokensIn
+      acc.tokensOut += tokensOut
+      acc.runs += 1
+      acc.costUsd += costUsd
+      acc.changedFiles += changedFiles
+    }
+
+    let workspaceAcc = workspaceTotals.get(workspaceId)
+    if (!workspaceAcc) {
+      workspaceAcc = { ...emptyAccumulator(), changedFiles: 0 }
+      workspaceTotals.set(workspaceId, workspaceAcc)
+    }
+    apply(workspaceAcc)
+
+    let modelMap = providerModelWorkspace.get(provider)
+    if (!modelMap) {
+      modelMap = new Map()
+      providerModelWorkspace.set(provider, modelMap)
+    }
+    const model = modelKeyFor(record)
+    let workspaceMap = modelMap.get(model)
+    if (!workspaceMap) {
+      workspaceMap = new Map()
+      modelMap.set(model, workspaceMap)
+    }
+    let cell = workspaceMap.get(workspaceId)
+    if (!cell) {
+      cell = { ...emptyAccumulator(), changedFiles: 0 }
+      workspaceMap.set(workspaceId, cell)
+    }
+    apply(cell)
+  }
+
+  const workspaceLimit = Math.max(1, Math.min(7, Math.floor(limit) || 7))
+  const workspaces = [...workspaceTotals.entries()]
+    .sort(
+      ([aId, a], [bId, b]) =>
+        b.tokensIn + b.tokensOut - (a.tokensIn + a.tokensOut) ||
+        b.costUsd - a.costUsd ||
+        aId.localeCompare(bId)
+    )
+    .slice(0, workspaceLimit)
+    .map(([workspaceId, acc]) => ({
+      workspaceId,
+      label: workspaceLabelFor(workspaceId, chats),
+      totalTokens: acc.tokensIn + acc.tokensOut,
+      runs: acc.runs,
+      changedFiles: acc.changedFiles,
+      costUsd: acc.costUsd,
+      costDisplay: formatCost(acc.costUsd, currency, locale, overestimatePercent)
+    }))
+
+  const workspaceIds = new Set(workspaces.map((workspace) => workspace.workspaceId))
+  const finalizeCell = (acc: UsageAccumulator & { changedFiles: number }): ModelUsageWorkspaceCell => ({
+    runs: acc.runs,
+    changedFiles: acc.changedFiles,
+    totalTokens: acc.tokensIn + acc.tokensOut,
+    costUsd: acc.costUsd,
+    costDisplay: formatCost(acc.costUsd, currency, locale, overestimatePercent)
+  })
+
+  const groups: ModelUsageWorkspaceProviderGroup[] = []
+  for (const provider of MODEL_USAGE_PROVIDER_ORDER) {
+    const modelMap = providerModelWorkspace.get(provider)
+    if (!modelMap) continue
+    const models: ModelUsageWorkspaceModelRow[] = []
+    const totals: Record<string, ModelUsageWorkspaceCell> = {}
+    for (const workspace of workspaces) totals[workspace.workspaceId] = emptyWorkspaceCell()
+
+    for (const [model, workspaceMap] of modelMap.entries()) {
+      const rowCells: Record<string, ModelUsageWorkspaceCell> = {}
+      let rowTokens = 0
+      for (const workspace of workspaces) {
+        const acc = workspaceMap.get(workspace.workspaceId)
+        const cell = acc ? finalizeCell(acc) : emptyWorkspaceCell()
+        rowCells[workspace.workspaceId] = cell
+        rowTokens += cell.totalTokens
+        const total = totals[workspace.workspaceId]
+        total.runs += cell.runs
+        total.changedFiles += cell.changedFiles
+        total.totalTokens += cell.totalTokens
+        total.costUsd += cell.costUsd
+      }
+      if (rowTokens > 0) models.push({ model, workspaces: rowCells })
+    }
+    for (const workspaceId of Object.keys(totals)) {
+      totals[workspaceId].costDisplay = formatCost(
+        totals[workspaceId].costUsd,
+        currency,
+        locale,
+        overestimatePercent
+      )
+    }
+    models.sort((a, b) => {
+      const total = (row: ModelUsageWorkspaceModelRow) =>
+        Object.values(row.workspaces).reduce((sum, cell) => sum + cell.totalTokens, 0)
+      return total(b) - total(a) || a.model.localeCompare(b.model)
+    })
+    if (models.length > 0) groups.push({ provider, models, totals })
+  }
+
+  return { workspaces, groups: workspaceIds.size > 0 ? groups : [] }
 }
 
 /** Sum provider-level roll-ups into a single token/cost totals row. */

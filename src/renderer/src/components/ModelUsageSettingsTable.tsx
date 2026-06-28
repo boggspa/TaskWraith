@@ -42,8 +42,11 @@ import {
   MODEL_USAGE_WINDOW_LABEL,
   MODEL_USAGE_WINDOW_ORDER,
   buildModelUsageTableForSettings,
+  buildModelUsageWorkspaceMatrix,
   sumModelUsageProviderTotals,
   type ModelUsageProviderGroup,
+  type ModelUsageWorkspaceCell,
+  type ModelUsageWorkspaceMatrix,
   type ModelUsageWindowKey,
   type ModelUsageWindowTotals
 } from '../lib/modelUsageTable'
@@ -134,6 +137,19 @@ function costCell(totals: ModelUsageWindowTotals): string {
 /** Format a single window's token cell. */
 function tokenCell(totals: ModelUsageWindowTotals): string {
   return totals.totalTokens > 0 ? `${formatTokenCount(totals.totalTokens)} tok` : '—'
+}
+
+function workspaceMatrixCostCell(cell: ModelUsageWorkspaceCell): string {
+  return cell.costDisplay ? `~${cell.costDisplay}` : '—'
+}
+
+function workspaceMatrixCellTitle(cell: ModelUsageWorkspaceCell): string {
+  return [
+    `${cell.changedFiles.toLocaleString()} changed file${cell.changedFiles === 1 ? '' : 's'}`,
+    `${cell.totalTokens.toLocaleString()} tokens`,
+    `${cell.runs.toLocaleString()} run${cell.runs === 1 ? '' : 's'}`,
+    cell.costDisplay ? `~${cell.costDisplay} projected API-equivalent` : 'no cost estimate'
+  ].join(' · ')
 }
 
 function rateCell(value: number | undefined): string {
@@ -369,6 +385,123 @@ export function ModelUsageTableTotalsFooter({
         </tr>
       ) : null}
     </tfoot>
+  )
+}
+
+export function ModelUsageWorkspaceMatrixTable({ matrix }: { matrix: ModelUsageWorkspaceMatrix }) {
+  if (matrix.workspaces.length === 0 || matrix.groups.length === 0) return null
+  return (
+    <section
+      className="model-usage-table-section"
+      aria-label="Model usage by workspace"
+    >
+      <div className="model-usage-table-header">
+        <div className="model-usage-table-heading">
+          <span className="model-usage-table-title">Models by workspace</span>
+          <span className="model-usage-table-subtitle">
+            Top {matrix.workspaces.length} busiest workspaces over 90D · changed files, tokens,
+            estimated cost
+          </span>
+        </div>
+      </div>
+      <div className="model-usage-table-scroll">
+        <table className="model-usage-table model-usage-table--workspace-matrix">
+          <colgroup>
+            <col className="model-usage-table-name-col" />
+            {matrix.workspaces.map((workspace) => (
+              <col key={workspace.workspaceId} className="model-usage-table-workspace-col" />
+            ))}
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col" className="model-usage-table-corner">
+                Model
+              </th>
+              {matrix.workspaces.map((workspace) => (
+                <th
+                  key={workspace.workspaceId}
+                  scope="col"
+                  className="model-usage-table-workspace-head"
+                  title={`${workspace.label} · ${workspace.totalTokens.toLocaleString()} tokens · ${workspace.changedFiles.toLocaleString()} changed files`}
+                >
+                  {workspace.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          {matrix.groups.map((group) => (
+            <tbody key={group.provider} className={`model-usage-table-provider provider-${group.provider}`}>
+              <tr className="model-usage-table-provider-row">
+                <th scope="rowgroup" className="model-usage-table-provider-cell">
+                  <span className={`model-usage-table-provider-label provider-${group.provider}`}>
+                    <ProviderLogoTile provider={group.provider} />
+                    <span className="model-usage-table-provider-name">{getProviderName(group.provider)}</span>
+                    <span
+                      className="model-usage-table-model-count"
+                      title={`${group.models.length} model${group.models.length === 1 ? '' : 's'}`}
+                    >
+                      {group.models.length}
+                    </span>
+                  </span>
+                </th>
+                {matrix.workspaces.map((workspace) => {
+                  const cell = group.totals[workspace.workspaceId]
+                  return (
+                    <td
+                      key={workspace.workspaceId}
+                      className="model-usage-table-workspace-cell is-provider-total"
+                      title={workspaceMatrixCellTitle(cell)}
+                    >
+                      <span className="model-usage-table-workspace-diffs">
+                        {cell.changedFiles > 0 ? `${cell.changedFiles.toLocaleString()} files` : '— files'}
+                      </span>
+                      <span className="model-usage-table-workspace-tokens">
+                        {cell.totalTokens > 0 ? `${formatTokenCount(cell.totalTokens)} tok` : '— tok'}
+                      </span>
+                      <span className="model-usage-table-workspace-cost">
+                        {workspaceMatrixCostCell(cell)}
+                      </span>
+                    </td>
+                  )
+                })}
+              </tr>
+              {group.models.map((model) => (
+                <tr key={`${group.provider}-${model.model}`} className="model-usage-table-model-row">
+                  <td className="model-usage-table-model-cell" title={humaniseModelIdCompact(group.provider, model.model)}>
+                    {humaniseModelIdTableCell(group.provider, model.model)}
+                  </td>
+                  {matrix.workspaces.map((workspace) => {
+                    const cell = model.workspaces[workspace.workspaceId]
+                    return (
+                      <td
+                        key={workspace.workspaceId}
+                        className="model-usage-table-workspace-cell"
+                        title={workspaceMatrixCellTitle(cell)}
+                      >
+                        <span className="model-usage-table-workspace-diffs">
+                          {cell.changedFiles > 0 ? `${cell.changedFiles.toLocaleString()} files` : '— files'}
+                        </span>
+                        <span className="model-usage-table-workspace-tokens">
+                          {cell.totalTokens > 0 ? `${formatTokenCount(cell.totalTokens)} tok` : '— tok'}
+                        </span>
+                        <span className="model-usage-table-workspace-cost">
+                          {workspaceMatrixCostCell(cell)}
+                        </span>
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          ))}
+        </table>
+      </div>
+      <p className="model-usage-table-footnote">
+        Changed-file counts come from TaskWraith run diffs when a usage row can be joined to a
+        stored chat run. Provider-wide external rows without a local run join show no changed-file
+        count.
+      </p>
+    </section>
   )
 }
 
@@ -768,6 +901,32 @@ export function ModelUsageSettingsTable({
     [groups, currency, overestimatePercent, locale]
   )
 
+  const workspaceMatrix = useMemo(
+    () =>
+      buildModelUsageWorkspaceMatrix(
+        internalRecords,
+        externalRecords,
+        chats,
+        rates,
+        {
+          currency,
+          overestimatePercent,
+          locale,
+          includeExternal
+        }
+      ),
+    [
+      internalRecords,
+      externalRecords,
+      chats,
+      rates,
+      currency,
+      overestimatePercent,
+      locale,
+      includeExternal
+    ]
+  )
+
   const hasTableContent = groups.length > 0 || Boolean(ollamaGroup)
 
   const selectExternal = (next: boolean) => {
@@ -918,6 +1077,7 @@ export function ModelUsageSettingsTable({
           </span>
         </div>
       )}
+      <ModelUsageWorkspaceMatrixTable matrix={workspaceMatrix} />
     </section>
   )
 }

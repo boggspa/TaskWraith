@@ -135,6 +135,11 @@
   width: 1%;
 }
 
+.model-usage-table col.model-usage-table-workspace-col {
+  width: 1%;
+  min-width: 104px;
+}
+
 /* Context-lengths mini-table (2 columns): let the model name take the slack so
  * the right-aligned window figure hugs the edge instead of floating with a gap. */
 .model-usage-table.model-usage-table--context col.model-usage-table-name-col {
@@ -248,10 +253,51 @@
 .model-usage-table-cost,
 .model-usage-table-memory,
 .model-usage-table-samples,
-.model-usage-table-rate {
+.model-usage-table-rate,
+.model-usage-table-workspace-cell {
   font-variant-numeric: tabular-nums;
   font-size: 10.5px;
   white-space: nowrap;
+}
+
+.model-usage-table--workspace-matrix {
+  min-width: 860px;
+}
+
+.model-usage-table-workspace-head {
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.model-usage-table-workspace-cell {
+  min-width: 104px;
+  padding: 6px 8px !important;
+  text-align: right;
+  vertical-align: top;
+}
+
+.model-usage-table-workspace-cell span {
+  display: block;
+  line-height: 1.35;
+}
+
+.model-usage-table-workspace-diffs {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.model-usage-table-workspace-tokens {
+  color: var(--text-secondary);
+}
+
+.model-usage-table-workspace-cost {
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.model-usage-table-workspace-cell.is-provider-total .model-usage-table-workspace-cost,
+.model-usage-table-workspace-cell.is-provider-total .model-usage-table-workspace-tokens {
+  color: var(--text-secondary);
 }
 
 /* Keep the rightmost 90D column off the scroll-container edge. */

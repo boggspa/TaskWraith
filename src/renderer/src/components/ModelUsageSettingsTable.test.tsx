@@ -6,9 +6,14 @@ import {
   ModelUsageProviderTableBlock,
   ModelUsageSettingsTable,
   ModelUsageTableTotalsFooter,
+  ModelUsageWorkspaceMatrixTable,
   ProviderApiRatesTableBlock
 } from './ModelUsageSettingsTable'
-import { buildModelUsageTable, sumModelUsageProviderTotals } from '../lib/modelUsageTable'
+import {
+  buildModelUsageTable,
+  buildModelUsageWorkspaceMatrix,
+  sumModelUsageProviderTotals
+} from '../lib/modelUsageTable'
 import { buildOllamaMemoryModelTable } from '../lib/ollamaMemoryAggregation'
 import { buildProviderApiRateGroups } from '../lib/providerApiRatesTable'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
@@ -225,6 +230,72 @@ describe('ModelUsageTableTotalsFooter (populated render)', () => {
     expect(html).toContain('~$7.00')
     expect(html).toContain('12GB')
     expect(html).toContain('8 avg')
+  })
+})
+
+describe('ModelUsageWorkspaceMatrixTable (populated render)', () => {
+  it('renders workspace columns with changed files, tokens, and estimated cost', () => {
+    const records: UsageRecord[] = [
+      makeRecord({
+        workspaceId: 'ws-alpha',
+        chatId: 'chat-alpha',
+        runId: 'run-alpha',
+        timestamp: NOW - 60_000,
+        inputTokens: 2_000_000,
+        outputTokens: 500_000,
+        totalTokens: 2_500_000
+      })
+    ]
+    const matrix = buildModelUsageWorkspaceMatrix(
+      records,
+      [],
+      [
+        {
+          id: 'chat-alpha',
+          appChatId: 'chat-alpha',
+          title: 'Alpha',
+          provider: 'codex',
+          messages: [],
+          runs: [
+            {
+              runId: 'run-alpha',
+              startedAt: new Date(NOW - 60_000).toISOString(),
+              message: 'run',
+              timestamp: new Date(NOW).toISOString(),
+              runDiff: {
+                runId: 'run-alpha',
+                preSnapshot: { capturedAt: 't', isGitRepo: true },
+                createdFiles: [
+                  { path: 'src/new.ts', status: 'created', previewKind: 'git_diff' }
+                ],
+                modifiedFiles: [
+                  { path: 'src/app.ts', status: 'modified', previewKind: 'git_diff' }
+                ],
+                deletedFiles: [],
+                preExistingFiles: []
+              }
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 1,
+          scope: 'workspace',
+          chatKind: 'single',
+          workspaceId: 'ws-alpha',
+          workspacePath: '/repo/alpha'
+        } as any
+      ],
+      RATES,
+      { currency: 'USD' },
+      NOW
+    )
+
+    const html = renderToStaticMarkup(<ModelUsageWorkspaceMatrixTable matrix={matrix} />)
+    expect(html).toContain('Models by workspace')
+    expect(html).toContain('alpha')
+    expect(html).toContain('2 files')
+    expect(html).toContain('2.5M tok')
+    expect(html).toContain('~$7.00')
+    expect(html).toContain('estimated cost')
   })
 })
 
