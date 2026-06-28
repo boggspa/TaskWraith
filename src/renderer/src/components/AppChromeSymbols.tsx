@@ -1,3 +1,5 @@
+import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
+
 export function SidebarCornerIcon({
   direction,
   isOpen
@@ -617,11 +619,16 @@ export function SteerSymbolIcon() {
 }
 
 export function ThinkingIndicator() {
-  // The composer telemetry row now carries the elapsed run clock, so
-  // the transcript indicator stays intentionally quiet.
+  // Participant name + model badge live in TranscriptPanel's `.message-meta`.
+  // This bubble mirrors iOS LiveActivityAnchor: ghost + glow + "Working" + dots.
   return (
-    <div className="message-bubble assistant message-thinking">
-      <span>Thinking</span>
+    <div className="message-bubble assistant message-working" aria-label="Working">
+      <span
+        className="message-working-ghost"
+        aria-hidden
+        dangerouslySetInnerHTML={{ __html: taskwraithGhostMonolineSvg }}
+      />
+      <span className="message-working-label">Working</span>
       <span className="thinking-dots" aria-hidden>
         <span className="thinking-dot" />
         <span className="thinking-dot" />

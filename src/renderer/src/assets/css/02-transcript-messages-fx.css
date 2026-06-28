@@ -3686,6 +3686,42 @@
   color: var(--provider-ornith-color) !important;
 }
 
+/* Working indicator (transcript tail) inherits provider hue from the
+ * sibling `.message-meta.provider-*` row above the bubble. */
+.message-group:has(.message-meta.provider-codex) {
+  --message-working-accent: var(--provider-codex-color);
+}
+.message-group:has(.message-meta.provider-claude) {
+  --message-working-accent: var(--provider-claude-color);
+}
+.message-group:has(.message-meta.provider-gemini) {
+  --message-working-accent: var(--provider-gemini-color);
+}
+.message-group:has(.message-meta.provider-kimi) {
+  --message-working-accent: var(--provider-kimi-color);
+}
+.message-group:has(.message-meta.provider-grok) {
+  --message-working-accent: var(--provider-grok-color);
+}
+.message-group:has(.message-meta.provider-cursor) {
+  --message-working-accent: var(--provider-cursor-color);
+}
+.message-group:has(.message-meta.provider-ollama) {
+  --message-working-accent: var(--provider-ollama-color);
+}
+.message-group:has(.message-meta.provider-qwen) {
+  --message-working-accent: var(--provider-qwen-color);
+}
+.message-group:has(.message-meta.provider-google) {
+  --message-working-accent: var(--provider-google-color);
+}
+.message-group:has(.message-meta.provider-openai) {
+  --message-working-accent: var(--provider-openai-color);
+}
+.message-group:has(.message-meta.provider-ornith) {
+  --message-working-accent: var(--provider-ornith-color);
+}
+
 .message-bubble {
   padding: var(--space-md) var(--space-lg);
   border-radius: calc(var(--radius-md) * 3);
@@ -4033,62 +4069,131 @@
   outline-offset: 1px;
 }
 
-.message-thinking {
+.message-working {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding-block: calc(var(--space-sm) + 1px);
+  --message-working-accent: var(--accent);
 }
 
 /*
- * "Thinking…" text shimmer-sweep.
- *
- * Real Codex's "Thinking" label has a brighter highlight band
- * sweeping left-to-right across the text — gives the moment-of-
- * waiting a sense of forward motion instead of a static label.
- *
- * Implementation: linear-gradient background clipped to the
- * glyph silhouette via `background-clip: text` + transparent
- * fill, animated by sliding `background-position`. The
- * `text-shimmer-sweep` keyframes (defined below) animate from
- * +220% → -120% over 2.4s linear loop, matching the timing
- * the run-status shimmer-sweep already uses for visual
- * consistency.
- *
- * Targets the first <span> inside `.message-thinking` (the
- * literal word "Thinking"); the trailing `.thinking-dots`
- * cluster keeps its own pulse animation untouched.
+ * iOS LiveActivityAnchor parity: monoline ghost + provider-tinted radial
+ * glow + granular sparkle on "Working" (noise grain + stepped sweep, not
+ * the smooth text-shimmer band used by the old Thinking label).
  */
-.message-thinking > span:first-child {
-  background: linear-gradient(
-    100deg,
-    color-mix(in srgb, var(--text-secondary) 70%, transparent) 0%,
-    color-mix(in srgb, var(--text-secondary) 70%, transparent) 35%,
-    var(--text-primary) 50%,
-    color-mix(in srgb, var(--text-secondary) 70%, transparent) 65%,
-    color-mix(in srgb, var(--text-secondary) 70%, transparent) 100%
+.message-working-ghost {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.94);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.22));
+  animation: working-ghost-pulse 0.85s ease-in-out infinite alternate;
+}
+
+.message-working-ghost::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--message-working-accent) 34%, transparent) 0%,
+    color-mix(in srgb, var(--message-working-accent) 16%, transparent) 46%,
+    transparent 76%
   );
-  background-size: 240% 100%;
+  filter: blur(3px);
+  transform: scale(1.08);
+  z-index: 0;
+}
+
+.message-working-ghost svg {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .message-working-ghost {
+  color: rgba(0, 0, 0, 0.76);
+  filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.4));
+}
+
+.message-working-label {
+  font-weight: 600;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 2px,
+      color-mix(in srgb, var(--message-working-accent) 22%, white) 2px,
+      transparent 3px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 3px,
+      color-mix(in srgb, var(--message-working-accent) 14%, white) 3px,
+      transparent 4px
+    ),
+    linear-gradient(
+      105deg,
+      color-mix(in srgb, var(--message-working-accent) 58%, var(--text-secondary)) 0%,
+      color-mix(in srgb, var(--message-working-accent) 82%, white 10%) 40%,
+      color-mix(in srgb, var(--message-working-accent) 96%, white 16%) 50%,
+      color-mix(in srgb, var(--message-working-accent) 72%, var(--text-secondary)) 60%,
+      color-mix(in srgb, var(--message-working-accent) 58%, var(--text-secondary)) 100%
+    );
+  background-size: 5px 5px, 7px 7px, 240% 100%;
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
   -webkit-text-fill-color: transparent;
-  animation: text-shimmer-sweep 2.4s linear infinite;
+  animation: working-sparkle-noise 2.6s steps(16) infinite;
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--message-working-accent) 30%, transparent));
+}
+
+@keyframes working-ghost-pulse {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+
+@keyframes working-sparkle-noise {
+  0% {
+    background-position: 0 0, 0 0, 220% 0;
+  }
+  100% {
+    background-position: 36px 18px, -28px 14px, -120% 0;
+  }
 }
 
 @keyframes text-shimmer-sweep {
-  0%   { background-position: 220% 0; }
-  100% { background-position: -120% 0; }
+  0% {
+    background-position: 220% 0;
+  }
+  100% {
+    background-position: -120% 0;
+  }
 }
 
-/* Reduced-motion respect: hold the brighter colour mid-sweep
- * instead of animating. Same pattern the run-status shimmer
- * uses elsewhere in the file. */
-[data-reduce-motion="true"] .message-thinking > span:first-child {
+[data-reduce-motion='true'] .message-working-ghost {
+  animation: none;
+  opacity: 1;
+}
+
+[data-reduce-motion='true'] .message-working-label {
   animation: none;
   background: none;
-  color: var(--text-primary);
-  -webkit-text-fill-color: var(--text-primary);
+  color: var(--message-working-accent, var(--text-primary));
+  -webkit-text-fill-color: var(--message-working-accent, var(--text-primary));
+  filter: none;
+}
+
+.message-working .thinking-dot {
+  background: color-mix(in srgb, var(--message-working-accent, var(--text-secondary)) 78%, transparent);
 }
 
 .thinking-dots {
