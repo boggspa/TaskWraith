@@ -574,6 +574,7 @@
   mix-blend-mode: var(--fx-sky-blend-mode, screen);
   filter: var(--fx-sky-filter, saturate(1.144) brightness(1.108));
   contain: strict;
+  container-type: size;
   isolation: isolate;
   transform: translateZ(0);
   backface-visibility: hidden;
@@ -1021,6 +1022,97 @@
   filter: blur(9px) saturate(0.42) brightness(0.62);
 }
 
+.sky-ufo {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  width: 46px;
+  height: 22px;
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: 50% 58%;
+  animation: skyUfoFlight var(--sky-ufo-duration, 60s) linear both;
+  backface-visibility: hidden;
+  will-change: transform, opacity;
+  filter:
+    drop-shadow(0 0 8px rgba(144, 239, 255, 0.38))
+    drop-shadow(0 8px 12px rgba(0, 0, 0, 0.24));
+}
+
+.sky-ufo::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -5px;
+  height: 12px;
+  border-radius: 999px;
+  background: radial-gradient(ellipse, rgba(129, 242, 255, 0.2), transparent 68%);
+  filter: blur(5px);
+  opacity: 0.74;
+  animation: skyUfoGlow 2.8s ease-in-out infinite;
+}
+
+.sky-ufo-dome,
+.sky-ufo-hull,
+.sky-ufo-light {
+  position: absolute;
+  pointer-events: none;
+}
+
+.sky-ufo-dome {
+  left: 15px;
+  top: 2px;
+  width: 16px;
+  height: 11px;
+  border-radius: 50% 50% 42% 42% / 68% 68% 32% 32%;
+  background:
+    radial-gradient(circle at 38% 30%, rgba(255, 255, 255, 0.86), transparent 22%),
+    linear-gradient(180deg, rgba(165, 238, 255, 0.82), rgba(70, 147, 190, 0.52) 76%, rgba(31, 56, 78, 0.76));
+  box-shadow:
+    inset 0 1px 3px rgba(255, 255, 255, 0.5),
+    0 0 9px rgba(114, 221, 255, 0.42);
+}
+
+.sky-ufo-hull {
+  left: 2px;
+  right: 2px;
+  top: 10px;
+  height: 11px;
+  border-radius: 50% / 58%;
+  background:
+    radial-gradient(ellipse at 50% 88%, rgba(22, 28, 37, 0.52), transparent 48%),
+    linear-gradient(180deg, rgba(241, 247, 248, 0.9), rgba(142, 158, 171, 0.72) 50%, rgba(47, 58, 72, 0.94) 100%);
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.42),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.34);
+}
+
+.sky-ufo-light {
+  top: 15px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(130, 255, 203, 0.92);
+  box-shadow: 0 0 8px rgba(99, 255, 199, 0.86);
+  animation: skyUfoLightBlink 1.45s steps(1, end) infinite;
+}
+
+.sky-ufo-light-1 {
+  left: 12px;
+}
+
+.sky-ufo-light-2 {
+  left: 21px;
+  animation-delay: -0.48s;
+}
+
+.sky-ufo-light-3 {
+  left: 30px;
+  animation-delay: -0.92s;
+}
+
 .sky-rainfall,
 .sky-snowfall {
   position: absolute;
@@ -1454,6 +1546,59 @@
   }
 }
 
+@keyframes skyUfoFlight {
+  0% {
+    transform: translate3d(-76px, var(--sky-ufo-y0), 0) rotate(var(--sky-ufo-r0)) scale(var(--sky-ufo-scale, 0.94));
+    opacity: 0;
+  }
+  4% {
+    opacity: 0.72;
+  }
+  18% {
+    transform: translate3d(16cqw, var(--sky-ufo-y1), 0) rotate(var(--sky-ufo-r1)) scale(calc(var(--sky-ufo-scale, 0.94) * 1.08));
+    opacity: 0.82;
+  }
+  37% {
+    transform: translate3d(39cqw, var(--sky-ufo-y2), 0) rotate(var(--sky-ufo-r2)) scale(calc(var(--sky-ufo-scale, 0.94) * 0.92));
+    opacity: 0.76;
+  }
+  57% {
+    transform: translate3d(58cqw, var(--sky-ufo-y3), 0) rotate(var(--sky-ufo-r3)) scale(calc(var(--sky-ufo-scale, 0.94) * 1.1));
+    opacity: 0.86;
+  }
+  78% {
+    transform: translate3d(82cqw, var(--sky-ufo-y4), 0) rotate(var(--sky-ufo-r4)) scale(calc(var(--sky-ufo-scale, 0.94) * 0.96));
+    opacity: 0.74;
+  }
+  95% {
+    opacity: 0.64;
+  }
+  100% {
+    transform: translate3d(calc(100cqw + 84px), var(--sky-ufo-y5), 0) rotate(var(--sky-ufo-r5)) scale(var(--sky-ufo-scale, 0.94));
+    opacity: 0;
+  }
+}
+
+@keyframes skyUfoGlow {
+  0%, 100% {
+    transform: scaleX(0.82);
+    opacity: 0.42;
+  }
+  50% {
+    transform: scaleX(1.16);
+    opacity: 0.78;
+  }
+}
+
+@keyframes skyUfoLightBlink {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  33% {
+    opacity: 1;
+  }
+}
+
 @keyframes skyRainFall {
   0% {
     transform: translate3d(0, -18px, 0) rotate(12deg);
@@ -1558,10 +1703,17 @@
 [data-reduce-motion="true"] .sky-day .sky-orb::before,
 [data-reduce-motion="true"] .sky-star,
 [data-reduce-motion="true"] .sky-cloud,
+[data-reduce-motion="true"] .sky-ufo,
+[data-reduce-motion="true"] .sky-ufo::before,
+[data-reduce-motion="true"] .sky-ufo-light,
 [data-reduce-motion="true"] .sky-storm .sky-glow::after,
 [data-reduce-motion="true"] .sky-rainfall span,
 [data-reduce-motion="true"] .sky-snowfall span {
   animation: none;
+}
+
+[data-reduce-motion="true"] .sky-ufo {
+  display: none;
 }
 
 [data-reduce-motion="true"] .ghost-avatar {

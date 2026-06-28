@@ -1,4 +1,4 @@
-import { useId, type CSSProperties } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import type { AppSettings, ProviderId } from '../../../main/store/types'
 
 export type SkyWeatherKind =
@@ -26,6 +26,70 @@ export interface HostWeatherVisualState {
 }
 
 type SkyTimePhase = 'dawn' | 'day' | 'evening' | 'night'
+
+const SKY_UFO_INITIAL_DELAY_MS = 60_000
+const SKY_UFO_RECURRENCE_MS = 40 * 60_000
+const SKY_UFO_FLIGHT_MS = 60_000
+const SKY_UFO_RENDERER_BOOTED_AT_MS = Date.now()
+
+interface SkyUfoFlight {
+  id: number
+  style: CSSProperties
+}
+
+interface SkyUfoTiming {
+  delayMs: number
+  nextDelayMs: number
+}
+
+const randomBetween = (min: number, max: number) => min + Math.random() * (max - min)
+const randomInt = (min: number, max: number) => Math.round(randomBetween(min, max))
+const randomSkyUfoY = () => `clamp(28px, ${randomInt(8, 30)}cqh, 190px)`
+
+function createSkyUfoFlight(id: number): SkyUfoFlight {
+  return {
+    id,
+    style: {
+      '--sky-ufo-duration': `${SKY_UFO_FLIGHT_MS}ms`,
+      '--sky-ufo-scale': randomBetween(0.78, 1.08).toFixed(2),
+      '--sky-ufo-y0': randomSkyUfoY(),
+      '--sky-ufo-y1': randomSkyUfoY(),
+      '--sky-ufo-y2': randomSkyUfoY(),
+      '--sky-ufo-y3': randomSkyUfoY(),
+      '--sky-ufo-y4': randomSkyUfoY(),
+      '--sky-ufo-y5': randomSkyUfoY(),
+      '--sky-ufo-r0': `${randomInt(-5, 5)}deg`,
+      '--sky-ufo-r1': `${randomInt(-12, 8)}deg`,
+      '--sky-ufo-r2': `${randomInt(-8, 12)}deg`,
+      '--sky-ufo-r3': `${randomInt(-10, 10)}deg`,
+      '--sky-ufo-r4': `${randomInt(-6, 8)}deg`,
+      '--sky-ufo-r5': `${randomInt(-3, 6)}deg`
+    } as CSSProperties
+  }
+}
+
+function getNextSkyUfoTiming(now = Date.now()): SkyUfoTiming {
+  const elapsedMs = Math.max(0, now - SKY_UFO_RENDERER_BOOTED_AT_MS)
+  if (elapsedMs < SKY_UFO_INITIAL_DELAY_MS) {
+    return {
+      delayMs: SKY_UFO_INITIAL_DELAY_MS - elapsedMs,
+      nextDelayMs: SKY_UFO_RECURRENCE_MS
+    }
+  }
+
+  const cycleOffsetMs = (elapsedMs - SKY_UFO_INITIAL_DELAY_MS) % SKY_UFO_RECURRENCE_MS
+  if (cycleOffsetMs < SKY_UFO_FLIGHT_MS) {
+    return {
+      delayMs: 0,
+      nextDelayMs: SKY_UFO_RECURRENCE_MS - cycleOffsetMs
+    }
+  }
+
+  return {
+    delayMs: SKY_UFO_RECURRENCE_MS - cycleOffsetMs,
+    nextDelayMs: SKY_UFO_RECURRENCE_MS
+  }
+}
 
 /**
  * The SVG filter the fog/mist sky variants warp their glow through. Referenced
@@ -118,6 +182,8 @@ export function RefractionFilterDefs() {
 export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState | null }) {
   const localHour = new Date().getHours()
   const skyKind = weather?.kind || 'unknown'
+  const skyUfoSequenceRef = useRef(0)
+  const [skyUfoFlight, setSkyUfoFlight] = useState<SkyUfoFlight | null>(null)
 
   // Keep the backend daylight signal for core assets like stars vs sun/day state.
   const isNightBase = weather ? !weather.isDay : localHour < 7 || localHour >= 19
@@ -129,15 +195,65 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
     timePhase = 'evening'
   }
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    let scheduledTimer: number | undefined
+    let recurringTimer: number | undefined
+    let clearFlightTimer: number | undefined
+
+    const clearFlight = (id: number) => {
+      setSkyUfoFlight((current) => (current?.id === id ? null : current))
+    }
+
+    const launchFlight = () => {
+      if (clearFlightTimer !== undefined) {
+        window.clearTimeout(clearFlightTimer)
+      }
+
+      const id = skyUfoSequenceRef.current + 1
+      skyUfoSequenceRef.current = id
+      setSkyUfoFlight(createSkyUfoFlight(id))
+      clearFlightTimer = window.setTimeout(() => clearFlight(id), SKY_UFO_FLIGHT_MS + 500)
+    }
+
+    const scheduleRecurring = (delayMs: number) => {
+      scheduledTimer = window.setTimeout(() => {
+        launchFlight()
+        recurringTimer = window.setInterval(launchFlight, SKY_UFO_RECURRENCE_MS)
+      }, delayMs)
+    }
+
+    const timing = getNextSkyUfoTiming()
+    scheduledTimer = window.setTimeout(() => {
+      launchFlight()
+      scheduleRecurring(timing.nextDelayMs)
+    }, timing.delayMs)
+
+    return () => {
+      if (scheduledTimer !== undefined) {
+        window.clearTimeout(scheduledTimer)
+      }
+      if (recurringTimer !== undefined) {
+        window.clearInterval(recurringTimer)
+      }
+      if (clearFlightTimer !== undefined) {
+        window.clearTimeout(clearFlightTimer)
+      }
+    }
+  }, [])
+
   return (
     <div
       className={`sky-visual-fx sky-${skyKind} ${isNightBase ? 'sky-night' : 'sky-day'} sky-phase-${timePhase}`}
       aria-hidden
     >
       {/* The fog/mist warp filter is defined ONCE globally via <SkyFogFilterDefs>
-        * (rendered by App) — the CSS that applies it references a FIXED id, which
-        * can't be namespaced per-instance, so emitting it here would duplicate the
-        * id across the up-to-4 panes that can mount this layer at once. */}
+       * (rendered by App) — the CSS that applies it references a FIXED id, which
+       * can't be namespaced per-instance, so emitting it here would duplicate the
+       * id across the up-to-4 panes that can mount this layer at once. */}
       <div className="sky-glow" />
       <div className="sky-orb" />
       {isNightBase && (
@@ -154,6 +270,15 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
       <span className="sky-cloud sky-cloud-3" />
       <span className="sky-cloud sky-cloud-4" />
       <span className="sky-cloud sky-cloud-5" />
+      {skyUfoFlight && (
+        <div key={skyUfoFlight.id} className="sky-ufo" style={skyUfoFlight.style}>
+          <span className="sky-ufo-dome" />
+          <span className="sky-ufo-hull" />
+          <span className="sky-ufo-light sky-ufo-light-1" />
+          <span className="sky-ufo-light sky-ufo-light-2" />
+          <span className="sky-ufo-light sky-ufo-light-3" />
+        </div>
+      )}
       <div className="sky-rainfall">
         <span />
         <span />
