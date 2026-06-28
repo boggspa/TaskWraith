@@ -4252,6 +4252,7 @@
   position: relative;
   display: inline-flex;
   align-items: center;
+  gap: 4px;
 }
 
 .composer-goal-button {
@@ -5072,7 +5073,9 @@
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent),
+    0 0 14px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .composer-schedule-trigger:disabled {

@@ -3322,6 +3322,7 @@ export interface RunQueueRequestSnapshot {
   claudeFastMode?: boolean | null
   kimiThinkingEnabled?: boolean
   scheduledTaskId?: string
+  scheduledRunAt?: string
   preserveComposer?: boolean
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null

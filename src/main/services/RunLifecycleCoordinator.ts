@@ -543,6 +543,7 @@ export class RunLifecycleCoordinator {
       claudeFastMode: request?.claudeFastMode,
       kimiThinkingEnabled: request?.kimiThinkingEnabled,
       scheduledTaskId: this.normalizeOptionalString(request?.scheduledTaskId),
+      scheduledRunAt: this.normalizeOptionalString(request?.scheduledRunAt),
       preserveComposer: request?.preserveComposer,
       runtimeProfileId: this.normalizeOptionalString(request?.runtimeProfileId),
       geminiAuthProfileId: this.normalizeNullableString(request?.geminiAuthProfileId),

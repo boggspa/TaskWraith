@@ -141,6 +141,9 @@ export const queuedRunRequestChatId = (request: QueuedRunRequest): string | unde
 export const queuedRunDisplayPrompt = (request: QueuedRunRequest): string =>
   request.displayPrompt || request.prompt || ''
 
+export const queuedRunScheduledRunAt = (request: QueuedRunRequest): string | undefined =>
+  request.scheduledRunAt
+
 export const ensembleQueuedPromptsFromRound = (
   round: NonNullable<ChatRecord['ensemble']>['activeRound'] | null | undefined
 ): string[] => {
@@ -176,6 +179,7 @@ export const appendLocalQueuedRunEntries = ({
       id,
       provider: request.provider,
       prompt: queuedRunDisplayPrompt(request),
+      scheduledRunAt: queuedRunScheduledRunAt(request),
       dmTargetParticipantId: request.dmTargetParticipantId
     })
     entryIds.add(id)

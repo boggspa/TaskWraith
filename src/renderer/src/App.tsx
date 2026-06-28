@@ -94,7 +94,7 @@ import type {
   UsageBalanceAggregate
 } from './lib/usageAggregateTypes'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
-import { formatScheduledRunTime } from './lib/dateTimeFormat'
+import { formatScheduledRunTime, toDateTimeLocalValue } from './lib/dateTimeFormat'
 import { buildReviewCurrentDiffPrompt } from './lib/reviewDiffPrompt'
 import { normalizeExternalPathGrants } from './lib/normalizeExternalPathGrants'
 import type { SideSlashCommand } from './lib/SideSlashCommand'
@@ -1210,6 +1210,7 @@ function App(): React.JSX.Element {
   const steerSuppressedSummaryRunIdsRef = useRef<Set<string>>(new Set())
   const queuedSteerInFlightRunIdsRef = useRef<Set<string>>(new Set())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
+  const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
   const [guestDispatchPendingParentChatIds, setGuestDispatchPendingParentChatIds] = useState<
     Set<string>
   >(() => new Set())
@@ -8374,10 +8375,29 @@ function App(): React.JSX.Element {
   }, [])
 
   const getRunQueueSource = (request: QueuedRunRequest): RunQueueJobSource => {
+    if (request.scheduledRunAt) return 'scheduled'
     if (request.scheduledTaskId) return 'scheduled'
     if (request.codexNativeReview) return 'review'
     if (request.existingPrompt) return 'retry'
     return 'manual'
+  }
+
+  const normalizeScheduledQueueRunAt = (value: string): string | null => {
+    if (!value) return null
+    const runAtMs = new Date(value).getTime()
+    if (!Number.isFinite(runAtMs) || runAtMs <= Date.now()) return null
+    return new Date(runAtMs).toISOString()
+  }
+
+  const getScheduledQueueRunAtMs = (request: Pick<QueuedRunRequest, 'scheduledRunAt'>): number | null => {
+    if (!request.scheduledRunAt) return null
+    const runAtMs = new Date(request.scheduledRunAt).getTime()
+    return Number.isFinite(runAtMs) ? runAtMs : null
+  }
+
+  const isQueuedRunReadyToDispatch = (request: QueuedRunRequest, nowMs = Date.now()): boolean => {
+    const runAtMs = getScheduledQueueRunAtMs(request)
+    return runAtMs === null || runAtMs <= nowMs
   }
 
   /**
@@ -8573,6 +8593,7 @@ function App(): React.JSX.Element {
         ? { kimiThinkingEnabled: snapshot.kimiThinkingEnabled }
         : {}),
       ...(snapshot.scheduledTaskId ? { scheduledTaskId: snapshot.scheduledTaskId } : {}),
+      ...(snapshot.scheduledRunAt ? { scheduledRunAt: snapshot.scheduledRunAt } : {}),
       ...(snapshot.runtimeProfileId ? { runtimeProfileId: snapshot.runtimeProfileId } : {}),
       ...(snapshot.geminiAuthProfileId
         ? { geminiAuthProfileId: snapshot.geminiAuthProfileId }
@@ -8647,6 +8668,7 @@ function App(): React.JSX.Element {
       ? { kimiThinkingEnabled: request.kimiThinkingEnabled }
       : {}),
     ...(request.scheduledTaskId ? { scheduledTaskId: request.scheduledTaskId } : {}),
+    ...(request.scheduledRunAt ? { scheduledRunAt: request.scheduledRunAt } : {}),
     ...(request.runtimeProfileId ? { runtimeProfileId: request.runtimeProfileId } : {}),
     ...(request.geminiAuthProfileId ? { geminiAuthProfileId: request.geminiAuthProfileId } : {}),
     ...(request.handoffSourceRunId ? { handoffSourceRunId: request.handoffSourceRunId } : {}),
@@ -8751,6 +8773,7 @@ function App(): React.JSX.Element {
       claudeFastMode: request.claudeFastMode,
       kimiThinkingEnabled: request.kimiThinkingEnabled,
       scheduledTaskId: request.scheduledTaskId,
+      scheduledRunAt: request.scheduledRunAt,
       runtimeProfileId: job.runtimeProfileId || request.runtimeProfileId,
       geminiAuthProfileId: request.geminiAuthProfileId,
       handoffSourceRunId: job.handoffSourceRunId || request.handoffSourceRunId,
@@ -9066,6 +9089,7 @@ function App(): React.JSX.Element {
         job.chatId === targetChatId &&
         (job.request?.prompt || job.promptPreview || '') === queuedRequest.prompt &&
         job.request?.selectedModelType === queuedRequest.selectedModelType &&
+        job.request?.scheduledRunAt === queuedRequest.scheduledRunAt &&
         discordContextSelectionQueueKey(job.request?.discordContextSelection) ===
           discordContextSelectionQueueKey(queuedRequest.discordContextSelection)
     )
@@ -9076,6 +9100,7 @@ function App(): React.JSX.Element {
         queuedRunRequestChatId(request) === targetChatId &&
         request.prompt === queuedRequest.prompt &&
         request.selectedModelType === queuedRequest.selectedModelType &&
+        request.scheduledRunAt === queuedRequest.scheduledRunAt &&
         discordContextSelectionQueueKey(request.discordContextSelection) ===
           discordContextSelectionQueueKey(queuedRequest.discordContextSelection)
     )
@@ -9116,6 +9141,10 @@ function App(): React.JSX.Element {
       const promptPreview = (queuedRequest.displayPrompt || queuedRequest.prompt || '').trim()
       const promptOneLiner =
         promptPreview.length > 240 ? `${promptPreview.slice(0, 240)}…` : promptPreview
+      const scheduledRunAt = queuedRequest.scheduledRunAt
+      const deliveryLine = scheduledRunAt
+        ? `— Scheduled for ${formatScheduledRunTime(scheduledRunAt)}.`
+        : `— Will dispatch when this chat's current ${getProviderLabel(targetProvider)} turn finishes.`
       updateChatById(targetChatId, (source) => ({
         ...source,
         messages: [
@@ -9124,15 +9153,16 @@ function App(): React.JSX.Element {
             id: `queued-${queuedRequest.appRunId || createMessageId()}`,
             role: 'system',
             content: promptPreview
-              ? `Queued (#${queuePosition}): ${promptOneLiner}\n— Will dispatch when this chat's current ${getProviderLabel(targetProvider)} turn finishes.`
-              : `Queued (#${queuePosition}). Will dispatch when this chat's current ${getProviderLabel(targetProvider)} turn finishes.`,
+              ? `Queued (#${queuePosition}): ${promptOneLiner}\n${deliveryLine}`
+              : `Queued (#${queuePosition}). ${deliveryLine}`,
             timestamp: queuedAt,
             metadata: {
               kind: 'queuedRunRequest',
               appRunId: queuedRequest.appRunId,
               queuePosition,
               provider: targetProvider,
-              promptPreview: promptOneLiner
+              promptPreview: promptOneLiner,
+              ...(scheduledRunAt ? { scheduledRunAt } : {})
             }
           }
         ],
@@ -10659,6 +10689,32 @@ function App(): React.JSX.Element {
       setPendingPlanImport(null)
     }
 
+    if (!existingPrompt && scheduleRunAt) {
+      const scheduledRunAt = normalizeScheduledQueueRunAt(scheduleRunAt)
+      if (!scheduledRunAt) {
+        appendThreadRawLog(request.chatRecord?.appChatId || currentChat?.appChatId, {
+          type: 'info',
+          content: 'Choose a future time for scheduled runs.'
+        })
+        return
+      }
+      const scheduledRequest: QueuedRunRequest = {
+        ...request,
+        scheduledRunAt
+      }
+      queueRunRequest(
+        scheduledRequest,
+        `Scheduled for ${formatScheduledRunTime(scheduledRunAt)}.`
+      )
+      setScheduleRunAt('')
+      clearComposerAttachmentsForSubmittedRequest(request)
+      setChatPromptDraft(
+        request.chatRecord?.appChatId || currentChatIdRef.current || currentChat?.appChatId,
+        ''
+      )
+      return
+    }
+
     const parentChat = request.chatRecord || currentChat
     const guestAddressTarget =
       parentChat && parentChat.chatKind !== 'ensemble' && parentChat.guestParticipant
@@ -11715,9 +11771,7 @@ function App(): React.JSX.Element {
   }
 
   const handleScheduleRun = async () => {
-    if (!currentWorkspace || !currentChat) return
-    const request = buildRunRequest()
-    if (!request.prompt.trim() || !scheduleRunAt) return
+    if (!currentWorkspace || !currentChat || !scheduleRunAt) return
     const runAtDate = new Date(scheduleRunAt)
     if (Number.isNaN(runAtDate.getTime())) {
       setRawLogs((prev) => [...prev, { type: 'info', content: 'Scheduled run time is invalid.' }])
@@ -11730,55 +11784,11 @@ function App(): React.JSX.Element {
       ])
       return
     }
-
-    // 1.0.4-AT3 — when scheduling from an ensemble chat, capture
-    // the panel state at schedule time (orchestration mode +
-    // participants + caps + DM target) so the dispatcher can
-    // apply it as the fire-time roster. Pre-AT3 the dispatcher
-    // read the chat's LIVE ensemble config, so the user's
-    // post-schedule edits silently reshaped what ran.
-    const ensembleSnapshot = isCurrentEnsembleChat
-      ? buildScheduledEnsembleSnapshot(currentChat, {
-          dmTargetParticipantId: request.dmTargetParticipantId
-        })
-      : null
-
-    const saved = await window.api.saveScheduledTask({
-      workspaceId: currentWorkspace.id,
-      workspacePath: currentWorkspace.path,
-      chatId: currentChat.appChatId,
-      provider: request.provider,
-      prompt: request.prompt,
-      displayPrompt: request.displayPrompt,
-      selectedModelType: request.selectedModelType,
-      customModel: request.customModel,
-      approvalMode: request.approvalMode,
-      sessionTrust: request.sessionTrust,
-      imageAttachments: request.imageAttachments,
-      externalPathGrants: request.externalPathGrants?.filter(
-        (grant) => grant.duration === 'workspace'
-      ),
-      geminiWorktree: request.geminiWorktree,
-      codexReasoningEffort: request.codexReasoningEffort,
-      codexServiceTier: request.codexServiceTier,
-      claudeFastMode: request.claudeFastMode,
-      kimiThinkingEnabled: request.kimiThinkingEnabled,
-      runtimeProfileId: request.runtimeProfileId,
-      geminiAuthProfileId: request.geminiAuthProfileId,
-      handoffSourceRunId: request.handoffSourceRunId,
-      runAt: runAtDate.toISOString(),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'local',
-      ...(ensembleSnapshot
-        ? { kind: 'ensemble' as const, ensembleSnapshot }
-        : { kind: 'single' as const })
-    })
-    setScheduledTasks(await window.api.getScheduledTasks(currentWorkspace.id))
-    setScheduleRunAt('')
     setRawLogs((prev) => [
       ...prev,
       {
         type: 'info',
-        content: `Scheduled ${getProviderLabel(saved.provider)} run for ${formatScheduledRunTime(saved.runAt)}.`
+        content: `Schedule enabled for ${formatScheduledRunTime(runAtDate.toISOString())}. Press Run to queue this message.`
       }
     ])
   }
@@ -13734,6 +13744,24 @@ function App(): React.JSX.Element {
   }
 
   useEffect(() => {
+    const queuedRequests = getQueuedDesktopRunJobs(runQueueJobs)
+      .map((job) => resolveQueuedDesktopRunRequest(job))
+      .filter((request): request is QueuedRunRequest => Boolean(request))
+    const nowMs = Date.now()
+    const nextRunAtMs = queuedRequests.reduce<number | null>((next, request) => {
+      const runAtMs = getScheduledQueueRunAtMs(request)
+      if (runAtMs === null || runAtMs <= nowMs) return next
+      return next === null || runAtMs < next ? runAtMs : next
+    }, null)
+    if (nextRunAtMs === null) return
+    const delayMs = Math.max(250, nextRunAtMs - nowMs)
+    const timeout = window.setTimeout(() => {
+      setScheduledQueueWakeTick((tick) => tick + 1)
+    }, delayMs)
+    return () => window.clearTimeout(timeout)
+  }, [queuedRuns, runQueueJobs, workspaces, currentWorkspace, currentChat, scheduledQueueWakeTick])
+
+  useEffect(() => {
     const queuedJobs = getQueuedDesktopRunJobs(runQueueJobs)
     if (queuedJobs.length === 0) return
 
@@ -13751,9 +13779,10 @@ function App(): React.JSX.Element {
       .map((job) => resolveQueuedDesktopRunRequest(job))
       .filter((request): request is QueuedRunRequest => Boolean(request))
     if (queuedRequests.length === 0) return
+    const nowMs = Date.now()
     const nextIndex = findNextRunnableQueueIndex(
       queuedRequests,
-      (job) => !isChatBusy(job.chatRecord?.appChatId)
+      (job) => isQueuedRunReadyToDispatch(job, nowMs) && !isChatBusy(job.chatRecord?.appChatId)
     )
     if (nextIndex < 0) return
 
@@ -13772,11 +13801,11 @@ function App(): React.JSX.Element {
         }
         appEventHandlersRef.current.appendThreadRawLog(nextRun.chatRecord?.appChatId, {
           type: 'info',
-          content: `Starting queued ${getProviderLabel(nextRun.provider)} run. ${remainingRuns.length} queued task${remainingRuns.length === 1 ? '' : 's'} remain.`
+          content: `Starting ${nextRun.scheduledRunAt ? 'scheduled ' : 'queued '}${getProviderLabel(nextRun.provider)} run. ${remainingRuns.length} queued task${remainingRuns.length === 1 ? '' : 's'} remain.`
         })
         void executeRunRef.current({ ...nextRun, appRunId: leased.runId })
       })
-  }, [queuedRuns, runningChatIds, runQueueJobs, workspaces, currentWorkspace, currentChat])
+  }, [queuedRuns, runningChatIds, runQueueJobs, workspaces, currentWorkspace, currentChat, scheduledQueueWakeTick])
 
   useEffect(() => {
     try {
@@ -16217,6 +16246,7 @@ function App(): React.JSX.Element {
               job.request?.prompt ||
               job.promptPreview ||
               '',
+            scheduledRunAt: request?.scheduledRunAt || job.request?.scheduledRunAt,
             dmTargetParticipantId: request?.dmTargetParticipantId
           }
         })
@@ -16351,6 +16381,10 @@ function App(): React.JSX.Element {
             job?.promptPreview ||
             ''
         )
+      }
+      const scheduledRunAt = match?.scheduledRunAt || job?.request?.scheduledRunAt
+      if (scheduledRunAt) {
+        setScheduleRunAt(toDateTimeLocalValue(new Date(scheduledRunAt)))
       }
       setQueuedRuns((prev) =>
         prev.filter(
@@ -17565,9 +17599,7 @@ function App(): React.JSX.Element {
     ? 'Scheduling requires a workspace-backed chat.'
     : !currentChat
       ? 'Open a chat to schedule a message.'
-      : isCurrentComposerLocked
-        ? 'Composer is locked while the current turn is running.'
-        : undefined
+      : undefined
   const scheduleControls = currentChat ? (
     <ComposerScheduleButton
       provider={currentProvider}
@@ -17576,7 +17608,7 @@ function App(): React.JSX.Element {
       onChange={setScheduleRunAt}
       onSchedule={handleScheduleRun}
       hasPrompt={Boolean(prompt.trim())}
-      disabled={!hasWorkspaceContext || !currentWorkspace || !currentChat || isCurrentComposerLocked}
+      disabled={!hasWorkspaceContext || !currentWorkspace || !currentChat}
       disabledReason={scheduleDisabledReason}
     />
   ) : null

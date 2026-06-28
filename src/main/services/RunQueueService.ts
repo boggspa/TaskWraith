@@ -350,6 +350,7 @@ export class RunQueueService {
       kimiThinkingEnabled:
         typeof value.kimiThinkingEnabled === 'boolean' ? value.kimiThinkingEnabled : undefined,
       scheduledTaskId: optionalString(value.scheduledTaskId),
+      scheduledRunAt: optionalString(value.scheduledRunAt),
       preserveComposer: Boolean(value.preserveComposer) || undefined,
       runtimeProfileId: optionalString(value.runtimeProfileId),
       handoffSourceRunId: optionalString(value.handoffSourceRunId)

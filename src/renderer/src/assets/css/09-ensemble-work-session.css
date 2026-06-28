@@ -418,6 +418,15 @@
 .queued-messages-row-action-steer:hover {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
+.queued-messages-row-action-scheduled {
+  cursor: default;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+  text-align: center;
+}
 .queued-messages-row-action-delete {
   font-size: 13px;
   font-weight: 600;

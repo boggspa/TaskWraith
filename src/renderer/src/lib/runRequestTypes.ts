@@ -40,6 +40,7 @@ export interface QueuedRunRequest {
   claudeFastMode?: boolean | null
   kimiThinkingEnabled?: boolean
   scheduledTaskId?: string
+  scheduledRunAt?: string
   workspaceRecord?: WorkspaceRecord
   chatRecord?: ChatRecord
   preserveComposer?: boolean

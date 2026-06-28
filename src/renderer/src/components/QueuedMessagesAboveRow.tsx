@@ -35,10 +35,11 @@
  * Max 5 visible before scroll (overflow: auto on the inner list).
  */
 
-import { memo, useCallback, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { ProviderBadgeIcon, getProviderName } from './Sidebar'
 import { MentionHighlightedText } from './MentionHighlightedText'
+import { formatScheduleCountdown } from '../lib/scheduledCountdown'
 
 /**
  * Subset of `QueuedRunRequest` the row needs. Kept narrow so this
@@ -54,6 +55,7 @@ export interface QueuedMessageRowEntry {
   /** What the user typed (or the display variant if the prompt was
    * collapsed for readability). Truncated below for display. */
   prompt: string
+  scheduledRunAt?: string
   /** Optional DM target participant id if this is an ensemble-chat
    * direct-message dispatch. Drives a tiny "→ Role" hint next to
    * the provider chip. */
@@ -80,7 +82,8 @@ function truncatePrompt(prompt: string): string {
 function getPositionedRowLabel(entry: QueuedMessageRowEntry, position: number, total: number): string {
   const prompt = truncatePrompt(entry.prompt)
   const positionLabel = `${position} of ${total}`
-  return `Queued message ${positionLabel} from ${getProviderName(entry.provider)}: ${prompt}`
+  const scheduleLabel = entry.scheduledRunAt ? ` scheduled for ${entry.scheduledRunAt}` : ''
+  return `Queued message ${positionLabel} from ${getProviderName(entry.provider)}${scheduleLabel}: ${prompt}`
 }
 
 function resolveDmRoleLabel(
@@ -114,7 +117,15 @@ function QueuedMessagesAboveRowImpl({
 }: QueuedMessagesAboveRowProps): React.JSX.Element | null {
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const listRef = useRef<HTMLUListElement | null>(null)
+  const hasScheduledEntries = entries.some((entry) => Boolean(entry.scheduledRunAt))
+
+  useEffect(() => {
+    if (!hasScheduledEntries) return
+    const interval = window.setInterval(() => setNowMs(Date.now()), 1_000)
+    return () => window.clearInterval(interval)
+  }, [hasScheduledEntries])
 
   const handleReorder = useCallback(
     (sourceId: string, targetId: string | null) => {
@@ -171,6 +182,7 @@ function QueuedMessagesAboveRowImpl({
             onEdit={() => onEdit(entry.id)}
             onDelete={() => onDelete(entry.id)}
             onSteer={() => onSteer(entry.id)}
+            nowMs={nowMs}
             onMoveUp={() => handleMove(entry.id, -1)}
             onMoveDown={() => handleMove(entry.id, 1)}
             onDragStart={() => setDragId(entry.id)}
@@ -211,6 +223,7 @@ interface QueuedMessageRowProps {
   onDragStart: () => void
   onDragHover: (overId: string | null) => void
   onDragEnd: (droppedOnId: string | null) => void
+  nowMs: number
 }
 
 function QueuedMessageRow({
@@ -230,12 +243,16 @@ function QueuedMessageRow({
   onMoveDown,
   onDragStart,
   onDragHover,
-  onDragEnd
+  onDragEnd,
+  nowMs
 }: QueuedMessageRowProps): React.JSX.Element {
   const rowLabel = getPositionedRowLabel(entry, position, total)
   const providerLabel = getProviderName(entry.provider)
   const moveUpPosition = Math.max(position - 1, 1)
   const moveDownPosition = Math.min(position + 1, total)
+  const scheduleCountdown = entry.scheduledRunAt
+    ? formatScheduleCountdown(entry.scheduledRunAt, nowMs)
+    : null
 
   const handlePointerDown = useCallback(
     (event: React.PointerEvent) => {
@@ -344,19 +361,29 @@ function QueuedMessageRow({
         >
           ↓
         </button>
-        <button
-          type="button"
-          className="queued-messages-row-action queued-messages-row-action-steer"
-          onClick={(event) => {
-            event.stopPropagation()
-            onSteer()
-          }}
-          onPointerDown={(event) => event.stopPropagation()}
-          title={`Steer ${providerLabel} queued message ${position}: dispatch this queued message now.`}
-          aria-label={`Steer ${providerLabel} queued message ${position} from the queue now`}
-        >
-          ↳ Steer
-        </button>
+        {scheduleCountdown ? (
+          <span
+            className="queued-messages-row-action queued-messages-row-action-scheduled"
+            title={`Scheduled ${providerLabel} queued message ${position} dispatches in ${scheduleCountdown}.`}
+            aria-label={`Scheduled ${providerLabel} queued message ${position} dispatches in ${scheduleCountdown}`}
+          >
+            {scheduleCountdown === 'due now' ? 'Due' : scheduleCountdown}
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="queued-messages-row-action queued-messages-row-action-steer"
+            onClick={(event) => {
+              event.stopPropagation()
+              onSteer()
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            title={`Steer ${providerLabel} queued message ${position}: dispatch this queued message now.`}
+            aria-label={`Steer ${providerLabel} queued message ${position} from the queue now`}
+          >
+            ↳ Steer
+          </button>
+        )}
         <button
           type="button"
           className="queued-messages-row-action queued-messages-row-action-edit"

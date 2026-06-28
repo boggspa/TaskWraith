@@ -3162,7 +3162,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             />
                           )
                         })()}
-                        {scheduleControls}
                         {/* 1.0.4-AS3 — the old name-pill (Application × ) is gone;
                         the attached-window affordance now lives in the
                         composer telemetry row as a Screen Watch icon
@@ -4342,6 +4341,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                      </span>
 	                    )}
 	                  </button>
+                    {scheduleControls}
 	                  {goalPopoverOpen && currentChat && typeof document !== 'undefined' && createPortal(
 	                    <div
 	                      ref={goalPopoverRef}
