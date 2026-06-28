@@ -630,11 +630,14 @@ export function ThinkingIndicator() {
           dangerouslySetInnerHTML={{ __html: taskwraithGhostMonolineSvg }}
         />
       </span>
-      <span className="message-working-label">Working</span>
-      <span className="thinking-dots" aria-hidden>
-        <span className="thinking-dot" />
-        <span className="thinking-dot" />
-        <span className="thinking-dot" />
+      <span className="message-working-text">
+        <span className="message-working-sparkles" aria-hidden />
+        <span className="message-working-label">Working</span>
+        <span className="thinking-dots" aria-hidden>
+          <span className="thinking-dot" />
+          <span className="thinking-dot" />
+          <span className="thinking-dot" />
+        </span>
       </span>
     </div>
   )

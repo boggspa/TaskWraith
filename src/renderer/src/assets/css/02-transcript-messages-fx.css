@@ -4131,6 +4131,8 @@
 }
 
 .message-working-label {
+  position: relative;
+  z-index: 1;
   font-weight: 600;
   background-image:
     repeating-linear-gradient(
@@ -4162,6 +4164,142 @@
   -webkit-text-fill-color: transparent;
   animation: working-sparkle-noise 2.6s steps(16) infinite;
   filter: drop-shadow(0 0 7px color-mix(in srgb, var(--message-working-accent) 30%, transparent));
+}
+
+/* Ambient 1px sparkle specs around "Working…" (label + dots). */
+.message-working-text {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  isolation: isolate;
+}
+
+.message-working-sparkles {
+  position: absolute;
+  inset: -8px -16px -6px -8px;
+  z-index: 0;
+  pointer-events: none;
+  overflow: visible;
+  --working-spec: color-mix(in srgb, var(--message-working-accent) 86%, white);
+  --working-spec-dim: color-mix(in srgb, var(--message-working-accent) 52%, transparent);
+  background-image:
+    radial-gradient(circle, var(--working-spec) 0.45px, transparent 0.55px),
+    radial-gradient(circle, var(--working-spec-dim) 0.45px, transparent 0.55px),
+    radial-gradient(circle, color-mix(in srgb, white 62%, var(--message-working-accent)) 0.45px, transparent 0.55px);
+  background-size: 8px 10px, 12px 9px, 10px 13px;
+  background-position: 0 0, 5px 4px, 9px 2px;
+  -webkit-mask-image: radial-gradient(ellipse 92% 130% at 44% 52%, #000 14%, transparent 74%);
+  mask-image: radial-gradient(ellipse 92% 130% at 44% 52%, #000 14%, transparent 74%);
+  animation:
+    working-sparkle-specs-drift 2.2s steps(11) infinite,
+    working-sparkle-specs-flash 1.4s steps(7) infinite;
+}
+
+.message-working-sparkles::before,
+.message-working-sparkles::after {
+  content: '';
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  border-radius: 50%;
+  background: var(--working-spec);
+  pointer-events: none;
+}
+
+.message-working-sparkles::before {
+  top: 18%;
+  left: 6%;
+  box-shadow:
+    12px -6px 0 0 var(--working-spec),
+    24px 2px 0 0 var(--working-spec-dim),
+    38px -3px 0 0 var(--working-spec),
+    52px 5px 0 0 color-mix(in srgb, white 55%, var(--message-working-accent)),
+    -4px 5px 0 0 var(--working-spec-dim),
+    6px 11px 0 0 var(--working-spec);
+  animation: working-spec-twinkle-a 1.65s steps(5) infinite;
+}
+
+.message-working-sparkles::after {
+  top: 58%;
+  left: 18%;
+  box-shadow:
+    10px -8px 0 0 var(--working-spec-dim),
+    22px -1px 0 0 var(--working-spec),
+    34px 4px 0 0 color-mix(in srgb, white 50%, var(--message-working-accent)),
+    46px -4px 0 0 var(--working-spec-dim),
+    58px 3px 0 0 var(--working-spec),
+    -2px -3px 0 0 var(--working-spec);
+  animation: working-spec-twinkle-b 1.95s steps(5) infinite 0.35s;
+}
+
+@keyframes working-sparkle-specs-drift {
+  0% {
+    background-position: 0 0, 5px 4px, 9px 2px;
+  }
+  100% {
+    background-position: 20px -14px, -12px 18px, 24px 10px;
+  }
+}
+
+@keyframes working-sparkle-specs-flash {
+  0%,
+  100% {
+    opacity: 0.22;
+  }
+  14% {
+    opacity: 0.95;
+  }
+  28% {
+    opacity: 0.3;
+  }
+  42% {
+    opacity: 1;
+  }
+  56% {
+    opacity: 0.18;
+  }
+  70% {
+    opacity: 0.88;
+  }
+  84% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes working-spec-twinkle-a {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  20% {
+    opacity: 1;
+  }
+  40% {
+    opacity: 0.25;
+  }
+  60% {
+    opacity: 0.92;
+  }
+  80% {
+    opacity: 0.2;
+  }
+}
+
+@keyframes working-spec-twinkle-b {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  25% {
+    opacity: 0.95;
+  }
+  50% {
+    opacity: 0.18;
+  }
+  75% {
+    opacity: 1;
+  }
 }
 
 @keyframes working-ghost-pulse {
@@ -4198,6 +4336,18 @@
   color: var(--message-working-accent, var(--text-primary));
   -webkit-text-fill-color: var(--message-working-accent, var(--text-primary));
   filter: none;
+}
+
+[data-reduce-motion='true'] .message-working-sparkles,
+[data-reduce-motion='true'] .message-working-sparkles::before,
+[data-reduce-motion='true'] .message-working-sparkles::after {
+  animation: none;
+  opacity: 0;
+}
+
+.message-working .thinking-dots {
+  position: relative;
+  z-index: 1;
 }
 
 .message-working .thinking-dot {
