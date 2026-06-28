@@ -13,6 +13,10 @@ history, and workspace state stay on your machine throughout.
   usually appears, and dispatch automatically when due.
 - **Larger composer uploads.** Drag/drop, paste, and attachment picker flows now
   keep up to 15 composer attachments.
+- **Detected Tailscale relay setup.** The iOS bridge settings now show this
+  Mac's detected `wss://` Tailscale relay door with Use this, Copy, and Test
+  actions so cellular pairing no longer depends on users hand-entering the
+  MagicDNS URL and port.
 
 ### Changed
 - **Cleaner trust-mode UX.** YOLO / Trust This Session now appears as a compact
@@ -23,6 +27,9 @@ history, and workspace state stay on your machine throughout.
   consequence and lifetime of each choice.
 - **Softer visual polish.** Sky visual effects have softer orb edges, and image
   attachments show better placeholder behavior while previews load.
+- **Message actions moved into timestamp footers.** Transcript copy/delete
+  actions now sit in the message footer area instead of floating over the
+  message body.
 
 ### Fixed
 - **Share invite reliability.** Shared-chat invite copy and relay setup are more
