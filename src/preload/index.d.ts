@@ -1278,8 +1278,14 @@ declare global {
         mode?: HumanCollaborationMode
         inviteTtlMs?: number
       }) => Promise<
-        CreateShareResult & { relayUrl: string; relayUrls?: string[]; hostIdentityPubKeyB64: string }
+        CreateShareResult & {
+          relayUrl: string
+          relayUrls?: string[]
+          relayWarning?: string
+          hostIdentityPubKeyB64: string
+        }
       >
+      humanCollaborationCopyInvite: (input: { invite: string }) => Promise<{ ok: true }>
       humanCollaborationListShares: (chatId?: string) => Promise<HumanCollaborationShare[]>
       humanCollaborationConnectedChatIds: () => Promise<string[]>
       humanCollaborationRevokeShare: (shareId: string) => Promise<HumanCollaborationShare | null>

@@ -97,6 +97,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // requireNonEmptyString), so the coarse 'object' spec here matches the existing
   // 'compose-run' / 'create-sub-thread' precedent and is the IPC-boundary shape gate.
   'human-collaboration:create-share': ['object'],
+  'human-collaboration:copy-invite': ['object'],
   'human-collaboration:list-shares': ['optionalString'],
   'human-collaboration:connected-chat-ids': [],
   'human-collaboration:revoke-share': ['nonEmptyString'],

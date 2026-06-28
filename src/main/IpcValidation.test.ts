@@ -52,6 +52,7 @@ describe('IpcValidation', () => {
   it('registers every human-collaboration IPC channel', () => {
     const collabChannels = [
       'human-collaboration:create-share',
+      'human-collaboration:copy-invite',
       'human-collaboration:list-shares',
       'human-collaboration:revoke-share',
       'human-collaboration:consume-invite',

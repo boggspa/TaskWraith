@@ -1124,16 +1124,36 @@ function App(): React.JSX.Element {
           null,
           2
         )
-        if (!navigator.clipboard?.writeText) throw new Error('Clipboard is not available.')
-        await navigator.clipboard.writeText(invitePayload)
+        let copied = false
+        let copyError: unknown = null
+        if (typeof window.api.humanCollaborationCopyInvite === 'function') {
+          try {
+            await window.api.humanCollaborationCopyInvite({ invite: invitePayload })
+            copied = true
+          } catch (error) {
+            copyError = error
+          }
+        }
+        if (!copied) {
+          if (!navigator.clipboard?.writeText) {
+            throw copyError instanceof Error ? copyError : new Error('Clipboard is not available.')
+          }
+          await navigator.clipboard.writeText(invitePayload)
+        }
+        const relayWarning =
+          typeof result.relayWarning === 'string' && result.relayWarning.trim().length > 0
+            ? `\n\n${result.relayWarning.trim()}`
+            : ''
         window.alert(
-          relayUrls.length > 0
+          (relayUrls.length > 0
             ? 'People invite copied. Share it out of band with the collaborator.'
-            : 'People invite copied — but remote access is OFF, so collaborators cannot connect yet. Enable remote access in Settings, then create a new invite.'
+            : 'People invite copied — but remote access is OFF, so collaborators cannot connect yet. Enable remote access in Settings, then create a new invite.') +
+            relayWarning
         )
       } catch (error) {
         console.error('[human-collaboration] create share failed', error)
-        window.alert('Could not create or copy People invite.')
+        const detail = error instanceof Error ? error.message : String(error)
+        window.alert(`Could not create or copy People invite.${detail ? `\n\n${detail}` : ''}`)
       }
     },
     [refreshHumanCollaborationShares]

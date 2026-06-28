@@ -23333,12 +23333,6 @@ if (isGeminiMcpBridgeProcess) {
         )
       )
     }
-    const collaborationInviteRelayUrl = (): string => {
-      const advertised = collaborationInviteRelayUrls()[0]
-      if (advertised) return advertised
-      // Same-Mac testing fallback (loopback).
-      return collaborationHostRelayUrl()
-    }
     // Boot re-open: rooms are otherwise only opened on create-share, so after a
     // restart the host wasn't listening on existing shares' rooms and a
     // reconnecting collaborator's frames were dropped. Once the relay is ready,
@@ -24087,9 +24081,68 @@ if (isGeminiMcpBridgeProcess) {
       if (!chat) throw new Error('Chat not found.')
       return buildHumanShareProjection(chat, share)
     }
+    const prepareHumanCollaborationInviteTransport = async (): Promise<{
+      relayUrl: string
+      relayUrls: string[]
+      relayWarning?: string
+    }> => {
+      if (!iosRemoteRuntime) {
+        await startIosRemoteBridge('human collaboration invite')
+      }
+      if (iosRemoteRuntime && !selfHostedWssLane) {
+        await maybeUpgradeIosRemoteToTailscaleLane('human collaboration invite')
+      }
+      if (!iosRemoteRuntime) {
+        const relayUrls = collaborationInviteRelayUrls()
+        return {
+          relayUrl: relayUrls[0] ?? '',
+          relayUrls,
+          ...(iosRemoteRuntimeError
+            ? { relayWarning: `Remote bridge is not running: ${iosRemoteRuntimeError}` }
+            : {})
+        }
+      }
+      const runtimeRelayUrls = iosRemoteRuntime.describeHost().relayUrls
+      const relayCandidates =
+        selfHostedWssLane?.candidates.length ? selfHostedWssLane.candidates : runtimeRelayUrls
+      let selection = await selectAdvertisableRelayUrls(relayCandidates)
+      if (selfHostedWssLane) {
+        const lane = selfHostedWssLane
+        if (!selection.advertisable.includes(lane.wssUrl) && lane.cliPath) {
+          const httpsPort = defaultIosServeHttpsPort()
+          const serve = await getTailscaleServeStatus({
+            cliPath: lane.cliPath,
+            relayPort: lane.relayPort,
+            httpsPort
+          })
+          if (!serve.configured) {
+            const enabled = await enableTailscaleServe({
+              cliPath: lane.cliPath,
+              relayPort: lane.relayPort,
+              httpsPort
+            })
+            console[enabled.ok ? 'warn' : 'error'](
+              `[human-collaboration] invite self-heal: tailscale serve was off — re-enable ${
+                enabled.ok ? 'succeeded' : `FAILED: ${enabled.message ?? 'unknown'}`
+              }`
+            )
+            if (enabled.ok) selection = await selectAdvertisableRelayUrls(lane.candidates)
+          }
+        }
+      }
+      const relayUrls = selection.advertisable
+      return {
+        relayUrl: relayUrls[0] ?? '',
+        relayUrls,
+        ...(selection.warnings.length > 0
+          ? { relayWarning: `A relay door was left out of the invite: ${selection.warnings.join('; ')}` }
+          : {})
+      }
+    }
     ipcMain.handle(
       'human-collaboration:create-share',
-      (_, input: { chatId: string; mode?: 'readOnly' | 'comments'; inviteTtlMs?: number }) => {
+      async (_, input: { chatId: string; mode?: 'readOnly' | 'comments'; inviteTtlMs?: number }) => {
+        const inviteTransport = await prepareHumanCollaborationInviteTransport()
         const result = chatService.createHumanCollaborationShare({
           chatId: input.chatId,
           mode: input.mode === 'readOnly' ? 'readOnly' : 'comments',
@@ -24109,12 +24162,20 @@ if (isGeminiMcpBridgeProcess) {
         // when the remote-bridge infra isn't running — the renderer surfaces that.
         return {
           ...result,
-          relayUrl: collaborationInviteRelayUrl(),
-          relayUrls: collaborationInviteRelayUrls(),
+          relayUrl: inviteTransport.relayUrl,
+          relayUrls: inviteTransport.relayUrls,
+          relayWarning: inviteTransport.relayWarning,
           hostIdentityPubKeyB64: runtime.hostIdentityPubKeyB64()
         }
       }
     )
+    ipcMain.handle('human-collaboration:copy-invite', (_, input: { invite?: string }) => {
+      const invite = typeof input?.invite === 'string' ? input.invite.trim() : ''
+      if (!invite) throw new Error('Invite payload is empty.')
+      if (invite.length > 128_000) throw new Error('Invite payload is too large.')
+      clipboard.writeText(invite, 'clipboard')
+      return { ok: true }
+    })
     ipcMain.handle('human-collaboration:list-shares', (_, chatId?: string) =>
       chatService.listHumanCollaborationShares(chatId)
     )

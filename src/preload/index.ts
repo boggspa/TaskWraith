@@ -960,6 +960,8 @@ const api = {
     mode?: 'readOnly' | 'comments'
     inviteTtlMs?: number
   }) => ipcRenderer.invoke('human-collaboration:create-share', input),
+  humanCollaborationCopyInvite: (input: { invite: string }) =>
+    ipcRenderer.invoke('human-collaboration:copy-invite', input),
   humanCollaborationListShares: (chatId?: string) =>
     ipcRenderer.invoke('human-collaboration:list-shares', chatId),
   humanCollaborationConnectedChatIds: () =>
