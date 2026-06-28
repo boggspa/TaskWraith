@@ -241,6 +241,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // ipcMain.handle() literal against this table at test time.
   'ios-remote-tailscale-status': [],
   'ios-remote-tailscale-enable': [],
+  'ios-remote-tailscale-test': [],
   'ios-remote-tailscale-disable': [],
   'ios-remote-tailscale-link': ['nonEmptyString'],
   // QR-optional discovery (Slice 5d): set takes {clientId, clientSecret}; the

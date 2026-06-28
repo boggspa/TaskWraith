@@ -301,7 +301,9 @@ function IosRemoteBridgeSection(): React.JSX.Element {
   const [sectionError, setSectionError] = useState<string | null>(null)
   const [tailscale, setTailscale] = useState<IosRemoteTailscaleStatus | null>(null)
   const [tailscaleBusy, setTailscaleBusy] = useState(false)
+  const [tailscaleTestBusy, setTailscaleTestBusy] = useState(false)
   const [tailscaleMessage, setTailscaleMessage] = useState<string | null>(null)
+  const [tailscaleCopied, setTailscaleCopied] = useState(false)
   // QR-optional discovery: host-side Tailscale OAuth credential so a paired
   // phone can ask this host to enumerate the tailnet. The secret is write-only
   // (encrypted at rest, never read back) — status reports only whether it's set.
@@ -345,13 +347,11 @@ function IosRemoteBridgeSection(): React.JSX.Element {
     }
   }, [])
 
-  const toggleTailscaleRemote = async (): Promise<void> => {
+  const useDetectedTailscaleRelay = async (): Promise<void> => {
     try {
       setTailscaleBusy(true)
       setTailscaleMessage(null)
-      const result = tailscale?.active
-        ? await window.api.iosRemoteTailscaleDisable?.()
-        : await window.api.iosRemoteTailscaleEnable?.()
+      const result = await window.api.iosRemoteTailscaleEnable?.()
       if (result?.status) setTailscale(result.status as unknown as IosRemoteTailscaleStatus)
       if (!result?.ok) {
         setTailscaleMessage(result?.message || 'Tailscale command failed.')
@@ -368,6 +368,53 @@ function IosRemoteBridgeSection(): React.JSX.Element {
       setTailscaleMessage(err instanceof Error ? err.message : String(err))
     } finally {
       setTailscaleBusy(false)
+    }
+  }
+
+  const disableTailscaleRemote = async (): Promise<void> => {
+    try {
+      setTailscaleBusy(true)
+      setTailscaleMessage(null)
+      const result = await window.api.iosRemoteTailscaleDisable?.()
+      if (result?.status) setTailscale(result.status as unknown as IosRemoteTailscaleStatus)
+      if (!result?.ok) {
+        setTailscaleMessage(result?.message || 'Tailscale command failed.')
+      } else {
+        const refreshed = (await window.api.getIosRemoteConfig?.()) as
+          | IosRemoteConfig
+          | undefined
+        if (refreshed) setConfig(refreshed)
+      }
+    } catch (err) {
+      setTailscaleMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setTailscaleBusy(false)
+    }
+  }
+
+  const testDetectedTailscaleRelay = async (): Promise<void> => {
+    try {
+      setTailscaleTestBusy(true)
+      setTailscaleMessage(null)
+      const result = await window.api.iosRemoteTailscaleTest?.()
+      if (result?.status) setTailscale(result.status as unknown as IosRemoteTailscaleStatus)
+      setTailscaleMessage(result?.message || (result?.ok ? 'Ready for cellular.' : 'Test failed.'))
+    } catch (err) {
+      setTailscaleMessage(err instanceof Error ? err.message : String(err))
+    } finally {
+      setTailscaleTestBusy(false)
+    }
+  }
+
+  const copyDetectedTailscaleRelay = async (): Promise<void> => {
+    const value = tailscale?.suggestedUrl
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+      setTailscaleCopied(true)
+      window.setTimeout(() => setTailscaleCopied(false), 1200)
+    } catch {
+      setTailscaleMessage('Could not copy the detected relay door.')
     }
   }
 
@@ -483,58 +530,9 @@ function IosRemoteBridgeSection(): React.JSX.Element {
           onChange={(event) => void save({ enabled: event.target.checked })}
         />
       </label>
-      <label className="settings-service-row">
+      <div className="settings-service-row bridge-networking-detected-relay-row">
         <span>
-          External relay server URL
-          <small>
-            Optional. Leave blank for this Mac&apos;s built-in relay. Use wss:// only for a
-            separate hosted relay.
-          </small>
-        </span>
-        <input
-          type="text"
-          className="settings-text-input"
-          placeholder="wss://relay.example.com"
-          defaultValue={config?.relayUrl ?? ''}
-          disabled={saving || config === null}
-          onBlur={(event) => {
-            if ((config?.relayUrl ?? '') !== event.target.value.trim()) {
-              void save({ relayUrl: event.target.value })
-            }
-          }}
-        />
-      </label>
-      <label className="settings-service-row">
-        <span>
-          Manual tailnet relay door
-          <small>
-            Optional fallback advertised alongside LAN. Enter this computer&apos;s tailnet host/IP
-            or a full ws(s):// URL, never the phone&apos;s address. For cellular iOS, wss:// is the
-            reliable path; raw 100.x tailnet IPs are cleartext candidates and may be skipped by
-            iOS.
-            {tailscale?.manualRelayInput && tailscale.manualRelayUrl
-              ? ` Current candidate: ${tailscale.manualRelayUrl}.`
-              : tailscale?.manualRelayInput
-                ? ' The current value could not be parsed as a relay URL.'
-                : ''}
-          </small>
-        </span>
-        <input
-          type="text"
-          className="settings-text-input"
-          placeholder="wss://your-mac.tailnet.ts.net or 100.x.y.z"
-          defaultValue={config?.manualRelayUrl ?? ''}
-          disabled={saving || config === null}
-          onBlur={(event) => {
-            if ((config?.manualRelayUrl ?? '') !== event.target.value.trim()) {
-              void save({ manualRelayUrl: event.target.value })
-            }
-          }}
-        />
-      </label>
-      <div className="settings-service-row">
-        <span>
-          Remote access via Tailscale
+          Detected Tailscale relay door
           <small>
             {tailscale === null
               ? 'Checking Tailscale…'
@@ -542,26 +540,110 @@ function IosRemoteBridgeSection(): React.JSX.Element {
                 ? tailscale.tailscaleReason ||
                   'Tailscale not detected — install it and sign in to enable off-LAN access.'
                 : tailscale.active
-                  ? `Phones connect via ${tailscale.suggestedUrl} (TLS front door over the embedded relay). Works on cellular when the phone's Tailscale is on.`
-                  : `Puts a wss:// TLS front door on the embedded relay via \`tailscale serve\` (${tailscale.dnsName ?? 'your MagicDNS name'}) so phones can connect off-LAN — iOS blocks cleartext ws:// away from your Wi-Fi. One-time: HTTPS certificates must be enabled for your tailnet (admin console → DNS).`}
+                  ? 'Ready for cellular when the phone has Tailscale connected.'
+                  : 'Use this for off-LAN iOS pairing. TaskWraith will configure Tailscale Serve and test the WSS front door.'}
           </small>
+          {tailscale?.suggestedUrl && (
+            <code className="bridge-networking-detected-relay-url">{tailscale.suggestedUrl}</code>
+          )}
         </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <span className="bridge-networking-detected-relay-actions">
           {tailscale?.active && <StatusPill kind="ok" label="Active" />}
           {tailscale && tailscale.serveConfigured && !tailscale.relayUrlMatches && (
             <StatusPill kind="warn" label="Serve on, URL differs" />
           )}
           <button
+            className="btn btn-sm btn-primary"
+            type="button"
+            disabled={
+              tailscaleBusy ||
+              tailscale === null ||
+              !tailscale.tailscaleAvailable ||
+              !tailscale.suggestedUrl
+            }
+            onClick={() => void useDetectedTailscaleRelay()}
+          >
+            {tailscaleBusy ? 'Working…' : tailscale?.active ? 'Repair' : 'Use this'}
+          </button>
+          <button
             className="btn btn-sm"
             type="button"
-            disabled={tailscaleBusy || tailscale === null || !tailscale.tailscaleAvailable}
-            onClick={() => void toggleTailscaleRemote()}
+            disabled={!tailscale?.suggestedUrl}
+            onClick={() => void copyDetectedTailscaleRelay()}
           >
-            {tailscaleBusy ? 'Working…' : tailscale?.active ? 'Disable' : 'Enable'}
+            {tailscaleCopied ? 'Copied' : 'Copy'}
           </button>
+          <button
+            className="btn btn-sm"
+            type="button"
+            disabled={tailscaleTestBusy || !tailscale?.suggestedUrl}
+            onClick={() => void testDetectedTailscaleRelay()}
+          >
+            {tailscaleTestBusy ? 'Testing…' : 'Test'}
+          </button>
+          {tailscale?.active && (
+            <button
+              className="btn btn-sm btn-ghost"
+              type="button"
+              disabled={tailscaleBusy}
+              onClick={() => void disableTailscaleRemote()}
+            >
+              Disable
+            </button>
+          )}
         </span>
       </div>
       {tailscaleMessage && <div className="settings-error">{tailscaleMessage}</div>}
+      <details className="bridge-networking-advanced-relay">
+        <summary>Advanced relay settings</summary>
+        <label className="settings-service-row">
+          <span>
+            Configured relay URL
+            <small>
+              Usually managed by Use this above. Edit only for a separate hosted relay or a
+              custom Tailscale Serve address.
+            </small>
+          </span>
+          <input
+            type="text"
+            className="settings-text-input"
+            placeholder="wss://relay.example.com"
+            defaultValue={config?.relayUrl ?? ''}
+            disabled={saving || config === null}
+            onBlur={(event) => {
+              if ((config?.relayUrl ?? '') !== event.target.value.trim()) {
+                void save({ relayUrl: event.target.value })
+              }
+            }}
+          />
+        </label>
+        <label className="settings-service-row">
+          <span>
+            Extra advertised relay door
+            <small>
+              Optional fallback advertised alongside LAN and the detected Tailscale door. Enter
+              this computer&apos;s host/IP or a full ws(s):// URL, never the phone&apos;s address.
+              {tailscale?.manualRelayInput && tailscale.manualRelayUrl
+                ? ` Current candidate: ${tailscale.manualRelayUrl}.`
+                : tailscale?.manualRelayInput
+                  ? ' The current value could not be parsed as a relay URL.'
+                  : ''}
+            </small>
+          </span>
+          <input
+            type="text"
+            className="settings-text-input"
+            placeholder="wss://your-mac.tailnet.ts.net or 100.x.y.z"
+            defaultValue={config?.manualRelayUrl ?? ''}
+            disabled={saving || config === null}
+            onBlur={(event) => {
+              if ((config?.manualRelayUrl ?? '') !== event.target.value.trim()) {
+                void save({ manualRelayUrl: event.target.value })
+              }
+            }}
+          />
+        </label>
+      </details>
       <div className="settings-service-row">
         <span>
           Let phones find this host on your tailnet

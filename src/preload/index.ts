@@ -600,6 +600,7 @@ const api = {
     ipcRenderer.invoke('set-ios-remote-config', config),
   iosRemoteTailscaleStatus: () => ipcRenderer.invoke('ios-remote-tailscale-status'),
   iosRemoteTailscaleEnable: () => ipcRenderer.invoke('ios-remote-tailscale-enable'),
+  iosRemoteTailscaleTest: () => ipcRenderer.invoke('ios-remote-tailscale-test'),
   iosRemoteTailscaleDisable: () => ipcRenderer.invoke('ios-remote-tailscale-disable'),
   iosRemoteTailscaleLink: (authKey: string) =>
     ipcRenderer.invoke('ios-remote-tailscale-link', authKey),

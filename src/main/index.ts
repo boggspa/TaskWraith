@@ -23526,7 +23526,49 @@ if (isGeminiMcpBridgeProcess) {
         iosRemoteRelayUrl: serveWssUrl(dnsName, iosRemoteServeHttpsPort())
       })
       await restartIosRemoteBridge('tailscale enable')
-      return { ok: true, message: result.message ?? null, status: await iosRemoteTailscaleStatus() }
+      const relayUrl = serveWssUrl(dnsName, iosRemoteServeHttpsPort())
+      const probe = await probeRelayFrontDoor(relayUrl)
+      const status = await iosRemoteTailscaleStatus()
+      if (!probe.reachable) {
+        return {
+          ok: false,
+          message: `Set the detected relay door (${relayUrl}), but it is not reachable yet: ${probe.detail}`,
+          status,
+          relayUrl,
+          reachable: false
+        }
+      }
+      return {
+        ok: true,
+        message: result.message ?? 'Ready for cellular.',
+        status,
+        relayUrl,
+        reachable: true
+      }
+    })
+    ipcMain.handle('ios-remote-tailscale-test', async () => {
+      const status = await iosRemoteTailscaleStatus()
+      const relayUrl =
+        typeof status.suggestedUrl === 'string' && status.suggestedUrl ? status.suggestedUrl : null
+      if (!relayUrl) {
+        return {
+          ok: false,
+          message:
+            status.tailscaleReason ||
+            'TaskWraith could not detect this Mac’s Tailscale MagicDNS relay door.',
+          status
+        }
+      }
+      const probe = await probeRelayFrontDoor(relayUrl)
+      return {
+        ok: probe.reachable,
+        message: probe.reachable
+          ? `Ready for cellular: ${relayUrl}`
+          : `${relayUrl} is not reachable yet: ${probe.detail}`,
+        relayUrl,
+        reachable: probe.reachable,
+        status
+      }
     })
     ipcMain.handle('ios-remote-tailscale-disable', async () => {
       const tailscale = await detectTailscale()
@@ -23735,13 +23777,23 @@ if (isGeminiMcpBridgeProcess) {
         }
         advertiseRelayUrls = selection.advertisable
         if (selection.warnings.length > 0) {
+          const detected = await resolveTailscaleWssLane(configuredSettingsRelayUrl() || null)
+          const setupHint = detected
+            ? ` Cellular pairing needs Tailscale remote access. Use detected door: ${detected.wssUrl}.`
+            : ''
           pairingWarning =
             `Pairing will work, but a relay door was left out of the QR: ` +
             `${selection.warnings.join('; ')}. ` +
             (selection.advertisable.some((url) => url.startsWith('wss:'))
               ? 'Phones may need Tailscale for this pairing until the other door is fixed.'
-              : 'This pairing is home-Wi-Fi only until the Tailscale front door is fixed.')
+              : `This pairing is home-Wi-Fi only until the Tailscale front door is fixed.${setupHint}`)
           console.warn(`[remote-bridge] ${pairingWarning}`)
+        } else if (!selection.advertisable.some((url) => url.startsWith('wss:'))) {
+          const detected = await resolveTailscaleWssLane(configuredSettingsRelayUrl() || null)
+          if (detected) {
+            pairingWarning = `Cellular pairing needs Tailscale remote access. Use detected door: ${detected.wssUrl}.`
+            console.warn(`[remote-bridge] ${pairingWarning}`)
+          }
         }
         const result = iosRemoteRuntime.beginPairing(
           typeof displayName === 'string' ? displayName : undefined,

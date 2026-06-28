@@ -881,6 +881,15 @@ declare global {
         ok: boolean
         message?: string | null
         status?: Record<string, unknown>
+        relayUrl?: string
+        reachable?: boolean
+      }>
+      iosRemoteTailscaleTest: () => Promise<{
+        ok: boolean
+        message?: string | null
+        relayUrl?: string
+        reachable?: boolean
+        status?: Record<string, unknown>
       }>
       iosRemoteTailscaleDisable: () => Promise<{
         ok: boolean

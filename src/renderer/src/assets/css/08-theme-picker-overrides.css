@@ -1419,6 +1419,46 @@
   display: flex;
   gap: 8px;
 }
+.bridge-networking-detected-relay-row {
+  align-items: flex-start;
+}
+.bridge-networking-detected-relay-url {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.86em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.bridge-networking-detected-relay-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.bridge-networking-advanced-relay {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 8px;
+}
+.bridge-networking-advanced-relay summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.86em;
+  font-weight: 600;
+}
+.bridge-networking-advanced-relay[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
 /* ── Approval timeout fields (Phase E1.1) ───────────────────────────── */
 .approval-timeout-grid {
