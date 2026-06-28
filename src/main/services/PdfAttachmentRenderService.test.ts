@@ -1,4 +1,5 @@
-import { mkdtempSync, writeFileSync, mkdirSync, realpathSync, rmSync } from 'fs'
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'fs'
+import { realpath } from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import { describe, expect, it } from 'vitest'
@@ -52,7 +53,7 @@ describe('PdfAttachmentRenderService', () => {
       }
     )
     try {
-      const realPdf = realpathSync(pdf)
+      const realPdf = await realpath(pdf)
       expect(result.skipped).toEqual([])
       expect(result.rendered).toHaveLength(1)
       expect(result.rendered[0]).toMatchObject({
