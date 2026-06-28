@@ -1233,7 +1233,6 @@
   .composer-area.interface-claude
   :is(
     .composer-textarea,
-    .composer-above-bar-stack:has(.ensemble-above-row),
     .composer-above-bar,
     .ensemble-above-row,
     .queued-messages-above-row,
@@ -1242,6 +1241,24 @@
   ) {
   background: #272726 !important;
   background-image: none !important;
+}
+
+[data-composer-style="claude"]:not(
+    :is(
+      [data-theme="light"],
+      [data-theme="citrus"],
+      [data-theme="mist"],
+      [data-theme="sage"],
+      [data-theme="alabaster"]
+    )
+  )
+  .app-transcript
+  .composer-area.interface-claude
+  .composer-above-bar-stack:has(.ensemble-above-row) {
+  background: transparent !important;
+  background-image: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
 
 [data-composer-style="claude"]:not(
