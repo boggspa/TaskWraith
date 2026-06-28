@@ -670,6 +670,7 @@
 }
 
 .sky-orb {
+  --sky-orb-gaussian-blur: 0.55px;
   position: absolute;
   top: 79px;
   right: clamp(54px, 12vw, 150px);
@@ -685,7 +686,9 @@
     0 0 168px rgba(255, 222, 111, 0.18);
   /* GPU: skySunPulse removed — it animated `filter: brightness/saturate`
    * which is paint-bound on a sun-sized layer. The orb already reads as
-   * "alive" from skyOrbFloat's gentle transform drift. */
+   * "alive" from skyOrbFloat's gentle transform drift. Keep the Gaussian blur
+   * static so the sun/moon edge softens without re-painting every frame. */
+  filter: blur(var(--sky-orb-gaussian-blur));
   animation: skyOrbFloat 18s ease-in-out infinite;
   backface-visibility: hidden;
   will-change: transform, opacity;
@@ -720,6 +723,7 @@
 }
 
 .sky-night .sky-orb {
+  --sky-orb-gaussian-blur: 1.2px;
   width: 56px;
   height: 56px;
   right: clamp(58px, 13vw, 162px);
@@ -746,8 +750,9 @@
 .sky-day.sky-heavy_rain .sky-orb,
 .sky-day.sky-storm .sky-orb,
 .sky-day.sky-snow .sky-orb {
+  --sky-orb-gaussian-blur: 2px;
   opacity: 0.22;
-  filter: blur(2px) brightness(0.9);
+  filter: blur(var(--sky-orb-gaussian-blur)) brightness(0.9);
 }
 
 .sky-day.sky-heavy_rain .sky-orb,
