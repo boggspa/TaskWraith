@@ -22529,6 +22529,7 @@ function App(): React.JSX.Element {
                     : null
                 }
                 onManualTranscriptJump={beginManualMainTranscriptJump}
+                onJumpToLatest={handleJumpToLatest}
                 copiedId={copiedId}
                 copy={copy}
                 autoFollowRef={autoFollowRef}

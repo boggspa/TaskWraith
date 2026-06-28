@@ -22,12 +22,16 @@ interface ActiveMarkerState {
   anchorY: number
 }
 
+const EDGE_CONTROL_SLOT_PX = 24
+
 interface TranscriptUserMessageGutterProps {
   markers: readonly TranscriptUserGutterMarker[]
   scrollRef: React.RefObject<HTMLDivElement | null>
   contentRef: React.RefObject<HTMLDivElement | null>
   currentChat?: ChatRecord | null
   onJumpToMessage: (messageId: string, rowKey: string) => void
+  onJumpToStart: () => void
+  onJumpToEnd: () => void
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -132,7 +136,9 @@ export function TranscriptUserMessageGutter({
   scrollRef,
   contentRef,
   currentChat,
-  onJumpToMessage
+  onJumpToMessage,
+  onJumpToStart,
+  onJumpToEnd
 }: TranscriptUserMessageGutterProps): React.JSX.Element | null {
   const [frame, setFrame] = useState<GutterFrame | null>(null)
   const [activeMarker, setActiveMarker] = useState<ActiveMarkerState | null>(null)
@@ -193,15 +199,17 @@ export function TranscriptUserMessageGutter({
     () => markers.find((marker) => marker.key === activeMarker?.key) || null,
     [activeMarker?.key, markers]
   )
+  const markerTrackTop = frame ? EDGE_CONTROL_SLOT_PX : 0
+  const markerTrackHeight = frame ? Math.max(60, frame.height - EDGE_CONTROL_SLOT_PX * 2) : 0
   const markerLayoutByKey = useMemo(() => {
     if (!frame) return null
     return new Map(
-      layoutTranscriptUserGutterMarkers(markers, frame.height).map((layout) => [
+      layoutTranscriptUserGutterMarkers(markers, markerTrackHeight).map((layout) => [
         layout.key,
         layout.topPx
       ])
     )
-  }, [frame, markers])
+  }, [frame, markerTrackHeight, markers])
 
   const cancelDismiss = useCallback(() => {
     if (dismissTimerRef.current !== null) {
@@ -261,6 +269,15 @@ export function TranscriptUserMessageGutter({
       role="navigation"
       aria-label="User messages"
     >
+      <button
+        type="button"
+        className="transcript-user-gutter-edge transcript-user-gutter-edge--top"
+        onClick={onJumpToStart}
+        aria-label="Jump to beginning of thread"
+        title="Jump to beginning"
+      >
+        <span aria-hidden="true">↑</span>
+      </button>
       {markers.map((marker, index) => (
         <button
           key={marker.key}
@@ -273,7 +290,10 @@ export function TranscriptUserMessageGutter({
             activeMarker?.key === marker.key ? ' is-active' : ''
           }`}
           style={{
-            top: markerLayoutByKey?.get(marker.key) ?? `${marker.topPercent}%`
+            top:
+              markerLayoutByKey?.get(marker.key) !== undefined
+                ? markerTrackTop + (markerLayoutByKey.get(marker.key) || 0)
+                : `${marker.topPercent}%`
           }}
           data-message-id={marker.messageId}
           data-row-key={marker.rowKey}
@@ -304,6 +324,15 @@ export function TranscriptUserMessageGutter({
           <span className="transcript-user-gutter-line" aria-hidden />
         </button>
       ))}
+      <button
+        type="button"
+        className="transcript-user-gutter-edge transcript-user-gutter-edge--bottom"
+        onClick={onJumpToEnd}
+        aria-label="Jump to latest message"
+        title="Jump to latest"
+      >
+        <span aria-hidden="true">↓</span>
+      </button>
       {activeMarker && activeMarkerModel && frame && (
         <TranscriptUserGutterPreview
           marker={activeMarkerModel}

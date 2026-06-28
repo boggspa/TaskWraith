@@ -180,6 +180,8 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     )
     expect(html).toContain('role="navigation"')
     expect(html).toContain('aria-label="User messages"')
+    expect(html).toContain('aria-label="Jump to beginning of thread"')
+    expect(html).toContain('aria-label="Jump to latest message"')
     expect(countUserGutterMarkers(html)).toBe(60)
     expect(html).toContain('data-row-key="m0#0"')
     expect(html).toContain('Jump to user message 1: UNIQUEMARK_0 sample transcript line')

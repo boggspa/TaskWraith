@@ -216,6 +216,7 @@ export type TranscriptPanelProps = {
   sideChatSeedMessageId?: string | null
   jumpToMessageRequest?: { messageId: string; rowKey?: string; requestId: number } | null
   onManualTranscriptJump?: () => void
+  onJumpToLatest?: () => void
   onPreviewImage: (ref: ChatMediaRef) => void
   /** Pop an A/V attachment out into its own Multiview pane (the docked media
    *  player). Optional — omitted when Multiview isn't available to the host. */
@@ -868,6 +869,7 @@ export const TranscriptPanel = memo(
     sideChatSeedMessageId,
     jumpToMessageRequest,
     onManualTranscriptJump,
+    onJumpToLatest,
     onPreviewImage,
     onDetachToPane,
     copiedId,
@@ -1293,6 +1295,29 @@ export const TranscriptPanel = memo(
       [estimateScrollToMessage, focusMessageBlock]
     )
 
+    const jumpToTranscriptStart = useCallback(() => {
+      const scroller = scrollRef.current
+      if (!scroller) return
+      prepareManualTranscriptJump()
+      scroller.scrollTop = 0
+      syncVirtualizerScrollPosition(0)
+    }, [prepareManualTranscriptJump, scrollRef, syncVirtualizerScrollPosition])
+
+    const jumpToTranscriptEnd = useCallback(() => {
+      if (onJumpToLatest) {
+        onJumpToLatest()
+        const scroller = scrollRef.current
+        if (scroller) syncVirtualizerScrollPosition(scroller.scrollHeight)
+        return
+      }
+      const scroller = scrollRef.current
+      if (!scroller) return
+      const nextScrollTop = scroller.scrollHeight
+      if (autoFollowRef) autoFollowRef.current = true
+      scroller.scrollTop = nextScrollTop
+      syncVirtualizerScrollPosition(nextScrollTop)
+    }, [autoFollowRef, onJumpToLatest, scrollRef, syncVirtualizerScrollPosition])
+
     useEffect(() => {
       const request = jumpToMessageRequest
       if (!request?.messageId) return
@@ -1359,6 +1384,8 @@ export const TranscriptPanel = memo(
             contentRef={contentRef}
             currentChat={currentChat}
             onJumpToMessage={scrollToMessage}
+            onJumpToStart={jumpToTranscriptStart}
+            onJumpToEnd={jumpToTranscriptEnd}
           />
         )}
         <div
@@ -2228,6 +2255,7 @@ export const TranscriptPanel = memo(
     previous.jumpToMessageRequest?.rowKey === next.jumpToMessageRequest?.rowKey &&
     previous.jumpToMessageRequest?.requestId === next.jumpToMessageRequest?.requestId &&
     previous.onManualTranscriptJump === next.onManualTranscriptJump &&
+    previous.onJumpToLatest === next.onJumpToLatest &&
     previous.onPreviewImage === next.onPreviewImage &&
     previous.onDetachToPane === next.onDetachToPane &&
     previous.copiedId === next.copiedId &&
