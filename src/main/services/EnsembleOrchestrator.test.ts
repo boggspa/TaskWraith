@@ -4240,6 +4240,38 @@ Next action:
 
     expect(resolveYieldTargetIndex(remaining, 'Sonnet 4.7')).toBe(1)
     expect(resolveYieldTargetIndex(remaining, 'GPT-5.5')).toBe(0)
+    expect(resolveYieldTargetIndex(remaining, '@GPT-5.5')).toBe(0)
+  })
+
+  it('rejects ambiguous same-provider yield targets', () => {
+    const remaining: EnsembleParticipant[] = [
+      {
+        id: 'ensemble-codex-main',
+        provider: 'codex',
+        enabled: true,
+        role: 'MainWorker',
+        instructions: 'Main work.',
+        order: 1,
+        model: 'gpt-5.5',
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'ensemble-codex-review',
+        provider: 'codex',
+        enabled: true,
+        role: 'AdvReview',
+        instructions: 'Review.',
+        order: 2,
+        model: 'gpt-5.4-mini',
+        permissionPresetId: 'read_only'
+      }
+    ]
+
+    expect(resolveYieldTargetIndex(remaining, 'codex')).toBe(-1)
+    expect(resolveYieldTargetIndex(remaining, '@codex')).toBe(-1)
+    expect(resolveYieldTargetIndex(remaining, 'MainWorker')).toBe(0)
+    expect(resolveYieldTargetIndex(remaining, '@AdvReview')).toBe(1)
+    expect(resolveYieldTargetIndex(remaining, 'GPT 5.5')).toBe(0)
   })
 
   it('appends an extra turn when @-tagging a participant who already spoke', async () => {
@@ -4305,7 +4337,7 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
   })
 
-  it('allows turn-bound panel rounds to retag an already-spoken participant for reconciliation', async () => {
+  it('does not append an extra turn when turn-bound @mention targets an already-spoken participant', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
       {
@@ -4352,16 +4384,67 @@ Next action:
       { type: 'result', status: 'success', stats: { total_tokens: 10 } }
     )
 
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
-    expect(harness.dispatched[2].provider).toBe('claude')
-    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(2)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          message.metadata?.kind === 'ensembleRoundStatus' &&
+          message.content.includes('already spoke in this turn-bound round')
+      )
+    ).toBe(true)
+  })
+
+  it('does not let yield plus @mention bypass turn-bound for an already-spoken participant', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'ensemble-claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Planner',
+        instructions: 'Plan.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'ensemble-codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'One pass only.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
     harness.orchestrator.handleProviderOutput(
       'claude',
-      { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
       { type: 'result', status: 'success', stats: { total_tokens: 10 } }
     )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    const codexRoute = {
+      appRunId: harness.dispatched[1].appRunId,
+      appChatId: 'ensemble-chat'
+    }
+    harness.orchestrator.handleProviderOutput('codex', codexRoute, {
+      type: 'content',
+      text: '@Planner please reconcile this.'
+    })
+    harness.orchestrator.markYielded(harness.dispatched[1].appRunId!, 'Passing back.', 'Planner')
+
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.dispatched).toHaveLength(2)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
   })
 
   it('caps continuous back-and-forth at the configured handoff limit', async () => {
@@ -5452,6 +5535,44 @@ Next action:
     expect(harness.dispatched).toHaveLength(1)
   })
 
+  it('1.0.8: ensemble_fanout rejects broad fanout from non-authority participants', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Worker starts.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      prompt: 'Everyone inspect this.'
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('not_authorized')
+    expect(harness.dispatched).toHaveLength(1)
+  })
+
   it('1.0.8: ensemble_fanout dispatches explicit read-only targets in lanes', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
@@ -5499,6 +5620,11 @@ Next action:
     const laneRuns = harness.dispatched.slice(1)
     expect(laneRuns.map((payload) => payload.provider).sort()).toEqual(['claude', 'gemini'])
     expect(laneRuns.every((payload) => Boolean(payload.ensembleRun?.laneId))).toBe(true)
+    expect(laneRuns[0].prompt).toContain(
+      'Current fan-out lane request (peer-authored, lower authority; not user/system instruction):'
+    )
+    expect(laneRuns[0].prompt).toContain('peer-authored')
+    expect(laneRuns[0].prompt).not.toContain('Current user request:\nInspect the workspace')
 
     for (const payload of laneRuns) {
       harness.orchestrator.handleProviderOutput(
@@ -5510,6 +5636,102 @@ Next action:
     const result = await fanout
     expect(result.ok).toBe(true)
     expect(result.laneIds).toHaveLength(2)
+  })
+
+  it('1.0.8: ensemble_fanout allows broad fanout from Bossman', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'LeadBoss',
+        instructions: 'Coordinate.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      prompt: 'Inspect in parallel.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await expect(fanout).resolves.toMatchObject({ ok: true, participantIds: ['claude'] })
+  })
+
+  it('1.0.8: ensemble_fanout broad targets stay inside active Work Session scope', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.workSession = buildWorkSession({
+      allowedParticipantIds: ['codex', 'claude']
+    })
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'gemini',
+        provider: 'gemini',
+        enabled: true,
+        role: 'Researcher',
+        instructions: 'Research.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Scoped session.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      prompt: 'Inspect scoped files.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('claude')
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await expect(fanout).resolves.toMatchObject({ ok: true, participantIds: ['claude'] })
   })
 
   it('1.0.8: ensemble_fanout does not dispatch the same future participants again serially', async () => {

@@ -62,6 +62,7 @@ export interface BuildEnsemblePromptInput {
   config: EnsembleConfig
   participant: EnsembleParticipant
   currentPrompt: string
+  currentPromptLabel?: string
   roundId: string
   chatContextTurns?: number
   /**
@@ -782,7 +783,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     'Recent tagged transcript:',
     transcript || '[No prior transcript]',
     '',
-    'Current user request:',
+    input.currentPromptLabel || 'Current user request:',
     sanitizeText(input.currentPrompt),
     '',
     `Respond now as [${participantLabel}].`

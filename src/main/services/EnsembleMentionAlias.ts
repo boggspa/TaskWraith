@@ -465,6 +465,7 @@ export function resolveSingleEnsembleDmTarget(
     ...new Set(
       findAllMentions(text, participants)
         .filter(isParticipantMention)
+        .filter((match) => !match.ambiguousAmong || match.ambiguousAmong.length === 0)
         .map((match) => match.participant.id)
     )
   ]
@@ -519,10 +520,9 @@ function resolveMentionPhrase(
       // Ambiguous aliases are advisory only. Routing `@codex` to the
       // first Codex lane when the ensemble has multiple Codex seats is
       // deterministic, but it is still the wrong failure mode for
-      // orchestration: a provider fallback can override an intentional
-      // role/model tag and send the next turn to the wrong participant.
-      // Force agents/users to use a unique role/model/id alias instead.
-      if (eligible.length > 1) continue
+      // orchestration. Return a non-routeable match with the full
+      // candidate set so callers can warn and force a unique role/model/id
+      // alias instead.
       // Reconstruct the consumed text from the original `phrase`
       // (preserving the user's original casing / spacing) by taking
       // the first `len` words from it. Trailing sentence punctuation
@@ -530,6 +530,13 @@ function resolveMentionPhrase(
       // the *meaningful* mention boundary — the `.` after `Planner`
       // stays in the surrounding text where it belongs.
       const consumedText = reconstructPrefix(phrase, len).replace(TRAILING_PUNCT_RE, '')
+      if (eligible.length > 1) {
+        return {
+          participant: eligible[0],
+          consumedText,
+          ambiguousAmong: eligible.slice(1)
+        }
+      }
       return { participant: eligible[0], consumedText }
     }
   }
@@ -601,6 +608,7 @@ export function resolvePhraseToParticipant(
   if (!phrase || participants.length === 0) return null
   const aliasMap = buildParticipantAliasMap(participants)
   const resolved = resolveMentionPhrase(phrase, aliasMap, excludeIds)
+  if (resolved?.ambiguousAmong && resolved.ambiguousAmong.length > 0) return null
   return resolved?.participant ?? null
 }
 
