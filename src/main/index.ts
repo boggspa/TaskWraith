@@ -44,6 +44,10 @@ import { startAppIconManager, applyAppIcon } from './AppIconManager'
 import trayGhostMonoline from '../../resources/tray-ghost-monoline.png?asset'
 import { normalizeThreadTitle } from '../shared/threadTitles'
 import {
+  isTaskWraithHelperProcess,
+  shouldSuppressMacAppPresentation
+} from './HelperProcessPresentation'
+import {
   contentPartsToText,
   extractProviderSessionId,
   extractProviderText,
@@ -117,7 +121,6 @@ import {
 } from './featureGates'
 import {
   GEMINI_MCP_SERVER_NAME,
-  GEMINI_MCP_BRIDGE_ARG_SUFFIX,
   GEMINI_MCP_BRIDGE_ENV,
   GEMINI_MCP_ALLOWED_TOOL_NAMES,
   GEMINI_MCP_READ_ONLY_TOOL_NAMES
@@ -1399,8 +1402,20 @@ const FILE_ICON_CACHE = new Map<string, string | null>()
 // booting the FULL app, which would re-probe the bridge and self-spawn
 // exponentially — the root cause of the 1.0.74 "100s of dev apps" loop.
 const isGeminiMcpBridgeProcess =
-  process.argv.some((arg) => arg.endsWith(GEMINI_MCP_BRIDGE_ARG_SUFFIX)) ||
-  process.env[GEMINI_MCP_BRIDGE_ENV] === '1'
+  isTaskWraithHelperProcess(process.argv, process.env)
+if (shouldSuppressMacAppPresentation(process.argv, process.env)) {
+  try {
+    app.setActivationPolicy('prohibited')
+  } catch {
+    // Best-effort: bridge children must still serve stdio even if macOS rejects
+    // a presentation-policy change on an older Electron/macOS combination.
+  }
+  try {
+    app.dock?.hide()
+  } catch {
+    // Best-effort, see activation-policy note above.
+  }
+}
 const externalGrantSigningSecret = loadOrCreateExternalGrantSigningSecret()
 const geminiMcpBrokerToken = randomBytes(32).toString('hex')
 

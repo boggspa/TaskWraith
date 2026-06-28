@@ -7,6 +7,12 @@ import AppKit
 // strict-mode complaints to warnings without papering over real races.
 @preconcurrency import ScreenCaptureKit
 
+// Background-only daemon. `.accessory` keeps the process out of the Dock
+// and Cmd+Tab list; it still has the window-server connection it needs to
+// host `SCContentSharingPicker` on demand. Set as early as possible so launch
+// does not briefly look like a second TaskWraith app to non-dev testers.
+NSApplication.shared.setActivationPolicy(.accessory)
+
 /// TaskWraithBridgeDaemon — self-contained stdio JSON-RPC helper.
 ///
 /// The daemon now owns only the local macOS surfaces that do not require the
@@ -1441,12 +1447,6 @@ stdinReaderQueue.async {
         NSApplication.shared.terminate(nil)
     }
 }
-
-// Background-only daemon. `.accessory` keeps the process out of the Dock
-// and Cmd+Tab list; it still has the window-server connection it needs to
-// host `SCContentSharingPicker` on demand. Set before `NSApp.run()` so the
-// policy is in effect for the first picker presentation.
-NSApplication.shared.setActivationPolicy(.accessory)
 
 // Hand the main thread to AppKit. The picker UI, when called, drives off
 // this runloop; everything else runs on the reader/handler queues above.
