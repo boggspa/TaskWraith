@@ -665,31 +665,43 @@
  *     forward to defeat the base hover rule at
  *     main.css:7674 which has (0,4,0) and would otherwise
  *     beat the EW31-family rule's (0,3,0) on hover.
- *   - EW31b (9px) — final value. Clearly nudged: the glyph
- *     sits visibly higher in the corner rather than reading
- *     as baseline-aligned with the surrounding chrome.
+ *   - EW31b (9px) — clearly nudged the glyph upward.
+ *   - EW31c (26px + 1.25x) — recentres the glyph in the taller
+ *     Claude composer field and improves legibility.
+ *   - EW31d (stop 2x) — keeps the stop square legible next to the
+ *     enlarged send glyph.
  * `!important` sidesteps the specificity battle entirely so
  * any future transform with higher source-order or unforeseen
  * specificity can't sneak past. Hover combines nudge + scale
  * via the second selector below. */
 [data-composer-style="claude"] .composer-action-btn .sf-symbol-icon {
-  transform: translateY(-9px) !important;
+  transform: translateY(calc(-1 * var(--claude-send-glyph-nudge))) scale(var(--claude-send-glyph-scale)) !important;
 }
 [data-composer-style="claude"] .composer-action-btn:hover:not(:disabled) .sf-symbol-icon {
-  transform: translateY(-9px) scale(1.06) !important;
+  transform: translateY(calc(-1 * var(--claude-send-glyph-nudge))) scale(var(--claude-send-glyph-hover-scale)) !important;
+}
+[data-composer-style="claude"] .composer-action-btn.stop-btn .sf-symbol-icon {
+  transform: translateY(calc(-1 * var(--claude-send-glyph-nudge))) scale(var(--claude-stop-glyph-scale)) !important;
+}
+[data-composer-style="claude"] .composer-action-btn.stop-btn:hover:not(:disabled) .sf-symbol-icon {
+  transform: translateY(calc(-1 * var(--claude-send-glyph-nudge))) scale(var(--claude-stop-glyph-hover-scale)) !important;
 }
 
 /* 1.0.6 — Claude send/stop/steer focus ring sync. The global focus-visible
  * outline (main.css:~142) is `outline`, which always hugs the button BORDER-BOX
- * and ignores child transforms — but the Claude glyph is floated translateY(-9px)
- * up (EW31b above), so the square blue ring read as vertically out of sync with
- * the glyph. `outline` can't be offset vertically, so for the Claude shell only
- * we replace it with a box-shadow ring shifted up by the SAME amount the glyph is
+ * and ignores child transforms. Because the Claude glyph is floated upward,
+ * the square blue ring read as vertically out of sync with the glyph. `outline`
+ * can't be offset vertically, so for the Claude shell only we replace it with a
+ * box-shadow ring shifted up by the SAME amount the glyph is
  * nudged, tracking it. `--claude-send-glyph-nudge` keeps the ring offset and the
- * glyph nudge in lock-step (tunable in one place). Scoped to the Claude shell —
- * the -9px nudge is Claude-only, so no other shell's focus ring changes. */
+ * glyph nudge in lock-step (tunable in one place). Scoped to the Claude shell,
+ * so no other shell's focus ring changes. */
 [data-composer-style="claude"] .composer-action-btn {
-  --claude-send-glyph-nudge: 9px;
+  --claude-send-glyph-nudge: 26px;
+  --claude-send-glyph-scale: 1.25;
+  --claude-send-glyph-hover-scale: 1.325;
+  --claude-stop-glyph-scale: 2;
+  --claude-stop-glyph-hover-scale: 2.12;
 }
 [data-composer-style="claude"] .composer-action-btn:focus-visible {
   outline: none;
