@@ -1151,6 +1151,15 @@
 
 [data-theme="dark"][data-composer-style="codex"]
   .app-transcript
+  .composer-area.interface-codex
+  > .composer-surface
+  > .composer-inner-module {
+  background: #252525 !important;
+  background-image: none !important;
+}
+
+[data-theme="dark"][data-composer-style="codex"]
+  .app-transcript
   :is(
     .composer-above-bar,
     .ensemble-above-row,

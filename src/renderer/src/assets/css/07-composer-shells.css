@@ -37,7 +37,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 14px 14px 8px;
-  background: #252525;
+  background: var(--composer-bg-solid, var(--composer-bg));
   border-radius: 21px 21px 14px 14px;
   box-shadow:
     0 8px 16px rgba(0, 0, 0, 0.12),
@@ -3354,7 +3354,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 14px 14px 8px;
-  background: #252525;
+  background: var(--composer-bg-solid, var(--composer-bg));
   border-radius: 21px 21px 14px 14px;
   box-shadow:
     0 8px 16px rgba(0, 0, 0, 0.12),

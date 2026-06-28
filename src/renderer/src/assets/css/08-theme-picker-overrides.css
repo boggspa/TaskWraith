@@ -5208,10 +5208,9 @@
   background: transparent;
 }
 
-/* Light-mode inner module + telemetry row. The outer .composer-surface gets a
- * light bg above, but the nested .composer-inner-module kept its dark #252525
- * (dark text → dark-on-dark) and the telemetry row kept light #ffffff text
- * (→ light-on-light). Recolour both for light themes so the console reads. */
+/* Light-mode inner module + telemetry row. Keep the nested Codex input panel
+ * on the light surface token and the telemetry row on dark text if earlier
+ * shell defaults or compatibility overrides drift toward dark chrome. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-inner-module,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-interface-style="codex"] .composer-inner-module {
   background: var(--surface-2);
