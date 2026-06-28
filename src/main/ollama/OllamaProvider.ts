@@ -448,6 +448,38 @@ export function ollamaRepeatedToolCallNudge(toolName: string): string {
   )
 }
 
+const OLLAMA_GOAL_LIFECYCLE_TOOL_NAMES = new Set([
+  'goal_update',
+  'goal_complete',
+  'goal_blocked'
+])
+
+export function isOllamaNoActiveGoalToolResult(
+  toolName: string,
+  result: Pick<OllamaToolExecutionResult, 'ok' | 'output'>
+): boolean {
+  return (
+    !result.ok &&
+    OLLAMA_GOAL_LIFECYCLE_TOOL_NAMES.has(toolName) &&
+    result.output.includes('No active TaskWraith goal is set')
+  )
+}
+
+export function ollamaNoActiveGoalToolNudge(
+  toolName: string,
+  options: { repeated?: boolean } = {}
+): string {
+  const prefix = options.repeated
+    ? `You already retried \`${toolName}\`, but TaskWraith still has no active thread goal.`
+    : `TaskWraith reported there is no active thread goal, so \`${toolName}\` cannot help this request.`
+  return [
+    prefix,
+    'Do NOT call goal_update, goal_complete, or goal_blocked again in this run.',
+    'Those tools only change the lifecycle of an existing TaskWraith goal; they are not todo lists, progress notes, or planning tools.',
+    'Continue the user request with the available workspace tools, or give a normal final answer with the next local step.'
+  ].join(' ')
+}
+
 export function normalizeOllamaBaseUrl(value?: string | null): string {
   const raw = String(value || '').trim() || DEFAULT_OLLAMA_BASE_URL
   try {
@@ -1925,7 +1957,7 @@ export async function runOllamaProvider(
           id: 'ollama-tool-loop-limit',
           severity: 'warning',
           title: 'Ollama tool loop limit reached',
-          message: ollamaStruggleHandoffMessage(modelLabel)
+          message: ollamaStruggleHandoffMessage(modelLabel, model)
         },
         route
       )
@@ -2235,7 +2267,7 @@ export async function runOllamaProvider(
               id: 'ollama-tool-loop-limit',
               severity: 'warning',
               title: 'Ollama tool loop limit reached',
-              message: ollamaStruggleHandoffMessage(modelLabel)
+              message: ollamaStruggleHandoffMessage(modelLabel, model)
             },
             route
           )
@@ -2257,7 +2289,7 @@ export async function runOllamaProvider(
             id: 'ollama-tool-loop-limit',
             severity: 'warning',
             title: 'Ollama tool loop limit reached',
-            message: ollamaStruggleHandoffMessage(modelLabel)
+            message: ollamaStruggleHandoffMessage(modelLabel, model)
           },
           route
         )
@@ -2369,8 +2401,14 @@ export async function runOllamaProvider(
         // same result earlier this run, feed the model a redirect instead of
         // re-dumping identical output. The UI tool_result + trajectory below
         // still record the real read; only the model-facing follow-up changes.
-        let modelFacingOutput = truncatedOutput
-        if (toolResult.ok) {
+        const noActiveGoalToolResult = isOllamaNoActiveGoalToolResult(
+          toolRequest.toolName,
+          toolResult
+        )
+        let modelFacingOutput = noActiveGoalToolResult
+          ? ollamaNoActiveGoalToolNudge(toolRequest.toolName)
+          : truncatedOutput
+        if (toolResult.ok || noActiveGoalToolResult) {
           const repeat = evaluateOllamaRepeatedToolCall(
             toolCallSignatures,
             toolRequest.toolName,
@@ -2378,7 +2416,9 @@ export async function runOllamaProvider(
             toolResult.output
           )
           if (repeat.repeated) {
-            modelFacingOutput = ollamaRepeatedToolCallNudge(toolRequest.toolName)
+            modelFacingOutput = noActiveGoalToolResult
+              ? ollamaNoActiveGoalToolNudge(toolRequest.toolName, { repeated: true })
+              : ollamaRepeatedToolCallNudge(toolRequest.toolName)
           }
         }
         sessionMemory = appendOllamaTrajectoryEntry(sessionMemory, {
@@ -2463,7 +2503,7 @@ export async function runOllamaProvider(
         'ollama',
         {
           type: 'content',
-          text: ollamaStruggleHandoffMessage(modelLabel),
+          text: ollamaStruggleHandoffMessage(modelLabel, model),
           model,
           modelLabel,
           timestamp: new Date().toISOString()

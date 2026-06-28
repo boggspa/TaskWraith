@@ -86,6 +86,14 @@ describe('ollamaLocalToolSystemPrompt', () => {
     expect(prompt).not.toContain('The current user message is conversational')
   })
 
+  it('documents goal tools as lifecycle-only for local tool use', () => {
+    const prompt = ollamaLocalToolSystemPrompt('provider_parity', 'ornith:9b')
+    expect(prompt).toContain('goal_update')
+    expect(prompt).toContain('lifecycle status for an existing active TaskWraith goal only')
+    expect(prompt).toContain('Do NOT use it for planning')
+    expect(prompt).toContain('instead of defaulting to another provider')
+  })
+
   it('includes ask_user_question in the safe read-only local tool tier', () => {
     const prompt = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b')
     expect(prompt).toContain('ask_user_question')
@@ -103,9 +111,15 @@ describe('workflow hints', () => {
     expect(ollamaTierAwareWorkflowHint('gpt-oss:20b', 'approved_edits')).toContain(
       'approved-patcher workflow'
     )
+    expect(ollamaTierAwareWorkflowHint('ornith:9b', 'provider_parity')).toContain(
+      'Ornith should attempt scoped coding work locally first'
+    )
   })
 
   it('suggests cloud handoff after struggle', () => {
     expect(ollamaStruggleHandoffMessage('Qwen 3.5 (9B Param)')).toContain('Codex or Claude')
+    const ornith = ollamaStruggleHandoffMessage('Ornith 1.0 (9B Param)', 'ornith:9b')
+    expect(ornith).toContain('keep the next attempt local')
+    expect(ornith).not.toContain('Codex or Claude')
   })
 })

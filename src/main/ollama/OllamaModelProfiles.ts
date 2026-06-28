@@ -65,12 +65,13 @@ export function ollamaModelFamilyPromptLines(
     case 'ornith_9b':
       return [
         'Model profile (Ornith 1.0 9B): agentic coding model; search first, then make focused edits with explicit verification notes.',
-        'Keep tool payloads compact and stop with a handoff plan if the task becomes broad or multi-file.'
+        'Keep tool payloads compact. When the task becomes broad, ask the user which smaller local slice to tackle first instead of defaulting to another provider.'
       ]
     case 'ornith_35b':
       return [
         'Model profile (Ornith 1.0 35B): agentic coding model; use its larger coding context for deeper review and focused implementation.',
-        'Read targeted files before editing, keep each tool call concrete, and call out verification gaps before release-sensitive changes.'
+        'Read targeted files before editing, keep each tool call concrete, and call out verification gaps before release-sensitive changes.',
+        'Stay local for scoped coding work; prefer a smaller concrete next step over a delegation handoff.'
       ]
     case 'granite4_1_3b':
       return [
@@ -142,6 +143,18 @@ function describeTool(toolName: OllamaToolName): string | null {
   }
   if (toolName === 'ask_user_question') {
     return '- ask_user_question: {"question":"What should I do next?","options":["Option A","Option B"],"context":"Why this decision matters"} — pause and ask the user for clarification when the prompt is ambiguous or you hit a real decision fork. Omit options for free text.'
+  }
+  if (toolName === 'goal_read') {
+    return '- goal_read: {} — read the active TaskWraith thread goal only. If there is no active goal, continue with the user request using ordinary workspace tools.'
+  }
+  if (toolName === 'goal_update') {
+    return '- goal_update: {"status":"active|paused|blocked|completed","reason":"optional reason"} — lifecycle status for an existing active TaskWraith goal only. Do NOT use it for planning, progress notes, or todo/checklist updates.'
+  }
+  if (toolName === 'goal_complete') {
+    return '- goal_complete: {"reason":"optional completion summary"} — mark an existing active TaskWraith goal complete only after the objective is genuinely achieved.'
+  }
+  if (toolName === 'goal_blocked') {
+    return '- goal_blocked: {"reason":"blocker detail"} — mark an existing active TaskWraith goal blocked only after a real blocker prevents progress.'
   }
   if (toolName === 'write_file') {
     return '- write_file: {"path":"relative/path.txt","content":"...","intent":"short reason before changing files"}'
@@ -245,6 +258,13 @@ export function ollamaTierAwareWorkflowHint(
     ].join(' ')
   }
   if (normalizedTier === 'provider_parity') {
+    if (family === 'ornith_9b' || family === 'ornith_35b') {
+      return [
+        'TaskWraith provider-parity workflow:',
+        'Use the full tool surface sparingly and stay anchored to the user request.',
+        'Ornith should attempt scoped coding work locally first. Do not recommend or use delegation as the default recovery path; if the task is too broad, ask the user for a smaller local slice or explain the exact blocker.'
+      ].join(' ')
+    }
     return [
       'TaskWraith provider-parity workflow:',
       'Use the full tool surface sparingly and stay anchored to the user request.',
@@ -272,7 +292,18 @@ export function ollamaTierAwareWorkflowHint(
   ].join(' ')
 }
 
-export function ollamaStruggleHandoffMessage(modelLabel: string): string {
+export function ollamaStruggleHandoffMessage(
+  modelLabel: string,
+  modelId?: string | null
+): string {
+  const family = resolveOllamaModelFamily(modelId || '')
+  if (family === 'ornith_9b' || family === 'ornith_35b' || /ornith/i.test(modelLabel)) {
+    return [
+      `${modelLabel} hit a local reliability limit (tool-loop cap or repeated malformed/tool-intent turns).`,
+      'I stopped the loop before burning more turns; keep the next attempt local and narrower rather than handing off to another provider.',
+      'Use concrete workspace tools for the next step, or ask the user which smaller local slice to tackle first.'
+    ].join(' ')
+  }
   return [
     `${modelLabel} hit a local reliability limit (tool-loop cap or repeated malformed/tool-intent turns).`,
     'Consider delegating the remainder to Codex or Claude via ↪ delegate on this chat.',

@@ -18,6 +18,8 @@ import {
   ollamaToolResultSignature,
   evaluateOllamaRepeatedToolCall,
   ollamaRepeatedToolCallNudge,
+  isOllamaNoActiveGoalToolResult,
+  ollamaNoActiveGoalToolNudge,
   advanceOllamaStallStreak,
   ollamaGoalLifecycleStopContent,
   shouldStopOllamaAfterGoalLifecycleTool,
@@ -770,6 +772,99 @@ describe('runOllamaProvider streaming', () => {
       'content:runs local agents.',
       'result'
     ])
+  })
+
+  it('recovers from no-active-goal lifecycle tool failures without forcing a handoff', async () => {
+    let chatCalls = 0
+    const chatBodies: any[] = []
+    const executeTool = vi.fn(async () => ({
+      ok: false,
+      output:
+        '{"ok":false,"tool":"goal_update","error":"No active TaskWraith goal is set for this chat."}'
+    }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'ornith:9b',
+              digest: 'digest-ornith',
+              details: { family: 'ornith' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'ornith' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'goal_update',
+                      arguments: { status: 'active', reason: 'Setting up test environment.' }
+                    }
+                  }
+                ]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 20, eval_count: 8 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'I will continue locally with the available workspace tools.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 18, eval_count: 12 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({
+      fetchMock,
+      executeTool,
+      settings: { ollamaDefaultModel: 'ornith:9b' }
+    })
+
+    await runOllamaProvider(
+      deps,
+      stubEvent,
+      { ...basePayload, model: 'ornith:9b', prompt: 'add tests locally' },
+      baseRoute
+    )
+
+    expect(executeTool).toHaveBeenCalledTimes(1)
+    const rawToolResults = lines
+      .filter((line) => line.payload.type === 'tool_result' && line.payload.tool_name === 'goal_update')
+      .map((line) => line.payload.output)
+    expect(rawToolResults).toEqual([
+      '{"ok":false,"tool":"goal_update","error":"No active TaskWraith goal is set for this chat."}'
+    ])
+    expect(JSON.stringify(chatBodies[1].messages)).toContain('Do NOT call goal_update')
+    expect(JSON.stringify(chatBodies[1].messages)).toContain('not todo lists')
+    expect(
+      lines
+        .filter((line) => line.payload.type === 'content')
+        .map((line) => line.payload.text)
+    ).toEqual(['I will continue locally with the available workspace tools.'])
+    expect(
+      lines.some(
+        (line) =>
+          line.payload.type === 'provider_warning' &&
+          String(line.payload.message || '').includes('Codex or Claude')
+      )
+    ).toBe(false)
   })
 
   it('streams visible Ollama thinking once public content is flowing', async () => {
@@ -1724,6 +1819,22 @@ describe('repeated-tool-call guard', () => {
     const nudge = ollamaRepeatedToolCallNudge('read_file')
     expect(nudge).toContain('read_file')
     expect(nudge).toContain('Do NOT call it again')
+  })
+
+  it('detects and rewrites no-active-goal lifecycle failures for the local model', () => {
+    const result = {
+      ok: false,
+      output:
+        '{"ok":false,"tool":"goal_update","error":"No active TaskWraith goal is set for this chat."}'
+    }
+    expect(isOllamaNoActiveGoalToolResult('goal_update', result)).toBe(true)
+    expect(isOllamaNoActiveGoalToolResult('read_file', result)).toBe(false)
+    const nudge = ollamaNoActiveGoalToolNudge('goal_update')
+    expect(nudge).toContain('Do NOT call goal_update')
+    expect(nudge).toContain('not todo lists')
+    expect(ollamaNoActiveGoalToolNudge('goal_update', { repeated: true })).toContain(
+      'already retried'
+    )
   })
 })
 
