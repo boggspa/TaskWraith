@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildDiffWorkbenchNavMeta,
   buildEditorWorkbenchNavMeta,
+  isWorkbenchPaneHidden,
   TaskWraithWorkbench
 } from './TaskWraithWorkbench'
 
@@ -35,6 +36,15 @@ describe('TaskWraithWorkbench nav metadata', () => {
 })
 
 describe('TaskWraithWorkbench shell', () => {
+  it('keeps both editor and diff panes visible in split mode', () => {
+    expect(isWorkbenchPaneHidden('editor', 'editor')).toBe(false)
+    expect(isWorkbenchPaneHidden('editor', 'diff')).toBe(true)
+    expect(isWorkbenchPaneHidden('diff', 'editor')).toBe(true)
+    expect(isWorkbenchPaneHidden('diff', 'diff')).toBe(false)
+    expect(isWorkbenchPaneHidden('split', 'editor')).toBe(false)
+    expect(isWorkbenchPaneHidden('split', 'diff')).toBe(false)
+  })
+
   it('renders editor command controls and lifted status summary', () => {
     const html = renderToStaticMarkup(
       <TaskWraithWorkbench
@@ -48,6 +58,8 @@ describe('TaskWraithWorkbench shell', () => {
     expect(html).toContain('TaskWraith Workbench')
     expect(html).toContain('Quick Open')
     expect(html).toContain('Save All')
+    expect(html).toContain('Split')
+    expect(html).toContain('Editor + diff')
     expect(html).toContain('No open files')
     expect(html).toContain('No wrap')
     expect(html).toContain('role="tablist"')
@@ -58,5 +70,6 @@ describe('TaskWraithWorkbench shell', () => {
     expect(html).toContain('aria-keyshortcuts="Meta+P Control+P"')
     expect(html).toContain('aria-keyshortcuts="Meta+1 Control+1"')
     expect(html).toContain('aria-keyshortcuts="Meta+2 Control+2"')
+    expect(html).toContain('aria-keyshortcuts="Meta+3 Control+3"')
   })
 })

@@ -15,7 +15,8 @@ import {
   type FileEditorPanelState
 } from './FileEditorPanel'
 
-type WorkbenchView = 'editor' | 'diff'
+export type WorkbenchView = 'editor' | 'diff' | 'split'
+type WorkbenchPane = Exclude<WorkbenchView, 'split'>
 
 type WorkspaceDiff = Awaited<ReturnType<typeof window.api.getDiff>>
 
@@ -28,7 +29,7 @@ interface WorkbenchOpenRequest extends EditorOpenRequest {
   view?: WorkbenchView
 }
 
-const WORKBENCH_VIEWS: WorkbenchView[] = ['editor', 'diff']
+const WORKBENCH_VIEWS: WorkbenchView[] = ['editor', 'diff', 'split']
 
 const DEFAULT_EDITOR_STATE: FileEditorPanelState = {
   selectedPath: '',
@@ -51,8 +52,15 @@ interface TaskWraithWorkbenchProps {
   onDirtyChange?: (dirtyBufferCount: number) => void
 }
 
-const viewLabel = (view: WorkbenchView): string =>
-  view === 'editor' ? 'File Editor' : 'Diff Studio'
+const viewLabel = (view: WorkbenchView): string => {
+  if (view === 'editor') return 'File Editor'
+  if (view === 'diff') return 'Diff Studio'
+  return 'Split View'
+}
+
+export const isWorkbenchPaneHidden = (activeView: WorkbenchView, pane: WorkbenchPane): boolean => {
+  return activeView !== 'split' && activeView !== pane
+}
 
 export const buildEditorWorkbenchNavMeta = (
   state: Pick<FileEditorPanelState, 'dirtyBufferCount' | 'openBufferCount'>
@@ -81,10 +89,15 @@ function WorkbenchNavIcon({ view }: { view: WorkbenchView }) {
           <path d="M6 5h5l2 2h5v12H6z" />
           <path d="M9 11h6M9 14h5M9 17h7" />
         </svg>
-      ) : (
+      ) : view === 'diff' ? (
         <svg viewBox="0 0 24 24" focusable="false">
           <path d="M6 6h5M6 10h4M6 15h6M6 19h5" />
           <path d="M15 7l2 2-2 2M17 9h-5M17 14l-2 2 2 2M12 16h5" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" focusable="false">
+          <path d="M5 5h6v14H5zM13 5h6v14h-6z" />
+          <path d="M7.5 9h1M7.5 12h1M15.5 9h1M15.5 12h1M15.5 15h1" />
         </svg>
       )}
     </span>
@@ -112,16 +125,21 @@ export function TaskWraithWorkbench({
   const diffRefreshSeqRef = useRef(0)
   const editorNavRef = useRef<HTMLButtonElement | null>(null)
   const diffNavRef = useRef<HTMLButtonElement | null>(null)
+  const splitNavRef = useRef<HTMLButtonElement | null>(null)
 
   const breadcrumbs = useMemo(
-    () =>
-      activeView === 'editor' && editorState.selectedPath
-        ? [workspaceName, ...editorState.selectedPath.split('/').filter(Boolean)]
-        : [workspaceName, viewLabel(activeView)],
+    () => {
+      if ((activeView === 'editor' || activeView === 'split') && editorState.selectedPath) {
+        return [workspaceName, ...editorState.selectedPath.split('/').filter(Boolean)]
+      }
+      return [workspaceName, viewLabel(activeView)]
+    },
     [activeView, editorState.selectedPath, workspaceName]
   )
   const activeGitSnapshot =
-    activeView === 'diff' ? diffGitSnapshot : editorState.gitSnapshot
+    activeView === 'diff' || activeView === 'split'
+      ? (diffGitSnapshot ?? editorState.gitSnapshot)
+      : editorState.gitSnapshot
   const branchLabel = useMemo(() => {
     if (!activeGitSnapshot) return 'No git status'
     if (activeGitSnapshot.detached) {
@@ -133,7 +151,7 @@ export function TaskWraithWorkbench({
     ? `${activeGitSnapshot.counts.changed} changed · ${activeGitSnapshot.counts.staged} staged · ${activeGitSnapshot.counts.unstaged} unstaged`
     : ''
   const editorCursorSummary =
-    activeView === 'editor' && editorState.selectedPath
+    (activeView === 'editor' || activeView === 'split') && editorState.selectedPath
       ? `Ln ${editorState.cursorStatus.line}, Col ${editorState.cursorStatus.column}${
           editorState.cursorStatus.selectedChars > 0
             ? ` · ${editorState.cursorStatus.selectedChars} selected`
@@ -156,10 +174,17 @@ export function TaskWraithWorkbench({
   const diffNavMeta = buildDiffWorkbenchNavMeta(diffGitSnapshot)
   const editorBusy = editorState.isLoading || editorState.isListLoading
   const workbenchStatus =
-    activeView === 'editor' ? editorState.status || editorState.gitMessage || status : status
+    activeView === 'editor' || activeView === 'split'
+      ? editorState.status || editorState.gitMessage || status
+      : status
 
   const focusNavItem = useCallback((view: WorkbenchView) => {
-    const navButton = view === 'editor' ? editorNavRef.current : diffNavRef.current
+    const navButton =
+      view === 'editor'
+        ? editorNavRef.current
+        : view === 'diff'
+          ? diffNavRef.current
+          : splitNavRef.current
     navButton?.focus()
   }, [])
 
@@ -173,24 +198,29 @@ export function TaskWraithWorkbench({
     [focusNavItem]
   )
 
-  const dispatchEditorCommand = useCallback((kind: FileEditorCommandKind) => {
-    selectWorkbenchView('editor')
-    setEditorCommandRequest((current) => ({
-      kind,
-      nonce: (current?.nonce ?? 0) + 1
-    }))
-    setStatus(
-      kind === 'quick-open'
-        ? 'Opening quick open'
-        : kind === 'save-all'
-          ? 'Saving all dirty files'
-          : kind === 'save-current'
-            ? 'Saving current file'
-            : kind === 'reveal-selected'
-              ? 'Revealing selected file'
-              : 'Toggling line wrap'
-    )
-  }, [selectWorkbenchView])
+  const dispatchEditorCommand = useCallback(
+    (kind: FileEditorCommandKind) => {
+      if (activeView !== 'split') {
+        selectWorkbenchView('editor')
+      }
+      setEditorCommandRequest((current) => ({
+        kind,
+        nonce: (current?.nonce ?? 0) + 1
+      }))
+      setStatus(
+        kind === 'quick-open'
+          ? 'Opening quick open'
+          : kind === 'save-all'
+            ? 'Saving all dirty files'
+            : kind === 'save-current'
+              ? 'Saving current file'
+              : kind === 'reveal-selected'
+                ? 'Revealing selected file'
+                : 'Toggling line wrap'
+      )
+    },
+    [activeView, selectWorkbenchView]
+  )
 
   const refreshDiff = useCallback(async () => {
     if (!workspacePath) return
@@ -222,6 +252,12 @@ export function TaskWraithWorkbench({
       void refreshDiff()
       return
     }
+    if (activeView === 'split') {
+      setEditorRefreshTick((tick) => tick + 1)
+      void refreshDiff()
+      setStatus('Refreshing workbench')
+      return
+    }
     setEditorRefreshTick((tick) => tick + 1)
     setStatus('Refreshing editor')
   }, [activeView, refreshDiff])
@@ -250,28 +286,38 @@ export function TaskWraithWorkbench({
         event.preventDefault()
         selectWorkbenchView('diff', { focusNav: true })
         setStatus('Showing Diff Studio')
+        return
+      }
+      if (key === '3') {
+        event.preventDefault()
+        selectWorkbenchView('split', { focusNav: true })
+        setStatus('Showing split view')
       }
     },
     [dispatchEditorCommand, selectWorkbenchView]
   )
 
   const openFileInEditor = useCallback((path: string) => {
-    selectWorkbenchView('editor')
+    if (activeView !== 'split') {
+      selectWorkbenchView('editor')
+    }
     setEditorOpenRequest((current) => ({
       path,
       nonce: (current?.nonce ?? 0) + 1
     }))
     setStatus(`Opening ${path}`)
-  }, [selectWorkbenchView])
+  }, [activeView, selectWorkbenchView])
 
   const showFileInDiff = useCallback((path: string) => {
-    selectWorkbenchView('diff')
+    if (activeView !== 'split') {
+      selectWorkbenchView('diff')
+    }
     setDiffSelectionRequest((current) => ({
       path,
       nonce: (current?.nonce ?? 0) + 1
     }))
     setStatus(`Showing diff for ${path}`)
-  }, [selectWorkbenchView])
+  }, [activeView, selectWorkbenchView])
 
   const handleNavKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLButtonElement>, view: WorkbenchView) => {
@@ -367,7 +413,7 @@ export function TaskWraithWorkbench({
     queueMicrotask(() => {
       if (cancelled) return
       setEditorRefreshTick(refreshTick)
-      if (activeView === 'diff') {
+      if (activeView === 'diff' || activeView === 'split') {
         void refreshDiff()
       }
     })
@@ -377,7 +423,7 @@ export function TaskWraithWorkbench({
   }, [activeView, refreshDiff, refreshTick])
 
   useEffect(() => {
-    if (activeView !== 'diff' || diff) return
+    if ((activeView !== 'diff' && activeView !== 'split') || diff) return
     let cancelled = false
     queueMicrotask(() => {
       if (!cancelled) void refreshDiff()
@@ -433,6 +479,23 @@ export function TaskWraithWorkbench({
           <span>Diff</span>
           <small>{diffNavMeta}</small>
         </button>
+        <button
+          ref={splitNavRef}
+          className={`workbench-nav-item ${activeView === 'split' ? 'active' : ''}`}
+          type="button"
+          role="tab"
+          id="workbench-split-tab"
+          aria-selected={activeView === 'split'}
+          aria-controls="workbench-editor-panel workbench-diff-panel"
+          aria-keyshortcuts="Meta+3 Control+3"
+          tabIndex={activeView === 'split' ? 0 : -1}
+          onClick={() => selectWorkbenchView('split')}
+          onKeyDown={(event) => handleNavKeyDown(event, 'split')}
+        >
+          <WorkbenchNavIcon view="split" />
+          <span>Split</span>
+          <small>Editor + diff</small>
+        </button>
       </aside>
       <div className="workbench-main">
         <div className="workbench-toolbar">
@@ -444,7 +507,7 @@ export function TaskWraithWorkbench({
                   title={
                     index === 0
                       ? workspacePath
-                      : activeView === 'editor'
+                      : activeView === 'editor' || activeView === 'split'
                         ? editorState.selectedPath
                         : undefined
                   }
@@ -489,13 +552,13 @@ export function TaskWraithWorkbench({
             </button>
           </div>
         </div>
-        <div className="workbench-stage">
+        <div className={`workbench-stage ${activeView === 'split' ? 'split' : ''}`}>
           <div
-            className="workbench-pane"
+            className="workbench-pane workbench-editor-pane"
             role="tabpanel"
             id="workbench-editor-panel"
-            aria-labelledby="workbench-editor-tab"
-            hidden={activeView !== 'editor'}
+            aria-labelledby={activeView === 'split' ? 'workbench-split-tab' : 'workbench-editor-tab'}
+            hidden={isWorkbenchPaneHidden(activeView, 'editor')}
           >
             <FileEditorPanel
               workspacePath={workspacePath}
@@ -507,11 +570,11 @@ export function TaskWraithWorkbench({
             />
           </div>
           <div
-            className="workbench-pane"
+            className="workbench-pane workbench-diff-pane"
             role="tabpanel"
             id="workbench-diff-panel"
-            aria-labelledby="workbench-diff-tab"
-            hidden={activeView !== 'diff'}
+            aria-labelledby={activeView === 'split' ? 'workbench-split-tab' : 'workbench-diff-tab'}
+            hidden={isWorkbenchPaneHidden(activeView, 'diff')}
           >
             <div className="diff-studio popout-diff-studio">
               <DiffViewer
@@ -533,10 +596,12 @@ export function TaskWraithWorkbench({
             {changeSummary ? ` · ${changeSummary}` : ''}
           </span>
           <span>
-            {activeView === 'editor' ? `${editorBufferSummary} · ` : ''}
+            {activeView === 'editor' || activeView === 'split' ? `${editorBufferSummary} · ` : ''}
             {editorDirtySummary ? `${editorDirtySummary} · ` : ''}
             {editorCursorSummary}
-            {activeView === 'editor' ? ` · ${editorState.lineWrapEnabled ? 'Wrap' : 'No wrap'}` : ''}
+            {activeView === 'editor' || activeView === 'split'
+              ? ` · ${editorState.lineWrapEnabled ? 'Wrap' : 'No wrap'}`
+              : ''}
           </span>
         </footer>
       </div>
