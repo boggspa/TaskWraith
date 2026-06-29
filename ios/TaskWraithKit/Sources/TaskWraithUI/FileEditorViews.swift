@@ -584,6 +584,7 @@ struct FilesModeSplitView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject var state: MobileFileEditorState
     let onBack: () -> Void
+    let onShowSelectedDiff: (String) -> Void
 
     var body: some View {
         NavigationSplitView {
@@ -598,7 +599,12 @@ struct FilesModeSplitView: View {
                     }
                 }
         } detail: {
-            FileEditorPane(model: model, state: state, onBack: onBack, compact: false)
+            FileEditorPane(
+                model: model,
+                state: state,
+                onBack: onBack,
+                onShowSelectedDiff: onShowSelectedDiff,
+                compact: false)
         }
         .confirmationDialog("Unsaved changes", isPresented: $state.showDirtyDialog) {
             Button("Save") { state.saveThenContinue(model: model, onClose: onBack) }
@@ -613,6 +619,7 @@ struct FilesModeSplitView: View {
 struct FilesModeCompactView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject var state: MobileFileEditorState
+    let onShowSelectedDiff: (String) -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -634,7 +641,12 @@ struct FilesModeCompactView: View {
                         }
                     }
             } else {
-                FileEditorPane(model: model, state: state, onBack: onClose, compact: true)
+                FileEditorPane(
+                    model: model,
+                    state: state,
+                    onBack: onClose,
+                    onShowSelectedDiff: onShowSelectedDiff,
+                    compact: true)
             }
         }
         .confirmationDialog("Unsaved changes", isPresented: $state.showDirtyDialog) {
@@ -783,6 +795,7 @@ private struct FileEditorPane: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject var state: MobileFileEditorState
     let onBack: () -> Void
+    let onShowSelectedDiff: (String) -> Void
     let compact: Bool
 
     var body: some View {
@@ -887,6 +900,18 @@ private struct FileEditorPane: View {
                 .buttonStyle(.bordered)
                 .tint(.red)
                 .disabled(state.selectedPath == nil || state.isDirty || state.isLoading)
+
+                Button {
+                    if let selectedPath = state.selectedPath {
+                        onShowSelectedDiff(selectedPath)
+                    }
+                } label: {
+                    actionLabel("Show Diff", systemImage: "plus.forwardslash.minus")
+                }
+                .buttonStyle(.bordered)
+                .disabled(
+                    state.selectedPath == nil || state.isDirty || state.isLoading
+                        || !model.workspaceCanReviewDiffs(state.selectedWorkspaceId))
 
                 Button {
                     Task { await state.stageSelected(model: model) }

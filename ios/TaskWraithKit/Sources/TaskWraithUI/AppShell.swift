@@ -296,7 +296,11 @@ struct ConnectedShell: View {
             }
             .fileModeCover(isPresented: $compactFilesPresented) {
                 NavigationStack {
-                    FilesModeCompactView(model: model, state: fileState) {
+                    FilesModeCompactView(
+                        model: model,
+                        state: fileState,
+                        onShowSelectedDiff: openFileInDiff
+                    ) {
                         compactFilesPresented = false
                         model.inspectorPresented = previousInspectorPresented
                     }
@@ -321,10 +325,15 @@ struct ConnectedShell: View {
     private var shellContent: some View {
         if sizeClass == .regular {
             if shellMode == .files {
-                FilesModeSplitView(model: model, state: fileState) {
-                    shellMode = .app
-                    model.inspectorPresented = previousInspectorPresented
-                }
+                FilesModeSplitView(
+                    model: model,
+                    state: fileState,
+                    onBack: {
+                        shellMode = .app
+                        model.inspectorPresented = previousInspectorPresented
+                    },
+                    onShowSelectedDiff: openFileInDiff
+                )
             } else if shellMode == .diff {
                 DiffStudioSplitView(
                     model: model,
@@ -416,6 +425,23 @@ struct ConnectedShell: View {
         }
     }
 
+    private func openFileInDiff(_ path: String) {
+        guard let workspaceId = fileState.selectedWorkspaceId,
+            model.workspaceCanReviewDiffs(workspaceId)
+        else { return }
+        previousInspectorPresented = model.inspectorPresented
+        model.inspectorPresented = false
+        diffState.activate(model: model, preferredWorkspaceId: workspaceId, targetPath: path)
+        if sizeClass == .regular {
+            shellMode = .diff
+        } else {
+            compactFilesPresented = false
+            DispatchQueue.main.async {
+                compactDiffPresented = true
+            }
+        }
+    }
+
     private func openDiffFileInFiles(_ path: String) {
         guard let workspaceId = diffState.selectedWorkspaceId,
             model.workspaceCanEditFiles(workspaceId)
@@ -453,7 +479,10 @@ struct ConnectedShell: View {
         guard let request = model.diffModeRequest else { return }
         previousInspectorPresented = model.inspectorPresented
         model.inspectorPresented = false
-        diffState.activate(model: model, preferredWorkspaceId: request.workspaceId)
+        diffState.activate(
+            model: model,
+            preferredWorkspaceId: request.workspaceId,
+            targetPath: request.targetPath)
         if sizeClass == .regular {
             shellMode = .diff
         } else {

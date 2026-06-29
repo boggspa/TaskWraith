@@ -89,7 +89,11 @@ final class MobileDiffStudioState: ObservableObject {
         return nil
     }
 
-    func activate(model: RemoteSessionModel, preferredWorkspaceId: String?) {
+    func activate(
+        model: RemoteSessionModel,
+        preferredWorkspaceId: String?,
+        targetPath: String? = nil
+    ) {
         let eligible = model.diffReviewableWorkspaces
         guard
             let workspaceId = preferredWorkspaceId.flatMap({ id in
@@ -105,6 +109,9 @@ final class MobileDiffStudioState: ObservableObject {
             diff = nil
             selectedPath = nil
             fileFilter = ""
+        }
+        if let targetPath = Self.normalizedTargetPath(targetPath) {
+            selectedPath = targetPath
         }
         Task { await reload(model: model) }
     }
@@ -148,6 +155,13 @@ final class MobileDiffStudioState: ObservableObject {
             guard isCurrentRequest() else { return }
             status = error.localizedDescription
         }
+    }
+
+    static func normalizedTargetPath(_ path: String?) -> String? {
+        guard let path else { return nil }
+        let normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return normalized.isEmpty ? nil : normalized
     }
 }
 

@@ -744,6 +744,7 @@ public final class RemoteSessionModel: ObservableObject {
     public struct DiffModeRequest: Identifiable, Sendable {
         public let id = UUID()
         public let workspaceId: String?
+        public let targetPath: String?
     }
 
     // ── Pairing ────────────────────────────────────────────────────────────────
@@ -3084,8 +3085,8 @@ public final class RemoteSessionModel: ObservableObject {
         return capabilities.fileWrite == true
     }
 
-    public func requestDiffMode(workspaceId: String? = nil) {
-        diffModeRequest = DiffModeRequest(workspaceId: workspaceId)
+    public func requestDiffMode(workspaceId: String? = nil, targetPath: String? = nil) {
+        diffModeRequest = DiffModeRequest(workspaceId: workspaceId, targetPath: targetPath)
     }
 
     public func refreshGitSnapshotCache(workspaceId: String?) async {

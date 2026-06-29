@@ -70,6 +70,13 @@ struct MobileDiffStudioStateTests {
         state.selectedPath = "docs/Old.md"
         #expect(state.selectedFileCanOpenInEditor == false)
     }
+
+    @MainActor
+    @Test func targetPathNormalizationIgnoresBlankAndSlashes() {
+        #expect(MobileDiffStudioState.normalizedTargetPath(nil) == nil)
+        #expect(MobileDiffStudioState.normalizedTargetPath("   ") == nil)
+        #expect(MobileDiffStudioState.normalizedTargetPath("/src/App.swift/") == "src/App.swift")
+    }
 }
 
 private func decodeWorkspaceDiff() throws -> WorkspaceDiffResult {
