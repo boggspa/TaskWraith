@@ -348,7 +348,7 @@ export function truncateOllamaToolResultOutput(
   if (toolName) return summarizeOllamaToolResult(toolName, output, maxChars)
   const value = String(output || '')
   if (value.length <= maxChars) return value
-  return `${value.slice(0, maxChars)}\n[tool result truncated for local model context]`
+  return `${value.slice(0, maxChars)}\n[tool result truncated for selected Ollama context budget]`
 }
 
 /**

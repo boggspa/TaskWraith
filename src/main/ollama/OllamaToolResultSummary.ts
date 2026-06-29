@@ -17,7 +17,7 @@ function summarizeReadFileOutput(output: string, maxChars: number): string {
   const summary = `${head}\n[read_file summary: ${lines.length} lines total; showing first ${READ_FILE_HEAD_LINES}; ${omitted} lines omitted for context]`
   return summary.length <= maxChars
     ? summary
-    : `${summary.slice(0, maxChars)}\n[tool result truncated for local model context]`
+    : `${summary.slice(0, maxChars)}\n[tool result truncated for selected Ollama context budget]`
 }
 
 function summarizeSearchOutput(output: string, maxChars: number): string {
@@ -28,7 +28,7 @@ function summarizeSearchOutput(output: string, maxChars: number): string {
   const summary = `${head}\n[workspace_search summary: ${lines.length} result lines; top ${SEARCH_SNIPPET_LINES} kept]`
   return summary.length <= maxChars
     ? summary
-    : `${summary.slice(0, maxChars)}\n[tool result truncated for local model context]`
+    : `${summary.slice(0, maxChars)}\n[tool result truncated for selected Ollama context budget]`
 }
 
 function flattenSearchOutput(output: string): string {
@@ -87,7 +87,7 @@ function summarizeListDirectoryOutput(output: string, maxChars: number): string 
   const summary = `${head}\n[list_directory summary: ${lines.length} entries; first ${LIST_DIR_MAX_LINES} kept]`
   return summary.length <= maxChars
     ? summary
-    : `${summary.slice(0, maxChars)}\n[tool result truncated for local model context]`
+    : `${summary.slice(0, maxChars)}\n[tool result truncated for selected Ollama context budget]`
 }
 
 function summarizeGenericOutput(output: string, maxChars: number): string {
