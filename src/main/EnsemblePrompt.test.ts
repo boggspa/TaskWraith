@@ -1346,8 +1346,12 @@ describe('Ensemble synthesizer + last-round summary (AT8)', () => {
       roundId: 'round-2'
     })
     // Should contain a truncated chunk, NOT the full 3000-char blob.
-    expect(prompt).toContain('xxxxxxxxxx')
-    expect(prompt.length).toBeLessThan(longSummary.length + 4000)
+    const summaryBlock = prompt
+      .split('Prior round summary (from the panel synthesizer):\n')[1]
+      ?.split('\n\nRecent tagged transcript:')[0]
+    expect(summaryBlock).toBeDefined()
+    expect(summaryBlock).toContain('xxxxxxxxxx')
+    expect(summaryBlock?.length).toBe(2000)
   })
 })
 
@@ -1428,6 +1432,17 @@ describe('Ollama ensemble prompt budgeting', () => {
     expect(resolveOllamaEnsembleTranscriptBudget(8_000, 3).contextTurns).toBe(3)
   })
 
+  it('honors larger budgets when Ollama model context can carry them', () => {
+    const budget = resolveOllamaEnsembleTranscriptBudget(120_000, 12, {
+      modelId: 'ornith:35b',
+      promptShellChars: 7_500,
+      toolsEnabled: true
+    })
+    expect(budget.contextChars).toBe(120_000)
+    expect(budget.contextTurns).toBe(12)
+    expect(budget.autoCompacted).toBe(false)
+  })
+
   it('adds local empowerment notes for Ollama ensemble participants', () => {
     const ollamaParticipant: EnsembleParticipant = {
       id: 'ollama-gemma',
@@ -1453,7 +1468,7 @@ describe('Ollama ensemble prompt budgeting', () => {
     })
     expect(prompt).toContain('Local Ollama participant notes:')
     expect(prompt).toContain('TaskWraith gives you real workspace tools')
-    expect(prompt).toContain('compacted for your local context window')
+    expect(prompt).toContain('sized for your local context window')
     expect(prompt).toContain('TaskWraith local-scout workflow')
   })
 })

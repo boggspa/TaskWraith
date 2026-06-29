@@ -15387,11 +15387,18 @@ function App(): React.JSX.Element {
     )
     if (ollamaParticipants.length === 0) return null
     const primaryOllama = ollamaParticipants[0]
+    const primaryOllamaContextLength = Array.isArray(agentStatusByProvider.ollama?.models)
+      ? agentStatusByProvider.ollama.models.find(
+          (model: { id?: string; contextLength?: number }) =>
+            model.id && isOllamaModelInstalled(primaryOllama.model || '', [model.id])
+        )?.contextLength
+      : undefined
     const pressure = estimateOllamaEnsembleUiPressure({
       configuredContextChars: currentChat.ensemble.ensembleContextChars,
       participantCount: currentChat.ensemble.participants.filter((participant) => participant.enabled)
         .length,
       ollamaModelId: primaryOllama.model,
+      ollamaContextLength: primaryOllamaContextLength,
       toolsEnabled: currentChat.scope !== 'global'
     })
     return {
@@ -15399,7 +15406,7 @@ function App(): React.JSX.Element {
       message: ollamaContextPressureMessage(pressure),
       suggestedChars: pressure.effectiveTranscriptChars
     }
-  }, [isCurrentEnsembleChat, currentChat?.ensemble, currentChat?.scope])
+  }, [isCurrentEnsembleChat, currentChat?.ensemble, currentChat?.scope, agentStatusByProvider.ollama?.models])
   const currentEnsembleContinuationHops = currentEnsembleRound?.continuationHops || 0
   // Prefer chat-level cap so the hops meter updates as soon as the user
   // saves — an in-flight round still carries its own snapshot, but the

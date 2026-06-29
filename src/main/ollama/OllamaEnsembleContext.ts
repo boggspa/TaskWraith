@@ -1,12 +1,13 @@
+import { resolveContextWindow } from '../../shared/contextWindows'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
 
-/** Compact transcript cap for Ollama ensemble participants. */
+/** Legacy fallback transcript cap when no model/context metadata is available. */
 export const OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS = 10_000
 
 /** Turn window cap paired with the char budget above. */
 export const OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS = 4
 
-/** Conservative default when Ollama metadata is unavailable. */
+/** Conservative default retained for malformed/no-model contexts. */
 export const OLLAMA_CONSERVATIVE_CONTEXT_TOKENS = 4096
 
 /** Tokens reserved for model output so prompts do not fill 100% of ctx. */
@@ -47,23 +48,14 @@ export function resolveOllamaContextTokenLimit(
   contextLength?: number
 ): number {
   if (typeof contextLength === 'number' && Number.isFinite(contextLength) && contextLength >= 2048) {
-    return Math.min(Math.floor(contextLength), 131_072)
+    return Math.floor(contextLength)
   }
-  const family = resolveOllamaModelFamily(modelId || '')
-  if (family === 'gpt_oss_20b') return 8192
-  if (
-    family === 'gemma4_12b' ||
-    family === 'qwen3_5_9b' ||
-    family === 'qwen3_6_35b' ||
-    family === 'minicpm_v45_8b' ||
-    family === 'granite4_1_3b' ||
-    family === 'granite4_1_30b' ||
-    family === 'ornith_9b' ||
-    family === 'ornith_35b' ||
-    family === 'nemotron3_33b'
-  ) return 8192
-  if (family === 'qwen3_4b') return 4096
-  return OLLAMA_CONSERVATIVE_CONTEXT_TOKENS
+  const trimmedModelId = String(modelId || '').trim()
+  if (!trimmedModelId) return OLLAMA_CONSERVATIVE_CONTEXT_TOKENS
+  if (resolveOllamaModelFamily(trimmedModelId) === 'unknown') {
+    return OLLAMA_CONSERVATIVE_CONTEXT_TOKENS
+  }
+  return resolveContextWindow('ollama', trimmedModelId)
 }
 
 export function estimateOllamaEnsemblePromptTokens(input: {
@@ -112,7 +104,6 @@ export function resolveOllamaEnsembleTranscriptCharsForBudget(input: {
 } {
   const configuredChars = input.configuredChars ?? OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS
   const configuredTurns = input.configuredTurns ?? 6
-  const ceiling = Math.min(configuredChars, OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS)
   const contextLimit = resolveOllamaContextTokenLimit(input.modelId, input.contextLength)
   const reserve = OLLAMA_GENERATION_RESERVE_TOKENS
   const toolOverhead = input.toolsEnabled ? OLLAMA_COMPACT_TOOL_SCHEMA_TOKENS : 0
@@ -127,14 +118,18 @@ export function resolveOllamaEnsembleTranscriptCharsForBudget(input: {
   )
   const maxTranscriptChars = Math.floor(availableForTranscript * 3.5)
   const minTranscriptChars = 2_500
-  let contextChars = Math.min(ceiling, Math.max(minTranscriptChars, maxTranscriptChars))
-  let contextTurns = Math.min(configuredTurns, OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS)
-  const autoCompacted = contextChars < ceiling || contextTurns < configuredTurns
+  let contextChars = Math.min(configuredChars, Math.max(minTranscriptChars, maxTranscriptChars))
+  let contextTurns =
+    contextChars < configuredChars
+      ? Math.min(configuredTurns, OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS)
+      : configuredTurns
 
   if (maxTranscriptChars < minTranscriptChars) {
     contextChars = Math.max(1_500, maxTranscriptChars)
     contextTurns = Math.min(contextTurns, 2)
   }
+
+  const autoCompacted = contextChars < configuredChars || contextTurns < configuredTurns
 
   return { contextChars, contextTurns, autoCompacted }
 }

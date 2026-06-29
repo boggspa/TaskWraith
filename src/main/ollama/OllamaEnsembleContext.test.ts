@@ -3,31 +3,66 @@ import {
   assessOllamaContextPressure,
   compactOllamaEnsemblePromptText,
   estimateOllamaEnsemblePromptTokens,
+  estimateOllamaEnsembleUiPressure,
   resolveOllamaContextTokenLimit,
   resolveOllamaEnsembleTranscriptCharsForBudget
 } from './OllamaEnsembleContext'
 
 describe('OllamaEnsembleContext', () => {
-  it('uses conservative defaults for unknown local models', () => {
+  it('uses the shared Ollama context windows instead of tiny provider-level fallbacks', () => {
+    expect(resolveOllamaContextTokenLimit()).toBe(4096)
     expect(resolveOllamaContextTokenLimit('unknown:7b')).toBe(4096)
-    expect(resolveOllamaContextTokenLimit('gemma4:12b')).toBe(8192)
-    expect(resolveOllamaContextTokenLimit('ornith:9b')).toBe(8192)
-    expect(resolveOllamaContextTokenLimit('ornith:35b')).toBe(8192)
-    expect(resolveOllamaContextTokenLimit('qwen3.6:35b')).toBe(8192)
-    expect(resolveOllamaContextTokenLimit('granite4.1:30b')).toBe(8192)
-    expect(resolveOllamaContextTokenLimit('nemotron3:33b')).toBe(8192)
+    expect(resolveOllamaContextTokenLimit('qwen3:4b-instruct')).toBe(262_144)
+    expect(resolveOllamaContextTokenLimit('gemma4:12b')).toBe(262_144)
+    expect(resolveOllamaContextTokenLimit('ornith:9b')).toBe(262_144)
+    expect(resolveOllamaContextTokenLimit('ornith:35b')).toBe(262_144)
+    expect(resolveOllamaContextTokenLimit('qwen3.6:35b')).toBe(262_144)
+    expect(resolveOllamaContextTokenLimit('gpt-oss:20b')).toBe(131_072)
+    expect(resolveOllamaContextTokenLimit('minicpm-v4.5:8b')).toBe(40_960)
+    expect(resolveOllamaContextTokenLimit('granite4.1:30b')).toBe(131_072)
+    expect(resolveOllamaContextTokenLimit('nemotron3:33b')).toBe(131_072)
+    expect(resolveOllamaContextTokenLimit('custom-local', 300_000)).toBe(300_000)
   })
 
-  it('shrinks transcript budget when the shell already consumes most context', () => {
+  it('keeps the default shared-history budget for known large-context Ollama models', () => {
+    const budget = resolveOllamaEnsembleTranscriptCharsForBudget({
+      configuredChars: 24_000,
+      configuredTurns: 6,
+      promptWithoutTranscriptChars: 7_500,
+      modelId: 'qwen3:4b-instruct',
+      toolsEnabled: true
+    })
+    expect(budget).toEqual({
+      contextChars: 24_000,
+      contextTurns: 6,
+      autoCompacted: false
+    })
+  })
+
+  it('shrinks transcript budget when the shell already consumes most of a small live context', () => {
     const budget = resolveOllamaEnsembleTranscriptCharsForBudget({
       configuredChars: 120_000,
       configuredTurns: 10,
       promptWithoutTranscriptChars: 7_500,
       modelId: 'qwen3.5:9b',
+      contextLength: 8192,
       toolsEnabled: true
     })
-    expect(budget.contextChars).toBeLessThan(12_000)
+    expect(budget.contextChars).toBeLessThan(16_000)
     expect(budget.autoCompacted).toBe(true)
+  })
+
+  it('does not show critical UI pressure for a 24K panel on a 262K local model', () => {
+    const pressure = estimateOllamaEnsembleUiPressure({
+      configuredContextChars: 24_000,
+      participantCount: 6,
+      ollamaModelId: 'qwen3:4b-instruct',
+      ollamaContextLength: 262_144,
+      toolsEnabled: true
+    })
+    expect(pressure.contextLimit).toBe(262_144)
+    expect(pressure.effectiveTranscriptChars).toBe(24_000)
+    expect(pressure.severity).toBe('ok')
   })
 
   it('flags critical pressure near the context ceiling', () => {
