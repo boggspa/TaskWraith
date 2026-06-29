@@ -30,6 +30,7 @@ const CODEX_DEFAULT_MODELS = [
     id: 'gpt-5.5',
     label: 'GPT-5.5',
     supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
@@ -41,6 +42,7 @@ const CODEX_DEFAULT_MODELS = [
     id: 'gpt-5.4',
     label: 'GPT-5.4',
     supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }

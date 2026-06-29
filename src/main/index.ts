@@ -594,6 +594,7 @@ import {
   CODEX_RETIRED_MODEL_IDS,
   claudePermissionModeForApproval,
   codexModelContextConfig,
+  codexReasoningEffortsForModel,
   getStaticProviderModels,
   normalizeCliProviderModel,
   normalizeCodexModel
@@ -27787,7 +27788,12 @@ if (isGeminiMcpBridgeProcess) {
             label: model.displayName || model.model || model.id,
             description: model.description,
             isDefault: Boolean(model.isDefault),
-            supportedReasoningEfforts: model.supportedReasoningEfforts || [],
+            supportedReasoningEfforts: codexReasoningEffortsForModel(
+              model.id,
+              Array.isArray(model.supportedReasoningEfforts)
+                ? model.supportedReasoningEfforts
+                : []
+            ),
             defaultReasoningEffort: model.defaultReasoningEffort || null,
             additionalSpeedTiers: model.additionalSpeedTiers || [],
             // Inject retirement metadata the CLI doesn't carry. Without this

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  codexReasoningEffortsForModel,
   codexModelContextConfig,
   getStaticProviderModels,
   normalizeCliProviderModel
@@ -152,6 +153,27 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
         'preview:openai:gpt-5.6:luna'
       ])
     )
+  })
+
+  it('advertises Light/low reasoning on GPT-5 Codex models', () => {
+    const models = getStaticProviderModels('codex') as StaticModelShape[]
+    for (const modelId of ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+      expect(
+        models
+          .find((model) => model.id === modelId)
+          ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
+      ).toContain('low')
+    }
+  })
+
+  it('fills missing Light/low reasoning from stale live Codex model metadata', () => {
+    expect(
+      codexReasoningEffortsForModel('gpt-5.5', [
+        { reasoningEffort: 'medium' },
+        { reasoningEffort: 'high' },
+        { reasoningEffort: 'xhigh' }
+      ]).map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh'])
   })
 
   it('can expose disabled OpenAI preview placeholders behind the preview catalog flag', () => {

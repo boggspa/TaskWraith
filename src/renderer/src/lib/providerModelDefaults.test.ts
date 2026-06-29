@@ -12,6 +12,16 @@ import {
   isClaudeModelId
 } from './providerModelDefaults'
 
+describe('Codex provider model defaults', () => {
+  it('offers Light/low reasoning on every fallback Codex model row', () => {
+    for (const model of CODEX_DEFAULT_MODELS) {
+      expect(model.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toContain(
+        'low'
+      )
+    }
+  })
+})
+
 describe('Claude provider model defaults', () => {
   it('keeps unavailable Fable rows out of the renderer fallback picker list', () => {
     const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)

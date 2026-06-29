@@ -60,6 +60,42 @@ const CODEX_MODEL_CONTEXT_CONFIGS: Readonly<Record<string, CodexModelContextConf
   }
 }
 
+export interface CodexReasoningEffortOption {
+  reasoningEffort: string
+  description?: string
+  disabled?: boolean
+  disabledReason?: string
+}
+
+export function codexModelSupportsLightReasoning(modelId?: string | null): boolean {
+  const id = String(modelId || '').trim().toLowerCase()
+  return /^gpt-5(?:[.-]|$)/.test(id) && !id.startsWith('preview:')
+}
+
+export function codexReasoningEffortsForModel<T extends CodexReasoningEffortOption>(
+  modelId: string,
+  efforts: readonly T[] | null | undefined
+): Array<T | CodexReasoningEffortOption> {
+  const normalized: Array<T | CodexReasoningEffortOption> = []
+  const seen = new Set<string>()
+  for (const effort of efforts || []) {
+    if (!effort?.reasoningEffort) continue
+    const key = effort.reasoningEffort.toLowerCase() === 'light' ? 'low' : effort.reasoningEffort
+    const normalizedKey = key.toLowerCase()
+    if (seen.has(normalizedKey)) continue
+    seen.add(normalizedKey)
+    normalized.push(
+      effort.reasoningEffort.toLowerCase() === 'light'
+        ? { ...effort, reasoningEffort: 'low' }
+        : effort
+    )
+  }
+  if (codexModelSupportsLightReasoning(modelId) && !seen.has('low')) {
+    return [{ reasoningEffort: 'low' }, ...normalized]
+  }
+  return normalized
+}
+
 // Fallback model list — used ONLY when the live Codex CLI `model/list` query
 // fails or returns nothing (see `get-agent-models`). On the normal path the
 // renderer's `codexModels` comes from the CLI-derived `normalized` list, not
@@ -71,39 +107,42 @@ export const CODEX_STATIC_MODELS = [
     label: 'GPT-5.5',
     description: 'Default Codex model',
     isDefault: true,
-    supportedReasoningEfforts: [
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-5.5', [
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
-    ],
+    ]),
     defaultReasoningEffort: 'medium'
   },
   {
     id: 'gpt-5.4',
     label: 'GPT-5.4',
-    supportedReasoningEfforts: [
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-5.4', [
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
-    ],
+    ]),
     defaultReasoningEffort: 'medium'
   },
   {
     id: 'gpt-5.4-mini',
     label: 'GPT-5.4 Mini',
-    supportedReasoningEfforts: [
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-5.4-mini', [
       { reasoningEffort: 'low' },
       { reasoningEffort: 'medium' },
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
-    ],
+    ]),
     defaultReasoningEffort: 'medium'
   },
   {
     id: 'gpt-5.3-codex-spark',
     label: 'GPT-5.3 Codex Spark',
     description: 'Research preview where available',
-    supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }],
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-5.3-codex-spark', [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' }
+    ]),
     defaultReasoningEffort: 'low'
   }
   // gpt-5.2 and gpt-5.3-codex are HARD-retired (see CODEX_RETIRED_MODEL_IDS)

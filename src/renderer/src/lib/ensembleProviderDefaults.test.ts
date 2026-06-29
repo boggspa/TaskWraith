@@ -213,7 +213,20 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
   // `getDefaultEnsembleParticipantConfig`; generic Default/CLI Default rows
   // must not reappear in the picker.
   it('exposes codex preferred model id as gpt-5.5', () => {
-    expect(getEnsembleModelDefaults('codex').defaultModelId).toBe('gpt-5.5')
+    const codex = getEnsembleModelDefaults('codex')
+    expect(codex.defaultModelId).toBe('gpt-5.5')
+    expect(codex.reasoningOptions.map((option) => option.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
+    expect(getEnsembleReasoningOptions('codex', 'gpt-5.5').map((option) => option.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
   })
 
   it('does not expose Default or CLI Default as ensemble picker model rows', () => {

@@ -3416,12 +3416,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           let combinedSelectedReasoning = ''
                           if (effectiveProvider === 'codex') {
                             // For ensemble binding we use a stable default
-                            // reasoning list (medium/high/xhigh) because the
+                            // reasoning list (low/medium/high/xhigh) because the
                             // participant doesn't carry per-model reasoning
                             // sets the way `codexReasoningOptions` does for
                             // the chat-level state.
                             const sourceOptions = ensembleBinding
                               ? [
+                                  { reasoningEffort: 'low' },
                                   { reasoningEffort: 'medium' },
                                   { reasoningEffort: 'high' },
                                   { reasoningEffort: 'xhigh' }

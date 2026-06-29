@@ -46,6 +46,7 @@ export interface EnsembleModelDefaults {
 }
 
 const CODEX_REASONING: CombinedModelPickerReasoningOption[] = [
+  { value: 'low', label: codexReasoningDisplayLabel('low') },
   { value: 'medium', label: codexReasoningDisplayLabel('medium') },
   { value: 'high', label: codexReasoningDisplayLabel('high') },
   { value: 'xhigh', label: codexReasoningDisplayLabel('xhigh') }
