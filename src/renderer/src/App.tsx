@@ -4,7 +4,9 @@ import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
 import {
   legacyAssistantDeltaProjectionKey,
-  projectRunItemAssistantDelta
+  legacyToolEventProjectionKey,
+  projectRunItemAssistantDelta,
+  projectRunItemToolEvent
 } from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { messagesRenderEqual } from './lib/messagesRenderEqual'
@@ -1259,6 +1261,7 @@ function App(): React.JSX.Element {
   const pendingStreamFlushCharsByRunIdRef = useRef<Map<string, number>>(new Map())
   const pendingStreamFlushCharsByRunItemRef = useRef<Map<string, number>>(new Map())
   const projectedLegacyAssistantDeltaKeysRef = useRef<Set<string>>(new Set())
+  const projectedLegacyToolEventKeysRef = useRef<Set<string>>(new Set())
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
   const [guestDispatchPendingParentChatIds, setGuestDispatchPendingParentChatIds] = useState<
@@ -9968,6 +9971,31 @@ function App(): React.JSX.Element {
               return updated
             }, { coalesce: true })
           }
+          const toolProjection = projectRunItemToolEvent(itemEvent, effectiveRunProvider)
+          if (toolProjection && toolProjection.chatId === runChatId) {
+            if (toolProjection.event.isUse && isProviderExecutionToolEvent(toolProjection.event)) {
+              runContext.toolCallsCount += 1
+            }
+            updateChatById(runChatId, (source) => {
+              const updated = { ...source }
+              if (updated.chatKind === 'ensemble') return updated
+              const reduction = reduceSoloToolEventMessages(updated.messages, toolProjection.event, {
+                createMessageId,
+                provider: effectiveRunProvider
+              })
+              updated.messages = reduction.messages
+              if (
+                isVisibleRunChat() &&
+                !runContext.diffUnavailable &&
+                reduction.latestToolActivity &&
+                reduction.isResult
+              ) {
+                upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
+              }
+              projectedLegacyToolEventKeysRef.current.add(toolProjection.legacySkipKey)
+              return updated
+            }, { coalesce: true })
+          }
           return
         }
 
@@ -10066,6 +10094,25 @@ function App(): React.JSX.Element {
             event.content
           )
           if (projectedLegacyAssistantDeltaKeysRef.current.delete(projectedKey)) {
+            return
+          }
+        }
+        if (event.type === 'tool_event') {
+          const toolId =
+            typeof event.data?.tool_id === 'string'
+              ? event.data.tool_id
+              : typeof event.data?.toolId === 'string'
+                ? event.data.toolId
+                : typeof event.data?.id === 'string'
+                  ? event.data.id
+                  : typeof event.data?.call_id === 'string'
+                    ? event.data.call_id
+                    : undefined
+          if (
+            projectedLegacyToolEventKeysRef.current.delete(
+              legacyToolEventProjectionKey(currentRunId, toolId, event.isResult)
+            )
+          ) {
             return
           }
         }
