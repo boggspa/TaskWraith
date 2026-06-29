@@ -464,7 +464,8 @@ function normalizeWorkspaceBoardLink(value: unknown): WorkspaceBoardCardLink | u
     input.kind !== 'chat' &&
     input.kind !== 'workflow' &&
     input.kind !== 'scheduled-task' &&
-    input.kind !== 'run-queue-job'
+    input.kind !== 'run-queue-job' &&
+    input.kind !== 'local-server'
   ) {
     return undefined
   }
@@ -3022,6 +3023,9 @@ export class AppStore {
       if (!job || job.workspaceId !== board.workspaceId) {
         throw new Error('Board card run queue link must belong to the board workspace.')
       }
+      return link
+    }
+    if (link.kind === 'local-server') {
       return link
     }
     return undefined

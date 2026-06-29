@@ -10,6 +10,7 @@ import type {
   WorkspaceBoardDefinition,
   WorkspaceRecord
 } from '../../../main/store/types'
+import type { LocalServerEntry } from '../../../main/localServers/types'
 import {
   buildWorkspaceBoardProjectedCards,
   workspaceBoardColumnLabel,
@@ -17,6 +18,7 @@ import {
   type WorkspaceBoardProjectedCard
 } from '../lib/workspaceBoardProjection'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import { useLocalServers } from '../hooks/useLocalServers'
 
 const ACTIVE_RUN_QUEUE_STATUSES = new Set(['queued', 'starting', 'active', 'steer_promoting', 'cancelling'])
 const STALE_THREAD_AGE_MS = 7 * 24 * 60 * 60 * 1000
@@ -121,7 +123,8 @@ function parseLink(value: string): WorkspaceBoardCardLink | undefined {
     kind !== 'chat' &&
     kind !== 'workflow' &&
     kind !== 'scheduled-task' &&
-    kind !== 'run-queue-job'
+    kind !== 'run-queue-job' &&
+    kind !== 'local-server'
   ) {
     return undefined
   }
@@ -193,6 +196,10 @@ function candidateColumnForJob(job: RunQueueJob): WorkspaceBoardColumnId {
   if (job.status === 'failed' || job.status === 'cancelled') return 'needs-input'
   if (job.status === 'completed') return 'done'
   return 'ready'
+}
+
+function titleForLocalServer(server: LocalServerEntry): string {
+  return `Local server: ${server.name}`
 }
 
 function titleForTask(task: ScheduledTask): string {
@@ -342,6 +349,7 @@ export function WorkspaceBoardView({
     cardId: string
     edge: WorkspaceBoardDropEdge
   } | null>(null)
+  const { servers: localServers } = useLocalServers()
 
   const workspaceChats = useMemo(
     () =>
@@ -370,6 +378,13 @@ export function WorkspaceBoardView({
         .filter((job) => job.workspaceId === board?.workspaceId)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [board?.workspaceId, runQueueJobs]
+  )
+  const workspaceLocalServers = useMemo(
+    () =>
+      localServers
+        .filter((server) => server.workspaceId === board?.workspaceId)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [board?.workspaceId, localServers]
   )
 
   const linkOptions = useMemo<LinkOption[]>(() => {
@@ -410,8 +425,17 @@ export function WorkspaceBoardView({
         link
       })
     }
+    for (const server of workspaceLocalServers) {
+      const link: WorkspaceBoardCardLink = { kind: 'local-server', id: server.id }
+      options.push({
+        value: encodeLink(link),
+        label: titleForLocalServer(server),
+        meta: server.primaryPort != null ? `:${server.primaryPort}` : server.origin,
+        link
+      })
+    }
     return options
-  }, [workspaceChats, workspaceWorkflows, workspaceScheduledTasks, workspaceRunQueueJobs])
+  }, [workspaceChats, workspaceWorkflows, workspaceScheduledTasks, workspaceRunQueueJobs, workspaceLocalServers])
 
   const projectedCards = useMemo(
     () =>
@@ -421,6 +445,7 @@ export function WorkspaceBoardView({
         workflows,
         scheduledTasks,
         runQueueJobs,
+        localServers,
         runningChatIds,
         pendingApprovalsByChatId,
         pendingApprovalQueueByChatId,
@@ -432,6 +457,7 @@ export function WorkspaceBoardView({
       workflows,
       scheduledTasks,
       runQueueJobs,
+      localServers,
       runningChatIds,
       pendingApprovalsByChatId,
       pendingApprovalQueueByChatId,
@@ -518,6 +544,21 @@ export function WorkspaceBoardView({
         link: { kind: 'run-queue-job', id: job.id }
       })
     }
+    for (const server of workspaceLocalServers) {
+      add({
+        key: `local-server:${server.id}`,
+        title: titleForLocalServer(server),
+        body: [
+          server.primaryPort != null ? `http://localhost:${server.primaryPort}` : undefined,
+          server.command
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        columnId: 'running',
+        labels: ['local-server', server.origin],
+        link: { kind: 'local-server', id: server.id }
+      })
+    }
     return candidates
   }, [
     board,
@@ -526,6 +567,7 @@ export function WorkspaceBoardView({
     workspaceWorkflows,
     workspaceScheduledTasks,
     workspaceRunQueueJobs,
+    workspaceLocalServers,
     runningChatIds,
     pendingApprovalsByChatId,
     collaboratingChatIds
@@ -625,6 +667,13 @@ export function WorkspaceBoardView({
       const job = runQueueJobs.find((item) => item.id === link.id || item.runId === link.id)
       const chat = job?.chatId ? chats.find((item) => item.appChatId === job.chatId) : null
       if (chat) onOpenChat(chat)
+      return
+    }
+    if (link.kind === 'local-server') {
+      const server = localServers.find((item) => item.id === link.id)
+      if (server?.primaryPort != null) {
+        void window.api.openExternalOrPath?.(`http://localhost:${server.primaryPort}`)
+      }
     }
   }
 

@@ -12852,6 +12852,7 @@ function App(): React.JSX.Element {
         .filter(Boolean)
         .join('\n'),
       labels: compactBoardLabels('local-server', server.origin),
+      link: { kind: 'local-server', id: server.id },
       columnId: 'running'
     })
   }

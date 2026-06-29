@@ -3116,7 +3116,12 @@ export interface WorkspaceBoardColumn {
   wipLimit?: number
 }
 
-export type WorkspaceBoardCardLinkKind = 'chat' | 'workflow' | 'scheduled-task' | 'run-queue-job'
+export type WorkspaceBoardCardLinkKind =
+  | 'chat'
+  | 'workflow'
+  | 'scheduled-task'
+  | 'run-queue-job'
+  | 'local-server'
 
 export interface WorkspaceBoardCardLink {
   kind: WorkspaceBoardCardLinkKind

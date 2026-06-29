@@ -6,6 +6,7 @@ import type {
   WorkspaceBoardCard,
   WorkspaceBoardColumnId
 } from '../../../main/store/types'
+import type { LocalServerEntry } from '../../../main/localServers/types'
 import type { AgentApprovalRequest } from './agentApprovalTypes'
 import { ACTIVE_RUN_QUEUE_STATUSES } from './chatBusyState'
 
@@ -64,6 +65,7 @@ export interface WorkspaceBoardProjectionInput {
   workflows: WorkflowDefinition[]
   scheduledTasks: ScheduledTask[]
   runQueueJobs: RunQueueJob[]
+  localServers?: LocalServerEntry[]
   runningChatIds?: Set<string>
   pendingApprovalsByChatId?: Record<string, AgentApprovalRequest | null>
   pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
@@ -231,6 +233,11 @@ export function deriveWorkspaceBoardStatus(
     if (job.status === 'completed') return 'done'
     return columnStatus(card.columnId)
   }
+  if (link.kind === 'local-server') {
+    const server = input.localServers?.find((item) => item.id === link.id)
+    if (!server || isCrossWorkspaceLink(card, server)) return 'stale'
+    return 'running'
+  }
   return columnStatus(card.columnId)
 }
 
@@ -240,6 +247,7 @@ export function buildWorkspaceBoardProjectedCards(
   const chatsById = new Map(input.chats.map((chat) => [chat.appChatId, chat]))
   const workflowsById = new Map(input.workflows.map((workflow) => [workflow.id, workflow]))
   const tasksById = new Map(input.scheduledTasks.map((task) => [task.id, task]))
+  const localServersById = new Map((input.localServers || []).map((server) => [server.id, server]))
   const jobsById = new Map<string, RunQueueJob>()
   for (const job of input.runQueueJobs) {
     jobsById.set(job.id, job)
@@ -253,15 +261,18 @@ export function buildWorkspaceBoardProjectedCards(
     const linkedWorkflow = link?.kind === 'workflow' ? workflowsById.get(link.id) || null : null
     const linkedTask = link?.kind === 'scheduled-task' ? tasksById.get(link.id) || null : null
     const linkedJob = link?.kind === 'run-queue-job' ? jobsById.get(link.id) || null : null
+    const linkedLocalServer = link?.kind === 'local-server' ? localServersById.get(link.id) || null : null
     const crossWorkspaceLink =
       isCrossWorkspaceLink(card, linkedChat) ||
       isCrossWorkspaceLink(card, linkedWorkflow) ||
       isCrossWorkspaceLink(card, linkedTask) ||
-      isCrossWorkspaceLink(card, linkedJob)
+      isCrossWorkspaceLink(card, linkedJob) ||
+      isCrossWorkspaceLink(card, linkedLocalServer)
     const chat = linkedChat && !linkedChat.archived && !crossWorkspaceLink ? linkedChat : null
     const workflow = linkedWorkflow && !crossWorkspaceLink ? linkedWorkflow : null
     const task = linkedTask && !crossWorkspaceLink ? linkedTask : null
     const job = linkedJob && !crossWorkspaceLink ? linkedJob : null
+    const localServer = linkedLocalServer && !crossWorkspaceLink ? linkedLocalServer : null
     const badges: WorkspaceBoardProjectedBadge[] = []
     let linkedKindLabel: string | undefined
     let liveStatusDetail: string | undefined
@@ -370,6 +381,20 @@ export function buildWorkspaceBoardProjectedCards(
       })
       if (job.source) badges.push({ label: job.source, tone: 'muted', title: 'Run source' })
       liveStatusDetail = job.lastError || job.statusReason || job.resumeHint
+    } else if (localServer) {
+      linkedKindLabel = 'Local Server'
+      badges.push({ label: localServer.origin, tone: 'muted', title: 'Server origin' })
+      if (localServer.primaryPort != null) {
+        badges.push({ label: `:${localServer.primaryPort}`, tone: 'running', title: 'Listening port' })
+      }
+      if (localServer.provider) {
+        const provider = formatProvider(localServer.provider)
+        if (provider) badges.push({ label: provider, tone: 'muted', title: 'Started by provider' })
+      }
+      liveStatusDetail =
+        localServer.primaryPort != null
+          ? `Running at http://localhost:${localServer.primaryPort}`
+          : localServer.command
     } else if (link) {
       linkedKindLabel = link.kind
       staleReason = crossWorkspaceLink
@@ -396,13 +421,20 @@ export function buildWorkspaceBoardProjectedCards(
       liveStatusDetail,
       attentionState: attentionForStatus(derivedStatus),
       badges: badges.slice(0, 8),
-      linkedTitle: chat?.title || workflow?.name || task?.displayPrompt || task?.prompt || job?.promptPreview,
+      linkedTitle:
+        chat?.title ||
+        workflow?.name ||
+        task?.displayPrompt ||
+        task?.prompt ||
+        job?.promptPreview ||
+        localServer?.name,
       linkedSubtitle:
         linkedKindLabel ||
         chat?.provider ||
         workflow?.template.provider ||
         task?.provider ||
         job?.provider ||
+        (localServer?.primaryPort != null ? `localhost:${localServer.primaryPort}` : localServer?.origin) ||
         (link ? link.kind : undefined),
       linkedKindLabel,
       staleReason,

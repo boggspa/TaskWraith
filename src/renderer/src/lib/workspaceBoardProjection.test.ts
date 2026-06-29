@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, WorkspaceBoardCard } from '../../../main/store/types'
+import type { LocalServerEntry } from '../../../main/localServers/types'
 import type { AgentApprovalRequest } from './agentApprovalTypes'
 import { buildWorkspaceBoardProjectedCards, deriveWorkspaceBoardStatus } from './workspaceBoardProjection'
 
@@ -31,6 +32,21 @@ function makeCard(overrides: Partial<WorkspaceBoardCard> = {}): WorkspaceBoardCa
     createdAt: '2026-06-29T00:00:00.000Z',
     updatedAt: '2026-06-29T00:00:00.000Z',
     activity: [],
+    ...overrides
+  }
+}
+
+function makeLocalServer(overrides: Partial<LocalServerEntry> = {}): LocalServerEntry {
+  return {
+    id: 'server-1',
+    pid: 123,
+    name: 'vite',
+    command: 'npm run dev',
+    ports: [5173],
+    primaryPort: 5173,
+    workspaceId: 'ws-1',
+    workspacePath: '/repo',
+    origin: 'agent-spawned',
     ...overrides
   }
 }
@@ -147,5 +163,32 @@ describe('workspace board projection', () => {
     expect(projected.badges.some((badge) => badge.label === '+1 approvals')).toBe(true)
     expect(projected.badges.some((badge) => badge.label === 'Shared')).toBe(true)
     expect(projected.badges.some((badge) => badge.label === 'Pinned')).toBe(true)
+  })
+
+  it('projects live local server links as running and stale when missing', () => {
+    const card = makeCard({ link: { kind: 'local-server', id: 'server-1' }, columnId: 'ready' })
+    const projected = buildWorkspaceBoardProjectedCards({
+      cards: [card],
+      chats: [],
+      workflows: [],
+      scheduledTasks: [],
+      runQueueJobs: [],
+      localServers: [makeLocalServer()]
+    })[0]
+
+    expect(projected.derivedStatus).toBe('running')
+    expect(projected.linkedTitle).toBe('vite')
+    expect(projected.liveStatusDetail).toBe('Running at http://localhost:5173')
+    expect(projected.badges.some((badge) => badge.label === ':5173')).toBe(true)
+
+    expect(
+      deriveWorkspaceBoardStatus(card, {
+        chats: [],
+        workflows: [],
+        scheduledTasks: [],
+        runQueueJobs: [],
+        localServers: []
+      })
+    ).toBe('stale')
   })
 })
