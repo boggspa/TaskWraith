@@ -9472,16 +9472,58 @@ button.diff-file-row {
 
 .diff-detail {
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: color-mix(in srgb, var(--app-bg-sunken) 58%, transparent);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
-.diff-lines-stack {
+.diff-detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.diff-detail-body-diff {
+  overflow: hidden;
+}
+
+.diff-lines-root {
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.diff-lines-stack {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.diff-lines-virtual-window {
+  min-width: max-content;
+}
+
+.diff-lines-stack.virtualized {
+  position: relative;
+}
+
+.diff-lines-floating-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 22px;
+  box-sizing: border-box;
+  padding: 3px var(--space-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 90%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 .diff-lines-truncated {
@@ -9526,8 +9568,10 @@ button.diff-file-row {
 
 .diff-lines-section-header {
   position: sticky;
-  top: 42px;
+  top: 0;
   z-index: 1;
+  min-height: 22px;
+  box-sizing: border-box;
   padding: 3px var(--space-md);
   font-size: var(--font-size-xs);
   color: var(--text-muted);
@@ -9536,8 +9580,8 @@ button.diff-file-row {
 }
 
 .diff-detail-header {
-  position: sticky;
-  top: 0;
+  flex: 0 0 auto;
+  position: relative;
   background: color-mix(in srgb, var(--panel-elevated-bg) 78%, transparent);
   padding: var(--space-sm) var(--space-md);
   font-size: var(--font-size-sm);
@@ -9552,6 +9596,7 @@ button.diff-file-row {
 .diff-line {
   display: grid;
   grid-template-columns: 4ch 4ch minmax(0, 1fr);
+  min-height: 22px;
   min-width: max-content;
   padding: 0;
   white-space: pre;
@@ -9574,6 +9619,7 @@ button.diff-file-row {
 .diff-line-split {
   display: grid;
   grid-template-columns: 4ch minmax(320px, 1fr) 4ch minmax(320px, 1fr);
+  min-height: 22px;
   min-width: 780px;
   padding: 0;
   white-space: pre;

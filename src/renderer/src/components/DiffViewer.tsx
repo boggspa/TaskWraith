@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DiffFileSummary, DiffPreviewKind } from '../../../main/store/types'
 import type {
   GitFileStatus,
@@ -69,9 +69,19 @@ interface DiffLinesProps {
   onShowMore?: () => void
 }
 
+interface DiffRenderRow {
+  id: string
+  kind: 'empty' | 'line' | 'sectionHeader'
+  header?: string
+  line?: ParsedDiffLine
+}
+
 type DiffViewMode = 'inline' | 'split'
 
 const DIFF_DETAIL_RENDER_LINE_LIMIT = DEFAULT_DIFF_RENDER_LINE_LIMIT
+const DIFF_VIRTUALIZATION_THRESHOLD = 800
+const DIFF_VIRTUAL_ROW_HEIGHT = 22
+const DIFF_VIRTUAL_OVERSCAN = 24
 
 const normalizeAbsolutePath = (path: string): string => {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -428,6 +438,9 @@ function DiffDetail({
     summary.previewKind !== 'hidden'
   const canStageFile = Boolean(onStageFile) && Boolean(gitStatus?.unstaged) && !isBusy
   const canUnstageFile = Boolean(onUnstageFile) && Boolean(gitStatus?.staged) && !isBusy
+  const previewKind: DiffPreviewKind = summary.previewKind || 'none'
+  const usesDiffLines =
+    Boolean(summary.diffText) && (previewKind === 'synthetic_new_file' || previewKind === 'git_diff')
   const parsedDiff = useMemo(
     () =>
       summary.diffText
@@ -445,8 +458,7 @@ function DiffDetail({
   }
 
   const renderPreview = () => {
-    const kind: DiffPreviewKind = summary.previewKind || 'none'
-    switch (kind) {
+    switch (previewKind) {
       case 'hidden':
         return (
           <div
@@ -564,20 +576,118 @@ function DiffDetail({
           </button>
         </div>
       </div>
-      {renderPreview()}
+      <div className={`diff-detail-body ${usesDiffLines ? 'diff-detail-body-diff' : ''}`}>
+        {renderPreview()}
+      </div>
     </div>
   )
 }
 
+const buildDiffRows = (parsed: ParsedUnifiedDiff): DiffRenderRow[] => {
+  const rows: DiffRenderRow[] = []
+  parsed.sections.forEach((section, sectionIndex) => {
+    if (section.header) {
+      rows.push({
+        id: `${sectionIndex}:header`,
+        kind: 'sectionHeader',
+        header: section.header
+      })
+    }
+    if (section.lines.length === 0) {
+      rows.push({
+        id: `${sectionIndex}:empty`,
+        kind: 'empty'
+      })
+      return
+    }
+    section.lines.forEach((line, lineIndex) => {
+      rows.push({
+        id: `${sectionIndex}:line:${lineIndex}`,
+        kind: 'line',
+        line
+      })
+    })
+  })
+  return rows
+}
+
 function DiffLines({ parsed, viewMode, onShowMore }: DiffLinesProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const [viewport, setViewport] = useState({ height: 0, scrollTop: 0 })
+  const rows = useMemo(() => (parsed ? buildDiffRows(parsed) : []), [parsed])
+
+  useEffect(() => {
+    const scrollElement = scrollRef.current
+    if (!scrollElement) return
+
+    const updateViewport = () => {
+      setViewport({
+        height: scrollElement.clientHeight,
+        scrollTop: scrollElement.scrollTop
+      })
+    }
+
+    updateViewport()
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(updateViewport)
+      observer.observe(scrollElement)
+      return () => observer.disconnect()
+    }
+    window.addEventListener('resize', updateViewport)
+    return () => window.removeEventListener('resize', updateViewport)
+  }, [rows.length])
+
   if (!parsed || parsed.sections.length === 0) {
     return <div className="diff-lines-section">No diff hunks to display.</div>
   }
 
   const nextLineCount = Math.min(DIFF_DETAIL_RENDER_LINE_LIMIT, parsed.omittedLineCount)
+  const useVirtualization = rows.length > DIFF_VIRTUALIZATION_THRESHOLD
+  const visibleRange = (() => {
+    if (!useVirtualization) {
+      return {
+        endIndex: rows.length,
+        paddingBottom: 0,
+        paddingTop: 0,
+        startIndex: 0
+      }
+    }
+    const viewportHeight = Math.max(viewport.height, DIFF_VIRTUAL_ROW_HEIGHT * 12)
+    const visibleCount =
+      Math.ceil(viewportHeight / DIFF_VIRTUAL_ROW_HEIGHT) + DIFF_VIRTUAL_OVERSCAN * 2
+    const startIndex = Math.max(
+      0,
+      Math.floor(viewport.scrollTop / DIFF_VIRTUAL_ROW_HEIGHT) - DIFF_VIRTUAL_OVERSCAN
+    )
+    const endIndex = Math.min(rows.length, startIndex + visibleCount)
+    return {
+      endIndex,
+      paddingBottom: Math.max(0, rows.length - endIndex) * DIFF_VIRTUAL_ROW_HEIGHT,
+      paddingTop: startIndex * DIFF_VIRTUAL_ROW_HEIGHT,
+      startIndex
+    }
+  })()
+  const currentVirtualHeader = (() => {
+    if (!useVirtualization) return ''
+    for (let index = Math.min(rows.length - 1, visibleRange.startIndex); index >= 0; index -= 1) {
+      const row = rows[index]
+      if (row?.kind === 'sectionHeader') return row.header ?? ''
+    }
+    return ''
+  })()
+  const visibleRows = rows.slice(visibleRange.startIndex, visibleRange.endIndex)
+
+  const handleScroll = () => {
+    const scrollElement = scrollRef.current
+    if (!scrollElement) return
+    setViewport({
+      height: scrollElement.clientHeight,
+      scrollTop: scrollElement.scrollTop
+    })
+  }
 
   return (
-    <div className="diff-lines-stack">
+    <div className="diff-lines-root">
       {parsed.truncated && (
         <div className="diff-lines-truncated" role="note">
           <span>
@@ -595,25 +705,52 @@ function DiffLines({ parsed, viewMode, onShowMore }: DiffLinesProps) {
           )}
         </div>
       )}
-      {parsed.sections.map((section, sectionIndex) => (
-        <div key={sectionIndex} className="diff-lines-section">
-          {section.header ? (
-            <div className="diff-lines-section-header">{section.header}</div>
-          ) : null}
-          {section.lines.length === 0 ? (
-            <div className="diff-line">No content in this section.</div>
-          ) : (
-            section.lines.map((line, index) =>
-              viewMode === 'split' ? (
-                <SplitDiffLineRow key={index} line={line} />
-              ) : (
-                <DiffLineRow key={index} line={line} />
-              )
-            )
-          )}
+      <div
+        className={`diff-lines-stack ${useVirtualization ? 'virtualized' : ''}`}
+        ref={scrollRef}
+        onScroll={handleScroll}
+      >
+        {currentVirtualHeader && (
+          <div className="diff-lines-floating-header">{currentVirtualHeader}</div>
+        )}
+        <div
+          className="diff-lines-virtual-window"
+          style={
+            useVirtualization
+              ? {
+                  paddingBottom: `${visibleRange.paddingBottom}px`,
+                  paddingTop: `${visibleRange.paddingTop}px`
+                }
+              : undefined
+          }
+        >
+          {visibleRows.map((row) => renderDiffRow(row, viewMode))}
         </div>
-      ))}
+      </div>
     </div>
+  )
+}
+
+function renderDiffRow(row: DiffRenderRow, viewMode: DiffViewMode) {
+  if (row.kind === 'sectionHeader') {
+    return (
+      <div key={row.id} className="diff-lines-section-header">
+        {row.header}
+      </div>
+    )
+  }
+  if (row.kind === 'empty') {
+    return (
+      <div key={row.id} className="diff-line">
+        No content in this section.
+      </div>
+    )
+  }
+  if (!row.line) return null
+  return viewMode === 'split' ? (
+    <SplitDiffLineRow key={row.id} line={row.line} />
+  ) : (
+    <DiffLineRow key={row.id} line={row.line} />
   )
 }
 
