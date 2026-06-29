@@ -9451,12 +9451,34 @@ button.diff-file-row {
 }
 
 .diff-lines-truncated {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
   padding: 5px var(--space-md);
   color: var(--warning);
   background: color-mix(in srgb, var(--warning) 10%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
   font-family: var(--font-sans);
   font-size: var(--font-size-xs);
+}
+
+.diff-lines-show-more {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--warning) 36%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  padding: 3px 8px;
+}
+
+.diff-lines-show-more:hover,
+.diff-lines-show-more:focus-visible {
+  background: color-mix(in srgb, var(--warning) 22%, transparent);
+  outline: 0;
 }
 
 .diff-lines-section {
@@ -9469,6 +9491,9 @@ button.diff-file-row {
 }
 
 .diff-lines-section-header {
+  position: sticky;
+  top: 42px;
+  z-index: 1;
   padding: 3px var(--space-md);
   font-size: var(--font-size-xs);
   color: var(--text-muted);
@@ -9487,7 +9512,7 @@ button.diff-file-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  z-index: 1;
+  z-index: 2;
 }
 
 .diff-line {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { DiffFileSummary, DiffPreviewKind } from '../../../main/store/types'
 import type {
   GitFileStatus,
@@ -58,6 +58,11 @@ interface DiffDetailProps {
 
 interface DiffLineRowProps {
   line: ParsedDiffLine
+}
+
+interface DiffLinesProps {
+  parsed: ParsedUnifiedDiff | null
+  onShowMore?: () => void
 }
 
 const DIFF_DETAIL_RENDER_LINE_LIMIT = DEFAULT_DIFF_RENDER_LINE_LIMIT
@@ -226,6 +231,7 @@ export function DiffViewer({
           />
           {selectedSummary && (
             <DiffDetail
+              key={selectedSummary.path}
               summary={selectedSummary}
               gitStatus={selectedGitStatus}
               busyPath={busyPath}
@@ -380,6 +386,7 @@ function DiffDetail({
   onUnstageFile
 }: DiffDetailProps) {
   const { copiedId, copy } = useCopyFeedback()
+  const [renderLineLimit, setRenderLineLimit] = useState(DIFF_DETAIL_RENDER_LINE_LIMIT)
   const isBusy = busyPath === summary.path
   const canOpenFile =
     Boolean(onOpenFile) &&
@@ -393,10 +400,18 @@ function DiffDetail({
   const parsedDiff = useMemo(
     () =>
       summary.diffText
-        ? parseUnifiedDiff(summary.diffText, { maxLines: DIFF_DETAIL_RENDER_LINE_LIMIT })
+        ? parseUnifiedDiff(summary.diffText, { maxLines: renderLineLimit })
         : null,
-    [summary.diffText]
+    [renderLineLimit, summary.diffText]
   )
+
+  useEffect(() => {
+    setRenderLineLimit(DIFF_DETAIL_RENDER_LINE_LIMIT)
+  }, [summary.diffText, summary.path])
+
+  const showMoreDiffLines = () => {
+    setRenderLineLimit((current) => current + DIFF_DETAIL_RENDER_LINE_LIMIT)
+  }
 
   const renderPreview = () => {
     const kind: DiffPreviewKind = summary.previewKind || 'none'
@@ -428,7 +443,7 @@ function DiffDetail({
       case 'synthetic_new_file':
       case 'git_diff':
         return summary.diffText ? (
-          <DiffLines parsed={parsedDiff} />
+          <DiffLines parsed={parsedDiff} onShowMore={showMoreDiffLines} />
         ) : (
           <div
             style={{
@@ -519,17 +534,30 @@ function DiffDetail({
   )
 }
 
-function DiffLines({ parsed }: { parsed: ParsedUnifiedDiff | null }) {
+function DiffLines({ parsed, onShowMore }: DiffLinesProps) {
   if (!parsed || parsed.sections.length === 0) {
     return <div className="diff-lines-section">No diff hunks to display.</div>
   }
+
+  const nextLineCount = Math.min(DIFF_DETAIL_RENDER_LINE_LIMIT, parsed.omittedLineCount)
 
   return (
     <div className="diff-lines-stack">
       {parsed.truncated && (
         <div className="diff-lines-truncated" role="note">
-          Showing first {parsed.renderedLineCount.toLocaleString()} lines.{' '}
-          {parsed.omittedLineCount.toLocaleString()} more omitted.
+          <span>
+            Showing first {parsed.renderedLineCount.toLocaleString()} lines.{' '}
+            {parsed.omittedLineCount.toLocaleString()} more omitted.
+          </span>
+          {onShowMore && (
+            <button
+              className="diff-lines-show-more"
+              type="button"
+              onClick={onShowMore}
+            >
+              Show {nextLineCount.toLocaleString()} more
+            </button>
+          )}
         </div>
       )}
       {parsed.sections.map((section, sectionIndex) => (
