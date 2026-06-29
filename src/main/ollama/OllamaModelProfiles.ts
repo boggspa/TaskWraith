@@ -49,7 +49,7 @@ export function ollamaModelFamilyPromptLines(
       return [
         'Model profile (Qwen 3 4B): stay lightweight — search first, read one file at a time, answer concisely.',
         normalizedTier === 'read_only'
-          ? 'Avoid wide refactors; prefer a short plan the user can hand to a larger model.'
+          ? 'Avoid wide refactors; prefer a short plan the user can run with an edit-capable tier or a wider local profile.'
           : 'You have edit tools in this tier — make small, localized, verified edits directly rather than only planning. For broad multi-file refactors, summarize progress and suggest delegation instead of guessing.'
       ]
     case 'minicpm_v45_8b':
@@ -110,7 +110,7 @@ export function ollamaModelFamilyPromptLines(
     default:
       return [
         'Model profile (local): search first, read narrowly, and keep tool payloads small.',
-        'Stop with a concise plan when the task outgrows local model reliability.'
+        'Stop with a concise plan when the requested scope exceeds the selected tier, context window, or available tools.'
       ]
   }
 }
@@ -311,7 +311,7 @@ export function ollamaTierAwareWorkflowHint(
   return [
     'TaskWraith local-scout workflow:',
     scout,
-    'When the plan is ready, ask the user to delegate implementation to Codex or Claude (↪ delegate on this chat) and attach the plan in the delegation prompt.',
+    'When the plan is ready, ask the user whether to continue locally with a higher tier/profile, assign another participant, or delegate the prepared plan.',
     'Do not attempt repo-wide refactors or full test-suite repair loops alone on a local model.'
   ].join(' ')
 }

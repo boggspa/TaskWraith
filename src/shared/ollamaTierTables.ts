@@ -8,9 +8,9 @@
  * MEMORY.md on the renderer blank-window hazard).
  *
  * MODEL REALITY: `OllamaToolControlTier` is ONE cumulative 4-step ladder
- * (read_only = Tier 1 … provider_parity = Tier 4 / "parity"). The run profiles
- * map 1:1 onto a tier today (each option carries its `.tier`), so the picker's
- * child pane is a dependent view filtered by the selected parent tier.
+ * (read_only = Tier 1 … provider_parity = Tier 4 / "parity"). Run profiles keep
+ * their minimum tier metadata, but the picker can present them alongside the
+ * selected tool grants when a participant needs a more specific local runtime.
  */
 import type { OllamaRunProfileId, OllamaToolControlTier } from '../main/store/types'
 
@@ -55,13 +55,13 @@ export const OLLAMA_RUN_PROFILE_OPTIONS: OllamaRunProfileOption[] = [
     value: 'local_scout',
     label: 'Local Scout',
     tier: 'read_only',
-    helper: 'Read/search/symbol/git inspection with GPT-OSS medium thinking.'
+    helper: 'Read/search/symbol/git inspection with a moderate local reasoning budget.'
   },
   {
     value: 'approved_patcher',
     label: 'Approved Patcher',
     tier: 'approved_edits',
-    helper: 'Bounded file edits with approval and GPT-OSS high thinking.'
+    helper: 'Bounded file edits with approval and a higher local reasoning budget.'
   },
   {
     value: 'verify_with_shell',

@@ -187,55 +187,55 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
       return {
         guidance: `${modelLabel} is a capable local scout for scoped tasks — search, read files, and single-file edits with approval.`,
         delegateHint:
-          'For multi-file refactors, broad test-suite fixes, or long autonomous loops, delegate implementation to Codex or Claude.'
+          'For multi-file refactors, broad test-suite fixes, or long autonomous loops, confirm the needed Ollama tier, context, and verification path before continuing.'
       }
     case 'qwen3_6_35b':
       return {
         guidance: `${modelLabel} is a strong local reasoning model with a large context window and native tool support.`,
         delegateHint:
-          'For long implementation loops or release-critical edits, keep Codex/Claude delegation available as the verification pass.'
+          'For long implementation loops or release-critical edits, pair the run with an explicit verification pass before landing broad changes.'
       }
     case 'qwen3_4b':
       return {
         guidance: `${modelLabel} is best for quick lookups, narrow reads, and short answers.`,
         delegateHint:
-          'For edits, shell work, or multi-step refactors, use a larger local model or delegate to a cloud provider.'
+          'For edits, shell work, or multi-step refactors, choose an edit-capable Ollama tier and a model/profile sized for the scope.'
       }
     case 'minicpm_v45_8b':
       return {
         guidance: `${modelLabel} is a compact multimodal local model with tools and thinking support.`,
         delegateHint:
-          'Use it for scoped reads, visual/local checks, and quick analysis; delegate broad code edits to a stronger implementation model.'
+          'Use it for scoped reads, visual/local checks, and quick analysis; for broad code edits, switch to a coding-oriented model/profile or split the work into smaller local slices.'
       }
     case 'gemma4_12b':
       return {
         guidance: `${modelLabel} handles moderate local tasks well — exploration, planning, and smaller edits.`,
         delegateHint:
-          'For large refactors or repo-wide test fixes, consider Codex or Claude for implementation.'
+          'For large refactors or repo-wide test fixes, confirm the required edit and shell permissions before starting the implementation pass.'
       }
     case 'ornith_9b':
       return {
         guidance: `${modelLabel} is an agentic-coding local model; keep tasks scoped, search first, and verify generated edits carefully.`,
         delegateHint:
-          'Use it for local planning and focused patches; delegate broad refactors or long test-fix loops to Codex or Claude.'
+          'Use it for local planning and focused patches; for broad refactors or long test-fix loops, split the work or pick a wider-context local profile.'
       }
     case 'ornith_35b':
       return {
         guidance: `${modelLabel} is a larger agentic-coding local model with a broad context window for deeper repo review and focused implementation.`,
         delegateHint:
-          'For release-critical changes, pair it with Codex or Claude verification before landing broad edits.'
+          'For release-critical changes, pair it with an explicit verification pass before landing broad edits.'
       }
     case 'granite4_1_3b':
       return {
         guidance: `${modelLabel} is a lightweight tool-capable local model for fast reads and small planning tasks.`,
         delegateHint:
-          'For edits, shell verification, or long reasoning chains, use a larger Ollama tag or delegate to Codex/Claude.'
+          'For edits, shell verification, or long reasoning chains, choose an edit-capable tier and a larger local tag when the scope needs it.'
       }
     case 'granite4_1_30b':
       return {
         guidance: `${modelLabel} is a larger tool-capable local model suited to deeper local review and planning.`,
         delegateHint:
-          'For release-critical patches, use it as a local reviewer or pair it with Codex/Claude verification.'
+          'For release-critical patches, use it as a local reviewer or pair it with a separate verification pass.'
       }
     case 'nemotron3_33b':
       return {
@@ -247,13 +247,13 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
       return {
         guidance: `${modelLabel} has stronger reasoning but can be finicky with tool calls; TaskWraith will nudge it when it stalls.`,
         delegateHint:
-          'For heavy multi-file implementation, a cloud sub-thread (Codex/Claude) is often faster and more reliable.'
+          'For heavy multi-file implementation, confirm the tool tier and consider a separate reviewer or worker when parallel verification would reduce risk.'
       }
     default:
       return {
-        guidance: `${modelLabel} is a local model — great for privacy and quick workspace reads, but smaller than frontier cloud agents.`,
+        guidance: `${modelLabel} is a local model. Match the selected tier, context window, and installed capabilities to the requested task.`,
         delegateHint:
-          'For ambitious refactors or long tool chains, delegate the implementation pass to Codex or Claude.'
+          'For ambitious refactors or long tool chains, make the scope and verification path explicit before starting.'
       }
   }
 }

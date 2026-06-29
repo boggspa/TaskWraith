@@ -15,7 +15,7 @@ describe('ollamaModelFamilyPromptLines', () => {
 
   it('flips tiny-model guidance from hand-off (read-only) to direct edits (edit tiers)', () => {
     const qwenReadOnly = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'read_only').join(' ')
-    expect(qwenReadOnly).toContain('hand to a larger model')
+    expect(qwenReadOnly).toContain('edit-capable tier')
     const qwenEdits = ollamaModelFamilyPromptLines('qwen3:4b', 'workspace', 'provider_parity').join(
       ' '
     )
@@ -102,9 +102,10 @@ describe('ollamaLocalToolSystemPrompt', () => {
 })
 
 describe('workflow hints', () => {
-  it('documents scout-then-delegate workflow', () => {
-    expect(ollamaScoutDelegateWorkflowHint('qwen3.5:9b')).toContain('delegate implementation')
-    expect(ollamaScoutDelegateWorkflowHint('ornith:35b')).toContain('delegate implementation')
+  it('documents scout escalation without defaulting to cloud implementation', () => {
+    expect(ollamaScoutDelegateWorkflowHint('qwen3.5:9b')).toContain('continue locally')
+    expect(ollamaScoutDelegateWorkflowHint('ornith:35b')).toContain('higher tier/profile')
+    expect(ollamaScoutDelegateWorkflowHint('ornith:35b')).not.toContain('Codex or Claude')
   })
 
   it('documents approved patcher behavior without default delegation', () => {

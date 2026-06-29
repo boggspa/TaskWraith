@@ -45,7 +45,7 @@ export function buildOllamaMidRunTierBumpWarning(
     id: 'ollama-midrun-tier-bump',
     severity: 'warning',
     title: 'Raise Ollama tool tier to continue',
-    message: `${toolName} needs ${tierLabel(required)} tools, but this run is on ${tierLabel(normalized)}. Open Settings → Behavior → Ollama, raise the tier, then retry — or delegate to Codex/Claude.`
+    message: `${toolName} needs ${tierLabel(required)} tools, but this run is on ${tierLabel(normalized)}. Open Settings → Behavior → Ollama, raise the tier, then retry.`
   }
 }
 
@@ -84,6 +84,6 @@ export function suggestOllamaTierBump(
     id: 'ollama-tier-suggestion',
     severity: 'warning',
     title: 'Consider raising Ollama tool tier',
-    message: `This request likely needs ${tierLabel(effective)} tools. Current tier is ${tierLabel(normalized)} — bump it in Settings → Behavior → Ollama before the run stalls, or delegate implementation to Codex/Claude.`
+    message: `This request likely needs ${tierLabel(effective)} tools. Current tier is ${tierLabel(normalized)}. Raise it in Settings → Behavior → Ollama before running, or choose a participant/profile with the needed tools.`
   }
 }

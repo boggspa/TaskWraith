@@ -63,8 +63,8 @@ export const OLLAMA_BENCH_FIXTURES: BenchmarkTaskManifest[] = [
     id: 'ollama-over-scope-handoff',
     title: 'Over-scope handoff',
     provider: 'ollama',
-    prompt: 'Identify when a broad refactor exceeds local scope and recommend a Codex/Claude handoff.',
-    scorers: [{ id: 'mentions-handoff', kind: 'regex_match', pattern: 'Codex|Claude|delegate|handoff' }]
+    prompt: 'Identify when a broad refactor exceeds the selected local tier or context budget and recommend a smaller next step or explicit handoff.',
+    scorers: [{ id: 'mentions-scope-path', kind: 'regex_match', pattern: 'scope|tier|context|handoff|delegate|smaller' }]
   }
 ]
 

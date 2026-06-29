@@ -23,5 +23,6 @@ describe('suggestOllamaTierBump', () => {
     expect(warning.id).toBe('ollama-midrun-tier-bump')
     expect(warning.message).toContain('write_file')
     expect(warning.message).toContain('Approved edits')
+    expect(warning.message).not.toContain('Codex/Claude')
   })
 })

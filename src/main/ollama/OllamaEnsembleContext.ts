@@ -211,7 +211,7 @@ export function ollamaContextPressureMessage(pressure: OllamaContextPressure): s
   if (pressure.severity === 'warn') {
     return `Ollama context ~${pressure.usagePercent}% full. Locals auto-compact transcript to ~${formatK(
       pressure.effectiveTranscriptChars
-    )} chars; cloud providers still use the full budget.`
+    )} chars; other participants still use their configured budgets.`
   }
   return `Ollama transcript capped at ~${formatK(
     pressure.effectiveTranscriptChars

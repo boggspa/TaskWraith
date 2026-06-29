@@ -82,7 +82,7 @@ describe('estimateOllamaModelRamGb', () => {
 })
 
 describe('evaluateOllamaModelPreflight', () => {
-  it('surfaces honest Qwen 3.5 guidance and delegate hint', () => {
+  it('surfaces honest Qwen 3.5 guidance and scope hint', () => {
     const result = evaluateOllamaModelPreflight({
       modelId: 'qwen3.5:9b',
       modelLabel: 'Qwen 3.5 (9B Param)',
@@ -101,7 +101,8 @@ describe('evaluateOllamaModelPreflight', () => {
     expect(result.checks.find((c) => c.id === 'installed')?.ok).toBe(true)
     expect(result.checks.find((c) => c.id === 'tools')?.ok).toBe(true)
     expect(result.guidance).toContain('scoped tasks')
-    expect(result.delegateHint).toContain('Codex or Claude')
+    expect(result.delegateHint).toContain('confirm the needed Ollama tier')
+    expect(result.delegateHint).not.toContain('Codex or Claude')
     expect(result.warnings[0].id).toBe('ollama-model-guidance')
   })
 
