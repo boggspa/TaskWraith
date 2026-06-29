@@ -1,37 +1,56 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type DragEvent, type FormEvent } from 'react'
 import type {
   ChatRecord,
   RunQueueJob,
   ScheduledTask,
   WorkflowDefinition,
   WorkspaceBoardCard,
+  WorkspaceBoardCardLink,
   WorkspaceBoardColumnId,
   WorkspaceBoardDefinition,
   WorkspaceRecord
 } from '../../../main/store/types'
 import {
   buildWorkspaceBoardProjectedCards,
+  workspaceBoardColumnLabel,
   type WorkspaceBoardProjectedCard
 } from '../lib/workspaceBoardProjection'
 
-const COLUMN_COPY: Record<WorkspaceBoardColumnId, string> = {
-  inbox: 'Inbox',
-  ready: 'Ready',
-  running: 'Running',
-  'needs-input': 'Needs Input',
-  blocked: 'Blocked',
-  'review-ready': 'Review Ready',
-  done: 'Done',
-  archived: 'Archived'
+const ACTIVE_RUN_QUEUE_STATUSES = new Set(['queued', 'starting', 'active', 'steer_promoting', 'cancelling'])
+const STALE_THREAD_AGE_MS = 7 * 24 * 60 * 60 * 1000
+
+interface LinkOption {
+  value: string
+  label: string
+  meta: string
+  link: WorkspaceBoardCardLink
 }
 
-function statusLabel(card: WorkspaceBoardProjectedCard): string {
-  if (card.isStale) return 'Stale link'
-  if (card.derivedStatus === 'manual') return COLUMN_COPY[card.columnId]
-  return card.derivedStatus
-    .split('-')
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
-    .join(' ')
+interface SeedCandidate {
+  key: string
+  title: string
+  body?: string
+  columnId: WorkspaceBoardColumnId
+  labels?: string[]
+  link: WorkspaceBoardCardLink
+  blockedReason?: string
+  nextStep?: string
+}
+
+interface DetailDraft {
+  title: string
+  body: string
+  humanOwner: string
+  labels: string
+  blockedReason: string
+  nextStep: string
+  reminderAt: string
+}
+
+interface LastArchivedCard {
+  id: string
+  title: string
+  columnId: WorkspaceBoardColumnId
 }
 
 interface WorkspaceBoardViewProps {
@@ -52,6 +71,119 @@ interface WorkspaceBoardViewProps {
   onOpenWorkflow: (workflow: WorkflowDefinition) => void
 }
 
+function latestRun(chat: ChatRecord) {
+  return chat.runs && chat.runs.length > 0 ? chat.runs[chat.runs.length - 1] : null
+}
+
+function isRunningChat(chat: ChatRecord, runningChatIds?: Set<string>): boolean {
+  const run = latestRun(chat)
+  return (
+    Boolean(runningChatIds?.has(chat.appChatId)) ||
+    run?.status === 'running' ||
+    run?.status === 'sleeping'
+  )
+}
+
+function isSuccessfulRunStatus(status?: string): boolean {
+  return status === 'success' || status === 'success_with_warnings' || status === 'completed'
+}
+
+function linkKey(link?: WorkspaceBoardCardLink): string {
+  return link ? `${link.kind}:${link.id}` : ''
+}
+
+function encodeLink(link: WorkspaceBoardCardLink): string {
+  return linkKey(link)
+}
+
+function parseLink(value: string): WorkspaceBoardCardLink | undefined {
+  const separator = value.indexOf(':')
+  if (separator <= 0) return undefined
+  const kind = value.slice(0, separator)
+  const id = value.slice(separator + 1)
+  if (
+    kind !== 'chat' &&
+    kind !== 'workflow' &&
+    kind !== 'scheduled-task' &&
+    kind !== 'run-queue-job'
+  ) {
+    return undefined
+  }
+  if (!id) return undefined
+  return { kind, id }
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error || 'Workspace board update failed.')
+}
+
+function labelsFromText(value: string): string[] | undefined {
+  const labels = value
+    .split(',')
+    .map((label) => label.trim())
+    .filter(Boolean)
+    .slice(0, 12)
+  return labels.length > 0 ? labels : undefined
+}
+
+function draftFromCard(card: WorkspaceBoardCard): DetailDraft {
+  return {
+    title: card.title,
+    body: card.body || '',
+    humanOwner: card.humanOwner || '',
+    labels: (card.labels || []).join(', '),
+    blockedReason: card.blockedReason || '',
+    nextStep: card.nextStep || '',
+    reminderAt: card.reminderAt || ''
+  }
+}
+
+function candidateColumnForChat(
+  chat: ChatRecord,
+  runningChatIds?: Set<string>
+): WorkspaceBoardColumnId {
+  const run = latestRun(chat)
+  if (chat.activeGoal?.status === 'blocked') return 'blocked'
+  if (isRunningChat(chat, runningChatIds)) return 'running'
+  if (run?.status === 'failed' || run?.status === 'cancelled') return 'needs-input'
+  if (isSuccessfulRunStatus(run?.status)) return 'review-ready'
+  if (Date.now() - (chat.updatedAt || 0) > STALE_THREAD_AGE_MS) return 'needs-input'
+  return 'inbox'
+}
+
+function candidateColumnForWorkflow(workflow: WorkflowDefinition): WorkspaceBoardColumnId {
+  if (workflow.activeExecutionId || workflow.lastStatus === 'running' || workflow.lastStatus === 'queued') {
+    return 'running'
+  }
+  if (workflow.lastStatus === 'failed' || workflow.failureStreak > 0 || workflow.lastStatus === 'cancelled') {
+    return 'needs-input'
+  }
+  if (workflow.lastStatus === 'completed') return 'review-ready'
+  return 'ready'
+}
+
+function candidateColumnForTask(task: ScheduledTask): WorkspaceBoardColumnId {
+  if (task.status === 'running' || task.status === 'due') return 'running'
+  if (task.status === 'failed' || task.status === 'cancelled') return 'needs-input'
+  if (task.status === 'completed') return 'done'
+  return 'ready'
+}
+
+function candidateColumnForJob(job: RunQueueJob): WorkspaceBoardColumnId {
+  if (ACTIVE_RUN_QUEUE_STATUSES.has(job.status)) return 'running'
+  if (job.status === 'failed' || job.status === 'cancelled') return 'needs-input'
+  if (job.status === 'completed') return 'done'
+  return 'ready'
+}
+
+function titleForTask(task: ScheduledTask): string {
+  return task.displayPrompt || task.prompt || 'Scheduled task'
+}
+
+function titleForJob(job: RunQueueJob): string {
+  return job.promptPreview || job.request?.displayPrompt || job.request?.prompt || job.runId || 'Run queue job'
+}
+
 export function WorkspaceBoardView({
   board,
   workspace,
@@ -70,11 +202,20 @@ export function WorkspaceBoardView({
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [linkValue, setLinkValue] = useState('')
+  const [isAdding, setIsAdding] = useState(false)
+  const [isSeeding, setIsSeeding] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
+  const [detailDraft, setDetailDraft] = useState<DetailDraft | null>(null)
+  const [isSavingDetail, setIsSavingDetail] = useState(false)
+  const [lastArchivedCard, setLastArchivedCard] = useState<LastArchivedCard | null>(null)
+  const [draggingCardId, setDraggingCardId] = useState<string | null>(null)
+  const [dragOverColumnId, setDragOverColumnId] = useState<WorkspaceBoardColumnId | null>(null)
 
   const workspaceChats = useMemo(
     () =>
       chats
-        .filter((chat) => !chat.archived && chat.workspaceId === board?.workspaceId)
+        .filter((chat) => !chat.archived && chat.workspaceId === board?.workspaceId && chat.scope !== 'global')
         .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),
     [board?.workspaceId, chats]
   )
@@ -85,6 +226,61 @@ export function WorkspaceBoardView({
         .sort((a, b) => a.name.localeCompare(b.name)),
     [board?.workspaceId, workflows]
   )
+  const workspaceScheduledTasks = useMemo(
+    () =>
+      scheduledTasks
+        .filter((task) => task.workspaceId === board?.workspaceId)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    [board?.workspaceId, scheduledTasks]
+  )
+  const workspaceRunQueueJobs = useMemo(
+    () =>
+      runQueueJobs
+        .filter((job) => job.workspaceId === board?.workspaceId)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    [board?.workspaceId, runQueueJobs]
+  )
+
+  const linkOptions = useMemo<LinkOption[]>(() => {
+    const options: LinkOption[] = []
+    for (const chat of workspaceChats) {
+      const link: WorkspaceBoardCardLink = { kind: 'chat', id: chat.appChatId }
+      options.push({
+        value: encodeLink(link),
+        label: `Thread: ${chat.title}`,
+        meta: chat.provider || 'thread',
+        link
+      })
+    }
+    for (const workflow of workspaceWorkflows) {
+      const link: WorkspaceBoardCardLink = { kind: 'workflow', id: workflow.id }
+      options.push({
+        value: encodeLink(link),
+        label: `Workflow: ${workflow.name}`,
+        meta: workflow.template.provider,
+        link
+      })
+    }
+    for (const task of workspaceScheduledTasks) {
+      const link: WorkspaceBoardCardLink = { kind: 'scheduled-task', id: task.id }
+      options.push({
+        value: encodeLink(link),
+        label: `Scheduled: ${titleForTask(task)}`,
+        meta: task.status,
+        link
+      })
+    }
+    for (const job of workspaceRunQueueJobs) {
+      const link: WorkspaceBoardCardLink = { kind: 'run-queue-job', id: job.id }
+      options.push({
+        value: encodeLink(link),
+        label: `Run: ${titleForJob(job)}`,
+        meta: job.status,
+        link
+      })
+    }
+    return options
+  }, [workspaceChats, workspaceWorkflows, workspaceScheduledTasks, workspaceRunQueueJobs])
 
   const projectedCards = useMemo(
     () =>
@@ -98,6 +294,67 @@ export function WorkspaceBoardView({
       }),
     [cards, chats, workflows, scheduledTasks, runQueueJobs, runningChatIds]
   )
+
+  const seedCandidates = useMemo<SeedCandidate[]>(() => {
+    if (!board) return []
+    const existingLinks = new Set(cards.map((card) => linkKey(card.link)).filter(Boolean))
+    const seen = new Set<string>()
+    const candidates: SeedCandidate[] = []
+    const add = (candidate: SeedCandidate) => {
+      if (existingLinks.has(candidate.key) || seen.has(candidate.key)) return
+      seen.add(candidate.key)
+      candidates.push(candidate)
+    }
+
+    for (const chat of workspaceChats) {
+      const columnId = candidateColumnForChat(chat, runningChatIds)
+      const labels = ['thread']
+      if (columnId !== 'inbox') labels.push(workspaceBoardColumnLabel(columnId).toLowerCase())
+      add({
+        key: `chat:${chat.appChatId}`,
+        title: chat.title || 'Workspace thread',
+        body: chat.activeGoal?.objective ? `Goal: ${chat.activeGoal.objective}` : undefined,
+        columnId,
+        labels,
+        link: { kind: 'chat', id: chat.appChatId },
+        blockedReason: chat.activeGoal?.status === 'blocked' ? chat.activeGoal.blockedReason : undefined
+      })
+    }
+    for (const workflow of workspaceWorkflows) {
+      const columnId = candidateColumnForWorkflow(workflow)
+      add({
+        key: `workflow:${workflow.id}`,
+        title: workflow.name,
+        body: workflow.lastError || workflow.template.prompt,
+        columnId,
+        labels: ['workflow', workflow.template.provider],
+        link: { kind: 'workflow', id: workflow.id }
+      })
+    }
+    for (const task of workspaceScheduledTasks.filter((task) => task.status !== 'completed')) {
+      const columnId = candidateColumnForTask(task)
+      add({
+        key: `scheduled-task:${task.id}`,
+        title: titleForTask(task),
+        body: task.lastError || `Scheduled task for ${task.runAt}`,
+        columnId,
+        labels: ['scheduled', task.provider, task.status],
+        link: { kind: 'scheduled-task', id: task.id }
+      })
+    }
+    for (const job of workspaceRunQueueJobs.filter((job) => job.status !== 'completed')) {
+      const columnId = candidateColumnForJob(job)
+      add({
+        key: `run-queue-job:${job.id}`,
+        title: titleForJob(job),
+        body: job.lastError || job.statusReason || job.request?.prompt,
+        columnId,
+        labels: ['run', job.provider, job.status],
+        link: { kind: 'run-queue-job', id: job.id }
+      })
+    }
+    return candidates
+  }, [board, cards, workspaceChats, workspaceWorkflows, workspaceScheduledTasks, workspaceRunQueueJobs, runningChatIds])
 
   if (!board || !workspace) {
     return (
@@ -118,40 +375,208 @@ export function WorkspaceBoardView({
     cardsByColumn.set(card.columnId, bucket)
   }
 
-  const submitCard = () => {
+  const selectedProjected = selectedCardId
+    ? projectedCards.find((projected) => projected.card.id === selectedCardId) || null
+    : null
+
+  const submitCard = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
     const trimmedTitle = title.trim()
-    if (!trimmedTitle) return
-    const link =
-      linkValue.startsWith('chat:')
-        ? ({ kind: 'chat', id: linkValue.slice('chat:'.length) } as const)
-        : linkValue.startsWith('workflow:')
-          ? ({ kind: 'workflow', id: linkValue.slice('workflow:'.length) } as const)
-          : undefined
-    void onAddCard({
-      boardId: board.id,
-      workspaceId: board.workspaceId,
-      columnId: 'inbox',
-      title: trimmedTitle,
-      body: body.trim() || undefined,
-      sortOrder: Date.now(),
-      link
-    })
-    setTitle('')
-    setBody('')
-    setLinkValue('')
+    if (!trimmedTitle || isAdding) return
+    setIsAdding(true)
+    setError(null)
+    try {
+      await onAddCard({
+        boardId: board.id,
+        workspaceId: board.workspaceId,
+        columnId: 'inbox',
+        title: trimmedTitle,
+        body: body.trim() || undefined,
+        sortOrder: Date.now(),
+        link: parseLink(linkValue)
+      })
+      setTitle('')
+      setBody('')
+      setLinkValue('')
+    } catch (err) {
+      setError(formatError(err))
+    } finally {
+      setIsAdding(false)
+    }
+  }
+
+  const seedBoard = async () => {
+    if (seedCandidates.length === 0 || isSeeding) return
+    setIsSeeding(true)
+    setError(null)
+    try {
+      let sortOrder = Date.now()
+      for (const candidate of seedCandidates) {
+        await onAddCard({
+          boardId: board.id,
+          workspaceId: board.workspaceId,
+          columnId: candidate.columnId,
+          title: candidate.title,
+          body: candidate.body,
+          sortOrder: sortOrder++,
+          labels: candidate.labels,
+          link: candidate.link,
+          blockedReason: candidate.blockedReason,
+          nextStep: candidate.nextStep
+        })
+      }
+    } catch (err) {
+      setError(formatError(err))
+    } finally {
+      setIsSeeding(false)
+    }
   }
 
   const openLinked = (card: WorkspaceBoardProjectedCard) => {
     const link = card.card.link
-    if (!link) return
+    if (!link || card.isStale) return
     if (link.kind === 'chat') {
       const chat = chats.find((item) => item.appChatId === link.id)
       if (chat) onOpenChat(chat)
+      return
     }
     if (link.kind === 'workflow') {
       const workflow = workflows.find((item) => item.id === link.id)
       if (workflow) onOpenWorkflow(workflow)
+      return
     }
+    if (link.kind === 'scheduled-task') {
+      const task = scheduledTasks.find((item) => item.id === link.id)
+      const chat = task ? chats.find((item) => item.appChatId === task.chatId) : null
+      if (chat) onOpenChat(chat)
+      return
+    }
+    if (link.kind === 'run-queue-job') {
+      const job = runQueueJobs.find((item) => item.id === link.id || item.runId === link.id)
+      const chat = job?.chatId ? chats.find((item) => item.appChatId === job.chatId) : null
+      if (chat) onOpenChat(chat)
+    }
+  }
+
+  const openDetails = (projected: WorkspaceBoardProjectedCard) => {
+    setSelectedCardId(projected.card.id)
+    setDetailDraft(draftFromCard(projected.card))
+    setError(null)
+  }
+
+  const saveDetails = async () => {
+    if (!selectedProjected || !detailDraft || isSavingDetail) return
+    const trimmedTitle = detailDraft.title.trim()
+    if (!trimmedTitle) {
+      setError('Card title is required.')
+      return
+    }
+    setIsSavingDetail(true)
+    setError(null)
+    try {
+      await onUpdateCard(selectedProjected.card.id, {
+        title: trimmedTitle,
+        body: detailDraft.body.trim() || undefined,
+        humanOwner: detailDraft.humanOwner.trim() || undefined,
+        labels: labelsFromText(detailDraft.labels),
+        blockedReason: detailDraft.blockedReason.trim() || undefined,
+        nextStep: detailDraft.nextStep.trim() || undefined,
+        reminderAt: detailDraft.reminderAt.trim() || undefined
+      })
+    } catch (err) {
+      setError(formatError(err))
+    } finally {
+      setIsSavingDetail(false)
+    }
+  }
+
+  const moveCard = async (projected: WorkspaceBoardProjectedCard, columnId: WorkspaceBoardColumnId) => {
+    if (projected.card.columnId === columnId) return
+    setError(null)
+    try {
+      await onUpdateCard(projected.card.id, {
+        columnId,
+        sortOrder: Date.now()
+      })
+    } catch (err) {
+      setError(formatError(err))
+    }
+  }
+
+  const archiveCard = async (projected: WorkspaceBoardProjectedCard) => {
+    setError(null)
+    try {
+      await onUpdateCard(projected.card.id, {
+        archived: true,
+        columnId: 'archived'
+      })
+      setLastArchivedCard({
+        id: projected.card.id,
+        title: projected.card.title,
+        columnId: projected.card.columnId
+      })
+      if (selectedCardId === projected.card.id) {
+        setSelectedCardId(null)
+        setDetailDraft(null)
+      }
+    } catch (err) {
+      setError(formatError(err))
+    }
+  }
+
+  const restoreLastArchivedCard = async () => {
+    if (!lastArchivedCard) return
+    setError(null)
+    try {
+      await onUpdateCard(lastArchivedCard.id, {
+        archived: false,
+        columnId: lastArchivedCard.columnId,
+        sortOrder: Date.now()
+      })
+      setLastArchivedCard(null)
+    } catch (err) {
+      setError(formatError(err))
+    }
+  }
+
+  const permanentlyDeleteSelectedCard = async () => {
+    if (!selectedProjected) return
+    const confirmed = window.confirm(`Permanently delete "${selectedProjected.card.title}"?`)
+    if (!confirmed) return
+    setError(null)
+    try {
+      await onDeleteCard(selectedProjected.card.id)
+      setSelectedCardId(null)
+      setDetailDraft(null)
+    } catch (err) {
+      setError(formatError(err))
+    }
+  }
+
+  const unlinkSelectedCard = async () => {
+    if (!selectedProjected) return
+    setError(null)
+    try {
+      await onUpdateCard(selectedProjected.card.id, { link: undefined })
+    } catch (err) {
+      setError(formatError(err))
+    }
+  }
+
+  const onCardDragStart = (event: DragEvent<HTMLElement>, projected: WorkspaceBoardProjectedCard) => {
+    event.dataTransfer.setData('application/x-taskwraith-workspace-board-card-id', projected.card.id)
+    event.dataTransfer.effectAllowed = 'move'
+    setDraggingCardId(projected.card.id)
+  }
+
+  const onColumnDrop = (event: DragEvent<HTMLElement>, columnId: WorkspaceBoardColumnId) => {
+    event.preventDefault()
+    const cardId =
+      event.dataTransfer.getData('application/x-taskwraith-workspace-board-card-id') || draggingCardId
+    setDraggingCardId(null)
+    setDragOverColumnId(null)
+    const projected = projectedCards.find((item) => item.card.id === cardId)
+    if (projected) void moveCard(projected, columnId)
   }
 
   return (
@@ -168,34 +593,64 @@ export function WorkspaceBoardView({
         </div>
       </header>
 
-      <section className="workspace-board-add-card" aria-label="Add board card">
-        <input
-          value={title}
-          onChange={(event) => setTitle(event.currentTarget.value)}
-          placeholder="Card title"
-        />
-        <input
-          value={body}
-          onChange={(event) => setBody(event.currentTarget.value)}
-          placeholder="Note or next step"
-        />
-        <select value={linkValue} onChange={(event) => setLinkValue(event.currentTarget.value)}>
-          <option value="">No link</option>
-          {workspaceChats.map((chat) => (
-            <option key={`chat-${chat.appChatId}`} value={`chat:${chat.appChatId}`}>
-              Thread: {chat.title}
-            </option>
-          ))}
-          {workspaceWorkflows.map((workflow) => (
-            <option key={`workflow-${workflow.id}`} value={`workflow:${workflow.id}`}>
-              Workflow: {workflow.name}
-            </option>
-          ))}
-        </select>
-        <button type="button" onClick={submitCard} disabled={!title.trim()}>
-          Add card
+      {(seedCandidates.length > 0 || lastArchivedCard || error) && (
+        <section className="workspace-board-intake" aria-label="Workspace board intake">
+          {seedCandidates.length > 0 && (
+            <div className="workspace-board-intake-copy">
+              <strong>{seedCandidates.length} untracked workspace item{seedCandidates.length === 1 ? '' : 's'}</strong>
+              <span>
+                Includes threads, workflows, scheduled tasks, and run queue jobs that already belong to this workspace.
+              </span>
+            </div>
+          )}
+          <div className="workspace-board-intake-actions">
+            {seedCandidates.length > 0 && (
+              <button type="button" onClick={seedBoard} disabled={isSeeding}>
+                {isSeeding ? 'Creating...' : `Create ${seedCandidates.length} cards`}
+              </button>
+            )}
+            {lastArchivedCard && (
+              <button type="button" className="secondary" onClick={restoreLastArchivedCard}>
+                Undo archive
+              </button>
+            )}
+          </div>
+          {error && <div className="workspace-board-error" role="alert">{error}</div>}
+        </section>
+      )}
+
+      <form className="workspace-board-add-card" aria-label="Add board card" onSubmit={submitCard}>
+        <label className="workspace-board-field">
+          <span>Card title</span>
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.currentTarget.value)}
+            placeholder="Card title"
+          />
+        </label>
+        <label className="workspace-board-field">
+          <span>Note or next step</span>
+          <input
+            value={body}
+            onChange={(event) => setBody(event.currentTarget.value)}
+            placeholder="Note or next step"
+          />
+        </label>
+        <label className="workspace-board-field">
+          <span>Link</span>
+          <select value={linkValue} onChange={(event) => setLinkValue(event.currentTarget.value)}>
+            <option value="">No link</option>
+            {linkOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label} · {option.meta}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" disabled={!title.trim() || isAdding}>
+          {isAdding ? 'Adding...' : 'Add card'}
         </button>
-      </section>
+      </form>
 
       <div className="workspace-board-columns">
         {board.columns
@@ -203,44 +658,93 @@ export function WorkspaceBoardView({
           .map((column) => {
             const columnCards = cardsByColumn.get(column.id) || []
             return (
-              <section key={column.id} className="workspace-board-column">
+              <section
+                key={column.id}
+                className={`workspace-board-column ${dragOverColumnId === column.id ? 'drag-over' : ''}`}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  setDragOverColumnId(column.id)
+                }}
+                onDragLeave={() => setDragOverColumnId(null)}
+                onDrop={(event) => onColumnDrop(event, column.id)}
+              >
                 <div className="workspace-board-column-header">
                   <h3>{column.name}</h3>
-                  <span>{columnCards.length}</span>
+                  <span>
+                    {columnCards.length}
+                    {column.wipLimit ? ` / ${column.wipLimit}` : ''}
+                  </span>
                 </div>
                 <div className="workspace-board-card-stack">
                   {columnCards.length === 0 ? (
                     <div className="workspace-board-column-empty">No cards</div>
                   ) : (
                     columnCards.map((projected) => (
-                      <article key={projected.card.id} className="workspace-board-card">
+                      <article
+                        key={projected.card.id}
+                        className={`workspace-board-card attention-${projected.attentionState} ${
+                          draggingCardId === projected.card.id ? 'dragging' : ''
+                        }`}
+                        draggable
+                        onDragStart={(event) => onCardDragStart(event, projected)}
+                        onDragEnd={() => {
+                          setDraggingCardId(null)
+                          setDragOverColumnId(null)
+                        }}
+                        onDoubleClick={() => openDetails(projected)}
+                      >
                         <div className="workspace-board-card-topline">
-                          <span className={`workspace-board-status status-${projected.derivedStatus}`}>
-                            {statusLabel(projected)}
+                          <span className={`workspace-board-status status-${projected.attentionState}`}>
+                            {projected.derivedStatus === 'manual' ? projected.laneLabel : projected.statusLabel}
                           </span>
-                          {projected.card.humanOwner && <span>{projected.card.humanOwner}</span>}
+                          {projected.laneStatusMismatch && (
+                            <span className="workspace-board-lane-pill">Lane: {projected.laneLabel}</span>
+                          )}
+                          {projected.card.humanOwner && (
+                            <span className="workspace-board-owner">{projected.card.humanOwner}</span>
+                          )}
                         </div>
                         <h4>{projected.card.title}</h4>
                         {projected.card.body && <p>{projected.card.body}</p>}
+                        {projected.card.nextStep && (
+                          <p className="workspace-board-card-note">Next: {projected.card.nextStep}</p>
+                        )}
+                        {projected.card.blockedReason && (
+                          <p className="workspace-board-card-blocker">Blocked: {projected.card.blockedReason}</p>
+                        )}
                         {projected.linkedTitle && (
                           <button
                             type="button"
                             className="workspace-board-link"
-                            onClick={() => openLinked(projected)}
-                            disabled={projected.isStale}
+                            onClick={() => openDetails(projected)}
+                            aria-label={`Show linked ${projected.linkedKindLabel || 'item'} details for ${projected.card.title}`}
                           >
-                            {projected.linkedTitle}
+                            <span className="workspace-board-link-title">{projected.linkedTitle}</span>
                             {projected.linkedSubtitle && <span>{projected.linkedSubtitle}</span>}
                           </button>
+                        )}
+                        {projected.liveStatusDetail && (
+                          <div className="workspace-board-live-detail">{projected.liveStatusDetail}</div>
+                        )}
+                        {projected.badges.length > 0 && (
+                          <div className="workspace-board-badges" aria-label="Card badges">
+                            {projected.badges.map((badge) => (
+                              <span
+                                key={`${projected.card.id}-${badge.label}`}
+                                className={`workspace-board-badge tone-${badge.tone}`}
+                                title={badge.title}
+                              >
+                                {badge.label}
+                              </span>
+                            ))}
+                          </div>
                         )}
                         <div className="workspace-board-card-actions">
                           <select
                             value={projected.card.columnId}
                             onChange={(event) =>
-                              void onUpdateCard(projected.card.id, {
-                                columnId: event.currentTarget.value as WorkspaceBoardColumnId,
-                                sortOrder: Date.now()
-                              })
+                              void moveCard(projected, event.currentTarget.value as WorkspaceBoardColumnId)
                             }
                             aria-label={`Move ${projected.card.title}`}
                           >
@@ -252,18 +756,21 @@ export function WorkspaceBoardView({
                                 </option>
                               ))}
                           </select>
-                          {projected.card.link?.kind === 'chat' ||
-                          projected.card.link?.kind === 'workflow' ? (
+                          <button type="button" onClick={() => openDetails(projected)}>
+                            Details
+                          </button>
+                          {projected.card.link && (
                             <button
                               type="button"
                               onClick={() => openLinked(projected)}
                               disabled={projected.isStale}
+                              aria-label={`Open linked item for ${projected.card.title}`}
                             >
                               Open
                             </button>
-                          ) : null}
-                          <button type="button" onClick={() => void onDeleteCard(projected.card.id)}>
-                            Remove
+                          )}
+                          <button type="button" className="secondary" onClick={() => void archiveCard(projected)}>
+                            Archive
                           </button>
                         </div>
                       </article>
@@ -274,6 +781,123 @@ export function WorkspaceBoardView({
             )
           })}
       </div>
+
+      {selectedProjected && detailDraft && (
+        <aside className="workspace-board-drawer" aria-label={`${selectedProjected.card.title} details`}>
+          <div className="workspace-board-drawer-header">
+            <div>
+              <p className="workspace-board-kicker">Card Details</p>
+              <h3>{selectedProjected.card.title}</h3>
+            </div>
+            <button
+              type="button"
+              className="workspace-board-drawer-close"
+              onClick={() => {
+                setSelectedCardId(null)
+                setDetailDraft(null)
+              }}
+              aria-label="Close card details"
+            >
+              Close
+            </button>
+          </div>
+          <div className="workspace-board-drawer-fields">
+            <label className="workspace-board-field">
+              <span>Title</span>
+              <input
+                value={detailDraft.title}
+                onChange={(event) => setDetailDraft({ ...detailDraft, title: event.currentTarget.value })}
+              />
+            </label>
+            <label className="workspace-board-field">
+              <span>Body</span>
+              <textarea
+                value={detailDraft.body}
+                onChange={(event) => setDetailDraft({ ...detailDraft, body: event.currentTarget.value })}
+                rows={4}
+              />
+            </label>
+            <label className="workspace-board-field">
+              <span>Owner</span>
+              <input
+                value={detailDraft.humanOwner}
+                onChange={(event) => setDetailDraft({ ...detailDraft, humanOwner: event.currentTarget.value })}
+                placeholder="Human owner"
+              />
+            </label>
+            <label className="workspace-board-field">
+              <span>Labels</span>
+              <input
+                value={detailDraft.labels}
+                onChange={(event) => setDetailDraft({ ...detailDraft, labels: event.currentTarget.value })}
+                placeholder="review, frontend"
+              />
+            </label>
+            <label className="workspace-board-field">
+              <span>Next step</span>
+              <input
+                value={detailDraft.nextStep}
+                onChange={(event) => setDetailDraft({ ...detailDraft, nextStep: event.currentTarget.value })}
+                placeholder="Next action"
+              />
+            </label>
+            <label className="workspace-board-field">
+              <span>Blocked reason</span>
+              <input
+                value={detailDraft.blockedReason}
+                onChange={(event) => setDetailDraft({ ...detailDraft, blockedReason: event.currentTarget.value })}
+                placeholder="What is blocking this?"
+              />
+            </label>
+            <label className="workspace-board-field">
+              <span>Reminder</span>
+              <input
+                value={detailDraft.reminderAt}
+                onChange={(event) => setDetailDraft({ ...detailDraft, reminderAt: event.currentTarget.value })}
+                placeholder="ISO date or note"
+              />
+            </label>
+          </div>
+          {selectedProjected.card.link && (
+            <div className="workspace-board-linked-detail">
+              <strong>{selectedProjected.linkedKindLabel || selectedProjected.card.link.kind}</strong>
+              <span>{selectedProjected.linkedTitle || selectedProjected.card.link.id}</span>
+              {selectedProjected.staleReason && <small>{selectedProjected.staleReason}</small>}
+              <div className="workspace-board-linked-actions">
+                <button type="button" onClick={() => openLinked(selectedProjected)} disabled={selectedProjected.isStale}>
+                  Open full item
+                </button>
+                <button type="button" className="secondary" onClick={unlinkSelectedCard}>
+                  Unlink
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="workspace-board-activity">
+            <strong>Activity</strong>
+            {selectedProjected.card.activity.length === 0 ? (
+              <span>No activity yet.</span>
+            ) : (
+              selectedProjected.card.activity.slice(-5).map((entry) => (
+                <span key={entry.id}>
+                  {entry.action} · {new Date(entry.at).toLocaleString()}
+                </span>
+              ))
+            )}
+          </div>
+          <div className="workspace-board-drawer-actions">
+            <button type="button" onClick={saveDetails} disabled={isSavingDetail || !detailDraft.title.trim()}>
+              {isSavingDetail ? 'Saving...' : 'Save'}
+            </button>
+            <button type="button" className="secondary" onClick={() => void archiveCard(selectedProjected)}>
+              Archive
+            </button>
+            <button type="button" className="danger" onClick={() => void permanentlyDeleteSelectedCard()}>
+              Delete permanently
+            </button>
+          </div>
+        </aside>
+      )}
     </div>
   )
 }

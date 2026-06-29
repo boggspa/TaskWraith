@@ -71,4 +71,32 @@ describe('workspace board projection', () => {
       })
     ).toBe('stale')
   })
+
+  it('marks successful chat runs review-ready and exposes live badges', () => {
+    const card = makeCard({ link: { kind: 'chat', id: 'chat-1' }, columnId: 'ready' })
+    const projected = buildWorkspaceBoardProjectedCards({
+      cards: [card],
+      chats: [
+        makeChat({
+          provider: 'codex',
+          runs: [
+            {
+              runId: 'run-1',
+              startedAt: '2026-06-29T00:00:00.000Z',
+              endedAt: '2026-06-29T00:01:00.000Z',
+              status: 'success'
+            }
+          ]
+        })
+      ],
+      workflows: [],
+      scheduledTasks: [],
+      runQueueJobs: []
+    })
+
+    expect(projected[0].derivedStatus).toBe('review-ready')
+    expect(projected[0].statusLabel).toBe('Review Ready')
+    expect(projected[0].badges.some((badge) => badge.label === 'Codex')).toBe(true)
+    expect(projected[0].badges.some((badge) => badge.label === 'Run review ready')).toBe(true)
+  })
 })

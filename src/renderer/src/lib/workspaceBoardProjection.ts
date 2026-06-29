@@ -6,6 +6,7 @@ import type {
   WorkspaceBoardCard,
   WorkspaceBoardColumnId
 } from '../../../main/store/types'
+import { ACTIVE_RUN_QUEUE_STATUSES } from './chatBusyState'
 
 export type WorkspaceBoardDerivedStatus =
   | 'manual'
@@ -16,12 +17,43 @@ export type WorkspaceBoardDerivedStatus =
   | 'done'
   | 'stale'
 
+export type WorkspaceBoardAttentionState =
+  | 'neutral'
+  | 'running'
+  | 'needs-input'
+  | 'blocked'
+  | 'review-ready'
+  | 'done'
+  | 'stale'
+
+export type WorkspaceBoardBadgeTone =
+  | 'muted'
+  | 'running'
+  | 'warning'
+  | 'danger'
+  | 'success'
+  | 'accent'
+
+export interface WorkspaceBoardProjectedBadge {
+  label: string
+  tone: WorkspaceBoardBadgeTone
+  title?: string
+}
+
 export interface WorkspaceBoardProjectedCard {
   card: WorkspaceBoardCard
   columnId: WorkspaceBoardColumnId
+  laneLabel: string
   derivedStatus: WorkspaceBoardDerivedStatus
+  statusLabel: string
+  liveStatusDetail?: string
+  attentionState: WorkspaceBoardAttentionState
+  badges: WorkspaceBoardProjectedBadge[]
   linkedTitle?: string
   linkedSubtitle?: string
+  linkedKindLabel?: string
+  staleReason?: string
+  laneStatusMismatch: boolean
   isStale: boolean
 }
 
@@ -34,20 +66,103 @@ export interface WorkspaceBoardProjectionInput {
   runningChatIds?: Set<string>
 }
 
+const COLUMN_LABELS: Record<WorkspaceBoardColumnId, string> = {
+  inbox: 'Inbox',
+  ready: 'Ready',
+  running: 'Running',
+  'needs-input': 'Needs Input',
+  blocked: 'Blocked',
+  'review-ready': 'Review Ready',
+  done: 'Done',
+  archived: 'Archived'
+}
+
+const STATUS_LABELS: Record<WorkspaceBoardDerivedStatus, string> = {
+  manual: 'Manual',
+  running: 'Running',
+  'needs-input': 'Needs Input',
+  blocked: 'Blocked',
+  'review-ready': 'Review Ready',
+  done: 'Done',
+  stale: 'Stale Link'
+}
+
 function latestRun(chat: ChatRecord) {
   return chat.runs && chat.runs.length > 0 ? chat.runs[chat.runs.length - 1] : null
+}
+
+function isSuccessRunStatus(status?: string): boolean {
+  return status === 'success' || status === 'success_with_warnings' || status === 'completed'
+}
+
+function isRunningRunStatus(status?: string): boolean {
+  return status === 'running' || status === 'sleeping'
+}
+
+function hasOpenTodos(chat: ChatRecord): number {
+  let count = 0
+  for (const todos of Object.values(chat.chatTodos || {})) {
+    count += todos.filter((todo) => todo.status !== 'completed').length
+  }
+  return count
+}
+
+function pinnedMessageCount(chat: ChatRecord): number {
+  return (chat.messages || []).filter((message) => Number.isFinite(message.metadata?.pinnedAt)).length
+}
+
+function formatProvider(value?: string): string | undefined {
+  if (!value) return undefined
+  return value
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function formatDateTime(value?: string): string | undefined {
+  if (!value) return undefined
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return undefined
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+function columnStatus(columnId: WorkspaceBoardColumnId): WorkspaceBoardDerivedStatus {
+  if (columnId === 'running') return 'running'
+  if (columnId === 'needs-input') return 'needs-input'
+  if (columnId === 'blocked') return 'blocked'
+  if (columnId === 'review-ready') return 'review-ready'
+  if (columnId === 'done' || columnId === 'archived') return 'done'
+  return 'manual'
+}
+
+function attentionForStatus(status: WorkspaceBoardDerivedStatus): WorkspaceBoardAttentionState {
+  if (status === 'manual') return 'neutral'
+  return status
+}
+
+export function workspaceBoardColumnLabel(columnId: WorkspaceBoardColumnId): string {
+  return COLUMN_LABELS[columnId] || columnId
+}
+
+export function workspaceBoardStatusLabel(status: WorkspaceBoardDerivedStatus): string {
+  return STATUS_LABELS[status] || status
 }
 
 export function deriveWorkspaceBoardStatus(
   card: WorkspaceBoardCard,
   input: Omit<WorkspaceBoardProjectionInput, 'cards'>
 ): WorkspaceBoardDerivedStatus {
+  if (card.archived) return 'done'
   const link = card.link
   if (!link) {
-    if (card.columnId === 'blocked') return 'blocked'
-    if (card.columnId === 'review-ready') return 'review-ready'
-    if (card.columnId === 'done' || card.columnId === 'archived') return 'done'
-    return 'manual'
+    if (card.blockedReason) return 'blocked'
+    return columnStatus(card.columnId)
   }
   if (link.kind === 'chat') {
     const chat = input.chats.find((item) => item.appChatId === link.id)
@@ -55,18 +170,21 @@ export function deriveWorkspaceBoardStatus(
     if (input.runningChatIds?.has(chat.appChatId)) return 'running'
     if (chat.activeGoal?.status === 'blocked') return 'blocked'
     const run = latestRun(chat)
-    if (run?.status === 'running') return 'running'
+    if (isRunningRunStatus(run?.status)) return 'running'
     if (run?.status === 'failed' || run?.status === 'cancelled') return 'needs-input'
-    if (run?.status === 'completed') return 'review-ready'
-    return 'manual'
+    if (isSuccessRunStatus(run?.status)) return 'review-ready'
+    return columnStatus(card.columnId)
   }
   if (link.kind === 'workflow') {
     const workflow = input.workflows.find((item) => item.id === link.id)
     if (!workflow) return 'stale'
-    if (workflow.activeExecutionId) return 'running'
+    if (workflow.activeExecutionId || workflow.lastStatus === 'running' || workflow.lastStatus === 'queued') {
+      return 'running'
+    }
     if (workflow.lastStatus === 'failed' || workflow.failureStreak > 0) return 'needs-input'
     if (workflow.lastStatus === 'completed') return 'review-ready'
-    return 'manual'
+    if (workflow.lastStatus === 'cancelled') return 'needs-input'
+    return columnStatus(card.columnId)
   }
   if (link.kind === 'scheduled-task') {
     const task = input.scheduledTasks.find((item) => item.id === link.id)
@@ -74,48 +192,167 @@ export function deriveWorkspaceBoardStatus(
     if (task.status === 'running' || task.status === 'due') return 'running'
     if (task.status === 'failed' || task.status === 'cancelled') return 'needs-input'
     if (task.status === 'completed') return 'done'
-    return 'manual'
+    return columnStatus(card.columnId)
   }
   if (link.kind === 'run-queue-job') {
     const job = input.runQueueJobs.find((item) => item.id === link.id || item.runId === link.id)
     if (!job) return 'stale'
-    if (job.status === 'active' || job.status === 'starting' || job.status === 'steer_promoting') {
-      return 'running'
-    }
+    if (ACTIVE_RUN_QUEUE_STATUSES.has(job.status) || job.status === 'queued') return 'running'
     if (job.status === 'failed' || job.status === 'cancelled') return 'needs-input'
     if (job.status === 'completed') return 'done'
+    return columnStatus(card.columnId)
   }
-  return 'manual'
+  return columnStatus(card.columnId)
 }
 
 export function buildWorkspaceBoardProjectedCards(
   input: WorkspaceBoardProjectionInput
 ): WorkspaceBoardProjectedCard[] {
+  const chatsById = new Map(input.chats.map((chat) => [chat.appChatId, chat]))
+  const workflowsById = new Map(input.workflows.map((workflow) => [workflow.id, workflow]))
+  const tasksById = new Map(input.scheduledTasks.map((task) => [task.id, task]))
+  const jobsById = new Map<string, RunQueueJob>()
+  for (const job of input.runQueueJobs) {
+    jobsById.set(job.id, job)
+    jobsById.set(job.runId, job)
+  }
+
   return input.cards.map((card) => {
     const derivedStatus = deriveWorkspaceBoardStatus(card, input)
     const link = card.link
-    const chat = link?.kind === 'chat' ? input.chats.find((item) => item.appChatId === link.id) : null
-    const workflow =
-      link?.kind === 'workflow' ? input.workflows.find((item) => item.id === link.id) : null
-    const task =
-      link?.kind === 'scheduled-task'
-        ? input.scheduledTasks.find((item) => item.id === link.id)
-        : null
-    const job =
-      link?.kind === 'run-queue-job'
-        ? input.runQueueJobs.find((item) => item.id === link.id || item.runId === link.id)
-        : null
+    const chat = link?.kind === 'chat' ? chatsById.get(link.id) || null : null
+    const workflow = link?.kind === 'workflow' ? workflowsById.get(link.id) || null : null
+    const task = link?.kind === 'scheduled-task' ? tasksById.get(link.id) || null : null
+    const job = link?.kind === 'run-queue-job' ? jobsById.get(link.id) || null : null
+    const badges: WorkspaceBoardProjectedBadge[] = []
+    let linkedKindLabel: string | undefined
+    let liveStatusDetail: string | undefined
+    let staleReason: string | undefined
+
+    if (chat) {
+      linkedKindLabel = 'Thread'
+      const provider = formatProvider(chat.provider)
+      if (provider) badges.push({ label: provider, tone: 'muted', title: 'Thread provider' })
+      if (chat.activeGoal?.status) {
+        badges.push({
+          label: `Goal ${chat.activeGoal.status}`,
+          tone:
+            chat.activeGoal.status === 'blocked'
+              ? 'danger'
+              : chat.activeGoal.status === 'completed'
+                ? 'success'
+                : 'accent',
+          title: chat.activeGoal.objective
+        })
+      }
+      const todoCount = hasOpenTodos(chat)
+      if (todoCount > 0) badges.push({ label: `${todoCount} todos`, tone: 'accent' })
+      const pinCount = pinnedMessageCount(chat)
+      if (pinCount > 0) badges.push({ label: `${pinCount} pins`, tone: 'muted' })
+      const run = latestRun(chat)
+      if (run?.status) {
+        badges.push({
+          label: `Run ${workspaceBoardStatusLabel(derivedStatus).toLowerCase()}`,
+          tone:
+            derivedStatus === 'running'
+              ? 'running'
+              : derivedStatus === 'needs-input'
+                ? 'danger'
+                : derivedStatus === 'review-ready'
+                  ? 'success'
+                  : 'muted',
+          title: run.runId
+        })
+      }
+      if (run?.endedAt) liveStatusDetail = `Last run ended ${formatDateTime(run.endedAt)}`
+      if (run?.warnings?.length) {
+        badges.push({ label: `${run.warnings.length} warnings`, tone: 'warning' })
+      }
+    } else if (workflow) {
+      linkedKindLabel = 'Workflow'
+      const provider = formatProvider(workflow.template.provider)
+      if (provider) badges.push({ label: provider, tone: 'muted', title: 'Workflow provider' })
+      if (workflow.enabled === false) badges.push({ label: 'Paused', tone: 'warning' })
+      if (workflow.failureStreak > 0) {
+        badges.push({ label: `${workflow.failureStreak} failures`, tone: 'danger' })
+      }
+      if (workflow.lastRunIterationCount && workflow.lastRunIterationCount > 0) {
+        badges.push({ label: `${workflow.lastRunIterationCount}x loop`, tone: 'accent' })
+      }
+      liveStatusDetail =
+        workflow.activeExecutionId
+          ? 'Execution in progress'
+          : workflow.lastStatus
+            ? `Last ${workflow.lastStatus}${workflow.lastRunAt ? ` at ${formatDateTime(workflow.lastRunAt)}` : ''}`
+            : undefined
+    } else if (task) {
+      linkedKindLabel = 'Scheduled Task'
+      const provider = formatProvider(task.provider)
+      if (provider) badges.push({ label: provider, tone: 'muted', title: 'Scheduled provider' })
+      badges.push({
+        label: task.status,
+        tone:
+          task.status === 'failed' || task.status === 'cancelled'
+            ? 'danger'
+            : task.status === 'completed'
+              ? 'success'
+              : task.status === 'running' || task.status === 'due'
+                ? 'running'
+                : 'muted'
+      })
+      liveStatusDetail = task.lastError || `Scheduled for ${formatDateTime(task.runAt) || task.runAt}`
+    } else if (job) {
+      linkedKindLabel = 'Run Queue'
+      const provider = formatProvider(job.provider)
+      if (provider) badges.push({ label: provider, tone: 'muted', title: 'Run provider' })
+      badges.push({
+        label: job.status,
+        tone:
+          job.status === 'failed' || job.status === 'cancelled'
+            ? 'danger'
+            : job.status === 'completed'
+              ? 'success'
+              : job.status === 'active' || job.status === 'starting' || job.status === 'queued'
+                ? 'running'
+                : 'muted'
+      })
+      if (job.source) badges.push({ label: job.source, tone: 'muted', title: 'Run source' })
+      liveStatusDetail = job.lastError || job.statusReason || job.resumeHint
+    } else if (link) {
+      linkedKindLabel = link.kind
+      staleReason = `${link.kind} ${link.id} is missing or no longer belongs to this workspace.`
+    }
+
+    if (card.labels?.length) {
+      for (const label of card.labels.slice(0, 4)) badges.push({ label, tone: 'accent' })
+    }
+    if (card.blockedReason) badges.push({ label: 'Blocked', tone: 'danger', title: card.blockedReason })
+    if (card.reminderAt) badges.push({ label: 'Reminder', tone: 'warning', title: card.reminderAt })
+
+    const manualLaneStatus = columnStatus(card.columnId)
+    const laneStatusMismatch =
+      derivedStatus !== 'manual' && manualLaneStatus !== 'manual' && manualLaneStatus !== derivedStatus
+
     return {
       card,
       columnId: card.columnId,
+      laneLabel: workspaceBoardColumnLabel(card.columnId),
       derivedStatus,
-      linkedTitle: chat?.title || workflow?.name || task?.displayPrompt || job?.promptPreview,
+      statusLabel: workspaceBoardStatusLabel(derivedStatus),
+      liveStatusDetail,
+      attentionState: attentionForStatus(derivedStatus),
+      badges: badges.slice(0, 8),
+      linkedTitle: chat?.title || workflow?.name || task?.displayPrompt || task?.prompt || job?.promptPreview,
       linkedSubtitle:
+        linkedKindLabel ||
         chat?.provider ||
         workflow?.template.provider ||
         task?.provider ||
         job?.provider ||
         (link ? link.kind : undefined),
+      linkedKindLabel,
+      staleReason,
+      laneStatusMismatch,
       isStale: derivedStatus === 'stale'
     }
   })

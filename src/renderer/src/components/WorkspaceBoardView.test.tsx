@@ -80,10 +80,12 @@ describe('WorkspaceBoardView', () => {
     expect(html).toContain('Repo Board')
     expect(html).toContain('Add card')
     expect(html).toContain('Open')
-    expect(html).toContain('Remove')
+    expect(html).toContain('Archive')
+    expect(html).toContain('Details')
     for (const forbidden of ['Dispatch', 'Approve', 'Deny', 'Delegate', 'Handoff', 'Retry', 'Cancel']) {
       expect(html).not.toContain(forbidden)
     }
+    expect(html).not.toContain('Remove')
     expect(html).not.toContain('&gt;Run&lt;')
   })
 })

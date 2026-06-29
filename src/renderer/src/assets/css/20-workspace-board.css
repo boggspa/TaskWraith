@@ -1,11 +1,12 @@
 .workspace-board-pane {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 28px;
+  gap: 14px;
+  padding: 24px;
   overflow: hidden;
   background: color-mix(
     in srgb,
@@ -25,51 +26,114 @@
 .workspace-board-kicker {
   margin: 0 0 4px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: uppercase;
 }
 
-.workspace-board-header h2 {
+.workspace-board-header h2,
+.workspace-board-drawer-header h3 {
   margin: 0;
   color: var(--text-primary);
-  font-size: 26px;
   letter-spacing: 0;
 }
 
-.workspace-board-summary {
+.workspace-board-header h2 {
+  font-size: 24px;
+}
+
+.workspace-board-summary,
+.workspace-board-badges {
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workspace-board-summary {
   justify-content: flex-end;
-  gap: 8px;
   color: var(--text-secondary);
   font-size: 12px;
 }
 
 .workspace-board-summary span,
-.workspace-board-status {
+.workspace-board-status,
+.workspace-board-lane-pill,
+.workspace-board-badge {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 2px 8px;
+  min-height: 20px;
+  padding: 2px 7px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--panel-bg) 68%, transparent);
 }
 
-.workspace-board-add-card {
-  display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.5fr) minmax(180px, 0.9fr) auto;
+.workspace-board-intake {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.workspace-board-intake-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workspace-board-intake-copy strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.workspace-board-intake-copy span,
+.workspace-board-error {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.workspace-board-intake-actions {
+  display: flex;
+  align-items: center;
   gap: 8px;
   flex: 0 0 auto;
 }
 
-.workspace-board-add-card input,
-.workspace-board-add-card select,
+.workspace-board-error {
+  flex-basis: 100%;
+  color: var(--danger, #ff5f6d);
+}
+
+.workspace-board-add-card {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.35fr) minmax(190px, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.workspace-board-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.workspace-board-field input,
+.workspace-board-field select,
+.workspace-board-field textarea,
 .workspace-board-card-actions select {
   min-width: 0;
-  height: 34px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 78%, transparent);
   border-radius: 8px;
   background: color-mix(in srgb, var(--panel-bg) 76%, transparent);
@@ -78,8 +142,23 @@
   font: inherit;
 }
 
+.workspace-board-field input,
+.workspace-board-field select,
+.workspace-board-card-actions select {
+  height: 34px;
+}
+
+.workspace-board-field textarea {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  resize: vertical;
+}
+
 .workspace-board-add-card button,
-.workspace-board-card-actions button {
+.workspace-board-card-actions button,
+.workspace-board-intake button,
+.workspace-board-drawer button,
+.workspace-board-linked-actions button {
   height: 34px;
   border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
   border-radius: 8px;
@@ -92,9 +171,38 @@
 }
 
 .workspace-board-add-card button:disabled,
-.workspace-board-card-actions button:disabled {
+.workspace-board-card-actions button:disabled,
+.workspace-board-intake button:disabled,
+.workspace-board-drawer button:disabled,
+.workspace-board-linked-actions button:disabled {
   cursor: default;
   opacity: 0.45;
+}
+
+.workspace-board-card-actions button.secondary,
+.workspace-board-intake button.secondary,
+.workspace-board-drawer button.secondary,
+.workspace-board-linked-actions button.secondary {
+  border-color: color-mix(in srgb, var(--panel-border) 78%, transparent);
+  background: color-mix(in srgb, var(--panel-bg) 72%, transparent);
+}
+
+.workspace-board-drawer button.danger {
+  border-color: color-mix(in srgb, var(--danger, #ff5f6d) 52%, transparent);
+  background: color-mix(in srgb, var(--danger, #ff5f6d) 14%, transparent);
+}
+
+.workspace-board-field input:focus-visible,
+.workspace-board-field select:focus-visible,
+.workspace-board-field textarea:focus-visible,
+.workspace-board-card-actions select:focus-visible,
+.workspace-board-add-card button:focus-visible,
+.workspace-board-card-actions button:focus-visible,
+.workspace-board-intake button:focus-visible,
+.workspace-board-link:focus-visible,
+.workspace-board-drawer button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: 2px;
 }
 
 .workspace-board-columns {
@@ -102,7 +210,7 @@
   min-height: 0;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(260px, 1fr);
+  grid-auto-columns: minmax(270px, 1fr);
   gap: 12px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -114,14 +222,24 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  border-radius: 8px;
+}
+
+.workspace-board-column.drag-over {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .workspace-board-column-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 0 2px;
+  padding: 0 2px 2px;
+  background: color-mix(in srgb, var(--content-bg, var(--panel-bg)) 88%, transparent);
 }
 
 .workspace-board-column-header h3 {
@@ -142,7 +260,7 @@
   flex-direction: column;
   gap: 8px;
   overflow-y: auto;
-  padding-right: 2px;
+  padding: 2px;
 }
 
 .workspace-board-card,
@@ -160,16 +278,40 @@
   padding: 12px;
 }
 
+.workspace-board-card.dragging {
+  opacity: 0.58;
+}
+
+.workspace-board-card.attention-needs-input,
+.workspace-board-card.attention-blocked,
+.workspace-board-card.attention-stale {
+  border-color: color-mix(in srgb, var(--danger, #ff5f6d) 34%, var(--panel-border));
+}
+
+.workspace-board-card.attention-running {
+  border-color: color-mix(in srgb, var(--warning, #f6b44b) 34%, var(--panel-border));
+}
+
+.workspace-board-card.attention-review-ready,
+.workspace-board-card.attention-done {
+  border-color: color-mix(in srgb, var(--success, #4ccf7a) 30%, var(--panel-border));
+}
+
 .workspace-board-card-topline {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   color: var(--text-secondary);
   font-size: 11px;
 }
 
-.workspace-board-status {
+.workspace-board-owner {
+  margin-left: auto;
+}
+
+.workspace-board-status,
+.workspace-board-lane-pill,
+.workspace-board-badge {
   min-height: 18px;
   padding: 1px 6px;
   font-size: 10px;
@@ -179,22 +321,35 @@
   color: color-mix(in srgb, var(--text-primary) 82%, transparent);
 }
 
-.workspace-board-status.status-running {
-  border-color: color-mix(in srgb, #f6b44b 42%, transparent);
-  background: color-mix(in srgb, #f6b44b 14%, transparent);
+.workspace-board-status.status-running,
+.workspace-board-badge.tone-running {
+  border-color: color-mix(in srgb, var(--warning, #f6b44b) 42%, transparent);
+  background: color-mix(in srgb, var(--warning, #f6b44b) 14%, transparent);
 }
 
 .workspace-board-status.status-needs-input,
 .workspace-board-status.status-blocked,
-.workspace-board-status.status-stale {
-  border-color: color-mix(in srgb, #ff5f6d 42%, transparent);
-  background: color-mix(in srgb, #ff5f6d 12%, transparent);
+.workspace-board-status.status-stale,
+.workspace-board-badge.tone-danger {
+  border-color: color-mix(in srgb, var(--danger, #ff5f6d) 42%, transparent);
+  background: color-mix(in srgb, var(--danger, #ff5f6d) 12%, transparent);
 }
 
 .workspace-board-status.status-review-ready,
-.workspace-board-status.status-done {
-  border-color: color-mix(in srgb, #4ccf7a 42%, transparent);
-  background: color-mix(in srgb, #4ccf7a 12%, transparent);
+.workspace-board-status.status-done,
+.workspace-board-badge.tone-success {
+  border-color: color-mix(in srgb, var(--success, #4ccf7a) 42%, transparent);
+  background: color-mix(in srgb, var(--success, #4ccf7a) 12%, transparent);
+}
+
+.workspace-board-badge.tone-warning {
+  border-color: color-mix(in srgb, var(--warning, #f6b44b) 42%, transparent);
+  background: color-mix(in srgb, var(--warning, #f6b44b) 11%, transparent);
+}
+
+.workspace-board-badge.tone-accent {
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .workspace-board-card h4 {
@@ -204,11 +359,23 @@
   letter-spacing: 0;
 }
 
-.workspace-board-card p {
+.workspace-board-card p,
+.workspace-board-live-detail,
+.workspace-board-activity span,
+.workspace-board-linked-detail span,
+.workspace-board-linked-detail small {
   margin: 0;
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.35;
+}
+
+.workspace-board-card-note {
+  color: color-mix(in srgb, var(--text-primary) 82%, transparent);
+}
+
+.workspace-board-card-blocker {
+  color: var(--danger, #ff5f6d);
 }
 
 .workspace-board-link {
@@ -233,7 +400,14 @@
   font-size: 11px;
 }
 
-.workspace-board-card-actions {
+.workspace-board-link .workspace-board-link-title {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.workspace-board-card-actions,
+.workspace-board-linked-actions,
+.workspace-board-drawer-actions {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -241,11 +415,13 @@
 }
 
 .workspace-board-card-actions select {
-  flex: 1 1 120px;
+  flex: 1 1 110px;
   height: 30px;
 }
 
-.workspace-board-card-actions button {
+.workspace-board-card-actions button,
+.workspace-board-linked-actions button,
+.workspace-board-drawer-actions button {
   height: 30px;
   padding: 0 10px;
 }
@@ -278,12 +454,68 @@
   margin: 0;
 }
 
+.workspace-board-drawer {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 8;
+  width: min(420px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 84%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-bg) 96%, #000 4%);
+  box-shadow: 0 18px 48px color-mix(in srgb, #000 34%, transparent);
+  overflow: auto;
+}
+
+.workspace-board-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-board-drawer-header h3 {
+  font-size: 18px;
+}
+
+.workspace-board-drawer-close {
+  flex: 0 0 auto;
+}
+
+.workspace-board-drawer-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.workspace-board-linked-detail,
+.workspace-board-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--content-bg, var(--panel-bg)) 58%, transparent);
+}
+
+.workspace-board-linked-detail strong,
+.workspace-board-activity strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
 @media (max-width: 900px) {
   .workspace-board-pane {
-    padding: 18px;
+    padding: 16px;
   }
 
-  .workspace-board-header {
+  .workspace-board-header,
+  .workspace-board-intake {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -294,5 +526,14 @@
 
   .workspace-board-add-card {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-board-columns {
+    grid-auto-columns: minmax(82vw, 1fr);
+    scroll-snap-type: x mandatory;
+  }
+
+  .workspace-board-column {
+    scroll-snap-align: start;
   }
 }
