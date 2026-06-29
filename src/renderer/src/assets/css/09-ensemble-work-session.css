@@ -2728,9 +2728,22 @@
 }
 
 .popout-root[data-popout-family="workspace"]
-  :is(.diff-detail, .file-editor-code-surface, .workbench-stage) {
+  :is(.diff-detail, .file-editor-code-surface, .workbench-main, .workbench-stage, .workbench-pane) {
   background-color: var(--popout-editor-bg) !important;
   background-image: none !important;
+}
+
+.popout-root[data-popout-family="workspace"] .workbench-stage {
+  box-shadow: inset 1px 0 0 var(--popout-rim);
+}
+
+.popout-root[data-popout-family="workspace"]
+  :is(.workbench-breadcrumbs, .workbench-status, .workbench-bottom-bar > span) {
+  color: var(--text-muted);
+}
+
+.popout-root[data-popout-family="workspace"] .workbench-breadcrumbs > span > span:last-child {
+  color: var(--text-secondary);
 }
 
 .popout-root[data-popout-family="workspace"] .diff-lines-section {
