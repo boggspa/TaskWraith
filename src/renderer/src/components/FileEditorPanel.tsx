@@ -87,6 +87,7 @@ interface FileEditorGitActionsProps {
   selectedHasUnstagedChanges: boolean
   selectedHasStagedChanges: boolean
   stagedCount: number
+  outOfScopeStagedCount: number
   dirtyBufferCount: number
   lineWrapEnabled: boolean
   onDeleteRequest: () => void
@@ -492,25 +493,48 @@ export function FileEditorPanel({
     workspacePath
   ])
 
-  const selectedRepoPath = useMemo(() => {
-    if (!selectedPath) return ''
+  const workspaceRepoPrefix = useMemo(() => {
     const repoRoot = gitSnapshot?.repoRoot
-    if (!repoRoot || !workspacePath) return selectedPath
+    if (!repoRoot || !workspacePath) return ''
     const normalizedRepo = normalizeAbsolutePath(repoRoot)
     const normalizedWorkspace = normalizeAbsolutePath(workspacePath)
-    if (normalizedWorkspace === normalizedRepo) return selectedPath
+    if (normalizedWorkspace === normalizedRepo) return ''
     if (normalizedWorkspace.startsWith(`${normalizedRepo}/`)) {
-      return `${normalizedWorkspace.slice(normalizedRepo.length + 1)}/${selectedPath}`
+      return normalizedWorkspace.slice(normalizedRepo.length + 1)
     }
+    return ''
+  }, [gitSnapshot?.repoRoot, workspacePath])
+
+  const selectedRepoPath = useMemo(() => {
+    if (!selectedPath) return ''
+    if (workspaceRepoPrefix) return `${workspaceRepoPrefix}/${selectedPath}`
     return selectedPath
-  }, [gitSnapshot?.repoRoot, selectedPath, workspacePath])
+  }, [selectedPath, workspaceRepoPrefix])
 
   const selectedGitFile = useMemo<GitFileStatus | undefined>(() => {
     if (!selectedRepoPath) return undefined
     return gitSnapshot?.files.find((file) => file.path === selectedRepoPath)
   }, [gitSnapshot?.files, selectedRepoPath])
 
-  const stagedCount = gitSnapshot?.counts.staged ?? 0
+  const stagedFileCounts = useMemo(() => {
+    const stagedFiles = (gitSnapshot?.files ?? []).filter((file) => file.staged)
+    if (!workspaceRepoPrefix) {
+      return { staged: stagedFiles.length, outOfScope: 0 }
+    }
+    const prefix = `${workspaceRepoPrefix}/`
+    let staged = 0
+    let outOfScope = 0
+    for (const file of stagedFiles) {
+      if (file.path === workspaceRepoPrefix || file.path.startsWith(prefix)) {
+        staged += 1
+      } else {
+        outOfScope += 1
+      }
+    }
+    return { staged, outOfScope }
+  }, [gitSnapshot?.files, workspaceRepoPrefix])
+  const stagedCount = stagedFileCounts.staged
+  const outOfScopeStagedCount = stagedFileCounts.outOfScope
   const selectedHasUnstagedChanges = Boolean(selectedGitFile?.unstaged)
   const selectedHasStagedChanges = Boolean(selectedGitFile?.staged)
 
@@ -1224,6 +1248,14 @@ export function FileEditorPanel({
   const commitStagedChanges = async () => {
     const message = commitMessage.trim()
     if (!workspacePath || !message || stagedCount === 0) return
+    if (outOfScopeStagedCount > 0) {
+      const nextMessage = `${outOfScopeStagedCount} staged ${
+        outOfScopeStagedCount === 1 ? 'file is' : 'files are'
+      } outside this workspace. Unstage or commit them elsewhere first.`
+      setGitMessage(nextMessage)
+      setStatus(nextMessage)
+      return
+    }
 
     setIsLoading(true)
     setStatus('Committing staged changes')
@@ -1308,6 +1340,7 @@ export function FileEditorPanel({
             selectedHasUnstagedChanges={selectedHasUnstagedChanges}
             selectedHasStagedChanges={selectedHasStagedChanges}
             stagedCount={stagedCount}
+            outOfScopeStagedCount={outOfScopeStagedCount}
             dirtyBufferCount={dirtyBufferCount}
             lineWrapEnabled={lineWrapEnabled}
             onDeleteRequest={() => setShowDeleteConfirm(true)}
@@ -1358,9 +1391,17 @@ export function FileEditorPanel({
           <div className="file-editor-modal-backdrop">
             <div className="file-editor-confirm-card" role="dialog" aria-modal="true">
               <strong>Commit staged changes</strong>
-              <span>
-                {stagedCount} staged file{stagedCount === 1 ? '' : 's'} will be committed.
-              </span>
+              {outOfScopeStagedCount > 0 ? (
+                <span>
+                  {outOfScopeStagedCount} staged{' '}
+                  {outOfScopeStagedCount === 1 ? 'file is' : 'files are'} outside this workspace.
+                  Unstage or commit {outOfScopeStagedCount === 1 ? 'it' : 'them'} elsewhere first.
+                </span>
+              ) : (
+                <span>
+                  {stagedCount} staged file{stagedCount === 1 ? '' : 's'} will be committed.
+                </span>
+              )}
               <input
                 className="file-editor-commit-input"
                 aria-label="Commit message"
@@ -1374,7 +1415,12 @@ export function FileEditorPanel({
                   className="btn btn-sm"
                   type="button"
                   onClick={() => void commitStagedChanges()}
-                  disabled={!commitMessage.trim() || isLoading || stagedCount === 0}
+                  disabled={
+                    !commitMessage.trim() ||
+                    isLoading ||
+                    stagedCount === 0 ||
+                    outOfScopeStagedCount > 0
+                  }
                 >
                   Commit
                 </button>
@@ -1551,6 +1597,7 @@ function FileEditorGitActions({
   selectedHasUnstagedChanges,
   selectedHasStagedChanges,
   stagedCount,
+  outOfScopeStagedCount,
   dirtyBufferCount,
   lineWrapEnabled,
   onDeleteRequest,
@@ -1562,6 +1609,17 @@ function FileEditorGitActions({
   onToggleLineWrap,
   onOpenQuickOpen
 }: FileEditorGitActionsProps) {
+  const commitDisabled =
+    !workspacePath || stagedCount === 0 || outOfScopeStagedCount > 0 || isLoading
+  const commitTitle =
+    outOfScopeStagedCount > 0
+      ? `${outOfScopeStagedCount} staged ${
+          outOfScopeStagedCount === 1 ? 'file is' : 'files are'
+        } outside this workspace`
+      : stagedCount > 0
+        ? `Commit ${stagedCount} staged file${stagedCount === 1 ? '' : 's'}`
+        : 'No staged files'
+
   return (
     <div className="file-editor-actions">
       <button
@@ -1600,13 +1658,9 @@ function FileEditorGitActions({
         className="btn btn-sm btn-ghost"
         type="button"
         onClick={onCommitRequest}
-        disabled={!workspacePath || stagedCount === 0 || isLoading}
+        disabled={commitDisabled}
         aria-label="Commit staged changes"
-        title={
-          stagedCount > 0
-            ? `Commit ${stagedCount} staged file${stagedCount === 1 ? '' : 's'}`
-            : 'No staged files'
-        }
+        title={commitTitle}
       >
         Commit
       </button>
