@@ -401,6 +401,32 @@ export interface TaskWraithPluginResourceProvenance
   materializedAt: string
 }
 
+export interface TaskWraithPluginMaterializedResourceRef {
+  id: string
+  kind: TaskWraithPluginResourceKind
+  label?: string
+  enabled?: boolean
+  running?: boolean
+  pluginProvenance?: TaskWraithPluginResourceProvenance
+}
+
+export interface TaskWraithPluginCleanupAction {
+  action: 'disable' | 'stop' | 'remove'
+  resource: TaskWraithPluginMaterializedResourceRef
+  reason: string
+}
+
+export interface TaskWraithPluginCleanupManualReviewItem {
+  resource: TaskWraithPluginMaterializedResourceRef
+  reason: string
+}
+
+export interface TaskWraithPluginCleanupPlan {
+  pluginId: string
+  actions: TaskWraithPluginCleanupAction[]
+  manualReview: TaskWraithPluginCleanupManualReviewItem[]
+}
+
 export interface TaskWraithPluginUserMcpServerConfig {
   id: string
   name: string
