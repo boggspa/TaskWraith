@@ -5,7 +5,7 @@ import { FileEditorPanel } from './components/FileEditorPanel'
 import { TaskWraithWorkbench } from './components/TaskWraithWorkbench'
 import { useAppearance } from './hooks/useAppearance'
 
-type PopoutKind = 'file-editor' | 'diff-studio' | 'workbench' | 'permission-helper'
+export type PopoutKind = 'file-editor' | 'diff-studio' | 'workbench' | 'permission-helper'
 
 type WorkspaceDiff = Awaited<ReturnType<typeof window.api.getDiff>>
 
@@ -32,6 +32,17 @@ const basename = (path: string): string => {
 const parseTargetView = (
   value: string | null,
   kind: PopoutKind | null
+): 'editor' | 'diff' => {
+  return resolvePopoutOpenFileView(kind, value)
+}
+
+export const popoutKindReceivesOpenFileBroadcast = (kind: PopoutKind | null): boolean => {
+  return kind === 'file-editor' || kind === 'diff-studio' || kind === 'workbench'
+}
+
+export const resolvePopoutOpenFileView = (
+  kind: PopoutKind | null,
+  value: unknown
 ): 'editor' | 'diff' => {
   if (kind === 'diff-studio') return 'diff'
   if (kind === 'file-editor') return 'editor'
@@ -219,13 +230,13 @@ export function PopoutApp() {
   }, [kind, workspacePath, refreshDiff])
 
   useEffect(() => {
-    if (!workspacePath || (kind !== 'file-editor' && kind !== 'workbench')) return
+    if (!workspacePath || !popoutKindReceivesOpenFileBroadcast(kind)) return
     const unsubscribe = window.api.onWorkspacePopoutOpenFile((payload) => {
       if (payload.workspacePath !== workspacePath || !payload.path) return
       setOpenFileRequest((current) => ({
         path: payload.path,
         nonce: (current?.nonce ?? 0) + 1,
-        view: payload.view === 'diff' ? 'diff' : 'editor'
+        view: resolvePopoutOpenFileView(kind, payload.view)
       }))
     })
     return () => {

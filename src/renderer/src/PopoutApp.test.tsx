@@ -1,6 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PopoutApp } from './PopoutApp'
+import {
+  PopoutApp,
+  popoutKindReceivesOpenFileBroadcast,
+  resolvePopoutOpenFileView
+} from './PopoutApp'
 
 const diffViewerCapture = vi.hoisted(() => ({
   calls: [] as Array<Record<string, unknown>>
@@ -55,5 +59,23 @@ describe('PopoutApp Diff Studio', () => {
     expect(typeof props?.onOpenFile).toBe('function')
     expect(typeof props?.onStageFile).toBe('function')
     expect(typeof props?.onUnstageFile).toBe('function')
+  })
+})
+
+describe('PopoutApp open-file broadcast routing', () => {
+  it('subscribes workspace popouts that can target files', () => {
+    expect(popoutKindReceivesOpenFileBroadcast('file-editor')).toBe(true)
+    expect(popoutKindReceivesOpenFileBroadcast('diff-studio')).toBe(true)
+    expect(popoutKindReceivesOpenFileBroadcast('workbench')).toBe(true)
+    expect(popoutKindReceivesOpenFileBroadcast('permission-helper')).toBe(false)
+    expect(popoutKindReceivesOpenFileBroadcast(null)).toBe(false)
+  })
+
+  it('keeps standalone editors and diff studios in their native target views', () => {
+    expect(resolvePopoutOpenFileView('file-editor', 'diff')).toBe('editor')
+    expect(resolvePopoutOpenFileView('diff-studio', 'editor')).toBe('diff')
+    expect(resolvePopoutOpenFileView('workbench', 'diff')).toBe('diff')
+    expect(resolvePopoutOpenFileView('workbench', 'editor')).toBe('editor')
+    expect(resolvePopoutOpenFileView('workbench', undefined)).toBe('editor')
   })
 })
