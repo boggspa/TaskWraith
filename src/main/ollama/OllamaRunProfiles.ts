@@ -5,8 +5,11 @@ import type {
   OllamaRunProfileId,
   OllamaToolControlTier
 } from '../store/types'
+import { resolveContextWindow } from '../../shared/contextWindows'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
 import { normalizeOllamaToolControlTier } from './OllamaToolTiers'
+
+const OLLAMA_RUN_PROFILE_CONTEXT_CAP_MAX = 262_144
 
 export const OLLAMA_RUN_PROFILE_PRESETS: Record<
   Exclude<OllamaRunProfileId, 'custom'>,
@@ -100,6 +103,26 @@ function sanitizePositiveInt(value: unknown, fallback: number, min: number, max:
   return Math.max(min, Math.min(max, Math.trunc(numeric)))
 }
 
+function knownModelContextWindow(modelId?: string | null): number | null {
+  const trimmed = String(modelId || '').trim()
+  if (!trimmed || resolveOllamaModelFamily(trimmed) === 'unknown') return null
+  return resolveContextWindow('ollama', trimmed)
+}
+
+function defaultContextCapTokens(
+  baseId: Exclude<OllamaRunProfileId, 'custom'>,
+  modelId: string | null | undefined,
+  fallback: number
+): number {
+  const modelWindow = knownModelContextWindow(modelId)
+  if (!modelWindow) return fallback
+  if (baseId === 'local_scout') return Math.min(modelWindow, 65_536)
+  if (baseId === 'provider_parity') {
+    return Math.min(modelWindow, OLLAMA_RUN_PROFILE_CONTEXT_CAP_MAX)
+  }
+  return Math.min(modelWindow, 131_072)
+}
+
 export function resolveOllamaRunProfile(
   settings: Pick<
     AppSettings,
@@ -125,6 +148,11 @@ export function resolveOllamaRunProfile(
     settings.ollamaRunProfiles?.default ||
     {}
   const tier = normalizeOllamaToolControlTier(custom.tier || base.tier)
+  const fallbackContextCapTokens = defaultContextCapTokens(
+    baseId,
+    modelId,
+    base.contextCapTokens
+  )
   return {
     ...base,
     ...custom,
@@ -134,9 +162,9 @@ export function resolveOllamaRunProfile(
     reasoningLevel: sanitizeReasoningLevel(custom.reasoningLevel, base.reasoningLevel),
     contextCapTokens: sanitizePositiveInt(
       custom.contextCapTokens,
-      base.contextCapTokens,
+      fallbackContextCapTokens,
       4096,
-      131_072
+      OLLAMA_RUN_PROFILE_CONTEXT_CAP_MAX
     ),
     protocolMode:
       custom.protocolMode === 'json_fallback' || custom.protocolMode === 'json_only'

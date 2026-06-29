@@ -41,6 +41,44 @@ describe('OllamaRunProfiles', () => {
     )
   })
 
+  it('uses larger context caps for known high-context local coding models', () => {
+    expect(
+      resolveOllamaRunProfile({}, 'provider_parity', 'ornith:35b').contextCapTokens
+    ).toBe(262_144)
+    expect(
+      resolveOllamaRunProfile({}, 'provider_parity', 'qwen3.6:35b').contextCapTokens
+    ).toBe(262_144)
+    expect(
+      resolveOllamaRunProfile({}, 'approved_shell', 'ornith:35b').contextCapTokens
+    ).toBe(131_072)
+    expect(
+      resolveOllamaRunProfile({}, 'read_only', 'ornith:35b').contextCapTokens
+    ).toBe(65_536)
+    expect(
+      resolveOllamaRunProfile({}, 'provider_parity', 'gpt-oss:20b').contextCapTokens
+    ).toBe(131_072)
+  })
+
+  it('keeps unknown local tags conservative unless the user customizes the cap', () => {
+    expect(
+      resolveOllamaRunProfile({}, 'provider_parity', 'unknown-local:latest').contextCapTokens
+    ).toBe(65_536)
+    expect(
+      resolveOllamaRunProfile(
+        { ollamaRunProfiles: { default: { contextCapTokens: 300_000 } } },
+        'provider_parity',
+        'unknown-local:latest'
+      ).contextCapTokens
+    ).toBe(262_144)
+    expect(
+      resolveOllamaRunProfile(
+        { ollamaRunProfiles: { default: { contextCapTokens: 24_000 } } },
+        'provider_parity',
+        'ornith:35b'
+      ).contextCapTokens
+    ).toBe(24_000)
+  })
+
   it('returns thinking level for Ollama tags that advertise thinking support', () => {
     expect(
       resolveOllamaThinkingLevel('gpt-oss:latest', OLLAMA_RUN_PROFILE_PRESETS.local_scout)

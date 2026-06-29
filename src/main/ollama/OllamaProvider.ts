@@ -1615,7 +1615,7 @@ function resolveOllamaNumCtx(input: {
     typeof input.contextCapTokens === 'number' && input.contextCapTokens > 0
       ? input.contextCapTokens
       : undefined
-  const limit = Math.min(modelLimit || 131_072, profileLimit || modelLimit || 65_536)
+  const limit = Math.min(modelLimit || profileLimit || 131_072, profileLimit || modelLimit || 65_536)
   const required = estimateOllamaContextTokens(input) + (input.reserveTokens || 4096)
   const rounded = roundOllamaContext(Math.max(8192, required))
   return Math.min(limit, rounded)
