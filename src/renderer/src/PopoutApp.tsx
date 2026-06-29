@@ -86,6 +86,7 @@ export function PopoutApp() {
   const [diffGitSnapshot, setDiffGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
   const [status, setStatus] = useState('')
   const [dirtyBufferCount, setDirtyBufferCount] = useState(0)
+  const [diffActionPath, setDiffActionPath] = useState('')
   const [openFileRequest, setOpenFileRequest] = useState<PopoutOpenFileRequest | null>(() =>
     targetFilePath ? { path: targetFilePath, nonce: 1, view: targetView } : null
   )
@@ -118,6 +119,69 @@ export function PopoutApp() {
       setStatus('Diff refresh failed')
     }
   }, [kind, workspacePath])
+
+  const openDiffFileInEditor = useCallback(
+    async (path: string) => {
+      if (!workspacePath) return
+      setStatus(`Opening ${path} in editor...`)
+      try {
+        await window.api.openWorkspacePopout({
+          kind: 'file-editor',
+          workspacePath,
+          targetPath: path,
+          targetView: 'editor'
+        })
+        setStatus(`Opened ${path} in editor`)
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'Could not open file editor')
+      }
+    },
+    [workspacePath]
+  )
+
+  const stageDiffFile = useCallback(
+    async (path: string) => {
+      if (!workspacePath) return
+      setDiffActionPath(path)
+      setStatus(`Staging ${path}...`)
+      try {
+        const result = await window.api.gitStage({ workspacePath, paths: [path] })
+        if (result.ok) {
+          setDiffGitSnapshot(result.data)
+          await refreshDiff()
+        } else {
+          setStatus(result.error)
+        }
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'Could not stage file')
+      } finally {
+        setDiffActionPath('')
+      }
+    },
+    [refreshDiff, workspacePath]
+  )
+
+  const unstageDiffFile = useCallback(
+    async (path: string) => {
+      if (!workspacePath) return
+      setDiffActionPath(path)
+      setStatus(`Unstaging ${path}...`)
+      try {
+        const result = await window.api.gitUnstage({ workspacePath, paths: [path] })
+        if (result.ok) {
+          setDiffGitSnapshot(result.data)
+          await refreshDiff()
+        } else {
+          setStatus(result.error)
+        }
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'Could not unstage file')
+      } finally {
+        setDiffActionPath('')
+      }
+    },
+    [refreshDiff, workspacePath]
+  )
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -257,8 +321,12 @@ export function PopoutApp() {
             <DiffViewer
               diff={diff}
               gitSnapshot={diffGitSnapshot}
+              busyPath={diffActionPath}
               workspacePath={workspacePath}
               selectionRequest={openFileRequest}
+              onOpenFile={openDiffFileInEditor}
+              onStageFile={stageDiffFile}
+              onUnstageFile={unstageDiffFile}
             />
           </div>
         ) : (
