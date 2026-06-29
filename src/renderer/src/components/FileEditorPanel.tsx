@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import CodeMirror from '@uiw/react-codemirror'
 import { keymap, EditorView, type ViewUpdate } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
@@ -59,6 +60,38 @@ interface EditorBuffer {
   mtimeMs?: number
 }
 
+interface FileEditorContextMenuAnchor {
+  x: number
+  y: number
+}
+
+type FileEditorContextMenuSelection =
+  | {
+      kind: 'tree'
+      anchor: FileEditorContextMenuAnchor
+      entry: WorkspaceFileEntry
+    }
+  | {
+      kind: 'tab'
+      anchor: FileEditorContextMenuAnchor
+      path: string
+    }
+
+interface FileEditorContextMenuItem {
+  id: string
+  label: string
+  shortcut?: string
+  disabled?: boolean
+  danger?: boolean
+  onSelect: () => void
+}
+
+interface FileEditorContextMenuProps {
+  selection: FileEditorContextMenuSelection | null
+  items: FileEditorContextMenuItem[]
+  onClose: () => void
+}
+
 export interface EditorCursorStatus {
   line: number
   column: number
@@ -85,6 +118,7 @@ interface WorkspaceFileTreeProps {
   onFilterChange: (value: string) => void
   onRefresh: () => void | Promise<void>
   onOpenEntry: (entry: WorkspaceFileEntry) => void | Promise<void>
+  onContextMenuEntry: (entry: WorkspaceFileEntry, anchor: FileEditorContextMenuAnchor) => void
 }
 
 interface FileEditorGitActionsProps {
@@ -115,6 +149,7 @@ interface EditorTabStripProps {
   workspacePath?: string
   onSelect: (path: string) => void
   onClose: (path: string) => void
+  onContextMenuTab: (path: string, anchor: FileEditorContextMenuAnchor) => void
 }
 
 interface EditorPaneProps {
@@ -405,6 +440,30 @@ const isBufferDirty = (buffer: EditorBuffer | null | undefined): boolean => {
   return Boolean(buffer && buffer.content !== buffer.savedContent)
 }
 
+function focusFileEditorContextMenuButton(
+  menu: HTMLDivElement,
+  direction: 'first' | 'last' | 'next' | 'previous'
+): void {
+  const buttons = Array.from(
+    menu.querySelectorAll<HTMLButtonElement>('.file-editor-context-menu-item:not(:disabled)')
+  )
+  if (buttons.length === 0) return
+  const activeIndex = buttons.findIndex((button) => button === document.activeElement)
+  if (direction === 'first') {
+    buttons[0]?.focus()
+    return
+  }
+  if (direction === 'last') {
+    buttons[buttons.length - 1]?.focus()
+    return
+  }
+  const fallbackIndex = direction === 'next' ? -1 : 0
+  const currentIndex = activeIndex >= 0 ? activeIndex : fallbackIndex
+  const delta = direction === 'next' ? 1 : -1
+  const nextIndex = (currentIndex + delta + buttons.length) % buttons.length
+  buttons[nextIndex]?.focus()
+}
+
 export function FileEditorPanel({
   workspacePath,
   width,
@@ -442,6 +501,8 @@ export function FileEditorPanel({
   const [quickOpenMessage, setQuickOpenMessage] = useState('')
   const [isQuickOpenLoading, setIsQuickOpenLoading] = useState(false)
   const [quickOpenSelectedIndex, setQuickOpenSelectedIndex] = useState(0)
+  const [contextMenuSelection, setContextMenuSelection] =
+    useState<FileEditorContextMenuSelection | null>(null)
   const lastRefreshTickRef = useRef(refreshTick)
   const lastOpenRequestRef = useRef<number | null>(null)
   const activeBuffer = useMemo(
@@ -919,6 +980,7 @@ export function FileEditorPanel({
       setStatus('')
       setGitSnapshot(null)
       setGitMessage('')
+      setContextMenuSelection(null)
       void refreshFiles({ resetNavigation: true })
     })
     return () => {
@@ -1075,16 +1137,62 @@ export function FileEditorPanel({
     [openFilePath]
   )
 
+  const revealFilePathInTree = useCallback(
+    async (filePath: string) => {
+      if (!workspacePath || !filePath) return
+      setFilter('')
+      const parentPath = parentDirectoryForPath(filePath)
+      if (parentPath) {
+        await expandDirectoryPath(parentPath)
+      } else {
+        await loadDirectory(ROOT_DIR_KEY)
+      }
+      setSelectedPath(filePath)
+      setStatus(`${filePath} · revealed`)
+    },
+    [expandDirectoryPath, loadDirectory, workspacePath]
+  )
+
   const revealSelectedFileInTree = async () => {
-    if (!workspacePath || !selectedPath) return
-    setFilter('')
-    const parentPath = parentDirectoryForPath(selectedPath)
-    if (parentPath) {
-      await expandDirectoryPath(parentPath)
-    } else {
-      await loadDirectory(ROOT_DIR_KEY)
+    if (!selectedPath) return
+    await revealFilePathInTree(selectedPath)
+  }
+
+  const copyFilePath = useCallback((filePath: string) => {
+    if (!filePath) return
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      setStatus('Clipboard unavailable')
+      return
     }
-    setStatus(`${selectedPath} · revealed`)
+    void navigator.clipboard
+      .writeText(filePath)
+      .then(() => setStatus(`Copied ${filePath}`))
+      .catch(() => setStatus('Could not copy path'))
+  }, [])
+
+  const closeOtherCleanBuffers = (path: string) => {
+    const selectedBuffer = buffers.find((buffer) => buffer.path === path)
+    if (!selectedBuffer) return
+    const nextBuffers = buffers.filter((buffer) => buffer.path === path || isBufferDirty(buffer))
+    const closedCount = buffers.length - nextBuffers.length
+    const keptDirtyCount = nextBuffers.filter(
+      (buffer) => buffer.path !== path && isBufferDirty(buffer)
+    ).length
+    setBuffers(nextBuffers)
+    setSelectedPath(path)
+    setPendingClosePath('')
+    setCursorStatus(DEFAULT_CURSOR_STATUS)
+    if (closedCount === 0 && keptDirtyCount > 0) {
+      setStatus(`Kept ${keptDirtyCount} dirty tab${keptDirtyCount === 1 ? '' : 's'} open`)
+      return
+    }
+    if (keptDirtyCount > 0) {
+      setStatus(
+        `Closed ${closedCount} clean tab${closedCount === 1 ? '' : 's'}; kept ${keptDirtyCount} dirty`
+      )
+      return
+    }
+    setStatus(`Closed ${closedCount} other tab${closedCount === 1 ? '' : 's'}`)
   }
 
   const openFile = async (entry: WorkspaceFileEntry) => {
@@ -1199,6 +1307,73 @@ export function FileEditorPanel({
     }
     closeEditorBuffer(path)
   }
+
+  const contextMenuItems: FileEditorContextMenuItem[] = (() => {
+    if (!contextMenuSelection) return []
+    if (contextMenuSelection.kind === 'tree') {
+      const { entry } = contextMenuSelection
+      const isExpanded = entry.isDirectory && expandedDirectories.has(entry.path)
+      const openLabel = entry.isDirectory
+        ? isExpanded
+          ? 'Collapse Folder'
+          : 'Open Folder'
+        : 'Open File'
+      return [
+        {
+          id: 'open',
+          label: openLabel,
+          onSelect: () => void openFile(entry)
+        },
+        ...(entry.isDirectory
+          ? []
+          : [
+              {
+                id: 'reveal',
+                label: 'Reveal in Tree',
+                onSelect: () => void revealFilePathInTree(entry.path)
+              }
+            ]),
+        {
+          id: 'copy-path',
+          label: 'Copy Relative Path',
+          onSelect: () => copyFilePath(entry.path)
+        }
+      ]
+    }
+
+    const buffer = buffers.find((item) => item.path === contextMenuSelection.path)
+    const tabDirty = isBufferDirty(buffer)
+    return [
+      {
+        id: 'reveal',
+        label: 'Reveal in Tree',
+        onSelect: () => void revealFilePathInTree(contextMenuSelection.path)
+      },
+      {
+        id: 'save',
+        label: 'Save',
+        shortcut: 'Cmd S',
+        disabled: !tabDirty,
+        onSelect: () => void saveBuffer(contextMenuSelection.path)
+      },
+      {
+        id: 'close',
+        label: 'Close',
+        onSelect: () => requestCloseBuffer(contextMenuSelection.path)
+      },
+      {
+        id: 'close-others',
+        label: 'Close Clean Others',
+        disabled: buffers.length <= 1,
+        onSelect: () => closeOtherCleanBuffers(contextMenuSelection.path)
+      },
+      {
+        id: 'copy-path',
+        label: 'Copy Relative Path',
+        onSelect: () => copyFilePath(contextMenuSelection.path)
+      }
+    ]
+  })()
 
   const saveAndClosePendingBuffer = async () => {
     const path = pendingClosePath
@@ -1341,6 +1516,9 @@ export function FileEditorPanel({
         onFilterChange={setFilter}
         onRefresh={refreshCurrentView}
         onOpenEntry={openFile}
+        onContextMenuEntry={(entry, anchor) => {
+          setContextMenuSelection({ kind: 'tree', entry, anchor })
+        }}
       />
 
       <section
@@ -1409,6 +1587,15 @@ export function FileEditorPanel({
             setCursorStatus(DEFAULT_CURSOR_STATUS)
           }}
           onClose={requestCloseBuffer}
+          onContextMenuTab={(path, anchor) => {
+            setSelectedPath(path)
+            setContextMenuSelection({ kind: 'tab', path, anchor })
+          }}
+        />
+        <FileEditorContextMenu
+          selection={contextMenuSelection}
+          items={contextMenuItems}
+          onClose={() => setContextMenuSelection(null)}
         />
         {showDeleteConfirm && selectedPath && (
           <div className="file-editor-modal-backdrop">
@@ -1558,6 +1745,102 @@ export function FileEditorPanel({
   )
 }
 
+function FileEditorContextMenu({
+  selection,
+  items,
+  onClose
+}: FileEditorContextMenuProps) {
+  const menuRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!selection) return
+    const handlePointerDown = (event: globalThis.MouseEvent) => {
+      const target = event.target as Node
+      if (menuRef.current?.contains(target)) return
+      onClose()
+    }
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown, true)
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown, true)
+      document.removeEventListener('keydown', handleKeyDown, true)
+    }
+  }, [selection, onClose])
+
+  useEffect(() => {
+    if (!selection) return
+    const frame = window.requestAnimationFrame(() => {
+      if (!menuRef.current) return
+      focusFileEditorContextMenuButton(menuRef.current, 'first')
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [selection, items.length])
+
+  if (!selection || items.length === 0) return null
+
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 768
+  const heightEstimate = 18 + items.length * 34
+  const left = Math.max(8, Math.min(selection.anchor.x, viewportWidth - 224))
+  const top = Math.max(8, Math.min(selection.anchor.y, viewportHeight - heightEstimate))
+  const targetLabel = selection.kind === 'tree' ? selection.entry.path : selection.path
+
+  const menu = (
+    <div
+      ref={menuRef}
+      className="file-editor-context-menu"
+      style={{ position: 'fixed', left: `${left}px`, top: `${top}px` }}
+      role="menu"
+      aria-label={`Actions for ${targetLabel}`}
+      onKeyDown={(event) => {
+        if (!menuRef.current) return
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          focusFileEditorContextMenuButton(menuRef.current, 'next')
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          focusFileEditorContextMenuButton(menuRef.current, 'previous')
+        } else if (event.key === 'Home') {
+          event.preventDefault()
+          focusFileEditorContextMenuButton(menuRef.current, 'first')
+        } else if (event.key === 'End') {
+          event.preventDefault()
+          focusFileEditorContextMenuButton(menuRef.current, 'last')
+        }
+      }}
+    >
+      {items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          role="menuitem"
+          className={`file-editor-context-menu-item${item.danger ? ' is-danger' : ''}`}
+          disabled={item.disabled}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (item.disabled) return
+            item.onSelect()
+            onClose()
+          }}
+        >
+          <span className="file-editor-context-menu-label">{item.label}</span>
+          {item.shortcut && (
+            <span className="file-editor-context-menu-shortcut">{item.shortcut}</span>
+          )}
+        </button>
+      ))}
+    </div>
+  )
+
+  return typeof document === 'undefined' ? menu : createPortal(menu, document.body)
+}
+
 function WorkspaceFileTree({
   workspacePath,
   filter,
@@ -1570,8 +1853,79 @@ function WorkspaceFileTree({
   isListLoading,
   onFilterChange,
   onRefresh,
-  onOpenEntry
+  onOpenEntry,
+  onContextMenuEntry
 }: WorkspaceFileTreeProps) {
+  const listRef = useRef<HTMLDivElement | null>(null)
+
+  const focusRowAt = (rows: HTMLButtonElement[], index: number) => {
+    const nextIndex = Math.max(0, Math.min(rows.length - 1, index))
+    rows[nextIndex]?.focus()
+  }
+
+  const handleListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return
+    const rows = Array.from(
+      listRef.current?.querySelectorAll<HTMLButtonElement>('.file-editor-row:not(:disabled)') ?? []
+    )
+    if (rows.length === 0) return
+    const activeIndex = rows.findIndex((row) => row === document.activeElement)
+    const currentIndex = activeIndex >= 0 ? activeIndex : 0
+    const currentEntry = displayedFiles[currentIndex]
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      focusRowAt(rows, currentIndex + 1)
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      focusRowAt(rows, currentIndex - 1)
+      return
+    }
+    if (event.key === 'Home') {
+      event.preventDefault()
+      focusRowAt(rows, 0)
+      return
+    }
+    if (event.key === 'End') {
+      event.preventDefault()
+      focusRowAt(rows, rows.length - 1)
+      return
+    }
+    if (!currentEntry) return
+    const isExpanded = currentEntry.isDirectory && expandedDirectories.has(currentEntry.path)
+    if (event.key === 'ArrowRight' && currentEntry.isDirectory) {
+      event.preventDefault()
+      if (!isExpanded && currentEntry.hasChildren) {
+        void onOpenEntry(currentEntry)
+        return
+      }
+      const nextEntry = displayedFiles[currentIndex + 1]
+      if (nextEntry && nextEntry.depth > currentEntry.depth) {
+        focusRowAt(rows, currentIndex + 1)
+      }
+      return
+    }
+    if (event.key === 'ArrowLeft') {
+      if (currentEntry.isDirectory && isExpanded) {
+        event.preventDefault()
+        void onOpenEntry(currentEntry)
+        return
+      }
+      const parentPath = parentDirectoryForPath(currentEntry.path)
+      if (parentPath) {
+        event.preventDefault()
+        const parentIndex = rows.findIndex(
+          (row) =>
+            row.dataset.fileEditorPath === parentPath &&
+            row.dataset.fileEditorDirectory === 'true'
+        )
+        if (parentIndex >= 0) focusRowAt(rows, parentIndex)
+      }
+    }
+  }
+
   return (
     <section className="file-editor-files">
       <div className="file-editor-header">
@@ -1596,7 +1950,12 @@ function WorkspaceFileTree({
       <div className="file-editor-list-status" role="status" aria-live="polite">
         {fileListStatus}
       </div>
-      <div className="file-editor-list">
+      <div
+        className="file-editor-list"
+        ref={listRef}
+        onKeyDown={handleListKeyDown}
+        aria-label="Workspace file navigator"
+      >
         {displayedFiles.length > 0 ? (
           displayedFiles.map((entry) => {
             const isExpanded = entry.isDirectory && expandedDirectories.has(entry.path)
@@ -1607,6 +1966,15 @@ function WorkspaceFileTree({
                 style={{ paddingLeft: `calc(var(--space-sm) + ${entry.depth * 12}px)` }}
                 type="button"
                 onClick={() => void onOpenEntry(entry)}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  onContextMenuEntry(entry, { x: event.clientX, y: event.clientY })
+                }}
+                data-file-editor-path={entry.path}
+                data-file-editor-directory={entry.isDirectory ? 'true' : 'false'}
+                aria-current={selectedPath === entry.path ? 'true' : undefined}
+                aria-expanded={entry.isDirectory && entry.hasChildren ? isExpanded : undefined}
                 disabled={isLoading}
                 title={entry.path}
               >
@@ -1772,7 +2140,8 @@ function EditorTabStrip({
   selectedPath,
   workspacePath,
   onSelect,
-  onClose
+  onClose,
+  onContextMenuTab
 }: EditorTabStripProps) {
   if (buffers.length === 0) return null
 
@@ -1786,6 +2155,12 @@ function EditorTabStrip({
             key={buffer.path}
             className={`file-editor-tab ${isActive ? 'active' : ''} ${tabDirty ? 'dirty' : ''}`}
             title={buffer.path}
+            onContextMenu={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              onSelect(buffer.path)
+              onContextMenuTab(buffer.path, { x: event.clientX, y: event.clientY })
+            }}
           >
             <button
               className="file-editor-tab-select"
