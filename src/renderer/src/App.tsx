@@ -56,6 +56,7 @@ import {
   WorkflowDefinition,
   WorkspaceBoardCard,
   WorkspaceBoardDefinition,
+  PinnedMessageSummary,
   AgenticServicesSettings,
   AgenticWorkspaceGrant,
   AgenticServiceId,
@@ -100,6 +101,7 @@ import {
 } from '../../main/GoalState'
 import type { NativeCapabilitySnapshot } from '../../main/NativeCapabilities'
 import type { HumanCollaborationShare } from '../../main/collaboration/HumanCollaborationStore'
+import type { LocalServerEntry } from '../../main/localServers/types'
 import {
   canonicalizeExternalPathGrantMetadata,
   collectExternalPathGrantsFromMetadata,
@@ -616,6 +618,18 @@ import {
 // and slash picker consume the same data without drift.
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
+
+interface WorkspaceBoardCaptureInput {
+  workspaceId?: string
+  workspacePath?: string
+  title: string
+  body?: string
+  labels?: string[]
+  link?: WorkspaceBoardCard['link']
+  columnId?: WorkspaceBoardCard['columnId']
+  blockedReason?: string
+  nextStep?: string
+}
 
 const STREAM_FLUSH_ITEM_KEY_SEPARATOR = '\u0000'
 
@@ -12440,6 +12454,184 @@ function App(): React.JSX.Element {
     setWorkspaceBoardCards((prev) => prev.filter((item) => item.id !== id))
   }
 
+  const addWorkspaceBoardCapture = async (input: WorkspaceBoardCaptureInput): Promise<void> => {
+    if (!workspaceBoardApiReady) return
+    const workspace =
+      (input.workspaceId ? workspaces.find((item) => item.id === input.workspaceId) : null) ||
+      (input.workspacePath ? workspaces.find((item) => item.path === input.workspacePath) : null)
+    if (!workspace) return
+
+    let board =
+      (activeWorkspaceBoardId
+        ? workspaceBoards.find(
+            (item) =>
+              item.id === activeWorkspaceBoardId &&
+              item.workspaceId === workspace.id &&
+              !item.archived
+          )
+        : null) ||
+      workspaceBoards.find((item) => item.workspaceId === workspace.id && !item.archived) ||
+      null
+
+    if (!board) {
+      board = await window.api.saveWorkspaceBoard({
+        workspaceId: workspace.id,
+        workspacePath: workspace.path,
+        name: `${workspace.displayName} Board`,
+        columns: []
+      })
+      setWorkspaceBoards((prev) => [board!, ...prev.filter((item) => item.id !== board!.id)])
+    }
+
+    const targetLinkKey = input.link ? `${input.link.kind}:${input.link.id}` : ''
+    const existing = targetLinkKey
+      ? workspaceBoardCards.find(
+          (card) =>
+            card.boardId === board!.id &&
+            card.link &&
+            `${card.link.kind}:${card.link.id}` === targetLinkKey
+        ) || null
+      : null
+
+    if (existing) {
+      const updated = await window.api.updateWorkspaceBoardCard(existing.id, {
+        title: input.title,
+        body: input.body || existing.body,
+        labels: input.labels || existing.labels,
+        blockedReason: input.blockedReason || existing.blockedReason,
+        nextStep: input.nextStep || existing.nextStep,
+        archived: false,
+        columnId: input.columnId || existing.columnId,
+        sortOrder: Date.now()
+      })
+      if (updated) {
+        setWorkspaceBoardCards((prev) =>
+          prev.map((item) => (item.id === updated.id ? updated : item))
+        )
+      }
+      return
+    }
+
+    const saved = await window.api.saveWorkspaceBoardCard({
+      boardId: board.id,
+      workspaceId: workspace.id,
+      columnId: input.columnId || 'inbox',
+      title: input.title,
+      body: input.body,
+      labels: input.labels,
+      link: input.link,
+      blockedReason: input.blockedReason,
+      nextStep: input.nextStep,
+      sortOrder: Date.now()
+    })
+    setWorkspaceBoardCards((prev) => [...prev.filter((item) => item.id !== saved.id), saved])
+  }
+
+  const compactBoardLabels = (...labels: Array<string | undefined | null | false>): string[] =>
+    labels.filter((label): label is string => typeof label === 'string' && label.trim().length > 0)
+
+  const chatBoardColumn = (chat: ChatRecord): WorkspaceBoardCard['columnId'] => {
+    const run = chat.runs?.[chat.runs.length - 1]
+    if (runningChatIds.has(chat.appChatId) || run?.status === 'running' || run?.status === 'sleeping') {
+      return 'running'
+    }
+    if (chat.activeGoal?.status === 'blocked') return 'blocked'
+    if (run?.status === 'failed' || run?.status === 'cancelled') return 'needs-input'
+    if (run?.status === 'success' || run?.status === 'success_with_warnings' || run?.status === 'completed') {
+      return 'review-ready'
+    }
+    return 'inbox'
+  }
+
+  const workflowBoardColumn = (workflow: WorkflowDefinition): WorkspaceBoardCard['columnId'] => {
+    if (workflow.activeExecutionId || workflow.lastStatus === 'running' || workflow.lastStatus === 'queued') {
+      return 'running'
+    }
+    if (workflow.lastStatus === 'failed' || workflow.lastStatus === 'cancelled' || workflow.failureStreak > 0) {
+      return 'needs-input'
+    }
+    if (workflow.lastStatus === 'completed') return 'review-ready'
+    return 'ready'
+  }
+
+  const runQueueJobBoardColumn = (job: RunQueueJob): WorkspaceBoardCard['columnId'] => {
+    if (job.status === 'queued' || job.status === 'starting' || job.status === 'active' || job.status === 'steer_promoting') {
+      return 'running'
+    }
+    if (job.status === 'failed' || job.status === 'cancelled') return 'needs-input'
+    if (job.status === 'completed') return 'done'
+    return 'ready'
+  }
+
+  const handleAddChatToWorkspaceBoard = (chat: ChatRecord): void => {
+    if (!chat.workspaceId || chat.scope === 'global') return
+    void addWorkspaceBoardCapture({
+      workspaceId: chat.workspaceId,
+      workspacePath: chat.workspacePath,
+      title: chat.title || 'Workspace thread',
+      body: chat.activeGoal?.objective ? `Goal: ${chat.activeGoal.objective}` : undefined,
+      labels: compactBoardLabels('thread', chat.provider),
+      link: { kind: 'chat', id: chat.appChatId },
+      columnId: chatBoardColumn(chat),
+      blockedReason: chat.activeGoal?.status === 'blocked' ? chat.activeGoal.blockedReason : undefined
+    })
+  }
+
+  const handleAddWorkflowToWorkspaceBoard = (workflow: WorkflowDefinition): void => {
+    void addWorkspaceBoardCapture({
+      workspaceId: workflow.workspaceId,
+      workspacePath: workflow.workspacePath,
+      title: workflow.name,
+      body: workflow.lastError || workflow.template.prompt,
+      labels: compactBoardLabels('workflow', workflow.template.provider, workflow.lastStatus),
+      link: { kind: 'workflow', id: workflow.id },
+      columnId: workflowBoardColumn(workflow)
+    })
+  }
+
+  const handleAddRunQueueJobToWorkspaceBoard = (job: RunQueueJob): void => {
+    if (!job.workspaceId) return
+    void addWorkspaceBoardCapture({
+      workspaceId: job.workspaceId,
+      workspacePath: job.workspacePath,
+      title: job.promptPreview || job.request?.displayPrompt || job.request?.prompt || job.runId,
+      body: job.lastError || job.statusReason || job.request?.prompt,
+      labels: compactBoardLabels('run', job.provider, job.status),
+      link: { kind: 'run-queue-job', id: job.id },
+      columnId: runQueueJobBoardColumn(job)
+    })
+  }
+
+  const handleAddLocalServerToWorkspaceBoard = (server: LocalServerEntry): void => {
+    if (!server.workspaceId) return
+    void addWorkspaceBoardCapture({
+      workspaceId: server.workspaceId,
+      workspacePath: server.workspacePath,
+      title: `Local server: ${server.name}`,
+      body: [
+        server.primaryPort != null ? `http://localhost:${server.primaryPort}` : undefined,
+        server.command
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      labels: compactBoardLabels('local-server', server.origin),
+      columnId: 'running'
+    })
+  }
+
+  const handleAddPinnedMessageToWorkspaceBoard = (message: PinnedMessageSummary): void => {
+    if (!currentChat?.workspaceId || currentChat.scope === 'global') return
+    void addWorkspaceBoardCapture({
+      workspaceId: currentChat.workspaceId,
+      workspacePath: currentChat.workspacePath,
+      title: `Pinned: ${currentChat.title || 'Thread'}`,
+      body: message.content.slice(0, 1200),
+      labels: compactBoardLabels('pinned-message', message.role),
+      link: { kind: 'chat', id: currentChat.appChatId },
+      columnId: 'inbox'
+    })
+  }
+
   const getCockpitRunSource = (
     lane: RunLane
   ): { chat: ChatRecord | null; run: ChatRun | null; prompt: string } => {
@@ -22051,6 +22243,18 @@ function App(): React.JSX.Element {
                 onCreateWorkspaceBoard={workspaceBoardApiReady ? handleCreateWorkspaceBoard : undefined}
                 onOpenWorkspaceBoard={workspaceBoardApiReady ? handleOpenWorkspaceBoard : undefined}
                 onDeleteWorkspaceBoard={workspaceBoardApiReady ? handleDeleteWorkspaceBoard : undefined}
+                onAddChatToWorkspaceBoard={
+                  workspaceBoardApiReady ? handleAddChatToWorkspaceBoard : undefined
+                }
+                onAddWorkflowToWorkspaceBoard={
+                  workspaceBoardApiReady ? handleAddWorkflowToWorkspaceBoard : undefined
+                }
+                onAddRunQueueJobToWorkspaceBoard={
+                  workspaceBoardApiReady ? handleAddRunQueueJobToWorkspaceBoard : undefined
+                }
+                onAddLocalServerToWorkspaceBoard={
+                  workspaceBoardApiReady ? handleAddLocalServerToWorkspaceBoard : undefined
+                }
                 onCreateSharedChat={handleStartSharedChat}
                 onJoinSharedChat={() => setJoinSharedChatOpen(true)}
                 onRunWorkflowNow={handleRunWorkflowNow}
@@ -23862,6 +24066,9 @@ function App(): React.JSX.Element {
                       jumpToTranscriptMessage(currentChat?.appChatId, messageId)
                     }
                     onUnpinMessage={(messageId) => togglePinMessageInChat(currentChat, messageId)}
+                    onAddPinnedMessageToWorkspaceBoard={
+                      workspaceBoardApiReady ? handleAddPinnedMessageToWorkspaceBoard : undefined
+                    }
                   />
                 )}
 

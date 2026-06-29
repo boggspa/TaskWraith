@@ -47,6 +47,7 @@ interface ActiveRunsSectionProps {
   currentChat: ChatRecord | null
   runningChatIds?: string[]
   onSelectChat: (chat: ChatRecord) => void
+  onAddRunQueueJobToWorkspaceBoard?: (job: RunQueueJob) => void
   /** Reserved: a runId-targeted inspector deep-link. Not wired — clicking a
    * row now opens the chat THREAD (transcript), not the Run Inspector. */
   onInspectRun?: (runId: string, chatId: string | undefined) => void
@@ -56,7 +57,8 @@ export function ActiveRunsSection({
   chats,
   currentChat,
   runningChatIds = [],
-  onSelectChat
+  onSelectChat,
+  onAddRunQueueJobToWorkspaceBoard
 }: ActiveRunsSectionProps): JSX.Element {
   const [jobs, setJobs] = useState<RunQueueJob[]>([])
   const [, setNowTick] = useState(0)
@@ -143,32 +145,47 @@ export function ActiveRunsSection({
             const chat = job.chatId ? chatById.get(job.chatId) || null : null
             const isCurrent = Boolean(chat && currentChat?.appChatId === chat.appChatId)
             return (
-              <button
+              <div
                 key={job.id || job.runId}
-                type="button"
-                className={`sidebar-active-run-row provider-${job.provider || 'gemini'} ${isCurrent ? 'active' : ''}`}
-                onClick={() => {
-                  // Open the chat THREAD (transcript), not the Run Inspector.
-                  if (chat) onSelectChat(chat)
-                }}
-                disabled={!chat}
-                title={chat ? chat.title : job.promptPreview || job.runId}
+                className="sidebar-active-run-entry"
               >
-                <span
-                  className={`sidebar-active-run-provider provider-${job.provider || 'gemini'}`}
+                <button
+                  type="button"
+                  className={`sidebar-active-run-row provider-${job.provider || 'gemini'} ${isCurrent ? 'active' : ''}`}
+                  onClick={() => {
+                    // Open the chat THREAD (transcript), not the Run Inspector.
+                    if (chat) onSelectChat(chat)
+                  }}
+                  disabled={!chat}
+                  title={chat ? chat.title : job.promptPreview || job.runId}
                 >
-                  {getProviderLabel(job.provider)}
-                </span>
-                <span className="sidebar-active-run-copy">
-                  <span className="sidebar-active-run-workspace">
-                    {getWorkspaceShortName(job, chat)}
+                  <span
+                    className={`sidebar-active-run-provider provider-${job.provider || 'gemini'}`}
+                  >
+                    {getProviderLabel(job.provider)}
                   </span>
-                  <span className="sidebar-active-run-elapsed">{formatElapsed(job)}</span>
-                </span>
-                <span className={`sidebar-run-status tone-${statusTone(job.status)}`}>
-                  {statusLabel(job.status)}
-                </span>
-              </button>
+                  <span className="sidebar-active-run-copy">
+                    <span className="sidebar-active-run-workspace">
+                      {getWorkspaceShortName(job, chat)}
+                    </span>
+                    <span className="sidebar-active-run-elapsed">{formatElapsed(job)}</span>
+                  </span>
+                  <span className={`sidebar-run-status tone-${statusTone(job.status)}`}>
+                    {statusLabel(job.status)}
+                  </span>
+                </button>
+                {onAddRunQueueJobToWorkspaceBoard && job.workspaceId && (
+                  <button
+                    type="button"
+                    className="sidebar-active-run-board-action"
+                    onClick={() => onAddRunQueueJobToWorkspaceBoard(job)}
+                    title="Add run to workspace board"
+                    aria-label={`Add ${job.promptPreview || job.runId} to workspace board`}
+                  >
+                    #
+                  </button>
+                )}
+              </div>
             )
           })}
         </div>

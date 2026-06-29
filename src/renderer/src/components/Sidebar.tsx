@@ -22,6 +22,7 @@ import type {
   ChatRecord,
   ChatListItem,
   ScheduledTask,
+  RunQueueJob,
   WorkflowDefinition,
   WorkspaceBoardDefinition,
   ProviderId,
@@ -55,6 +56,7 @@ import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
+import type { LocalServerEntry } from '../../../main/localServers/types'
 
 export type SharedChatCreateVariant = 'global' | 'workspace' | 'ensemble'
 
@@ -243,6 +245,10 @@ interface SidebarProps {
   onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
   onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
   onDeleteWorkspaceBoard?: (boardId: string) => void
+  onAddChatToWorkspaceBoard?: (chat: ChatRecord) => void
+  onAddWorkflowToWorkspaceBoard?: (workflow: WorkflowDefinition) => void
+  onAddRunQueueJobToWorkspaceBoard?: (job: RunQueueJob) => void
+  onAddLocalServerToWorkspaceBoard?: (server: LocalServerEntry) => void
   /** Start a new shared chat + copy a collaborator invite (People feature). */
   onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
   /** Join someone else's shared chat by pasting their invite (People feature). */
@@ -1496,6 +1502,7 @@ type WorkflowActionIconKind =
   | 'cancel'
   | 'delete'
   | 'unattended'
+  | 'board'
 
 function isWorkflowExecutionActive(status?: string): boolean {
   return Boolean(status && !WORKFLOW_TERMINAL_STATUSES.has(status))
@@ -1542,6 +1549,17 @@ function WorkflowActionIcon({ kind }: { kind: WorkflowActionIconKind }) {
         <path d="M17.4 4.2 16.1 6.3" />
         <path d="M20.1 7.1 17.8 8.1" />
         <path d="M19.8 16.9 17.7 15.7" />
+      </svg>
+    )
+  }
+  if (kind === 'board') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden>
+        <path d="M4.5 5.5h15" />
+        <path d="M4.5 12h15" />
+        <path d="M4.5 18.5h15" />
+        <path d="M9 4v16" />
+        <path d="M15 4v16" />
       </svg>
     )
   }
@@ -2017,6 +2035,10 @@ export function Sidebar({
   onCreateWorkspaceBoard,
   onOpenWorkspaceBoard,
   onDeleteWorkspaceBoard,
+  onAddChatToWorkspaceBoard,
+  onAddWorkflowToWorkspaceBoard,
+  onAddRunQueueJobToWorkspaceBoard,
+  onAddLocalServerToWorkspaceBoard,
   onCreateSharedChat,
   onJoinSharedChat,
   onRunWorkflowNow,
@@ -2973,6 +2995,14 @@ export function Sidebar({
         onSelect: () => onToggleArchiveChat(chat.appChatId, !chat.archived)
       })
     }
+    if (onAddChatToWorkspaceBoard && chat.scope !== 'global' && chat.workspaceId) {
+      items.push({
+        id: 'add-to-board',
+        label: 'Add to Workspace Board',
+        group: 'primary',
+        onSelect: () => onAddChatToWorkspaceBoard(chat)
+      })
+    }
     if (onCreateSubThread) {
       // 1.0.3 — delegate moved INTO the overflow menu after the inline
       // `↪` icon button on each chat tile was retired. Same handler
@@ -3496,12 +3526,13 @@ export function Sidebar({
               runningChatIds={runningChatIds}
               onSelectChat={onSelectChat}
               onInspectRun={onInspectRun}
+              onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
             />
           )}
 
           {wrapHierarchySection(
             'local-servers',
-            <LocalServersSection />,
+            <LocalServersSection onAddLocalServerToWorkspaceBoard={onAddLocalServerToWorkspaceBoard} />,
             localServers.length > 0
           )}
 
@@ -3666,6 +3697,16 @@ export function Sidebar({
                                   aria-label={`Run ${workflow.name} now`}
                                 >
                                   <WorkflowActionIcon kind="run" />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="sidebar-workflow-action"
+                                  onClick={() => onAddWorkflowToWorkspaceBoard?.(workflow)}
+                                  disabled={!onAddWorkflowToWorkspaceBoard}
+                                  title="Add to Workspace Board"
+                                  aria-label={`Add ${workflow.name} to workspace board`}
+                                >
+                                  <WorkflowActionIcon kind="board" />
                                 </button>
                                 <button
                                   type="button"

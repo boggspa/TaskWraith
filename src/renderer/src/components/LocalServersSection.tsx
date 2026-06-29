@@ -1,4 +1,5 @@
 import { useMemo, useState, type JSX } from 'react'
+import type { LocalServerEntry } from '../../../main/localServers/types'
 import { localServerWorkspaceLabel } from '../../../shared/localServerWorkspaceLabel'
 import { useLocalServers } from '../hooks/useLocalServers'
 import { SidebarOverflowMenu } from './SidebarOverflowMenu'
@@ -29,7 +30,13 @@ function SectionChevron({ isExpanded }: { isExpanded: boolean }): JSX.Element {
  * workspaces with one-click Stop. Hidden entirely when nothing is running
  * (like the update pill), so it costs zero space in the common case.
  */
-export function LocalServersSection(): JSX.Element | null {
+interface LocalServersSectionProps {
+  onAddLocalServerToWorkspaceBoard?: (server: LocalServerEntry) => void
+}
+
+export function LocalServersSection({
+  onAddLocalServerToWorkspaceBoard
+}: LocalServersSectionProps): JSX.Element | null {
   const { servers, busy, stop, stopAll } = useLocalServers()
   const [collapsed, setCollapsed] = useState(false)
   const headerMenuItems = useMemo(
@@ -102,6 +109,17 @@ export function LocalServersSection(): JSX.Element | null {
                   title={`Open http://localhost:${server.primaryPort}`}
                 >
                   :{server.primaryPort}
+                </button>
+              )}
+              {onAddLocalServerToWorkspaceBoard && server.workspaceId && (
+                <button
+                  type="button"
+                  className="sidebar-local-server-board"
+                  onClick={() => onAddLocalServerToWorkspaceBoard(server)}
+                  title={`Add ${server.name} to workspace board`}
+                  aria-label={`Add ${server.name} to workspace board`}
+                >
+                  #
                 </button>
               )}
               <button

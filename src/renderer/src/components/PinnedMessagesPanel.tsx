@@ -11,6 +11,7 @@ interface PinnedMessagesPanelProps {
   onCopyMessage: (messageId: string, content: string) => void
   onJumpToMessage: (messageId: string) => void
   onUnpinMessage: (messageId: string) => void
+  onAddPinnedMessageToWorkspaceBoard?: (message: PinnedMessageSummary) => void
 }
 
 const BLACKBOARD_CATEGORY_ORDER: BlackboardEntry['category'][] = [
@@ -171,7 +172,8 @@ export function PinnedMessagesPanel({
   onNotesChange,
   onCopyMessage,
   onJumpToMessage,
-  onUnpinMessage
+  onUnpinMessage,
+  onAddPinnedMessageToWorkspaceBoard
 }: PinnedMessagesPanelProps): React.JSX.Element {
   const [draftNotes, setDraftNotes] = useState(notes)
   const skipDraftSaveRef = useRef(true)
@@ -251,6 +253,16 @@ export function PinnedMessagesPanel({
                 >
                   <PinMiniIcon />
                 </button>
+                {onAddPinnedMessageToWorkspaceBoard && chat?.workspaceId && (
+                  <button
+                    type="button"
+                    onClick={() => onAddPinnedMessageToWorkspaceBoard(message)}
+                    title="Add pinned message to workspace board"
+                    aria-label="Add pinned message to workspace board"
+                  >
+                    #
+                  </button>
+                )}
               </div>
             </article>
           ))}
