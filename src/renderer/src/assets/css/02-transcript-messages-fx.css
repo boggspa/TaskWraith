@@ -2062,7 +2062,7 @@
 .transcript-user-gutter-edge {
   appearance: none;
   position: absolute;
-  left: -5px;
+  left: 0;
   width: 24px;
   height: 24px;
   margin: 0;
