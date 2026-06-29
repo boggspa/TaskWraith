@@ -95,6 +95,7 @@ interface FileEditorGitActionsProps {
   onSaveAll: () => void | Promise<void>
   onSave: () => void | Promise<void>
   onToggleLineWrap: () => void
+  onOpenQuickOpen: () => void
 }
 
 interface EditorTabStripProps {
@@ -123,6 +124,19 @@ interface EditorStatusBarProps {
   selectedHasStagedChanges: boolean
   selectedHasUnstagedChanges: boolean
   lineWrapEnabled: boolean
+}
+
+interface QuickOpenPaletteProps {
+  workspacePath?: string
+  query: string
+  results: WorkspaceFileEntry[]
+  status: string
+  isLoading: boolean
+  selectedIndex: number
+  onQueryChange: (value: string) => void
+  onSelectedIndexChange: (index: number) => void
+  onOpenPath: (path: string) => void | Promise<void>
+  onClose: () => void
 }
 
 const ROOT_DIR_KEY = ''
@@ -404,6 +418,13 @@ export function FileEditorPanel({
   const [isListLoading, setIsListLoading] = useState(false)
   const [pendingClosePath, setPendingClosePath] = useState('')
   const [lineWrapEnabled, setLineWrapEnabled] = useState(false)
+  const [showQuickOpen, setShowQuickOpen] = useState(false)
+  const [quickOpenQuery, setQuickOpenQuery] = useState('')
+  const [quickOpenResults, setQuickOpenResults] = useState<WorkspaceFileEntry[]>([])
+  const [quickOpenTruncated, setQuickOpenTruncated] = useState(false)
+  const [quickOpenMessage, setQuickOpenMessage] = useState('')
+  const [isQuickOpenLoading, setIsQuickOpenLoading] = useState(false)
+  const [quickOpenSelectedIndex, setQuickOpenSelectedIndex] = useState(0)
   const lastRefreshTickRef = useRef(refreshTick)
   const lastOpenRequestRef = useRef<number | null>(null)
   const activeBuffer = useMemo(
@@ -432,12 +453,38 @@ export function FileEditorPanel({
   }, [childrenByDirectory, expandedDirectories])
 
   const displayedFiles = isFiltering ? searchFiles : browseFiles
+  const quickOpenTrimmedQuery = quickOpenQuery.trim()
   const completionFiles = useMemo(() => {
     const byPath = new Map<string, WorkspaceFileEntry>()
     for (const entry of browseFiles) byPath.set(entry.path, entry)
     for (const entry of searchFiles) byPath.set(entry.path, entry)
     return Array.from(byPath.values())
   }, [browseFiles, searchFiles])
+  const displayedQuickOpenFiles = useMemo(() => {
+    if (quickOpenTrimmedQuery) return quickOpenResults
+    return completionFiles.filter((entry) => !entry.isDirectory).slice(0, 80)
+  }, [completionFiles, quickOpenResults, quickOpenTrimmedQuery])
+  const quickOpenStatus = useMemo(() => {
+    if (!workspacePath) return 'No workspace selected'
+    if (isQuickOpenLoading) return 'Searching...'
+    if (quickOpenMessage) return quickOpenMessage
+    if (quickOpenTrimmedQuery) {
+      return `${displayedQuickOpenFiles.length} ${
+        displayedQuickOpenFiles.length === 1 ? 'match' : 'matches'
+      }${quickOpenTruncated ? ' · keep narrowing' : ''}`
+    }
+    if (displayedQuickOpenFiles.length === 0) return 'No files loaded'
+    return `${displayedQuickOpenFiles.length} visible ${
+      displayedQuickOpenFiles.length === 1 ? 'file' : 'files'
+    }`
+  }, [
+    displayedQuickOpenFiles.length,
+    isQuickOpenLoading,
+    quickOpenMessage,
+    quickOpenTrimmedQuery,
+    quickOpenTruncated,
+    workspacePath
+  ])
 
   const selectedRepoPath = useMemo(() => {
     if (!selectedPath) return ''
@@ -741,6 +788,69 @@ export function FileEditorPanel({
 
   useEffect(() => {
     let cancelled = false
+    const resetQuickOpenSearch = () => {
+      queueMicrotask(() => {
+        if (cancelled) return
+        setQuickOpenResults([])
+        setQuickOpenTruncated(false)
+        setQuickOpenMessage('')
+        setIsQuickOpenLoading(false)
+      })
+    }
+
+    if (!showQuickOpen || !workspacePath || !quickOpenTrimmedQuery) {
+      resetQuickOpenSearch()
+      return () => {
+        cancelled = true
+      }
+    }
+
+    queueMicrotask(() => {
+      if (cancelled) return
+      setIsQuickOpenLoading(true)
+      setQuickOpenMessage('')
+    })
+
+    const timer = window.setTimeout(() => {
+      editorApi
+        .listFiles(workspacePath, {
+          query: quickOpenTrimmedQuery,
+          limit: FILE_EDITOR_SEARCH_LIMIT
+        })
+        .then((result) => {
+          if (cancelled) return
+          setQuickOpenResults(result.entries.filter((entry) => !entry.isDirectory))
+          setQuickOpenTruncated(result.truncated)
+        })
+        .catch((error) => {
+          if (cancelled) return
+          setQuickOpenResults([])
+          setQuickOpenTruncated(false)
+          setQuickOpenMessage(error instanceof Error ? error.message : 'Could not search files')
+        })
+        .finally(() => {
+          if (!cancelled) setIsQuickOpenLoading(false)
+        })
+    }, 120)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [quickOpenTrimmedQuery, showQuickOpen, workspacePath])
+
+  useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) setQuickOpenSelectedIndex(0)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [displayedQuickOpenFiles.length, quickOpenTrimmedQuery])
+
+  useEffect(() => {
+    let cancelled = false
     queueMicrotask(() => {
       if (cancelled) return
       setSelectedPath('')
@@ -886,6 +996,25 @@ export function FileEditorPanel({
       void openFilePath(openRequest.path)
     })
   }, [openFilePath, openRequest])
+
+  const openQuickOpen = useCallback(() => {
+    if (!workspacePath) return
+    setQuickOpenQuery('')
+    setQuickOpenResults([])
+    setQuickOpenTruncated(false)
+    setQuickOpenMessage('')
+    setQuickOpenSelectedIndex(0)
+    setShowQuickOpen(true)
+  }, [workspacePath])
+
+  const openQuickOpenPath = useCallback(
+    async (filePath: string) => {
+      setShowQuickOpen(false)
+      setQuickOpenQuery('')
+      await openFilePath(filePath)
+    },
+    [openFilePath]
+  )
 
   const openFile = async (entry: WorkspaceFileEntry) => {
     if (!workspacePath) return
@@ -1133,6 +1262,15 @@ export function FileEditorPanel({
       <section
         className="file-editor-code"
         onKeyDown={(event) => {
+          if (
+            !showQuickOpen &&
+            (event.metaKey || event.ctrlKey) &&
+            event.key.toLowerCase() === 'p'
+          ) {
+            event.preventDefault()
+            openQuickOpen()
+            return
+          }
           if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
             event.preventDefault()
             void saveFile()
@@ -1173,6 +1311,7 @@ export function FileEditorPanel({
             onSaveAll={saveAllFiles}
             onSave={saveFile}
             onToggleLineWrap={() => setLineWrapEnabled((enabled) => !enabled)}
+            onOpenQuickOpen={openQuickOpen}
           />
         </div>
         <EditorTabStrip
@@ -1243,6 +1382,20 @@ export function FileEditorPanel({
               </div>
             </div>
           </div>
+        )}
+        {showQuickOpen && (
+          <QuickOpenPalette
+            workspacePath={workspacePath}
+            query={quickOpenQuery}
+            results={displayedQuickOpenFiles}
+            status={quickOpenStatus}
+            isLoading={isQuickOpenLoading}
+            selectedIndex={quickOpenSelectedIndex}
+            onQueryChange={setQuickOpenQuery}
+            onSelectedIndexChange={setQuickOpenSelectedIndex}
+            onOpenPath={openQuickOpenPath}
+            onClose={() => setShowQuickOpen(false)}
+          />
         )}
         {pendingClosePath && (
           <div
@@ -1400,7 +1553,8 @@ function FileEditorGitActions({
   onCommitRequest,
   onSaveAll,
   onSave,
-  onToggleLineWrap
+  onToggleLineWrap,
+  onOpenQuickOpen
 }: FileEditorGitActionsProps) {
   return (
     <div className="file-editor-actions">
@@ -1449,6 +1603,15 @@ function FileEditorGitActions({
         }
       >
         Commit
+      </button>
+      <button
+        className="btn btn-sm btn-ghost"
+        type="button"
+        onClick={onOpenQuickOpen}
+        disabled={!workspacePath || isLoading}
+        title="Quick open file"
+      >
+        Quick Open
       </button>
       <button
         className="btn btn-sm btn-ghost"
@@ -1572,6 +1735,103 @@ function EditorPane({
       ) : (
         <div className="file-editor-placeholder">Select a text file</div>
       )}
+    </div>
+  )
+}
+
+function QuickOpenPalette({
+  workspacePath,
+  query,
+  results,
+  status,
+  isLoading,
+  selectedIndex,
+  onQueryChange,
+  onSelectedIndexChange,
+  onOpenPath,
+  onClose
+}: QuickOpenPaletteProps) {
+  const clampedIndex = results.length === 0 ? 0 : Math.min(selectedIndex, results.length - 1)
+  const selectedEntry = results[clampedIndex]
+
+  const moveSelection = (delta: number) => {
+    if (results.length === 0) return
+    onSelectedIndexChange((clampedIndex + delta + results.length) % results.length)
+  }
+
+  return (
+    <div className="file-editor-modal-backdrop">
+      <div
+        className="file-editor-quick-open-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Quick open file"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            onClose()
+            return
+          }
+          if (event.key === 'ArrowDown') {
+            event.preventDefault()
+            moveSelection(1)
+            return
+          }
+          if (event.key === 'ArrowUp') {
+            event.preventDefault()
+            moveSelection(-1)
+            return
+          }
+          if (event.key === 'Enter' && selectedEntry) {
+            event.preventDefault()
+            void onOpenPath(selectedEntry.path)
+          }
+        }}
+      >
+        <input
+          className="file-editor-quick-open-input"
+          aria-label="Quick open file path"
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder="Search files"
+          disabled={!workspacePath}
+          autoFocus
+        />
+        <div className="file-editor-quick-open-status" role="status" aria-live="polite">
+          {status}
+        </div>
+        <div className="file-editor-quick-open-list">
+          {results.length > 0 ? (
+            results.map((entry, index) => {
+              const isSelected = index === clampedIndex
+              return (
+                <button
+                  key={entry.path}
+                  className={`file-editor-quick-open-row ${isSelected ? 'active' : ''}`}
+                  type="button"
+                  onMouseEnter={() => onSelectedIndexChange(index)}
+                  onClick={() => void onOpenPath(entry.path)}
+                  aria-pressed={isSelected}
+                  title={entry.path}
+                >
+                  <FileTypeIcon
+                    path={entry.path}
+                    size={14}
+                    className="file-editor-file-icon"
+                    workspacePath={workspacePath}
+                  />
+                  <span>{entry.path}</span>
+                  <small>{formatBytes(entry.sizeBytes)}</small>
+                </button>
+              )
+            })
+          ) : (
+            <div className="file-editor-quick-open-empty">
+              {isLoading ? 'Searching...' : 'No matching files'}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

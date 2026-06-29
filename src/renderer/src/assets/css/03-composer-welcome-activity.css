@@ -8508,6 +8508,91 @@
   flex: 1 1 auto;
 }
 
+.file-editor-quick-open-card {
+  width: min(620px, 100%);
+  max-height: min(520px, calc(100vh - 96px));
+  padding: 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel-elevated-bg) 96%, var(--app-bg));
+  box-shadow: 0 18px 52px rgba(0,0,0,0.32);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-editor-quick-open-input {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 85%, transparent);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.file-editor-quick-open-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--panel-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.file-editor-quick-open-status {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.file-editor-quick-open-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-editor-quick-open-row {
+  min-height: 30px;
+  padding: 0 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-editor-quick-open-row.active,
+.file-editor-quick-open-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text-primary);
+}
+
+.file-editor-quick-open-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-editor-quick-open-row small,
+.file-editor-quick-open-empty {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.file-editor-quick-open-empty {
+  padding: 10px 8px;
+}
+
 /* Inspector / Diff Studio */
 .app-inspector {
   width: var(--inspector-width);
