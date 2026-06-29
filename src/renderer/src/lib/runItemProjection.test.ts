@@ -4,6 +4,8 @@ import {
   isAssistantRunItemDelta,
   legacyAssistantDeltaProjectionKey,
   legacyToolEventProjectionKey,
+  legacyToolEventProjectionNameKey,
+  projectRunItemToolEvents,
   projectRunItemToolEvent,
   projectRunItemAssistantDelta
 } from './runItemProjection'
@@ -66,7 +68,7 @@ describe('runItemProjection', () => {
   })
 
   it('projects tool progress sidecars into tool use events', () => {
-    const projection = projectRunItemToolEvent(
+    const projections = projectRunItemToolEvents(
       event({
         kind: 'tool/progress',
         itemKind: undefined,
@@ -80,12 +82,18 @@ describe('runItemProjection', () => {
       }),
       'codex'
     )
+    const projection = projections[0]
 
+    expect(projections).toHaveLength(1)
     expect(projection).toMatchObject({
       chatId: 'chat-1',
       runId: 'run-1',
       itemId: 'tool-1',
       legacySkipKey: legacyToolEventProjectionKey('run-1', 'tool-1', false),
+      legacySkipKeys: [
+        legacyToolEventProjectionKey('run-1', 'tool-1', false),
+        legacyToolEventProjectionNameKey('run-1', 'read_file', false)
+      ],
       event: {
         type: 'tool_event',
         name: 'read_file',
@@ -102,7 +110,7 @@ describe('runItemProjection', () => {
   })
 
   it('projects tool output sidecars into tool result events', () => {
-    const projection = projectRunItemToolEvent(
+    const projections = projectRunItemToolEvents(
       event({
         kind: 'tool/outputDelta',
         itemKind: undefined,
@@ -116,9 +124,15 @@ describe('runItemProjection', () => {
       }),
       'codex'
     )
+    const projection = projections[0]
 
+    expect(projections).toHaveLength(1)
     expect(projection).toMatchObject({
       legacySkipKey: legacyToolEventProjectionKey('run-1', 'tool-1', true),
+      legacySkipKeys: [
+        legacyToolEventProjectionKey('run-1', 'tool-1', true),
+        legacyToolEventProjectionNameKey('run-1', 'read_file', true)
+      ],
       event: {
         type: 'tool_event',
         name: 'read_file',
@@ -134,20 +148,83 @@ describe('runItemProjection', () => {
     })
   })
 
-  it('leaves visible progress compat events on the legacy path', () => {
-    expect(
-      projectRunItemToolEvent(
-        event({
-          kind: 'tool/progress',
-          itemKind: undefined,
-          channel: undefined,
-          delta: undefined,
-          itemId: 'progress-1',
-          toolName: 'update_topic',
-          data: { type: 'update_topic', title: 'Indexing', summary: 'Reading files' }
-        }),
-        'codex'
-      )
-    ).toBeNull()
+  it('projects visible progress compat sidecars into paired tool use and result events', () => {
+    const projections = projectRunItemToolEvents(
+      event({
+        kind: 'tool/progress',
+        itemKind: undefined,
+        channel: undefined,
+        delta: undefined,
+        itemId: 'progress-1',
+        toolName: 'update_topic',
+        data: {
+          type: 'update_topic',
+          title: 'Indexing',
+          summary: 'Reading files',
+          reasoning_trace: 'hidden'
+        }
+      }),
+      'codex'
+    )
+
+    expect(projections).toHaveLength(2)
+    expect(projections[0]).toMatchObject({
+      legacySkipKeys: [
+        legacyToolEventProjectionKey('run-1', 'progress-1', false),
+        legacyToolEventProjectionNameKey('run-1', 'update_topic', false)
+      ],
+      event: {
+        name: 'update_topic',
+        isUse: true,
+        isResult: false,
+        data: {
+          type: 'tool_use',
+          tool_id: 'progress-1',
+          tool_name: 'update_topic',
+          parameters: {
+            title: 'Indexing',
+            kind: 'update_topic',
+            summary: 'Reading files',
+            type: 'update_topic'
+          }
+        }
+      }
+    })
+    expect(projections[0]?.event.data.parameters).not.toHaveProperty('reasoning_trace')
+    expect(projections[1]).toMatchObject({
+      legacySkipKeys: [
+        legacyToolEventProjectionKey('run-1', 'progress-1', true),
+        legacyToolEventProjectionNameKey('run-1', 'update_topic', true)
+      ],
+      event: {
+        name: 'update_topic',
+        isUse: false,
+        isResult: true,
+        data: {
+          type: 'tool_result',
+          tool_id: 'progress-1',
+          tool_name: 'update_topic',
+          output: 'Reading files',
+          status: 'success'
+        }
+      }
+    })
+  })
+
+  it('keeps the single-projection wrapper for callers that only need the first tool event', () => {
+    const projection = projectRunItemToolEvent(
+      event({
+        kind: 'tool/progress',
+        itemKind: undefined,
+        channel: undefined,
+        delta: undefined,
+        itemId: 'tool-1',
+        toolCallId: 'tool-1',
+        toolName: 'read_file'
+      }),
+      'codex'
+    )
+
+    expect(projection?.event.isUse).toBe(true)
   })
 })

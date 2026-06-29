@@ -5,8 +5,9 @@ import { applyAssistantDelta } from './lib/applyAssistantDelta'
 import {
   legacyAssistantDeltaProjectionKey,
   legacyToolEventProjectionKey,
+  legacyToolEventProjectionNameKey,
   projectRunItemAssistantDelta,
-  projectRunItemToolEvent
+  projectRunItemToolEvents
 } from './lib/runItemProjection'
 import { reconcileChatRefMap } from './lib/reconcileChatRefMap'
 import { messagesRenderEqual } from './lib/messagesRenderEqual'
@@ -9971,28 +9972,38 @@ function App(): React.JSX.Element {
               return updated
             }, { coalesce: true })
           }
-          const toolProjection = projectRunItemToolEvent(itemEvent, effectiveRunProvider)
-          if (toolProjection && toolProjection.chatId === runChatId) {
-            if (toolProjection.event.isUse && isProviderExecutionToolEvent(toolProjection.event)) {
-              runContext.toolCallsCount += 1
-            }
+          const toolProjections = projectRunItemToolEvents(itemEvent, effectiveRunProvider).filter(
+            (projection) => projection.chatId === runChatId
+          )
+          if (toolProjections.length > 0) {
+            toolProjections.forEach((projection) => {
+              if (projection.event.isUse && isProviderExecutionToolEvent(projection.event)) {
+                runContext.toolCallsCount += 1
+              }
+            })
             updateChatById(runChatId, (source) => {
               const updated = { ...source }
               if (updated.chatKind === 'ensemble') return updated
-              const reduction = reduceSoloToolEventMessages(updated.messages, toolProjection.event, {
-                createMessageId,
-                provider: effectiveRunProvider
-              })
-              updated.messages = reduction.messages
-              if (
-                isVisibleRunChat() &&
-                !runContext.diffUnavailable &&
-                reduction.latestToolActivity &&
-                reduction.isResult
-              ) {
-                upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
+              let nextMessages = updated.messages
+              for (const projection of toolProjections) {
+                const reduction = reduceSoloToolEventMessages(nextMessages, projection.event, {
+                  createMessageId,
+                  provider: effectiveRunProvider
+                })
+                nextMessages = reduction.messages
+                if (
+                  isVisibleRunChat() &&
+                  !runContext.diffUnavailable &&
+                  reduction.latestToolActivity &&
+                  reduction.isResult
+                ) {
+                  upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
+                }
+                projection.legacySkipKeys.forEach((key) => {
+                  projectedLegacyToolEventKeysRef.current.add(key)
+                })
               }
-              projectedLegacyToolEventKeysRef.current.add(toolProjection.legacySkipKey)
+              updated.messages = nextMessages
               return updated
             }, { coalesce: true })
           }
@@ -10105,14 +10116,24 @@ function App(): React.JSX.Element {
                 ? event.data.toolId
                 : typeof event.data?.id === 'string'
                   ? event.data.id
-                  : typeof event.data?.call_id === 'string'
-                    ? event.data.call_id
-                    : undefined
-          if (
-            projectedLegacyToolEventKeysRef.current.delete(
-              legacyToolEventProjectionKey(currentRunId, toolId, event.isResult)
-            )
-          ) {
+                : typeof event.data?.call_id === 'string'
+                  ? event.data.call_id
+                  : undefined
+          const toolName =
+            typeof event.name === 'string' && event.name
+              ? event.name
+              : typeof event.data?.tool_name === 'string'
+                ? event.data.tool_name
+                : typeof event.data?.toolName === 'string'
+                  ? event.data.toolName
+                  : undefined
+          const skippedById = projectedLegacyToolEventKeysRef.current.delete(
+            legacyToolEventProjectionKey(currentRunId, toolId, event.isResult)
+          )
+          const skippedByName = projectedLegacyToolEventKeysRef.current.delete(
+            legacyToolEventProjectionNameKey(currentRunId, toolName, event.isResult)
+          )
+          if (skippedById || skippedByName) {
             return
           }
         }
