@@ -1,0 +1,61 @@
+import Foundation
+import Testing
+import TaskWraithKit
+
+@testable import TaskWraithUI
+
+@Suite("Mobile Diff Studio state")
+struct MobileDiffStudioStateTests {
+    @MainActor
+    @Test func statusUsesTotalFilesWhenVisibleFilesAreCapped() {
+        #expect(MobileDiffStudioState.statusText(visibleFiles: 40, totalFiles: 128) == "128 changed files")
+        #expect(MobileDiffStudioState.statusText(visibleFiles: 1, totalFiles: nil) == "1 changed file")
+        #expect(MobileDiffStudioState.statusText(visibleFiles: 0, totalFiles: 0) == "No changes.")
+    }
+
+    @MainActor
+    @Test func clearUnavailableWorkspaceStatusDropsStaleDiffAndSelection() throws {
+        let state = MobileDiffStudioState()
+        state.selectedWorkspaceId = "ws-1"
+        state.selectedPath = "src/App.swift"
+        state.diff = try decodeWorkspaceDiff()
+        state.isLoading = true
+
+        state.clearUnavailableWorkspaceStatus()
+
+        #expect(state.selectedWorkspaceId == nil)
+        #expect(state.selectedPath == nil)
+        #expect(state.diff == nil)
+        #expect(state.files.isEmpty)
+        #expect(state.isLoading == false)
+        #expect(state.status == "No workspace has diff review enabled.")
+    }
+}
+
+private func decodeWorkspaceDiff() throws -> WorkspaceDiffResult {
+    let json = """
+        {
+          "files": [
+            {
+              "path": "src/App.swift",
+              "kind": "modified",
+              "additions": 2,
+              "deletions": 1,
+              "truncated": false,
+              "hunks": [
+                {
+                  "header": "@@ -1,1 +1,1 @@",
+                  "lines": [
+                    { "type": "del", "text": "old", "oldLine": 1, "newLine": null },
+                    { "type": "add", "text": "new", "oldLine": null, "newLine": 1 }
+                  ]
+                }
+              ]
+            }
+          ],
+          "totalFiles": 4,
+          "truncated": true
+        }
+        """
+    return try JSONDecoder().decode(WorkspaceDiffResult.self, from: Data(json.utf8))
+}

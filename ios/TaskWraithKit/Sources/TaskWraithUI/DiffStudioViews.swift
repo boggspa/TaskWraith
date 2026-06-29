@@ -23,6 +23,22 @@ final class MobileDiffStudioState: ObservableObject {
 
     var files: [WorkspaceDiffFile] { diff?.files ?? [] }
 
+    static func statusText(visibleFiles: Int, totalFiles: Int?) -> String {
+        let count = max(totalFiles ?? visibleFiles, visibleFiles)
+        return count == 0
+            ? "No changes."
+            : "\(count) changed file\(count == 1 ? "" : "s")"
+    }
+
+    func clearUnavailableWorkspaceStatus() {
+        reloadGeneration += 1
+        selectedWorkspaceId = nil
+        diff = nil
+        selectedPath = nil
+        isLoading = false
+        status = "No workspace has diff review enabled."
+    }
+
     var selectedFile: WorkspaceDiffFile? {
         guard let selectedPath else { return nil }
         return files.first { $0.path == selectedPath }
@@ -53,7 +69,7 @@ final class MobileDiffStudioState: ObservableObject {
             })
                 ?? eligible.first?.id
         else {
-            status = "No workspace has diff review enabled."
+            clearUnavailableWorkspaceStatus()
             return
         }
         if selectedWorkspaceId != workspaceId {
@@ -94,10 +110,10 @@ final class MobileDiffStudioState: ObservableObject {
             if let selectedPath, !result.files.contains(where: { $0.path == selectedPath }) {
                 self.selectedPath = nil
             }
-            let count = result.files.count
-            status = count == 0
-                ? "No changes."
-                : "\(count) changed file\(count == 1 ? "" : "s")"
+            status = Self.statusText(
+                visibleFiles: result.files.count,
+                totalFiles: result.totalFiles
+            )
         } catch {
             guard isCurrentRequest() else { return }
             status = error.localizedDescription
