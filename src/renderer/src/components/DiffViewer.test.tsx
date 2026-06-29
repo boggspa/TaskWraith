@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
-import { DiffDetail } from './DiffDetail'
+import { DiffDetail, diffDetailHeaderSummary } from './DiffDetail'
 import { DiffFileList } from './DiffFileList'
 import { DiffToolbar } from './DiffToolbar'
 import { DiffViewer } from './DiffViewer'
@@ -295,6 +295,16 @@ describe('DiffFileList', () => {
 })
 
 describe('DiffDetail', () => {
+  it('formats compact file change summaries for the detail header', () => {
+    expect(
+      diffDetailHeaderSummary({ status: 'modified', additions: 12, deletions: 3 })
+    ).toBe('modified +12 -3')
+    expect(diffDetailHeaderSummary({ status: 'hidden_sensitive' })).toBe('hidden')
+    expect(diffDetailHeaderSummary({ status: 'too_large', deletions: 4 })).toBe(
+      'large +0 -4'
+    )
+  })
+
   it('renders split diff rows and file actions for an unstaged file', () => {
     const summary = makeChangedFileSummary('src/detail.ts', 'detail line')
     const html = renderToStaticMarkup(
@@ -317,6 +327,9 @@ describe('DiffDetail', () => {
 
     expect(html).toContain('class="diff-detail"')
     expect(html).toContain('src/detail.ts')
+    expect(html).toContain('class="diff-detail-stat-badge"')
+    expect(html).toContain('aria-label="File change summary: modified +1 -1"')
+    expect(html).toContain('modified +1 -1')
     expect(html).toContain('Stage')
     expect(html).toContain('Copy')
     expect(html).toContain('class="diff-line-split')

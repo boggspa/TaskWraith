@@ -47,6 +47,23 @@ const DIFF_VIRTUALIZATION_THRESHOLD = 800
 const DIFF_VIRTUAL_ROW_HEIGHT = 22
 const DIFF_VIRTUAL_OVERSCAN = 24
 
+const diffStatusLabel = (status: DiffFileSummary['status']): string => {
+  if (status === 'hidden_sensitive') return 'hidden'
+  if (status === 'too_large') return 'large'
+  return status.replace(/_/g, ' ')
+}
+
+export const diffDetailHeaderSummary = (
+  summary: Pick<DiffFileSummary, 'additions' | 'deletions' | 'status'>
+): string => {
+  const parts = [diffStatusLabel(summary.status)]
+  if (summary.additions !== undefined || summary.deletions !== undefined) {
+    parts.push(`+${summary.additions ?? 0}`)
+    parts.push(`-${summary.deletions ?? 0}`)
+  }
+  return parts.join(' ')
+}
+
 export function DiffDetail({
   summary,
   gitStatus,
@@ -69,6 +86,7 @@ export function DiffDetail({
   const canStageFile = Boolean(onStageFile) && Boolean(gitStatus?.unstaged) && !isBusy
   const canUnstageFile = Boolean(onUnstageFile) && Boolean(gitStatus?.staged) && !isBusy
   const previewKind: DiffPreviewKind = summary.previewKind || 'none'
+  const headerSummary = diffDetailHeaderSummary(summary)
   const usesDiffLines =
     Boolean(summary.diffText) && (previewKind === 'synthetic_new_file' || previewKind === 'git_diff')
   const parsedDiff = useMemo(
@@ -179,7 +197,16 @@ export function DiffDetail({
   return (
     <div className="diff-detail">
       <div className="diff-detail-header">
-        <span>{summary.path}</span>
+        <div className="diff-detail-title">
+          <span title={summary.path}>{summary.path}</span>
+          <span
+            className="diff-detail-stat-badge"
+            data-status={summary.status}
+            aria-label={`File change summary: ${headerSummary}`}
+          >
+            {headerSummary}
+          </span>
+        </div>
         <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
           <button
             className="btn btn-sm btn-ghost"

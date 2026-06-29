@@ -9666,6 +9666,54 @@ button.diff-file-row {
   z-index: 2;
 }
 
+.diff-detail-title {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.diff-detail-title > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-detail-stat-badge {
+  flex: 0 0 auto;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 10%, transparent);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.diff-detail-stat-badge[data-status="created"] {
+  color: var(--success);
+}
+
+.diff-detail-stat-badge[data-status="deleted"] {
+  color: var(--danger);
+}
+
+.diff-detail-stat-badge[data-status="modified"],
+.diff-detail-stat-badge[data-status="renamed"] {
+  color: var(--accent);
+}
+
+.diff-detail-stat-badge[data-status="untracked"] {
+  color: var(--warning);
+}
+
 .diff-line {
   display: grid;
   grid-template-columns: 4ch 4ch minmax(0, 1fr);
