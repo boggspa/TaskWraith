@@ -81,6 +81,34 @@ export const buildDiffWorkbenchNavMeta = (
   return gitSnapshot.counts.changed > 0 ? `${gitSnapshot.counts.changed} changed` : 'Clean'
 }
 
+export const buildWorkbenchBreadcrumbs = ({
+  activeView,
+  diffSelectedPath,
+  editorSelectedPath,
+  workspaceName
+}: {
+  activeView: WorkbenchView
+  diffSelectedPath?: string
+  editorSelectedPath?: string
+  workspaceName: string
+}): string[] => {
+  const editorParts = editorSelectedPath?.split('/').filter(Boolean) ?? []
+  if ((activeView === 'editor' || activeView === 'split') && editorParts.length > 0) {
+    return [workspaceName, ...editorParts]
+  }
+
+  const diffParts = diffSelectedPath?.split('/').filter(Boolean) ?? []
+  if (diffParts.length > 0) {
+    return [
+      workspaceName,
+      activeView === 'split' ? 'Split View' : 'Diff Studio',
+      ...diffParts
+    ]
+  }
+
+  return [workspaceName, viewLabel(activeView)]
+}
+
 function WorkbenchNavIcon({ view }: { view: WorkbenchView }) {
   return (
     <span className="workbench-nav-icon" aria-hidden="true">
@@ -120,6 +148,7 @@ export function TaskWraithWorkbench({
   const [editorCommandRequest, setEditorCommandRequest] =
     useState<FileEditorCommandRequest | null>(null)
   const [diffSelectionRequest, setDiffSelectionRequest] = useState<EditorOpenRequest | null>(null)
+  const [diffSelectedPath, setDiffSelectedPath] = useState('')
   const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
   const diffRefreshSeqRef = useRef(0)
@@ -128,13 +157,14 @@ export function TaskWraithWorkbench({
   const splitNavRef = useRef<HTMLButtonElement | null>(null)
 
   const breadcrumbs = useMemo(
-    () => {
-      if ((activeView === 'editor' || activeView === 'split') && editorState.selectedPath) {
-        return [workspaceName, ...editorState.selectedPath.split('/').filter(Boolean)]
-      }
-      return [workspaceName, viewLabel(activeView)]
-    },
-    [activeView, editorState.selectedPath, workspaceName]
+    () =>
+      buildWorkbenchBreadcrumbs({
+        activeView,
+        diffSelectedPath,
+        editorSelectedPath: editorState.selectedPath,
+        workspaceName
+      }),
+    [activeView, diffSelectedPath, editorState.selectedPath, workspaceName]
   )
   const activeGitSnapshot =
     activeView === 'diff' || activeView === 'split'
@@ -157,7 +187,9 @@ export function TaskWraithWorkbench({
             ? ` · ${editorState.cursorStatus.selectedChars} selected`
             : ''
         }`
-      : viewLabel(activeView)
+      : activeView === 'diff' && diffSelectedPath
+        ? diffSelectedPath
+        : viewLabel(activeView)
   const editorBufferSummary =
     editorState.openBufferCount > 0
       ? `${editorState.openBufferCount} open ${
@@ -312,6 +344,7 @@ export function TaskWraithWorkbench({
     if (activeView !== 'split') {
       selectWorkbenchView('diff')
     }
+    setDiffSelectedPath(path)
     setDiffSelectionRequest((current) => ({
       path,
       nonce: (current?.nonce ?? 0) + 1
@@ -583,6 +616,7 @@ export function TaskWraithWorkbench({
                 gitSnapshot={diffGitSnapshot}
                 busyPath={diffActionPath}
                 selectionRequest={diffSelectionRequest}
+                onSelectedPathChange={(path) => setDiffSelectedPath(path ?? '')}
                 onOpenFile={openFileInEditor}
                 onStageFile={stageDiffFile}
                 onUnstageFile={unstageDiffFile}

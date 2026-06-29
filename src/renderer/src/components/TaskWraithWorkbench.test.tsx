@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildDiffWorkbenchNavMeta,
   buildEditorWorkbenchNavMeta,
+  buildWorkbenchBreadcrumbs,
   isWorkbenchPaneHidden,
   TaskWraithWorkbench
 } from './TaskWraithWorkbench'
@@ -32,6 +33,32 @@ describe('TaskWraithWorkbench nav metadata', () => {
         counts: { changed: 7, staged: 2, unstaged: 5, untracked: 0 }
       })
     ).toBe('7 changed')
+  })
+
+  it('builds targeted breadcrumbs for editor and Diff Studio selections', () => {
+    expect(
+      buildWorkbenchBreadcrumbs({
+        activeView: 'editor',
+        editorSelectedPath: 'src/renderer/App.tsx',
+        workspaceName: 'AGBench'
+      })
+    ).toEqual(['AGBench', 'src', 'renderer', 'App.tsx'])
+
+    expect(
+      buildWorkbenchBreadcrumbs({
+        activeView: 'diff',
+        diffSelectedPath: 'src/main/index.ts',
+        workspaceName: 'AGBench'
+      })
+    ).toEqual(['AGBench', 'Diff Studio', 'src', 'main', 'index.ts'])
+
+    expect(
+      buildWorkbenchBreadcrumbs({
+        activeView: 'split',
+        diffSelectedPath: 'src/main/index.ts',
+        workspaceName: 'AGBench'
+      })
+    ).toEqual(['AGBench', 'Split View', 'src', 'main', 'index.ts'])
   })
 })
 
