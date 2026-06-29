@@ -5,6 +5,8 @@ import {
   useState,
   useEffect,
   type CSSProperties,
+  type ChangeEvent,
+  type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -55,6 +57,11 @@ import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 
 export type SharedChatCreateVariant = 'global' | 'workspace' | 'ensemble'
+
+export interface WorkspaceBoardCreateInput {
+  workspaceId?: string
+  name?: string
+}
 
 export interface SharedChatCreateOption {
   variant: SharedChatCreateVariant
@@ -233,7 +240,7 @@ interface SidebarProps {
    * the Run Inspector for that runId. */
   onInspectRun?: (runId: string, chatId: string | undefined) => void
   onCreateWorkflow?: () => void
-  onCreateWorkspaceBoard?: () => void
+  onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
   onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
   onDeleteWorkspaceBoard?: (boardId: string) => void
   /** Start a new shared chat + copy a collaborator invite (People feature). */
@@ -2018,6 +2025,9 @@ export function Sidebar({
   const [hoveredWorkspace, setHoveredWorkspace] = useState<string | null>(null)
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [sharedCreateMenuOpen, setSharedCreateMenuOpen] = useState(false)
+  const [boardCreatorOpen, setBoardCreatorOpen] = useState(false)
+  const [boardCreatorWorkspaceId, setBoardCreatorWorkspaceId] = useState('')
+  const [boardCreatorName, setBoardCreatorName] = useState('')
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [settingsMenuPane, setSettingsMenuPane] = useState<SidebarSettingsMenuPane>('root')
   // Footer control-row popovers (Approvals / Shares / Devices). At most one is
@@ -2092,6 +2102,7 @@ export function Sidebar({
   // menu portal, etc.).
   const newMenuWrapRef = useRef<HTMLDivElement | null>(null)
   const sharedCreateMenuWrapRef = useRef<HTMLDivElement | null>(null)
+  const boardCreatorWrapRef = useRef<HTMLDivElement | null>(null)
   const settingsMenuWrapRef = useRef<HTMLDivElement | null>(null)
   // One wrap around the whole footer control cluster (Approvals/Shares/Devices
   // buttons + their popovers) so a single outside-click/Escape listener
@@ -2204,6 +2215,8 @@ export function Sidebar({
   const totalChatCount = displayChats.filter((chat) => !chat.archived).length
   const workspaceWorkflowIds = new Set(workspaces.map((workspace) => workspace.id))
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
+  const boardCreatorWorkspace =
+    workspaceById.get(boardCreatorWorkspaceId) || currentWorkspace || workspaces[0] || null
   const scopedWorkflows = workflows
     .filter((workflow) => workspaceWorkflowIds.has(workflow.workspaceId))
     .slice()
@@ -2493,10 +2506,33 @@ export function Sidebar({
     expandSidebarSection('workflows')
     onCreateWorkflow?.()
   }
-  const handleNewWorkspaceBoard = () => {
+  const openWorkspaceBoardCreator = () => {
+    if (!onCreateWorkspaceBoard || workspaces.length === 0) return
+    const workspace = currentWorkspace || workspaces[0]
     setNewMenuOpen(false)
+    setSharedCreateMenuOpen(false)
     expandSidebarSection('workspace-boards')
-    onCreateWorkspaceBoard?.()
+    setBoardCreatorWorkspaceId(workspace.id)
+    setBoardCreatorName(`${workspace.displayName} Board`)
+    setBoardCreatorOpen(true)
+  }
+  const handleNewWorkspaceBoard = () => {
+    openWorkspaceBoardCreator()
+  }
+  const handleBoardCreatorWorkspaceChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const workspaceId = event.target.value
+    const workspace = workspaceById.get(workspaceId)
+    setBoardCreatorWorkspaceId(workspaceId)
+    if (workspace) {
+      setBoardCreatorName(`${workspace.displayName} Board`)
+    }
+  }
+  const handleBoardCreatorSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!onCreateWorkspaceBoard || !boardCreatorWorkspace) return
+    const name = boardCreatorName.trim() || `${boardCreatorWorkspace.displayName} Board`
+    onCreateWorkspaceBoard({ workspaceId: boardCreatorWorkspace.id, name })
+    setBoardCreatorOpen(false)
   }
   const sharedChatCreateOptions = getSharedChatCreateOptions({
     hasWorkspace: Boolean(currentWorkspace),
@@ -2556,6 +2592,27 @@ export function Sidebar({
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [sharedCreateMenuOpen])
+
+  useEffect(() => {
+    if (!boardCreatorOpen) return
+    const handleMouseDown = (event: globalThis.MouseEvent) => {
+      const wrap = boardCreatorWrapRef.current
+      if (!wrap) return
+      if (event.target instanceof Node && wrap.contains(event.target)) return
+      setBoardCreatorOpen(false)
+    }
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setBoardCreatorOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [boardCreatorOpen])
 
   useEffect(() => {
     if (!settingsMenuOpen) return
@@ -3316,11 +3373,11 @@ export function Sidebar({
                     role="menuitem"
                     className="sidebar-new-menu-item"
                     onClick={handleNewWorkspaceBoard}
-                    disabled={!currentWorkspace}
+                    disabled={workspaces.length === 0}
                     title={
-                      currentWorkspace
+                      workspaces.length > 0
                         ? 'New workspace board'
-                        : 'Open a workspace first to create a board'
+                        : 'Add a workspace first to create a board'
                     }
                   >
                     <BoardSymbolIcon />
@@ -3718,11 +3775,11 @@ export function Sidebar({
                   type="button"
                   className="sidebar-section-header-action sidebar-workspace-board-create"
                   onClick={handleNewWorkspaceBoard}
-                  disabled={!onCreateWorkspaceBoard || !currentWorkspace}
+                  disabled={!onCreateWorkspaceBoard || workspaces.length === 0}
                   title={
-                    currentWorkspace
+                    workspaces.length > 0
                       ? 'New workspace board'
-                      : 'Open a workspace first to create a board'
+                      : 'Add a workspace first to create a board'
                   }
                   aria-label="New workspace board"
                 >
@@ -4872,6 +4929,52 @@ export function Sidebar({
             )}
           </div>
         </div>
+        {boardCreatorOpen && (
+          <div
+            ref={boardCreatorWrapRef}
+            className="sidebar-new-menu sidebar-board-creator-menu"
+            role="dialog"
+            aria-label="New Workspace Board"
+          >
+            <form className="sidebar-board-creator-form" onSubmit={handleBoardCreatorSubmit}>
+              <div className="sidebar-board-creator-title">New Workspace Board</div>
+              <label className="sidebar-board-creator-field">
+                <span>Workspace</span>
+                <select
+                  value={boardCreatorWorkspace?.id || boardCreatorWorkspaceId}
+                  onChange={handleBoardCreatorWorkspaceChange}
+                  disabled={workspaces.length === 0}
+                >
+                  {workspaces.map((workspace) => (
+                    <option key={workspace.id} value={workspace.id}>
+                      {workspace.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="sidebar-board-creator-field">
+                <span>Board name</span>
+                <input
+                  type="text"
+                  value={boardCreatorName}
+                  onChange={(event) => setBoardCreatorName(event.target.value)}
+                  placeholder={
+                    boardCreatorWorkspace ? `${boardCreatorWorkspace.displayName} Board` : 'Board'
+                  }
+                  autoFocus
+                />
+              </label>
+              <div className="sidebar-board-creator-actions">
+                <button type="button" onClick={() => setBoardCreatorOpen(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary" disabled={workspaces.length === 0}>
+                  Create
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
         <AppShellStatsToolbar />
       </div>
     </div>

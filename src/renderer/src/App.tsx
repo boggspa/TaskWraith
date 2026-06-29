@@ -269,7 +269,11 @@ import {
   type ExternalPathGrantGap
 } from './lib/externalPathGrantPreflight'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../main/services/GitService'
-import { Sidebar, type SharedChatCreateVariant } from './components/Sidebar'
+import {
+  Sidebar,
+  type SharedChatCreateVariant,
+  type WorkspaceBoardCreateInput
+} from './components/Sidebar'
 import { WorkspaceBoardView } from './components/WorkspaceBoardView'
 import { Inspector } from './components/Inspector'
 import {
@@ -2019,6 +2023,7 @@ function App(): React.JSX.Element {
     typeof window.api.getWorkspaceBoards === 'function' &&
     typeof window.api.getWorkspaceBoardCards === 'function' &&
     typeof window.api.saveWorkspaceBoard === 'function' &&
+    typeof window.api.updateWorkspaceBoard === 'function' &&
     typeof window.api.deleteWorkspaceBoard === 'function' &&
     typeof window.api.saveWorkspaceBoardCard === 'function' &&
     typeof window.api.updateWorkspaceBoardCard === 'function' &&
@@ -7194,7 +7199,7 @@ function App(): React.JSX.Element {
     void window.api.getScheduledTasks(currentWorkspace?.id).then(setScheduledTasks)
     void window.api.getWorkflowDefinitions(currentWorkspace?.id).then(setWorkflowDefinitions)
     if (workspaceBoardApiReady) {
-      void window.api.getWorkspaceBoards(currentWorkspace?.id).then(setWorkspaceBoards)
+      void window.api.getWorkspaceBoards().then(setWorkspaceBoards)
       void window.api.getWorkspaceBoardCards().then(setWorkspaceBoardCards)
     } else {
       setWorkspaceBoards([])
@@ -8176,12 +8181,7 @@ function App(): React.JSX.Element {
 
     if (workspaceBoardApiReady && typeof window.api.onWorkspaceBoardsChanged === 'function') {
       window.api.onWorkspaceBoardsChanged((payload) => {
-        const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
-        setWorkspaceBoards(
-          workspaceId
-            ? payload.boards.filter((board) => board.workspaceId === workspaceId)
-            : payload.boards
-        )
+        setWorkspaceBoards(payload.boards)
         setWorkspaceBoardCards(payload.cards)
       })
     }
@@ -12313,17 +12313,45 @@ function App(): React.JSX.Element {
     await refreshWorkflowState(currentWorkspace?.id)
   }
 
-  const handleCreateWorkspaceBoard = async () => {
-    if (!currentWorkspace || !workspaceBoardApiReady) return
+  const enterWorkspaceBoardMode = (boardId: string) => {
+    currentChatIdRef.current = null
+    setCurrentChat(null)
+    setActiveSidebarChatId(null)
+    setSideChatId(null)
+    setSideChatMenuOpen(false)
+    setActiveWorkspaceBoardId(boardId)
+    setRawLogs([])
+    setRunCompleteNotice(null)
+    setDiff(null)
+    setRunDiff(null)
+    setShowGeminiTerminal(false)
+  }
+
+  const handleCreateWorkspaceBoard = async (input?: WorkspaceBoardCreateInput) => {
+    if (!workspaceBoardApiReady) return
+    const requestedWorkspace = input?.workspaceId
+      ? workspaces.find((item) => item.id === input.workspaceId) || null
+      : null
+    const workspace =
+      requestedWorkspace || (!input?.workspaceId ? currentWorkspace || workspaces[0] || null : null)
+    if (!workspace) return
+    const name = input?.name?.trim() || `${workspace.displayName} Board`
     const saved = await window.api.saveWorkspaceBoard({
-      workspaceId: currentWorkspace.id,
-      workspacePath: currentWorkspace.path,
-      name: `${currentWorkspace.displayName} Board`,
+      workspaceId: workspace.id,
+      workspacePath: workspace.path,
+      name,
       columns: []
     })
+    if (currentWorkspace?.id !== workspace.id) {
+      setCurrentWorkspace(workspace)
+      currentWorkspaceIdRef.current = workspace.id
+      void window.api
+        .checkTrust(workspace.path)
+        .then(setTrustResult)
+        .catch(() => {})
+    }
     setWorkspaceBoards((prev) => [saved, ...prev.filter((board) => board.id !== saved.id)])
-    setActiveWorkspaceBoardId(saved.id)
-    setActiveSidebarChatId(null)
+    enterWorkspaceBoardMode(saved.id)
   }
 
   const handleOpenWorkspaceBoard = async (board: WorkspaceBoardDefinition) => {
@@ -12336,8 +12364,7 @@ function App(): React.JSX.Element {
         .then(setTrustResult)
         .catch(() => {})
     }
-    setActiveWorkspaceBoardId(board.id)
-    setActiveSidebarChatId(null)
+    enterWorkspaceBoardMode(board.id)
   }
 
   const handleDeleteWorkspaceBoard = async (boardId: string) => {

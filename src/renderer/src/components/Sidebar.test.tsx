@@ -12,7 +12,8 @@ import {
   ApprovalsFooterPopover,
   SharesFooterPopover,
   getSharedChatCreateOptions,
-  type SharedChatCreateVariant
+  type SharedChatCreateVariant,
+  type WorkspaceBoardCreateInput
 } from './Sidebar'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
@@ -156,8 +157,10 @@ function renderSidebar(
     workflows?: WorkflowDefinition[]
     workspaceBoards?: WorkspaceBoardDefinition[]
     activeWorkspaceBoardId?: string | null
+    workspaces?: WorkspaceRecord[]
+    currentWorkspace?: WorkspaceRecord | null
     onCreateWorkflow?: () => void
-    onCreateWorkspaceBoard?: () => void
+    onCreateWorkspaceBoard?: (input?: WorkspaceBoardCreateInput) => void
     onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
     onDeleteWorkspaceBoard?: (boardId: string) => void
     onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
@@ -172,10 +175,12 @@ function renderSidebar(
   } = {}
 ) {
   const workspace = makeWorkspace()
+  const workspaces = options.workspaces ?? [workspace]
+  const currentWorkspace = options.currentWorkspace === undefined ? workspace : options.currentWorkspace
   return renderToStaticMarkup(
     <Sidebar
-      workspaces={[workspace]}
-      currentWorkspace={workspace}
+      workspaces={workspaces}
+      currentWorkspace={currentWorkspace}
       chats={chats}
       currentChat={chats[0] ?? null}
       activeChatId={options.activeChatId}
@@ -371,6 +376,30 @@ describe('Sidebar workspace boards', () => {
     expect(html).toContain('aria-label="New workspace board"')
   })
 
+  it('keeps board creation available when a workspace exists but none is active', () => {
+    stubSidebarStorage({})
+
+    const html = renderSidebar([], {
+      currentWorkspace: null,
+      onCreateWorkspaceBoard: () => {}
+    })
+
+    expect(html).toContain('sidebar-workspace-board-create')
+    expect(html).not.toContain('sidebar-workspace-board-create" disabled=""')
+  })
+
+  it('disables board creation only when there are no workspaces', () => {
+    stubSidebarStorage({})
+
+    const html = renderSidebar([], {
+      workspaces: [],
+      currentWorkspace: null,
+      onCreateWorkspaceBoard: () => {}
+    })
+
+    expect(html).toContain('sidebar-workspace-board-create" disabled=""')
+  })
+
   it('renders board rows without chat drag affordances', () => {
     stubSidebarStorage({
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspace-boards')
@@ -387,6 +416,33 @@ describe('Sidebar workspace boards', () => {
     expect(html).toContain('sidebar-workspace-board-item active')
     expect(html).toContain('Remove')
     expect(html).not.toContain('application/x-taskwraith-chat-id')
+  })
+
+  it('renders boards from any known workspace in the shared board section', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspace-boards')
+    })
+
+    const otherWorkspace = makeWorkspace({
+      id: 'ws-2',
+      path: '/other',
+      displayName: 'Other Repo'
+    })
+    const html = renderSidebar([], {
+      workspaces: [makeWorkspace(), otherWorkspace],
+      workspaceBoards: [
+        makeWorkspaceBoard({
+          id: 'board-2',
+          workspaceId: 'ws-2',
+          workspacePath: '/other',
+          name: 'Other board'
+        })
+      ],
+      onOpenWorkspaceBoard: () => {}
+    })
+
+    expect(html).toContain('Other board')
+    expect(html).toContain('Other Repo')
   })
 })
 

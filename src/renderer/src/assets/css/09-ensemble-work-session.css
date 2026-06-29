@@ -126,6 +126,16 @@
   background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
 }
 
+.sidebar-new-menu.sidebar-board-creator-menu {
+  top: 112px;
+  left: 14px;
+  right: 14px;
+  min-width: 0;
+  padding: 10px;
+  gap: 10px;
+  transform-origin: top right;
+}
+
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .sidebar-new-menu.sidebar-shared-create-menu {
   --sidebar-picker-bg-solid: var(--surface-1, #ffffff);
@@ -232,6 +242,91 @@
 
 .sidebar-new-menu > button:not(.sidebar-new-menu-item):hover {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.sidebar-board-creator-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-board-creator-title {
+  color: var(--text-primary);
+  font-size: var(--font-size-sm, 13px);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.sidebar-board-creator-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.sidebar-board-creator-field span {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.sidebar-board-creator-field input,
+.sidebar-board-creator-field select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 84%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg) 70%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  padding: 7px 9px;
+  outline: 0;
+}
+
+.sidebar-board-creator-field input:focus,
+.sidebar-board-creator-field select:focus {
+  border-color: color-mix(in srgb, var(--accent) 64%, var(--panel-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.sidebar-board-creator-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sidebar-board-creator-actions button {
+  border: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg) 72%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm, 13px);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.sidebar-board-creator-actions button.primary {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 26%, var(--panel-bg));
+}
+
+.sidebar-board-creator-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .sidebar-board-creator-title,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .sidebar-board-creator-actions button,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .sidebar-board-creator-field input,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .sidebar-board-creator-field select {
+  color: var(--surface-text);
 }
 
 /* Empty-state caption shown in the Ensembles sidebar section when the
