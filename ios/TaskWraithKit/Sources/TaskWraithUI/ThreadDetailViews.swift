@@ -1766,6 +1766,9 @@ struct ThreadDetailView: View {
                         ToolbarIconPillLabel("Files", systemImage: "folder")
                     }
                     .buttonStyle(.plain)
+                    .keyboardShortcut("1", modifiers: [.command])
+                    .accessibilityLabel("Open Files mode")
+                    .accessibilityHint("Opens the workspace file browser and editor.")
                 }
             }
             if let workspaceId = diffsToolbarWorkspaceId {
@@ -1776,6 +1779,9 @@ struct ThreadDetailView: View {
                         ToolbarIconPillLabel("Diffs", systemImage: "plus.forwardslash.minus")
                     }
                     .buttonStyle(.plain)
+                    .keyboardShortcut("2", modifiers: [.command])
+                    .accessibilityLabel("Open Diff Studio")
+                    .accessibilityHint("Opens the read-only workspace diff review.")
                 }
             }
             // Roster — dedicated ensemble-only page (supersedes the cramped
