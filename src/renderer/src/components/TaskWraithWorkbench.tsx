@@ -109,6 +109,10 @@ export const buildWorkbenchBreadcrumbs = ({
   return [workspaceName, viewLabel(activeView)]
 }
 
+export const resolveInitialWorkbenchView = (view?: WorkbenchView): WorkbenchView => {
+  return view === 'diff' || view === 'split' ? view : 'editor'
+}
+
 function WorkbenchNavIcon({ view }: { view: WorkbenchView }) {
   return (
     <span className="workbench-nav-icon" aria-hidden="true">
@@ -139,7 +143,8 @@ export function TaskWraithWorkbench({
   openFileRequest,
   onDirtyChange
 }: TaskWraithWorkbenchProps) {
-  const [activeView, setActiveView] = useState<WorkbenchView>('editor')
+  const initialView = resolveInitialWorkbenchView(openFileRequest?.view)
+  const [activeView, setActiveView] = useState<WorkbenchView>(initialView)
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
   const [diffGitSnapshot, setDiffGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
   const [status, setStatus] = useState('Workbench ready')
@@ -148,7 +153,9 @@ export function TaskWraithWorkbench({
   const [editorCommandRequest, setEditorCommandRequest] =
     useState<FileEditorCommandRequest | null>(null)
   const [diffSelectionRequest, setDiffSelectionRequest] = useState<EditorOpenRequest | null>(null)
-  const [diffSelectedPath, setDiffSelectedPath] = useState('')
+  const [diffSelectedPath, setDiffSelectedPath] = useState(
+    initialView === 'diff' ? (openFileRequest?.path ?? '') : ''
+  )
   const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
   const diffRefreshSeqRef = useRef(0)
@@ -209,6 +216,8 @@ export function TaskWraithWorkbench({
     activeView === 'editor' || activeView === 'split'
       ? editorState.status || editorState.gitMessage || status
       : status
+  const diffEditorActionPath =
+    activeView === 'diff' || activeView === 'split' ? diffSelectedPath : ''
 
   const focusNavItem = useCallback((view: WorkbenchView) => {
     const navButton =
@@ -577,6 +586,18 @@ export function TaskWraithWorkbench({
             >
               Save All
             </button>
+            {diffEditorActionPath && (
+              <button
+                className="btn btn-sm btn-ghost"
+                type="button"
+                onClick={() => openFileInEditor(diffEditorActionPath)}
+                disabled={editorBusy}
+                aria-label={`Open ${diffEditorActionPath} in editor`}
+                title={`Open ${diffEditorActionPath} in editor`}
+              >
+                Open in Editor
+              </button>
+            )}
             <span className="workbench-status" role="status" aria-live="polite">
               {workbenchStatus}
             </span>

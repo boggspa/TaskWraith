@@ -5,6 +5,7 @@ import {
   buildEditorWorkbenchNavMeta,
   buildWorkbenchBreadcrumbs,
   isWorkbenchPaneHidden,
+  resolveInitialWorkbenchView,
   TaskWraithWorkbench
 } from './TaskWraithWorkbench'
 
@@ -98,5 +99,28 @@ describe('TaskWraithWorkbench shell', () => {
     expect(html).toContain('aria-keyshortcuts="Meta+1 Control+1"')
     expect(html).toContain('aria-keyshortcuts="Meta+2 Control+2"')
     expect(html).toContain('aria-keyshortcuts="Meta+3 Control+3"')
+  })
+
+  it('renders deep-linked diff targets with a direct editor handoff', () => {
+    expect(resolveInitialWorkbenchView('diff')).toBe('diff')
+    expect(resolveInitialWorkbenchView('split')).toBe('split')
+    expect(resolveInitialWorkbenchView()).toBe('editor')
+
+    const html = renderToStaticMarkup(
+      <TaskWraithWorkbench
+        workspacePath="/repo"
+        workspaceName="Repo"
+        refreshTick={0}
+        openFileRequest={{ path: 'src/main/index.ts', nonce: 1, view: 'diff' }}
+        onDirtyChange={() => {}}
+      />
+    )
+
+    expect(html).toContain('Diff Studio')
+    expect(html).toContain('src/main/index.ts')
+    expect(html).toContain('Open in Editor')
+    expect(html).toContain('aria-label="Open src/main/index.ts in editor"')
+    expect(html).toContain('id="workbench-diff-tab"')
+    expect(html).toContain('aria-selected="true"')
   })
 })
