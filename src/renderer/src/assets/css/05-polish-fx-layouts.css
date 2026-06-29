@@ -2603,6 +2603,11 @@
   background: color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
+.sidebar-footer-settings .sf-symbol-icon,
+.sidebar-footer-settings .sf-symbol-icon svg {
+  width: 28px;
+  height: 28px;
+}
 .sidebar-footer-settings .sf-symbol-icon {
   flex-shrink: 0;
   opacity: 0.7;
