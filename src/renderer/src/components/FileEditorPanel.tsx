@@ -31,6 +31,7 @@ interface FileEditorPanelProps {
   refreshTick?: number
   openRequest?: FileEditorOpenRequest | null
   onDirtyChange?: (dirtyBufferCount: number) => void
+  onEditorStateChange?: (state: FileEditorPanelState) => void
 }
 
 interface FileEditorOpenRequest {
@@ -58,10 +59,17 @@ interface EditorBuffer {
   mtimeMs?: number
 }
 
-interface EditorCursorStatus {
+export interface EditorCursorStatus {
   line: number
   column: number
   selectedChars: number
+}
+
+export interface FileEditorPanelState {
+  selectedPath: string
+  dirtyBufferCount: number
+  cursorStatus: EditorCursorStatus
+  gitSnapshot: GitRepositorySnapshot | null
 }
 
 interface WorkspaceFileTreeProps {
@@ -98,6 +106,7 @@ interface FileEditorGitActionsProps {
   onSave: () => void | Promise<void>
   onToggleLineWrap: () => void
   onOpenQuickOpen: () => void
+  onRevealInTree: () => void | Promise<void>
 }
 
 interface EditorTabStripProps {
@@ -397,7 +406,8 @@ export function FileEditorPanel({
   width,
   refreshTick = 0,
   openRequest,
-  onDirtyChange
+  onDirtyChange,
+  onEditorStateChange
 }: FileEditorPanelProps) {
   const [childrenByDirectory, setChildrenByDirectory] = useState<
     Record<string, WorkspaceFileEntry[]>
@@ -444,6 +454,21 @@ export function FileEditorPanel({
   useEffect(() => {
     onDirtyChange?.(dirtyBufferCount)
   }, [dirtyBufferCount, onDirtyChange])
+
+  useEffect(() => {
+    onEditorStateChange?.({
+      selectedPath,
+      dirtyBufferCount,
+      cursorStatus,
+      gitSnapshot
+    })
+  }, [
+    cursorStatus,
+    dirtyBufferCount,
+    gitSnapshot,
+    onEditorStateChange,
+    selectedPath
+  ])
 
   const browseFiles = useMemo(() => {
     const rows: WorkspaceFileEntry[] = []
@@ -1046,6 +1071,18 @@ export function FileEditorPanel({
     [openFilePath]
   )
 
+  const revealSelectedFileInTree = async () => {
+    if (!workspacePath || !selectedPath) return
+    setFilter('')
+    const parentPath = parentDirectoryForPath(selectedPath)
+    if (parentPath) {
+      await expandDirectoryPath(parentPath)
+    } else {
+      await loadDirectory(ROOT_DIR_KEY)
+    }
+    setStatus(`${selectedPath} · revealed`)
+  }
+
   const openFile = async (entry: WorkspaceFileEntry) => {
     if (!workspacePath) return
     if (entry.isDirectory) {
@@ -1351,6 +1388,7 @@ export function FileEditorPanel({
             onSave={saveFile}
             onToggleLineWrap={() => setLineWrapEnabled((enabled) => !enabled)}
             onOpenQuickOpen={openQuickOpen}
+            onRevealInTree={revealSelectedFileInTree}
           />
         </div>
         <EditorTabStrip
@@ -1607,7 +1645,8 @@ function FileEditorGitActions({
   onSaveAll,
   onSave,
   onToggleLineWrap,
-  onOpenQuickOpen
+  onOpenQuickOpen,
+  onRevealInTree
 }: FileEditorGitActionsProps) {
   const commitDisabled =
     !workspacePath || stagedCount === 0 || outOfScopeStagedCount > 0 || isLoading
@@ -1663,6 +1702,15 @@ function FileEditorGitActions({
         title={commitTitle}
       >
         Commit
+      </button>
+      <button
+        className="btn btn-sm btn-ghost"
+        type="button"
+        onClick={() => void onRevealInTree()}
+        disabled={!workspacePath || !selectedPath || isLoading}
+        title="Reveal selected file in tree"
+      >
+        Reveal
       </button>
       <button
         className="btn btn-sm btn-ghost"

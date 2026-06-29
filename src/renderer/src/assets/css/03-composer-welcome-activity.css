@@ -9016,6 +9016,13 @@
   background: color-mix(in srgb, var(--panel-elevated-bg) 44%, transparent);
 }
 
+.workbench-bottom-bar > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .popout-chat-transcript {
   width: 100%;
   height: 100%;

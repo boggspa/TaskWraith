@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import { DiffViewer } from './DiffViewer'
-import { FileEditorPanel } from './FileEditorPanel'
+import { FileEditorPanel, type FileEditorPanelState } from './FileEditorPanel'
 
 type WorkbenchView = 'editor' | 'diff'
 
@@ -10,6 +10,13 @@ type WorkspaceDiff = Awaited<ReturnType<typeof window.api.getDiff>>
 interface EditorOpenRequest {
   path: string
   nonce: number
+}
+
+const DEFAULT_EDITOR_STATE: FileEditorPanelState = {
+  selectedPath: '',
+  dirtyBufferCount: 0,
+  cursorStatus: { line: 1, column: 1, selectedChars: 0 },
+  gitSnapshot: null
 }
 
 interface TaskWraithWorkbenchProps {
@@ -34,12 +41,42 @@ export function TaskWraithWorkbench({
   const [status, setStatus] = useState('Workbench ready')
   const [editorRefreshTick, setEditorRefreshTick] = useState(refreshTick)
   const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(null)
+  const [editorState, setEditorState] = useState<FileEditorPanelState>(DEFAULT_EDITOR_STATE)
   const [diffActionPath, setDiffActionPath] = useState('')
 
   const breadcrumbs = useMemo(
-    () => [workspaceName, viewLabel(activeView)],
-    [activeView, workspaceName]
+    () =>
+      activeView === 'editor' && editorState.selectedPath
+        ? [workspaceName, ...editorState.selectedPath.split('/').filter(Boolean)]
+        : [workspaceName, viewLabel(activeView)],
+    [activeView, editorState.selectedPath, workspaceName]
   )
+  const activeGitSnapshot =
+    activeView === 'diff' ? diffGitSnapshot : editorState.gitSnapshot
+  const branchLabel = useMemo(() => {
+    if (!activeGitSnapshot) return 'No git status'
+    if (activeGitSnapshot.detached) {
+      return activeGitSnapshot.commit ? `Detached ${activeGitSnapshot.commit}` : 'Detached HEAD'
+    }
+    return activeGitSnapshot.branch || 'Git repository'
+  }, [activeGitSnapshot])
+  const changeSummary = activeGitSnapshot
+    ? `${activeGitSnapshot.counts.changed} changed · ${activeGitSnapshot.counts.staged} staged · ${activeGitSnapshot.counts.unstaged} unstaged`
+    : ''
+  const editorCursorSummary =
+    activeView === 'editor' && editorState.selectedPath
+      ? `Ln ${editorState.cursorStatus.line}, Col ${editorState.cursorStatus.column}${
+          editorState.cursorStatus.selectedChars > 0
+            ? ` · ${editorState.cursorStatus.selectedChars} selected`
+            : ''
+        }`
+      : viewLabel(activeView)
+  const editorDirtySummary =
+    editorState.dirtyBufferCount > 0
+      ? `${editorState.dirtyBufferCount} unsaved ${
+          editorState.dirtyBufferCount === 1 ? 'file' : 'files'
+        }`
+      : ''
 
   const refreshDiff = useCallback(async () => {
     if (!workspacePath) return
@@ -177,7 +214,17 @@ export function TaskWraithWorkbench({
             {breadcrumbs.map((crumb, index) => (
               <span key={`${crumb}-${index}`}>
                 {index > 0 && <span aria-hidden="true">/</span>}
-                <span title={index === 0 ? workspacePath : undefined}>{crumb}</span>
+                <span
+                  title={
+                    index === 0
+                      ? workspacePath
+                      : activeView === 'editor'
+                        ? editorState.selectedPath
+                        : undefined
+                  }
+                >
+                  {crumb}
+                </span>
               </span>
             ))}
           </div>
@@ -197,6 +244,7 @@ export function TaskWraithWorkbench({
               refreshTick={editorRefreshTick}
               openRequest={editorOpenRequest}
               onDirtyChange={onDirtyChange}
+              onEditorStateChange={setEditorState}
             />
           </div>
           <div className="workbench-pane" hidden={activeView !== 'diff'}>
@@ -214,8 +262,14 @@ export function TaskWraithWorkbench({
           </div>
         </div>
         <footer className="workbench-bottom-bar">
-          <span>{workspaceName}</span>
-          <span>{viewLabel(activeView)}</span>
+          <span title={changeSummary ? `${branchLabel} · ${changeSummary}` : branchLabel}>
+            {branchLabel}
+            {changeSummary ? ` · ${changeSummary}` : ''}
+          </span>
+          <span>
+            {editorDirtySummary ? `${editorDirtySummary} · ` : ''}
+            {editorCursorSummary}
+          </span>
         </footer>
       </div>
     </section>
