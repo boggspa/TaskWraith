@@ -21,6 +21,7 @@ import type {
   ChatListItem,
   ScheduledTask,
   WorkflowDefinition,
+  WorkspaceBoardDefinition,
   ProviderId,
   ComposerStyle,
   ThemeAccentStyle,
@@ -148,6 +149,8 @@ interface SidebarProps {
   }>
   runningChatIds?: string[]
   workflows?: WorkflowDefinition[]
+  workspaceBoards?: WorkspaceBoardDefinition[]
+  activeWorkspaceBoardId?: string | null
   scheduledTasks?: ScheduledTask[]
   collaboratingChatIds?: Set<string>
   /**
@@ -230,6 +233,9 @@ interface SidebarProps {
    * the Run Inspector for that runId. */
   onInspectRun?: (runId: string, chatId: string | undefined) => void
   onCreateWorkflow?: () => void
+  onCreateWorkspaceBoard?: () => void
+  onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+  onDeleteWorkspaceBoard?: (boardId: string) => void
   /** Start a new shared chat + copy a collaborator invite (People feature). */
   onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
   /** Join someone else's shared chat by pasting their invite (People feature). */
@@ -384,6 +390,7 @@ const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'all-collapsed-v1'
 type SidebarSectionId =
   | 'workflows'
+  | 'workspace-boards'
   | 'pinned'
   | 'recents'
   | 'ensembles'
@@ -392,6 +399,7 @@ type SidebarSectionId =
   | 'shared'
 const SIDEBAR_SECTION_IDS: readonly SidebarSectionId[] = [
   'workflows',
+  'workspace-boards',
   'pinned',
   'recents',
   'ensembles',
@@ -1421,6 +1429,18 @@ function workflowMatchesSearch(workflow: WorkflowDefinition, query: string): boo
     .includes(query)
 }
 
+function workspaceBoardMatchesSearch(
+  board: WorkspaceBoardDefinition,
+  workspace: WorkspaceRecord | undefined,
+  query: string
+): boolean {
+  if (!query) return true
+  return [board.name, board.description, workspace?.displayName, workspace?.path]
+    .join(' ')
+    .toLowerCase()
+    .includes(query)
+}
+
 const WORKFLOW_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'skipped'])
 const WORKFLOW_COUNTER_STATUSES = [
   'running',
@@ -1924,6 +1944,8 @@ export function Sidebar({
   usageSummary,
   runningChatIds = [],
   workflows = [],
+  workspaceBoards = [],
+  activeWorkspaceBoardId = null,
   scheduledTasks = [],
   collaboratingChatIds = new Set<string>(),
   showOnboardingHint = false,
@@ -1956,6 +1978,9 @@ export function Sidebar({
   onRenameChat,
   onInspectRun,
   onCreateWorkflow,
+  onCreateWorkspaceBoard,
+  onOpenWorkspaceBoard,
+  onDeleteWorkspaceBoard,
   onCreateSharedChat,
   onJoinSharedChat,
   onRunWorkflowNow,
@@ -2160,6 +2185,7 @@ export function Sidebar({
     : globalChats
   const totalChatCount = displayChats.filter((chat) => !chat.archived).length
   const workspaceWorkflowIds = new Set(workspaces.map((workspace) => workspace.id))
+  const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
   const scopedWorkflows = workflows
     .filter((workflow) => workspaceWorkflowIds.has(workflow.workspaceId))
     .slice()
@@ -2226,6 +2252,15 @@ export function Sidebar({
   const visibleWorkflows = isSidebarSearchActive
     ? scopedWorkflows.filter((workflow) => workflowMatchesSearch(workflow, sidebarSearchQuery))
     : scopedWorkflows
+  const visibleWorkspaceBoards = (isSidebarSearchActive
+    ? workspaceBoards.filter((board) =>
+        workspaceBoardMatchesSearch(board, workspaceById.get(board.workspaceId), sidebarSearchQuery)
+      )
+    : workspaceBoards
+  )
+    .filter((board) => workspaceWorkflowIds.has(board.workspaceId) && !board.archived)
+    .slice()
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
   const scheduledTaskById = useMemo(() => {
     const map = new Map<string, ScheduledTask>()
     for (const task of scheduledTasks) map.set(task.id, task)
@@ -2250,7 +2285,9 @@ export function Sidebar({
     const chatIds = new Set<string>()
     const workspaceIds = new Set<string>()
     const workflowIds = new Set<string>()
+    const boardIds = new Set<string>()
     for (const workflow of visibleWorkflows) workflowIds.add(workflow.id)
+    for (const board of visibleWorkspaceBoards) boardIds.add(board.id)
     for (const entry of visibleWorkspaceEntries) {
       workspaceIds.add(entry.workspace.id)
       for (const chat of entry.visibleChats) chatIds.add(chat.appChatId)
@@ -2260,7 +2297,7 @@ export function Sidebar({
     for (const chat of visibleRecentChats) chatIds.add(chat.appChatId)
     for (const chat of visibleEnsembleChats) chatIds.add(chat.appChatId)
     for (const workspace of visiblePinnedWorkspaces) workspaceIds.add(workspace.id)
-    return chatIds.size + workspaceIds.size + workflowIds.size
+    return chatIds.size + workspaceIds.size + workflowIds.size + boardIds.size
   })()
 
   // 1.0.3 retiring inline tile action icons — `handleTogglePinChatClick`,
@@ -3616,6 +3653,93 @@ export function Sidebar({
                 )}
               </div>
             )}
+            </div>
+          )}
+
+          {wrapHierarchySection(
+            'workspace-boards',
+            <div className="sidebar-workspace-boards-section">
+              <div className="sidebar-section-header">
+                <button
+                  type="button"
+                  className="sidebar-section-header-toggle"
+                  onClick={() => toggleSidebarSection('workspace-boards')}
+                  aria-expanded={!isSectionCollapsed('workspace-boards')}
+                  title={
+                    isSectionCollapsed('workspace-boards')
+                      ? 'Expand Workspace Boards'
+                      : 'Collapse Workspace Boards'
+                  }
+                >
+                  <ChevronSymbolIcon isExpanded={!isSectionCollapsed('workspace-boards')} />
+                  <h4 className="sidebar-section-title">Workspace Boards</h4>
+                </button>
+                <button
+                  type="button"
+                  className="sidebar-section-header-action sidebar-workspace-board-create"
+                  onClick={onCreateWorkspaceBoard}
+                  disabled={!onCreateWorkspaceBoard || !currentWorkspace}
+                  title={
+                    currentWorkspace
+                      ? 'New workspace board'
+                      : 'Open a workspace first to create a board'
+                  }
+                  aria-label="New workspace board"
+                >
+                  <PlusSymbolIcon />
+                </button>
+              </div>
+              {!isSectionCollapsed('workspace-boards') && (
+                <div className="sidebar-workspace-board-list">
+                  {visibleWorkspaceBoards.length === 0 ? (
+                    <div className="sidebar-workflow-empty">
+                      {isSidebarSearchActive ? 'No matching boards' : 'No workspace boards'}
+                    </div>
+                  ) : (
+                    visibleWorkspaceBoards.map((board) => {
+                      const workspace = workspaceById.get(board.workspaceId)
+                      return (
+                        <div key={board.id} className="sidebar-workspace-board-block">
+                          <button
+                            type="button"
+                            className={`sidebar-workspace-board-item ${
+                              activeWorkspaceBoardId === board.id ? 'active' : ''
+                            }`}
+                            onClick={() => onOpenWorkspaceBoard?.(board)}
+                            title={board.name}
+                          >
+                            <span className="sidebar-workspace-board-icon" aria-hidden>
+                              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor">
+                                <path d="M3 3.5h10M3 8h10M3 12.5h10" />
+                                <path d="M5.5 2.5v11M10.5 2.5v11" />
+                              </svg>
+                            </span>
+                            <span className="sidebar-workflow-copy">
+                              <span className="sidebar-workflow-name">
+                                <HighlightMatch text={board.name} query={sidebarSearchQuery} />
+                              </span>
+                              <span className="sidebar-workflow-meta">
+                                {workspace?.displayName || 'Workspace'}
+                              </span>
+                            </span>
+                          </button>
+                          {activeWorkspaceBoardId === board.id && onDeleteWorkspaceBoard && (
+                            <button
+                              type="button"
+                              className="sidebar-workspace-board-remove"
+                              onClick={() => onDeleteWorkspaceBoard(board.id)}
+                              title={`Remove ${board.name}`}
+                              aria-label={`Remove ${board.name}`}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              )}
             </div>
           )}
 

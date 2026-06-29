@@ -3051,6 +3051,71 @@ export interface WorkflowDefinition {
   updatedAt: string
 }
 
+export type WorkspaceBoardColumnId =
+  | 'inbox'
+  | 'ready'
+  | 'running'
+  | 'needs-input'
+  | 'blocked'
+  | 'review-ready'
+  | 'done'
+  | 'archived'
+
+export interface WorkspaceBoardColumn {
+  id: WorkspaceBoardColumnId
+  name: string
+  sortOrder: number
+  wipLimit?: number
+}
+
+export type WorkspaceBoardCardLinkKind = 'chat' | 'workflow' | 'scheduled-task' | 'run-queue-job'
+
+export interface WorkspaceBoardCardLink {
+  kind: WorkspaceBoardCardLinkKind
+  id: string
+}
+
+export interface WorkspaceBoardActivityEntry {
+  id: string
+  at: string
+  actor: 'user' | 'system'
+  action: string
+  detail?: string
+}
+
+export interface WorkspaceBoardDefinition {
+  id: string
+  workspaceId: string
+  workspacePath: string
+  name: string
+  description?: string
+  columns: WorkspaceBoardColumn[]
+  archived?: boolean
+  createdAt: string
+  updatedAt: string
+  activity: WorkspaceBoardActivityEntry[]
+}
+
+export interface WorkspaceBoardCard {
+  id: string
+  boardId: string
+  workspaceId: string
+  columnId: WorkspaceBoardColumnId
+  title: string
+  body?: string
+  sortOrder: number
+  humanOwner?: string
+  labels?: string[]
+  link?: WorkspaceBoardCardLink
+  blockedReason?: string
+  nextStep?: string
+  reminderAt?: string
+  archived?: boolean
+  createdAt: string
+  updatedAt: string
+  activity: WorkspaceBoardActivityEntry[]
+}
+
 // ── Audit orchestration workflow ───────────────────────────────────────────
 // A bounded, disciplined, multi-provider strengths/weaknesses audit. Unlike
 // WorkflowDefinition (a reusable schedule template), an AuditRunRecord is a

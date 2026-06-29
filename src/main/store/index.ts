@@ -44,6 +44,12 @@ import {
   WorkflowDefinition,
   WorkflowExecutionRecord,
   WorkflowRunTemplate,
+  WorkspaceBoardActivityEntry,
+  WorkspaceBoardCard,
+  WorkspaceBoardCardLink,
+  WorkspaceBoardColumn,
+  WorkspaceBoardColumnId,
+  WorkspaceBoardDefinition,
   PinnedMessageGroup,
   AuditRunRecord,
   AuditFinding,
@@ -162,6 +168,8 @@ const usagePath = path.join(userDataPath, 'usage.json')
 const providerUsageSnapshotsPath = path.join(userDataPath, 'provider-usage-snapshots.json')
 const scheduledTasksPath = path.join(userDataPath, 'scheduled-tasks.json')
 const workflowsPath = path.join(userDataPath, 'workflows.json')
+const workspaceBoardsPath = path.join(userDataPath, 'workspace-boards.json')
+const workspaceBoardCardsPath = path.join(userDataPath, 'workspace-board-cards.json')
 const runQueuePath = path.join(userDataPath, 'run-queue.json')
 // Single choke point for run-queue writes: bounds retained terminal history
 // (capRunQueueJobs) so the full synchronous rewrite stays small. In-flight jobs
@@ -382,6 +390,172 @@ function normalizeUnattendedElevationAck(value: unknown): UnattendedElevationAck
     acknowledgedAt: ack.acknowledgedAt,
     acknowledgedApprovalMode: ack.acknowledgedApprovalMode,
     signature: ack.signature
+  }
+}
+
+const WORKSPACE_BOARD_DEFAULT_COLUMNS: WorkspaceBoardColumn[] = [
+  { id: 'inbox', name: 'Inbox', sortOrder: 0 },
+  { id: 'ready', name: 'Ready', sortOrder: 1 },
+  { id: 'running', name: 'Running', sortOrder: 2 },
+  { id: 'needs-input', name: 'Needs Input', sortOrder: 3 },
+  { id: 'blocked', name: 'Blocked', sortOrder: 4 },
+  { id: 'review-ready', name: 'Review Ready', sortOrder: 5 },
+  { id: 'done', name: 'Done', sortOrder: 6 },
+  { id: 'archived', name: 'Archived', sortOrder: 7 }
+]
+
+const WORKSPACE_BOARD_COLUMN_IDS = new Set<WorkspaceBoardColumnId>(
+  WORKSPACE_BOARD_DEFAULT_COLUMNS.map((column) => column.id)
+)
+
+function isWorkspaceBoardColumnId(value: unknown): value is WorkspaceBoardColumnId {
+  return typeof value === 'string' && WORKSPACE_BOARD_COLUMN_IDS.has(value as WorkspaceBoardColumnId)
+}
+
+function normalizeWorkspaceBoardActivityEntry(
+  value: unknown,
+  fallbackAction: string,
+  nowIso: string
+): WorkspaceBoardActivityEntry | null {
+  if (!value || typeof value !== 'object') return null
+  const input = value as Partial<WorkspaceBoardActivityEntry>
+  const action =
+    typeof input.action === 'string' && input.action.trim() ? input.action.trim() : fallbackAction
+  return {
+    id: typeof input.id === 'string' && input.id ? input.id : randomUUID(),
+    at: typeof input.at === 'string' && input.at ? input.at : nowIso,
+    actor: input.actor === 'system' ? 'system' : 'user',
+    action,
+    detail: typeof input.detail === 'string' && input.detail.trim() ? input.detail.trim() : undefined
+  }
+}
+
+function normalizeWorkspaceBoardColumns(value: unknown): WorkspaceBoardColumn[] {
+  const provided = Array.isArray(value) ? value : []
+  const byId = new Map<WorkspaceBoardColumnId, WorkspaceBoardColumn>()
+  for (const item of provided) {
+    if (!item || typeof item !== 'object') continue
+    const input = item as Partial<WorkspaceBoardColumn>
+    if (!isWorkspaceBoardColumnId(input.id)) continue
+    byId.set(input.id, {
+      id: input.id,
+      name: typeof input.name === 'string' && input.name.trim() ? input.name.trim() : input.id,
+      sortOrder:
+        typeof input.sortOrder === 'number' && Number.isFinite(input.sortOrder)
+          ? Math.max(0, Math.floor(input.sortOrder))
+          : WORKSPACE_BOARD_DEFAULT_COLUMNS.find((column) => column.id === input.id)?.sortOrder || 0,
+      wipLimit:
+        typeof input.wipLimit === 'number' && Number.isFinite(input.wipLimit) && input.wipLimit > 0
+          ? Math.floor(input.wipLimit)
+          : undefined
+    })
+  }
+  for (const column of WORKSPACE_BOARD_DEFAULT_COLUMNS) {
+    if (!byId.has(column.id)) byId.set(column.id, column)
+  }
+  return Array.from(byId.values()).sort((a, b) => a.sortOrder - b.sortOrder)
+}
+
+function normalizeWorkspaceBoardLink(value: unknown): WorkspaceBoardCardLink | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const input = value as Partial<WorkspaceBoardCardLink>
+  if (
+    input.kind !== 'chat' &&
+    input.kind !== 'workflow' &&
+    input.kind !== 'scheduled-task' &&
+    input.kind !== 'run-queue-job'
+  ) {
+    return undefined
+  }
+  if (typeof input.id !== 'string' || !input.id.trim()) return undefined
+  return { kind: input.kind, id: input.id.trim() }
+}
+
+function normalizeWorkspaceBoardDefinitionRecord(
+  value: unknown,
+  nowMs: number
+): WorkspaceBoardDefinition | null {
+  if (!value || typeof value !== 'object') return null
+  const input = value as Partial<WorkspaceBoardDefinition>
+  if (typeof input.workspaceId !== 'string' || !input.workspaceId.trim()) return null
+  if (typeof input.workspacePath !== 'string' || !input.workspacePath.trim()) return null
+  const nowIso = new Date(nowMs).toISOString()
+  return {
+    id: typeof input.id === 'string' && input.id ? input.id : randomUUID(),
+    workspaceId: input.workspaceId,
+    workspacePath: input.workspacePath,
+    name: typeof input.name === 'string' && input.name.trim() ? input.name.trim() : 'Workspace Board',
+    description:
+      typeof input.description === 'string' && input.description.trim()
+        ? input.description.trim()
+        : undefined,
+    columns: normalizeWorkspaceBoardColumns(input.columns),
+    archived: input.archived === true,
+    createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
+    updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : nowIso,
+    activity: Array.isArray(input.activity)
+      ? input.activity
+          .map((entry) => normalizeWorkspaceBoardActivityEntry(entry, 'updated', nowIso))
+          .filter((entry): entry is WorkspaceBoardActivityEntry => Boolean(entry))
+          .slice(-100)
+      : []
+  }
+}
+
+function normalizeWorkspaceBoardCardRecord(
+  value: unknown,
+  nowMs: number
+): WorkspaceBoardCard | null {
+  if (!value || typeof value !== 'object') return null
+  const input = value as Partial<WorkspaceBoardCard>
+  if (typeof input.boardId !== 'string' || !input.boardId.trim()) return null
+  if (typeof input.workspaceId !== 'string' || !input.workspaceId.trim()) return null
+  const nowIso = new Date(nowMs).toISOString()
+  const labels = Array.isArray(input.labels)
+    ? input.labels
+        .filter((label): label is string => typeof label === 'string')
+        .map((label) => label.trim())
+        .filter(Boolean)
+        .slice(0, 12)
+    : undefined
+  return {
+    id: typeof input.id === 'string' && input.id ? input.id : randomUUID(),
+    boardId: input.boardId,
+    workspaceId: input.workspaceId,
+    columnId: isWorkspaceBoardColumnId(input.columnId) ? input.columnId : 'inbox',
+    title: typeof input.title === 'string' && input.title.trim() ? input.title.trim() : 'Untitled card',
+    body: typeof input.body === 'string' && input.body.trim() ? input.body.trim() : undefined,
+    sortOrder:
+      typeof input.sortOrder === 'number' && Number.isFinite(input.sortOrder)
+        ? Math.max(0, Math.floor(input.sortOrder))
+        : nowMs,
+    humanOwner:
+      typeof input.humanOwner === 'string' && input.humanOwner.trim()
+        ? input.humanOwner.trim()
+        : undefined,
+    labels,
+    link: normalizeWorkspaceBoardLink(input.link),
+    blockedReason:
+      typeof input.blockedReason === 'string' && input.blockedReason.trim()
+        ? input.blockedReason.trim()
+        : undefined,
+    nextStep:
+      typeof input.nextStep === 'string' && input.nextStep.trim()
+        ? input.nextStep.trim()
+        : undefined,
+    reminderAt:
+      typeof input.reminderAt === 'string' && input.reminderAt.trim()
+        ? input.reminderAt.trim()
+        : undefined,
+    archived: input.archived === true,
+    createdAt: typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : nowIso,
+    updatedAt: typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : nowIso,
+    activity: Array.isArray(input.activity)
+      ? input.activity
+          .map((entry) => normalizeWorkspaceBoardActivityEntry(entry, 'updated', nowIso))
+          .filter((entry): entry is WorkspaceBoardActivityEntry => Boolean(entry))
+          .slice(-100)
+      : []
   }
 }
 
@@ -2624,6 +2798,281 @@ export class AppStore {
     writeJson(
       workflowsPath,
       this.getWorkflowDefinitions().filter((item) => item.id !== id)
+    )
+  }
+
+  // Workspace boards
+  static getWorkspaceBoards(workspaceId?: string): WorkspaceBoardDefinition[] {
+    const nowMs = Date.now()
+    return readJson<unknown[]>(workspaceBoardsPath, [])
+      .map((item) => normalizeWorkspaceBoardDefinitionRecord(item, nowMs))
+      .filter((item): item is WorkspaceBoardDefinition => Boolean(item))
+      .filter((board) => !workspaceId || board.workspaceId === workspaceId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  }
+
+  static getWorkspaceBoard(id: string): WorkspaceBoardDefinition | null {
+    return this.getWorkspaceBoards().find((board) => board.id === id) || null
+  }
+
+  static saveWorkspaceBoard(
+    board: Omit<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
+      Partial<
+        Pick<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'>
+      >
+  ): WorkspaceBoardDefinition {
+    const boards = this.getWorkspaceBoards()
+    const nowMs = Date.now()
+    const nowIso = new Date(nowMs).toISOString()
+    const createdActivity: WorkspaceBoardActivityEntry = {
+      id: randomUUID(),
+      at: nowIso,
+      actor: 'user',
+      action: 'created'
+    }
+    const normalized = normalizeWorkspaceBoardDefinitionRecord(
+      {
+        ...board,
+        id: board.id || randomUUID(),
+        columns: board.columns || WORKSPACE_BOARD_DEFAULT_COLUMNS,
+        activity: [
+          ...(Array.isArray(board.activity) ? board.activity : []),
+          createdActivity
+        ],
+        createdAt: board.createdAt || nowIso,
+        updatedAt: nowIso
+      },
+      nowMs
+    )
+    if (!normalized) throw new Error('Workspace board is invalid.')
+    const index = boards.findIndex((item) => item.id === normalized.id)
+    if (index >= 0) {
+      const prior = boards[index]
+      const updatedActivity: WorkspaceBoardActivityEntry = {
+        id: randomUUID(),
+        at: nowIso,
+        actor: 'user',
+        action: 'updated'
+      }
+      boards[index] = {
+        ...prior,
+        ...normalized,
+        createdAt: prior.createdAt,
+        updatedAt: nowIso,
+        activity: [
+          ...(prior.activity || []),
+          updatedActivity
+        ].slice(-100)
+      }
+    } else {
+      boards.push(normalized)
+    }
+    writeJson(workspaceBoardsPath, boards)
+    return index >= 0 ? boards[index] : normalized
+  }
+
+  static updateWorkspaceBoard(
+    id: string,
+    partial: Partial<WorkspaceBoardDefinition>
+  ): WorkspaceBoardDefinition | null {
+    const boards = this.getWorkspaceBoards()
+    const index = boards.findIndex((board) => board.id === id)
+    if (index < 0) return null
+    const source = boards[index]
+    const nowMs = Date.now()
+    const nowIso = new Date(nowMs).toISOString()
+    const normalized = normalizeWorkspaceBoardDefinitionRecord(
+      {
+        ...source,
+        name: partial.name ?? source.name,
+        description: partial.description ?? source.description,
+        columns: partial.columns ?? source.columns,
+        archived: partial.archived ?? source.archived,
+        workspaceId: source.workspaceId,
+        workspacePath: source.workspacePath,
+        updatedAt: nowIso,
+        activity: [
+          ...(source.activity || []),
+          { id: randomUUID(), at: nowIso, actor: 'user', action: 'updated' }
+        ].slice(-100)
+      },
+      nowMs
+    )
+    if (!normalized) return null
+    boards[index] = normalized
+    writeJson(workspaceBoardsPath, boards)
+    return normalized
+  }
+
+  static deleteWorkspaceBoard(id: string): void {
+    writeJson(
+      workspaceBoardsPath,
+      this.getWorkspaceBoards().filter((board) => board.id !== id)
+    )
+    writeJson(
+      workspaceBoardCardsPath,
+      this.getWorkspaceBoardCards().filter((card) => card.boardId !== id)
+    )
+  }
+
+  static getWorkspaceBoardCards(boardId?: string): WorkspaceBoardCard[] {
+    const nowMs = Date.now()
+    return readJson<unknown[]>(workspaceBoardCardsPath, [])
+      .map((item) => normalizeWorkspaceBoardCardRecord(item, nowMs))
+      .filter((item): item is WorkspaceBoardCard => Boolean(item))
+      .filter((card) => !boardId || card.boardId === boardId)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt.localeCompare(b.createdAt))
+  }
+
+  static getWorkspaceBoardCard(id: string): WorkspaceBoardCard | null {
+    return this.getWorkspaceBoardCards().find((card) => card.id === id) || null
+  }
+
+  private static assertWorkspaceBoardCardLink(
+    board: WorkspaceBoardDefinition,
+    link?: WorkspaceBoardCardLink
+  ): WorkspaceBoardCardLink | undefined {
+    if (!link) return undefined
+    if (link.kind === 'chat') {
+      const chat = this.getChat(link.id)
+      if (!chat || chat.archived || chat.workspaceId !== board.workspaceId || chat.scope === 'global') {
+        throw new Error('Board card chat link must belong to the board workspace.')
+      }
+      return link
+    }
+    if (link.kind === 'workflow') {
+      const workflow = this.getWorkflowDefinition(link.id)
+      if (!workflow || workflow.workspaceId !== board.workspaceId) {
+        throw new Error('Board card workflow link must belong to the board workspace.')
+      }
+      return link
+    }
+    if (link.kind === 'scheduled-task') {
+      const task = this.getScheduledTasks().find((item) => item.id === link.id)
+      if (!task || task.workspaceId !== board.workspaceId) {
+        throw new Error('Board card scheduled task link must belong to the board workspace.')
+      }
+      return link
+    }
+    if (link.kind === 'run-queue-job') {
+      const job = this.getRunQueueJob(link.id)
+      if (!job || job.workspaceId !== board.workspaceId) {
+        throw new Error('Board card run queue link must belong to the board workspace.')
+      }
+      return link
+    }
+    return undefined
+  }
+
+  static saveWorkspaceBoardCard(
+    card: Omit<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
+      Partial<Pick<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>>
+  ): WorkspaceBoardCard {
+    const board = this.getWorkspaceBoard(card.boardId)
+    if (!board) throw new Error('Workspace board could not be loaded.')
+    const nowMs = Date.now()
+    const nowIso = new Date(nowMs).toISOString()
+    const createdActivity: WorkspaceBoardActivityEntry = {
+      id: randomUUID(),
+      at: nowIso,
+      actor: 'user',
+      action: 'created'
+    }
+    const normalized = normalizeWorkspaceBoardCardRecord(
+      {
+        ...card,
+        id: card.id || randomUUID(),
+        boardId: board.id,
+        workspaceId: board.workspaceId,
+        link: this.assertWorkspaceBoardCardLink(board, card.link),
+        activity: [
+          ...(Array.isArray(card.activity) ? card.activity : []),
+          createdActivity
+        ],
+        createdAt: card.createdAt || nowIso,
+        updatedAt: nowIso
+      },
+      nowMs
+    )
+    if (!normalized) throw new Error('Workspace board card is invalid.')
+    const cards = this.getWorkspaceBoardCards()
+    const index = cards.findIndex((item) => item.id === normalized.id)
+    if (index >= 0) {
+      const prior = cards[index]
+      const updatedActivity: WorkspaceBoardActivityEntry = {
+        id: randomUUID(),
+        at: nowIso,
+        actor: 'user',
+        action: 'updated'
+      }
+      cards[index] = {
+        ...prior,
+        ...normalized,
+        boardId: prior.boardId,
+        workspaceId: prior.workspaceId,
+        createdAt: prior.createdAt,
+        updatedAt: nowIso,
+        activity: [
+          ...(prior.activity || []),
+          updatedActivity
+        ].slice(-100)
+      }
+    } else {
+      cards.push(normalized)
+    }
+    writeJson(workspaceBoardCardsPath, cards)
+    return index >= 0 ? cards[index] : normalized
+  }
+
+  static updateWorkspaceBoardCard(
+    id: string,
+    partial: Partial<WorkspaceBoardCard>
+  ): WorkspaceBoardCard | null {
+    const cards = this.getWorkspaceBoardCards()
+    const index = cards.findIndex((card) => card.id === id)
+    if (index < 0) return null
+    const source = cards[index]
+    const board = this.getWorkspaceBoard(source.boardId)
+    if (!board) return null
+    const nowMs = Date.now()
+    const nowIso = new Date(nowMs).toISOString()
+    const normalized = normalizeWorkspaceBoardCardRecord(
+      {
+        ...source,
+        title: partial.title ?? source.title,
+        body: partial.body ?? source.body,
+        columnId: partial.columnId ?? source.columnId,
+        sortOrder: partial.sortOrder ?? source.sortOrder,
+        humanOwner: partial.humanOwner ?? source.humanOwner,
+        labels: partial.labels ?? source.labels,
+        link:
+          'link' in partial
+            ? this.assertWorkspaceBoardCardLink(board, partial.link)
+            : source.link,
+        blockedReason: partial.blockedReason ?? source.blockedReason,
+        nextStep: partial.nextStep ?? source.nextStep,
+        reminderAt: partial.reminderAt ?? source.reminderAt,
+        archived: partial.archived ?? source.archived,
+        boardId: source.boardId,
+        workspaceId: source.workspaceId,
+        updatedAt: nowIso,
+        activity: [
+          ...(source.activity || []),
+          { id: randomUUID(), at: nowIso, actor: 'user', action: 'updated' }
+        ].slice(-100)
+      },
+      nowMs
+    )
+    if (!normalized) return null
+    cards[index] = normalized
+    writeJson(workspaceBoardCardsPath, cards)
+    return normalized
+  }
+
+  static deleteWorkspaceBoardCard(id: string): void {
+    writeJson(
+      workspaceBoardCardsPath,
+      this.getWorkspaceBoardCards().filter((card) => card.id !== id)
     )
   }
 

@@ -14,6 +14,10 @@ import type {
   RuntimeProfile,
   ScheduledTask,
   UserMcpServerConfig,
+  WorkspaceBoardCard,
+  WorkspaceBoardCardLinkKind,
+  WorkspaceBoardColumnId,
+  WorkspaceBoardDefinition,
   WorkflowDefinition,
   WorkflowRunTemplate,
   WorkflowTrigger,
@@ -716,6 +720,165 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     return sanitized
   }
 
+  const workspaceBoardColumnIds = new Set<WorkspaceBoardColumnId>([
+    'inbox',
+    'ready',
+    'running',
+    'needs-input',
+    'blocked',
+    'review-ready',
+    'done',
+    'archived'
+  ])
+
+  function assertWorkspaceBoardWorkspaceIdentity(
+    workspacePath: string,
+    workspaceId?: unknown
+  ): WorkspaceRecord {
+    const registeredPath = deps.requireRegisteredWorkspace(workspacePath, 'Workspace board')
+    const workspace = deps.findRegisteredWorkspace(registeredPath)
+    if (!workspace) {
+      throw new Error('Workspace board workspace must be registered.')
+    }
+    if (typeof workspaceId === 'string' && workspaceId && workspaceId !== workspace.id) {
+      throw new Error('Workspace board workspace id does not match the registered workspace.')
+    }
+    return workspace
+  }
+
+  function sanitizeWorkspaceBoardForSave(
+    board: unknown
+  ): Omit<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
+    Partial<Pick<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'>> {
+    const input = requireRecord(board, 'Workspace board')
+    const workspace = assertWorkspaceBoardWorkspaceIdentity(
+      requireNonEmptyString(input.workspacePath, 'Workspace board workspace'),
+      input.workspaceId
+    )
+    return {
+      id: optionalString(input.id),
+      workspaceId: workspace.id,
+      workspacePath: deps.canonicalPath(workspace.path),
+      name: requireNonEmptyString(input.name, 'Workspace board name'),
+      description: optionalString(input.description),
+      archived: input.archived === true,
+      columns: Array.isArray(input.columns)
+        ? input.columns
+            .filter((column): column is Record<string, unknown> => isRecord(column))
+            .filter((column) => workspaceBoardColumnIds.has(column.id as WorkspaceBoardColumnId))
+            .map((column, index) => ({
+              id: column.id as WorkspaceBoardColumnId,
+              name: optionalString(column.name) || String(column.id),
+              sortOrder: Number.isFinite(Number(column.sortOrder))
+                ? Math.max(0, Math.trunc(Number(column.sortOrder)))
+                : index,
+              wipLimit: Number.isFinite(Number(column.wipLimit))
+                ? Math.max(1, Math.trunc(Number(column.wipLimit)))
+                : undefined
+            }))
+        : []
+    }
+  }
+
+  function sanitizeWorkspaceBoardPatch(
+    partial: unknown
+  ): Partial<WorkspaceBoardDefinition> {
+    const input = requireRecord(partial, 'Workspace board update')
+    const sanitized: Partial<WorkspaceBoardDefinition> = {}
+    if ('name' in input) sanitized.name = requireNonEmptyString(input.name, 'Workspace board name')
+    if ('description' in input) sanitized.description = optionalString(input.description)
+    if ('archived' in input) sanitized.archived = input.archived === true
+    if ('columns' in input && Array.isArray(input.columns)) {
+      sanitized.columns = input.columns
+        .filter((column): column is Record<string, unknown> => isRecord(column))
+        .filter((column) => workspaceBoardColumnIds.has(column.id as WorkspaceBoardColumnId))
+        .map((column, index) => ({
+          id: column.id as WorkspaceBoardColumnId,
+          name: optionalString(column.name) || String(column.id),
+          sortOrder: Number.isFinite(Number(column.sortOrder))
+            ? Math.max(0, Math.trunc(Number(column.sortOrder)))
+            : index,
+          wipLimit: Number.isFinite(Number(column.wipLimit))
+            ? Math.max(1, Math.trunc(Number(column.wipLimit)))
+            : undefined
+        }))
+    }
+    return sanitized
+  }
+
+  function sanitizeWorkspaceBoardCardForSave(
+    card: unknown
+  ): Omit<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
+    Partial<Pick<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>> {
+    const input = requireRecord(card, 'Workspace board card')
+    const columnId = workspaceBoardColumnIds.has(input.columnId as WorkspaceBoardColumnId)
+      ? (input.columnId as WorkspaceBoardColumnId)
+      : 'inbox'
+    return {
+      id: optionalString(input.id),
+      boardId: requireNonEmptyString(input.boardId, 'Workspace board'),
+      workspaceId: optionalString(input.workspaceId) || '',
+      columnId,
+      title: requireNonEmptyString(input.title, 'Workspace board card title'),
+      body: optionalString(input.body),
+      sortOrder: Number.isFinite(Number(input.sortOrder))
+        ? Math.max(0, Math.trunc(Number(input.sortOrder)))
+        : Date.now(),
+      humanOwner: optionalString(input.humanOwner),
+      labels: Array.isArray(input.labels)
+        ? input.labels
+            .filter((label): label is string => typeof label === 'string')
+            .map((label) => label.trim())
+            .filter(Boolean)
+            .slice(0, 12)
+        : undefined,
+      link: isRecord(input.link)
+        ? {
+            kind: input.link.kind as WorkspaceBoardCardLinkKind,
+            id: requireNonEmptyString(input.link.id, 'Workspace board card link')
+          }
+        : undefined,
+      blockedReason: optionalString(input.blockedReason),
+      nextStep: optionalString(input.nextStep),
+      reminderAt: optionalString(input.reminderAt),
+      archived: input.archived === true
+    }
+  }
+
+  function sanitizeWorkspaceBoardCardPatch(partial: unknown): Partial<WorkspaceBoardCard> {
+    const input = requireRecord(partial, 'Workspace board card update')
+    const sanitized: Partial<WorkspaceBoardCard> = {}
+    if ('title' in input) sanitized.title = requireNonEmptyString(input.title, 'Workspace board card title')
+    if ('body' in input) sanitized.body = optionalString(input.body)
+    if ('columnId' in input && workspaceBoardColumnIds.has(input.columnId as WorkspaceBoardColumnId)) {
+      sanitized.columnId = input.columnId as WorkspaceBoardColumnId
+    }
+    if ('sortOrder' in input && Number.isFinite(Number(input.sortOrder))) {
+      sanitized.sortOrder = Math.max(0, Math.trunc(Number(input.sortOrder)))
+    }
+    if ('humanOwner' in input) sanitized.humanOwner = optionalString(input.humanOwner)
+    if ('labels' in input && Array.isArray(input.labels)) {
+      sanitized.labels = input.labels
+        .filter((label): label is string => typeof label === 'string')
+        .map((label) => label.trim())
+        .filter(Boolean)
+        .slice(0, 12)
+    }
+    if ('link' in input) {
+      sanitized.link = isRecord(input.link)
+        ? {
+            kind: input.link.kind as WorkspaceBoardCardLinkKind,
+            id: requireNonEmptyString(input.link.id, 'Workspace board card link')
+          }
+        : undefined
+    }
+    if ('blockedReason' in input) sanitized.blockedReason = optionalString(input.blockedReason)
+    if ('nextStep' in input) sanitized.nextStep = optionalString(input.nextStep)
+    if ('reminderAt' in input) sanitized.reminderAt = optionalString(input.reminderAt)
+    if ('archived' in input) sanitized.archived = input.archived === true
+    return sanitized
+  }
+
   function sanitizeRuntimeProfileForSave(
     profile: unknown
   ): Partial<RuntimeProfile> & Pick<RuntimeProfile, 'name' | 'provider'> {
@@ -1302,6 +1465,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     sanitizeScheduledTaskPatch,
     sanitizeWorkflowForSave,
     sanitizeWorkflowPatch,
+    sanitizeWorkspaceBoardForSave,
+    sanitizeWorkspaceBoardPatch,
+    sanitizeWorkspaceBoardCardForSave,
+    sanitizeWorkspaceBoardCardPatch,
     sanitizeRuntimeProfileForSave,
     sanitizeHandoffCardForSave,
     sanitizeHandoffCardPatch,

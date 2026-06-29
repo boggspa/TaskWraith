@@ -1,6 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ChatRecord, WorkflowDefinition, WorkspaceRecord } from '../../../main/store/types'
+import type {
+  ChatRecord,
+  WorkflowDefinition,
+  WorkspaceBoardDefinition,
+  WorkspaceRecord
+} from '../../../main/store/types'
 import {
   Sidebar,
   DevicesFooterPopover,
@@ -23,6 +28,7 @@ const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sec
 // default migration, pinning exactly these sections open.
 const SIDEBAR_SECTION_IDS = [
   'workflows',
+  'workspace-boards',
   'pinned',
   'recents',
   'ensembles',
@@ -106,6 +112,26 @@ function makeWorkflow(overrides: Partial<WorkflowDefinition> = {}): WorkflowDefi
   }
 }
 
+function makeWorkspaceBoard(
+  overrides: Partial<WorkspaceBoardDefinition> = {}
+): WorkspaceBoardDefinition {
+  const now = '2026-06-29T00:00:00.000Z'
+  return {
+    id: 'board-1',
+    workspaceId: 'ws-1',
+    workspacePath: '/repo',
+    name: 'Release board',
+    columns: [
+      { id: 'inbox', name: 'Inbox', sortOrder: 0 },
+      { id: 'ready', name: 'Ready', sortOrder: 1 }
+    ],
+    createdAt: now,
+    updatedAt: now,
+    activity: [],
+    ...overrides
+  }
+}
+
 function stubSidebarStorage(values: Record<string, string>) {
   const store = new Map(Object.entries(values))
   vi.stubGlobal('localStorage', {
@@ -128,7 +154,12 @@ function renderSidebar(
     activeChatId?: string | null
     ensembleModeEnabled?: boolean
     workflows?: WorkflowDefinition[]
+    workspaceBoards?: WorkspaceBoardDefinition[]
+    activeWorkspaceBoardId?: string | null
     onCreateWorkflow?: () => void
+    onCreateWorkspaceBoard?: () => void
+    onOpenWorkspaceBoard?: (board: WorkspaceBoardDefinition) => void
+    onDeleteWorkspaceBoard?: (boardId: string) => void
     onCreateSharedChat?: (variant: SharedChatCreateVariant) => void
     collaboratingChatIds?: Set<string>
     pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
@@ -151,6 +182,8 @@ function renderSidebar(
       usageSummary={[]}
       runningChatIds={[]}
       workflows={options.workflows}
+      workspaceBoards={options.workspaceBoards}
+      activeWorkspaceBoardId={options.activeWorkspaceBoardId}
       collaboratingChatIds={options.collaboratingChatIds}
       pendingAgentApprovalByChatId={options.pendingAgentApprovalByChatId}
       hasConnectedCollaborator={options.hasConnectedCollaborator}
@@ -164,6 +197,9 @@ function renderSidebar(
       onSelectChat={() => {}}
       onOpenSettings={() => {}}
       onCreateWorkflow={options.onCreateWorkflow}
+      onCreateWorkspaceBoard={options.onCreateWorkspaceBoard}
+      onOpenWorkspaceBoard={options.onOpenWorkspaceBoard}
+      onDeleteWorkspaceBoard={options.onDeleteWorkspaceBoard}
       onCreateSharedChat={options.onCreateSharedChat}
       onRenameChat={options.onRenameChat}
       onTogglePinChat={options.onTogglePinChat}
@@ -321,6 +357,36 @@ describe('Sidebar workflows', () => {
     expect(html).toContain('Every 15m')
     expect(html).toContain('Queued')
     expect(html).toContain('provider-codex')
+  })
+})
+
+describe('Sidebar workspace boards', () => {
+  it('renders a workspace board section with create affordance', () => {
+    stubSidebarStorage({})
+
+    const html = renderSidebar([], { onCreateWorkspaceBoard: () => {} })
+
+    expect(html).toContain('Workspace Boards')
+    expect(html).toContain('sidebar-workspace-board-create')
+    expect(html).toContain('aria-label="New workspace board"')
+  })
+
+  it('renders board rows without chat drag affordances', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspace-boards')
+    })
+
+    const html = renderSidebar([], {
+      workspaceBoards: [makeWorkspaceBoard()],
+      activeWorkspaceBoardId: 'board-1',
+      onOpenWorkspaceBoard: () => {},
+      onDeleteWorkspaceBoard: () => {}
+    })
+
+    expect(html).toContain('Release board')
+    expect(html).toContain('sidebar-workspace-board-item active')
+    expect(html).toContain('Remove')
+    expect(html).not.toContain('application/x-taskwraith-chat-id')
   })
 })
 

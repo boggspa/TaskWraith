@@ -49,7 +49,9 @@ import {
   AgenticServiceId,
   EffectiveRunPermissions,
   AuditRunRecord,
-  ProviderRunReroute
+  ProviderRunReroute,
+  WorkspaceBoardCard,
+  WorkspaceBoardDefinition
 } from '../main/store/types'
 import type {
   WorkflowRunSummary,
@@ -1416,6 +1418,26 @@ declare global {
         partial: Partial<WorkflowDefinition>
       ) => Promise<WorkflowDefinition | null>
       deleteWorkflowDefinition: (id: string) => Promise<void>
+      getWorkspaceBoards: (workspaceId?: string) => Promise<WorkspaceBoardDefinition[]>
+      saveWorkspaceBoard: (
+        board: Omit<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
+          Partial<Pick<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'>>
+      ) => Promise<WorkspaceBoardDefinition>
+      updateWorkspaceBoard: (
+        id: string,
+        partial: Partial<WorkspaceBoardDefinition>
+      ) => Promise<WorkspaceBoardDefinition | null>
+      deleteWorkspaceBoard: (id: string) => Promise<void>
+      getWorkspaceBoardCards: (boardId?: string) => Promise<WorkspaceBoardCard[]>
+      saveWorkspaceBoardCard: (
+        card: Omit<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
+          Partial<Pick<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>>
+      ) => Promise<WorkspaceBoardCard>
+      updateWorkspaceBoardCard: (
+        id: string,
+        partial: Partial<WorkspaceBoardCard>
+      ) => Promise<WorkspaceBoardCard | null>
+      deleteWorkspaceBoardCard: (id: string) => Promise<void>
       runWorkflowNow: (id: string) => Promise<ScheduledTask | null>
       setWorkflowUnattendedElevation: (
         id: string,
@@ -1557,6 +1579,12 @@ declare global {
         callback: (presetId: string) => void
       ) => () => void
       onWorkflowDefinitionsChanged: (callback: (payload: WorkflowDefinition[]) => void) => void
+      onWorkspaceBoardsChanged: (
+        callback: (payload: {
+          boards: WorkspaceBoardDefinition[]
+          cards: WorkspaceBoardCard[]
+        }) => void
+      ) => void
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
       onUsageChanged: (callback: () => void) => void
       onChatUpdated: (callback: (chat: ChatRecord) => void) => () => void

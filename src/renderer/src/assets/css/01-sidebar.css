@@ -165,6 +165,7 @@
 .sidebar-pinned-section,
 .sidebar-recents-section,
 .sidebar-workflows-section,
+.sidebar-workspace-boards-section,
 .sidebar-active-runs-section {
   display: flex;
   flex-direction: column;
@@ -387,6 +388,7 @@
 .sidebar-pinned-list,
 .sidebar-recents-list,
 .sidebar-workflow-list,
+.sidebar-workspace-board-list,
 .sidebar-active-runs-list {
   display: flex;
   flex-direction: column;
@@ -396,6 +398,7 @@
 .sidebar-pinned-item,
 .sidebar-recents-item,
 .sidebar-workflow-item,
+.sidebar-workspace-board-item,
 .sidebar-active-run-row {
   --chat-provider-accent: var(--accent);
   appearance: none;
@@ -420,6 +423,7 @@
 .sidebar-pinned-item:hover,
 .sidebar-recents-item:hover,
 .sidebar-workflow-item:hover,
+.sidebar-workspace-board-item:hover,
 .sidebar-active-run-row:hover:not(:disabled) {
   background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
@@ -427,6 +431,7 @@
 .sidebar-pinned-item:focus-visible,
 .sidebar-recents-item:focus-visible,
 .sidebar-workflow-item:focus-visible,
+.sidebar-workspace-board-item:focus-visible,
 .sidebar-active-run-row:focus-visible {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   outline: none;
@@ -450,6 +455,7 @@
 .sidebar-pinned-item.active,
 .sidebar-recents-item.active,
 .sidebar-workflow-item.active,
+.sidebar-workspace-board-item.active,
 .sidebar-active-run-row.active {
   /* Selection = rim-highlight chrome (accent inset ring + faint inner glow),
      replacing the old left-edge "fingernail" sliver. The opacity-gradient
@@ -641,6 +647,44 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.sidebar-workspace-board-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+  align-items: center;
+}
+
+.sidebar-workspace-board-icon {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  color: color-mix(in srgb, var(--sidebar-text) 68%, transparent);
+}
+
+.sidebar-workspace-board-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sidebar-workspace-board-remove {
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--sidebar-text) 58%, transparent);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.sidebar-workspace-board-remove:hover,
+.sidebar-workspace-board-remove:focus-visible {
+  color: var(--danger, #ff5f6d);
+  outline: 0;
 }
 
 .sidebar-workflow-item.is-paused {

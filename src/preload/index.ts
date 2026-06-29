@@ -4,6 +4,8 @@ import type {
   ProviderId,
   RunAnalystRequest,
   RunAnalystSnapshot,
+  WorkspaceBoardCard,
+  WorkspaceBoardDefinition,
   WorkspaceActivitySnapshot
 } from '../main/store/types'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
@@ -1101,6 +1103,20 @@ const api = {
     ipcRenderer.invoke('update-workflow-definition', id, partial),
   deleteWorkflowDefinition: (id: string) =>
     ipcRenderer.invoke('delete-workflow-definition', id),
+  getWorkspaceBoards: (workspaceId?: string) =>
+    ipcRenderer.invoke('get-workspace-boards', workspaceId) as Promise<WorkspaceBoardDefinition[]>,
+  saveWorkspaceBoard: (board: any) =>
+    ipcRenderer.invoke('save-workspace-board', board) as Promise<WorkspaceBoardDefinition>,
+  updateWorkspaceBoard: (id: string, partial: any) =>
+    ipcRenderer.invoke('update-workspace-board', id, partial) as Promise<WorkspaceBoardDefinition | null>,
+  deleteWorkspaceBoard: (id: string) => ipcRenderer.invoke('delete-workspace-board', id),
+  getWorkspaceBoardCards: (boardId?: string) =>
+    ipcRenderer.invoke('get-workspace-board-cards', boardId) as Promise<WorkspaceBoardCard[]>,
+  saveWorkspaceBoardCard: (card: any) =>
+    ipcRenderer.invoke('save-workspace-board-card', card) as Promise<WorkspaceBoardCard>,
+  updateWorkspaceBoardCard: (id: string, partial: any) =>
+    ipcRenderer.invoke('update-workspace-board-card', id, partial) as Promise<WorkspaceBoardCard | null>,
+  deleteWorkspaceBoardCard: (id: string) => ipcRenderer.invoke('delete-workspace-board-card', id),
   runWorkflowNow: (id: string) => ipcRenderer.invoke('run-workflow-now', id),
   setWorkflowUnattendedElevation: (id: string, level: string) =>
     ipcRenderer.invoke('set-workflow-unattended-elevation', id, level),
@@ -1238,6 +1254,11 @@ const api = {
   },
   onWorkflowDefinitionsChanged: (callback: (payload: any) => void) => {
     ipcRenderer.on('workflow-definitions-changed', (_event, payload) => callback(payload))
+  },
+  onWorkspaceBoardsChanged: (
+    callback: (payload: { boards: WorkspaceBoardDefinition[]; cards: WorkspaceBoardCard[] }) => void
+  ) => {
+    ipcRenderer.on('workspace-boards-changed', (_event, payload) => callback(payload))
   },
   // iOS-triggered roster-preset writes round-tripped back to the renderer (the
   // localStorage source of truth). The renderer persists, which re-syncs the
@@ -1435,6 +1456,7 @@ const api = {
     ipcRenderer.removeAllListeners('scheduled-task-due')
     ipcRenderer.removeAllListeners('scheduled-tasks-changed')
     ipcRenderer.removeAllListeners('workflow-definitions-changed')
+    ipcRenderer.removeAllListeners('workspace-boards-changed')
     ipcRenderer.removeAllListeners('audit-run-changed')
     ipcRenderer.removeAllListeners('usage-changed')
     ipcRenderer.removeAllListeners('chat-updated')

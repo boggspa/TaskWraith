@@ -548,6 +548,8 @@ import {
   EnsembleWakeupRecord,
   RunEventKind,
   WorkflowDefinition,
+  WorkspaceBoardCard,
+  WorkspaceBoardDefinition,
   TranscriptMediaRef,
   TranscriptMediaThumbnail
 } from './store/types'
@@ -3456,6 +3458,10 @@ const {
   sanitizeScheduledTaskPatch,
   sanitizeWorkflowForSave,
   sanitizeWorkflowPatch,
+  sanitizeWorkspaceBoardForSave,
+  sanitizeWorkspaceBoardPatch,
+  sanitizeWorkspaceBoardCardForSave,
+  sanitizeWorkspaceBoardCardPatch,
   sanitizeRuntimeProfileForSave,
   sanitizeHandoffCardForSave,
   sanitizeHandoffCardPatch,
@@ -25236,6 +25242,74 @@ if (isGeminiMcpBridgeProcess) {
 	      mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
 	      bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
 	      scheduleNextTaskTimer()
+	    })
+	    ipcMain.handle('get-workspace-boards', (_, workspaceId?: string) =>
+	      AppStore.getWorkspaceBoards(workspaceId)
+	    )
+	    ipcMain.handle(
+	      'save-workspace-board',
+	      (
+	        _,
+	        board: Omit<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
+	          Partial<
+	            Pick<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'>
+	          >
+	      ) => {
+	        const saved = AppStore.saveWorkspaceBoard(sanitizeWorkspaceBoardForSave(board))
+	        mainWindow?.webContents.send('workspace-boards-changed', {
+	          boards: AppStore.getWorkspaceBoards(),
+	          cards: AppStore.getWorkspaceBoardCards()
+	        })
+	        return saved
+	      }
+	    )
+	    ipcMain.handle('update-workspace-board', (_, id: string, partial: Partial<WorkspaceBoardDefinition>) => {
+	      const updated = AppStore.updateWorkspaceBoard(id, sanitizeWorkspaceBoardPatch(partial))
+	      mainWindow?.webContents.send('workspace-boards-changed', {
+	        boards: AppStore.getWorkspaceBoards(),
+	        cards: AppStore.getWorkspaceBoardCards()
+	      })
+	      return updated
+	    })
+	    ipcMain.handle('delete-workspace-board', (_, id: string) => {
+	      AppStore.deleteWorkspaceBoard(id)
+	      mainWindow?.webContents.send('workspace-boards-changed', {
+	        boards: AppStore.getWorkspaceBoards(),
+	        cards: AppStore.getWorkspaceBoardCards()
+	      })
+	    })
+	    ipcMain.handle('get-workspace-board-cards', (_, boardId?: string) =>
+	      AppStore.getWorkspaceBoardCards(boardId)
+	    )
+	    ipcMain.handle(
+	      'save-workspace-board-card',
+	      (
+	        _,
+	        card: Omit<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
+	          Partial<Pick<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>>
+	      ) => {
+	        const saved = AppStore.saveWorkspaceBoardCard(sanitizeWorkspaceBoardCardForSave(card))
+	        mainWindow?.webContents.send('workspace-boards-changed', {
+	          boards: AppStore.getWorkspaceBoards(),
+	          cards: AppStore.getWorkspaceBoardCards()
+	        })
+	        return saved
+	      }
+	    )
+	    ipcMain.handle('update-workspace-board-card', (_, id: string, partial: Partial<WorkspaceBoardCard>) => {
+	      const updated = AppStore.updateWorkspaceBoardCard(id, sanitizeWorkspaceBoardCardPatch(partial))
+	      mainWindow?.webContents.send('workspace-boards-changed', {
+	        boards: AppStore.getWorkspaceBoards(),
+	        cards: AppStore.getWorkspaceBoardCards()
+	      })
+	      return updated
+	    })
+	    ipcMain.handle('delete-workspace-board-card', (_, id: string) => {
+	      AppStore.deleteWorkspaceBoardCard(id)
+	      mainWindow?.webContents.send('workspace-boards-changed', {
+	        boards: AppStore.getWorkspaceBoards(),
+	        cards: AppStore.getWorkspaceBoardCards()
+	      })
 	    })
 	    ipcMain.handle('run-workflow-now', (_, id: string) => {
 	      const task = AppStore.materializeWorkflowNow(id)

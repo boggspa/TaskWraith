@@ -1,0 +1,74 @@
+import { describe, expect, it } from 'vitest'
+import type { ChatRecord, WorkspaceBoardCard } from '../../../main/store/types'
+import { buildWorkspaceBoardProjectedCards, deriveWorkspaceBoardStatus } from './workspaceBoardProjection'
+
+function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
+  return {
+    appChatId: 'chat-1',
+    scope: 'workspace',
+    title: 'Workspace thread',
+    workspaceId: 'ws-1',
+    workspacePath: '/repo',
+    provider: 'codex',
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+    messages: [],
+    runs: [],
+    ...overrides
+  }
+}
+
+function makeCard(overrides: Partial<WorkspaceBoardCard> = {}): WorkspaceBoardCard {
+  return {
+    id: 'card-1',
+    boardId: 'board-1',
+    workspaceId: 'ws-1',
+    columnId: 'ready',
+    title: 'Review changes',
+    sortOrder: 1,
+    createdAt: '2026-06-29T00:00:00.000Z',
+    updatedAt: '2026-06-29T00:00:00.000Z',
+    activity: [],
+    ...overrides
+  }
+}
+
+describe('workspace board projection', () => {
+  it('derives live state from linked chats without changing the card lane', () => {
+    const card = makeCard({ link: { kind: 'chat', id: 'chat-1' }, columnId: 'ready' })
+    const projected = buildWorkspaceBoardProjectedCards({
+      cards: [card],
+      chats: [makeChat()],
+      workflows: [],
+      scheduledTasks: [],
+      runQueueJobs: [],
+      runningChatIds: new Set(['chat-1'])
+    })
+
+    expect(projected[0].columnId).toBe('ready')
+    expect(projected[0].derivedStatus).toBe('running')
+  })
+
+  it('marks missing or archived links stale instead of recreating work', () => {
+    const card = makeCard({ link: { kind: 'chat', id: 'chat-1' } })
+
+    expect(
+      deriveWorkspaceBoardStatus(card, {
+        chats: [makeChat({ archived: true })],
+        workflows: [],
+        scheduledTasks: [],
+        runQueueJobs: []
+      })
+    ).toBe('stale')
+
+    expect(
+      deriveWorkspaceBoardStatus(card, {
+        chats: [],
+        workflows: [],
+        scheduledTasks: [],
+        runQueueJobs: []
+      })
+    ).toBe('stale')
+  })
+})

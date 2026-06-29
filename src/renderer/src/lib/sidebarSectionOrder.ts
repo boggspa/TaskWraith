@@ -2,6 +2,7 @@ export type SidebarHierarchySectionId =
   | 'active-runs'
   | 'local-servers'
   | 'workflows'
+  | 'workspace-boards'
   | 'pinned'
   | 'recents'
   | 'ensembles'
@@ -13,6 +14,7 @@ export const SIDEBAR_HIERARCHY_SECTION_IDS: readonly SidebarHierarchySectionId[]
   'active-runs',
   'local-servers',
   'workflows',
+  'workspace-boards',
   'pinned',
   'recents',
   'ensembles',
@@ -28,6 +30,7 @@ export const SIDEBAR_HIERARCHY_SECTION_LABELS: Record<SidebarHierarchySectionId,
   'active-runs': 'Active runs',
   'local-servers': 'Local servers',
   workflows: 'Workflows',
+  'workspace-boards': 'Workspace Boards',
   pinned: 'Pinned',
   recents: 'Recents',
   ensembles: 'Ensembles',

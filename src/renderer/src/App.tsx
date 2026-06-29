@@ -50,6 +50,8 @@ import {
   ExternalPathGrant,
   ScheduledTask,
   WorkflowDefinition,
+  WorkspaceBoardCard,
+  WorkspaceBoardDefinition,
   AgenticServicesSettings,
   AgenticWorkspaceGrant,
   AgenticServiceId,
@@ -264,6 +266,7 @@ import {
 } from './lib/externalPathGrantPreflight'
 import type { GitPrSummary, GitRepositorySnapshot } from '../../main/services/GitService'
 import { Sidebar, type SharedChatCreateVariant } from './components/Sidebar'
+import { WorkspaceBoardView } from './components/WorkspaceBoardView'
 import { Inspector } from './components/Inspector'
 import {
   SETTINGS_TABS,
@@ -2003,6 +2006,9 @@ function App(): React.JSX.Element {
     usePerChatState(0)
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([])
   const [workflowDefinitions, setWorkflowDefinitions] = useState<WorkflowDefinition[]>([])
+  const [workspaceBoards, setWorkspaceBoards] = useState<WorkspaceBoardDefinition[]>([])
+  const [workspaceBoardCards, setWorkspaceBoardCards] = useState<WorkspaceBoardCard[]>([])
+  const [activeWorkspaceBoardId, setActiveWorkspaceBoardId] = useState<string | null>(null)
   // First-class Workflows compose state. A workflow's chat is an ordinary
   // ChatRecord; while it's being set up (before the WorkflowDefinition is saved
   // on first send) we hold a transient draft keyed to that chat so the welcome
@@ -5308,6 +5314,7 @@ function App(): React.JSX.Element {
   //     curated-but-unstarted Ensemble panel in place (matching the in-welcome
   //     workspace picker) instead of abandoning it for a solo draft.
   const handleNavigateToWorkspace = (ws: WorkspaceRecord): Promise<void> => {
+    setActiveWorkspaceBoardId(null)
     if (isWelcomeChat) {
       return handleSelectWelcomeWorkspace(ws)
     }
@@ -6128,6 +6135,7 @@ function App(): React.JSX.Element {
   }
 
   const handleNewChat = async (wsId: string, wsPath: string): Promise<ChatRecord> => {
+    setActiveWorkspaceBoardId(null)
     const newChat = await window.api.createChat(wsId, wsPath)
     const provider = getChatProvider(newChat)
     setSideChatId(null)
@@ -6191,6 +6199,7 @@ function App(): React.JSX.Element {
   }
 
   const selectGlobalChat = async (chat: ChatRecord) => {
+    setActiveWorkspaceBoardId(null)
     const provider = getChatProvider(chat)
     clearWorkspaceOnlyUiState()
     const normalizedChat: ChatRecord = { ...chat, scope: 'global' }
@@ -6259,6 +6268,7 @@ function App(): React.JSX.Element {
   }
 
   const handleNewEnsemble = async (): Promise<ChatRecord | null> => {
+    setActiveWorkspaceBoardId(null)
     if (settings?.ensembleModeEnabled === false) return null
     const workspace =
       currentWorkspace ||
@@ -6718,6 +6728,7 @@ function App(): React.JSX.Element {
   }
 
   const handleSelectChat = async (chat: ChatRecord) => {
+    setActiveWorkspaceBoardId(null)
     const currentMainChat =
       (currentChatIdRef.current
         ? chatByIdRef.current.get(currentChatIdRef.current) ||
@@ -7168,6 +7179,8 @@ function App(): React.JSX.Element {
   useEffect(() => {
     void window.api.getScheduledTasks(currentWorkspace?.id).then(setScheduledTasks)
     void window.api.getWorkflowDefinitions(currentWorkspace?.id).then(setWorkflowDefinitions)
+    void window.api.getWorkspaceBoards(currentWorkspace?.id).then(setWorkspaceBoards)
+    void window.api.getWorkspaceBoardCards().then(setWorkspaceBoardCards)
   }, [currentWorkspace?.id])
 
   useEffect(() => {
@@ -8138,6 +8151,18 @@ function App(): React.JSX.Element {
         setWorkflowDefinitions(
           workspaceId ? workflows.filter((workflow) => workflow.workspaceId === workspaceId) : workflows
         )
+      })
+    }
+
+    if (typeof window.api.onWorkspaceBoardsChanged === 'function') {
+      window.api.onWorkspaceBoardsChanged((payload) => {
+        const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
+        setWorkspaceBoards(
+          workspaceId
+            ? payload.boards.filter((board) => board.workspaceId === workspaceId)
+            : payload.boards
+        )
+        setWorkspaceBoardCards(payload.cards)
       })
     }
 
@@ -12191,6 +12216,63 @@ function App(): React.JSX.Element {
       await window.api.cancelAgentRun(task.provider, task.runId).catch(() => {})
     }
     await refreshWorkflowState(currentWorkspace?.id)
+  }
+
+  const handleCreateWorkspaceBoard = async () => {
+    if (!currentWorkspace) return
+    const saved = await window.api.saveWorkspaceBoard({
+      workspaceId: currentWorkspace.id,
+      workspacePath: currentWorkspace.path,
+      name: `${currentWorkspace.displayName} Board`,
+      columns: []
+    })
+    setWorkspaceBoards((prev) => [saved, ...prev.filter((board) => board.id !== saved.id)])
+    setActiveWorkspaceBoardId(saved.id)
+  }
+
+  const handleOpenWorkspaceBoard = async (board: WorkspaceBoardDefinition) => {
+    const workspace = workspaces.find((item) => item.id === board.workspaceId) || null
+    if (workspace && currentWorkspace?.id !== workspace.id) {
+      setCurrentWorkspace(workspace)
+      currentWorkspaceIdRef.current = workspace.id
+      void window.api
+        .checkTrust(workspace.path)
+        .then(setTrustResult)
+        .catch(() => {})
+    }
+    setActiveWorkspaceBoardId(board.id)
+    setActiveSidebarChatId(null)
+  }
+
+  const handleDeleteWorkspaceBoard = async (boardId: string) => {
+    const board = workspaceBoards.find((item) => item.id === boardId)
+    const confirmed = window.confirm(board ? `Remove board "${board.name}"?` : 'Remove this board?')
+    if (!confirmed) return
+    await window.api.deleteWorkspaceBoard(boardId)
+    setWorkspaceBoards((prev) => prev.filter((item) => item.id !== boardId))
+    setWorkspaceBoardCards((prev) => prev.filter((item) => item.boardId !== boardId))
+    if (activeWorkspaceBoardId === boardId) setActiveWorkspaceBoardId(null)
+  }
+
+  const handleAddWorkspaceBoardCard = async (
+    card: Omit<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>
+  ) => {
+    const saved = await window.api.saveWorkspaceBoardCard(card)
+    setWorkspaceBoardCards((prev) => [...prev.filter((item) => item.id !== saved.id), saved])
+  }
+
+  const handleUpdateWorkspaceBoardCard = async (
+    id: string,
+    partial: Partial<WorkspaceBoardCard>
+  ) => {
+    const updated = await window.api.updateWorkspaceBoardCard(id, partial)
+    if (!updated) return
+    setWorkspaceBoardCards((prev) => prev.map((item) => (item.id === id ? updated : item)))
+  }
+
+  const handleDeleteWorkspaceBoardCard = async (id: string) => {
+    await window.api.deleteWorkspaceBoardCard(id)
+    setWorkspaceBoardCards((prev) => prev.filter((item) => item.id !== id))
   }
 
   const getCockpitRunSource = (
@@ -21585,6 +21667,18 @@ function App(): React.JSX.Element {
     workflowForCurrentChat,
   }
 
+  const activeWorkspaceBoard =
+    activeWorkspaceBoardId != null
+      ? workspaceBoards.find((board) => board.id === activeWorkspaceBoardId) || null
+      : null
+  const activeWorkspaceBoardWorkspace =
+    activeWorkspaceBoard != null
+      ? workspaces.find((workspace) => workspace.id === activeWorkspaceBoard.workspaceId) || null
+      : null
+  const activeWorkspaceBoardCards = activeWorkspaceBoard
+    ? workspaceBoardCards.filter((card) => card.boardId === activeWorkspaceBoard.id && !card.archived)
+    : []
+
   return (
     <div
       className={`app-root ${fxBurstClass} ${appAgentAuraClass} ${providerShellClass} ${
@@ -21643,6 +21737,8 @@ function App(): React.JSX.Element {
                 }}
                 runningChatIds={runningChatIdsArray}
                 workflows={workflowDefinitions}
+                workspaceBoards={workspaceBoards}
+                activeWorkspaceBoardId={activeWorkspaceBoardId}
                 scheduledTasks={scheduledTasks}
                 collaboratingChatIds={collaboratingChatIds}
                 showOnboardingHint={showOnboardingHint}
@@ -21683,6 +21779,9 @@ function App(): React.JSX.Element {
                 onDeleteChat={handleDeleteChat}
                 onRenameChat={handleRenameChat}
                 onCreateWorkflow={handleOpenWorkflowCompose}
+                onCreateWorkspaceBoard={handleCreateWorkspaceBoard}
+                onOpenWorkspaceBoard={handleOpenWorkspaceBoard}
+                onDeleteWorkspaceBoard={handleDeleteWorkspaceBoard}
                 onCreateSharedChat={handleStartSharedChat}
                 onJoinSharedChat={() => setJoinSharedChatOpen(true)}
                 onRunWorkflowNow={handleRunWorkflowNow}
@@ -21879,6 +21978,27 @@ function App(): React.JSX.Element {
           </div>
         )}
 
+        {!isChatPopoutWindow && !showSettings && activeWorkspaceBoardId && (
+          <WorkspaceBoardView
+            board={activeWorkspaceBoard}
+            workspace={activeWorkspaceBoardWorkspace}
+            cards={activeWorkspaceBoardCards}
+            chats={chats}
+            workflows={workflowDefinitions}
+            scheduledTasks={scheduledTasks}
+            runQueueJobs={runQueueJobs}
+            runningChatIds={runningChatIds}
+            onAddCard={handleAddWorkspaceBoardCard}
+            onUpdateCard={handleUpdateWorkspaceBoardCard}
+            onDeleteCard={handleDeleteWorkspaceBoardCard}
+            onOpenChat={(chat) => void handleSelectChat(chat)}
+            onOpenWorkflow={(workflow) => {
+              const workflowChat = chats.find((chat) => chat.appChatId === workflow.template.chatId)
+              if (workflowChat) void handleSelectChat(workflowChat)
+            }}
+          />
+        )}
+
         {isLinkedChatPopout && currentChat && (
           <div
             className="side-chat-floating-actions side-chat-popout-actions"
@@ -21948,7 +22068,7 @@ function App(): React.JSX.Element {
         <div
           ref={chatSplitRegionRef}
           className={`chat-split-region ${sidePanelLayoutClass} ${
-            showSettings ? 'chat-split-hidden-for-settings' : ''
+            showSettings || activeWorkspaceBoardId ? 'chat-split-hidden-for-settings' : ''
           }`}
           style={chatSplitStyle}
         >
