@@ -2369,7 +2369,7 @@ function ActivityRow({
         onMouseEnter={activityDiffPreviewText ? openActivityDiffHoverPreview : undefined}
         onMouseLeave={activityDiffPreviewText ? scheduleCloseActivityDiffHoverPreview : undefined}
         onFocus={activityDiffPreviewText ? openActivityDiffHoverPreview : undefined}
-        onBlur={activityDiffPreviewText ? closeActivityDiffHoverPreview : undefined}
+        onBlur={activityDiffPreviewText ? scheduleCloseActivityDiffHoverPreview : undefined}
         aria-expanded={canExpand ? expanded : undefined}
         onClick={canExpand ? (event) => toggleExpanded(event.metaKey || event.shiftKey) : undefined}
         onKeyDown={
@@ -2575,6 +2575,8 @@ function ActivityRow({
       )}
       <DiffHoverPreviewOverlay
         preview={activityDiffHoverPreview}
+        onFocus={keepActivityDiffHoverPreviewOpen}
+        onBlur={scheduleCloseActivityDiffHoverPreview}
         onMouseEnter={keepActivityDiffHoverPreviewOpen}
         onMouseLeave={scheduleCloseActivityDiffHoverPreview}
       />

@@ -967,10 +967,19 @@ export const TranscriptPanel = memo(
             additions: summary.additions,
             deletions: summary.deletions,
             diffText: summary.diffText
-          }
+          },
+          action: onOpenFileChangeInWorkbench
+            ? {
+                label: 'Open Diff Studio',
+                onActivate: () => {
+                  closeFileChangeDiffPreview()
+                  onOpenFileChangeInWorkbench(summary)
+                }
+              }
+            : undefined
         })
       },
-      [onOpenFileChangeInWorkbench, showFileChangeDiffPreview]
+      [closeFileChangeDiffPreview, onOpenFileChangeInWorkbench, showFileChangeDiffPreview]
     )
     const activateFileChangeSummary = useCallback(
       (event: React.MouseEvent<HTMLElement>, summary: DiffFileSummary) => {
@@ -2481,7 +2490,9 @@ export const TranscriptPanel = memo(
                                 ? (event) => openFileChangeDiffPreview(event, item)
                                 : undefined
                             }
-                            onBlur={hasDiffPreview ? closeFileChangeDiffPreview : undefined}
+                            onBlur={
+                              hasDiffPreview ? scheduleCloseFileChangeDiffPreview : undefined
+                            }
                             onClick={(event) => activateFileChangeSummary(event, item)}
                           >
                             {rowContent}
@@ -2516,6 +2527,8 @@ export const TranscriptPanel = memo(
         />
         <DiffHoverPreviewOverlay
           preview={fileChangeDiffPreview}
+          onFocus={keepFileChangeDiffPreviewOpen}
+          onBlur={scheduleCloseFileChangeDiffPreview}
           onMouseEnter={keepFileChangeDiffPreviewOpen}
           onMouseLeave={scheduleCloseFileChangeDiffPreview}
         />

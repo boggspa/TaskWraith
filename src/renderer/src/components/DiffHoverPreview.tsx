@@ -15,6 +15,10 @@ export interface DiffHoverPreviewState {
   anchor: DOMRect
   boundary?: DOMRect
   summary: DiffHoverPreviewSummary
+  action?: {
+    label: string
+    onActivate: () => void
+  }
 }
 
 export const DIFF_HOVER_PREVIEW_TOOLTIP_ID = 'diff-hover-preview-tooltip'
@@ -209,10 +213,14 @@ export function useDiffHoverPreviewState(delayMs = DIFF_HOVER_PREVIEW_CLOSE_DELA
 }
 
 export function DiffHoverPreviewOverlay({
+  onFocus,
+  onBlur,
   onMouseEnter,
   onMouseLeave,
   preview
 }: {
+  onFocus?: () => void
+  onBlur?: () => void
   onMouseEnter?: () => void
   onMouseLeave?: () => void
   preview: DiffHoverPreviewState | null
@@ -259,6 +267,8 @@ export function DiffHoverPreviewOverlay({
       id={DIFF_HOVER_PREVIEW_TOOLTIP_ID}
       className="diff-hover-preview"
       data-status={statusText}
+      onBlur={onBlur}
+      onFocus={onFocus}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       style={{
@@ -304,10 +314,25 @@ export function DiffHoverPreviewOverlay({
       </div>
       <div className="diff-hover-preview-footer">
         <span>{preview.summary.actionLabel || 'Hover preview'}</span>
-        <span>
-          {parsed.renderedLineCount.toLocaleString()} lines shown
-          {hiddenLineCount > 0 ? ` · ${hiddenLineCount.toLocaleString()} hidden` : ''}
-        </span>
+        <div className="diff-hover-preview-footer-actions">
+          <span>
+            {parsed.renderedLineCount.toLocaleString()} lines shown
+            {hiddenLineCount > 0 ? ` · ${hiddenLineCount.toLocaleString()} hidden` : ''}
+          </span>
+          {preview.action && (
+            <button
+              className="diff-hover-preview-action"
+              type="button"
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                preview.action?.onActivate()
+              }}
+            >
+              {preview.action.label}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )

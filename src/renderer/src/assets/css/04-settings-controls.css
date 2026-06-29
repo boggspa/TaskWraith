@@ -5930,9 +5930,54 @@ input:disabled, select:disabled, textarea:disabled {
     );
 }
 
-.diff-hover-preview-footer span:last-child {
+.diff-hover-preview-footer > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-hover-preview-footer-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.diff-hover-preview-footer-actions > span {
   flex: 0 0 auto;
   color: var(--warning);
+}
+
+.diff-hover-preview-action {
+  min-height: 24px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  border-radius: 7px;
+  padding: 0 9px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent),
+    0 0 0 1px color-mix(in srgb, #000 12%, transparent);
+  font: inherit;
+  font-weight: 650;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.diff-hover-preview-action:hover,
+.diff-hover-preview-action:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 54%, transparent);
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  outline: none;
+}
+
+.diff-hover-preview-action:focus-visible {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent);
 }
 
 .composer-discovery-card {
