@@ -35,6 +35,19 @@ describe('OllamaHarnessGates', () => {
     expect(gate.blocked).toBe(false)
   })
 
+  it('allows read_file after find_files', () => {
+    let state = createOllamaHarnessRunState()
+    state = recordOllamaHarnessToolResult(state, 'find_files', { pattern: '*.ts' }, true)
+    const gate = evaluateOllamaHarnessGate({
+      modelId: 'gpt-oss:20b',
+      tier: 'approved_edits',
+      state,
+      toolName: 'read_file',
+      args: { path: 'src/main/Foo.ts' }
+    })
+    expect(gate.blocked).toBe(false)
+  })
+
   it('blocks replace until the target file was read', () => {
     let state = createOllamaHarnessRunState()
     state = recordOllamaHarnessToolResult(state, 'workspace_search', { query: 'Foo' }, true)

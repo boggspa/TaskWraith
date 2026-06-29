@@ -9,10 +9,11 @@ import {
 describe('MCP_AUTO_ALLOWED_TOOLS', () => {
   const autoAllowedTools = MCP_AUTO_ALLOWED_TOOLS as ReadonlySet<string>
 
-  it('auto-allows the four workspace read tools (1.0.71 read parity)', () => {
+  it('auto-allows the workspace read tools (1.0.71+ read parity)', () => {
     for (const tool of [
       'read_file',
       'list_directory',
+      'find_files',
       'workspace_search',
       'workspace_symbols'
     ] as const) {
@@ -43,7 +44,7 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
 
 describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
   it('advertises the safe coordination + read tools to a read-only seat', () => {
-    for (const tool of ['ask_user_question', 'ensemble_yield', 'read_file'] as const) {
+    for (const tool of ['ask_user_question', 'ensemble_yield', 'read_file', 'find_files'] as const) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain(tool)
     }
   })
@@ -75,7 +76,13 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
 
 describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
   it('matches the safe coordination + read tools', () => {
-    for (const tool of ['ask_user_question', 'ensemble_yield', 'read_file', 'list_directory']) {
+    for (const tool of [
+      'ask_user_question',
+      'ensemble_yield',
+      'read_file',
+      'list_directory',
+      'find_files'
+    ]) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
     }
   })

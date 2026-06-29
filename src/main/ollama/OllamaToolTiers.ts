@@ -6,6 +6,7 @@ export type OllamaToolName = TaskWraithMcpToolName
 export const OLLAMA_READ_TOOL_NAMES = [
   'read_file',
   'list_directory',
+  'find_files',
   'workspace_search',
   'workspace_symbols',
   'git_status',

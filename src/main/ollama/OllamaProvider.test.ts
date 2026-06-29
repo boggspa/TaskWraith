@@ -1593,6 +1593,7 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(names).toEqual([
       'read_file',
       'list_directory',
+      'find_files',
       'workspace_search',
       'workspace_symbols',
       'git_status',
@@ -1653,6 +1654,7 @@ describe('Ollama tool tiers', () => {
     expect(ollamaToolNamesForTier('read_only')).toEqual([
       'read_file',
       'list_directory',
+      'find_files',
       'workspace_search',
       'workspace_symbols',
       'git_status',

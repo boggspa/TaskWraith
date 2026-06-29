@@ -36,6 +36,7 @@ function flattenSearchOutput(output: string): string {
   if (!value.startsWith('{')) return output
   try {
     const parsed = JSON.parse(value) as {
+      files?: unknown[]
       matches?: Array<{ path?: unknown; line?: unknown; text?: unknown }>
       symbols?: Array<{ path?: unknown; line?: unknown; name?: unknown; kind?: unknown }>
       count?: unknown
@@ -43,6 +44,12 @@ function flattenSearchOutput(output: string): string {
       query?: unknown
     }
     const rows: string[] = []
+    if (Array.isArray(parsed.files)) {
+      for (const file of parsed.files) {
+        const path = String(file || '').trim()
+        if (path) rows.push(path)
+      }
+    }
     if (Array.isArray(parsed.matches)) {
       for (const match of parsed.matches) {
         const path = String(match.path || '').trim()
@@ -104,7 +111,11 @@ export function summarizeOllamaToolResult(
   const value = String(output || '')
   if (!value) return value
   if (toolName === 'read_file') return summarizeReadFileOutput(value, maxChars)
-  if (toolName === 'workspace_search' || toolName === 'workspace_symbols') {
+  if (
+    toolName === 'workspace_search' ||
+    toolName === 'workspace_symbols' ||
+    toolName === 'find_files'
+  ) {
     return summarizeSearchOutput(value, maxChars)
   }
   if (toolName === 'list_directory') return summarizeListDirectoryOutput(value, maxChars)

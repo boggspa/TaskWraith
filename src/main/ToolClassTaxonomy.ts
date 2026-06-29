@@ -61,6 +61,7 @@ export const TOOL_CLASS_LABELS: Record<ToolClass, string> = {
 export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'read_file',
   'list_directory',
+  'find_files',
   'grep',
   'glob',
   'attached_window_status',
@@ -92,6 +93,7 @@ const WORKSPACE_READ_TOOLS = new Set<string>([
   'list_directory',
   'grep',
   'glob',
+  'find_files',
   'workspace_search',
   'workspace_symbols',
   // git state + file surfacing — read-only repo / file reads

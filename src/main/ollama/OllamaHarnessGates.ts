@@ -206,7 +206,12 @@ export function recordOllamaHarnessToolResult(
 ): OllamaHarnessRunState {
   if (!ok) return state
 
-  if (toolName === 'workspace_search' || toolName === 'list_directory' || toolName === 'workspace_symbols') {
+  if (
+    toolName === 'workspace_search' ||
+    toolName === 'list_directory' ||
+    toolName === 'find_files' ||
+    toolName === 'workspace_symbols'
+  ) {
     state.hasExplored = true
     state.activePhase = 'explore'
   }
@@ -250,7 +255,12 @@ export function ollamaHarnessToolFollowUpPrompt(input: {
 
   const guidance: string[] = []
   if (input.ok) {
-    if (input.toolName === 'workspace_search' || input.toolName === 'list_directory' || input.toolName === 'workspace_symbols') {
+    if (
+      input.toolName === 'workspace_search' ||
+      input.toolName === 'list_directory' ||
+      input.toolName === 'find_files' ||
+      input.toolName === 'workspace_symbols'
+    ) {
       guidance.push(
         'Pick the best match from these results and read_file that path only — do not read whole directories blindly.'
       )

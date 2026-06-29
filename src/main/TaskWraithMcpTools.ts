@@ -4,6 +4,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'replace',
   'read_file',
   'list_directory',
+  'find_files',
   'workspace_search',
   'web_search',
   'web_fetch',

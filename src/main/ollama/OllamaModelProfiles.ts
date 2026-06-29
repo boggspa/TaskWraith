@@ -124,6 +124,9 @@ export function ollamaModelFamilyTemperature(modelId: string): number | undefine
 
 function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'list_directory') return '- list_directory: {"path":"."}'
+  if (toolName === 'find_files') {
+    return '- find_files: {"pattern":"**/*.test.ts","path":".","maxResults":50} — locate files by filename/path glob before reading or editing.'
+  }
   if (toolName === 'read_file') return '- read_file: {"path":"relative/path.txt"}'
   if (toolName === 'workspace_search') {
     return '- workspace_search: {"query":"text or regex","path":".","maxResults":50,"contextLines":1} — ripgrep over the workspace; search a distinctive literal string to pinpoint the exact file and line you will read or edit.'

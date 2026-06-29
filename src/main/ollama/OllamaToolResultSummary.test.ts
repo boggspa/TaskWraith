@@ -23,4 +23,19 @@ describe('summarizeOllamaToolResult', () => {
     expect(summary).toContain('src/main/Foo.ts:12: const foo = true')
     expect(summary).not.toContain('"matches"')
   })
+
+  it('flattens find_files JSON into path rows', () => {
+    const summary = summarizeOllamaToolResult(
+      'find_files',
+      JSON.stringify({
+        files: ['src/main/Foo.ts', 'src/main/Foo.test.ts'],
+        count: 2
+      }),
+      2400
+    )
+
+    expect(summary).toContain('src/main/Foo.ts')
+    expect(summary).toContain('src/main/Foo.test.ts')
+    expect(summary).not.toContain('"files"')
+  })
 })

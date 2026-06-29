@@ -1118,6 +1118,29 @@ function ollamaNativeToolParameters(
         },
         required: ['path']
       }
+    case 'find_files':
+      return compact
+        ? {
+            description: 'Find workspace files by glob.',
+            properties: {
+              pattern: { ...STRING, description: 'Filename/path glob.' },
+              path: { ...STRING, description: 'Optional subdirectory.' }
+            },
+            required: ['pattern']
+          }
+        : {
+            description: 'Find files by filename or path glob inside the active workspace.',
+            properties: {
+              pattern: {
+                ...STRING,
+                description: 'Filename/path glob such as package.json, *.test.ts, or **/*.tsx.'
+              },
+              path: { ...STRING, description: 'Optional subdirectory to scope the search.' },
+              maxResults: { type: 'number', description: 'Maximum files to return.' },
+              includeHidden: { type: 'boolean', description: 'Include hidden files. Defaults to false.' }
+            },
+            required: ['pattern']
+          }
     case 'workspace_search':
       return compact
         ? {

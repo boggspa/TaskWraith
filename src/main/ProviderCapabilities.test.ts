@@ -321,6 +321,7 @@ describe('ProviderCapabilities', () => {
     expect(contract.mcp.tools).toEqual([
       'read_file',
       'list_directory',
+      'find_files',
       'workspace_search',
       'workspace_symbols',
       'git_status',
@@ -463,6 +464,7 @@ describe('ProviderCapabilities', () => {
     expect(contract.mcp.tools).toEqual([
       'read_file',
       'list_directory',
+      'find_files',
       'workspace_search',
       'workspace_symbols',
       'git_status',

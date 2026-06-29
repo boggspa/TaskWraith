@@ -68,6 +68,7 @@ export interface WorkspaceToolExecutorDependencies {
 }
 
 export const WORKSPACE_MCP_TOOL_NAMES = [
+  'find_files',
   'workspace_search',
   'apply_patch',
   'git_status',
@@ -89,6 +90,11 @@ export interface WorkspaceMcpToolExecution {
 }
 
 export interface WorkspaceToolExecutors {
+  executeFindFiles: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext,
+    cwd: string
+  ) => Promise<unknown>
   executeWorkspaceSearch: (
     args: Record<string, any>,
     context: WorkspaceToolContext,
@@ -135,6 +141,18 @@ export interface WorkspaceToolExecutors {
 }
 
 const MAX_MCP_TEXT_CHARS = 200_000
+const FIND_FILES_DEFAULT_EXCLUDE_GLOBS = [
+  '!.git/**',
+  '!node_modules/**',
+  '!vendor/**',
+  '!Pods/**',
+  '!DerivedData/**',
+  '!dist/**',
+  '!build/**',
+  '!coverage/**',
+  '!.next/**',
+  '!out/**'
+] as const
 
 type SubThreadLifecycleState =
   | 'created'
@@ -148,6 +166,7 @@ export function createWorkspaceToolExecutors(
   deps: WorkspaceToolExecutorDependencies
 ): WorkspaceToolExecutors {
   return {
+    executeFindFiles: (args, context, cwd) => executeFindFiles(deps, args, context, cwd),
     executeWorkspaceSearch: (args, context, cwd) => executeWorkspaceSearch(deps, args, context, cwd),
     executeApplyPatch: (args, context, cwd) => executeApplyPatch(deps, args, context, cwd),
     executeGitStatus: (cwd) => executeGitStatus(deps, cwd),
@@ -172,6 +191,10 @@ export async function executeWorkspaceMcpTool(
   context: WorkspaceToolContext,
   cwd: string
 ): Promise<WorkspaceMcpToolExecution> {
+  if (toolName === 'find_files') {
+    const result = await executeFindFiles(deps, args, context, cwd)
+    return { result, isError: result.ok === false || Boolean(result.timedOut || result.error) }
+  }
   if (toolName === 'workspace_search') {
     const result = await executeWorkspaceSearch(deps, args, context, cwd)
     return { result, isError: result.ok === false || Boolean(result.timedOut || result.error) }
@@ -221,6 +244,58 @@ export async function executeWorkspaceMcpTool(
   return {
     result: await executeWorkspaceSymbols(deps, args, context, cwd),
     isError: false
+  }
+}
+
+export async function executeFindFiles(
+  deps: WorkspaceToolExecutorDependencies,
+  args: Record<string, any>,
+  context: WorkspaceToolContext,
+  cwd: string
+) {
+  const patterns = dedupeStrings([
+    ...toStringArray(args.pattern),
+    ...toStringArray(args.patterns),
+    ...toStringArray(args.glob),
+    ...toStringArray(args.globs)
+  ]).slice(0, 20)
+  if (patterns.length === 0) {
+    throw new Error('find_files requires at least one filename glob pattern.')
+  }
+  const target = args.path || args.directory || '.'
+  const targetPath = resolveMcpScopedPath(context, String(target), { allowWorkspaceRoot: true })
+  const maxResults = clampInteger(args.maxResults ?? args.limit, 100, 1, 1000)
+  const includeHidden = args.includeHidden === true || args.hidden === true
+  const rgArgs = [
+    '--files',
+    ...(includeHidden ? ['--hidden'] : []),
+    ...FIND_FILES_DEFAULT_EXCLUDE_GLOBS.flatMap((glob) => ['--glob', glob]),
+    ...patterns.flatMap((glob) => ['--glob', glob]),
+    '--',
+    targetPath
+  ]
+  const result = await runCommandArgs(deps, ['rg', ...rgArgs], cwd, 60_000)
+  const allFiles = result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const files = allFiles
+    .slice(0, maxResults)
+    .map((filePath) => workspaceRelativeForContext(context, filePath))
+  return {
+    ok: result.exitCode === 0 || result.exitCode === 1,
+    cwd,
+    target: workspaceRelativeForContext(context, targetPath),
+    patterns,
+    includeHidden,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    count: files.length,
+    totalMatches: allFiles.length,
+    truncated: allFiles.length > files.length,
+    files,
+    stderr: truncateText(result.stderr, 20_000),
+    error: result.error
   }
 }
 
@@ -976,6 +1051,10 @@ export function toStringArray(value: unknown): string[] {
   }
   if (!Array.isArray(value)) return []
   return value.map((item) => String(item || '').trim()).filter(Boolean)
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values)]
 }
 
 export function clampInteger(value: unknown, fallback: number, min: number, max: number): number {

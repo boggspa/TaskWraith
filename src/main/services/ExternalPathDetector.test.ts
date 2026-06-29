@@ -16,6 +16,20 @@ describe('detectExternalPath', () => {
     })
   })
 
+  it('returns needsPrompt=true for find_files outside the workspace as read access', () => {
+    const result = detectExternalPath({
+      toolName: 'find_files',
+      params: { path: '/tmp/outside' },
+      workspacePath: '/Users/me/code/proj'
+    })
+    expect(result).toEqual({
+      needsPrompt: true,
+      path: '/tmp/outside',
+      access: 'read',
+      basename: 'outside'
+    })
+  })
+
   it('returns needsPrompt=true for write_file outside the workspace', () => {
     const result = detectExternalPath({
       toolName: 'write_file',

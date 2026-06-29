@@ -107,6 +107,33 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'find_files',
+      description:
+        'Find files by filename/path glob inside the active workspace and return bounded metadata-only matches.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          pattern: {
+            type: 'string',
+            description: 'Filename/path glob such as package.json, *.test.ts, or **/*.tsx.'
+          },
+          patterns: { type: 'array', items: { type: 'string' } },
+          path: { type: 'string' },
+          includeHidden: {
+            type: 'boolean',
+            description: 'Include hidden files and directories. Defaults to false.'
+          },
+          maxResults: { type: 'number' }
+        }
+      }
+    },
+    {
       name: 'workspace_search',
       description: 'Search the active workspace with ripgrep and return structured JSON matches.',
       annotations: {

@@ -27,6 +27,7 @@ const FILE_IO_TOOL_CATEGORY: Record<string, 'read' | 'write'> = {
   // Read-side
   read_file: 'read',
   list_directory: 'read',
+  find_files: 'read',
   // Write-side
   write_file: 'write',
   replace: 'write',

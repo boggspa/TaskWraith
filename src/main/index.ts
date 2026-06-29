@@ -14255,6 +14255,16 @@ function flattenOllamaWorkspaceSearchResult(result: unknown): string {
   return rows.join('\n')
 }
 
+function flattenOllamaFindFilesResult(result: unknown): string {
+  if (!isRecord(result) || !Array.isArray(result.files)) return mcpJson(result)
+  const rows = result.files.map((file) => String(file || '').trim()).filter(Boolean)
+  if (rows.length === 0) return mcpJson(result)
+  if (result.truncated === true) {
+    rows.push(`[file list truncated at ${String(result.count || rows.length)} results]`)
+  }
+  return rows.join('\n')
+}
+
 function integerArg(value: unknown): number | null {
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return null
@@ -14320,6 +14330,22 @@ async function executeOllamaLocalTool(
     }
     assertOllamaMutationIntent(request.toolName, request.arguments)
     assertOllamaProtectedWritePaths(request.toolName, request.arguments, context, workspacePath)
+
+    if (request.toolName === 'find_files') {
+      const result = await workspaceToolExecutors.executeFindFiles(
+        request.arguments,
+        context,
+        workspacePath
+      )
+      return {
+        ok:
+          isRecord(result) &&
+          (result.ok === true || result.exitCode === 0 || result.exitCode === 1) &&
+          result.timedOut !== true,
+        output: flattenOllamaFindFilesResult(result),
+        structuredContent: result
+      }
+    }
 
     if (request.toolName === 'workspace_search') {
       const result = await workspaceToolExecutors.executeWorkspaceSearch(

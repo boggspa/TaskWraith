@@ -12,11 +12,11 @@ import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithM
  * `McpAutoAllowedTools.test.ts`; do not weaken it.
  *
  * Historically this held only status / focus tools (state the user already
- * sees, or focus changes). 1.0.71 adds the four workspace READ tools so every
+ * sees, or focus changes). 1.0.71+ adds the workspace READ tools so every
  * read-only participant — notably Claude, whose SDK plan-mode otherwise made
  * every file read hit the approval modal — gets the same friction-free read
  * surface Gemini already had. Those reads are genuinely read-only (`fs` reads +
- * ripgrep invoked as an argv array, no shell) and are workspace-scope-guarded
+ * fixed-argv ripgrep invocations, no shell) and are workspace-scope-guarded
  * (symlink/traversal-proof) in workspace chats. NOTE: in *global-scope* chats
  * the workspace path guard is bypassed by design, so auto-allowing reads there
  * means individual reads are no longer prompted — acceptable (reads only;
@@ -63,12 +63,13 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'goal_blocked',
   // 1.4.2 — goal-step checklist updates are non-mutating run coordination.
   'todo_write',
-  // 1.0.71 — workspace READ tools (see header). Read-only + host-gate-safe:
+  // 1.0.71+ — workspace READ tools (see header). Read-only + host-gate-safe:
   // writes/shell are NOT here, so they still hit the gate and are denied under
   // read_only. This is what gives read-only Claude/Kimi parity with Gemini's
   // read surface instead of a modal on every read.
   'read_file',
   'list_directory',
+  'find_files',
   'workspace_search',
   'workspace_symbols',
   // TaskWraith Canvas read-only verbs. No pixels, no mutation: list/status are
