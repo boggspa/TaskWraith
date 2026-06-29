@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { explicitOnlyCompletionSource } from './FileEditorPanel'
 import { EditorPane } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import { FileEditorStatusBar } from './FileEditorStatusBar'
@@ -198,5 +199,22 @@ describe('file editor keyboard context menu utilities', () => {
       x: 12,
       y: 8
     })
+  })
+})
+
+describe('file editor completion sources', () => {
+  it('keeps local word completions explicit-only', () => {
+    const source = vi.fn(() => ({ from: 0, options: [{ label: 'workspaceWord' }] }))
+    const wrapped = explicitOnlyCompletionSource(source)
+    const implicitContext = { explicit: false } as Parameters<typeof wrapped>[0]
+    const explicitContext = { explicit: true } as Parameters<typeof wrapped>[0]
+
+    expect(wrapped(implicitContext)).toBeNull()
+    expect(source).not.toHaveBeenCalled()
+    expect(wrapped(explicitContext)).toEqual({
+      from: 0,
+      options: [{ label: 'workspaceWord' }]
+    })
+    expect(source).toHaveBeenCalledWith(explicitContext)
   })
 })

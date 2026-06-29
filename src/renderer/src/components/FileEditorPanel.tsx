@@ -227,6 +227,10 @@ const pathCompletionSource = (entries: WorkspaceFileEntry[]): CompletionSource =
   }
 }
 
+export const explicitOnlyCompletionSource = (source: CompletionSource): CompletionSource => {
+  return (context) => (context.explicit ? source(context) : null)
+}
+
 const codeEditorTheme = EditorView.theme(
   {
     '&': {
@@ -631,7 +635,10 @@ export function FileEditorPanel({
       syntaxHighlighting(codeHighlightStyle),
       highlightSelectionMatches(),
       autocompletion({
-        override: [pathCompletionSource(completionFiles), completeAnyWord],
+        override: [
+          pathCompletionSource(completionFiles),
+          explicitOnlyCompletionSource(completeAnyWord)
+        ],
         defaultKeymap: true
       }),
       EditorView.updateListener.of(updateCursorStatus),
