@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
+import { DiffDetail } from './DiffDetail'
 import { DiffFileList } from './DiffFileList'
 import { DiffToolbar } from './DiffToolbar'
 import { DiffViewer } from './DiffViewer'
@@ -290,6 +291,36 @@ describe('DiffFileList', () => {
     expect(html).toContain('data-diff-file-path="src/staged.ts"')
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain('staged')
+  })
+})
+
+describe('DiffDetail', () => {
+  it('renders split diff rows and file actions for an unstaged file', () => {
+    const summary = makeChangedFileSummary('src/detail.ts', 'detail line')
+    const html = renderToStaticMarkup(
+      <DiffDetail
+        summary={summary}
+        gitStatus={{
+          path: 'src/detail.ts',
+          index: ' ',
+          workingTree: 'M',
+          kind: 'modified',
+          staged: false,
+          unstaged: true
+        }}
+        viewMode="split"
+        onOpenFile={() => {}}
+        onStageFile={() => {}}
+        onUnstageFile={() => {}}
+      />
+    )
+
+    expect(html).toContain('class="diff-detail"')
+    expect(html).toContain('src/detail.ts')
+    expect(html).toContain('Stage')
+    expect(html).toContain('Copy')
+    expect(html).toContain('class="diff-line-split')
+    expect(html).toContain('detail line')
   })
 })
 
