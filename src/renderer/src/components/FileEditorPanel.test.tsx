@@ -1,6 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { explicitOnlyCompletionSource, fileEditorDirtyActionCopy } from './FileEditorPanel'
+import {
+  explicitOnlyCompletionSource,
+  fileEditorDirtyActionCopy,
+  isFileEditorPromptDismissKey
+} from './FileEditorPanel'
 import { EditorPane } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import { FileEditorStatusBar } from './FileEditorStatusBar'
@@ -272,5 +276,11 @@ describe('file editor dirty action prompts', () => {
       confirmLabel: 'Discard',
       danger: true
     })
+  })
+
+  it('limits prompt keyboard dismissal to Escape', () => {
+    expect(isFileEditorPromptDismissKey('Escape')).toBe(true)
+    expect(isFileEditorPromptDismissKey('Enter')).toBe(false)
+    expect(isFileEditorPromptDismissKey('F10')).toBe(false)
   })
 })

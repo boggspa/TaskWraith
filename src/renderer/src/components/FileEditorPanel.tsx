@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent
+} from 'react'
 import { createPortal } from 'react-dom'
 import { keymap, EditorView, type ViewUpdate } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
@@ -348,6 +355,18 @@ export const fileEditorDirtyActionCopy = (
     confirmLabel: 'Discard',
     danger: true
   }
+}
+
+export const isFileEditorPromptDismissKey = (key: string): boolean => key === 'Escape'
+
+const dismissFileEditorPromptOnEscape = (
+  event: ReactKeyboardEvent,
+  onDismiss: () => void
+): void => {
+  if (!isFileEditorPromptDismissKey(event.key)) return
+  event.preventDefault()
+  event.stopPropagation()
+  onDismiss()
 }
 
 function focusFileEditorContextMenuButton(
@@ -1702,9 +1721,20 @@ export function FileEditorPanel({
         />
         {showDeleteConfirm && selectedPath && (
           <div className="file-editor-modal-backdrop">
-            <div className="file-editor-confirm-card" role="alertdialog" aria-modal="true">
-              <strong>Delete file?</strong>
-              <span>{selectedPath} will be removed from this workspace.</span>
+            <div
+              className="file-editor-confirm-card"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="file-editor-delete-title"
+              aria-describedby="file-editor-delete-body"
+              onKeyDown={(event) =>
+                dismissFileEditorPromptOnEscape(event, () => setShowDeleteConfirm(false))
+              }
+            >
+              <strong id="file-editor-delete-title">Delete file?</strong>
+              <span id="file-editor-delete-body">
+                {selectedPath} will be removed from this workspace.
+              </span>
               <div className="file-editor-unsaved-actions">
                 <button
                   className="btn btn-sm btn-danger"
@@ -1717,6 +1747,7 @@ export function FileEditorPanel({
                   className="btn btn-sm btn-ghost"
                   type="button"
                   onClick={() => setShowDeleteConfirm(false)}
+                  autoFocus
                 >
                   Cancel
                 </button>
@@ -1726,22 +1757,32 @@ export function FileEditorPanel({
         )}
         {showCommitDialog && (
           <div className="file-editor-modal-backdrop">
-            <div className="file-editor-confirm-card" role="dialog" aria-modal="true">
-              <strong>Commit staged changes</strong>
+            <div
+              className="file-editor-confirm-card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="file-editor-commit-title"
+              aria-describedby="file-editor-commit-body"
+              onKeyDown={(event) =>
+                dismissFileEditorPromptOnEscape(event, () => setShowCommitDialog(false))
+              }
+            >
+              <strong id="file-editor-commit-title">Commit staged changes</strong>
               {outOfScopeStagedCount > 0 ? (
-                <span>
+                <span id="file-editor-commit-body">
                   {outOfScopeStagedCount} staged{' '}
                   {outOfScopeStagedCount === 1 ? 'file is' : 'files are'} outside this workspace.
                   Unstage or commit {outOfScopeStagedCount === 1 ? 'it' : 'them'} elsewhere first.
                 </span>
               ) : (
-                <span>
+                <span id="file-editor-commit-body">
                   {stagedCount} staged file{stagedCount === 1 ? '' : 's'} will be committed.
                 </span>
               )}
               <input
                 className="file-editor-commit-input"
                 aria-label="Commit message"
+                aria-describedby="file-editor-commit-body"
                 value={commitMessage}
                 onChange={(event) => setCommitMessage(event.target.value)}
                 placeholder="Commit message"
@@ -1790,10 +1831,17 @@ export function FileEditorPanel({
           <div
             className="file-editor-unsaved-card"
             role="alertdialog"
-            aria-label="Unsaved editor changes"
+            aria-modal="true"
+            aria-labelledby="file-editor-unsaved-title"
+            aria-describedby="file-editor-unsaved-body"
+            onKeyDown={(event) =>
+              dismissFileEditorPromptOnEscape(event, () => setPendingClosePath(''))
+            }
           >
-            <strong>Unsaved changes</strong>
-            <span>Save or discard changes before closing {pendingClosePath}.</span>
+            <strong id="file-editor-unsaved-title">Unsaved changes</strong>
+            <span id="file-editor-unsaved-body">
+              Save or discard changes before closing {pendingClosePath}.
+            </span>
             <div className="file-editor-unsaved-actions">
               <button
                 className="btn btn-sm"
@@ -1813,6 +1861,7 @@ export function FileEditorPanel({
                 className="btn btn-sm btn-ghost"
                 type="button"
                 onClick={() => setPendingClosePath('')}
+                autoFocus
               >
                 Cancel
               </button>
@@ -1823,10 +1872,15 @@ export function FileEditorPanel({
           <div
             className="file-editor-unsaved-card"
             role="alertdialog"
-            aria-label={pendingDirtyActionCopy.title}
+            aria-modal="true"
+            aria-labelledby="file-editor-dirty-action-title"
+            aria-describedby="file-editor-dirty-action-body"
+            onKeyDown={(event) =>
+              dismissFileEditorPromptOnEscape(event, () => setPendingDirtyAction(null))
+            }
           >
-            <strong>{pendingDirtyActionCopy.title}</strong>
-            <span>{pendingDirtyActionCopy.body}</span>
+            <strong id="file-editor-dirty-action-title">{pendingDirtyActionCopy.title}</strong>
+            <span id="file-editor-dirty-action-body">{pendingDirtyActionCopy.body}</span>
             <div className="file-editor-unsaved-actions">
               <button
                 className={`btn btn-sm${pendingDirtyActionCopy.danger ? ' btn-danger' : ''}`}
@@ -1839,6 +1893,7 @@ export function FileEditorPanel({
                 className="btn btn-sm btn-ghost"
                 type="button"
                 onClick={() => setPendingDirtyAction(null)}
+                autoFocus
               >
                 Cancel
               </button>
