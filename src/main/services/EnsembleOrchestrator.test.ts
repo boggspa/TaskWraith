@@ -248,6 +248,13 @@ function makeHarness(
       runId: string | undefined
       metadata: Record<string, unknown>
     }) => void
+    recordFanoutAuthorizationRejection?: (rejection: {
+      provider: string
+      workspacePath: string | undefined
+      chatId: string
+      runId: string | undefined
+      metadata: Record<string, unknown>
+    }) => void
   } = {}
 ) {
   let chat = options.initialChat
@@ -286,6 +293,9 @@ function makeHarness(
     ...(options.recordUsage ? { recordUsage: options.recordUsage } : {}),
     ...(options.recordBossmanControlRejection
       ? { recordBossmanControlRejection: options.recordBossmanControlRejection }
+      : {}),
+    ...(options.recordFanoutAuthorizationRejection
+      ? { recordFanoutAuthorizationRejection: options.recordFanoutAuthorizationRejection }
       : {})
   })
   return {
@@ -5978,7 +5988,7 @@ Next action:
     }
   })
 
-  it('1.0.8: concurrent mode dispatches locked writer lanes when the write-lane gate is on', async () => {
+  it('1.0.8: concurrent mode keeps writers serial even when the write-lane gate is on', async () => {
     const previousConcurrent = process.env.TASKWRAITH_CONCURRENT_LANES
     const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
     process.env.TASKWRAITH_CONCURRENT_LANES = '1'
@@ -5992,31 +6002,362 @@ Next action:
         concurrentMode: true
       })
 
-      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
-      const lanes = Object.values(harness.chat.ensemble?.activeRound?.lanes || {})
-      expect(lanes.map((lane) => lane.intent).sort()).toEqual(['read', 'write'])
-      expect(lanes.map((lane) => lane.status).sort()).toEqual(['running', 'running'])
-
-      for (const payload of harness.dispatched) {
-        harness.orchestrator.handleProviderOutput(
-          payload.provider,
-          { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
-          { type: 'result', status: 'success' }
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+      expect(harness.dispatched[0].provider).toBe('claude')
+      expect(Object.values(harness.chat.ensemble?.activeRound?.lanes || {})).toHaveLength(0)
+      expect(
+        harness.chat.messages.some(
+          (message) =>
+            message.role === 'system' &&
+            typeof message.content === 'string' &&
+            message.content.includes('Locked writer fan-out needs at least two writer-capable participants')
         )
-      }
-      await vi.waitFor(() =>
-        expect(
-          Object.values(harness.chat.ensemble?.activeRound?.lanes || {})
-            .map((lane) => lane.status)
-            .sort()
-        ).toEqual(['completed', 'completed'])
+      ).toBe(true)
+
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
       )
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+      expect(harness.dispatched[1].provider).toBe('codex')
     } finally {
       if (previousConcurrent === undefined) {
         delete process.env.TASKWRAITH_CONCURRENT_LANES
       } else {
         process.env.TASKWRAITH_CONCURRENT_LANES = previousConcurrent
       }
+      if (previousWrite === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previousWrite
+      }
+    }
+  })
+
+  it('1.0.8: no-Boss concurrent mode runs writer lanes after claim and matrix ack preflight', async () => {
+    const previousConcurrent = process.env.TASKWRAITH_CONCURRENT_LANES
+    const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_LANES = '1'
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        participants: [
+          {
+            ...harness.chat.ensemble!.participants[0],
+            role: 'WorkerA',
+            permissionPresetId: 'workspace_write'
+          },
+          {
+            ...harness.chat.ensemble!.participants[1],
+            role: 'WorkerB',
+            permissionPresetId: 'workspace_write'
+          }
+        ]
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Run parallel writers.',
+        event: { sender: {} as Electron.WebContents },
+        concurrentMode: true
+      })
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+      const claimA = harness.dispatched[0]
+      const claimB = harness.dispatched[1]
+      expect(claimA.effectivePermissions?.readOnly).toBe(true)
+      expect(claimB.effectivePermissions?.readOnly).toBe(true)
+      harness.orchestrator.handleProviderOutput(
+        claimA.provider,
+        { appRunId: claimA.appRunId, appChatId: 'ensemble-chat' },
+        {
+          type: 'content',
+          text:
+            '```taskwraith_write_claim\n{"writeScopes":["src/a/**"],"operations":["edit"],"rationale":"Own A","canFallbackToSerial":true,"acknowledgeExclusiveScope":true}\n```'
+        }
+      )
+      harness.orchestrator.handleProviderOutput(
+        claimA.provider,
+        { appRunId: claimA.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      harness.orchestrator.handleProviderOutput(
+        claimB.provider,
+        { appRunId: claimB.appRunId, appChatId: 'ensemble-chat' },
+        {
+          type: 'content',
+          text:
+            '```taskwraith_write_claim\n{"writeScopes":["src/b/**"],"operations":["edit"],"rationale":"Own B","canFallbackToSerial":true,"acknowledgeExclusiveScope":true}\n```'
+        }
+      )
+      harness.orchestrator.handleProviderOutput(
+        claimB.provider,
+        { appRunId: claimB.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4), { timeout: 1000 })
+      for (const ackRun of harness.dispatched.slice(2, 4)) {
+        expect(ackRun.effectivePermissions?.readOnly).toBe(true)
+        harness.orchestrator.handleProviderOutput(
+          ackRun.provider,
+          { appRunId: ackRun.appRunId, appChatId: 'ensemble-chat' },
+          { type: 'content', text: '```taskwraith_write_ack\n{"acknowledgeMatrix":true}\n```' }
+        )
+        harness.orchestrator.handleProviderOutput(
+          ackRun.provider,
+          { appRunId: ackRun.appRunId, appChatId: 'ensemble-chat' },
+          { type: 'result', status: 'success' }
+        )
+      }
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(6), { timeout: 1000 })
+      const writerRuns = harness.dispatched.slice(4, 6)
+      expect(writerRuns.every((payload) => payload.effectivePermissions?.readOnly === false)).toBe(true)
+      const writeLanes = Object.values(harness.chat.ensemble?.activeRound?.lanes || {}).filter(
+        (lane) => lane.intent === 'write'
+      )
+      expect(writeLanes).toHaveLength(2)
+      expect(writeLanes.map((lane) => lane.approvedWriteScopes?.[0]?.approvedBy).sort()).toEqual([
+        'user-preflight',
+        'user-preflight'
+      ])
+      const workerAWrite = writerRuns.find((payload) => payload.provider === claimA.provider)!
+      expect(
+        harness.orchestrator.validateLaneWriteScopeForRun(workerAWrite.appRunId, {
+          toolName: 'write_file',
+          workspacePath: '/repo',
+          resourcePath: '/repo/src/a/output.ts'
+        })
+      ).toEqual({ ok: true })
+      expect(
+        harness.orchestrator.validateLaneWriteScopeForRun(workerAWrite.appRunId, {
+          toolName: 'write_file',
+          workspacePath: '/repo',
+          resourcePath: '/repo/src/b/output.ts'
+        })
+      ).toMatchObject({ ok: false })
+
+      for (const writerRun of writerRuns) {
+        harness.orchestrator.handleProviderOutput(
+          writerRun.provider,
+          { appRunId: writerRun.appRunId, appChatId: 'ensemble-chat' },
+          { type: 'result', status: 'success' }
+        )
+      }
+    } finally {
+      if (previousConcurrent === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_LANES = previousConcurrent
+      }
+      if (previousWrite === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previousWrite
+      }
+    }
+  })
+
+  it('1.0.8: no-Boss writer preflight falls back to serial on overlapping claims', async () => {
+    const previousConcurrent = process.env.TASKWRAITH_CONCURRENT_LANES
+    const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_LANES = '1'
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        participants: [
+          {
+            ...harness.chat.ensemble!.participants[0],
+            role: 'WorkerA',
+            permissionPresetId: 'workspace_write'
+          },
+          {
+            ...harness.chat.ensemble!.participants[1],
+            role: 'WorkerB',
+            permissionPresetId: 'workspace_write'
+          }
+        ]
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Run parallel writers.',
+        event: { sender: {} as Electron.WebContents },
+        concurrentMode: true
+      })
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+      for (const claimRun of harness.dispatched.slice(0, 2)) {
+        harness.orchestrator.handleProviderOutput(
+          claimRun.provider,
+          { appRunId: claimRun.appRunId, appChatId: 'ensemble-chat' },
+          {
+            type: 'content',
+            text:
+              '```taskwraith_write_claim\n{"writeScopes":["src/shared/**"],"operations":["edit"],"rationale":"Need shared files","canFallbackToSerial":true,"acknowledgeExclusiveScope":true}\n```'
+          }
+        )
+        harness.orchestrator.handleProviderOutput(
+          claimRun.provider,
+          { appRunId: claimRun.appRunId, appChatId: 'ensemble-chat' },
+          { type: 'result', status: 'success' }
+        )
+      }
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+      expect(
+        harness.chat.messages.some(
+          (message) =>
+            message.role === 'system' &&
+            typeof message.content === 'string' &&
+            message.content.includes('write-scope preflight found overlapping claims')
+        )
+      ).toBe(true)
+      expect(harness.dispatched[2].ensembleRun?.laneId).toBeUndefined()
+      expect(
+        Object.values(harness.chat.ensemble?.activeRound?.lanes || {}).some(
+          (lane) => lane.intent === 'write'
+        )
+      ).toBe(false)
+    } finally {
+      if (previousConcurrent === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_LANES = previousConcurrent
+      }
+      if (previousWrite === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previousWrite
+      }
+    }
+  })
+
+  it('1.0.8: rejects explicit locked writer fan-out from a non-Boss and audits it', async () => {
+    const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    const rejections: Array<{ metadata: Record<string, unknown> }> = []
+    try {
+      const harness = makeHarness({
+        recordFanoutAuthorizationRejection: (rejection) => {
+          rejections.push({ metadata: rejection.metadata })
+        }
+      })
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        bossmanParticipantId: 'codex'
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Reviewer starts.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+      const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Worker'],
+        prompt: 'Edit in parallel.',
+        mode: 'locked_writers',
+        writeScopes: { Worker: ['src/worker/**'] }
+      })
+
+      expect(result.ok).toBe(false)
+      expect(result.error).toBe('not_authorized')
+      expect(rejections).toHaveLength(1)
+      expect(rejections[0].metadata).toMatchObject({
+        kind: 'ensemble_fanout_rejected',
+        reason: 'locked_writer_not_authorized',
+        assignedBossmanParticipantId: 'codex'
+      })
+    } finally {
+      if (previousWrite === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previousWrite
+      }
+    }
+  })
+
+  it('1.0.8: Boss can dispatch locked writer lanes only with approved write scopes', async () => {
+    const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        bossmanParticipantId: 'claude'
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Boss starts.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+      const missingScopes = await harness.orchestrator.fanoutForRun(
+        harness.dispatched[0].appRunId,
+        {
+          targets: ['Worker'],
+          prompt: 'Edit in parallel.',
+          mode: 'locked_writers'
+        }
+      )
+      expect(missingScopes.ok).toBe(false)
+      expect(missingScopes.error).toBe('missing_write_scope')
+
+      const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+        targets: ['Worker'],
+        prompt: 'Edit only the worker files.',
+        mode: 'locked_writers',
+        writeScopes: { Worker: ['src/worker/**'] }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
+      const workerRun = harness.dispatched[1]
+      const lanes = Object.values(harness.chat.ensemble?.activeRound?.lanes || {})
+      expect(lanes).toHaveLength(1)
+      expect(lanes[0]).toMatchObject({
+        intent: 'write',
+        approvedWriteScopes: [{ kind: 'glob', path: 'src/worker/**', approvedBy: 'boss' }]
+      })
+      expect(
+        harness.orchestrator.validateLaneWriteScopeForRun(workerRun.appRunId, {
+          toolName: 'write_file',
+          workspacePath: '/repo',
+          resourcePath: '/repo/src/worker/output.ts'
+        })
+      ).toEqual({ ok: true })
+      expect(
+        harness.orchestrator.validateLaneWriteScopeForRun(workerRun.appRunId, {
+          toolName: 'write_file',
+          workspacePath: '/repo',
+          resourcePath: '/repo/src/other/output.ts'
+        })
+      ).toMatchObject({ ok: false })
+      expect(
+        harness.orchestrator.validateLaneWriteScopeForRun(workerRun.appRunId, {
+          toolName: 'write_file',
+          workspacePath: '/repo',
+          resourcePath: '/tmp/outside.ts'
+        })
+      ).toMatchObject({ ok: false })
+      expect(
+        harness.orchestrator.validateLaneWriteScopeForRun(workerRun.appRunId, {
+          toolName: 'git_commit',
+          workspacePath: '/repo'
+        })
+      ).toMatchObject({ ok: false })
+
+      harness.orchestrator.handleProviderOutput(
+        workerRun.provider,
+        { appRunId: workerRun.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      await expect(fanout).resolves.toMatchObject({ ok: true, participantIds: ['codex'] })
+    } finally {
       if (previousWrite === undefined) {
         delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
       } else {

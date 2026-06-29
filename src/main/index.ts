@@ -7290,6 +7290,27 @@ function acquireMcpWorkspaceWriteLocks(input: {
     return { ok: true, tokens: [] }
   }
   const workspacePath = resolve(input.context.workspacePath || input.context.cwd || input.cwd)
+  const scopeCheck = ensembleOrchestratorRef?.validateLaneWriteScopeForRun(
+    input.context.appRunId,
+    {
+      toolName: input.toolName,
+      workspacePath,
+      ...(input.resourcePath ? { resourcePath: input.resourcePath } : {})
+    }
+  )
+  if (scopeCheck && !scopeCheck.ok) {
+    ensembleOrchestratorRef?.markLaneBlockedForRun(input.context.appRunId, scopeCheck.reason)
+    return {
+      ok: false,
+      text: mcpJson({
+        ok: false,
+        tool: input.toolName,
+        error: scopeCheck.reason,
+        laneId
+      }),
+      reason: scopeCheck.reason
+    }
+  }
   const workspaceResource = workspacePath
   const acquired: WriteIntentToken[] = []
   const nowIso = new Date().toISOString()
@@ -16775,7 +16796,8 @@ async function executeGeminiMcpTool(
         targets: args.targets,
         prompt: optionalString(args.prompt),
         reason: optionalString(args.reason),
-        mode: args.mode === 'locked_writers' ? 'locked_writers' : args.mode === 'read_only' ? 'read_only' : undefined
+        mode: args.mode === 'locked_writers' ? 'locked_writers' : args.mode === 'read_only' ? 'read_only' : undefined,
+        writeScopes: args.writeScopes ?? args.write_scopes
       }) ?? Promise.resolve({
         ok: false,
         tool: 'ensemble_fanout' as const,
@@ -27860,6 +27882,22 @@ if (isGeminiMcpBridgeProcess) {
             method: 'ensemble_bossman_control',
             title: 'Ensemble Boss control rejected',
             body: 'A non-Boss participant attempted to use ensemble_bossman_control.'
+          },
+          'autoDeny',
+          'policy',
+          'request',
+          rejection.metadata
+        ),
+      recordFanoutAuthorizationRejection: (rejection) =>
+        auditService.recordAutomaticApprovalDecision(
+          rejection.provider,
+          { appRunId: rejection.runId, appChatId: rejection.chatId },
+          'mcpTools',
+          rejection.workspacePath,
+          {
+            method: 'ensemble_fanout',
+            title: 'Ensemble writer fan-out rejected',
+            body: 'A participant attempted to start locked writer fan-out without the required authority.'
           },
           'autoDeny',
           'policy',

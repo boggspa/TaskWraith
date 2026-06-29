@@ -28,6 +28,7 @@ import type {
   ConcurrentLane,
   ConcurrentLaneIntent,
   ConcurrentLaneStatus,
+  ConcurrentLaneWriteScope,
   EnsembleRoundState,
   ProviderId
 } from './store/types'
@@ -65,6 +66,7 @@ export interface CreateLaneInput {
   participantId: string
   provider: ProviderId
   intent?: ConcurrentLaneIntent
+  approvedWriteScopes?: ConcurrentLaneWriteScope[]
   runId?: string
   providerSessionId?: string | null
   nowIso: string
@@ -83,6 +85,9 @@ export function createLane(input: CreateLaneInput): ConcurrentLane {
     provider: input.provider,
     status: 'pending',
     intent: input.intent ?? 'none',
+    ...(input.approvedWriteScopes?.length
+      ? { approvedWriteScopes: input.approvedWriteScopes }
+      : {}),
     startedAt: input.nowIso,
     providerSessionId: input.providerSessionId ?? null,
     approvalsQueued: 0

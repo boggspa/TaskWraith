@@ -1,3 +1,4 @@
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
@@ -16,6 +17,7 @@ import type {
   ChatRecord,
   ChatRun,
   ConcurrentLane,
+  ConcurrentLaneWriteScope,
   EffectiveRunPermissions,
   EnsembleConfig,
   EnsembleOrchestrationMode,
@@ -209,6 +211,13 @@ export interface EnsembleOrchestratorDeps {
     runId: string | undefined
     metadata: Record<string, unknown>
   }) => void
+  recordFanoutAuthorizationRejection?: (rejection: {
+    provider: ProviderId
+    workspacePath: string | undefined
+    chatId: string
+    runId: string | undefined
+    metadata: Record<string, unknown>
+  }) => void
 }
 
 /**
@@ -237,6 +246,7 @@ interface ActiveParticipantRun {
   roundId: string
   runId: string
   laneId?: string
+  approvedWriteScopes?: ConcurrentLaneWriteScope[]
   participant: EnsembleParticipant
   promptMessageId: string
   /**
@@ -284,6 +294,22 @@ interface ActiveParticipantRun {
   flushTimer?: ReturnType<typeof setTimeout>
 }
 
+interface ConcurrentWriteScopeClaim {
+  participantId: string
+  participantRole: string
+  provider: ProviderId
+  scopes: ConcurrentLaneWriteScope[]
+  operations: string[]
+  rationale?: string
+  canFallbackToSerial: boolean
+}
+
+interface ConcurrentWriteScopePreflight {
+  claims: ConcurrentWriteScopeClaim[]
+  scopesByParticipantId: Map<string, ConcurrentLaneWriteScope[]>
+  matrixSummary: string
+}
+
 export interface ScheduleWakeupInput {
   wakeAt?: string
   delayMs?: number
@@ -303,6 +329,7 @@ export interface EnsembleFanoutInput {
   prompt?: string
   reason?: string
   mode?: EnsembleFanoutMode
+  writeScopes?: unknown
 }
 
 export interface EnsembleFanoutResult {
@@ -320,6 +347,8 @@ export interface EnsembleFanoutResult {
     | 'invalid_target'
     | 'no_eligible_targets'
     | 'not_authorized'
+    | 'missing_write_scope'
+    | 'invalid_write_scope'
     | 'write_lanes_disabled'
     | 'dispatch_failed'
 }
@@ -504,6 +533,330 @@ function dedupeParticipants(participants: EnsembleParticipant[]): EnsemblePartic
     out.push(participant)
   }
   return out
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function pickRawWriteScopesForParticipant(
+  rawScopes: unknown,
+  participant: EnsembleParticipant
+): unknown {
+  if (Array.isArray(rawScopes) || typeof rawScopes === 'string') return rawScopes
+  if (!isPlainRecord(rawScopes)) return undefined
+  const keys = [
+    participant.id,
+    participant.role,
+    participant.provider,
+    providerLabel(participant.provider),
+    '*',
+    'all'
+  ]
+    .filter((key): key is string => typeof key === 'string' && key.trim().length > 0)
+    .map((key) => key.toLowerCase())
+  for (const [key, value] of Object.entries(rawScopes)) {
+    if (keys.includes(stripLeadingAt(key).toLowerCase())) return value
+  }
+  return undefined
+}
+
+function normalizeConcurrentWriteScopes(
+  rawScopes: unknown,
+  approvedBy: ConcurrentLaneWriteScope['approvedBy'],
+  approvedAt: string
+): ConcurrentLaneWriteScope[] {
+  const rawList = Array.isArray(rawScopes) ? rawScopes : [rawScopes]
+  const scopes: ConcurrentLaneWriteScope[] = []
+  for (const raw of rawList.slice(0, 24)) {
+    const scope = normalizeConcurrentWriteScope(raw, approvedBy, approvedAt)
+    if (scope) scopes.push(scope)
+  }
+  return scopes
+}
+
+function normalizeConcurrentWriteScope(
+  raw: unknown,
+  approvedBy: ConcurrentLaneWriteScope['approvedBy'],
+  approvedAt: string
+): ConcurrentLaneWriteScope | null {
+  if (typeof raw === 'string') {
+    const value = raw.trim()
+    if (!value || value.includes('\0')) return null
+    if (/^workspace$/i.test(value)) return { kind: 'workspace', approvedBy, approvedAt }
+    return {
+      kind: value.includes('*') ? 'glob' : 'path',
+      path: value,
+      approvedBy,
+      approvedAt
+    }
+  }
+  if (!isPlainRecord(raw)) return null
+  const kindRaw = String(raw.kind || raw.type || '').trim().toLowerCase()
+  const path = typeof raw.path === 'string' ? raw.path.trim() : ''
+  const reason = typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason.trim() : undefined
+  if (kindRaw === 'workspace') {
+    return { kind: 'workspace', approvedBy, approvedAt, ...(reason ? { reason } : {}) }
+  }
+  if ((kindRaw === 'path' || kindRaw === 'glob') && path && !path.includes('\0')) {
+    return {
+      kind: kindRaw,
+      path,
+      approvedBy,
+      approvedAt,
+      ...(reason ? { reason } : {})
+    }
+  }
+  if (!kindRaw && path && !path.includes('\0')) {
+    return {
+      kind: path.includes('*') ? 'glob' : 'path',
+      path,
+      approvedBy,
+      approvedAt,
+      ...(reason ? { reason } : {})
+    }
+  }
+  return null
+}
+
+function pathIsInsideOrSame(rootPath: string, targetPath: string): boolean {
+  const root = resolve(rootPath)
+  const target = resolve(targetPath)
+  if (root === target) return true
+  const rel = relative(root, target)
+  return Boolean(rel && !rel.startsWith('..') && !isAbsolute(rel))
+}
+
+function resolveScopePath(workspacePath: string, scopePath: string): string {
+  return isAbsolute(scopePath) ? resolve(scopePath) : resolve(workspacePath, scopePath)
+}
+
+function writeScopeAllowsResource(
+  scope: ConcurrentLaneWriteScope,
+  workspacePath: string,
+  resourcePath: string
+): boolean {
+  if (scope.kind === 'workspace') return true
+  if (!scope.path) return false
+  if (scope.kind === 'path') {
+    const target = resolveScopePath(workspacePath, scope.path)
+    return pathIsInsideOrSame(target, resourcePath)
+  }
+  const wildcardIndex = scope.path.indexOf('*')
+  const staticPrefix = wildcardIndex === -1 ? scope.path : scope.path.slice(0, wildcardIndex)
+  const normalizedPrefix = staticPrefix.replace(/[\\/]+$/, '')
+  const target = resolveScopePath(workspacePath, normalizedPrefix || '.')
+  return pathIsInsideOrSame(target, resourcePath)
+}
+
+function toWorkspaceRelative(workspacePath: string, resourcePath: string): string {
+  const rel = relative(resolve(workspacePath), resolve(resourcePath))
+  return rel && !rel.startsWith('..') ? rel.split(sep).join('/') : resolve(resourcePath)
+}
+
+function extractJsonFromContent(content: string, marker: string): unknown {
+  const fencePattern = /```([A-Za-z0-9_-]*)\s*([\s\S]*?)```/g
+  for (const match of content.matchAll(fencePattern)) {
+    const language = (match[1] || '').trim().toLowerCase()
+    if (language && language !== 'json' && language !== marker.toLowerCase()) continue
+    try {
+      return JSON.parse((match[2] || '').trim())
+    } catch {
+      // Try the next fenced block.
+    }
+  }
+  const firstBrace = content.indexOf('{')
+  const lastBrace = content.lastIndexOf('}')
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    try {
+      return JSON.parse(content.slice(firstBrace, lastBrace + 1))
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function sanitizedStringList(value: unknown, maxItems = 12, maxLength = 80): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter(Boolean)
+    .slice(0, maxItems)
+    .map((entry) => entry.slice(0, maxLength))
+}
+
+function rawClaimScopes(raw: Record<string, unknown>): unknown {
+  return raw.writeScopes ?? raw.write_scopes ?? raw.scopes ?? raw.paths ?? raw.globs
+}
+
+function isVagueUserPreflightScope(scope: ConcurrentLaneWriteScope): boolean {
+  if (scope.kind === 'workspace') return true
+  const normalized = (scope.path || '').trim().replace(/\\/g, '/').replace(/^\.\//, '')
+  return (
+    !normalized ||
+    normalized === '.' ||
+    normalized === '/' ||
+    normalized === '*' ||
+    normalized === '**' ||
+    normalized === '**/*'
+  )
+}
+
+function scopeStaticRoot(
+  workspacePath: string,
+  scope: ConcurrentLaneWriteScope
+): string | null {
+  if (scope.kind === 'workspace') return resolve(workspacePath)
+  if (!scope.path) return null
+  if (scope.kind === 'path') return resolveScopePath(workspacePath, scope.path)
+  const wildcardIndex = scope.path.indexOf('*')
+  const staticPrefix = wildcardIndex === -1 ? scope.path : scope.path.slice(0, wildcardIndex)
+  const normalizedPrefix = (() => {
+    if (wildcardIndex < 0 || /[\\/]$/.test(staticPrefix)) return staticPrefix.replace(/[\\/]+$/, '')
+    const slashIndex = Math.max(staticPrefix.lastIndexOf('/'), staticPrefix.lastIndexOf('\\'))
+    return slashIndex >= 0 ? staticPrefix.slice(0, slashIndex).replace(/[\\/]+$/, '') : '.'
+  })()
+  return resolveScopePath(workspacePath, normalizedPrefix || '.')
+}
+
+function scopeIsInsideWorkspace(workspacePath: string, scope: ConcurrentLaneWriteScope): boolean {
+  const root = scopeStaticRoot(workspacePath, scope)
+  return Boolean(root && pathIsInsideOrSame(workspacePath, root))
+}
+
+function writeScopesMayOverlap(
+  workspacePath: string,
+  left: ConcurrentLaneWriteScope,
+  right: ConcurrentLaneWriteScope
+): boolean {
+  if (left.kind === 'workspace' || right.kind === 'workspace') return true
+  const leftRoot = scopeStaticRoot(workspacePath, left)
+  const rightRoot = scopeStaticRoot(workspacePath, right)
+  if (!leftRoot || !rightRoot) return true
+  return pathIsInsideOrSame(leftRoot, rightRoot) || pathIsInsideOrSame(rightRoot, leftRoot)
+}
+
+function formatWriteScope(scope: ConcurrentLaneWriteScope): string {
+  return scope.kind === 'workspace' ? 'workspace' : `${scope.kind}:${scope.path || ''}`
+}
+
+function parseConcurrentWriteScopeClaim(
+  run: ActiveParticipantRun,
+  approvedAt: string
+):
+  | { ok: true; claim: ConcurrentWriteScopeClaim }
+  | { ok: false; reason: string } {
+  const rawJson = extractJsonFromContent(run.content || '', 'taskwraith_write_claim')
+  if (!isPlainRecord(rawJson)) {
+    return {
+      ok: false,
+      reason: `${run.participant.role || providerLabel(run.participant.provider)} did not return a valid taskwraith_write_claim JSON object.`
+    }
+  }
+  const scopes = normalizeConcurrentWriteScopes(
+    rawClaimScopes(rawJson),
+    'user-preflight',
+    approvedAt
+  )
+  if (scopes.length === 0) {
+    return {
+      ok: false,
+      reason: `${run.participant.role || providerLabel(run.participant.provider)} did not claim any concrete write scopes.`
+    }
+  }
+  if (scopes.some(isVagueUserPreflightScope)) {
+    return {
+      ok: false,
+      reason: `${run.participant.role || providerLabel(run.participant.provider)} claimed a vague or workspace-wide write scope.`
+    }
+  }
+  const ack =
+    rawJson.acknowledgeExclusiveScope === true ||
+    rawJson.acknowledge_scope_matrix === true ||
+    rawJson.acknowledgeScopeMatrix === true ||
+    rawJson.ack === true
+  if (!ack) {
+    return {
+      ok: false,
+      reason: `${run.participant.role || providerLabel(run.participant.provider)} did not acknowledge the exclusive write-scope contract.`
+    }
+  }
+  const fallback =
+    rawJson.canFallbackToSerial === true ||
+    rawJson.can_fallback_to_serial === true ||
+    rawJson.fallbackSerial === true
+  if (!fallback) {
+    return {
+      ok: false,
+      reason: `${run.participant.role || providerLabel(run.participant.provider)} did not confirm it can fall back to serial execution.`
+    }
+  }
+  const rationale =
+    typeof rawJson.rationale === 'string' && rawJson.rationale.trim()
+      ? rawJson.rationale.trim().slice(0, 500)
+      : undefined
+  return {
+    ok: true,
+    claim: {
+      participantId: run.participant.id,
+      participantRole: run.participant.role || providerLabel(run.participant.provider),
+      provider: run.participant.provider,
+      scopes,
+      operations: sanitizedStringList(
+        rawJson.operations ?? rawJson.operationTypes ?? rawJson.operation_types
+      ),
+      canFallbackToSerial: true,
+      ...(rationale ? { rationale } : {})
+    }
+  }
+}
+
+function parseConcurrentWriteScopeAck(run: ActiveParticipantRun): boolean {
+  const rawJson = extractJsonFromContent(run.content || '', 'taskwraith_write_ack')
+  if (!isPlainRecord(rawJson)) return false
+  return (
+    rawJson.acknowledgeMatrix === true ||
+    rawJson.acknowledge_matrix === true ||
+    rawJson.acknowledgeScopeMatrix === true ||
+    rawJson.ack === true
+  )
+}
+
+function writeScopeClaimPrompt(): string {
+  return [
+    'Read-only write-scope preflight. Do not edit files, run shell commands, stage, or commit.',
+    'Return a single JSON object in a fenced block tagged taskwraith_write_claim.',
+    'The JSON schema is:',
+    '{',
+    '  "writeScopes": ["workspace-relative/path/or/glob/**"],',
+    '  "operations": ["edit" | "create" | "delete" | "rename"],',
+    '  "rationale": "why this lane owns only these files",',
+    '  "canFallbackToSerial": true,',
+    '  "acknowledgeExclusiveScope": true',
+    '}',
+    'Scopes must be concrete, workspace-relative, and non-overlapping with other writers. Do not claim workspace, ".", "*", "**", or external paths. If you cannot name a narrow scope, return an empty writeScopes array and canFallbackToSerial true.'
+  ].join('\n')
+}
+
+function writeScopeAckPrompt(matrixSummary: string): string {
+  return [
+    'Read-only write-scope matrix acknowledgment. Do not edit files, run shell commands, stage, or commit.',
+    'The host built this non-overlap matrix:',
+    matrixSummary,
+    'Return a single JSON object in a fenced block tagged taskwraith_write_ack:',
+    '{ "acknowledgeMatrix": true }',
+    'Only acknowledge if your lane can stay within its listed scope.'
+  ].join('\n')
+}
+
+function writeScopeExecutionPrompt(matrixSummary: string): string {
+  return [
+    'Locked writer fan-out is authorized by user preflight.',
+    'Stay strictly within your approved write scope. Do not stage or commit. If you need to write outside scope, stop and report the required serial follow-up.',
+    'Approved scope matrix:',
+    matrixSummary
+  ].join('\n')
 }
 
 function participantDisplayName(participant: EnsembleParticipant): string {
@@ -1064,6 +1417,7 @@ interface ActiveRoundRuntime {
    * pre-writer fan-out pass is running.
    */
   activeScoutRunIds?: Set<string>
+  laneAttemptByParticipantId?: Map<string, number>
   /**
    * Participant ids that already completed an explicit `ensemble_fanout`
    * lane in this round. Those participants may still be present in the
@@ -2381,6 +2735,23 @@ export class EnsembleOrchestrator {
       }
     }
 
+    if (mode === 'locked_writers' && !this.canRequestLockedWriterFanout(chat, runtime, run)) {
+      const message = this.lockedWriterFanoutAuthorizationMessage(chat, runtime, run)
+      this.appendRoundStatus(run.chatId, run.roundId, message)
+      this.recordFanoutAuthorizationRejection(chat, run, {
+        mode,
+        reason: 'locked_writer_not_authorized',
+        targets: normalizeTargetList(input.targets)
+      })
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        message,
+        error: 'not_authorized'
+      }
+    }
+
     if (isBroadFanoutRequest(input.targets) && !this.canRequestBroadFanout(chat, run)) {
       return {
         ok: false,
@@ -2403,6 +2774,27 @@ export class EnsembleOrchestrator {
       }
     }
 
+    let writeScopesByParticipantId: Map<string, ConcurrentLaneWriteScope[]> | undefined
+    if (mode === 'locked_writers') {
+      const resolvedScopes = this.resolveLockedWriterScopes(
+        chat,
+        runtime,
+        resolvedTargets.targets,
+        input.writeScopes,
+        'boss'
+      )
+      if (!resolvedScopes.ok) {
+        return {
+          ok: false,
+          tool: 'ensemble_fanout',
+          mode,
+          message: resolvedScopes.message,
+          error: resolvedScopes.error
+        }
+      }
+      writeScopesByParticipantId = resolvedScopes.scopesByParticipantId
+    }
+
     const label = mode === 'locked_writers' ? 'Locked writer fan-out' : 'Parallel fan-out'
     this.appendRoundStatus(
       run.chatId,
@@ -2414,7 +2806,8 @@ export class EnsembleOrchestrator {
         prompt,
         reason: input.reason,
         mode,
-        sourceRunId: runId
+        sourceRunId: runId,
+        writeScopesByParticipantId
       })
       if (!runtime.fannedOutParticipantIds) runtime.fannedOutParticipantIds = new Set()
       for (const participant of resolvedTargets.targets) {
@@ -2574,6 +2967,330 @@ export class EnsembleOrchestrator {
       `${run.participant.role || providerLabel(run.participant.provider)} lane blocked: ${reason}`
     )
     return true
+  }
+
+  validateLaneWriteScopeForRun(
+    runId: string | undefined,
+    input: {
+      toolName: string
+      workspacePath: string
+      resourcePath?: string
+    }
+  ): { ok: true } | { ok: false; reason: string } {
+    if (!runId) return { ok: true }
+    const run = this.runsByRunId.get(runId)
+    if (!run?.laneId) return { ok: true }
+    const lane = this.deps.getChat(run.chatId)?.ensemble?.activeRound?.lanes?.[run.laneId]
+    if (lane?.intent !== 'write') {
+      return {
+        ok: false,
+        reason: `Lane ${run.laneId} is not a writer lane and cannot mutate workspace state.`
+      }
+    }
+    if (input.toolName === 'git_stage' || input.toolName === 'git_commit') {
+      return {
+        ok: false,
+        reason:
+          'git_stage and git_commit are disabled inside parallel writer lanes; finish the lane and commit from a serial owner.'
+      }
+    }
+    const scopes = run.approvedWriteScopes || lane?.approvedWriteScopes || []
+    if (scopes.length === 0) {
+      return {
+        ok: false,
+        reason: `Lane ${run.laneId} has no approved write scope.`
+      }
+    }
+    const workspacePath = resolve(input.workspacePath)
+    const resourcePath = input.resourcePath ? resolve(input.resourcePath) : undefined
+    if (resourcePath && !pathIsInsideOrSame(workspacePath, resourcePath)) {
+      return {
+        ok: false,
+        reason:
+          'External path writes are disabled inside parallel writer lanes; use a serial writer for external grants.'
+      }
+    }
+    if (!resourcePath) {
+      return scopes.some((scope) => scope.kind === 'workspace')
+        ? { ok: true }
+        : {
+            ok: false,
+            reason: `Workspace-wide tool ${input.toolName} requires an approved workspace write scope.`
+          }
+    }
+    return scopes.some((scope) => writeScopeAllowsResource(scope, workspacePath, resourcePath))
+      ? { ok: true }
+      : {
+          ok: false,
+          reason: `Lane ${run.laneId} is not approved to write ${toWorkspaceRelative(workspacePath, resourcePath)}.`
+        }
+  }
+
+  private activeBossmanParticipantId(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime
+  ): string | undefined {
+    return (
+      runtime.bossmanParticipantId ||
+      chat.ensemble?.activeRound?.bossmanParticipantId ||
+      chat.ensemble?.bossmanParticipantId
+    )
+  }
+
+  private canRequestLockedWriterFanout(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    run: ActiveParticipantRun
+  ): boolean {
+    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
+    return Boolean(bossmanParticipantId && run.participant.id === bossmanParticipantId)
+  }
+
+  private lockedWriterFanoutAuthorizationMessage(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    run: ActiveParticipantRun
+  ): string {
+    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
+    if (!bossmanParticipantId) {
+      return 'Locked writer fan-out rejected: no Boss is assigned, so writer lanes require a user write-scope preflight before parallel mutation is allowed.'
+    }
+    return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: only the assigned Boss may authorize parallel writer lanes.`
+  }
+
+  private recordFanoutAuthorizationRejection(
+    chat: ChatRecord,
+    run: ActiveParticipantRun,
+    metadata: Record<string, unknown>
+  ): void {
+    try {
+      const runtime = this.roundsByChatId.get(run.chatId)
+      this.deps.recordFanoutAuthorizationRejection?.({
+        provider: run.participant.provider,
+        workspacePath: chat.scope === 'global' ? undefined : chat.workspacePath,
+        chatId: run.chatId,
+        runId: run.runId,
+        metadata: {
+          kind: 'ensemble_fanout_rejected',
+          roundId: run.roundId,
+          participantId: run.participant.id,
+          participantRole: run.participant.role,
+          assignedBossmanParticipantId: runtime
+            ? this.activeBossmanParticipantId(chat, runtime)
+            : chat.ensemble?.bossmanParticipantId,
+          ...metadata
+        }
+      })
+    } catch {
+      // Audit is best-effort; the tool result still rejects.
+    }
+  }
+
+  private resolveLockedWriterScopes(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    targets: EnsembleParticipant[],
+    rawScopes: unknown,
+    approvedBy: ConcurrentLaneWriteScope['approvedBy']
+  ):
+    | { ok: true; scopesByParticipantId: Map<string, ConcurrentLaneWriteScope[]> }
+    | {
+        ok: false
+        message: string
+        error: Extract<EnsembleFanoutResult['error'], 'missing_write_scope' | 'invalid_write_scope'>
+      } {
+    const writerTargets = targets.filter(
+      (participant) =>
+        !this.resolveFanoutDispatchPermissions(chat, runtime, participant, 'locked_writers')
+          .readOnly
+    )
+    const scopesByParticipantId = new Map<string, ConcurrentLaneWriteScope[]>()
+    if (writerTargets.length === 0) return { ok: true, scopesByParticipantId }
+    if (rawScopes === undefined || rawScopes === null || rawScopes === '') {
+      return {
+        ok: false,
+        message:
+          'ensemble_fanout: locked writer lanes require explicit writeScopes for every writer target.',
+        error: 'missing_write_scope'
+      }
+    }
+    for (const participant of writerTargets) {
+      const rawForParticipant = pickRawWriteScopesForParticipant(rawScopes, participant)
+      if (rawForParticipant === undefined) {
+        return {
+          ok: false,
+          message: `ensemble_fanout: missing writeScopes for ${participant.role || providerLabel(participant.provider)}.`,
+          error: 'missing_write_scope'
+        }
+      }
+      const scopes = normalizeConcurrentWriteScopes(
+        rawForParticipant,
+        approvedBy,
+        this.deps.nowIso()
+      )
+      if (scopes.length === 0) {
+        return {
+          ok: false,
+          message: `ensemble_fanout: invalid or empty writeScopes for ${participant.role || providerLabel(participant.provider)}.`,
+          error: 'invalid_write_scope'
+        }
+      }
+      scopesByParticipantId.set(participant.id, scopes)
+    }
+    return { ok: true, scopesByParticipantId }
+  }
+
+  private nextLaneId(runtime: ActiveRoundRuntime, participant: EnsembleParticipant): string {
+    if (!runtime.laneAttemptByParticipantId) {
+      runtime.laneAttemptByParticipantId = new Map<string, number>()
+    }
+    const attempt = (runtime.laneAttemptByParticipantId.get(participant.id) || 0) + 1
+    runtime.laneAttemptByParticipantId.set(participant.id, attempt)
+    return buildLaneId(runtime.roundId, participant.id, attempt)
+  }
+
+  private evaluateUserWriteScopeClaims(
+    chat: ChatRecord,
+    writers: EnsembleParticipant[],
+    runs: ActiveParticipantRun[]
+  ):
+    | { ok: true; preflight: ConcurrentWriteScopePreflight }
+    | { ok: false; reason: string } {
+    const workspacePath = chat.scope === 'global' ? '' : chat.workspacePath || ''
+    if (!workspacePath) {
+      return {
+        ok: false,
+        reason: 'user write-scope preflight requires a workspace-scoped chat.'
+      }
+    }
+    const runByParticipantId = new Map(runs.map((run) => [run.participant.id, run]))
+    const claims: ConcurrentWriteScopeClaim[] = []
+    for (const writer of writers) {
+      const run = runByParticipantId.get(writer.id)
+      if (!run) {
+        return {
+          ok: false,
+          reason: `${writer.role || providerLabel(writer.provider)} did not complete a write-scope claim lane.`
+        }
+      }
+      const parsed = parseConcurrentWriteScopeClaim(run, this.deps.nowIso())
+      if (!parsed.ok) return parsed
+      for (const scope of parsed.claim.scopes) {
+        if (!scopeIsInsideWorkspace(workspacePath, scope)) {
+          return {
+            ok: false,
+            reason: `${parsed.claim.participantRole} claimed an external write scope (${formatWriteScope(scope)}).`
+          }
+        }
+      }
+      claims.push(parsed.claim)
+    }
+
+    const conflicts: string[] = []
+    for (let i = 0; i < claims.length; i += 1) {
+      for (let j = i + 1; j < claims.length; j += 1) {
+        const left = claims[i]
+        const right = claims[j]
+        const overlaps = left.scopes.some((leftScope) =>
+          right.scopes.some((rightScope) =>
+            writeScopesMayOverlap(workspacePath, leftScope, rightScope)
+          )
+        )
+        if (overlaps) {
+          conflicts.push(
+            `${left.participantRole} (${left.scopes.map(formatWriteScope).join(', ')}) overlaps ${right.participantRole} (${right.scopes.map(formatWriteScope).join(', ')})`
+          )
+        }
+      }
+    }
+    if (conflicts.length > 0) {
+      return {
+        ok: false,
+        reason: `write-scope preflight found overlapping claims: ${conflicts.join('; ')}.`
+      }
+    }
+    const scopesByParticipantId = new Map<string, ConcurrentLaneWriteScope[]>(
+      claims.map((claim) => [claim.participantId, claim.scopes])
+    )
+    const matrixSummary = claims
+      .map(
+        (claim) =>
+          `${claim.participantRole}: ${claim.scopes.map(formatWriteScope).join(', ')}`
+      )
+      .join('\n')
+    return {
+      ok: true,
+      preflight: {
+        claims,
+        scopesByParticipantId,
+        matrixSummary
+      }
+    }
+  }
+
+  private async runUserWriteScopePreflight(
+    runtime: ActiveRoundRuntime,
+    chat: ChatRecord,
+    writers: EnsembleParticipant[]
+  ): Promise<boolean> {
+    if (writers.length < 2 || runtime.cancelled) return false
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `Write-scope preflight: ${writers.length} writer-capable participant(s) will claim non-overlapping scopes before any parallel writes are allowed.`
+    )
+    const claimRuns: ActiveParticipantRun[] = []
+    await this.runParallelFanoutPass(runtime, chat, writers, {
+      mode: 'read_only',
+      label: 'Write-scope claim preflight',
+      forceReadOnlyDispatch: true,
+      prompt: writeScopeClaimPrompt(),
+      reason: 'No Boss is assigned; user-enabled fan-out requires write-scope claims first.',
+      onCompleteRuns: (runs) => {
+        claimRuns.push(...runs)
+      }
+    })
+    if (runtime.cancelled) return false
+    const evaluated = this.evaluateUserWriteScopeClaims(chat, writers, claimRuns)
+    if (!evaluated.ok) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Write-scope preflight rejected parallel writers: ${evaluated.reason} Continuing with serial writers.`
+      )
+      return false
+    }
+
+    const ackRuns: ActiveParticipantRun[] = []
+    await this.runParallelFanoutPass(runtime, chat, writers, {
+      mode: 'read_only',
+      label: 'Write-scope matrix ack',
+      forceReadOnlyDispatch: true,
+      prompt: writeScopeAckPrompt(evaluated.preflight.matrixSummary),
+      reason: 'Confirm the host-built non-overlap matrix before write lanes start.',
+      onCompleteRuns: (runs) => {
+        ackRuns.push(...runs)
+      }
+    })
+    if (runtime.cancelled) return false
+    const missingAck = ackRuns.find((run) => !parseConcurrentWriteScopeAck(run))
+    if (missingAck) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Write-scope preflight rejected parallel writers: ${missingAck.participant.role || providerLabel(missingAck.participant.provider)} did not acknowledge the host conflict matrix. Continuing with serial writers.`
+      )
+      return false
+    }
+
+    await this.runParallelFanoutPass(runtime, chat, writers, {
+      mode: 'locked_writers',
+      label: 'User-preflight writer fan-out',
+      prompt: writeScopeExecutionPrompt(evaluated.preflight.matrixSummary),
+      reason: 'User enabled fan-out and all writer claims were non-overlapping and acknowledged.',
+      writeScopesByParticipantId: evaluated.preflight.scopesByParticipantId
+    })
+    return !runtime.cancelled
   }
 
   /**
@@ -3536,10 +4253,9 @@ export class EnsembleOrchestrator {
 
     // Parallel fan-out. Default/safe path: fan out read-only
     // participants first, then continue with writer-capable
-    // participants serially. When the explicit writer-lane feature
-    // gate is enabled, a concurrent round can dispatch all remaining
-    // participants in locked lanes and rely on the workspace write-
-    // intent registry to serialize actual mutations.
+    // participants serially. Writer-capable lanes only run in parallel
+    // after either Boss authorization via ensemble_fanout or, when no
+    // Boss is assigned, a host-owned user-preflight claim + ack pass.
     const chatForFanout = this.deps.getChat(runtime.chatId)
     const workSessionForFanout = chatForFanout?.ensemble?.workSession
     const shouldRunReadOnlyFanout =
@@ -3549,19 +4265,7 @@ export class EnsembleOrchestrator {
           workSessionForFanout.status === 'active' &&
           workSessionForFanout.enableScoutPass
       )
-    if (
-      runtime.concurrentMode &&
-      concurrentWriteLanesEnabled() &&
-      chatForFanout &&
-      remaining.length > 1 &&
-      !runtime.cancelled
-    ) {
-      const allLanes = [...remaining]
-      remaining.length = 0
-      await this.runParallelFanoutPass(runtime, chatForFanout, allLanes, {
-        mode: 'locked_writers'
-      })
-    } else if (shouldRunReadOnlyFanout && !runtime.cancelled) {
+    if (shouldRunReadOnlyFanout && !runtime.cancelled) {
       const readers: EnsembleParticipant[] = []
       const writers: EnsembleParticipant[] = []
       for (const participant of remaining) {
@@ -3593,6 +4297,44 @@ export class EnsembleOrchestrator {
           runtime.chatId,
           runtime.roundId,
           'Parallel mode requested but fewer than two read-only participants were available; continuing serially.'
+        )
+      }
+      if (
+        runtime.concurrentMode &&
+        concurrentWriteLanesEnabled() &&
+        chatForFanout &&
+        writers.length >= 2 &&
+        remaining.every((participant) => writers.some((writer) => writer.id === participant.id)) &&
+        !runtime.cancelled
+      ) {
+        const bossmanParticipantId = this.activeBossmanParticipantId(chatForFanout, runtime)
+        if (bossmanParticipantId) {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            'Locked writer fan-out requires the assigned Boss to call ensemble_fanout with explicit writeScopes; continuing with serial writers.'
+          )
+        } else {
+          const handledWriters = await this.runUserWriteScopePreflight(
+            runtime,
+            chatForFanout,
+            writers
+          )
+          if (handledWriters) {
+            remaining.length = 0
+          }
+        }
+      } else if (
+        runtime.concurrentMode &&
+        concurrentWriteLanesEnabled() &&
+        chatForFanout &&
+        writers.length > 0 &&
+        !runtime.cancelled
+      ) {
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          'Locked writer fan-out needs at least two writer-capable participants with no intervening serial participants after the read-only fan-out step; continuing serially.'
         )
       }
     }
@@ -4325,6 +5067,10 @@ export class EnsembleOrchestrator {
       reason?: string
       mode?: EnsembleFanoutMode
       sourceRunId?: string
+      label?: string
+      forceReadOnlyDispatch?: boolean
+      writeScopesByParticipantId?: Map<string, ConcurrentLaneWriteScope[]>
+      onCompleteRuns?: (runs: ActiveParticipantRun[]) => void
     } = {}
   ): Promise<string[]> {
     if (participants.length === 0) return []
@@ -4333,24 +5079,37 @@ export class EnsembleOrchestrator {
       throw new Error('Locked writer fan-out requires TASKWRAITH_CONCURRENT_WRITE_LANES.')
     }
     for (const participant of participants) {
-      const permissions = this.resolveFanoutEligibilityPermissions(chat, runtime, participant, mode)
+      const permissions = options.forceReadOnlyDispatch
+        ? this.resolveFanoutDispatchPermissions(chat, runtime, participant, 'read_only')
+        : this.resolveFanoutEligibilityPermissions(chat, runtime, participant, mode)
       if (mode === 'read_only' && !permissions.readOnly) {
         throw new Error(
           `runParallelFanoutPass: non-read-only participant ${participant.id} cannot run in read_only fan-out.`
+        )
+      }
+      if (
+        mode === 'locked_writers' &&
+        !permissions.readOnly &&
+        (options.writeScopesByParticipantId?.get(participant.id)?.length || 0) === 0
+      ) {
+        throw new Error(
+          `runParallelFanoutPass: writer participant ${participant.id} has no approved write scope.`
         )
       }
     }
 
     if (!runtime.activeScoutRunIds) runtime.activeScoutRunIds = new Set<string>()
 
-    const readOnlyCount = participants.filter((participant) =>
-      this.resolveFanoutDispatchPermissions(chat, runtime, participant, mode).readOnly
-    ).length
+    const readOnlyCount = participants.filter((participant) => {
+      const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
+      return this.resolveFanoutDispatchPermissions(chat, runtime, participant, dispatchMode).readOnly
+    }).length
     const writeCount = participants.length - readOnlyCount
     const label =
-      mode === 'locked_writers'
+      options.label ||
+      (mode === 'locked_writers'
         ? 'Locked writer fan-out'
-        : 'Parallel fan-out'
+        : 'Parallel fan-out')
     const ollamaLaneCount = participants.filter((p) => p.provider === 'ollama').length
     const ollamaRamNote =
       ollamaLaneCount >= 2
@@ -4374,12 +5133,16 @@ export class EnsembleOrchestrator {
     // spreads its `chat` parameter to compose the next save. Using
     // the stale `chat` would clobber the status note we just
     // appended.
-    const laneRuns: ActiveParticipantRun[] = participants.map((participant, index) => {
+    const laneRuns: ActiveParticipantRun[] = participants.map((participant) => {
       const freshChat = this.deps.getChat(runtime.chatId) || chat
-      const permissions = this.resolveFanoutDispatchPermissions(chat, runtime, participant, mode)
+      const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
+      const permissions = this.resolveFanoutDispatchPermissions(chat, runtime, participant, dispatchMode)
       return this.seedParticipantRun(freshChat, runtime, participant, {
-        laneId: buildLaneId(runtime.roundId, participant.id, index + 1),
-        laneIntent: permissions.readOnly ? 'read' : 'write'
+        laneId: this.nextLaneId(runtime, participant),
+        laneIntent: permissions.readOnly ? 'read' : 'write',
+        approvedWriteScopes: permissions.readOnly
+          ? undefined
+          : options.writeScopesByParticipantId?.get(participant.id)
       })
     })
     for (const run of laneRuns) {
@@ -4394,7 +5157,8 @@ export class EnsembleOrchestrator {
       const completion = new Promise<EnsembleParticipantStatus>((resolve) => {
         run.completion = resolve
       })
-      const permissions = this.resolveFanoutDispatchPermissions(chat, runtime, participant, mode)
+      const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
+      const permissions = this.resolveFanoutDispatchPermissions(chat, runtime, participant, dispatchMode)
       const lanePromptAuthor = options.sourceRunId ? 'peer-authored' : 'orchestrator-authored'
       const promptForLane = options.prompt?.trim()
         ? `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${options.prompt.trim()}${
@@ -4492,6 +5256,7 @@ export class EnsembleOrchestrator {
     const completionPromises = await Promise.all(dispatchPromises)
     await Promise.all(completionPromises)
     if (runtime.cancelled) return []
+    options.onCompleteRuns?.(laneRuns)
 
     for (const run of laneRuns) {
       runtime.activeScoutRunIds?.delete(run.runId)
@@ -4518,6 +5283,7 @@ export class EnsembleOrchestrator {
       sleepResumeWarning?: string
       laneId?: string
       laneIntent?: ConcurrentLane['intent']
+      approvedWriteScopes?: ConcurrentLaneWriteScope[]
     } = {}
   ): ActiveParticipantRun {
     const startedAt = this.deps.nowIso()
@@ -4557,6 +5323,9 @@ export class EnsembleOrchestrator {
       roundId: runtime.roundId,
       runId,
       ...(options.laneId ? { laneId: options.laneId } : {}),
+      ...(options.approvedWriteScopes?.length
+        ? { approvedWriteScopes: options.approvedWriteScopes }
+        : {}),
       participant,
       promptMessageId,
       assistantMessageId,
@@ -4589,6 +5358,7 @@ export class EnsembleOrchestrator {
                   participantId: participant.id,
                   provider: participant.provider,
                   intent: options.laneIntent || 'read',
+                  approvedWriteScopes: options.approvedWriteScopes,
                   runId,
                   providerSessionId: participant.linkedProviderSessionId || null,
                   nowIso: startedAt

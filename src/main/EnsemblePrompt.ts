@@ -566,7 +566,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     }`,
     activeConcurrentMode
       ? hasWriteIntentLane
-        ? 'Parallel policy: writer-capable lanes may run concurrently, but workspace-mutating tools acquire TaskWraith write locks before executing. If a lock conflict blocks your lane, report the conflict and do not retry blindly.'
+        ? 'Parallel policy: writer-capable lanes may run concurrently only when Boss-authorized with explicit write scopes, or when no Boss is assigned and the host has completed user-enabled write-scope claim + matrix-ack preflight. Workspace-mutating tools must stay inside the approved lane scope and acquire TaskWraith write locks before executing. If a lock or scope conflict blocks your lane, report the conflict and do not retry blindly.'
         : 'Parallel policy: read-only fan-out lanes may run concurrently. Writer-capable participants still run serially unless locked writer lanes are explicitly enabled.'
       : 'Parallel policy: use ensemble_fanout for targeted read-only fan-out when another participant can investigate in parallel.',
     ...(workspaceStanza ? [workspaceStanza] : []),
@@ -617,7 +617,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // banned, just exceptional.
     '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers a provider tag resolves non-deterministically and your message may reach the wrong panelist.',
     '- If another participant should handle this turn, call ensemble_yield with a short reason and optional target.',
-    '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated and relies on workspace write locks.',
+    '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss as caller with explicit writeScopes for writer targets, and relies on workspace write locks. When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
     '- Use blackboard_post only for durable shared facts, decisions, risks, or do-not-repeat notes. Do not use the blackboard for conversational side messages.',
     '- In Continuous mode, only request another handoff when more agent work is genuinely useful; otherwise return control to the user.',
     '- Respect your permission preset. Read-only roles should not attempt file or shell mutations.',

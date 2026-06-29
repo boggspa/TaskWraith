@@ -1261,7 +1261,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_fanout',
       description:
-        'In Ensemble Mode, ask multiple participants to run in parallel lanes and wait for their results. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager, or an active Work Session with an explicit participant scope. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES and routes writer-capable lanes through workspace write locks.',
+        'In Ensemble Mode, ask multiple participants to run in parallel lanes and wait for their results. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager, or an active Work Session with an explicit participant scope. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES, a Boss caller, explicit writeScopes for writer-capable targets, and routes mutations through lane scope checks plus workspace write locks.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1291,6 +1291,15 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             enum: ['read_only', 'locked_writers'],
             description:
               'Default read_only. locked_writers is feature-gated and allows writer-capable targets only when write-locking is enabled.'
+          },
+          writeScopes: {
+            oneOf: [
+              { type: 'string' },
+              { type: 'array', items: { type: 'string' } },
+              { type: 'object' }
+            ],
+            description:
+              'Required for mode=locked_writers writer targets. Use participant aliases as keys with path/glob arrays, or "workspace" for an explicit workspace-wide scope.'
           }
         },
         required: ['prompt']

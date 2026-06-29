@@ -559,6 +559,24 @@ export type ConcurrentLaneStatus =
  */
 export type ConcurrentLaneIntent = 'none' | 'read' | 'write'
 
+export type ConcurrentLaneWriteScopeKind = 'path' | 'glob' | 'workspace'
+
+export type ConcurrentLaneWriteScopeApprover = 'boss' | 'user-preflight'
+
+/**
+ * Approved mutation envelope for a concurrent writer lane. The lane may still
+ * hit the runtime write-intent registry, but it cannot ask for a lock outside
+ * this declared scope.
+ */
+export interface ConcurrentLaneWriteScope {
+  kind: ConcurrentLaneWriteScopeKind
+  /** Workspace-relative or absolute path/glob. Omitted only for workspace scope. */
+  path?: string
+  reason?: string
+  approvedBy: ConcurrentLaneWriteScopeApprover
+  approvedAt: string
+}
+
 /**
  * 1.0.5-C1 — Concurrent Ensemble lane record. Bookkeeping seam
  * for multi-writer execution. Persisted on
@@ -578,6 +596,8 @@ export interface ConcurrentLane {
   status: ConcurrentLaneStatus
   /** Hint of what this lane plans to do; informs write-intent acquisition. */
   intent: ConcurrentLaneIntent
+  /** Required for write-intent lanes before any workspace mutation is allowed. */
+  approvedWriteScopes?: ConcurrentLaneWriteScope[]
   startedAt: string
   endedAt?: string
   /** Provider-side session id, when the adapter supports session resume. */
