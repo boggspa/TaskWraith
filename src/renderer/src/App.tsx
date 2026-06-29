@@ -22726,6 +22726,9 @@ function App(): React.JSX.Element {
             scheduledTasks={scheduledTasks}
             runQueueJobs={runQueueJobs}
             runningChatIds={runningChatIds}
+            pendingApprovalsByChatId={pendingAgentApprovalByChatId}
+            pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+            collaboratingChatIds={collaboratingChatIds}
             onAddCard={handleAddWorkspaceBoardCard}
             onUpdateCard={handleUpdateWorkspaceBoardCard}
             onDeleteCard={handleDeleteWorkspaceBoardCard}

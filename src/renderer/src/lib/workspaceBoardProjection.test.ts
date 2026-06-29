@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, WorkspaceBoardCard } from '../../../main/store/types'
+import type { AgentApprovalRequest } from './agentApprovalTypes'
 import { buildWorkspaceBoardProjectedCards, deriveWorkspaceBoardStatus } from './workspaceBoardProjection'
 
 function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
@@ -115,5 +116,36 @@ describe('workspace board projection', () => {
     expect(projected[0].statusLabel).toBe('Review Ready')
     expect(projected[0].badges.some((badge) => badge.label === 'Codex')).toBe(true)
     expect(projected[0].badges.some((badge) => badge.label === 'Run review ready')).toBe(true)
+  })
+
+  it('projects pending approvals and shared chat state onto linked chat cards', () => {
+    const card = makeCard({ link: { kind: 'chat', id: 'chat-1' }, columnId: 'running' })
+    const approval: AgentApprovalRequest = {
+      id: 'approval-1',
+      provider: 'codex',
+      appChatId: 'chat-1',
+      method: 'shell',
+      title: 'Approve shell command',
+      body: 'npm test',
+      actions: ['accept', 'decline']
+    }
+    const projected = buildWorkspaceBoardProjectedCards({
+      cards: [card],
+      chats: [makeChat({ pinned: true })],
+      workflows: [],
+      scheduledTasks: [],
+      runQueueJobs: [],
+      runningChatIds: new Set(['chat-1']),
+      pendingApprovalsByChatId: { 'chat-1': approval },
+      pendingApprovalQueueByChatId: { 'chat-1': [approval] },
+      collaboratingChatIds: new Set(['chat-1'])
+    })[0]
+
+    expect(projected.derivedStatus).toBe('needs-input')
+    expect(projected.liveStatusDetail).toBe('Waiting for approval: Approve shell command')
+    expect(projected.badges.some((badge) => badge.label === 'Approval')).toBe(true)
+    expect(projected.badges.some((badge) => badge.label === '+1 approvals')).toBe(true)
+    expect(projected.badges.some((badge) => badge.label === 'Shared')).toBe(true)
+    expect(projected.badges.some((badge) => badge.label === 'Pinned')).toBe(true)
   })
 })

@@ -16,6 +16,7 @@ import {
   type WorkspaceBoardAttentionState,
   type WorkspaceBoardProjectedCard
 } from '../lib/workspaceBoardProjection'
+import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 
 const ACTIVE_RUN_QUEUE_STATUSES = new Set(['queued', 'starting', 'active', 'steer_promoting', 'cancelling'])
 const STALE_THREAD_AGE_MS = 7 * 24 * 60 * 60 * 1000
@@ -74,6 +75,9 @@ interface WorkspaceBoardViewProps {
   scheduledTasks: ScheduledTask[]
   runQueueJobs: RunQueueJob[]
   runningChatIds?: Set<string>
+  pendingApprovalsByChatId?: Record<string, AgentApprovalRequest | null>
+  pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
+  collaboratingChatIds?: Set<string>
   onAddCard: (
     card: Omit<WorkspaceBoardCard, 'id' | 'createdAt' | 'updatedAt' | 'activity'>
   ) => void | Promise<void>
@@ -153,9 +157,11 @@ function draftFromCard(card: WorkspaceBoardCard): DetailDraft {
 
 function candidateColumnForChat(
   chat: ChatRecord,
-  runningChatIds?: Set<string>
+  runningChatIds?: Set<string>,
+  pendingApproval?: AgentApprovalRequest | null
 ): WorkspaceBoardColumnId {
   const run = latestRun(chat)
+  if (pendingApproval) return 'needs-input'
   if (chat.activeGoal?.status === 'blocked') return 'blocked'
   if (isRunningChat(chat, runningChatIds)) return 'running'
   if (run?.status === 'failed' || run?.status === 'cancelled') return 'needs-input'
@@ -309,6 +315,9 @@ export function WorkspaceBoardView({
   scheduledTasks,
   runQueueJobs,
   runningChatIds,
+  pendingApprovalsByChatId,
+  pendingApprovalQueueByChatId,
+  collaboratingChatIds,
   onAddCard,
   onUpdateCard,
   onDeleteCard,
@@ -412,9 +421,22 @@ export function WorkspaceBoardView({
         workflows,
         scheduledTasks,
         runQueueJobs,
-        runningChatIds
+        runningChatIds,
+        pendingApprovalsByChatId,
+        pendingApprovalQueueByChatId,
+        collaboratingChatIds
       }),
-    [cards, chats, workflows, scheduledTasks, runQueueJobs, runningChatIds]
+    [
+      cards,
+      chats,
+      workflows,
+      scheduledTasks,
+      runQueueJobs,
+      runningChatIds,
+      pendingApprovalsByChatId,
+      pendingApprovalQueueByChatId,
+      collaboratingChatIds
+    ]
   )
   const activeProjectedCards = useMemo(
     () => projectedCards.filter((projected) => !projected.card.archived && projected.columnId !== 'archived'),
@@ -442,17 +464,25 @@ export function WorkspaceBoardView({
     }
 
     for (const chat of workspaceChats) {
-      const columnId = candidateColumnForChat(chat, runningChatIds)
+      const pendingApproval = pendingApprovalsByChatId?.[chat.appChatId] || null
+      const columnId = candidateColumnForChat(chat, runningChatIds, pendingApproval)
       const labels = ['thread']
+      if (pendingApproval) labels.push('approval')
+      if (collaboratingChatIds?.has(chat.appChatId)) labels.push('shared')
       if (columnId !== 'inbox') labels.push(workspaceBoardColumnLabel(columnId).toLowerCase())
       add({
         key: `chat:${chat.appChatId}`,
         title: chat.title || 'Workspace thread',
-        body: chat.activeGoal?.objective ? `Goal: ${chat.activeGoal.objective}` : undefined,
+        body: pendingApproval
+          ? `Approval: ${pendingApproval.title}`
+          : chat.activeGoal?.objective
+            ? `Goal: ${chat.activeGoal.objective}`
+            : undefined,
         columnId,
         labels,
         link: { kind: 'chat', id: chat.appChatId },
-        blockedReason: chat.activeGoal?.status === 'blocked' ? chat.activeGoal.blockedReason : undefined
+        blockedReason: chat.activeGoal?.status === 'blocked' ? chat.activeGoal.blockedReason : undefined,
+        nextStep: pendingApproval ? 'Resolve the pending approval.' : undefined
       })
     }
     for (const workflow of workspaceWorkflows) {
@@ -489,7 +519,17 @@ export function WorkspaceBoardView({
       })
     }
     return candidates
-  }, [board, cards, workspaceChats, workspaceWorkflows, workspaceScheduledTasks, workspaceRunQueueJobs, runningChatIds])
+  }, [
+    board,
+    cards,
+    workspaceChats,
+    workspaceWorkflows,
+    workspaceScheduledTasks,
+    workspaceRunQueueJobs,
+    runningChatIds,
+    pendingApprovalsByChatId,
+    collaboratingChatIds
+  ])
 
   if (!board || !workspace) {
     return (

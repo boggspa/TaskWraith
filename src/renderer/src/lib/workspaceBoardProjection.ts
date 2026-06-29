@@ -6,6 +6,7 @@ import type {
   WorkspaceBoardCard,
   WorkspaceBoardColumnId
 } from '../../../main/store/types'
+import type { AgentApprovalRequest } from './agentApprovalTypes'
 import { ACTIVE_RUN_QUEUE_STATUSES } from './chatBusyState'
 
 export type WorkspaceBoardDerivedStatus =
@@ -64,6 +65,9 @@ export interface WorkspaceBoardProjectionInput {
   scheduledTasks: ScheduledTask[]
   runQueueJobs: RunQueueJob[]
   runningChatIds?: Set<string>
+  pendingApprovalsByChatId?: Record<string, AgentApprovalRequest | null>
+  pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
+  collaboratingChatIds?: Set<string>
 }
 
 interface WorkspaceScopedRecord {
@@ -113,6 +117,20 @@ function hasOpenTodos(chat: ChatRecord): number {
 
 function pinnedMessageCount(chat: ChatRecord): number {
   return (chat.messages || []).filter((message) => Number.isFinite(message.metadata?.pinnedAt)).length
+}
+
+function pendingApprovalForChat(
+  chat: ChatRecord,
+  input: Pick<WorkspaceBoardProjectionInput, 'pendingApprovalsByChatId'>
+): AgentApprovalRequest | null {
+  return input.pendingApprovalsByChatId?.[chat.appChatId] || null
+}
+
+function queuedApprovalCountForChat(
+  chat: ChatRecord,
+  input: Pick<WorkspaceBoardProjectionInput, 'pendingApprovalQueueByChatId'>
+): number {
+  return input.pendingApprovalQueueByChatId?.[chat.appChatId]?.length || 0
 }
 
 function formatProvider(value?: string): string | undefined {
@@ -177,6 +195,7 @@ export function deriveWorkspaceBoardStatus(
   if (link.kind === 'chat') {
     const chat = input.chats.find((item) => item.appChatId === link.id)
     if (!chat || chat.archived || isCrossWorkspaceLink(card, chat)) return 'stale'
+    if (pendingApprovalForChat(chat, input)) return 'needs-input'
     if (input.runningChatIds?.has(chat.appChatId)) return 'running'
     if (chat.activeGoal?.status === 'blocked') return 'blocked'
     const run = latestRun(chat)
@@ -252,6 +271,19 @@ export function buildWorkspaceBoardProjectedCards(
       linkedKindLabel = 'Thread'
       const provider = formatProvider(chat.provider)
       if (provider) badges.push({ label: provider, tone: 'muted', title: 'Thread provider' })
+      const pendingApproval = pendingApprovalForChat(chat, input)
+      const queuedApprovalCount = queuedApprovalCountForChat(chat, input)
+      if (pendingApproval) {
+        badges.push({ label: 'Approval', tone: 'danger', title: pendingApproval.title })
+        liveStatusDetail = `Waiting for approval: ${pendingApproval.title}`
+      }
+      if (queuedApprovalCount > 0) {
+        badges.push({ label: `+${queuedApprovalCount} approvals`, tone: 'danger' })
+      }
+      if (input.collaboratingChatIds?.has(chat.appChatId)) {
+        badges.push({ label: 'Shared', tone: 'accent', title: 'Shared thread' })
+      }
+      if (chat.pinned) badges.push({ label: 'Pinned', tone: 'muted', title: 'Pinned thread' })
       if (chat.activeGoal?.status) {
         badges.push({
           label: `Goal ${chat.activeGoal.status}`,
@@ -284,6 +316,7 @@ export function buildWorkspaceBoardProjectedCards(
         })
       }
       if (run?.endedAt) liveStatusDetail = `Last run ended ${formatDateTime(run.endedAt)}`
+      if (pendingApproval) liveStatusDetail = `Waiting for approval: ${pendingApproval.title}`
       if (run?.warnings?.length) {
         badges.push({ label: `${run.warnings.length} warnings`, tone: 'warning' })
       }
