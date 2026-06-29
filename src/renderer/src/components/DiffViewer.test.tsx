@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { DiffFileSummary } from '../../../main/store/types'
+import { DiffFileList } from './DiffFileList'
 import { DiffToolbar } from './DiffToolbar'
 import { DiffViewer } from './DiffViewer'
 
@@ -238,6 +239,57 @@ describe('DiffToolbar', () => {
     expect(html).toContain('role="group" aria-label="Diff view mode"')
     expect(html).toContain('aria-pressed="false"')
     expect(html).toContain('aria-pressed="true"')
+  })
+})
+
+describe('DiffFileList', () => {
+  it('renders grouped rail rows with selected state and git badges', () => {
+    const summaries = [
+      makeChangedFileSummary('src/unstaged.ts', 'unstaged'),
+      makeChangedFileSummary('src/staged.ts', 'staged')
+    ]
+    const html = renderToStaticMarkup(
+      <DiffFileList
+        summaries={summaries}
+        selectedPath="src/staged.ts"
+        workspacePath="/repo"
+        gitStatusByPath={
+          new Map([
+            [
+              'src/unstaged.ts',
+              {
+                path: 'src/unstaged.ts',
+                index: ' ',
+                workingTree: 'M',
+                kind: 'modified',
+                staged: false,
+                unstaged: true
+              }
+            ],
+            [
+              'src/staged.ts',
+              {
+                path: 'src/staged.ts',
+                index: 'M',
+                workingTree: ' ',
+                kind: 'modified',
+                staged: true,
+                unstaged: false
+              }
+            ]
+          ])
+        }
+        repoPathForSummary={(summary) => summary.path}
+        onSelectPath={() => {}}
+      />
+    )
+
+    expect(html).toContain('role="listbox"')
+    expect(html).toContain('<span>Unstaged</span><small>1</small>')
+    expect(html).toContain('<span>Staged</span><small>1</small>')
+    expect(html).toContain('data-diff-file-path="src/staged.ts"')
+    expect(html).toContain('aria-selected="true"')
+    expect(html).toContain('staged')
   })
 })
 
