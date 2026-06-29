@@ -65,6 +65,7 @@ import type {
 import type { UpdateStateSnapshot } from '../main/UpdateService'
 import type { LocalServersSnapshot } from '../main/localServers/types'
 import type { LaunchTargetsSnapshot } from '../main/launchTargets/types'
+import type { TaskWraithPluginCatalogSnapshot } from '../main/plugins/PluginHost'
 import type {
   LaunchSnapshot,
   LaunchStartInput,
@@ -1144,6 +1145,13 @@ declare global {
       ) => Promise<HandoffCard>
       updateHandoffCard: (id: string, partial: Partial<HandoffCard>) => Promise<HandoffCard | null>
       deleteHandoffCard: (id: string) => Promise<void>
+      getPluginCatalog: () => Promise<TaskWraithPluginCatalogSnapshot>
+      installPlugin: (pluginId: string) => Promise<TaskWraithPluginCatalogSnapshot>
+      setPluginEnabled: (
+        pluginId: string,
+        enabled: boolean
+      ) => Promise<TaskWraithPluginCatalogSnapshot>
+      uninstallPlugin: (pluginId: string) => Promise<TaskWraithPluginCatalogSnapshot>
       getWorkspaces: () => Promise<WorkspaceRecord[]>
       addOrUpdateWorkspace: (
         path: string,

@@ -319,6 +319,7 @@ import {
   type UpdateStateSnapshot
 } from './UpdateService'
 import { LocalServersService } from './LocalServersService'
+import { PluginHost } from './plugins/PluginHost'
 import { LaunchAttemptStore } from './launch/LaunchAttemptStore'
 import { LaunchManager, type LaunchLifecycleRecord } from './launch/LaunchManager'
 import { SpawnRegistry } from './localServers/SpawnRegistry'
@@ -857,6 +858,7 @@ import { registerWorkspaceDiffSnapshotHandlers } from './ipc/workspaceDiffSnapsh
 import { registerTrustHandlers } from './ipc/trustHandlers'
 import { registerUpdateHandlers } from './ipc/updateHandlers'
 import { registerSettingsHandlers } from './ipc/settingsHandlers'
+import { registerPluginHandlers } from './ipc/pluginHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -23527,6 +23529,11 @@ if (isGeminiMcpBridgeProcess) {
     })
     localServersService.start()
     registerLocalServersHandlers({ localServersService })
+    const pluginHost = new PluginHost({
+      userDataPath: app.getPath('userData'),
+      log: (line) => console.log(line)
+    })
+    registerPluginHandlers({ pluginHost, requireNonEmptyString })
     const launchManager = new LaunchManager({
       store: new LaunchAttemptStore(join(app.getPath('userData'), 'launch-attempts.json')),
       platform: process.platform,

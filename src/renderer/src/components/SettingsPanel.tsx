@@ -102,6 +102,10 @@ import { UsageHeatmap } from './UsageHeatmap'
 import { WorkspaceActivityHeatmap } from './WorkspaceActivityHeatmap'
 import { WorkspaceRemoteAccessToggle } from './WorkspaceRemoteAccessToggle'
 import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
+import type {
+  TaskWraithPluginCatalogEntry,
+  TaskWraithPluginCatalogSnapshot
+} from '../../../main/plugins/PluginHost'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
@@ -2047,6 +2051,7 @@ export type SettingsTab =
   | 'roster'
   | 'mcp'
   | 'mcp-servers'
+  | 'plugins'
   | 'key-commands'
   | 'approval-ledger'
   | 'safety-privacy'
@@ -2217,6 +2222,23 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
       'toml',
       'import mcp',
       'import json'
+    ],
+    scope: 'global'
+  },
+  {
+    id: 'plugins',
+    label: 'Plugins',
+    group: 'integrations',
+    description: 'Declarative capability bundles, installed state, marketplace metadata, and preflight status.',
+    aliases: [
+      'plugins',
+      'extensions',
+      'skills',
+      'connectors',
+      'marketplace',
+      'installed',
+      'bundles',
+      'capability bundles'
     ],
     scope: 'global'
   },
@@ -2803,6 +2825,10 @@ export function SettingsPanel({
   const [composerPreviewText, setComposerPreviewText] = useState('')
   const [mcpToolQuery, setMcpToolQuery] = useState('')
   const [mcpServerQuery, setMcpServerQuery] = useState('')
+  const [pluginQuery, setPluginQuery] = useState('')
+  const [pluginCatalog, setPluginCatalog] = useState<TaskWraithPluginCatalogSnapshot | null>(null)
+  const [pluginCatalogError, setPluginCatalogError] = useState('')
+  const [pluginBusyId, setPluginBusyId] = useState<string | null>(null)
   const [mcpServerFormMode, setMcpServerFormMode] = useState<'hidden' | 'create' | 'edit'>(
     'hidden'
   )
@@ -2832,6 +2858,27 @@ export function SettingsPanel({
   const [showDeleteHistoryConfirm, setShowDeleteHistoryConfirm] = useState(false)
   const [deleteHistoryPending, setDeleteHistoryPending] = useState(false)
   const [deleteHistoryError, setDeleteHistoryError] = useState('')
+
+  useEffect(() => {
+    if (activeTab !== 'plugins') return
+    let cancelled = false
+    if (typeof window === 'undefined' || typeof window.api?.getPluginCatalog !== 'function') {
+      setPluginCatalogError('Plugin catalog unavailable.')
+      return
+    }
+    setPluginCatalogError('')
+    void window.api
+      .getPluginCatalog()
+      .then((snapshot) => {
+        if (!cancelled) setPluginCatalog(snapshot)
+      })
+      .catch((error) => {
+        if (!cancelled) setPluginCatalogError(String(error))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab])
 
   useEffect(() => {
     let cancelled = false
@@ -2885,6 +2932,44 @@ export function SettingsPanel({
       setKimiClassifierEnabled(!enabled)
       setKimiClassifierStatus('unavailable')
     })
+  }
+
+  const runPluginMutation = (
+    pluginId: string,
+    mutate: () => Promise<TaskWraithPluginCatalogSnapshot>
+  ): void => {
+    setPluginBusyId(pluginId)
+    setPluginCatalogError('')
+    void mutate()
+      .then((snapshot) => setPluginCatalog(snapshot))
+      .catch((error) => setPluginCatalogError(String(error)))
+      .finally(() => {
+        setPluginBusyId((current) => (current === pluginId ? null : current))
+      })
+  }
+
+  const installPlugin = (pluginId: string): void => {
+    if (typeof window === 'undefined' || typeof window.api?.installPlugin !== 'function') {
+      setPluginCatalogError('Plugin install unavailable.')
+      return
+    }
+    runPluginMutation(pluginId, () => window.api.installPlugin(pluginId))
+  }
+
+  const setPluginEnabled = (pluginId: string, enabled: boolean): void => {
+    if (typeof window === 'undefined' || typeof window.api?.setPluginEnabled !== 'function') {
+      setPluginCatalogError('Plugin enablement unavailable.')
+      return
+    }
+    runPluginMutation(pluginId, () => window.api.setPluginEnabled(pluginId, enabled))
+  }
+
+  const uninstallPlugin = (pluginId: string): void => {
+    if (typeof window === 'undefined' || typeof window.api?.uninstallPlugin !== 'function') {
+      setPluginCatalogError('Plugin uninstall unavailable.')
+      return
+    }
+    runPluginMutation(pluginId, () => window.api.uninstallPlugin(pluginId))
   }
 
   const resetMcpServerForm = (): void => {
@@ -3364,6 +3449,43 @@ export function SettingsPanel({
   const filteredUserMcpServers = userMcpServerReadinessRows.filter(({ server }) =>
     userMcpServerMatchesQuery(server, mcpServerSearch)
   )
+  const pluginEntries = pluginCatalog?.plugins ?? []
+  const pluginSearch = pluginQuery.trim().toLowerCase()
+  const filteredPluginEntries = pluginEntries.filter((entry) => {
+    if (!pluginSearch) return true
+    const haystack = [
+      entry.manifest.id,
+      entry.manifest.publisher,
+      entry.manifest.name,
+      entry.manifest.description,
+      entry.manifest.marketplace?.category || '',
+      ...(entry.manifest.marketplace?.tags || []),
+      entry.source,
+      entry.namespace,
+      entry.preflight.status,
+      entry.installed ? 'installed' : 'available',
+      entry.enabled ? 'enabled' : 'disabled',
+      ...entry.manifest.capabilities.flatMap((capability) => [
+        capability.kind,
+        capability.id,
+        capability.label,
+        capability.description || ''
+      ])
+    ]
+      .join(' ')
+      .toLowerCase()
+    return haystack.includes(pluginSearch)
+  })
+  const installedPluginCount =
+    pluginCatalog?.counts.installed ?? pluginEntries.filter((entry) => entry.installed).length
+  const enabledPluginCount =
+    pluginCatalog?.counts.enabled ?? pluginEntries.filter((entry) => entry.enabled).length
+  const blockedPluginCount =
+    pluginCatalog?.counts.blocked ??
+    pluginEntries.filter((entry) => entry.preflight.status === 'blocked').length
+  const repairablePluginCount =
+    pluginCatalog?.counts.repairable ??
+    pluginEntries.filter((entry) => entry.preflight.status === 'repairable').length
   const mcpToolSearch = mcpToolQuery.trim().toLowerCase()
   const filteredMcpToolCatalog = MCP_TOOL_CATALOG.filter((tool) => {
     if (!mcpToolSearch) return true
@@ -7280,6 +7402,222 @@ export function SettingsPanel({
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'plugins' && (
+          <div className="settings-mcp-page settings-plugins-page">
+            <div className="settings-group span-all settings-mcp-overview">
+              <div className="settings-mcp-header">
+                <div>
+                  <div className="settings-section-title-row">
+                    <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                      Plugins
+                    </h4>
+                    <span className="settings-editable-pill">Declarative</span>
+                  </div>
+                  <p className="settings-hint">
+                    Capability bundles declare TaskWraith-owned presets, templates, metadata, and
+                    permission requests. Install and enable state is stored separately from app
+                    settings.
+                  </p>
+                </div>
+              </div>
+
+              <div className="settings-mcp-summary-grid">
+                <article className="settings-mcp-summary-card">
+                  <span>Available</span>
+                  <strong>{pluginCatalog?.counts.available ?? pluginEntries.length}</strong>
+                  <small>catalog entries</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Installed</span>
+                  <strong>{installedPluginCount}</strong>
+                  <small>state records</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Enabled</span>
+                  <strong>{enabledPluginCount}</strong>
+                  <small>still inert in V1</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Repairable</span>
+                  <strong>{repairablePluginCount}</strong>
+                  <small>needs setup input</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Blocked</span>
+                  <strong>{blockedPluginCount}</strong>
+                  <small>cannot enable</small>
+                </article>
+                <article className="settings-mcp-summary-card">
+                  <span>Schema</span>
+                  <strong>{pluginCatalog?.schemaVersion ?? 1}</strong>
+                  <small>manifest V1</small>
+                </article>
+              </div>
+            </div>
+
+            <div className="settings-group span-all">
+              <div className="settings-mcp-section-title">
+                <h4 className="sidebar-section-title" style={{ margin: 0 }}>
+                  Catalog
+                </h4>
+                <p className="settings-hint">
+                  V1 plugins never run install scripts, register Electron code, or mutate provider
+                  configuration directly.
+                </p>
+              </div>
+              <div className="settings-audit-toolbar">
+                <label className="settings-audit-search">
+                  <span className="sr-only">Search plugins</span>
+                  <input
+                    className="settings-select"
+                    value={pluginQuery}
+                    onChange={(event) => setPluginQuery(event.target.value)}
+                    aria-label="Search plugins"
+                    placeholder="Search plugins, publishers, capabilities, categories"
+                  />
+                </label>
+                <div className="settings-audit-toolbar-meta">
+                  <span>
+                    {filteredPluginEntries.length} of {pluginEntries.length} plugins
+                  </span>
+                  {pluginSearch && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() => setPluginQuery('')}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {!pluginCatalog && !pluginCatalogError ? (
+                <div className="settings-audit-empty">Loading plugin catalog...</div>
+              ) : pluginCatalogError ? (
+                <div className="settings-user-mcp-empty">
+                  <strong>Plugin catalog unavailable</strong>
+                  <p>{pluginCatalogError}</p>
+                </div>
+              ) : filteredPluginEntries.length === 0 ? (
+                <div className="settings-audit-empty">No plugins match that search.</div>
+              ) : (
+                <div className="settings-user-mcp-list">
+                  {filteredPluginEntries.map((entry: TaskWraithPluginCatalogEntry) => {
+                    const pluginId = entry.manifest.id
+                    const busy = pluginBusyId === pluginId
+                    const capabilities = entry.manifest.capabilities || []
+                    const category = entry.manifest.marketplace?.category || 'Uncategorized'
+                    const tags = entry.manifest.marketplace?.tags || []
+                    const provenance = {
+                      pluginId,
+                      publisher: entry.manifest.publisher,
+                      version: entry.manifest.version,
+                      source: entry.source,
+                      namespace: entry.namespace,
+                      manifestHash: entry.manifestHash,
+                      installed: entry.installed,
+                      enabled: entry.enabled,
+                      preflight: entry.preflight,
+                      capabilities: capabilities.map((capability) => ({
+                        id: capability.id,
+                        kind: capability.kind,
+                        agenticServices: capability.agenticServices || [],
+                        fileScopes: capability.fileScopes || [],
+                        networkScopes: capability.networkScopes || [],
+                        remoteCapabilities: capability.remoteCapabilities || []
+                      }))
+                    }
+                    return (
+                      <article key={pluginId} className="settings-user-mcp-row">
+                        <div className="settings-user-mcp-main">
+                          <strong>{entry.manifest.name}</strong>
+                          <span>{entry.manifest.description}</span>
+                          <div className="settings-mcp-server-meta">
+                            <span>{entry.installed ? 'installed' : 'available'}</span>
+                            <span>{entry.enabled ? 'enabled' : 'disabled'}</span>
+                            <span>{entry.source}</span>
+                            <span>{entry.manifest.publisher}</span>
+                            <span>{entry.manifest.version}</span>
+                            <span>{category}</span>
+                            <span>{entry.namespace}</span>
+                            <span>{pluralizeCount(capabilities.length, 'capability')}</span>
+                            {tags.slice(0, 4).map((tag) => (
+                              <span key={tag}>{tag}</span>
+                            ))}
+                          </div>
+                          <div
+                            className={`settings-user-mcp-readiness settings-user-mcp-readiness-${entry.preflight.status}`}
+                          >
+                            <strong>{entry.preflight.status}</strong>
+                            {entry.preflight.issues.length > 0 && (
+                              <span>
+                                {entry.preflight.issues
+                                  .slice(0, 3)
+                                  .map((issue) => issue.message)
+                                  .join('; ')}
+                              </span>
+                            )}
+                          </div>
+                          {capabilities.length > 0 && (
+                            <div className="settings-mcp-server-meta">
+                              {capabilities.map((capability) => (
+                                <span key={capability.id}>
+                                  {capability.kind}: {capability.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <details className="settings-user-mcp-config">
+                            <summary>Provenance JSON</summary>
+                            <pre>
+                              <code>{JSON.stringify(provenance, null, 2)}</code>
+                            </pre>
+                          </details>
+                        </div>
+                        <div className="settings-user-mcp-actions">
+                          {entry.installed && (
+                            <label className="settings-user-mcp-toggle">
+                              <span className="sr-only">Enable {entry.manifest.name}</span>
+                              <input
+                                type="checkbox"
+                                checked={entry.enabled}
+                                disabled={busy || entry.preflight.status === 'blocked'}
+                                onChange={(event) =>
+                                  setPluginEnabled(pluginId, event.target.checked)
+                                }
+                              />
+                            </label>
+                          )}
+                          {!entry.installed ? (
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              disabled={busy || entry.preflight.status === 'blocked'}
+                              onClick={() => installPlugin(pluginId)}
+                            >
+                              {busy ? 'Installing' : 'Install'}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-ghost"
+                              disabled={busy}
+                              onClick={() => uninstallPlugin(pluginId)}
+                            >
+                              {busy ? 'Updating' : 'Uninstall'}
+                            </button>
+                          )}
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

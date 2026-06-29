@@ -38,6 +38,7 @@ import type {
   PromoteQueuedJobForSteerInput,
   PromoteQueuedJobForSteerResult
 } from '../main/services/RunLifecycleCoordinator'
+import type { TaskWraithPluginCatalogSnapshot } from '../main/plugins/PluginHost'
 
 type ComposerImageAttachment = {
   id?: string
@@ -815,6 +816,18 @@ const api = {
   updateHandoffCard: (id: string, partial: any) =>
     ipcRenderer.invoke('update-handoff-card', id, partial),
   deleteHandoffCard: (id: string) => ipcRenderer.invoke('delete-handoff-card', id),
+  getPluginCatalog: () =>
+    ipcRenderer.invoke('plugins:get-catalog') as Promise<TaskWraithPluginCatalogSnapshot>,
+  installPlugin: (pluginId: string) =>
+    ipcRenderer.invoke('plugins:install', pluginId) as Promise<TaskWraithPluginCatalogSnapshot>,
+  setPluginEnabled: (pluginId: string, enabled: boolean) =>
+    ipcRenderer.invoke(
+      'plugins:set-enabled',
+      pluginId,
+      enabled
+    ) as Promise<TaskWraithPluginCatalogSnapshot>,
+  uninstallPlugin: (pluginId: string) =>
+    ipcRenderer.invoke('plugins:uninstall', pluginId) as Promise<TaskWraithPluginCatalogSnapshot>,
   getWorkspaces: () => ipcRenderer.invoke('get-workspaces'),
   addOrUpdateWorkspace: (path: string, partial: any = {}) =>
     ipcRenderer.invoke('add-or-update-workspace', path, partial),
