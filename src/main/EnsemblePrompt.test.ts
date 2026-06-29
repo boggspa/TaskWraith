@@ -1421,13 +1421,17 @@ describe('formatRoundModeInstructions (AR13)', () => {
 })
 
 describe('Ollama ensemble prompt budgeting', () => {
-  it('clamps transcript budget for Ollama participants', () => {
+  it('falls back to the standard composer shared-history budget for Ollama participants', () => {
     expect(
       resolveOllamaEnsembleTranscriptBudget(120_000, 12).contextChars
     ).toBe(OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS)
     expect(resolveOllamaEnsembleTranscriptBudget(120_000, 12).contextTurns).toBe(
       OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS
     )
+    expect(resolveOllamaEnsembleTranscriptBudget(undefined, undefined).contextChars).toBe(
+      24_000
+    )
+    expect(resolveOllamaEnsembleTranscriptBudget(undefined, undefined).contextTurns).toBe(6)
     expect(resolveOllamaEnsembleTranscriptBudget(8_000, 3).contextChars).toBe(8_000)
     expect(resolveOllamaEnsembleTranscriptBudget(8_000, 3).contextTurns).toBe(3)
   })

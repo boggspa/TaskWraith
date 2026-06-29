@@ -295,6 +295,29 @@ describe('prepareOllamaEnsemblePromptForRuntime', () => {
     expect(prepared).toContain(transcript)
     expect(prepared).not.toContain('[transcript compacted for Ollama context]')
   })
+
+  it('does not fall back to the old 10K cap for unconfigured large-context ensemble runs', () => {
+    const transcript = 'y'.repeat(20_000)
+    const prompt = [
+      'TaskWraith Ensemble Mode',
+      '',
+      'Recent tagged transcript:',
+      transcript,
+      '',
+      'Current user request:',
+      'Use the recent panel history.'
+    ].join('\n')
+    const prepared = prepareOllamaEnsemblePromptForRuntime({
+      prompt,
+      modelId: 'ornith:35b',
+      modelInfo: { id: 'ornith:35b', label: 'Ornith', contextLength: 262_144 } as any,
+      contextCapTokens: 262_144,
+      toolsEnabled: false
+    })
+
+    expect(prepared).toContain(transcript)
+    expect(prepared).not.toContain('[transcript compacted for Ollama context]')
+  })
 })
 
 describe('runOllamaProvider streaming', () => {

@@ -1,11 +1,11 @@
 import { resolveContextWindow } from '../../shared/contextWindows'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
 
-/** Legacy fallback transcript cap when no model/context metadata is available. */
-export const OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS = 10_000
+/** Fallback transcript budget when older ensemble chats have no saved slider value. */
+export const OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS = 24_000
 
 /** Turn window cap paired with the char budget above. */
-export const OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS = 4
+export const OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS = 6
 
 /** Conservative default retained for malformed/no-model contexts. */
 export const OLLAMA_CONSERVATIVE_CONTEXT_TOKENS = 4096
