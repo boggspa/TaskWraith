@@ -463,6 +463,12 @@ export type EnsembleParticipantStatus =
 
 export type EnsembleOrchestrationMode = 'turn_bound' | 'continuous'
 
+export type EnsembleFanoutPolicy =
+  | 'off'
+  | 'read_only'
+  | 'locked_writers_with_boss'
+  | 'locked_writers_user_preflight'
+
 export interface EnsembleParticipant {
   id: string
   provider: ProviderId
@@ -653,6 +659,12 @@ export interface EnsembleRoundState {
    * silently falling back to serial.
    */
   concurrentMode?: boolean
+  /**
+   * Explicit fan-out policy captured at round start. Undefined is legacy
+   * serial/read-from-config behavior; `concurrentMode` remains for persisted
+   * round back-compat.
+   */
+  fanoutPolicy?: EnsembleFanoutPolicy
   /**
    * Legacy single-prompt queue (1.0.3 ship). Kept for back-compat
    * with persisted round records — the orchestrator's new path uses
@@ -858,13 +870,17 @@ export interface EnsembleConfig {
   maxParticipants: number
   orchestrationMode?: EnsembleOrchestrationMode
   /**
-   * 1.0.8 — per-chat preference for read-only concurrent fan-out.
-   * Captured onto new rounds as `EnsembleRoundState.concurrentMode`.
-   * The main process still feature-gates actual concurrent dispatch
-   * with TASKWRAITH_CONCURRENT_LANES and keeps writer-capable
-   * participants serial in the first slice.
+   * Legacy boolean preference for concurrent fan-out. New code should prefer
+   * `fanoutPolicy`; persisted `true` maps to `read_only` so older chats never
+   * surprise-upgrade into writer parallelism.
    */
   concurrentModeEnabled?: boolean
+  /**
+   * Per-chat fan-out policy. `read_only` runs read-only participants in
+   * parallel before serial writers; writer policies require either Boss-scoped
+   * explicit `ensemble_fanout` scopes or host-owned no-Boss preflight.
+   */
+  fanoutPolicy?: EnsembleFanoutPolicy
   /** 1.0.4-AR13 — see `EnsembleRoundMode` for semantics. Undefined
    * reads as `'roundtable'` so all pre-AR13 chats keep their
    * existing structure. */
@@ -2927,6 +2943,10 @@ export type ScheduledTaskKind = 'single' | 'ensemble'
  */
 export interface ScheduledEnsembleSnapshot {
   orchestrationMode: EnsembleOrchestrationMode
+  fanoutPolicy?: EnsembleFanoutPolicy
+  /** Legacy schedule-time fan-out flag for snapshots created before
+   * `fanoutPolicy`. New snapshots include both for one migration cycle. */
+  concurrentModeEnabled?: boolean
   participants: EnsembleParticipant[]
   /** Direct-message target participant id, when scheduled with
    * Cmd/Ctrl-Send while a chip was selected. */
@@ -3770,6 +3790,9 @@ export interface DiffFileSummary {
   isSensitive?: boolean
   previewKind: DiffPreviewKind
   diffText?: string
+  diffTextTruncated?: boolean
+  diffTextOmittedLines?: number
+  diffTextOriginalBytes?: number
   sizeBytes?: number
 }
 
@@ -3837,6 +3860,9 @@ export interface WorkspaceChangeFile {
   isSensitive?: boolean
   previewKind?: DiffPreviewKind
   diffText?: string
+  diffTextTruncated?: boolean
+  diffTextOmittedLines?: number
+  diffTextOriginalBytes?: number
 }
 
 export interface WorkspaceChangeArtifact {

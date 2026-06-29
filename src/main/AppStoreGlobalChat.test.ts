@@ -174,6 +174,7 @@ describe('AppStore global chats', () => {
       transcriptVisibility: 'none'
     })
     expect(sideChat.ensemble?.concurrentModeEnabled).toBe(true)
+    expect(sideChat.ensemble?.fanoutPolicy).toBe('read_only')
     expect(sideChat.ensemble?.participants.map((participant) => participant.id)).toEqual(
       parent.ensemble?.participants.map((participant) => participant.id)
     )

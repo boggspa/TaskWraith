@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   GeminiWorktreeLaunchOption,
+  EnsembleFanoutPolicy,
   ProviderId,
   RunAnalystRequest,
   RunAnalystSnapshot,
@@ -891,6 +892,7 @@ const api = {
     scheduledTaskId?: string
     mode?: string
     concurrentMode?: boolean
+    fanoutPolicy?: EnsembleFanoutPolicy
     imageAttachments?: ComposerImageAttachment[]
     discordContextSnapshots?: DiscordContextSnapshot[]
     /** A2 (1.0.3) — DM routing: scope this "round" to a single
@@ -917,6 +919,7 @@ const api = {
     index: number
     textPrefix?: string
     concurrentMode?: boolean
+    fanoutPolicy?: EnsembleFanoutPolicy
   }) => ipcRenderer.invoke('steer-queued-ensemble-prompt', payload),
   removeQueuedEnsemblePrompt: (payload: { chatId: string; index: number; textPrefix?: string }) =>
     ipcRenderer.invoke('remove-queued-ensemble-prompt', payload),

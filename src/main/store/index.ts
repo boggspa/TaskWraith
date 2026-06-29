@@ -2193,7 +2193,9 @@ export class AppStore {
                 : `Side ensemble from ${parent.title || 'chat'}`),
             ensemble: {
               ...cloneEnsembleForSideChat(parent, provider),
-              ...(sideChatMode === 'fanOut' ? { concurrentModeEnabled: true } : {})
+              ...(sideChatMode === 'fanOut'
+                ? { fanoutPolicy: 'read_only', concurrentModeEnabled: true }
+                : {})
             }
           }
         : base
@@ -2944,7 +2946,7 @@ export class AppStore {
       {
         ...source,
         name: partial.name ?? source.name,
-        description: partial.description ?? source.description,
+        description: 'description' in partial ? partial.description : source.description,
         columns: partial.columns ?? source.columns,
         archived: partial.archived ?? source.archived,
         workspaceId: source.workspaceId,
@@ -3099,19 +3101,19 @@ export class AppStore {
       {
         ...source,
         title: partial.title ?? source.title,
-        body: partial.body ?? source.body,
+        body: 'body' in partial ? partial.body : source.body,
         columnId: partial.columnId ?? source.columnId,
         sortOrder: partial.sortOrder ?? source.sortOrder,
-        humanOwner: partial.humanOwner ?? source.humanOwner,
-        labels: partial.labels ?? source.labels,
+        humanOwner: 'humanOwner' in partial ? partial.humanOwner : source.humanOwner,
+        labels: 'labels' in partial ? partial.labels : source.labels,
         link:
           'link' in partial
             ? this.assertWorkspaceBoardCardLink(board, partial.link)
             : source.link,
-        blockedReason: partial.blockedReason ?? source.blockedReason,
-        nextStep: partial.nextStep ?? source.nextStep,
-        reminderAt: partial.reminderAt ?? source.reminderAt,
-        archived: partial.archived ?? source.archived,
+        blockedReason: 'blockedReason' in partial ? partial.blockedReason : source.blockedReason,
+        nextStep: 'nextStep' in partial ? partial.nextStep : source.nextStep,
+        reminderAt: 'reminderAt' in partial ? partial.reminderAt : source.reminderAt,
+        archived: 'archived' in partial ? partial.archived : source.archived,
         boardId: source.boardId,
         workspaceId: source.workspaceId,
         updatedAt: nowIso,

@@ -1,5 +1,6 @@
 import type {
   EnsembleConfig,
+  EnsembleFanoutPolicy,
   EnsembleOrchestrationMode,
   EnsembleParticipant,
   PermissionOverrides,
@@ -10,6 +11,12 @@ import { getDefaultEnsembleParticipantConfig } from './ensembleProviderDefaults'
 import { getProviderLabel } from './providerLabels'
 
 const STORAGE_KEY = 'taskwraith-ensemble-roster-presets'
+const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
+  'off',
+  'read_only',
+  'locked_writers_with_boss',
+  'locked_writers_user_preflight'
+])
 
 /**
  * Ensemble roster floor / ceiling. Mirrors the live-chat guards:
@@ -50,6 +57,7 @@ export type EnsembleRosterPreset = {
   orchestrationMode: EnsembleOrchestrationMode
   maxParticipants: number
   maxContinuationHops?: number
+  fanoutPolicy?: EnsembleFanoutPolicy
   concurrentModeEnabled?: boolean
   ensembleContextChars?: number
   participants: EnsembleRosterParticipantSnapshot[]
@@ -115,10 +123,23 @@ function isEnsembleRosterPreset(value: unknown): value is EnsembleRosterPreset {
     typeof entry.createdAt === 'number' &&
     typeof entry.updatedAt === 'number' &&
     (entry.orchestrationMode === 'turn_bound' || entry.orchestrationMode === 'continuous') &&
+    (entry.fanoutPolicy === undefined ||
+      ENSEMBLE_FANOUT_POLICIES.has(entry.fanoutPolicy as EnsembleFanoutPolicy)) &&
     typeof entry.maxParticipants === 'number' &&
     Array.isArray(entry.participants) &&
     entry.participants.every(isEnsembleRosterParticipantSnapshot)
   )
+}
+
+function normalizeRosterFanoutPolicy(
+  value: unknown,
+  legacyEnabled?: boolean
+): EnsembleFanoutPolicy {
+  return ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
+    ? (value as EnsembleFanoutPolicy)
+    : legacyEnabled
+      ? 'read_only'
+      : 'off'
 }
 
 function writeRawPresets(presets: EnsembleRosterPreset[]): void {
@@ -234,6 +255,10 @@ export function buildEnsembleRosterPresetFromConfig(
     ...(typeof ensemble.maxContinuationHops === 'number'
       ? { maxContinuationHops: ensemble.maxContinuationHops }
       : {}),
+    fanoutPolicy: normalizeRosterFanoutPolicy(
+      ensemble.fanoutPolicy,
+      ensemble.concurrentModeEnabled
+    ),
     ...(typeof ensemble.concurrentModeEnabled === 'boolean'
       ? { concurrentModeEnabled: ensemble.concurrentModeEnabled }
       : {}),

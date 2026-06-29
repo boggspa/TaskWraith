@@ -1,4 +1,26 @@
-import type { ChatRecord, ScheduledEnsembleSnapshot } from '../../../main/store/types'
+import type {
+  ChatRecord,
+  EnsembleFanoutPolicy,
+  ScheduledEnsembleSnapshot
+} from '../../../main/store/types'
+
+const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
+  'off',
+  'read_only',
+  'locked_writers_with_boss',
+  'locked_writers_user_preflight'
+])
+
+function normalizeFanoutPolicy(
+  value: unknown,
+  legacyEnabled?: boolean
+): EnsembleFanoutPolicy {
+  return ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
+    ? (value as EnsembleFanoutPolicy)
+    : legacyEnabled
+      ? 'read_only'
+      : 'off'
+}
 
 /**
  * 1.0.4-AT3 — capture a scheduled-task ensemble snapshot from a
@@ -24,6 +46,13 @@ export function buildScheduledEnsembleSnapshot(
   return {
     orchestrationMode:
       chat.ensemble.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
+    fanoutPolicy: normalizeFanoutPolicy(
+      chat.ensemble.fanoutPolicy,
+      chat.ensemble.concurrentModeEnabled
+    ),
+    ...(typeof chat.ensemble.concurrentModeEnabled === 'boolean'
+      ? { concurrentModeEnabled: chat.ensemble.concurrentModeEnabled }
+      : {}),
     participants: chat.ensemble.participants.map((participant) => ({ ...participant })),
     ...(options.dmTargetParticipantId
       ? { dmTargetParticipantId: options.dmTargetParticipantId }
@@ -57,6 +86,14 @@ export function applyScheduledEnsembleSnapshot(
     ensemble: {
       ...chat.ensemble,
       orchestrationMode: snapshot.orchestrationMode,
+      fanoutPolicy: normalizeFanoutPolicy(
+        snapshot.fanoutPolicy,
+        snapshot.concurrentModeEnabled
+      ),
+      concurrentModeEnabled:
+        typeof snapshot.concurrentModeEnabled === 'boolean'
+          ? snapshot.concurrentModeEnabled
+          : normalizeFanoutPolicy(snapshot.fanoutPolicy) !== 'off',
       participants: snapshot.participants.map((participant) => ({ ...participant })),
       ...(typeof snapshot.maxParticipants === 'number'
         ? { maxParticipants: snapshot.maxParticipants }

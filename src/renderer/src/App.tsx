@@ -80,6 +80,7 @@ import {
   HandoffCard,
   RunAnalystSnapshot,
   EnsembleParticipant,
+  EnsembleFanoutPolicy,
   EnsembleOrchestrationMode,
   PinnedMessageGroup,
   AuditRunRecord,
@@ -629,6 +630,28 @@ function runIdFromStreamFlushItemKey(key: string): string {
 
 const FX_BURST_DURATION_MS = 1150
 const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
+const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
+  'off',
+  'read_only',
+  'locked_writers_with_boss',
+  'locked_writers_user_preflight'
+])
+
+function normalizeEnsembleFanoutPolicy(
+  value: unknown,
+  legacyEnabled?: boolean
+): EnsembleFanoutPolicy {
+  return ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
+    ? (value as EnsembleFanoutPolicy)
+    : legacyEnabled
+      ? 'read_only'
+      : 'off'
+}
+
+function ensembleFanoutPolicyEnabled(policy: EnsembleFanoutPolicy): boolean {
+  return policy !== 'off'
+}
+
 /**
  * Lifetime of the post-dismissal pointer animation on the sidebar
  * `+` workspace button. After the sheet closes for the first
@@ -9489,9 +9512,13 @@ function App(): React.JSX.Element {
           runChat.ensemble?.activeRound?.status === 'running'
             ? ('queue' as const)
             : ('normal' as const)
-        const concurrentMode = Boolean(
-          runChat.ensemble?.concurrentModeEnabled && !request.dmTargetParticipantId
-        )
+        const fanoutPolicy: EnsembleFanoutPolicy = request.dmTargetParticipantId
+          ? 'off'
+          : normalizeEnsembleFanoutPolicy(
+              runChat.ensemble?.fanoutPolicy,
+              runChat.ensemble?.concurrentModeEnabled
+            )
+        const concurrentMode = ensembleFanoutPolicyEnabled(fanoutPolicy)
         const didOptimisticallyQueue =
           mode === 'queue'
             ? appendOptimisticEnsembleQueuedPrompt(runChat.appChatId, request.prompt)
@@ -9503,6 +9530,7 @@ function App(): React.JSX.Element {
             ...(request.scheduledTaskId ? { scheduledTaskId: request.scheduledTaskId } : {}),
             mode,
             concurrentMode,
+            fanoutPolicy,
             imageAttachments: request.imageAttachments.map((attachment) => ({
               id: attachment.id,
               path: attachment.path,
@@ -11794,11 +11822,16 @@ function App(): React.JSX.Element {
 
     const targetChat = request.chatRecord || currentChat
     if (targetChat?.chatKind === 'ensemble') {
+      const fanoutPolicy = normalizeEnsembleFanoutPolicy(
+        targetChat.ensemble?.fanoutPolicy,
+        targetChat.ensemble?.concurrentModeEnabled
+      )
       await window.api.runEnsembleRound({
         chatId: targetChatId,
         prompt: request.prompt,
         mode: targetChat.ensemble?.activeRound?.status === 'running' ? 'steer' : 'normal',
-        concurrentMode: Boolean(targetChat.ensemble?.concurrentModeEnabled),
+        concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
+        fanoutPolicy,
         imageAttachments: request.imageAttachments.map((attachment) => ({
           id: attachment.id,
           path: attachment.path,
@@ -14823,9 +14856,20 @@ function App(): React.JSX.Element {
     currentEnsembleRound?.orchestrationMode === 'continuous'
       ? 'continuous'
       : currentEnsembleOrchestrationMode
-  const currentEnsembleConcurrentMode = Boolean(currentChat?.ensemble?.concurrentModeEnabled)
-  const activeEnsembleConcurrentMode =
-    currentEnsembleRound?.concurrentMode ?? currentEnsembleConcurrentMode
+  const currentEnsembleFanoutPolicy = normalizeEnsembleFanoutPolicy(
+    currentChat?.ensemble?.fanoutPolicy,
+    currentChat?.ensemble?.concurrentModeEnabled
+  )
+  const currentEnsembleConcurrentMode = ensembleFanoutPolicyEnabled(currentEnsembleFanoutPolicy)
+  const activeEnsembleFanoutPolicy =
+    currentEnsembleRound?.fanoutPolicy !== undefined ||
+    currentEnsembleRound?.concurrentMode !== undefined
+      ? normalizeEnsembleFanoutPolicy(
+          currentEnsembleRound?.fanoutPolicy,
+          currentEnsembleRound?.concurrentMode
+        )
+      : currentEnsembleFanoutPolicy
+  const activeEnsembleConcurrentMode = ensembleFanoutPolicyEnabled(activeEnsembleFanoutPolicy)
   const ensembleOllamaContextWarning = useMemo(() => {
     if (!isCurrentEnsembleChat || !currentChat?.ensemble) return null
     const ollamaParticipants = currentChat.ensemble.participants.filter(
@@ -14922,9 +14966,16 @@ function App(): React.JSX.Element {
           ...(typeof preset.maxContinuationHops === 'number'
             ? { maxContinuationHops: preset.maxContinuationHops }
             : {}),
-          ...(typeof preset.concurrentModeEnabled === 'boolean'
-            ? { concurrentModeEnabled: preset.concurrentModeEnabled }
-            : {}),
+          fanoutPolicy: normalizeEnsembleFanoutPolicy(
+            preset.fanoutPolicy,
+            preset.concurrentModeEnabled
+          ),
+          concurrentModeEnabled:
+            typeof preset.concurrentModeEnabled === 'boolean'
+              ? preset.concurrentModeEnabled
+              : ensembleFanoutPolicyEnabled(
+                  normalizeEnsembleFanoutPolicy(preset.fanoutPolicy)
+                ),
           ...(typeof preset.ensembleContextChars === 'number'
             ? { ensembleContextChars: preset.ensembleContextChars }
             : {}),
@@ -15006,16 +15057,18 @@ function App(): React.JSX.Element {
     },
     [isCurrentEnsembleChat, currentChat?.appChatId, currentChat?.ensemble, updateChatById]
   )
-  const updateCurrentEnsembleConcurrentMode = useCallback(
-    (enabled: boolean) => {
+  const updateCurrentEnsembleFanoutPolicy = useCallback(
+    (policy: EnsembleFanoutPolicy) => {
       if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+      const nextPolicy = normalizeEnsembleFanoutPolicy(policy)
       updateChatById(currentChat.appChatId, (source) => {
         if (!source.ensemble) return source
         const patched: ChatRecord = {
           ...source,
           ensemble: {
             ...source.ensemble,
-            concurrentModeEnabled: enabled,
+            fanoutPolicy: nextPolicy,
+            concurrentModeEnabled: ensembleFanoutPolicyEnabled(nextPolicy),
             updatedAt: new Date().toISOString()
           }
         }
@@ -15023,6 +15076,12 @@ function App(): React.JSX.Element {
       })
     },
     [isCurrentEnsembleChat, currentChat?.appChatId, currentChat?.ensemble, updateChatById]
+  )
+  const updateCurrentEnsembleConcurrentMode = useCallback(
+    (enabled: boolean) => {
+      updateCurrentEnsembleFanoutPolicy(enabled ? 'read_only' : 'off')
+    },
+    [updateCurrentEnsembleFanoutPolicy]
   )
 
   // D — persist the user-set shared-transcript char budget (5K–500K) onto
@@ -16948,11 +17007,16 @@ function App(): React.JSX.Element {
             : []
         const prompt = currentQueue[idx]
         if (!prompt) return
+        const fanoutPolicy = normalizeEnsembleFanoutPolicy(
+          chat.ensemble?.fanoutPolicy,
+          chat.ensemble?.concurrentModeEnabled
+        )
         const result = await window.api.steerQueuedEnsemblePrompt({
           chatId: chat.appChatId,
           index: idx,
           textPrefix: prompt,
-          concurrentMode: Boolean(chat.ensemble?.concurrentModeEnabled)
+          concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
+          fanoutPolicy
         })
         if (result?.status !== 'steered') {
           appendFailure(
@@ -18372,6 +18436,31 @@ function App(): React.JSX.Element {
     }
     return parseSlashToggleArg(arg, current)
   }
+  const parseScopedFanoutPolicySlashArg = (
+    ctx: SlashCommandRunContext,
+    arg: string,
+    current: EnsembleFanoutPolicy,
+    hasBossman: boolean,
+    usage: string
+  ): EnsembleFanoutPolicy | null => {
+    const token = firstSlashArgToken(arg)
+    if (!token || token === 'toggle') {
+      return current === 'off' ? 'read_only' : 'off'
+    }
+    if (token === 'off') return 'off'
+    if (token === 'on' || token === 'read' || token === 'read-only' || token === 'readonly') {
+      return 'read_only'
+    }
+    if (token === 'writers' || token === 'writer') {
+      return hasBossman ? 'locked_writers_with_boss' : 'locked_writers_user_preflight'
+    }
+    if (token === 'boss' || token === 'bossman') return 'locked_writers_with_boss'
+    if (token === 'preflight' || token === 'user-preflight') {
+      return 'locked_writers_user_preflight'
+    }
+    rejectSlashCommandWithDraft(ctx, usage)
+    return null
+  }
   const parseScopedPositiveIntSlashArg = (
     ctx: SlashCommandRunContext,
     arg: string,
@@ -18414,12 +18503,17 @@ function App(): React.JSX.Element {
   ): void => {
     if (chat.chatKind !== 'ensemble' || !chat.ensemble) return
     const attachments = imageAttachmentsByChatIdRef.current[chat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
+    const fanoutPolicy = normalizeEnsembleFanoutPolicy(
+      chat.ensemble.fanoutPolicy,
+      chat.ensemble.concurrentModeEnabled
+    )
     void window.api
       .runEnsembleRound({
         chatId: chat.appChatId,
         prompt: promptText,
         mode: chat.ensemble.activeRound?.status === 'running' ? 'steer' : 'normal',
-        concurrentMode: Boolean(chat.ensemble.concurrentModeEnabled),
+        concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
+        fanoutPolicy,
         imageAttachments: attachments.map((attachment) => ({
           id: attachment.id,
           path: attachment.path,
@@ -18705,9 +18799,9 @@ function App(): React.JSX.Element {
             kind: 'action' as const,
             id: 'taskwraith-ensemble-fanout',
             command: '/ensemble-fanout',
-            label: 'Toggle safe fanout',
+            label: 'Set safe fanout',
             description:
-              'Toggle or set safe concurrent fanout. Usage: /ensemble-fanout on|off|toggle.',
+              'Toggle or set safe concurrent fanout. Usage: /ensemble-fanout off|read|writers|boss|preflight.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -18715,16 +18809,21 @@ function App(): React.JSX.Element {
                 return
               }
               const arg = slashActionRemainder(ctx, /^\/ensemble-fanout\b/i)
-              const next = parseScopedToggleSlashArg(
+              const next = parseScopedFanoutPolicySlashArg(
                 ctx,
                 arg,
-                Boolean(chat.ensemble.concurrentModeEnabled),
-                'Usage: /ensemble-fanout on|off|toggle.'
+                normalizeEnsembleFanoutPolicy(
+                  chat.ensemble.fanoutPolicy,
+                  chat.ensemble.concurrentModeEnabled
+                ),
+                Boolean(chat.ensemble.bossmanParticipantId),
+                'Usage: /ensemble-fanout off|read|writers|boss|preflight.'
               )
               if (next === null) return
               patchScopedEnsembleConfig(chat, (ensemble) => ({
                 ...ensemble,
-                concurrentModeEnabled: next
+                fanoutPolicy: next,
+                concurrentModeEnabled: ensembleFanoutPolicyEnabled(next)
               }))
             }
           },
@@ -20851,6 +20950,7 @@ function App(): React.JSX.Element {
       PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
       acknowledgedElevationDefaults,
       activeEnsembleConcurrentMode,
+      activeEnsembleFanoutPolicy,
       activeEnsembleOrchestrationMode,
       addImageAttachmentsToChat,
       agentModelsByProvider,
@@ -20872,6 +20972,7 @@ function App(): React.JSX.Element {
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
       currentEnsembleConcurrentMode,
+      currentEnsembleFanoutPolicy,
       currentEnsembleContinuationHops,
       currentEnsembleMaxContinuationHops,
       currentEnsembleOrchestrationMode,
@@ -20969,6 +21070,7 @@ function App(): React.JSX.Element {
       trustResult,
       trustSelectValue,
       updateCurrentEnsembleConcurrentMode,
+      updateCurrentEnsembleFanoutPolicy,
       updateCurrentEnsembleContextChars,
       updateCurrentEnsembleMaxContinuationHops,
       updateCurrentEnsembleOrchestrationMode,
@@ -20986,6 +21088,7 @@ function App(): React.JSX.Element {
       composerHandlers,
       acknowledgedElevationDefaults,
       activeEnsembleConcurrentMode,
+      activeEnsembleFanoutPolicy,
       activeEnsembleOrchestrationMode,
       addImageAttachmentsToChat,
       agentModelsByProvider,
@@ -21007,6 +21110,7 @@ function App(): React.JSX.Element {
       currentComposerMentionParticipants,
       currentDiscordContextSelection,
       currentEnsembleConcurrentMode,
+      currentEnsembleFanoutPolicy,
       currentEnsembleContinuationHops,
       currentEnsembleMaxContinuationHops,
       currentEnsembleOrchestrationMode,
@@ -21099,6 +21203,7 @@ function App(): React.JSX.Element {
       trustResult,
       trustSelectValue,
       updateCurrentEnsembleConcurrentMode,
+      updateCurrentEnsembleFanoutPolicy,
       updateCurrentEnsembleContextChars,
       updateCurrentEnsembleMaxContinuationHops,
       updateCurrentEnsembleOrchestrationMode,

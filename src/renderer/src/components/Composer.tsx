@@ -1,6 +1,12 @@
 import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { MAX_ACTIVE_GOAL_OBJECTIVE_CHARS } from '../../../main/GoalState'
-import { AgenticWorkspaceGrant, EnsembleParticipant, PermissionPresetId, ProviderId } from '../../../main/store/types'
+import {
+  AgenticWorkspaceGrant,
+  EnsembleFanoutPolicy,
+  EnsembleParticipant,
+  PermissionPresetId,
+  ProviderId
+} from '../../../main/store/types'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
@@ -112,6 +118,7 @@ export interface ComposerProps {
   PLAN_IMPORT_RUN_CONSTRAINT_LABELS: any
   acknowledgedElevationDefaults: any
   activeEnsembleConcurrentMode: any
+  activeEnsembleFanoutPolicy: EnsembleFanoutPolicy
   activeEnsembleOrchestrationMode: any
   addImageAttachments: any
   addImageAttachmentsToChat: any
@@ -158,6 +165,7 @@ export interface ComposerProps {
   currentComposerMentionParticipants: any
   currentDiscordContextSelection: any
   currentEnsembleConcurrentMode: any
+  currentEnsembleFanoutPolicy: EnsembleFanoutPolicy
   currentEnsembleContinuationHops: any
   currentEnsembleMaxContinuationHops: any
   currentEnsembleOrchestrationMode: any
@@ -365,6 +373,7 @@ export interface ComposerProps {
   trustResult: any
   trustSelectValue: any
   updateCurrentEnsembleConcurrentMode: any
+  updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) => void
   updateCurrentEnsembleContextChars: any
   updateCurrentEnsembleMaxContinuationHops: any
   updateCurrentEnsembleOrchestrationMode: any
@@ -389,7 +398,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     PLAN_IMPORT_RISK_LABELS,
     PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
     acknowledgedElevationDefaults,
-    activeEnsembleConcurrentMode,
+    activeEnsembleFanoutPolicy,
     activeEnsembleOrchestrationMode,
     addImageAttachments,
     addImageAttachmentsToChat,
@@ -434,7 +443,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     currentComposerChatId,
     currentComposerMentionParticipants,
     currentDiscordContextSelection,
-    currentEnsembleConcurrentMode,
+    currentEnsembleFanoutPolicy,
     currentEnsembleContinuationHops,
     currentEnsembleMaxContinuationHops,
     currentEnsembleOrchestrationMode,
@@ -638,7 +647,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     threadTokenTallyTooltip,
     trustResult,
     trustSelectValue,
-    updateCurrentEnsembleConcurrentMode,
+    updateCurrentEnsembleFanoutPolicy,
     updateCurrentEnsembleContextChars,
     updateCurrentEnsembleMaxContinuationHops,
     updateCurrentEnsembleOrchestrationMode,
@@ -660,6 +669,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const hasVisibleScheduledCountdown =
     Array.isArray(visibleScheduledTasks) &&
     visibleScheduledTasks.some((task: any) => task?.status === 'pending' || task?.status === 'due')
+  const writerFanoutPolicy: EnsembleFanoutPolicy = currentChat?.ensemble?.bossmanParticipantId
+    ? 'locked_writers_with_boss'
+    : 'locked_writers_user_preflight'
+  const currentWriterFanoutSelected =
+    currentEnsembleFanoutPolicy === 'locked_writers_with_boss' ||
+    currentEnsembleFanoutPolicy === 'locked_writers_user_preflight'
 
   useEffect(() => {
     if (!hasVisibleScheduledCountdown) return
@@ -1890,6 +1905,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         prompt: retryPrompt,
                         mode: 'normal',
                         concurrentMode: false,
+                        fanoutPolicy: 'off',
                         dmTargetParticipantId: participantId
                       })
                     }}
@@ -3150,7 +3166,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             aria-label="Ensemble orchestration mode"
                             title={
                               isCurrentEnsembleRoundRunning
-                                ? `Current round: ${activeEnsembleOrchestrationMode === 'continuous' ? 'Continuous' : 'Turn-bound'}${activeEnsembleConcurrentMode ? ' + Parallel fan-out' : ''}`
+                                ? `Current round: ${activeEnsembleOrchestrationMode === 'continuous' ? 'Continuous' : 'Turn-bound'}${
+                                    activeEnsembleFanoutPolicy === 'read_only'
+                                      ? ' + Read fan-out'
+                                      : activeEnsembleFanoutPolicy === 'off'
+                                        ? ''
+                                        : ' + Writer fan-out'
+                                  }`
                                 : 'Choose whether agents speak once per round or can hand work back and forth.'
                             }
                             data-composer-control="ensemble-mode"
@@ -3183,9 +3205,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               <button
                                 type="button"
                                 className={`composer-ensemble-mode-button ${
-                                  !currentEnsembleConcurrentMode ? 'is-active' : ''
+                                  currentEnsembleFanoutPolicy === 'off' ? 'is-active' : ''
                                 }`}
-                                onClick={() => updateCurrentEnsembleConcurrentMode(false)}
+                                onClick={() => updateCurrentEnsembleFanoutPolicy('off')}
                                 title="Run participants serially."
                               >
                                 Off
@@ -3193,15 +3215,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               <button
                                 type="button"
                                 className={`composer-ensemble-mode-button ${
-                                  currentEnsembleConcurrentMode ? 'is-active' : ''
+                                  currentEnsembleFanoutPolicy === 'read_only' ? 'is-active' : ''
                                 }`}
-                                onClick={() => updateCurrentEnsembleConcurrentMode(true)}
+                                onClick={() => updateCurrentEnsembleFanoutPolicy('read_only')}
                                 title={
                                   ensembleConcurrentLanesAvailable
-                                    ? ensembleConcurrentWriteLanesAvailable &&
-                                      !currentChat?.ensemble?.bossmanParticipantId
-                                      ? 'Fan out read-only participants; when no Boss is assigned, multiple writer-capable participants must pass write-scope claim and ack preflight before parallel writes.'
-                                      : 'Fan out read-only participants in parallel before writer-capable participants run serially.'
+                                    ? 'Fan out read-only participants in parallel before writer-capable participants run serially.'
                                     : 'Parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0); rounds run serially.'
                                 }
                               >
@@ -3209,12 +3228,15 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               </button>
                               <button
                                 type="button"
-                                className="composer-ensemble-mode-button is-locked"
-                                disabled
+                                className={`composer-ensemble-mode-button ${
+                                  currentWriterFanoutSelected ? 'is-active' : ''
+                                } ${!ensembleConcurrentWriteLanesAvailable ? 'is-locked' : ''}`}
+                                disabled={!ensembleConcurrentWriteLanesAvailable}
+                                onClick={() => updateCurrentEnsembleFanoutPolicy(writerFanoutPolicy)}
                                 title={
                                   ensembleConcurrentWriteLanesAvailable
                                     ? currentChat?.ensemble?.bossmanParticipantId
-                                      ? 'Writer fan-out is available only when the assigned Boss calls ensemble_fanout with explicit writeScopes.'
+                                      ? 'Writer fan-out is available when the assigned Boss calls ensemble_fanout with explicit writeScopes.'
                                       : 'Writer fan-out is mediated by user-enabled write-scope preflight: claim scopes, host conflict matrix, then ack.'
                                     : 'Writer fan-out is disabled (TASKWRAITH_CONCURRENT_WRITE_LANES=0).'
                                 }

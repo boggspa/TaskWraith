@@ -20,6 +20,7 @@ import type {
   ConcurrentLaneWriteScope,
   EffectiveRunPermissions,
   EnsembleConfig,
+  EnsembleFanoutPolicy,
   EnsembleOrchestrationMode,
   EnsembleParticipant,
   EnsembleParticipantStatus,
@@ -414,6 +415,13 @@ export interface EnsembleSideMessageResult {
   error?: 'no_active_run' | 'not_ensemble' | 'missing_message' | 'invalid_target'
 }
 
+const ENSEMBLE_FANOUT_POLICIES: EnsembleFanoutPolicy[] = [
+  'off',
+  'read_only',
+  'locked_writers_with_boss',
+  'locked_writers_user_preflight'
+]
+
 /** Stable per-timeline-entry message id. Includes the runId + the
  * entry's ordinal so the same entry always resolves to the same id
  * across flush passes, letting `flushRun` replace-in-place rather
@@ -497,6 +505,52 @@ function stripPseudoSystemYieldLines(text: string): string {
 function normalizeFanoutMode(value: unknown): EnsembleFanoutMode | null {
   if (value === undefined || value === null || value === '') return 'read_only'
   return value === 'read_only' || value === 'locked_writers' ? value : null
+}
+
+function isEnsembleFanoutPolicy(value: unknown): value is EnsembleFanoutPolicy {
+  return typeof value === 'string' && ENSEMBLE_FANOUT_POLICIES.includes(value as EnsembleFanoutPolicy)
+}
+
+function fanoutPolicyEnablesConcurrent(policy: EnsembleFanoutPolicy): boolean {
+  return policy !== 'off'
+}
+
+function resolveEnsembleFanoutPolicy(
+  input:
+    | Pick<EnsembleConfig, 'fanoutPolicy' | 'concurrentModeEnabled'>
+    | Pick<EnsembleRoundState, 'fanoutPolicy' | 'concurrentMode'>
+    | {
+        fanoutPolicy?: unknown
+        concurrentModeEnabled?: boolean
+        concurrentMode?: boolean
+      }
+    | null
+    | undefined
+): EnsembleFanoutPolicy {
+  const raw = (input || {}) as {
+    fanoutPolicy?: unknown
+    concurrentMode?: boolean
+    concurrentModeEnabled?: boolean
+  }
+  if (isEnsembleFanoutPolicy(raw.fanoutPolicy)) return raw.fanoutPolicy
+  if (raw.concurrentMode === true) return 'read_only'
+  if (raw.concurrentModeEnabled === true) {
+    return 'read_only'
+  }
+  return 'off'
+}
+
+function resolveRequestedEnsembleFanoutPolicy(
+  config: Pick<EnsembleConfig, 'fanoutPolicy' | 'concurrentModeEnabled'> | null | undefined,
+  input: { fanoutPolicy?: unknown; concurrentMode?: boolean } = {}
+): EnsembleFanoutPolicy {
+  if (input.fanoutPolicy !== undefined) {
+    return resolveEnsembleFanoutPolicy({ fanoutPolicy: input.fanoutPolicy })
+  }
+  if (input.concurrentMode !== undefined) {
+    return resolveEnsembleFanoutPolicy({ concurrentMode: input.concurrentMode })
+  }
+  return resolveEnsembleFanoutPolicy(config)
 }
 
 function stripLeadingAt(value: string): string {
@@ -1363,6 +1417,7 @@ function createDiscordContextToolMessage(
 interface QueuedRoundEntry {
   id: string
   prompt: string
+  fanoutPolicy?: EnsembleFanoutPolicy
   imageAttachments: EnsembleImageAttachment[]
   imageThumbnails?: EnsembleImageThumbnail[]
   externalPathGrants?: ExternalPathGrant[]
@@ -1437,6 +1492,7 @@ interface ActiveRoundRuntime {
   scoutBriefs?: ScoutBriefRecord[]
   unreachableParticipantIds?: Set<string>
   orchestrationMode: EnsembleOrchestrationMode
+  fanoutPolicy?: EnsembleFanoutPolicy
   concurrentMode?: boolean
   continuationHops: number
   maxContinuationHops: number
@@ -1600,11 +1656,11 @@ export class EnsembleOrchestrator {
     externalPathGrants?: ExternalPathGrant[]
     discordContextSnapshots?: DiscordContextSnapshot[]
     /**
-     * 1.0.8 — request read-only concurrent fan-out for this round.
-     * The orchestrator validates this against TASKWRAITH_CONCURRENT_LANES
-     * and only dispatches read-only participants in parallel for now.
+     * Legacy request for read-only concurrent fan-out for this round.
+     * Prefer `fanoutPolicy`; `true` maps to `read_only`.
      */
     concurrentMode?: boolean
+    fanoutPolicy?: EnsembleFanoutPolicy
     /**
      * P1b — set for a scheduled/workflow occurrence (unattended run).
      * Forces every participant's posture to read-only so an unattended
@@ -1653,6 +1709,7 @@ export class EnsembleOrchestrator {
           parsed.selfReflective,
           input.externalPathGrants,
           input.concurrentMode,
+          input.fanoutPolicy,
           input.discordContextSnapshots,
           input.unattended,
           input.unattendedElevationLevel
@@ -1684,6 +1741,10 @@ export class EnsembleOrchestrator {
         ...(input.externalPathGrants?.length
           ? { externalPathGrants: [...input.externalPathGrants] }
           : {}),
+        fanoutPolicy: resolveRequestedEnsembleFanoutPolicy(
+          this.deps.getChat(input.chatId)?.ensemble,
+          input
+        ),
         discordContextSnapshots: normalizeDiscordContextSnapshots(input.discordContextSnapshots)
       })
       const nextQueuedPrompts = existing.queuedPrompts.map((entry) => entry.prompt)
@@ -1713,6 +1774,7 @@ export class EnsembleOrchestrator {
       parsed.selfReflective,
       input.externalPathGrants,
       input.concurrentMode,
+      input.fanoutPolicy,
       input.discordContextSnapshots,
       input.unattended,
       input.unattendedElevationLevel
@@ -1727,6 +1789,7 @@ export class EnsembleOrchestrator {
     textPrefix?: string
     queuedPromptId?: string
     concurrentMode?: boolean
+    fanoutPolicy?: EnsembleFanoutPolicy
   }): EnsembleQueuedSteerResult {
     const runtime = this.roundsByChatId.get(input.chatId)
     if (!runtime || runtime.cancelled) {
@@ -1751,6 +1814,7 @@ export class EnsembleOrchestrator {
       false,
       selected.externalPathGrants ?? [],
       input.concurrentMode,
+      input.fanoutPolicy ?? selected.fanoutPolicy,
       selected.discordContextSnapshots
     )
     this.appendRoundStatus(
@@ -2724,6 +2788,30 @@ export class EnsembleOrchestrator {
         error: 'not_ensemble'
       }
     }
+    const fanoutPolicy = runtime.fanoutPolicy ?? (runtime.concurrentMode ? 'read_only' : 'off')
+    const workSessionScoutPass =
+      chat.ensemble.workSession?.enabled &&
+      chat.ensemble.workSession.status === 'active' &&
+      chat.ensemble.workSession.enableScoutPass
+    if (fanoutPolicy === 'off' && !workSessionScoutPass) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        message: 'ensemble_fanout: fan-out is off for this round.',
+        error: 'not_authorized'
+      }
+    }
+    if (mode === 'locked_writers' && fanoutPolicy !== 'locked_writers_with_boss') {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        message:
+          'ensemble_fanout: locked writer lanes require the Boss writer fan-out policy.',
+        error: 'not_authorized'
+      }
+    }
     if (mode === 'locked_writers' && !concurrentWriteLanesEnabled()) {
       return {
         ok: false,
@@ -3578,6 +3666,10 @@ export class EnsembleOrchestrator {
       (entry) => entry.id === wakeup.participantId && entry.enabled
     )
     if (!participant) return false
+    const recoveredFanoutPolicy =
+      round.fanoutPolicy !== undefined || round.concurrentMode !== undefined
+        ? resolveEnsembleFanoutPolicy(round)
+        : resolveEnsembleFanoutPolicy(chat.ensemble)
     const runtime: ActiveRoundRuntime = {
       chatId: wakeup.chatId,
       roundId: wakeup.roundId,
@@ -3598,9 +3690,12 @@ export class EnsembleOrchestrator {
       queuedPrompts: (round.queuedPrompts || []).map((prompt) => ({
         id: this.nextQueuedPromptId(wakeup.chatId),
         prompt,
+        fanoutPolicy: recoveredFanoutPolicy,
         imageAttachments: []
       })),
       orchestrationMode: round.orchestrationMode || chat.ensemble.orchestrationMode || 'turn_bound',
+      fanoutPolicy: recoveredFanoutPolicy,
+      ...(fanoutPolicyEnablesConcurrent(recoveredFanoutPolicy) ? { concurrentMode: true } : {}),
       continuationHops: round.continuationHops || 0,
       maxContinuationHops:
         round.maxContinuationHops ||
@@ -4057,6 +4152,7 @@ export class EnsembleOrchestrator {
      */
     externalPathGrants: ExternalPathGrant[] = [],
     concurrentMode?: boolean,
+    fanoutPolicy?: EnsembleFanoutPolicy,
     discordContextSnapshotsInput?: DiscordContextSnapshot[],
     unattended?: boolean,
     unattendedElevationLevel?: UnattendedElevationLevel
@@ -4086,9 +4182,11 @@ export class EnsembleOrchestrator {
     const promptForParticipants = promptWithAttachmentReferences(prompt, normalizedImageAttachments)
     const orchestrationMode = resolveEnsembleOrchestrationMode(chat.ensemble)
     const maxContinuationHops = resolveMaxContinuationHops(chat.ensemble)
-    const requestedConcurrentMode = Boolean(
-      concurrentMode ?? chat.ensemble.concurrentModeEnabled ?? false
-    )
+    const requestedFanoutPolicy = resolveRequestedEnsembleFanoutPolicy(chat.ensemble, {
+      concurrentMode,
+      fanoutPolicy
+    })
+    const requestedConcurrentMode = fanoutPolicyEnablesConcurrent(requestedFanoutPolicy)
     const concurrentCheck = canStartConcurrentRound({
       concurrentLanesEnabled: concurrentLanesEnabled(),
       chatIsEnsemble: true,
@@ -4096,10 +4194,12 @@ export class EnsembleOrchestrator {
       enabledParticipantCount: ordered.length
     })
     let effectiveConcurrentMode = requestedConcurrentMode
+    let effectiveFanoutPolicy = requestedFanoutPolicy
     let concurrentFallbackReason: string | undefined
     if (!concurrentCheck.ok) {
       if (requestedConcurrentMode && concurrentCheck.reason?.includes('TASKWRAITH_CONCURRENT_LANES')) {
         effectiveConcurrentMode = false
+        effectiveFanoutPolicy = 'off'
         concurrentFallbackReason = concurrentCheck.reason
       } else {
         throw new Error(concurrentCheck.reason || 'Concurrent Ensemble dispatch is not available.')
@@ -4119,6 +4219,7 @@ export class EnsembleOrchestrator {
       bossmanBaselineParticipantIds: ordered.map((participant) => participant.id),
       bossmanBaselineParticipantCount: ordered.length,
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
+      fanoutPolicy: effectiveFanoutPolicy,
       participants: ordered.map((participant) => ({
         participantId: participant.id,
         provider: participant.provider,
@@ -4197,6 +4298,7 @@ export class EnsembleOrchestrator {
       bossmanBaselineParticipantIds: ordered.map((participant) => participant.id),
       bossmanBaselineParticipantCount: ordered.length,
       orchestrationMode,
+      fanoutPolicy: effectiveFanoutPolicy,
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
       continuationHops: 0,
       maxContinuationHops,
@@ -4258,13 +4360,16 @@ export class EnsembleOrchestrator {
     // Boss is assigned, a host-owned user-preflight claim + ack pass.
     const chatForFanout = this.deps.getChat(runtime.chatId)
     const workSessionForFanout = chatForFanout?.ensemble?.workSession
+    const roundFanoutPolicy = runtime.fanoutPolicy ?? (runtime.concurrentMode ? 'read_only' : 'off')
+    const userFanoutRequested = fanoutPolicyEnablesConcurrent(roundFanoutPolicy)
+    const workSessionScoutPass =
+      workSessionForFanout?.enabled &&
+      workSessionForFanout.status === 'active' &&
+      workSessionForFanout.enableScoutPass
+    // Work Session scout pass is its own explicit Work Session setting. Preserve
+    // its existing read-only scout behavior even when the chat fan-out policy is off.
     const shouldRunReadOnlyFanout =
-      runtime.concurrentMode ||
-      Boolean(
-        workSessionForFanout?.enabled &&
-          workSessionForFanout.status === 'active' &&
-          workSessionForFanout.enableScoutPass
-      )
+      userFanoutRequested || Boolean(workSessionScoutPass)
     if (shouldRunReadOnlyFanout && !runtime.cancelled) {
       const readers: EnsembleParticipant[] = []
       const writers: EnsembleParticipant[] = []
@@ -4292,27 +4397,55 @@ export class EnsembleOrchestrator {
         await this.runParallelFanoutPass(runtime, chatForFanout, readers, {
           mode: 'read_only'
         })
-      } else if (runtime.concurrentMode && readers.length > 0) {
+      } else if (userFanoutRequested && readers.length > 0) {
         this.appendRoundStatus(
           runtime.chatId,
           runtime.roundId,
           'Parallel mode requested but fewer than two read-only participants were available; continuing serially.'
         )
       }
-      if (
-        runtime.concurrentMode &&
-        concurrentWriteLanesEnabled() &&
-        chatForFanout &&
-        writers.length >= 2 &&
-        remaining.every((participant) => writers.some((writer) => writer.id === participant.id)) &&
-        !runtime.cancelled
-      ) {
+      if (chatForFanout && writers.length > 0 && !runtime.cancelled) {
+        const writerPolicy = roundFanoutPolicy
         const bossmanParticipantId = this.activeBossmanParticipantId(chatForFanout, runtime)
-        if (bossmanParticipantId) {
+        const eligibleWriterTail =
+          writers.length >= 2 &&
+          remaining.every((participant) => writers.some((writer) => writer.id === participant.id))
+        if (
+          writerPolicy !== 'locked_writers_with_boss' &&
+          writerPolicy !== 'locked_writers_user_preflight'
+        ) {
+          // Read-only fan-out intentionally leaves writer-capable participants serial.
+        } else if (!concurrentWriteLanesEnabled()) {
           this.appendRoundStatus(
             runtime.chatId,
             runtime.roundId,
-            'Locked writer fan-out requires the assigned Boss to call ensemble_fanout with explicit writeScopes; continuing with serial writers.'
+            'Locked writer fan-out requested but TASKWRAITH_CONCURRENT_WRITE_LANES=0; continuing with serial writers.'
+          )
+        } else if (!eligibleWriterTail) {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            'Locked writer fan-out needs at least two writer-capable participants with no intervening serial participants after the read-only fan-out step; continuing serially.'
+          )
+        } else if (writerPolicy === 'locked_writers_with_boss') {
+          if (bossmanParticipantId) {
+            this.appendRoundStatus(
+              runtime.chatId,
+              runtime.roundId,
+              'Locked writer fan-out requires the assigned Boss to call ensemble_fanout with explicit writeScopes; continuing with serial writers.'
+            )
+          } else {
+            this.appendRoundStatus(
+              runtime.chatId,
+              runtime.roundId,
+              'Locked writer fan-out requires an assigned Boss for this policy; continuing with serial writers.'
+            )
+          }
+        } else if (bossmanParticipantId) {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            'User-preflight writer fan-out is only used when no Boss is assigned; continuing with serial writers.'
           )
         } else {
           const handledWriters = await this.runUserWriteScopePreflight(
@@ -4324,18 +4457,6 @@ export class EnsembleOrchestrator {
             remaining.length = 0
           }
         }
-      } else if (
-        runtime.concurrentMode &&
-        concurrentWriteLanesEnabled() &&
-        chatForFanout &&
-        writers.length > 0 &&
-        !runtime.cancelled
-      ) {
-        this.appendRoundStatus(
-          runtime.chatId,
-          runtime.roundId,
-          'Locked writer fan-out needs at least two writer-capable participants with no intervening serial participants after the read-only fan-out step; continuing serially.'
-        )
       }
     }
     // 1.0.4 — participant id of the just-promoted yield target. Set
@@ -4867,6 +4988,7 @@ export class EnsembleOrchestrator {
         false,
         nextEntry.externalPathGrants ?? [],
         undefined,
+        nextEntry.fanoutPolicy,
         nextEntry.discordContextSnapshots
       )
     }

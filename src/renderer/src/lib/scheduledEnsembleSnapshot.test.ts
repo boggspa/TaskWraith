@@ -68,8 +68,18 @@ describe('buildScheduledEnsembleSnapshot', () => {
   })
 
   it('captures the orchestration mode, participants, and budgets', () => {
-    const snap = buildScheduledEnsembleSnapshot(chat(), { now: () => FIXED_NOW })!
+    const snap = buildScheduledEnsembleSnapshot(
+      chat({
+        ensemble: ensemble({
+          fanoutPolicy: 'locked_writers_user_preflight',
+          concurrentModeEnabled: true
+        })
+      }),
+      { now: () => FIXED_NOW }
+    )!
     expect(snap.orchestrationMode).toBe('turn_bound')
+    expect(snap.fanoutPolicy).toBe('locked_writers_user_preflight')
+    expect(snap.concurrentModeEnabled).toBe(true)
     expect(snap.participants.map((p) => p.id)).toEqual(['claude', 'codex'])
     expect(snap.maxParticipants).toBe(8)
     expect(snap.maxContinuationHops).toBe(6)
@@ -103,6 +113,19 @@ describe('buildScheduledEnsembleSnapshot', () => {
     )!
     expect(snap.orchestrationMode).toBe('turn_bound')
   })
+
+  it('maps legacy concurrent snapshots to read-only fan-out', () => {
+    const snap = buildScheduledEnsembleSnapshot(
+      chat({
+        ensemble: ensemble({
+          concurrentModeEnabled: true
+        })
+      }),
+      { now: () => FIXED_NOW }
+    )!
+    expect(snap.fanoutPolicy).toBe('read_only')
+    expect(snap.concurrentModeEnabled).toBe(true)
+  })
 })
 
 describe('applyScheduledEnsembleSnapshot', () => {
@@ -115,6 +138,8 @@ describe('applyScheduledEnsembleSnapshot', () => {
     })
     const snapshot: ScheduledEnsembleSnapshot = {
       orchestrationMode: 'turn_bound',
+      fanoutPolicy: 'read_only',
+      concurrentModeEnabled: true,
       participants: [participant({ id: 'claude', provider: 'claude', role: 'Explorer', order: 1 })],
       maxParticipants: 4,
       maxContinuationHops: 2,
@@ -122,6 +147,8 @@ describe('applyScheduledEnsembleSnapshot', () => {
     }
     const next = applyScheduledEnsembleSnapshot(sourceChat, snapshot)
     expect(next.ensemble!.orchestrationMode).toBe('turn_bound')
+    expect(next.ensemble!.fanoutPolicy).toBe('read_only')
+    expect(next.ensemble!.concurrentModeEnabled).toBe(true)
     expect(next.ensemble!.participants.map((p) => p.id)).toEqual(['claude'])
     expect(next.ensemble!.maxParticipants).toBe(4)
     expect(next.ensemble!.maxContinuationHops).toBe(2)

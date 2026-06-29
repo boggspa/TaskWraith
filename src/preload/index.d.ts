@@ -51,7 +51,8 @@ import {
   AuditRunRecord,
   ProviderRunReroute,
   WorkspaceBoardCard,
-  WorkspaceBoardDefinition
+  WorkspaceBoardDefinition,
+  EnsembleFanoutPolicy
 } from '../main/store/types'
 import type {
   WorkflowRunSummary,
@@ -1200,6 +1201,7 @@ declare global {
         scheduledTaskId?: string
         mode?: 'normal' | 'queue' | 'steer'
         concurrentMode?: boolean
+        fanoutPolicy?: EnsembleFanoutPolicy
         imageAttachments?: ComposerImageAttachment[]
         discordContextSnapshots?: DiscordContextSnapshot[]
         externalPathGrants?: ExternalPathGrant[]
@@ -1211,6 +1213,7 @@ declare global {
         index: number
         textPrefix?: string
         concurrentMode?: boolean
+        fanoutPolicy?: EnsembleFanoutPolicy
       }) => Promise<{ status: string; roundId?: string; error?: string }>
       removeQueuedEnsemblePrompt: (payload: {
         chatId: string

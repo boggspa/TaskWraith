@@ -142,6 +142,7 @@ describe('ensembleRosterPresets — capture + materialize', () => {
     expect(preset.name).toBe('Review panel')
     expect(preset.orchestrationMode).toBe('continuous')
     expect(preset.maxContinuationHops).toBe(12)
+    expect(preset.fanoutPolicy).toBe('read_only')
     expect(preset.concurrentModeEnabled).toBe(true)
     expect(preset.participants.map((participant) => participant.role)).toEqual(['Builder', 'Planner'])
     expect(preset.participants[0]).toMatchObject({
@@ -150,6 +151,20 @@ describe('ensembleRosterPresets — capture + materialize', () => {
       model: 'gpt-5.4-medium'
     })
     expect(preset.participants[0]).not.toHaveProperty('linkedProviderSessionId')
+  })
+
+  it('captures explicit fan-out policy over the legacy boolean', () => {
+    const preset = buildEnsembleRosterPresetFromConfig(
+      'Writer panel',
+      {
+        ...sampleEnsemble(),
+        fanoutPolicy: 'locked_writers_with_boss',
+        concurrentModeEnabled: false
+      },
+      1_700_000_000_000
+    )
+    expect(preset.fanoutPolicy).toBe('locked_writers_with_boss')
+    expect(preset.concurrentModeEnabled).toBe(false)
   })
 
   it('materializes fresh participant ids while preserving order', () => {

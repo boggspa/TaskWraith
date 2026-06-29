@@ -516,6 +516,7 @@ import {
   ExternalPathGrant,
   ScheduledTask,
   ScheduledEnsembleSnapshot,
+  EnsembleFanoutPolicy,
   AgenticServiceId,
   GeminiMcpBridgeStatus,
   ProviderCapabilityContract,
@@ -7895,6 +7896,24 @@ function clearScheduledTaskTimer() {
   }
 }
 
+const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
+  'off',
+  'read_only',
+  'locked_writers_with_boss',
+  'locked_writers_user_preflight'
+])
+
+function normalizeScheduledFanoutPolicy(
+  value: unknown,
+  legacyEnabled?: boolean
+): EnsembleFanoutPolicy {
+  return ENSEMBLE_FANOUT_POLICIES.has(value as EnsembleFanoutPolicy)
+    ? (value as EnsembleFanoutPolicy)
+    : legacyEnabled
+      ? 'read_only'
+      : 'off'
+}
+
 // Stage 0b-dispatch (ensemble) — apply a schedule-time ensemble snapshot onto a
 // chat MAIN-side. Tiny pure replica of the renderer's applyScheduledEnsembleSnapshot
 // (src/renderer/src/lib/scheduledEnsembleSnapshot.ts) so the main process doesn't
@@ -7909,6 +7928,14 @@ function applyScheduledEnsembleSnapshotMain(
     ensemble: {
       ...chat.ensemble,
       orchestrationMode: snapshot.orchestrationMode,
+      fanoutPolicy: normalizeScheduledFanoutPolicy(
+        snapshot.fanoutPolicy,
+        snapshot.concurrentModeEnabled
+      ),
+      concurrentModeEnabled:
+        typeof snapshot.concurrentModeEnabled === 'boolean'
+          ? snapshot.concurrentModeEnabled
+          : normalizeScheduledFanoutPolicy(snapshot.fanoutPolicy) !== 'off',
       participants: snapshot.participants.map((participant) => ({ ...participant })),
       ...(typeof snapshot.maxParticipants === 'number'
         ? { maxParticipants: snapshot.maxParticipants }
@@ -28779,6 +28806,7 @@ if (isGeminiMcpBridgeProcess) {
           prompt?: string
           mode?: 'normal' | 'queue' | 'steer'
           concurrentMode?: boolean
+          fanoutPolicy?: EnsembleFanoutPolicy
           imageAttachments?: Array<{ id?: string; path?: string; name?: string }>
           discordContextSnapshots?: DiscordContextSnapshot[]
           dmTargetParticipantId?: string
@@ -28828,6 +28856,9 @@ if (isGeminiMcpBridgeProcess) {
           ...(payload?.concurrentMode !== undefined
             ? { concurrentMode: Boolean(payload.concurrentMode) }
             : {}),
+          ...(payload?.fanoutPolicy !== undefined
+            ? { fanoutPolicy: payload.fanoutPolicy }
+            : {}),
           imageAttachments: dispatchImageAttachments,
           ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
           ...(payload?.dmTargetParticipantId
@@ -28864,6 +28895,7 @@ if (isGeminiMcpBridgeProcess) {
           index?: number
           textPrefix?: string
           concurrentMode?: boolean
+          fanoutPolicy?: EnsembleFanoutPolicy
         }
       ) => {
         if (AppStore.getSettings().ensembleModeEnabled === false) {
@@ -28878,6 +28910,9 @@ if (isGeminiMcpBridgeProcess) {
           ...(typeof payload?.textPrefix === 'string' ? { textPrefix: payload.textPrefix } : {}),
           ...(payload?.concurrentMode !== undefined
             ? { concurrentMode: Boolean(payload.concurrentMode) }
+            : {}),
+          ...(payload?.fanoutPolicy !== undefined
+            ? { fanoutPolicy: payload.fanoutPolicy }
             : {})
         }) ?? { status: 'ignored', error: 'Ensemble orchestrator is not initialized.' }
       }

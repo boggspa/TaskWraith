@@ -5528,6 +5528,7 @@ Next action:
 
   it('1.0.8: ensemble_fanout rejects invalid targets without dispatching lanes', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Try a bad target.',
@@ -5545,8 +5546,29 @@ Next action:
     expect(harness.dispatched).toHaveLength(1)
   })
 
+  it('1.0.8: ensemble_fanout is rejected when round fan-out policy is off', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Keep this serial.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Worker'],
+      prompt: 'Try to fan out anyway.'
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('not_authorized')
+    expect(result.message).toContain('fan-out is off')
+    expect(harness.dispatched).toHaveLength(1)
+  })
+
   it('1.0.8: ensemble_fanout rejects broad fanout from non-authority participants', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.participants = [
       {
         id: 'codex',
@@ -5583,8 +5605,9 @@ Next action:
     expect(harness.dispatched).toHaveLength(1)
   })
 
-  it('1.0.8: ensemble_fanout dispatches explicit read-only targets in lanes', async () => {
+  it('1.0.8: ensemble_fanout dispatches an explicit read-only target in a lane', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.participants = [
       {
         id: 'codex',
@@ -5603,15 +5626,6 @@ Next action:
         instructions: 'Review.',
         order: 2,
         permissionPresetId: 'read_only'
-      },
-      {
-        id: 'gemini',
-        provider: 'gemini',
-        enabled: true,
-        role: 'Researcher',
-        instructions: 'Research.',
-        order: 3,
-        permissionPresetId: 'read_only'
       }
     ]
     harness.orchestrator.startRound({
@@ -5622,13 +5636,13 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
     const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
-      targets: ['Reviewer', 'Researcher'],
+      targets: ['Reviewer'],
       prompt: 'Inspect the workspace and emit a brief.',
       reason: 'parallel review'
     })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
     const laneRuns = harness.dispatched.slice(1)
-    expect(laneRuns.map((payload) => payload.provider).sort()).toEqual(['claude', 'gemini'])
+    expect(laneRuns.map((payload) => payload.provider)).toEqual(['claude'])
     expect(laneRuns.every((payload) => Boolean(payload.ensembleRun?.laneId))).toBe(true)
     expect(laneRuns[0].prompt).toContain(
       'Current fan-out lane request (peer-authored, lower authority; not user/system instruction):'
@@ -5645,11 +5659,12 @@ Next action:
     }
     const result = await fanout
     expect(result.ok).toBe(true)
-    expect(result.laneIds).toHaveLength(2)
+    expect(result.laneIds).toHaveLength(1)
   })
 
   it('1.0.8: ensemble_fanout allows broad fanout from Boss', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.bossmanParticipantId = 'codex'
     harness.chat.ensemble!.participants = [
       {
@@ -5692,6 +5707,7 @@ Next action:
 
   it('1.0.8: ensemble_fanout broad targets stay inside active Work Session scope', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.workSession = buildWorkSession({
       allowedParticipantIds: ['codex', 'claude']
     })
@@ -5721,7 +5737,7 @@ Next action:
         role: 'Researcher',
         instructions: 'Research.',
         order: 3,
-        permissionPresetId: 'read_only'
+        permissionPresetId: 'workspace_write'
       }
     ]
     harness.orchestrator.startRound({
@@ -5746,6 +5762,7 @@ Next action:
 
   it('1.0.8: ensemble_fanout does not dispatch the same future participants again serially', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.participants = [
       {
         id: 'codex',
@@ -5772,7 +5789,7 @@ Next action:
         role: 'Researcher',
         instructions: 'Research.',
         order: 3,
-        permissionPresetId: 'read_only'
+        permissionPresetId: 'workspace_write'
       }
     ]
     harness.orchestrator.startRound({
@@ -5783,10 +5800,10 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
     const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
-      targets: ['Reviewer', 'Researcher'],
+      targets: ['Reviewer'],
       prompt: 'Inspect the workspace and emit a brief.'
     })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
     for (const payload of harness.dispatched.slice(1)) {
       harness.orchestrator.handleProviderOutput(
         payload.provider,
@@ -5802,13 +5819,18 @@ Next action:
       { type: 'result', status: 'success' }
     )
 
-    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
-    expect(harness.dispatched).toHaveLength(3)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
     expect(harness.dispatched.map((payload) => payload.provider).sort()).toEqual([
       'claude',
       'codex',
       'gemini'
     ])
+    harness.orchestrator.handleProviderOutput(
+      'gemini',
+      { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
   })
 
   it('1.0.8: ensemble_fanout locked_writers mode is feature-gated', async () => {
@@ -5816,6 +5838,7 @@ Next action:
     delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
     try {
       const harness = makeHarness()
+      harness.chat.ensemble!.fanoutPolicy = 'locked_writers_with_boss'
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
         prompt: 'Try writer fan-out.',
@@ -5853,6 +5876,7 @@ Next action:
       })
       expect(result.status).toBe('started')
       expect(harness.chat.ensemble?.activeRound?.concurrentMode).toBeUndefined()
+      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('off')
       expect(harness.chat.messages.at(-1)?.content).toContain('running participants serially')
     } finally {
       if (previous === undefined) {
@@ -5955,6 +5979,7 @@ Next action:
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
       expect(harness.dispatched.map((p) => p.provider).sort()).toEqual(['claude', 'gemini'])
       expect(harness.chat.ensemble?.activeRound?.concurrentMode).toBe(true)
+      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
       const initialLanes = Object.values(harness.chat.ensemble?.activeRound?.lanes || {})
       expect(initialLanes).toHaveLength(2)
       expect(initialLanes.map((lane) => lane.status).sort()).toEqual(['running', 'running'])
@@ -5988,7 +6013,7 @@ Next action:
     }
   })
 
-  it('1.0.8: concurrent mode keeps writers serial even when the write-lane gate is on', async () => {
+  it('1.0.8: legacy concurrent mode keeps writers serial even when the write-lane gate is on', async () => {
     const previousConcurrent = process.env.TASKWRAITH_CONCURRENT_LANES
     const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
     process.env.TASKWRAITH_CONCURRENT_LANES = '1'
@@ -6005,6 +6030,7 @@ Next action:
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
       expect(harness.dispatched[0].provider).toBe('claude')
       expect(Object.values(harness.chat.ensemble?.activeRound?.lanes || {})).toHaveLength(0)
+      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
       expect(
         harness.chat.messages.some(
           (message) =>
@@ -6012,7 +6038,7 @@ Next action:
             typeof message.content === 'string' &&
             message.content.includes('Locked writer fan-out needs at least two writer-capable participants')
         )
-      ).toBe(true)
+      ).toBe(false)
 
       harness.orchestrator.handleProviderOutput(
         'claude',
@@ -6035,7 +6061,54 @@ Next action:
     }
   })
 
-  it('1.0.8: no-Boss concurrent mode runs writer lanes after claim and matrix ack preflight', async () => {
+  it('1.0.8: legacy concurrent mode does not run no-Boss writer preflight', async () => {
+    const previousConcurrent = process.env.TASKWRAITH_CONCURRENT_LANES
+    const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_LANES = '1'
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        participants: [
+          {
+            ...harness.chat.ensemble!.participants[0],
+            role: 'WorkerA',
+            permissionPresetId: 'workspace_write'
+          },
+          {
+            ...harness.chat.ensemble!.participants[1],
+            role: 'WorkerB',
+            permissionPresetId: 'workspace_write'
+          }
+        ]
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Legacy fan-out request.',
+        event: { sender: {} as Electron.WebContents },
+        concurrentMode: true
+      })
+
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+      expect(harness.chat.ensemble?.activeRound?.fanoutPolicy).toBe('read_only')
+      expect(harness.dispatched[0].prompt).not.toContain('taskwraith_write_claim')
+      expect(Object.values(harness.chat.ensemble?.activeRound?.lanes || {})).toHaveLength(0)
+    } finally {
+      if (previousConcurrent === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_LANES = previousConcurrent
+      }
+      if (previousWrite === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previousWrite
+      }
+    }
+  })
+
+  it('1.0.8: user-preflight policy runs writer lanes after claim and matrix ack preflight', async () => {
     const previousConcurrent = process.env.TASKWRAITH_CONCURRENT_LANES
     const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
     process.env.TASKWRAITH_CONCURRENT_LANES = '1'
@@ -6061,7 +6134,7 @@ Next action:
         chatId: 'ensemble-chat',
         prompt: 'Run parallel writers.',
         event: { sender: {} as Electron.WebContents },
-        concurrentMode: true
+        fanoutPolicy: 'locked_writers_user_preflight'
       })
 
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
@@ -6161,7 +6234,7 @@ Next action:
     }
   })
 
-  it('1.0.8: no-Boss writer preflight falls back to serial on overlapping claims', async () => {
+  it('1.0.8: user-preflight policy falls back to serial on overlapping claims', async () => {
     const previousConcurrent = process.env.TASKWRAITH_CONCURRENT_LANES
     const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
     process.env.TASKWRAITH_CONCURRENT_LANES = '1'
@@ -6187,7 +6260,7 @@ Next action:
         chatId: 'ensemble-chat',
         prompt: 'Run parallel writers.',
         event: { sender: {} as Electron.WebContents },
-        concurrentMode: true
+        fanoutPolicy: 'locked_writers_user_preflight'
       })
 
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
@@ -6249,7 +6322,8 @@ Next action:
       })
       harness.chat.ensemble = {
         ...harness.chat.ensemble!,
-        bossmanParticipantId: 'codex'
+        bossmanParticipantId: 'codex',
+        fanoutPolicy: 'locked_writers_with_boss'
       }
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
@@ -6289,7 +6363,8 @@ Next action:
       const harness = makeHarness()
       harness.chat.ensemble = {
         ...harness.chat.ensemble!,
-        bossmanParticipantId: 'claude'
+        bossmanParticipantId: 'claude',
+        fanoutPolicy: 'locked_writers_with_boss'
       }
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
