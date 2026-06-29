@@ -51,6 +51,7 @@ interface DetailDraft {
   body: string
   humanOwner: string
   labels: string
+  linkValue: string
   blockedReason: string
   nextStep: string
   reminderAt: string
@@ -143,6 +144,7 @@ function draftFromCard(card: WorkspaceBoardCard): DetailDraft {
     body: card.body || '',
     humanOwner: card.humanOwner || '',
     labels: (card.labels || []).join(', '),
+    linkValue: card.link ? encodeLink(card.link) : '',
     blockedReason: card.blockedReason || '',
     nextStep: card.nextStep || '',
     reminderAt: card.reminderAt || ''
@@ -607,6 +609,7 @@ export function WorkspaceBoardView({
         body: detailDraft.body.trim() || undefined,
         humanOwner: detailDraft.humanOwner.trim() || undefined,
         labels: labelsFromText(detailDraft.labels),
+        link: parseLink(detailDraft.linkValue),
         blockedReason: detailDraft.blockedReason.trim() || undefined,
         nextStep: detailDraft.nextStep.trim() || undefined,
         reminderAt: detailDraft.reminderAt.trim() || undefined
@@ -717,6 +720,7 @@ export function WorkspaceBoardView({
     setError(null)
     try {
       await onUpdateCard(selectedProjected.card.id, { link: undefined })
+      if (detailDraft) setDetailDraft({ ...detailDraft, linkValue: '' })
     } catch (err) {
       setError(formatError(err))
     }
@@ -1082,6 +1086,26 @@ export function WorkspaceBoardView({
                 onChange={(event) => setDetailDraft({ ...detailDraft, labels: event.currentTarget.value })}
                 placeholder="review, frontend"
               />
+            </label>
+            <label className="workspace-board-field">
+              <span>Link</span>
+              <select
+                value={detailDraft.linkValue}
+                onChange={(event) => setDetailDraft({ ...detailDraft, linkValue: event.currentTarget.value })}
+              >
+                <option value="">No link</option>
+                {detailDraft.linkValue &&
+                  !linkOptions.some((option) => option.value === detailDraft.linkValue) && (
+                    <option value={detailDraft.linkValue}>
+                      Current missing link · {selectedProjected.card.link?.kind || 'link'}
+                    </option>
+                  )}
+                {linkOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label} · {option.meta}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="workspace-board-field">
               <span>Next step</span>
