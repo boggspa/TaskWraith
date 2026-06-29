@@ -4,6 +4,10 @@ import { EditorPane } from './FileEditorPane'
 import { FileEditorGitActions } from './FileEditorGitActions'
 import { FileEditorStatusBar } from './FileEditorStatusBar'
 import { EditorTabStrip } from './FileEditorTabStrip'
+import {
+  contextMenuAnchorFromRect,
+  isFileEditorContextMenuKey
+} from './FileEditorUtils'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 
 describe('EditorTabStrip', () => {
@@ -36,8 +40,12 @@ describe('EditorTabStrip', () => {
 
     expect(html).toContain('role="tablist"')
     expect(html).toContain('aria-label="Open editor files"')
-    expect(html).toContain('aria-selected="false" tabindex="-1"')
-    expect(html).toContain('aria-selected="true" tabindex="0"')
+    expect(html).toContain('aria-haspopup="menu"')
+    expect(html).toContain('aria-keyshortcuts="ContextMenu Shift+F10"')
+    expect(html).toContain('aria-selected="false"')
+    expect(html).toContain('tabindex="-1"')
+    expect(html).toContain('aria-selected="true"')
+    expect(html).toContain('tabindex="0"')
     expect(html).toContain('Close src/Editor.tsx')
     expect(html).toContain('file-editor-dirty-dot')
   })
@@ -114,6 +122,8 @@ describe('WorkspaceFileTree', () => {
     expect(html).toContain('aria-label="Workspace file navigator"')
     expect(html).toContain('aria-expanded="true"')
     expect(html).toContain('aria-current="true"')
+    expect(html).toContain('aria-haspopup="menu"')
+    expect(html).toContain('aria-keyshortcuts="ContextMenu Shift+F10"')
     expect(html).toContain('App.tsx')
     expect(html).toContain('2 KB')
   })
@@ -168,5 +178,25 @@ describe('FileEditorStatusBar', () => {
     expect(html).toContain('Ln 12, Col 4 · 9 selected')
     expect(html).toContain('Wrap')
     expect(html).toContain('staged + unstaged')
+  })
+})
+
+describe('file editor keyboard context menu utilities', () => {
+  it('recognizes platform context-menu shortcuts without taking plain F10', () => {
+    expect(isFileEditorContextMenuKey('ContextMenu', false)).toBe(true)
+    expect(isFileEditorContextMenuKey('F10', true)).toBe(true)
+    expect(isFileEditorContextMenuKey('F10', false)).toBe(false)
+    expect(isFileEditorContextMenuKey('Enter', false)).toBe(false)
+  })
+
+  it('places keyboard-opened menus near the focused row or tab', () => {
+    expect(contextMenuAnchorFromRect({ left: 100, top: 40, width: 180, height: 36 })).toEqual({
+      x: 128,
+      y: 64
+    })
+    expect(contextMenuAnchorFromRect({ left: 12, top: 8, width: 6, height: 3 })).toEqual({
+      x: 12,
+      y: 8
+    })
   })
 })

@@ -2,7 +2,9 @@ import { useRef, type KeyboardEvent } from 'react'
 import type { WorkspaceFileEntry } from '../../../main/store/types'
 import { FileTypeIcon } from './FileTypeIcon'
 import {
+  contextMenuAnchorFromRect,
   formatBytes,
+  isFileEditorContextMenuKey,
   parentDirectoryForPath,
   type FileEditorContextMenuAnchor
 } from './FileEditorUtils'
@@ -76,6 +78,16 @@ export function WorkspaceFileTree({
       return
     }
     if (!currentEntry) return
+    if (isFileEditorContextMenuKey(event.key, event.shiftKey)) {
+      event.preventDefault()
+      event.stopPropagation()
+      onContextMenuEntry(
+        currentEntry,
+        contextMenuAnchorFromRect(rows[currentIndex].getBoundingClientRect())
+      )
+      rows[currentIndex]?.focus()
+      return
+    }
     const isExpanded = currentEntry.isDirectory && expandedDirectories.has(currentEntry.path)
     if (event.key === 'ArrowRight' && currentEntry.isDirectory) {
       event.preventDefault()
@@ -157,6 +169,8 @@ export function WorkspaceFileTree({
                 data-file-editor-directory={entry.isDirectory ? 'true' : 'false'}
                 aria-current={selectedPath === entry.path ? 'true' : undefined}
                 aria-expanded={entry.isDirectory && entry.hasChildren ? isExpanded : undefined}
+                aria-haspopup="menu"
+                aria-keyshortcuts="ContextMenu Shift+F10"
                 disabled={isLoading}
                 title={entry.path}
               >

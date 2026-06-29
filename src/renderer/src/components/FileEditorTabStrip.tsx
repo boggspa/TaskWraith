@@ -1,7 +1,9 @@
 import type { KeyboardEvent } from 'react'
 import { FileTypeIcon } from './FileTypeIcon'
 import {
+  contextMenuAnchorFromRect,
   fileNameForPath,
+  isFileEditorContextMenuKey,
   type FileEditorContextMenuAnchor
 } from './FileEditorUtils'
 
@@ -78,9 +80,21 @@ export function EditorTabStrip({
               type="button"
               role="tab"
               aria-selected={isActive}
+              aria-haspopup="menu"
+              aria-keyshortcuts="ContextMenu Shift+F10"
               tabIndex={isActive ? 0 : -1}
               onClick={() => onSelect(buffer.path)}
               onKeyDown={(event) => {
+                if (isFileEditorContextMenuKey(event.key, event.shiftKey)) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  onSelect(buffer.path)
+                  onContextMenuTab(
+                    buffer.path,
+                    contextMenuAnchorFromRect(event.currentTarget.getBoundingClientRect())
+                  )
+                  return
+                }
                 if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
                   selectTabAt(event, (index + 1) % buffers.length)
                   return
