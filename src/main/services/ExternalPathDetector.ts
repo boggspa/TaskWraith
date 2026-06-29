@@ -31,6 +31,10 @@ const FILE_IO_TOOL_CATEGORY: Record<string, 'read' | 'write'> = {
   // Write-side
   write_file: 'write',
   replace: 'write',
+  create_directory: 'write',
+  delete_path: 'write',
+  move_path: 'write',
+  rename_path: 'write',
   edit: 'write',
   edit_file: 'write',
   create_file: 'write',
@@ -85,6 +89,14 @@ function extractPathsFromParams(params: unknown): string[] {
     record.target_file_path,
     record.targetPath,
     record.targetFile,
+    record.from,
+    record.to,
+    record.source,
+    record.destination,
+    record.sourcePath,
+    record.destinationPath,
+    record.fromPath,
+    record.toPath,
     record.cwd,
     record.workdir
   ]

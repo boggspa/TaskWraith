@@ -155,6 +155,10 @@ export function taskWraithToolAgenticService(toolName: string): AgenticServiceId
   if (
     toolName === 'write_file' ||
     toolName === 'replace' ||
+    toolName === 'create_directory' ||
+    toolName === 'delete_path' ||
+    toolName === 'move_path' ||
+    toolName === 'rename_path' ||
     toolName === 'apply_patch' ||
     toolName === 'git_stage' ||
     toolName === 'git_commit'

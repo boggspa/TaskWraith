@@ -43,6 +43,10 @@ export const OLLAMA_PROTECTED_WORKSPACE_PATHS = new Set([
 const OLLAMA_FORCE_PROMPT_TOOLS = new Set([
   'write_file',
   'replace',
+  'create_directory',
+  'delete_path',
+  'move_path',
+  'rename_path',
   'apply_patch',
   'run_shell_command',
   'run_task'
@@ -158,6 +162,26 @@ export function assertOllamaProtectedWritePaths(
   }
   if (toolName === 'write_file' || toolName === 'replace') {
     const targetPath = resolveMcpScopedPath(context, String(args.path || args.file_path || ''))
+    checkRelativePath(formatScopedPath(context, targetPath))
+  }
+  if (toolName === 'create_directory' || toolName === 'delete_path') {
+    const targetPath = resolveMcpScopedPath(
+      context,
+      String(args.path || args.directory || args.file || '')
+    )
+    checkRelativePath(formatScopedPath(context, targetPath))
+  }
+  if (toolName === 'move_path') {
+    for (const rawPath of [
+      args.from || args.source || args.sourcePath || args.path,
+      args.to || args.destination || args.destinationPath || args.target
+    ]) {
+      const targetPath = resolveMcpScopedPath(context, String(rawPath || ''))
+      checkRelativePath(formatScopedPath(context, targetPath))
+    }
+  }
+  if (toolName === 'rename_path') {
+    const targetPath = resolveMcpScopedPath(context, String(args.path || args.from || args.source || ''))
     checkRelativePath(formatScopedPath(context, targetPath))
   }
   if (toolName === 'apply_patch') {

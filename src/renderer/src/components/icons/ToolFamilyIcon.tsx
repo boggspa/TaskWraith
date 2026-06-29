@@ -208,6 +208,14 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     normalised === 'createfile' ||
     normalised === 'delete_file' ||
     normalised === 'deletefile' ||
+    normalised === 'create_directory' ||
+    normalised === 'createdirectory' ||
+    normalised === 'delete_path' ||
+    normalised === 'deletepath' ||
+    normalised === 'move_path' ||
+    normalised === 'movepath' ||
+    normalised === 'rename_path' ||
+    normalised === 'renamepath' ||
     normalised === 'apply_patch' ||
     normalised === 'applypatch' ||
     normalised === 'str_replace' ||

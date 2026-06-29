@@ -498,7 +498,16 @@ function getFileActionLabel(activity: ToolActivity): string {
   )
     return 'Edited'
   if (toolName === 'create_file' || toolName.endsWith('__create_file')) return 'Created'
-  if (toolName === 'delete_file' || toolName.endsWith('__delete_file')) return 'Deleted'
+  if (toolName === 'create_directory' || toolName.endsWith('__create_directory')) return 'Created'
+  if (
+    toolName === 'delete_file' ||
+    toolName === 'delete_path' ||
+    toolName.endsWith('__delete_file') ||
+    toolName.endsWith('__delete_path')
+  )
+    return 'Deleted'
+  if (toolName === 'move_path' || toolName.endsWith('__move_path')) return 'Moved'
+  if (toolName === 'rename_path' || toolName.endsWith('__rename_path')) return 'Renamed'
   if (
     toolName === 'write_file' ||
     toolName === 'write' ||
@@ -521,6 +530,8 @@ function getFileActionLabel(activity: ToolActivity): string {
 function attemptedWriteVerb(activity: ToolActivity): string {
   const toolName = (activity.toolName || '').toLowerCase()
   if (toolName.includes('delete')) return 'delete'
+  if (toolName.includes('move')) return 'move'
+  if (toolName.includes('rename')) return 'rename'
   if (toolName.includes('create')) return 'create'
   if (
     toolName === 'write' ||

@@ -357,6 +357,8 @@ describe('ProviderCapabilities', () => {
       status: { provider: 'ollama', available: true }
     })
     expect(approvedEdits.mcp.tools).toContain('write_file')
+    expect(approvedEdits.mcp.tools).toContain('delete_path')
+    expect(approvedEdits.mcp.tools).toContain('move_path')
     expect(approvedEdits.mcp.tools).toContain('apply_patch')
     expect(approvedEdits.mcp.tools).not.toContain('run_shell_command')
     expect(approvedEdits.tools.fileChanges.state).toBe('gated')

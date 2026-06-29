@@ -174,6 +174,18 @@ function describeTool(toolName: OllamaToolName): string | null {
   if (toolName === 'replace') {
     return '- replace: {"path":"relative/path.txt","old_string":"...","new_string":"...","intent":"short reason before changing files"}'
   }
+  if (toolName === 'create_directory') {
+    return '- create_directory: {"path":"relative/new-dir","intent":"short reason before changing files"}'
+  }
+  if (toolName === 'delete_path') {
+    return '- delete_path: {"path":"relative/file-or-empty-dir","intent":"short reason before deleting"}'
+  }
+  if (toolName === 'move_path') {
+    return '- move_path: {"from":"relative/source","to":"relative/destination","intent":"short reason before moving"}'
+  }
+  if (toolName === 'rename_path') {
+    return '- rename_path: {"path":"relative/source","newName":"new-name.ext","intent":"short reason before renaming"}'
+  }
   if (toolName === 'apply_patch') {
     return '- apply_patch: {"patch":"unified diff","intent":"short reason before changing files"}'
   }

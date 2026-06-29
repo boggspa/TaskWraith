@@ -72,6 +72,88 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'create_directory',
+      description:
+        'Create a directory inside the active TaskWraith workspace after approval.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Workspace-relative directory path.' },
+          recursive: { type: 'boolean', description: 'Create parent directories. Defaults to true.' },
+          intent: { type: 'string', description: 'Short reason for the change.' }
+        },
+        required: ['path']
+      }
+    },
+    {
+      name: 'delete_path',
+      description:
+        'Delete a file or empty directory inside the active TaskWraith workspace after approval. Recursive deletion is not supported.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Workspace-relative file or empty directory path.' },
+          intent: { type: 'string', description: 'Short reason for the deletion.' }
+        },
+        required: ['path']
+      }
+    },
+    {
+      name: 'move_path',
+      description:
+        'Move a file or directory inside the active TaskWraith workspace after approval. Destination overwrite is opt-in.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          from: { type: 'string', description: 'Workspace-relative source path.' },
+          to: { type: 'string', description: 'Workspace-relative destination path.' },
+          overwrite: { type: 'boolean', description: 'Replace an existing destination. Defaults to false.' },
+          createParents: { type: 'boolean', description: 'Create missing destination parent directories. Defaults to false.' },
+          intent: { type: 'string', description: 'Short reason for the move.' }
+        },
+        required: ['from', 'to']
+      }
+    },
+    {
+      name: 'rename_path',
+      description:
+        'Rename a file or directory within its current parent directory inside the active workspace after approval.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Workspace-relative source path.' },
+          newName: { type: 'string', description: 'New basename only, not a path.' },
+          overwrite: { type: 'boolean', description: 'Replace an existing destination. Defaults to false.' },
+          intent: { type: 'string', description: 'Short reason for the rename.' }
+        },
+        required: ['path', 'newName']
+      }
+    },
+    {
       name: 'read_file',
       description:
         'Read a UTF-8 text file inside the active TaskWraith workspace after tool policy allows it.',

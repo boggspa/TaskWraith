@@ -44,6 +44,12 @@ describe('Ollama tool policy', () => {
       })
     ).not.toThrow()
     expect(() =>
+      assertOllamaMutationIntent('move_path', {
+        from: 'old.md',
+        to: 'new.md'
+      })
+    ).toThrow(/requires an intent or summary/)
+    expect(() =>
       assertOllamaMutationIntent('run_shell_command', {
         command: 'npm test',
         summary: 'Run the focused test suite.'
@@ -62,6 +68,14 @@ describe('Ollama tool policy', () => {
     ).toThrow(/environment\/secret files are protected/)
     expect(() =>
       assertOllamaProtectedWritePaths(
+        'move_path',
+        { from: 'notes/ok.md', to: '.github/workflows/ci.yml' },
+        context,
+        workspace
+      )
+    ).toThrow(/CI\/workflow configuration is protected/)
+    expect(() =>
+      assertOllamaProtectedWritePaths(
         'apply_patch',
         { patch: samplePatch('.github/workflows/ci.yml') },
         context,
@@ -73,6 +87,14 @@ describe('Ollama tool policy', () => {
   it('rejects path escapes while allowing ordinary workspace edits', () => {
     expect(() =>
       assertOllamaProtectedWritePaths('write_file', { path: 'notes/ok.md' }, context, workspace)
+    ).not.toThrow()
+    expect(() =>
+      assertOllamaProtectedWritePaths(
+        'rename_path',
+        { path: 'notes/ok.md', newName: 'renamed.md' },
+        context,
+        workspace
+      )
     ).not.toThrow()
     expect(() =>
       assertOllamaProtectedWritePaths('apply_patch', { patch: samplePatch('src/ok.ts') }, context, workspace)
@@ -119,6 +141,8 @@ describe('Ollama tool policy', () => {
 
   it('forces per-call modals for Tier 2 and Tier 3 mutation requests', () => {
     expect(ollamaToolRequiresModalApproval('write_file', 'approved_edits')).toBe(true)
+    expect(ollamaToolRequiresModalApproval('delete_path', 'approved_edits')).toBe(true)
+    expect(ollamaToolRequiresModalApproval('move_path', 'approved_edits')).toBe(true)
     expect(ollamaToolRequiresModalApproval('apply_patch', 'approved_edits')).toBe(true)
     expect(ollamaToolRequiresModalApproval('run_shell_command', 'approved_shell')).toBe(true)
     expect(ollamaToolRequiresModalApproval('run_task', 'approved_shell')).toBe(true)

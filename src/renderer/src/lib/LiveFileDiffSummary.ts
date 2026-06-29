@@ -49,6 +49,10 @@ const WRITE_LIKE_TOOL_NAMES = new Set([
   'create_file',
   'edit_file',
   'delete_file',
+  'create_directory',
+  'delete_path',
+  'move_path',
+  'rename_path',
   'edit',
   'write',
   'multiedit',
@@ -59,9 +63,9 @@ const WRITE_LIKE_TOOL_NAMES = new Set([
   'strreplaceeditor'
 ])
 
-const CREATE_HINT_TOOL_NAMES = new Set(['create_file', 'write_file', 'write'])
+const CREATE_HINT_TOOL_NAMES = new Set(['create_file', 'create_directory', 'write_file', 'write'])
 
-const DELETE_HINT_TOOL_NAMES = new Set(['delete_file'])
+const DELETE_HINT_TOOL_NAMES = new Set(['delete_file', 'delete_path'])
 
 const STATUS_PRIORITY: Record<DiffFileStatus, number> = {
   created: 3,
@@ -99,6 +103,10 @@ function looksWriteLike(toolName: string): boolean {
   if (normalised.endsWith('__replace')) return true
   if (normalised.endsWith('__create_file')) return true
   if (normalised.endsWith('__edit_file')) return true
+  if (normalised.endsWith('__create_directory')) return true
+  if (normalised.endsWith('__delete_path')) return true
+  if (normalised.endsWith('__move_path')) return true
+  if (normalised.endsWith('__rename_path')) return true
   if (normalised.endsWith('__edit')) return true
   if (normalised.endsWith('__apply_patch')) return true
   return false
@@ -116,6 +124,7 @@ function statusFromToolName(toolName: string): DiffFileStatus | null {
   const name = (toolName || '').toLowerCase()
   if (CREATE_HINT_TOOL_NAMES.has(name)) return 'created'
   if (DELETE_HINT_TOOL_NAMES.has(name)) return 'deleted'
+  if (name === 'move_path' || name === 'rename_path') return 'renamed'
   return null
 }
 

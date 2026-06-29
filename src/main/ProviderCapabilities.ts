@@ -789,7 +789,15 @@ export function buildProviderCapabilityContract({
     const ollamaTier = effectiveOllamaToolControlTier(settings, workspacePath)
     const ollamaTierTools = ollamaToolNamesForTier(ollamaTier)
     const ollamaFileTools = ollamaTierTools.filter((tool) =>
-      ['write_file', 'replace', 'apply_patch'].includes(tool)
+      [
+        'write_file',
+        'replace',
+        'create_directory',
+        'delete_path',
+        'move_path',
+        'rename_path',
+        'apply_patch'
+      ].includes(tool)
     )
     const ollamaShellTools = ollamaTierTools.filter((tool) => tool === 'run_shell_command')
     mcp = ollamaLocalMcpCapability({
@@ -892,7 +900,15 @@ export function buildProviderCapabilityContract({
           'fileChanges',
           services.fileChanges,
           'bridge',
-          ['write_file', 'replace', 'apply_patch'],
+          [
+            'write_file',
+            'replace',
+            'create_directory',
+            'delete_path',
+            'move_path',
+            'rename_path',
+            'apply_patch'
+          ],
           `${label} should use the TaskWraith MCP bridge for workspace file changes.`
         )
       : delegatedCapability(

@@ -354,6 +354,14 @@ const WRITE_LIKE_TOOL_NAMES = new Set([
   'editfile',
   'delete_file',
   'deletefile',
+  'create_directory',
+  'createdirectory',
+  'delete_path',
+  'deletepath',
+  'move_path',
+  'movepath',
+  'rename_path',
+  'renamepath',
   'edit',
   'write',
   'multiedit',
@@ -378,6 +386,10 @@ export function isWriteLikeToolName(toolName: string): boolean {
   if (name.endsWith('__create_file')) return true
   if (name.endsWith('__edit_file')) return true
   if (name.endsWith('__delete_file')) return true
+  if (name.endsWith('__create_directory')) return true
+  if (name.endsWith('__delete_path')) return true
+  if (name.endsWith('__move_path')) return true
+  if (name.endsWith('__rename_path')) return true
   if (name.endsWith('__edit')) return true
   if (name.endsWith('__write')) return true
   if (name.endsWith('__apply_patch')) return true
@@ -559,6 +571,20 @@ export function getToolDisplayName(toolName: string, parameters?: Record<string,
   const unqualifiedName = stripToolNamespace((toolName || '').toLowerCase())
   const params = parameters || {}
   const filePath = (params.file_path as string) || (params.path as string) || ''
+  const sourcePath =
+    (params.from as string) ||
+    (params.source as string) ||
+    (params.sourcePath as string) ||
+    (params.source_path as string) ||
+    filePath
+  const destinationPath =
+    (params.to as string) ||
+    (params.destination as string) ||
+    (params.destinationPath as string) ||
+    (params.destination_path as string) ||
+    (params.target as string) ||
+    ''
+  const newName = (params.newName as string) || (params.name as string) || ''
   const beforePath =
     (params.before_path as string) ||
     (params.beforePath as string) ||
@@ -663,6 +689,24 @@ export function getToolDisplayName(toolName: string, parameters?: Record<string,
       if (name === 'delete_file' || name === 'deletefile' || name.endsWith('__delete_file')) {
         return filePath ? `Deleted ${filePath}` : 'Deleted file'
       }
+      if (
+        name === 'create_directory' ||
+        name === 'createdirectory' ||
+        name.endsWith('__create_directory')
+      ) {
+        return filePath ? `Created directory ${filePath}` : 'Created directory'
+      }
+      if (name === 'delete_path' || name === 'deletepath' || name.endsWith('__delete_path')) {
+        return filePath ? `Deleted ${filePath}` : 'Deleted path'
+      }
+      if (name === 'move_path' || name === 'movepath' || name.endsWith('__move_path')) {
+        return sourcePath && destinationPath
+          ? `Moved ${sourcePath} -> ${destinationPath}`
+          : 'Moved path'
+      }
+      if (name === 'rename_path' || name === 'renamepath' || name.endsWith('__rename_path')) {
+        return sourcePath && newName ? `Renamed ${sourcePath} -> ${newName}` : 'Renamed path'
+      }
       return filePath ? `Wrote ${filePath}` : 'Wrote file'
     }
     case 'search': {
@@ -751,7 +795,10 @@ function normalizeStatus(value: unknown): ToolDiffFileSummary['status'] {
     return 'created'
   if (status === 'delete' || status === 'deleted' || status === 'remove' || status === 'removed')
     return 'deleted'
-  if (status === 'rename' || status === 'renamed') return 'renamed'
+  if (status === 'rename' || status === 'renamed' || status === 'move' || status === 'moved')
+    return 'renamed'
+  if (status === 'mkdir' || status === 'directory' || status === 'create_directory')
+    return 'created'
   if (status === 'modify' || status === 'modified' || status === 'edit' || status === 'update')
     return 'modified'
   return status ? (status as DiffFileStatus | 'updated' | 'unknown') : 'unknown'
@@ -762,6 +809,14 @@ function getPathFromRecord(record: Record<string, unknown>): string | undefined 
     stringValue(record.path) ||
     stringValue(record.filePath) ||
     stringValue(record.file_path) ||
+    stringValue(record.from) ||
+    stringValue(record.source) ||
+    stringValue(record.sourcePath) ||
+    stringValue(record.source_path) ||
+    stringValue(record.to) ||
+    stringValue(record.destination) ||
+    stringValue(record.destinationPath) ||
+    stringValue(record.destination_path) ||
     stringValue(record.target) ||
     stringValue(record.target_file) ||
     stringValue(record.target_file_path)
@@ -959,7 +1014,7 @@ export function createToolActivity(toolUseEvent: any): ToolActivity {
   // name-based resolution when no usable kind is present.
   const category = mapToolKindToCategory(extractToolKind(toolUseEvent)) ?? getToolCategory(toolName)
   const displayName = getToolDisplayName(toolName, parameters)
-  const filePath = (parameters.file_path as string) || (parameters.path as string) || undefined
+  const filePath = getPathFromRecord(parameters)
   const parentToolCallId = extractParentToolCallId(toolUseEvent)
   const provider = extractToolProvider(toolUseEvent)
 

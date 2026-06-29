@@ -33,6 +33,10 @@ export const OLLAMA_READ_TOOL_NAMES = [
 export const OLLAMA_FILE_EDIT_TOOL_NAMES = [
   'write_file',
   'replace',
+  'create_directory',
+  'delete_path',
+  'move_path',
+  'rename_path',
   'apply_patch'
 ] as const satisfies readonly OllamaToolName[]
 

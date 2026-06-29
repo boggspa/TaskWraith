@@ -1090,6 +1090,29 @@ function getEnsembleToolDisplayName(
     return path ? `Listed ${path}` : 'Listed directory'
   }
   if (FILE_WRITE_TOOL_NAMES.has(name)) {
+    if (name === 'move_path') {
+      const source = getStringParameter(parameters, ['from', 'source', 'sourcePath', 'path'])
+      const destination = getStringParameter(parameters, [
+        'to',
+        'destination',
+        'destinationPath',
+        'target'
+      ])
+      return source && destination ? `Moved ${source} -> ${destination}` : 'Moved path'
+    }
+    if (name === 'rename_path') {
+      const path = getStringParameter(parameters, ['file_path', 'path', 'from', 'source'])
+      const newName = getStringParameter(parameters, ['newName', 'name'])
+      return path && newName ? `Renamed ${path} -> ${newName}` : 'Renamed path'
+    }
+    if (name === 'create_directory') {
+      const path = getStringParameter(parameters, ['file_path', 'path', 'directory'])
+      return path ? `Created directory ${path}` : 'Created directory'
+    }
+    if (name === 'delete_path') {
+      const path = getStringParameter(parameters, ['file_path', 'path', 'directory', 'file'])
+      return path ? `Deleted ${path}` : 'Deleted path'
+    }
     const path = getStringParameter(parameters, ['file_path', 'path'])
     return path ? `Edited ${path}` : 'Edited file'
   }
@@ -1117,7 +1140,10 @@ const FILE_WRITE_TOOL_NAMES = new Set([
   'fs_write',
   'fs_edit',
   'fs_patch',
-  'create_directory'
+  'create_directory',
+  'delete_path',
+  'move_path',
+  'rename_path'
 ])
 
 function singleDiffFilePath(

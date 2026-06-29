@@ -44,6 +44,20 @@ describe('detectExternalPath', () => {
     })
   })
 
+  it('returns needsPrompt=true for lifecycle destination paths outside the workspace', () => {
+    const result = detectExternalPath({
+      toolName: 'move_path',
+      params: { from: '/Users/me/code/proj/src/a.ts', to: '/tmp/a.ts' },
+      workspacePath: '/Users/me/code/proj'
+    })
+    expect(result).toEqual({
+      needsPrompt: true,
+      path: '/tmp/a.ts',
+      access: 'write',
+      basename: 'a.ts'
+    })
+  })
+
   it('returns needsPrompt=false for read_file INSIDE the workspace', () => {
     expect(
       detectExternalPath({

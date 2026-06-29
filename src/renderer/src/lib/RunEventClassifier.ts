@@ -35,6 +35,10 @@ const FILE_EDIT_TOOL_NAMES = new Set([
   'edit_file',
   'create_file',
   'delete_file',
+  'create_directory',
+  'delete_path',
+  'move_path',
+  'rename_path',
   'replace',
   'write_file',
   'apply_patch',
@@ -79,6 +83,10 @@ function extractFilePaths(payload: Record<string, unknown>): string[] {
   collectPath(payload.file_path, paths)
   collectPath(payload.targetPath, paths)
   collectPath(payload.target_path, paths)
+  collectPath(payload.from, paths)
+  collectPath(payload.to, paths)
+  collectPath(payload.source, paths)
+  collectPath(payload.destination, paths)
 
   const parameters = isRecord(payload.parameters) ? payload.parameters : undefined
   if (parameters) {
@@ -87,6 +95,10 @@ function extractFilePaths(payload: Record<string, unknown>): string[] {
     collectPath(parameters.file_path, paths)
     collectPath(parameters.targetPath, paths)
     collectPath(parameters.target_path, paths)
+    collectPath(parameters.from, paths)
+    collectPath(parameters.to, paths)
+    collectPath(parameters.source, paths)
+    collectPath(parameters.destination, paths)
     collectChanges(parameters.changes, paths)
   }
 

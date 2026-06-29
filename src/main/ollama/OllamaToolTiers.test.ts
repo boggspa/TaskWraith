@@ -6,7 +6,8 @@ import {
   effectiveOllamaToolControlTier,
   isOllamaToolControlTier,
   ollamaProviderParityWorkspaceGranted,
-  ollamaToolNamesForTier
+  ollamaToolNamesForTier,
+  ollamaToolRequiresIntent
 } from './OllamaToolTiers'
 
 function settingsWith(
@@ -193,6 +194,10 @@ describe('ollamaToolNamesForTier (edit-tool gating sanity)', () => {
     expect(names).toEqual(expect.arrayContaining(['git_log', 'git_show', 'git_blame']))
     expect(names).not.toContain('write_file')
     expect(names).not.toContain('replace')
+    expect(names).not.toContain('create_directory')
+    expect(names).not.toContain('delete_path')
+    expect(names).not.toContain('move_path')
+    expect(names).not.toContain('rename_path')
     expect(names).not.toContain('apply_patch')
   })
 
@@ -201,7 +206,13 @@ describe('ollamaToolNamesForTier (edit-tool gating sanity)', () => {
       const names = ollamaToolNamesForTier(tier)
       expect(names).toContain('write_file')
       expect(names).toContain('replace')
+      expect(names).toContain('create_directory')
+      expect(names).toContain('delete_path')
+      expect(names).toContain('move_path')
+      expect(names).toContain('rename_path')
       expect(names).toContain('apply_patch')
     }
+    expect(ollamaToolRequiresIntent('move_path')).toBe(true)
+    expect(ollamaToolRequiresIntent('delete_path')).toBe(true)
   })
 })

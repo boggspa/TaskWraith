@@ -7252,6 +7252,10 @@ function formatScopedPath(context: GeminiToolContext, targetPath: string): strin
 const WORKSPACE_WIDE_WRITE_LOCK_TOOLS = new Set<string>([
   'run_shell_command',
   'apply_patch',
+  'create_directory',
+  'delete_path',
+  'move_path',
+  'rename_path',
   'run_task',
   'git_stage',
   'git_commit'
@@ -7543,6 +7547,56 @@ function previewForGeminiMcpTool(
         changes: [{ kind: toolName === 'write_file' ? 'write' : 'replace', path: previewPath }],
         ...intentPreview,
         patchPreview
+      }
+    }
+  }
+
+  if (
+    toolName === 'create_directory' ||
+    toolName === 'delete_path' ||
+    toolName === 'move_path' ||
+    toolName === 'rename_path'
+  ) {
+    const previewPath = (rawPath: unknown): string => {
+      const filePath = typeof rawPath === 'string' ? rawPath : ''
+      return filePath ? previewGeminiMcpPath(context, filePath) : ''
+    }
+    const source = previewPath(
+      args.path || args.from || args.source || args.sourcePath || args.directory || args.file
+    )
+    const destination = previewPath(args.to || args.destination || args.destinationPath || args.target)
+    const newName = optionalString(args.newName || args.name)
+    const actionLabel =
+      toolName === 'create_directory'
+        ? 'directory create'
+        : toolName === 'delete_path'
+          ? 'path delete'
+          : toolName === 'move_path'
+            ? 'path move'
+            : 'path rename'
+    const changes =
+      toolName === 'move_path'
+        ? [
+            { kind: 'move', path: source },
+            { kind: 'move', path: destination }
+          ]
+        : toolName === 'rename_path'
+          ? [{ kind: 'rename', path: `${source} -> ${newName || ''}`.trim() }]
+          : [{ kind: toolName === 'delete_path' ? 'delete' : 'mkdir', path: source }]
+    const detail =
+      toolName === 'move_path'
+        ? `${source} -> ${destination}`
+        : toolName === 'rename_path'
+          ? `${source} -> ${newName || ''}`
+          : source
+    return {
+      title: `Approve ${providerName} ${actionLabel}`,
+      body: `${intentBody}${detail || toolName}`,
+      service: 'fileChanges' as AgenticServiceId,
+      preview: {
+        kind: 'fileChange',
+        changes,
+        ...intentPreview
       }
     }
   }
@@ -14513,6 +14567,10 @@ async function executeOllamaLocalTool(
       request.toolName === 'web_fetch' ||
       request.toolName === 'write_file' ||
       request.toolName === 'replace' ||
+      request.toolName === 'create_directory' ||
+      request.toolName === 'delete_path' ||
+      request.toolName === 'move_path' ||
+      request.toolName === 'rename_path' ||
       request.toolName === 'apply_patch' ||
       request.toolName === 'run_shell_command' ||
       request.toolName === 'run_task' ||

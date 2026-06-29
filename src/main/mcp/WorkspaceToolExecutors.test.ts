@@ -1,10 +1,16 @@
 import { resolve } from 'node:path'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import {
+  executeCreateDirectory,
+  executeDeletePath,
   executeFindFiles,
   executeGitBlame,
   executeGitLog,
   executeGitShow,
+  executeMovePath,
+  executeRenamePath,
   resolveMcpScopedPath,
   type HostCommandResult,
   type WorkspaceToolExecutorDependencies
@@ -159,6 +165,122 @@ describe('executeFindFiles', () => {
         workspace
       )
     ).rejects.toThrow('Path is outside the workspace.')
+  })
+})
+
+describe('file lifecycle workspace tools', () => {
+  async function withWorkspace<T>(fn: (workspace: string) => Promise<T>): Promise<T> {
+    const workspace = await mkdtemp(resolve(tmpdir(), 'taskwraith-mcp-lifecycle-'))
+    try {
+      return await fn(workspace)
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  }
+
+  it('creates directories inside the active workspace only', async () => {
+    await withWorkspace(async (workspace) => {
+      const context = { scope: 'workspace' as const, cwd: workspace, workspacePath: workspace }
+      const result = await executeCreateDirectory({ path: 'src/generated' }, context)
+
+      expect(result).toMatchObject({
+        ok: true,
+        tool: 'create_directory',
+        path: 'src/generated',
+        created: true
+      })
+      await expect(executeCreateDirectory({ path: '../outside' }, context)).rejects.toThrow(
+        'Path is outside the workspace.'
+      )
+    })
+  })
+
+  it('deletes files and empty directories without recursive removal', async () => {
+    await withWorkspace(async (workspace) => {
+      const context = { scope: 'workspace' as const, cwd: workspace, workspacePath: workspace }
+      await mkdir(resolve(workspace, 'empty'))
+      await mkdir(resolve(workspace, 'nonempty'))
+      await writeFile(resolve(workspace, 'note.txt'), 'hello')
+      await writeFile(resolve(workspace, 'nonempty', 'child.txt'), 'nope')
+
+      await expect(executeDeletePath({ path: 'nonempty' }, context)).rejects.toThrow()
+      await expect(readFile(resolve(workspace, 'nonempty', 'child.txt'), 'utf8')).resolves.toBe(
+        'nope'
+      )
+
+      await expect(executeDeletePath({ path: 'note.txt' }, context)).resolves.toMatchObject({
+        ok: true,
+        kind: 'file',
+        path: 'note.txt'
+      })
+      await expect(executeDeletePath({ path: 'empty' }, context)).resolves.toMatchObject({
+        ok: true,
+        kind: 'directory',
+        path: 'empty'
+      })
+    })
+  })
+
+  it('moves paths with explicit overwrite and optional parent creation', async () => {
+    await withWorkspace(async (workspace) => {
+      const context = { scope: 'workspace' as const, cwd: workspace, workspacePath: workspace }
+      await writeFile(resolve(workspace, 'from.txt'), 'from')
+      await writeFile(resolve(workspace, 'existing.txt'), 'existing')
+
+      await expect(
+        executeMovePath({ from: 'from.txt', to: 'existing.txt' }, context)
+      ).rejects.toThrow('destination already exists')
+
+      await expect(
+        executeMovePath(
+          { from: 'from.txt', to: 'nested/to.txt', createParents: true, overwrite: false },
+          context
+        )
+      ).resolves.toMatchObject({
+        ok: true,
+        tool: 'move_path',
+        from: 'from.txt',
+        to: 'nested/to.txt',
+        kind: 'file'
+      })
+      await expect(readFile(resolve(workspace, 'nested/to.txt'), 'utf8')).resolves.toBe('from')
+
+      await writeFile(resolve(workspace, 'replacement.txt'), 'replacement')
+      await expect(
+        executeMovePath(
+          { from: 'replacement.txt', to: 'nested/to.txt', overwrite: true },
+          context
+        )
+      ).resolves.toMatchObject({ overwritten: true })
+      await expect(readFile(resolve(workspace, 'nested/to.txt'), 'utf8')).resolves.toBe(
+        'replacement'
+      )
+    })
+  })
+
+  it('renames within the same directory and rejects path-shaped names/global scope', async () => {
+    await withWorkspace(async (workspace) => {
+      const context = { scope: 'workspace' as const, cwd: workspace, workspacePath: workspace }
+      await writeFile(resolve(workspace, 'old.txt'), 'content')
+
+      await expect(
+        executeRenamePath({ path: 'old.txt', newName: '../bad.txt' }, context)
+      ).rejects.toThrow('newName must be a basename')
+
+      await expect(
+        executeRenamePath({ path: 'old.txt', newName: 'new.txt' }, context)
+      ).resolves.toMatchObject({
+        ok: true,
+        tool: 'rename_path',
+        from: 'old.txt',
+        to: 'new.txt'
+      })
+      await expect(readFile(resolve(workspace, 'new.txt'), 'utf8')).resolves.toBe('content')
+
+      await expect(
+        executeDeletePath({ path: 'new.txt' }, { scope: 'global', cwd: workspace })
+      ).rejects.toThrow('This tool requires an active workspace.')
+    })
   })
 })
 

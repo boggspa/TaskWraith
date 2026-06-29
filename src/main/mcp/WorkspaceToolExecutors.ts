@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import fsSync from 'node:fs'
 import fs from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import { isPathInsideWorkspace } from '../AgenticPolicy'
 import { getSubThreadResumeSessionId as defaultGetSubThreadResumeSessionId } from '../SubThreadRecall'
@@ -71,6 +71,10 @@ export const WORKSPACE_MCP_TOOL_NAMES = [
   'find_files',
   'workspace_search',
   'apply_patch',
+  'create_directory',
+  'delete_path',
+  'move_path',
+  'rename_path',
   'git_status',
   'git_diff',
   'git_log',
@@ -107,6 +111,22 @@ export interface WorkspaceToolExecutors {
     args: Record<string, any>,
     context: WorkspaceToolContext,
     cwd: string
+  ) => Promise<unknown>
+  executeCreateDirectory: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext
+  ) => Promise<unknown>
+  executeDeletePath: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext
+  ) => Promise<unknown>
+  executeMovePath: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext
+  ) => Promise<unknown>
+  executeRenamePath: (
+    args: Record<string, any>,
+    context: WorkspaceToolContext
   ) => Promise<unknown>
   executeGitStatus: (cwd: string) => Promise<unknown>
   executeGitDiff: (
@@ -189,6 +209,10 @@ export function createWorkspaceToolExecutors(
     executeFindFiles: (args, context, cwd) => executeFindFiles(deps, args, context, cwd),
     executeWorkspaceSearch: (args, context, cwd) => executeWorkspaceSearch(deps, args, context, cwd),
     executeApplyPatch: (args, context, cwd) => executeApplyPatch(deps, args, context, cwd),
+    executeCreateDirectory: (args, context) => executeCreateDirectory(args, context),
+    executeDeletePath: (args, context) => executeDeletePath(args, context),
+    executeMovePath: (args, context) => executeMovePath(args, context),
+    executeRenamePath: (args, context) => executeRenamePath(args, context),
     executeGitStatus: (cwd) => executeGitStatus(deps, cwd),
     executeGitDiff: (args, context, cwd) => executeGitDiff(deps, args, context, cwd),
     executeGitLog: (args, context, cwd) => executeGitLog(deps, args, context, cwd),
@@ -224,6 +248,22 @@ export async function executeWorkspaceMcpTool(
   }
   if (toolName === 'apply_patch') {
     const result = await executeApplyPatch(deps, args, context, cwd)
+    return { result, isError: result.ok === false }
+  }
+  if (toolName === 'create_directory') {
+    const result = await executeCreateDirectory(args, context)
+    return { result, isError: result.ok === false }
+  }
+  if (toolName === 'delete_path') {
+    const result = await executeDeletePath(args, context)
+    return { result, isError: result.ok === false }
+  }
+  if (toolName === 'move_path') {
+    const result = await executeMovePath(args, context)
+    return { result, isError: result.ok === false }
+  }
+  if (toolName === 'rename_path') {
+    const result = await executeRenamePath(args, context)
     return { result, isError: result.ok === false }
   }
   if (toolName === 'git_status') {
@@ -439,6 +479,104 @@ export async function executeApplyPatch(
   } finally {
     await fs.rm(patchPath, { force: true }).catch(() => {})
   }
+}
+
+export async function executeCreateDirectory(
+  args: Record<string, any>,
+  context: WorkspaceToolContext
+) {
+  const targetPath = resolveMcpWorkspacePath(
+    context,
+    requireNonEmptyString(args.path || args.directory, 'Path')
+  )
+  const recursive = args.recursive !== false
+  await assertNearestExistingParentInsideWorkspace(context, targetPath)
+  const existedBefore = await pathExists(targetPath)
+  if (existedBefore) {
+    const lstat = await fs.lstat(targetPath)
+    if (lstat.isSymbolicLink()) throw new Error('Symbolic links cannot be managed by create_directory.')
+    if (!lstat.isDirectory()) throw new Error('Target path exists and is not a directory.')
+  } else {
+    await fs.mkdir(targetPath, { recursive })
+  }
+  return {
+    ok: true,
+    tool: 'create_directory',
+    path: workspaceRelativeForContext(context, targetPath),
+    created: !existedBefore,
+    recursive
+  }
+}
+
+export async function executeDeletePath(args: Record<string, any>, context: WorkspaceToolContext) {
+  const targetPath = resolveMcpWorkspacePath(
+    context,
+    requireNonEmptyString(args.path || args.file || args.directory, 'Path')
+  )
+  const lstat = await fs.lstat(targetPath)
+  if (lstat.isSymbolicLink()) throw new Error('Symbolic links cannot be deleted by delete_path.')
+  if (lstat.isDirectory()) {
+    await fs.rmdir(targetPath)
+    return {
+      ok: true,
+      tool: 'delete_path',
+      path: workspaceRelativeForContext(context, targetPath),
+      kind: 'directory',
+      deleted: true
+    }
+  }
+  if (!lstat.isFile()) throw new Error('Selected path is not a file or directory.')
+  await fs.unlink(targetPath)
+  return {
+    ok: true,
+    tool: 'delete_path',
+    path: workspaceRelativeForContext(context, targetPath),
+    kind: 'file',
+    deleted: true
+  }
+}
+
+export async function executeMovePath(args: Record<string, any>, context: WorkspaceToolContext) {
+  const sourcePath = resolveMcpWorkspacePath(
+    context,
+    requireNonEmptyString(args.from || args.source || args.sourcePath || args.path, 'Source path')
+  )
+  const destinationPath = resolveMcpWorkspacePath(
+    context,
+    requireNonEmptyString(
+      args.to || args.destination || args.destinationPath || args.target,
+      'Destination path'
+    )
+  )
+  return moveWorkspacePath({
+    context,
+    sourcePath,
+    destinationPath,
+    overwrite: args.overwrite === true,
+    createParents: args.createParents === true,
+    tool: 'move_path'
+  })
+}
+
+export async function executeRenamePath(args: Record<string, any>, context: WorkspaceToolContext) {
+  const sourcePath = resolveMcpWorkspacePath(
+    context,
+    requireNonEmptyString(args.path || args.from || args.source, 'Path')
+  )
+  const newName = requireNonEmptyString(args.newName || args.name, 'New name')
+  if (newName.includes('/') || newName.includes('\\') || newName === '.' || newName === '..') {
+    throw new Error('rename_path newName must be a basename, not a path.')
+  }
+  const destinationPath = resolve(dirname(sourcePath), newName)
+  assertPathInsideWorkspaceContext(context, destinationPath)
+  return moveWorkspacePath({
+    context,
+    sourcePath,
+    destinationPath,
+    overwrite: args.overwrite === true,
+    createParents: false,
+    tool: 'rename_path'
+  })
 }
 
 export async function executeGitStatus(deps: WorkspaceToolExecutorDependencies, cwd: string) {
@@ -1067,6 +1205,17 @@ export function resolveMcpScopedPath(
   return resolveMcpPath(context.workspacePath || context.cwd, filePath, options)
 }
 
+export function resolveMcpWorkspacePath(
+  context: WorkspaceToolContext,
+  filePath: string,
+  options: { allowWorkspaceRoot?: boolean } = {}
+): string {
+  if (context.scope !== 'workspace') {
+    throw new Error('This tool requires an active workspace.')
+  }
+  return resolveMcpScopedPath(context, filePath, options)
+}
+
 export function formatScopedPath(context: WorkspaceToolContext, targetPath: string): string {
   if (context.scope === 'global') return resolve(targetPath)
   const workspaceRoot = resolve(context.workspacePath || context.cwd)
@@ -1084,6 +1233,140 @@ export function workspaceRelativeForContext(
     return formatScopedPath(context, resolve(filePath))
   } catch {
     return filePath
+  }
+}
+
+async function moveWorkspacePath(input: {
+  context: WorkspaceToolContext
+  sourcePath: string
+  destinationPath: string
+  overwrite: boolean
+  createParents: boolean
+  tool: 'move_path' | 'rename_path'
+}) {
+  const { context, sourcePath, destinationPath, overwrite, createParents, tool } = input
+  if (resolve(sourcePath) === resolve(destinationPath)) {
+    throw new Error(`${tool} source and destination must be different.`)
+  }
+  const sourceStat = await fs.lstat(sourcePath)
+  if (sourceStat.isSymbolicLink()) throw new Error(`Symbolic links cannot be moved by ${tool}.`)
+  if (!sourceStat.isFile() && !sourceStat.isDirectory()) {
+    throw new Error(`${tool} source must be a file or directory.`)
+  }
+  const destinationParent = dirname(destinationPath)
+  if (createParents) {
+    await assertNearestExistingParentInsideWorkspace(context, destinationParent)
+    await fs.mkdir(destinationParent, { recursive: true })
+  } else {
+    await assertDirectoryInsideWorkspace(context, destinationParent)
+  }
+  const destinationExists = await pathExists(destinationPath)
+  if (destinationExists) {
+    if (!overwrite) throw new Error(`${tool} destination already exists.`)
+    const destinationStat = await fs.lstat(destinationPath)
+    if (destinationStat.isSymbolicLink()) {
+      throw new Error(`${tool} will not overwrite a symbolic link.`)
+    }
+    if (destinationStat.isDirectory()) {
+      await fs.rmdir(destinationPath)
+    } else if (destinationStat.isFile()) {
+      await fs.unlink(destinationPath)
+    } else {
+      throw new Error(`${tool} destination is not a file or directory.`)
+    }
+  }
+  await fs.rename(sourcePath, destinationPath)
+  return {
+    ok: true,
+    tool,
+    from: workspaceRelativeForContext(context, sourcePath),
+    to: workspaceRelativeForContext(context, destinationPath),
+    kind: sourceStat.isDirectory() ? 'directory' : 'file',
+    overwritten: destinationExists,
+    createParents
+  }
+}
+
+async function assertDirectoryInsideWorkspace(
+  context: WorkspaceToolContext,
+  directoryPath: string
+): Promise<void> {
+  assertPathInsideWorkspaceContext(context, directoryPath, { allowWorkspaceRoot: true })
+  const lstat = await fs.lstat(directoryPath)
+  if (lstat.isSymbolicLink()) throw new Error('Destination parent is a symbolic link.')
+  if (!lstat.isDirectory()) throw new Error('Destination parent is not a directory.')
+  await assertRealPathInsideWorkspace(context, directoryPath)
+}
+
+async function assertNearestExistingParentInsideWorkspace(
+  context: WorkspaceToolContext,
+  targetPath: string
+): Promise<void> {
+  assertPathInsideWorkspaceContext(context, targetPath, { allowWorkspaceRoot: true })
+  let cursor = dirname(targetPath)
+  while (true) {
+    assertPathInsideWorkspaceContext(context, cursor, { allowWorkspaceRoot: true })
+    try {
+      const lstat = await fs.lstat(cursor)
+      if (lstat.isSymbolicLink()) throw new Error('Path parent is a symbolic link.')
+      if (!lstat.isDirectory()) throw new Error('Path parent is not a directory.')
+      await assertRealPathInsideWorkspace(context, cursor)
+      return
+    } catch (error) {
+      if (!isNodeErrnoException(error) || error.code !== 'ENOENT') throw error
+      const next = dirname(cursor)
+      if (next === cursor) throw error
+      cursor = next
+    }
+  }
+}
+
+async function assertRealPathInsideWorkspace(
+  context: WorkspaceToolContext,
+  targetPath: string
+): Promise<void> {
+  const workspaceRoot = resolve(context.workspacePath || context.cwd)
+  const [realWorkspace, realTarget] = await Promise.all([
+    fs.realpath(workspaceRoot),
+    fs.realpath(targetPath)
+  ])
+  if (!isPathInsideWorkspace(realWorkspace, realTarget)) {
+    throw new Error('Path resolves outside the workspace.')
+  }
+}
+
+function assertPathInsideWorkspaceContext(
+  context: WorkspaceToolContext,
+  targetPath: string,
+  options: { allowWorkspaceRoot?: boolean } = {}
+): void {
+  if (context.scope !== 'workspace') {
+    throw new Error('This tool requires an active workspace.')
+  }
+  const workspaceRoot = resolve(context.workspacePath || context.cwd)
+  const resolvedTarget = resolve(targetPath)
+  if (
+    !options.allowWorkspaceRoot &&
+    (resolvedTarget === workspaceRoot || !isPathInsideWorkspace(workspaceRoot, resolvedTarget))
+  ) {
+    throw new Error('Path is outside the workspace.')
+  }
+  if (
+    options.allowWorkspaceRoot &&
+    resolvedTarget !== workspaceRoot &&
+    !isPathInsideWorkspace(workspaceRoot, resolvedTarget)
+  ) {
+    throw new Error('Path is outside the workspace.')
+  }
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.lstat(targetPath)
+    return true
+  } catch (error) {
+    if (isNodeErrnoException(error) && error.code === 'ENOENT') return false
+    throw error
   }
 }
 
@@ -1327,6 +1610,10 @@ function parseGitBlamePorcelain(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function isNodeErrnoException(value: unknown): value is NodeJS.ErrnoException {
+  return Boolean(value && typeof value === 'object' && 'code' in value)
 }
 
 async function runCommandArgs(

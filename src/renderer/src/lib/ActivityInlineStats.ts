@@ -43,6 +43,10 @@ const WRITE_LIKE_TOOLS = new Set([
   'write_file',
   'create_file',
   'edit_file',
+  'create_directory',
+  'delete_path',
+  'move_path',
+  'rename_path',
   'edit',
   'write',
   'multiedit',
@@ -62,6 +66,10 @@ function looksWriteLike(toolName: string): boolean {
   if (normalised.endsWith('__replace')) return true
   if (normalised.endsWith('__create_file')) return true
   if (normalised.endsWith('__edit_file')) return true
+  if (normalised.endsWith('__create_directory')) return true
+  if (normalised.endsWith('__delete_path')) return true
+  if (normalised.endsWith('__move_path')) return true
+  if (normalised.endsWith('__rename_path')) return true
   if (normalised.endsWith('__edit')) return true
   return false
 }

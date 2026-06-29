@@ -29,6 +29,10 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
     for (const tool of [
       'write_file',
       'replace',
+      'create_directory',
+      'delete_path',
+      'move_path',
+      'rename_path',
       'apply_patch',
       'run_shell_command',
       'git_stage',
@@ -69,6 +73,10 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     for (const tool of [
       'write_file',
       'replace',
+      'create_directory',
+      'delete_path',
+      'move_path',
+      'rename_path',
       'apply_patch',
       'run_shell_command',
       'git_stage',
@@ -116,6 +124,10 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     for (const tool of [
       'write_file',
       'replace',
+      'create_directory',
+      'delete_path',
+      'move_path',
+      'rename_path',
       'apply_patch',
       'run_shell_command',
       'git_stage',

@@ -64,6 +64,8 @@ describe('taskWraithToolServiceIfKnown', () => {
     expect(taskWraithToolServiceIfKnown('mcp__taskwraith__run_shell_command')).toBe('shellCommands')
     expect(taskWraithToolServiceIfKnown('mcp__other_server__write_file')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('taskwraith__write_file')).toBe('fileChanges')
+    expect(taskWraithToolServiceIfKnown('taskwraith__delete_path')).toBe('fileChanges')
+    expect(taskWraithToolServiceIfKnown('taskwraith__move_path')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('delegate_to_subthread')).toBe('subThreadDelegation')
     expect(taskWraithToolServiceIfKnown('ensemble_yield')).toBe('mcpTools')
   })

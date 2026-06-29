@@ -1241,6 +1241,48 @@ function ollamaNativeToolParameters(
         },
         required: ['path', 'old_string', 'new_string', 'intent']
       }
+    case 'create_directory':
+      return {
+        description: compact ? 'Create directory (intent required).' : 'Create a directory inside the active workspace. Requires a short intent.',
+        properties: {
+          path: { ...STRING, description: compact ? 'Relative directory.' : 'Workspace-relative directory path.' },
+          recursive: { type: 'boolean', description: 'Create parent directories. Defaults to true.' },
+          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the change.' }
+        },
+        required: ['path', 'intent']
+      }
+    case 'delete_path':
+      return {
+        description: compact ? 'Delete file/empty dir (intent required).' : 'Delete a file or empty directory inside the active workspace. Recursive deletion is not supported. Requires a short intent.',
+        properties: {
+          path: { ...STRING, description: compact ? 'Relative path.' : 'Workspace-relative file or empty directory path.' },
+          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the deletion.' }
+        },
+        required: ['path', 'intent']
+      }
+    case 'move_path':
+      return {
+        description: compact ? 'Move path (intent required).' : 'Move a file or directory inside the active workspace. Requires a short intent.',
+        properties: {
+          from: { ...STRING, description: compact ? 'Source path.' : 'Workspace-relative source path.' },
+          to: { ...STRING, description: compact ? 'Destination path.' : 'Workspace-relative destination path.' },
+          overwrite: { type: 'boolean', description: 'Replace an existing destination. Defaults to false.' },
+          createParents: { type: 'boolean', description: 'Create missing destination parent directories. Defaults to false.' },
+          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the move.' }
+        },
+        required: ['from', 'to', 'intent']
+      }
+    case 'rename_path':
+      return {
+        description: compact ? 'Rename path (intent required).' : 'Rename a file or directory within its current parent directory. Requires a short intent.',
+        properties: {
+          path: { ...STRING, description: compact ? 'Source path.' : 'Workspace-relative source path.' },
+          newName: { ...STRING, description: compact ? 'New basename.' : 'New basename only, not a path.' },
+          overwrite: { type: 'boolean', description: 'Replace an existing destination. Defaults to false.' },
+          intent: { ...STRING, description: compact ? 'Short reason.' : 'Short reason for the rename.' }
+        },
+        required: ['path', 'newName', 'intent']
+      }
     case 'apply_patch':
       return {
         description: compact ? 'Apply unified diff (intent required).' : 'Apply a unified diff to the workspace. Requires a short intent.',

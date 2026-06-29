@@ -5,7 +5,11 @@ const BRIDGE_TOOL_CATEGORY_RULES: Array<{
   pattern: RegExp
   category: ToolActivity['category']
 }> = [
-  { pattern: /write|replace|apply_patch|edit|patch|create_file/i, category: 'write' },
+  {
+    pattern:
+      /write|replace|apply_patch|edit|patch|create_file|create_directory|delete_path|move_path|rename_path|mkdir|delete|rename/i,
+    category: 'write'
+  },
   { pattern: /read|list|cat|view|open/i, category: 'read' },
   { pattern: /search|grep|glob|find/i, category: 'search' },
   { pattern: /shell|bash|terminal|command|exec/i, category: 'shell' },
@@ -124,6 +128,14 @@ export function buildBridgeToolActivity(input: {
     stringValue(parameters.path) ||
     stringValue(parameters.file_path) ||
     stringValue(parameters.filePath) ||
+    stringValue(parameters.from) ||
+    stringValue(parameters.source) ||
+    stringValue(parameters.sourcePath) ||
+    stringValue(parameters.source_path) ||
+    stringValue(parameters.to) ||
+    stringValue(parameters.destination) ||
+    stringValue(parameters.destinationPath) ||
+    stringValue(parameters.destination_path) ||
     undefined
   const innerName =
     /^(use_tool|call_tool|mcp)$/i.test(toolName) && typeof parameters.tool_name === 'string'

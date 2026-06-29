@@ -170,6 +170,7 @@ describe('ToolParser', () => {
       expect(getToolCategory('MultiEdit')).toBe('write')
       expect(getToolCategory('str_replace')).toBe('write')
       expect(getToolCategory('TaskWraith__write_file')).toBe('write')
+      expect(getToolCategory('TaskWraith__move_path')).toBe('write')
     })
     it('maps create_file to write', () => {
       expect(getToolCategory('create_file')).toBe('write')
@@ -334,6 +335,18 @@ describe('ToolParser', () => {
     })
     it('shows Deleted for no-separator deletefile', () => {
       expect(getToolDisplayName('deletefile', { file_path: 'old.ts' })).toBe('Deleted old.ts')
+    })
+    it('shows lifecycle file operation labels', () => {
+      expect(getToolDisplayName('create_directory', { path: 'src/generated' })).toBe(
+        'Created directory src/generated'
+      )
+      expect(getToolDisplayName('delete_path', { path: 'old.ts' })).toBe('Deleted old.ts')
+      expect(getToolDisplayName('move_path', { from: 'old.ts', to: 'new.ts' })).toBe(
+        'Moved old.ts -> new.ts'
+      )
+      expect(getToolDisplayName('rename_path', { path: 'old.ts', newName: 'new.ts' })).toBe(
+        'Renamed old.ts -> new.ts'
+      )
     })
     it('shows Exited plan mode for exit_plan_mode + exitplanmode', () => {
       expect(getToolDisplayName('exit_plan_mode', {})).toBe('Exited plan mode')

@@ -1806,6 +1806,38 @@ const MCP_TOOL_OVERRIDES: Partial<
     policyKey: 'fileChanges',
     description: 'Applies a targeted replacement inside a workspace file.'
   },
+  create_directory: {
+    label: 'Create directory',
+    transcript: 'Created directory',
+    group: 'files',
+    iconRef: 'tool:folder',
+    policyKey: 'fileChanges',
+    description: 'Creates a workspace directory after file-change approval.'
+  },
+  delete_path: {
+    label: 'Delete path',
+    transcript: 'Deleted path',
+    group: 'files',
+    iconRef: 'tool:file-write',
+    policyKey: 'fileChanges',
+    description: 'Deletes a workspace file or empty directory after approval.'
+  },
+  move_path: {
+    label: 'Move path',
+    transcript: 'Moved path',
+    group: 'files',
+    iconRef: 'tool:file-write',
+    policyKey: 'fileChanges',
+    description: 'Moves a workspace file or directory after approval.'
+  },
+  rename_path: {
+    label: 'Rename path',
+    transcript: 'Renamed path',
+    group: 'files',
+    iconRef: 'tool:file-write',
+    policyKey: 'fileChanges',
+    description: 'Renames a workspace file or directory after approval.'
+  },
   read_file: {
     label: 'Read file',
     transcript: 'Read file',
@@ -1942,6 +1974,10 @@ function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
   if (
     tool === 'write_file' ||
     tool === 'replace' ||
+    tool === 'create_directory' ||
+    tool === 'delete_path' ||
+    tool === 'move_path' ||
+    tool === 'rename_path' ||
     tool === 'apply_patch' ||
     tool.includes('import') ||
     tool.includes('dispatch')
