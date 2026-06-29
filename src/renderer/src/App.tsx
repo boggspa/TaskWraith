@@ -24858,7 +24858,7 @@ function App(): React.JSX.Element {
               <button
                 type="button"
                 className="creative-approval-modal-reject"
-                title="Leave Ollama on its current limited tool tier."
+                title="Leave Ollama on its current governed tool tier."
                 onClick={() => setOllamaComposerParityAck(null)}
               >
                 Cancel

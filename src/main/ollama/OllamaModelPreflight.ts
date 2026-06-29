@@ -185,7 +185,7 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
   switch (family) {
     case 'qwen3_5_9b':
       return {
-        guidance: `${modelLabel} is a capable local scout for scoped tasks — search, read files, and single-file edits with approval.`,
+        guidance: `${modelLabel} is a capable local workspace model for scoped tasks — search, read files, and focused edits with approval.`,
         delegateHint:
           'For multi-file refactors, broad test-suite fixes, or long autonomous loops, confirm the needed Ollama tier, context, and verification path before continuing.'
       }
@@ -205,11 +205,11 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
       return {
         guidance: `${modelLabel} is a compact multimodal local model with tools and thinking support.`,
         delegateHint:
-          'Use it for scoped reads, visual/local checks, and quick analysis; for broad code edits, switch to a coding-oriented model/profile or split the work into smaller local slices.'
+          'Use it for scoped reads, visual/local checks, and quick analysis; for broad code edits, confirm the coding model/profile or split the work into clear local slices.'
       }
     case 'gemma4_12b':
       return {
-        guidance: `${modelLabel} handles moderate local tasks well — exploration, planning, and smaller edits.`,
+        guidance: `${modelLabel} handles moderate local tasks well — exploration, planning, and focused edits.`,
         delegateHint:
           'For large refactors or repo-wide test fixes, confirm the required edit and shell permissions before starting the implementation pass.'
       }
@@ -217,7 +217,7 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
       return {
         guidance: `${modelLabel} is an agentic-coding local model; keep tasks scoped, search first, and verify generated edits carefully.`,
         delegateHint:
-          'Use it for local planning and focused patches; for broad refactors or long test-fix loops, split the work or pick a wider-context local profile.'
+          'Use it for local planning and focused patches; for broad refactors or long test-fix loops, claim explicit scope or pick a wider-context local profile.'
       }
     case 'ornith_35b':
       return {
@@ -241,7 +241,7 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
       return {
         guidance: `${modelLabel} is a multimodal local reasoning model with native tools and thinking support.`,
         delegateHint:
-          'Use it for deep local analysis and visual checks; delegate broad multi-file implementation when latency or reliability matters.'
+          'Use it for deep local analysis and visual checks; pair broad multi-file implementation with an explicit verification plan when latency or reliability matters.'
       }
     case 'gpt_oss_20b':
       return {

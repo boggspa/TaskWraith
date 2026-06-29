@@ -13,7 +13,7 @@ import {
  *
  * Conversational turns keep only the tool-call discipline lines (the failure
  * modes they guard are universal); the explore/read/edit workflow, checklist
- * ritual, and worked trajectories are workspace-task scaffolding that small
+ * ritual, and worked trajectories are workspace-task scaffolding that some
  * models otherwise apply to "hi, how are you?". */
 export function ollamaModelFamilyPromptLines(
   modelId: string,
@@ -59,13 +59,13 @@ export function ollamaModelFamilyPromptLines(
       ]
     case 'gemma4_12b':
       return [
-        'Model profile (Gemma 4 12B): search narrowly, then read targeted files before editing.',
+        'Model profile (Gemma 4 12B): search with a concrete query, then read targeted files before editing.',
         'Use one tool at a time and summarize results instead of chaining many speculative calls.'
       ]
     case 'ornith_9b':
       return [
         'Model profile (Ornith 1.0 9B): agentic coding model; search first, then make focused edits with explicit verification notes.',
-        'Keep tool payloads compact. When the task becomes broad, ask the user which smaller local slice to tackle first instead of defaulting to another provider.'
+        'Keep tool payloads compact. When the task becomes broad, claim a clear local slice or ask the user which part should land first instead of defaulting to another provider.'
       ]
     case 'ornith_35b':
       return [
@@ -75,7 +75,7 @@ export function ollamaModelFamilyPromptLines(
       ]
     case 'granite4_1_3b':
       return [
-        'Model profile (Granite 4.1 3B): use it as a fast local scout; list/search first and keep reads small.',
+        'Model profile (Granite 4.1 3B): use it as a fast local scout; list/search first and read the files relevant to the task.',
         normalizedTier === 'read_only'
           ? 'Avoid broad edits or long shell/test loops; hand off a short plan when the task grows.'
           : 'You have edit tools in this tier — make small, localized edits directly. For broad changes or long shell/test loops, summarize and suggest delegation rather than looping alone.'
@@ -109,7 +109,7 @@ export function ollamaModelFamilyPromptLines(
       ]
     default:
       return [
-        'Model profile (local): search first, read narrowly, and keep tool payloads small.',
+        'Model profile (local): search first, read the relevant files, and keep tool payloads purposeful.',
         'Stop with a concise plan when the requested scope exceeds the selected tier, context window, or available tools.'
       ]
   }
@@ -274,14 +274,14 @@ export function ollamaTierAwareWorkflowHint(
     return [
       'TaskWraith approved-patcher workflow:',
       'Search or list before reading unfamiliar files, read the exact target, then make a localized edit.',
-      'Keep the patch bounded; when the task becomes multi-file or ambiguous, summarize the partial result and ask for delegation or a stronger provider.'
+      'Keep the patch bounded; when the task becomes multi-file or ambiguous, summarize the partial result and ask for explicit scope or a reviewer.'
     ].join(' ')
   }
   if (normalizedTier === 'approved_shell') {
     return [
       'TaskWraith verify-with-shell workflow:',
       'Search/list, read, patch only scoped files, then run a targeted approved verification command when it adds confidence.',
-      'Do not attempt full-suite repair loops alone; summarize failures and recommend delegation when the loop expands.'
+      'Do not attempt unbounded full-suite repair loops; summarize failures and confirm the next scope when the loop expands.'
     ].join(' ')
   }
   if (normalizedTier === 'provider_parity') {
@@ -289,7 +289,7 @@ export function ollamaTierAwareWorkflowHint(
       return [
         'TaskWraith provider-parity workflow:',
         'Use the full tool surface sparingly and stay anchored to the user request.',
-        'Ornith should attempt scoped coding work locally first. Do not recommend or use delegation as the default recovery path; if the task is too broad, ask the user for a smaller local slice or explain the exact blocker.'
+        'Ornith should attempt scoped coding work locally first. Do not recommend or use delegation as the default recovery path; if the task is too broad, claim a clear local slice or explain the exact blocker.'
       ].join(' ')
     }
     return [
@@ -309,7 +309,7 @@ export function ollamaTierAwareWorkflowHint(
     family === 'granite4_1_3b' ||
     family === 'granite4_1_30b' ||
     family === 'nemotron3_33b'
-      ? 'Use this Ollama thread to search, read narrowly, and draft a short implementation plan.'
+      ? 'Use this Ollama thread to search, read the relevant files, and draft a short implementation plan.'
       : 'Use this local thread to explore the workspace and outline the next steps.'
   return [
     'TaskWraith local-scout workflow:',
