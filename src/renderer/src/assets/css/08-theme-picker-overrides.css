@@ -8409,6 +8409,10 @@
   right: auto !important;
   bottom: auto !important;
   transform: none;
+  width: 35px;
+  height: 35px;
+  min-width: 35px;
+  border-radius: 10px;
 }
 
 /* 3) Files-changed + diff chips — gray button chrome, linear row order
