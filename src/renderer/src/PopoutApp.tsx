@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import type { GitRepositorySnapshot } from '../../main/services/GitService'
 import { DiffViewer } from './components/DiffViewer'
 import { FileEditorPanel } from './components/FileEditorPanel'
 import { TaskWraithWorkbench } from './components/TaskWraithWorkbench'
@@ -82,6 +83,7 @@ export function PopoutApp() {
   const targetFilePath = params.get('file') || ''
   const targetView = parseTargetView(params.get('view'), kind)
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
+  const [diffGitSnapshot, setDiffGitSnapshot] = useState<GitRepositorySnapshot | null>(null)
   const [status, setStatus] = useState('')
   const [dirtyBufferCount, setDirtyBufferCount] = useState(0)
   const [openFileRequest, setOpenFileRequest] = useState<PopoutOpenFileRequest | null>(() =>
@@ -98,9 +100,13 @@ export function PopoutApp() {
     diffRefreshSeqRef.current = requestId
     setStatus('Refreshing diff...')
     try {
-      const nextDiff = await window.api.getDiff(workspacePath)
+      const [nextDiff, nextGitSnapshot] = await Promise.all([
+        window.api.getDiff(workspacePath),
+        window.api.gitSnapshot({ workspacePath })
+      ])
       if (requestId !== diffRefreshSeqRef.current) return
       setDiff(nextDiff)
+      setDiffGitSnapshot(nextGitSnapshot.ok ? nextGitSnapshot.data : null)
       setStatus('Diff refreshed')
     } catch (error) {
       if (requestId !== diffRefreshSeqRef.current) return
@@ -108,6 +114,7 @@ export function PopoutApp() {
         type: 'error',
         text: error instanceof Error ? error.message : 'Could not load workspace diff'
       })
+      setDiffGitSnapshot(null)
       setStatus('Diff refresh failed')
     }
   }, [kind, workspacePath])
@@ -249,6 +256,7 @@ export function PopoutApp() {
           <div className="diff-studio popout-diff-studio">
             <DiffViewer
               diff={diff}
+              gitSnapshot={diffGitSnapshot}
               workspacePath={workspacePath}
               selectionRequest={openFileRequest}
             />
