@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type FocusEvent as ReactFocusEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode
 } from 'react'
@@ -61,8 +62,8 @@ import {
 import {
   DiffHoverPreviewOverlay,
   diffHoverPreviewBoundaryForElement,
-  type DiffHoverPreviewState,
-  useDiffHoverPreviewDismiss
+  useDiffHoverPreviewDismiss,
+  useDiffHoverPreviewState
 } from './DiffHoverPreview'
 
 interface ActivityStackProps {
@@ -2155,8 +2156,13 @@ function ActivityRow({
   // `toggleExpanded`'s fallback branch.
   const [localExpanded, setLocalExpanded] = useState(false)
   const expanded = isExpanded ?? localExpanded
-  const [activityDiffHoverPreview, setActivityDiffHoverPreview] =
-    useState<DiffHoverPreviewState | null>(null)
+  const {
+    closePreview: closeActivityDiffHoverPreview,
+    keepPreviewOpen: keepActivityDiffHoverPreviewOpen,
+    preview: activityDiffHoverPreview,
+    scheduleClosePreview: scheduleCloseActivityDiffHoverPreview,
+    showPreview: showActivityDiffHoverPreview
+  } = useDiffHoverPreviewState()
 
   const isUnknown = activity.toolName === 'unknown' || !activity.toolName
   const showDebugWarning = Boolean(isUnknown && (activity.rawUseEvent || activity.rawResultEvent))
@@ -2213,16 +2219,14 @@ function ActivityRow({
   const activityDiffPreviewDeletions = inlineStats.visible
     ? inlineStats.deletions
     : diffSummary?.deletions
-  const closeActivityDiffHoverPreview = useCallback(() => {
-    setActivityDiffHoverPreview(null)
-  }, [])
   const openActivityDiffHoverPreview = useCallback(
-    (event: ReactMouseEvent<HTMLElement>) => {
+    (event: ReactFocusEvent<HTMLElement> | ReactMouseEvent<HTMLElement>) => {
       if (!activityDiffPreviewText) return
-      setActivityDiffHoverPreview({
+      showActivityDiffHoverPreview({
         anchor: event.currentTarget.getBoundingClientRect(),
         boundary: diffHoverPreviewBoundaryForElement(event.currentTarget),
         summary: {
+          actionLabel: 'Hover preview',
           path: activityDiffPreviewPath,
           status: activityDiffPreviewStatus,
           additions: activityDiffPreviewAdditions,
@@ -2236,13 +2240,14 @@ function ActivityRow({
       activityDiffPreviewDeletions,
       activityDiffPreviewPath,
       activityDiffPreviewStatus,
-      activityDiffPreviewText
+      activityDiffPreviewText,
+      showActivityDiffHoverPreview
     ]
   )
   useDiffHoverPreviewDismiss(activityDiffHoverPreview, closeActivityDiffHoverPreview)
   useEffect(() => {
-    setActivityDiffHoverPreview(null)
-  }, [activity.id, activity.status])
+    closeActivityDiffHoverPreview()
+  }, [activity.id, activity.status, closeActivityDiffHoverPreview])
   const sanitizedDetail = buildSanitizedDetail(
     activity,
     activityFilePath,
@@ -2351,7 +2356,9 @@ function ActivityRow({
         role={canExpand ? 'button' : undefined}
         tabIndex={canExpand ? 0 : -1}
         onMouseEnter={activityDiffPreviewText ? openActivityDiffHoverPreview : undefined}
-        onMouseLeave={activityDiffPreviewText ? closeActivityDiffHoverPreview : undefined}
+        onMouseLeave={activityDiffPreviewText ? scheduleCloseActivityDiffHoverPreview : undefined}
+        onFocus={activityDiffPreviewText ? openActivityDiffHoverPreview : undefined}
+        onBlur={activityDiffPreviewText ? closeActivityDiffHoverPreview : undefined}
         aria-expanded={canExpand ? expanded : undefined}
         onClick={canExpand ? (event) => toggleExpanded(event.metaKey || event.shiftKey) : undefined}
         onKeyDown={
@@ -2555,7 +2562,11 @@ function ActivityRow({
           shimmerNow={shimmerNow}
         />
       )}
-      <DiffHoverPreviewOverlay preview={activityDiffHoverPreview} />
+      <DiffHoverPreviewOverlay
+        preview={activityDiffHoverPreview}
+        onMouseEnter={keepActivityDiffHoverPreviewOpen}
+        onMouseLeave={scheduleCloseActivityDiffHoverPreview}
+      />
     </>
   )
 }

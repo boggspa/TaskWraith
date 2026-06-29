@@ -5734,19 +5734,21 @@ input:disabled, select:disabled, textarea:disabled {
 .diff-hover-preview {
   position: fixed;
   z-index: 10080;
-  max-height: min(320px, calc(100vh - 24px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--surface-elevated, var(--surface-base)) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-elevated, var(--surface-base)) 90%, transparent);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
-    0 18px 48px color-mix(in srgb, #000 34%, transparent);
-  pointer-events: none;
+    inset 0 1px 0 color-mix(in srgb, #fff 10%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, #000 18%, transparent),
+    0 18px 42px color-mix(in srgb, #000 36%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+  pointer-events: auto;
   backdrop-filter: blur(22px) saturate(145%);
   -webkit-backdrop-filter: blur(22px) saturate(145%);
+  isolation: isolate;
 }
 
 :root[data-reduce-transparency="true"] .diff-hover-preview {
@@ -5757,37 +5759,98 @@ input:disabled, select:disabled, textarea:disabled {
 
 .diff-hover-preview-header {
   flex: 0 0 auto;
-  min-height: 40px;
+  min-height: 42px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
-  padding: 0 var(--space-md);
+  padding: 0 10px 0 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--text-primary) 8%, transparent),
+      color-mix(in srgb, var(--text-primary) 3%, transparent)
+    );
   color: var(--text-primary);
   font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
-.diff-hover-preview-header span {
+.diff-hover-preview-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diff-hover-preview-title > span:last-child {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.diff-hover-preview-header strong {
+.diff-hover-preview-icon {
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.diff-hover-preview-icon svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.diff-hover-preview-badges {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diff-hover-preview-status,
+.diff-hover-preview-badges strong {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: var(--font-size-xs);
+  line-height: 1;
+}
+
+.diff-hover-preview-status {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.diff-hover-preview-badges strong {
   color: var(--success);
   font-size: var(--font-size-sm);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 20%, transparent);
 }
 
 .diff-hover-preview-body {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
-  background: color-mix(in srgb, var(--app-bg-sunken) 72%, transparent);
+  overflow: auto;
+  scrollbar-gutter: stable;
+  background: color-mix(in srgb, var(--app-bg-sunken) 84%, transparent);
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
@@ -5811,7 +5874,7 @@ input:disabled, select:disabled, textarea:disabled {
   display: grid;
   grid-template-columns: 4ch 4ch minmax(0, 1fr);
   min-width: max-content;
-  min-height: 18px;
+  min-height: 19px;
   white-space: pre;
 }
 
@@ -5854,8 +5917,21 @@ input:disabled, select:disabled, textarea:disabled {
 }
 
 .diff-hover-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
   border-top: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
-  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--text-primary) 4%, transparent),
+      color-mix(in srgb, var(--warning) 8%, transparent)
+    );
+}
+
+.diff-hover-preview-footer span:last-child {
+  flex: 0 0 auto;
   color: var(--warning);
 }
 

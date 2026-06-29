@@ -86,8 +86,8 @@ import {
   DIFF_HOVER_PREVIEW_TOOLTIP_ID,
   DiffHoverPreviewOverlay,
   diffHoverPreviewBoundaryForElement,
-  type DiffHoverPreviewState,
-  useDiffHoverPreviewDismiss
+  useDiffHoverPreviewDismiss,
+  useDiffHoverPreviewState
 } from './DiffHoverPreview'
 
 export type TranscriptPanelProps = {
@@ -933,8 +933,13 @@ export const TranscriptPanel = memo(
     }, [isWelcomeChat, messages, pendingQueuedAppRunIds, queuedRunStatusByAppRunId])
     const [messageContextMenu, setMessageContextMenu] =
       useState<TranscriptMessageContextMenuSelection | null>(null)
-    const [fileChangeDiffPreview, setFileChangeDiffPreview] =
-      useState<DiffHoverPreviewState | null>(null)
+    const {
+      closePreview: closeFileChangeDiffPreview,
+      keepPreviewOpen: keepFileChangeDiffPreviewOpen,
+      preview: fileChangeDiffPreview,
+      scheduleClosePreview: scheduleCloseFileChangeDiffPreview,
+      showPreview: showFileChangeDiffPreview
+    } = useDiffHoverPreviewState()
     // Row-level render cache: stream updates replace one message object, so
     // unchanged rows can reuse their previous element instead of rebuilding all
     // markdown/tool row JSX on every chat-level commit. Pruned to mounted rows.
@@ -944,19 +949,19 @@ export const TranscriptPanel = memo(
     const closeMessageContextMenu = useCallback(() => {
       setMessageContextMenu(null)
     }, [])
-    const closeFileChangeDiffPreview = useCallback(() => {
-      setFileChangeDiffPreview(null)
-    }, [])
     const openFileChangeDiffPreview = useCallback(
       (
         event: React.MouseEvent<HTMLElement> | React.FocusEvent<HTMLElement>,
         summary: DiffFileSummary
       ) => {
         if (!summary.diffText) return
-        setFileChangeDiffPreview({
+        showFileChangeDiffPreview({
           anchor: event.currentTarget.getBoundingClientRect(),
           boundary: diffHoverPreviewBoundaryForElement(event.currentTarget),
           summary: {
+            actionLabel: onOpenFileChangeInWorkbench
+              ? 'Click row to open Diff Studio'
+              : 'Click row to preview',
             path: summary.path,
             status: summary.status,
             additions: summary.additions,
@@ -965,7 +970,7 @@ export const TranscriptPanel = memo(
           }
         })
       },
-      []
+      [onOpenFileChangeInWorkbench, showFileChangeDiffPreview]
     )
     const activateFileChangeSummary = useCallback(
       (event: React.MouseEvent<HTMLElement>, summary: DiffFileSummary) => {
@@ -973,15 +978,20 @@ export const TranscriptPanel = memo(
           openFileChangeDiffPreview(event, summary)
           return
         }
-        setFileChangeDiffPreview(null)
+        closeFileChangeDiffPreview()
         onOpenFileChangeInWorkbench(summary)
       },
-      [onOpenFileChangeInWorkbench, openFileChangeDiffPreview]
+      [closeFileChangeDiffPreview, onOpenFileChangeInWorkbench, openFileChangeDiffPreview]
     )
     useDiffHoverPreviewDismiss(fileChangeDiffPreview, closeFileChangeDiffPreview)
     useEffect(() => {
-      setFileChangeDiffPreview(null)
-    }, [currentChat?.appChatId, currentRun?.runId, displayFileChangeSummaries])
+      closeFileChangeDiffPreview()
+    }, [
+      closeFileChangeDiffPreview,
+      currentChat?.appChatId,
+      currentRun?.runId,
+      displayFileChangeSummaries
+    ])
     const openMessageContextMenu = useCallback(
       (
         event: React.MouseEvent,
@@ -2463,7 +2473,9 @@ export const TranscriptPanel = memo(
                                 ? (event) => openFileChangeDiffPreview(event, item)
                                 : undefined
                             }
-                            onMouseLeave={hasDiffPreview ? closeFileChangeDiffPreview : undefined}
+                            onMouseLeave={
+                              hasDiffPreview ? scheduleCloseFileChangeDiffPreview : undefined
+                            }
                             onFocus={
                               hasDiffPreview
                                 ? (event) => openFileChangeDiffPreview(event, item)
@@ -2502,7 +2514,11 @@ export const TranscriptPanel = memo(
           onDeleteMessage={onDeleteMessage}
           onClose={closeMessageContextMenu}
         />
-        <DiffHoverPreviewOverlay preview={fileChangeDiffPreview} />
+        <DiffHoverPreviewOverlay
+          preview={fileChangeDiffPreview}
+          onMouseEnter={keepFileChangeDiffPreviewOpen}
+          onMouseLeave={scheduleCloseFileChangeDiffPreview}
+        />
       </div>
     )
   },
