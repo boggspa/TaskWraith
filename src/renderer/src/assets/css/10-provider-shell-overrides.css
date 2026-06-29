@@ -997,7 +997,7 @@
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .composer-above-bar-secondary-branch.git-tone-main {
-  color: #6f9dff !important;
+  color: #4b84ff !important;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]
@@ -1008,14 +1008,17 @@
 
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
-  .composer-above-bar-secondary-branch.git-tone-fix,
+  .composer-above-bar-secondary-branch.git-tone-fix {
+  color: #f0c674 !important;
+}
+
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .git-status-push.git-status-unpublished,
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .git-status-ahead {
-  color: #f0c674 !important;
+  color: #ffc248 !important;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]
@@ -1033,7 +1036,7 @@
 [data-theme="alabaster"][data-composer-style="codex"]
   .composer-above-bar
   .git-status-behind {
-  color: #6f9dff !important;
+  color: #4b84ff !important;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]

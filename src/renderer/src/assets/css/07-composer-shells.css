@@ -1699,7 +1699,7 @@
  * external rows). Reuses the git-status branch palette; other/detached keep the
  * muted secondary-branch colour. */
 .composer-above-bar-secondary-branch.git-tone-main {
-  color: #6f9dff;
+  color: #4b84ff;
 }
 .composer-above-bar-secondary-branch.git-tone-feature {
   color: #a78bfa;
@@ -1712,12 +1712,12 @@
 }
 /* "no upstream" variant of the sync chip — amber (needs publishing). */
 .git-status-push.git-status-unpublished {
-  color: #f0c674;
+  color: #ffc248;
   font-weight: 600;
 }
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
   .composer-above-bar-secondary-branch.git-tone-main {
-  color: #2f63d6;
+  color: #1a5ceb;
 }
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
   .composer-above-bar-secondary-branch.git-tone-feature {
@@ -1733,7 +1733,7 @@
 }
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
   .git-status-push.git-status-unpublished {
-  color: #b8860b;
+  color: #c38b00;
 }
 .git-status-push {
   display: inline-flex;
@@ -1743,10 +1743,10 @@
   font-weight: 600;
 }
 .git-status-ahead {
-  color: #f0c674;
+  color: #ffc248;
 }
 .git-status-behind {
-  color: #6f9dff;
+  color: #4b84ff;
 }
 .git-status-ci {
   display: inline-flex;
@@ -1830,10 +1830,10 @@
  * deepen them for contrast on light backgrounds. (The pill bg/border are
  * already theme-aware via --composer-bg / --composer-border.) */
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-ahead {
-  color: #b8860b;
+  color: #c38b00;
 }
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-behind {
-  color: #2f63d6;
+  color: #1a5ceb;
 }
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-ci.git-ci-pass {
   color: #138a59;
