@@ -31,6 +31,8 @@ export type {
   TaskWraithPluginCatalogEntry,
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginContributionProvenance,
+  TaskWraithPluginResourceKind,
+  TaskWraithPluginResourceProvenance,
   TaskWraithPluginCleanupAction,
   TaskWraithPluginCleanupManualReviewItem,
   TaskWraithPluginCleanupPlan,
