@@ -18,6 +18,7 @@ interface DiffViewerProps {
     summaries?: DiffFileSummary[]
   } | null
   workspacePath?: string
+  onOpenFile?: (path: string) => void
 }
 
 interface DiffToolbarProps {
@@ -35,6 +36,7 @@ interface DiffFileListProps {
 
 interface DiffDetailProps {
   summary: DiffFileSummary
+  onOpenFile?: (path: string) => void
 }
 
 interface DiffLineRowProps {
@@ -43,7 +45,7 @@ interface DiffLineRowProps {
 
 const DIFF_DETAIL_RENDER_LINE_LIMIT = DEFAULT_DIFF_RENDER_LINE_LIMIT
 
-export function DiffViewer({ diff, workspacePath }: DiffViewerProps) {
+export function DiffViewer({ diff, workspacePath, onOpenFile }: DiffViewerProps) {
   const [hideNoise, setHideNoise] = useState(true)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
 
@@ -116,7 +118,7 @@ export function DiffViewer({ diff, workspacePath }: DiffViewerProps) {
             workspacePath={workspacePath}
             onSelectPath={setSelectedPath}
           />
-          {selectedSummary && <DiffDetail summary={selectedSummary} />}
+          {selectedSummary && <DiffDetail summary={selectedSummary} onOpenFile={onOpenFile} />}
         </>
       )}
     </div>
@@ -186,8 +188,15 @@ function DiffFileList({ summaries, selectedPath, workspacePath, onSelectPath }: 
   )
 }
 
-function DiffDetail({ summary }: DiffDetailProps) {
+function DiffDetail({ summary, onOpenFile }: DiffDetailProps) {
   const { copiedId, copy } = useCopyFeedback()
+  const canOpenFile =
+    Boolean(onOpenFile) &&
+    summary.status !== 'deleted' &&
+    summary.status !== 'binary' &&
+    summary.status !== 'hidden_sensitive' &&
+    summary.previewKind !== 'binary' &&
+    summary.previewKind !== 'hidden'
   const parsedDiff = useMemo(
     () =>
       summary.diffText
@@ -273,6 +282,16 @@ function DiffDetail({ summary }: DiffDetailProps) {
         <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
           <button
             className="btn btn-sm btn-ghost"
+            type="button"
+            onClick={() => onOpenFile?.(summary.path)}
+            disabled={!canOpenFile}
+            title={canOpenFile ? 'Open file in editor' : 'This diff item cannot be opened'}
+          >
+            Open
+          </button>
+          <button
+            className="btn btn-sm btn-ghost"
+            type="button"
             onClick={() => summary.diffText && copy('diff', summary.diffText)}
             title="Copy diff"
           >

@@ -8891,6 +8891,18 @@
   overflow: hidden;
 }
 
+.workbench-pane {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workbench-pane[hidden] {
+  display: none;
+}
+
 .workbench-bottom-bar {
   min-height: 28px;
   padding: 5px 10px;

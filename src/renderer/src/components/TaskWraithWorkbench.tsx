@@ -6,6 +6,11 @@ type WorkbenchView = 'editor' | 'diff'
 
 type WorkspaceDiff = Awaited<ReturnType<typeof window.api.getDiff>>
 
+interface EditorOpenRequest {
+  path: string
+  nonce: number
+}
+
 interface TaskWraithWorkbenchProps {
   workspacePath: string
   workspaceName: string
@@ -24,6 +29,7 @@ export function TaskWraithWorkbench({
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null)
   const [status, setStatus] = useState('Workbench ready')
   const [editorRefreshTick, setEditorRefreshTick] = useState(refreshTick)
+  const [editorOpenRequest, setEditorOpenRequest] = useState<EditorOpenRequest | null>(null)
 
   const breadcrumbs = useMemo(
     () => [workspaceName, viewLabel(activeView)],
@@ -54,6 +60,15 @@ export function TaskWraithWorkbench({
     setEditorRefreshTick((tick) => tick + 1)
     setStatus('Editor refreshed')
   }, [activeView, refreshDiff])
+
+  const openFileInEditor = useCallback((path: string) => {
+    setActiveView('editor')
+    setEditorOpenRequest((current) => ({
+      path,
+      nonce: (current?.nonce ?? 0) + 1
+    }))
+    setStatus(`Opening ${path}`)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -122,13 +137,22 @@ export function TaskWraithWorkbench({
           </div>
         </div>
         <div className="workbench-stage">
-          {activeView === 'editor' ? (
-            <FileEditorPanel workspacePath={workspacePath} refreshTick={editorRefreshTick} />
-          ) : (
+          <div className="workbench-pane" hidden={activeView !== 'editor'}>
+            <FileEditorPanel
+              workspacePath={workspacePath}
+              refreshTick={editorRefreshTick}
+              openRequest={editorOpenRequest}
+            />
+          </div>
+          <div className="workbench-pane" hidden={activeView !== 'diff'}>
             <div className="diff-studio popout-diff-studio">
-              <DiffViewer diff={diff} workspacePath={workspacePath} />
+              <DiffViewer
+                diff={diff}
+                workspacePath={workspacePath}
+                onOpenFile={openFileInEditor}
+              />
             </div>
-          )}
+          </div>
         </div>
         <footer className="workbench-bottom-bar">
           <span>{workspaceName}</span>

@@ -29,6 +29,12 @@ interface FileEditorPanelProps {
   workspacePath?: string
   width?: number
   refreshTick?: number
+  openRequest?: FileEditorOpenRequest | null
+}
+
+interface FileEditorOpenRequest {
+  path: string
+  nonce: number
 }
 
 interface WorkspaceFileListOptions {
@@ -81,12 +87,14 @@ interface FileEditorGitActionsProps {
   selectedHasStagedChanges: boolean
   stagedCount: number
   dirtyBufferCount: number
+  lineWrapEnabled: boolean
   onDeleteRequest: () => void
   onStage: () => void | Promise<void>
   onUnstage: () => void | Promise<void>
   onCommitRequest: () => void
   onSaveAll: () => void | Promise<void>
   onSave: () => void | Promise<void>
+  onToggleLineWrap: () => void
 }
 
 interface EditorTabStripProps {
@@ -114,6 +122,7 @@ interface EditorStatusBarProps {
   selectedGitFile?: GitFileStatus
   selectedHasStagedChanges: boolean
   selectedHasUnstagedChanges: boolean
+  lineWrapEnabled: boolean
 }
 
 const ROOT_DIR_KEY = ''
@@ -275,6 +284,16 @@ const codeEditorTheme = EditorView.theme(
   { dark: true }
 )
 
+const codeLineWrapTheme = EditorView.theme({
+  '.cm-content': {
+    minWidth: '0'
+  },
+  '.cm-line': {
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere'
+  }
+})
+
 const codeHighlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: 'var(--cm-keyword)', fontWeight: '600' },
   { tag: [tags.name, tags.deleted, tags.character, tags.macroName], color: 'var(--cm-name)' },
@@ -357,7 +376,12 @@ const isBufferDirty = (buffer: EditorBuffer | null | undefined): boolean => {
   return Boolean(buffer && buffer.content !== buffer.savedContent)
 }
 
-export function FileEditorPanel({ workspacePath, width, refreshTick = 0 }: FileEditorPanelProps) {
+export function FileEditorPanel({
+  workspacePath,
+  width,
+  refreshTick = 0,
+  openRequest
+}: FileEditorPanelProps) {
   const [childrenByDirectory, setChildrenByDirectory] = useState<
     Record<string, WorkspaceFileEntry[]>
   >({})
@@ -379,7 +403,9 @@ export function FileEditorPanel({ workspacePath, width, refreshTick = 0 }: FileE
   const [isLoading, setIsLoading] = useState(false)
   const [isListLoading, setIsListLoading] = useState(false)
   const [pendingClosePath, setPendingClosePath] = useState('')
+  const [lineWrapEnabled, setLineWrapEnabled] = useState(false)
   const lastRefreshTickRef = useRef(refreshTick)
+  const lastOpenRequestRef = useRef<number | null>(null)
   const activeBuffer = useMemo(
     () => buffers.find((buffer) => buffer.path === selectedPath) ?? null,
     [buffers, selectedPath]
@@ -481,6 +507,7 @@ export function FileEditorPanel({ workspacePath, width, refreshTick = 0 }: FileE
   const editorExtensions = useMemo<Extension[]>(
     () => [
       codeEditorTheme,
+      ...(lineWrapEnabled ? [EditorView.lineWrapping, codeLineWrapTheme] : []),
       syntaxHighlighting(codeHighlightStyle),
       highlightSelectionMatches(),
       autocompletion({
@@ -503,7 +530,7 @@ export function FileEditorPanel({ workspacePath, width, refreshTick = 0 }: FileE
       ]),
       ...extensionForPath(selectedPath)
     ],
-    [completionFiles, selectedPath, updateCursorStatus]
+    [completionFiles, lineWrapEnabled, selectedPath, updateCursorStatus]
   )
 
   const loadDirectory = useCallback(
@@ -739,29 +766,32 @@ export function FileEditorPanel({ workspacePath, width, refreshTick = 0 }: FileE
     })
   }, [refreshCurrentView, refreshTick, workspacePath])
 
-  const expandDirectoryPath = async (dirPath: string) => {
-    if (!workspacePath) return
+  const expandDirectoryPath = useCallback(
+    async (dirPath: string) => {
+      if (!workspacePath) return
 
-    const parts = dirPath.split('/').filter(Boolean)
-    const chain = parts.map((_, index) => parts.slice(0, index + 1).join('/'))
-    setIsListLoading(true)
-    setListMessage('')
-    try {
-      await loadDirectory(ROOT_DIR_KEY)
-      for (const path of chain) {
-        await loadDirectory(path)
+      const parts = dirPath.split('/').filter(Boolean)
+      const chain = parts.map((_, index) => parts.slice(0, index + 1).join('/'))
+      setIsListLoading(true)
+      setListMessage('')
+      try {
+        await loadDirectory(ROOT_DIR_KEY)
+        for (const path of chain) {
+          await loadDirectory(path)
+        }
+        setExpandedDirectories((current) => {
+          const next = new Set(current)
+          chain.forEach((path) => next.add(path))
+          return next
+        })
+      } catch (error) {
+        setListMessage(error instanceof Error ? error.message : `Could not open ${dirPath}`)
+      } finally {
+        setIsListLoading(false)
       }
-      setExpandedDirectories((current) => {
-        const next = new Set(current)
-        chain.forEach((path) => next.add(path))
-        return next
-      })
-    } catch (error) {
-      setListMessage(error instanceof Error ? error.message : `Could not open ${dirPath}`)
-    } finally {
-      setIsListLoading(false)
-    }
-  }
+    },
+    [loadDirectory, workspacePath]
+  )
 
   const toggleDirectory = async (entry: WorkspaceFileEntry) => {
     if (!workspacePath || !entry.isDirectory) return
@@ -814,35 +844,56 @@ export function FileEditorPanel({ workspacePath, width, refreshTick = 0 }: FileE
     }
   }
 
+  const openFilePath = useCallback(
+    async (filePath: string) => {
+      if (!workspacePath || !filePath) return
+
+      setFilter('')
+      if (buffers.some((buffer) => buffer.path === filePath)) {
+        setSelectedPath(filePath)
+        setCursorStatus(DEFAULT_CURSOR_STATUS)
+        setStatus(`${filePath} · already open`)
+        const parentPath = parentDirectoryForPath(filePath)
+        if (parentPath) void expandDirectoryPath(parentPath)
+        return
+      }
+
+      setIsLoading(true)
+      setStatus(`Opening ${filePath}`)
+      try {
+        const result = await editorApi.readFile(workspacePath, filePath)
+        const nextBuffer = bufferFromReadResult(result)
+        setBuffers((current) => upsertBuffer(current, nextBuffer))
+        setSelectedPath(result.path)
+        setCursorStatus(DEFAULT_CURSOR_STATUS)
+        setStatus(`${result.path} · ${formatBytes(result.sizeBytes)}`)
+        const parentPath = parentDirectoryForPath(result.path)
+        if (parentPath) void expandDirectoryPath(parentPath)
+        void refreshGitSnapshot()
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'Could not open file')
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [buffers, expandDirectoryPath, refreshGitSnapshot, workspacePath]
+  )
+
+  useEffect(() => {
+    if (!openRequest || openRequest.nonce === lastOpenRequestRef.current) return
+    lastOpenRequestRef.current = openRequest.nonce
+    queueMicrotask(() => {
+      void openFilePath(openRequest.path)
+    })
+  }, [openFilePath, openRequest])
+
   const openFile = async (entry: WorkspaceFileEntry) => {
     if (!workspacePath) return
     if (entry.isDirectory) {
       await toggleDirectory(entry)
       return
     }
-
-    if (buffers.some((buffer) => buffer.path === entry.path)) {
-      setSelectedPath(entry.path)
-      setCursorStatus(DEFAULT_CURSOR_STATUS)
-      setStatus(`${entry.path} · already open`)
-      return
-    }
-
-    setIsLoading(true)
-    setStatus(`Opening ${entry.path}`)
-    try {
-      const result = await editorApi.readFile(workspacePath, entry.path)
-      const nextBuffer = bufferFromReadResult(result)
-      setBuffers((current) => upsertBuffer(current, nextBuffer))
-      setSelectedPath(result.path)
-      setCursorStatus(DEFAULT_CURSOR_STATUS)
-      setStatus(`${result.path} · ${formatBytes(result.sizeBytes)}`)
-      void refreshGitSnapshot()
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not open file')
-    } finally {
-      setIsLoading(false)
-    }
+    await openFilePath(entry.path)
   }
 
   const saveBuffer = async (path: string): Promise<boolean> => {
@@ -1114,12 +1165,14 @@ export function FileEditorPanel({ workspacePath, width, refreshTick = 0 }: FileE
             selectedHasStagedChanges={selectedHasStagedChanges}
             stagedCount={stagedCount}
             dirtyBufferCount={dirtyBufferCount}
+            lineWrapEnabled={lineWrapEnabled}
             onDeleteRequest={() => setShowDeleteConfirm(true)}
             onStage={stageSelectedFile}
             onUnstage={unstageSelectedFile}
             onCommitRequest={() => setShowCommitDialog(true)}
             onSaveAll={saveAllFiles}
             onSave={saveFile}
+            onToggleLineWrap={() => setLineWrapEnabled((enabled) => !enabled)}
           />
         </div>
         <EditorTabStrip
@@ -1246,6 +1299,7 @@ export function FileEditorPanel({ workspacePath, width, refreshTick = 0 }: FileE
           selectedGitFile={selectedGitFile}
           selectedHasStagedChanges={selectedHasStagedChanges}
           selectedHasUnstagedChanges={selectedHasUnstagedChanges}
+          lineWrapEnabled={lineWrapEnabled}
         />
       </section>
     </aside>
@@ -1339,12 +1393,14 @@ function FileEditorGitActions({
   selectedHasStagedChanges,
   stagedCount,
   dirtyBufferCount,
+  lineWrapEnabled,
   onDeleteRequest,
   onStage,
   onUnstage,
   onCommitRequest,
   onSaveAll,
-  onSave
+  onSave,
+  onToggleLineWrap
 }: FileEditorGitActionsProps) {
   return (
     <div className="file-editor-actions">
@@ -1393,6 +1449,15 @@ function FileEditorGitActions({
         }
       >
         Commit
+      </button>
+      <button
+        className="btn btn-sm btn-ghost"
+        type="button"
+        onClick={onToggleLineWrap}
+        aria-pressed={lineWrapEnabled}
+        title={lineWrapEnabled ? 'Turn line wrap off' : 'Turn line wrap on'}
+      >
+        Wrap
       </button>
       <button
         className="btn btn-sm btn-ghost"
@@ -1519,7 +1584,8 @@ function EditorStatusBar({
   cursorStatus,
   selectedGitFile,
   selectedHasStagedChanges,
-  selectedHasUnstagedChanges
+  selectedHasUnstagedChanges,
+  lineWrapEnabled
 }: EditorStatusBarProps) {
   return (
     <div className="file-editor-status">
@@ -1536,6 +1602,7 @@ function EditorStatusBar({
             Ln {cursorStatus.line}, Col {cursorStatus.column}
             {cursorStatus.selectedChars > 0 ? ` · ${cursorStatus.selectedChars} selected` : ''}
           </span>
+          <span>{lineWrapEnabled ? 'Wrap' : 'No wrap'}</span>
           {selectedGitFile && (
             <span>
               {selectedHasStagedChanges && selectedHasUnstagedChanges
