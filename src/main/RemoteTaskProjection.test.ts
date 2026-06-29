@@ -500,6 +500,35 @@ describe('RemoteTaskProjection', () => {
     expect(summary?.workspaces[0]?.workspaceId).toBe('workspace-1')
   })
 
+  it('caps mobile diff-summary file rows while preserving true totals', () => {
+    const firstWorkspaceFiles = Array.from({ length: 48 }, (_, index) =>
+      file(`src/first-${String(index).padStart(2, '0')}.ts`, 'modified', 1, 1)
+    )
+    const secondWorkspaceFiles = Array.from({ length: 12 }, (_, index) =>
+      file(`src/second-${String(index).padStart(2, '0')}.ts`, 'modified', 2, 0)
+    )
+    const summary = buildMobileDiffSummary(
+      run({
+        runDiffByPath: {
+          '/repo': firstWorkspaceFiles,
+          '/other': secondWorkspaceFiles
+        }
+      })
+    )
+
+    expect(summary?.filesChanged).toBe(60)
+    expect(summary?.additions).toBe(72)
+    expect(summary?.deletions).toBe(48)
+    expect(summary?.files).toHaveLength(40)
+    expect(summary?.workspaces[0]?.filesChanged).toBe(48)
+    expect(summary?.workspaces[0]?.files).toHaveLength(40)
+    expect(summary?.workspaces[1]?.filesChanged).toBe(12)
+    expect(summary?.workspaces[1]?.files).toHaveLength(0)
+    expect(summary?.truncated).toBe(true)
+    expect(summary?.files.some((projected) => projected.path === 'src/first-47.ts')).toBe(false)
+    expect(summary?.files.some((projected) => projected.path === 'src/second-00.ts')).toBe(false)
+  })
+
   it('projects active ensemble state compactly', () => {
     const card = buildRemoteTaskCard(
       chat({

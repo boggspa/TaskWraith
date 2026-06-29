@@ -25,6 +25,8 @@ import { isContentlessRemoteDraftChat, remoteDraftVariant } from './remote/Remot
 import { computeMergedTodosByLane, TODO_SOLO_LANE, type TodoStatus } from './TodoList'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
 
+const MOBILE_DIFF_SUMMARY_FILE_LIMIT = 40
+
 export type RemoteProjectionKind =
   | 'taskCard'
   | 'taskFeedSnapshot'
@@ -368,6 +370,11 @@ export interface MobileDiffWorkspaceSummary {
   deletedFiles: number
   preExistingFiles: number
   files: MobileDiffFile[]
+}
+
+interface MobileDiffFileBudget {
+  remaining: number
+  truncated: boolean
 }
 
 export interface MobileDiffSummary {
@@ -1041,8 +1048,17 @@ export function buildMobileDiffSummary(
   } = {}
 ): MobileDiffSummary | undefined {
   const workspaceSummaries: MobileDiffWorkspaceSummary[] = []
+  const fileBudget: MobileDiffFileBudget = {
+    remaining: MOBILE_DIFF_SUMMARY_FILE_LIMIT,
+    truncated: false
+  }
   const runDiffWorkspace = run.runDiff
-    ? workspaceSummaryFromRunDiff(run.runDiff, run, context.workspaceId ?? undefined)
+    ? workspaceSummaryFromRunDiff(
+        run.runDiff,
+        run,
+        context.workspaceId ?? undefined,
+        fileBudget
+      )
     : undefined
   if (runDiffWorkspace) {
     workspaceSummaries.push(runDiffWorkspace)
@@ -1052,14 +1068,16 @@ export function buildMobileDiffSummary(
   for (const [workspacePath, files] of Object.entries(byPath)) {
     if (!Array.isArray(files)) continue
     if (runDiffWorkspace && runDiffWorkspace.workspacePath === workspacePath) continue
-    workspaceSummaries.push(workspaceSummaryFromFiles(workspacePath, files))
+    workspaceSummaries.push(workspaceSummaryFromFiles(workspacePath, files, undefined, fileBudget))
   }
 
   if (workspaceSummaries.length === 0) return undefined
   const files = workspaceSummaries.flatMap((workspace) => workspace.files)
   const hunks = files.flatMap((file) => file.hunks ?? [])
   const truncated =
-    files.some((file) => Boolean(file.truncated)) || hunks.some((hunk) => hunk.truncated)
+    fileBudget.truncated ||
+    files.some((file) => Boolean(file.truncated)) ||
+    hunks.some((hunk) => hunk.truncated)
   const totals = workspaceSummaries.reduce(
     (acc, workspace) => {
       acc.filesChanged += workspace.filesChanged
@@ -1305,7 +1323,8 @@ function countByThread(threadIds: string[]): Map<string, number> {
 function workspaceSummaryFromRunDiff(
   runDiff: RunDiffResult,
   run: ChatRun,
-  workspaceId?: string | null
+  workspaceId?: string | null,
+  fileBudget?: MobileDiffFileBudget
 ): MobileDiffWorkspaceSummary {
   const workspacePath =
     runDiff.postSnapshot?.workspacePath ||
@@ -1320,14 +1339,16 @@ function workspaceSummaryFromRunDiff(
       deleted: runDiff.deletedFiles,
       preExisting: runDiff.preExistingFiles
     },
-    workspaceId ?? undefined
+    workspaceId ?? undefined,
+    fileBudget
   )
 }
 
 function workspaceSummaryFromFiles(
   workspacePath: string,
   files: DiffFileSummary[],
-  workspaceId?: string
+  workspaceId?: string,
+  fileBudget?: MobileDiffFileBudget
 ): MobileDiffWorkspaceSummary {
   const created: DiffFileSummary[] = []
   const modified: DiffFileSummary[] = []
@@ -1342,7 +1363,8 @@ function workspaceSummaryFromFiles(
   return workspaceSummaryFromBuckets(
     workspacePath,
     { created, modified, deleted, preExisting },
-    workspaceId
+    workspaceId,
+    fileBudget
   )
 }
 
@@ -1354,10 +1376,17 @@ function workspaceSummaryFromBuckets(
     deleted: DiffFileSummary[]
     preExisting: DiffFileSummary[]
   },
-  workspaceId?: string
+  workspaceId?: string,
+  fileBudget?: MobileDiffFileBudget
 ): MobileDiffWorkspaceSummary {
   const changed = [...buckets.created, ...buckets.modified, ...buckets.deleted]
   const allFiles = [...changed, ...buckets.preExisting]
+  const filesForProjection =
+    fileBudget === undefined ? allFiles : allFiles.slice(0, Math.max(0, fileBudget.remaining))
+  if (fileBudget !== undefined) {
+    if (filesForProjection.length < allFiles.length) fileBudget.truncated = true
+    fileBudget.remaining = Math.max(0, fileBudget.remaining - filesForProjection.length)
+  }
   return {
     workspaceId,
     workspacePath,
@@ -1368,7 +1397,7 @@ function workspaceSummaryFromBuckets(
     modifiedFiles: buckets.modified.length,
     deletedFiles: buckets.deleted.length,
     preExistingFiles: buckets.preExisting.length,
-    files: allFiles.map(projectDiffFile)
+    files: filesForProjection.map(projectDiffFile)
   }
 }
 
