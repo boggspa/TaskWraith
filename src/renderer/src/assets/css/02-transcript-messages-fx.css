@@ -3679,6 +3679,9 @@
 
 /* Working indicator (transcript tail) inherits provider hue from the
  * sibling `.message-meta.provider-*` row above the bubble. */
+.message-group:has(.message-working) {
+  --message-working-accent: var(--accent);
+}
 .message-group:has(.message-meta.provider-codex) {
   --message-working-accent: var(--provider-codex-color);
 }
@@ -4065,7 +4068,6 @@
   align-items: center;
   gap: 8px;
   padding-block: calc(var(--space-sm) + 1px);
-  --message-working-accent: var(--accent);
 }
 
 /*
