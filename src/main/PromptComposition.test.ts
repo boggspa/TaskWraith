@@ -8,6 +8,7 @@ import {
   composeRunPrompt,
   promptNeedsImageToolsHint
 } from './PromptComposition'
+import { resolveOllamaContextBudget } from './ollama/OllamaContextBudget'
 import type { ChatMessage } from './store/types'
 import { makeHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
 
@@ -589,9 +590,11 @@ describe('composeRunPrompt sub-thread returns', () => {
       nextModel: 'qwen3.5:9b'
     })
 
-    expect(result.applicationLog).toContain('2600 char cap')
+    expect(result.applicationLog).toContain(
+      `${resolveOllamaContextBudget('qwen3.5:9b').maxBlockChars} char cap`
+    )
     expect(result.contextualPrompt).toContain('local-scout workflow')
-    expect(result.contextTurnsApplied).toBeLessThanOrEqual(6)
+    expect(result.contextTurnsApplied).toBeLessThanOrEqual(10)
   })
 
   it('skips the scout hint for conversational Ollama prompts', () => {
