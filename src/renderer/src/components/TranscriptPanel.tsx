@@ -295,6 +295,48 @@ export type TranscriptPanelProps = {
   providerRates?: RendererProviderRates
 }
 
+export const FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT = 12
+export const FILE_CHANGE_SUMMARY_PAGE_SIZE = 24
+export const FILE_CHANGE_SUMMARY_MAX_VISIBLE = 120
+
+export interface FileChangeSummaryWindow {
+  canShowFewer: boolean
+  canShowMore: boolean
+  hiddenCount: number
+  items: DiffFileSummary[]
+  nextCount: number
+  nextShowCount: number
+  visibleCount: number
+}
+
+export function buildFileChangeSummaryWindow(
+  summaries: DiffFileSummary[],
+  requestedVisibleCount = FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT
+): FileChangeSummaryWindow {
+  const totalCount = summaries.length
+  const maxVisibleCount = Math.min(totalCount, FILE_CHANGE_SUMMARY_MAX_VISIBLE)
+  const visibleCount = Math.min(
+    Math.max(FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT, requestedVisibleCount),
+    maxVisibleCount
+  )
+  const nextCount = Math.min(
+    visibleCount + FILE_CHANGE_SUMMARY_PAGE_SIZE,
+    totalCount,
+    FILE_CHANGE_SUMMARY_MAX_VISIBLE
+  )
+  const hiddenCount = Math.max(0, totalCount - visibleCount)
+
+  return {
+    canShowFewer: visibleCount > FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT,
+    canShowMore: nextCount > visibleCount,
+    hiddenCount,
+    items: summaries.slice(0, visibleCount),
+    nextCount,
+    nextShowCount: Math.max(0, nextCount - visibleCount),
+    visibleCount
+  }
+}
+
 /** Stable empty heights array so the disabled path allocates nothing. */
 const EMPTY_TRANSCRIPT_HEIGHTS: number[] = []
 /** Stable empty rows array for the non-virtualised render path. */
@@ -940,6 +982,17 @@ export const TranscriptPanel = memo(
       scheduleClosePreview: scheduleCloseFileChangeDiffPreview,
       showPreview: showFileChangeDiffPreview
     } = useDiffHoverPreviewState()
+    const [fileChangeSummaryVisibleCount, setFileChangeSummaryVisibleCount] = useState(
+      FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT
+    )
+    const fileChangeSummaryWindow = useMemo(
+      () =>
+        buildFileChangeSummaryWindow(
+          displayFileChangeSummaries,
+          fileChangeSummaryVisibleCount
+        ),
+      [displayFileChangeSummaries, fileChangeSummaryVisibleCount]
+    )
     // Row-level render cache: stream updates replace one message object, so
     // unchanged rows can reuse their previous element instead of rebuilding all
     // markdown/tool row JSX on every chat-level commit. Pruned to mounted rows.
@@ -996,12 +1049,21 @@ export const TranscriptPanel = memo(
     useDiffHoverPreviewDismiss(fileChangeDiffPreview, closeFileChangeDiffPreview)
     useEffect(() => {
       closeFileChangeDiffPreview()
+      setFileChangeSummaryVisibleCount(FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT)
     }, [
       closeFileChangeDiffPreview,
       currentChat?.appChatId,
       currentRun?.runId,
       displayFileChangeSummaries
     ])
+    const showMoreFileChangeSummaries = useCallback(() => {
+      setFileChangeSummaryVisibleCount((current) =>
+        buildFileChangeSummaryWindow(displayFileChangeSummaries, current).nextCount
+      )
+    }, [displayFileChangeSummaries])
+    const showFewerFileChangeSummaries = useCallback(() => {
+      setFileChangeSummaryVisibleCount(FILE_CHANGE_SUMMARY_COLLAPSED_LIMIT)
+    }, [])
     const openMessageContextMenu = useCallback(
       (
         event: React.MouseEvent,
@@ -2423,7 +2485,7 @@ export const TranscriptPanel = memo(
                 <div className="file-change-summary-list">
                   {displayFileChangeSummaries.length > 0 ? (
                     <>
-                      {displayFileChangeSummaries.slice(0, 12).map((item) => {
+                      {fileChangeSummaryWindow.items.map((item) => {
                         const rowContent = (
                           <>
                             <span className={`file-change-summary-status status-${item.status}`}>
@@ -2501,10 +2563,30 @@ export const TranscriptPanel = memo(
                           </button>
                         )
                       })}
-                      {displayFileChangeSummaries.length > 12 && (
-                        <div className="file-change-summary-item file-change-summary-overflow">
-                          +{displayFileChangeSummaries.length - 12} more files changed
-                        </div>
+                      {fileChangeSummaryWindow.canShowMore ? (
+                        <button
+                          className="file-change-summary-item file-change-summary-overflow has-workbench-link"
+                          type="button"
+                          aria-label={`Show ${fileChangeSummaryWindow.nextShowCount} more changed files`}
+                          onClick={showMoreFileChangeSummaries}
+                        >
+                          Show {fileChangeSummaryWindow.nextShowCount} more files
+                        </button>
+                      ) : fileChangeSummaryWindow.canShowFewer ? (
+                        <button
+                          className="file-change-summary-item file-change-summary-overflow has-workbench-link"
+                          type="button"
+                          aria-label="Show fewer changed files"
+                          onClick={showFewerFileChangeSummaries}
+                        >
+                          Show fewer files
+                        </button>
+                      ) : null}
+                      {!fileChangeSummaryWindow.canShowMore &&
+                        fileChangeSummaryWindow.hiddenCount > 0 && (
+                          <div className="file-change-summary-item file-change-summary-overflow">
+                            +{fileChangeSummaryWindow.hiddenCount} more files omitted from summary
+                          </div>
                       )}
                     </>
                   ) : (
