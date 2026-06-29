@@ -269,7 +269,115 @@ describe('PluginPreflightService', () => {
     expect(result.status).toBe('blocked')
     expect(result.issues.some((issue) => issue.code === 'invalid-manifest')).toBe(true)
     expect(validateTaskWraithPluginManifest(manifest)).toContain(
-      'Manifest key "installScript" is not allowed in declarative plugins.'
+      'Manifest key "manifest.installScript" is not allowed in declarative plugins.'
     )
+  })
+
+  it('reports strict manifest validation diagnostics for local JSON manifests', () => {
+    const oversized = 'x'.repeat(4097)
+    const manifest = {
+      ...BASE_MANIFEST,
+      description: oversized,
+      compatibility: {
+        providers: ['unknown-provider']
+      },
+      capabilities: [
+        ...Array.from({ length: 65 }, (_, index) => ({
+          kind: 'mcpServers',
+          id: `cap-${index}`,
+          label: `Capability ${index}`
+        })),
+        {
+          kind: 'unknown-kind',
+          id: 'bad-kind',
+          label: 'Bad kind',
+          agenticServices: ['unknown-service'],
+          networkScopes: ['moon']
+        }
+      ],
+      mcpServers: [
+        {
+          id: 'dup',
+          name: 'Dup',
+          transport: 'http',
+          url: 'ftp://example.test/mcp',
+          env: { 'bad-key': 'value' },
+          headers: { 'bad header': 'value' }
+        },
+        {
+          id: 'dup',
+          name: 'Dup 2',
+          transport: 'http',
+          url: 'https://example.test/mcp'
+        }
+      ],
+      taskwraithToolBundles: [
+        {
+          id: 'tools',
+          label: 'Tools',
+          tools: ['not_a_real_tool']
+        }
+      ],
+      runtimeProfiles: [
+        {
+          id: 'runtime',
+          name: 'Runtime',
+          provider: 'unknown-provider',
+          scope: 'workspace',
+          workspaceMode: 'spaceship'
+        }
+      ],
+      connectors: [
+        {
+          id: 'connector',
+          label: 'Connector',
+          kind: 'raw-code',
+          scripts: ['install.sh']
+        }
+      ],
+      localServices: [
+        {
+          id: 'service',
+          label: 'Service',
+          ports: [0, 70000],
+          healthCheck: { url: 'not a url' }
+        }
+      ],
+      providerSetup: [{ provider: 'unknown-provider' }],
+      marketplace: {
+        category: 'Bad',
+        tags: [],
+        homepageUrl: 'file:///tmp/plugin.html'
+      }
+    } as unknown as TaskWraithPluginManifest
+
+    const errors = validateTaskWraithPluginManifest(manifest)
+
+    expect(errors).toContain('Plugin description exceeds 4096 characters.')
+    expect(errors).toContain('Compatibility providers contains unsupported value "unknown-provider".')
+    expect(errors).toContain('Capabilities exceeds 64 entries.')
+    expect(errors).toContain('Capability "bad-kind" has unsupported kind "unknown-kind".')
+    expect(errors).toContain(
+      'Capability "bad-kind" agentic services contains unsupported value "unknown-service".'
+    )
+    expect(errors).toContain(
+      'Capability "bad-kind" network scopes contains unsupported value "moon".'
+    )
+    expect(errors).toContain('MCP server preset "dup" is duplicated.')
+    expect(errors).toContain('MCP server preset "dup" URL must be an http(s) URL.')
+    expect(errors).toContain('MCP server preset "dup" env contains invalid key "bad-key".')
+    expect(errors).toContain('MCP server preset "dup" headers contains invalid key "bad header".')
+    expect(errors).toContain(
+      'TaskWraith tool bundle "tools" tools contains unsupported value "not_a_real_tool".'
+    )
+    expect(errors).toContain('Runtime profile "runtime" has unsupported provider "unknown-provider".')
+    expect(errors).toContain('Runtime profile "runtime" has unsupported workspace mode "spaceship".')
+    expect(errors).toContain('Connector "connector" has unsupported kind "raw-code".')
+    expect(errors).toContain('Manifest key "manifest.connectors[0].scripts" is not allowed in declarative plugins.')
+    expect(errors).toContain('Local service "service" has invalid port "0".')
+    expect(errors).toContain('Local service "service" has invalid port "70000".')
+    expect(errors).toContain('Local service "service" health check URL must be a valid URL.')
+    expect(errors).toContain('Provider setup has unsupported provider "unknown-provider".')
+    expect(errors).toContain('Marketplace homepage URL must be an http(s) URL.')
   })
 })

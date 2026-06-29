@@ -174,7 +174,7 @@ export const BUILT_IN_TASKWRAITH_PLUGIN_MANIFESTS: TaskWraithPluginManifest[] = 
         description: 'A workspace dev server exposed on localhost.',
         ports: [3000, 5173, 8080],
         healthCheck: {
-          url: 'http://127.0.0.1:<port>/'
+          commandHint: 'Check http://127.0.0.1:<port>/ after the user selects a concrete port.'
         },
         managedByTaskWraith: false
       }
@@ -354,4 +354,3 @@ export const BUILT_IN_TASKWRAITH_PLUGIN_MANIFESTS: TaskWraithPluginManifest[] = 
     }
   }
 ]
-
