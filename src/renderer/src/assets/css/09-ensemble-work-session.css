@@ -3107,3 +3107,111 @@
   ) {
   border-color: transparent !important;
 }
+
+/* 1.0.5 — Ensemble round cards.
+ *
+ * Collapsible header bar injected before each COMPLETED round in the
+ * transcript (see `lib/ensembleRoundCards.ts` +
+ * `components/EnsembleRoundCardHeader.tsx`). Collapsed rounds show only
+ * this bar; expanding it re-inserts the round's message bubbles beneath.
+ * The bar reads as transcript chrome — an accent-tinted, clickable rail
+ * that anchors each round without competing with the message bubbles. */
+.ensemble-round-card-header {
+  margin: 6px 0;
+}
+
+.ensemble-round-card-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-color, #d6a23a) 26%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-color, #d6a23a) 6%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.ensemble-round-card-toggle:hover {
+  background: color-mix(in srgb, var(--accent-color, #d6a23a) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color, #d6a23a) 42%, transparent);
+}
+
+.ensemble-round-card-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-color, #d6a23a) 60%, transparent);
+  outline-offset: 1px;
+}
+
+/* Expanded rounds keep a slimmer, quieter bar — it's an anchor + a way
+ * back to collapsed, not the round's primary content. */
+.ensemble-round-card-header.is-expanded .ensemble-round-card-toggle {
+  padding-top: 5px;
+  padding-bottom: 5px;
+  background: color-mix(in srgb, var(--accent-color, #d6a23a) 3%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color, #d6a23a) 16%, transparent);
+}
+
+.ensemble-round-card-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--accent-color, #d6a23a);
+}
+
+.ensemble-round-card-index {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: var(--font-size-sm, 0.82rem);
+  letter-spacing: 0.01em;
+}
+
+.ensemble-round-card-index-total {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.ensemble-round-card-providers {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.ensemble-round-card-provider {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.ensemble-round-card-provider svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ensemble-round-card-count {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs, 0.72rem);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Collapsed-only one-line preview (synthesizer summary or prompt). Takes
+ * the remaining width and truncates so the bar stays single-line. */
+.ensemble-round-card-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-xs, 0.72rem);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

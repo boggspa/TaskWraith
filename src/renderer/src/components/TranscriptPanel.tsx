@@ -48,7 +48,12 @@ import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import { shouldSuppressRunCompleteSummary, type RunCompleteNotice } from '../lib/runCompleteNotice'
 import { EMPTY_CHAT_MESSAGES } from '../lib/stableEmpties'
 import { groupAdjacentToolMessages } from '../lib/transcriptToolMessageGrouping'
+import {
+  buildEnsembleRoundCardRows,
+  isEnsembleRoundHeaderMessage
+} from '../lib/ensembleRoundCards'
 import { ActivityStack } from './ActivityStack'
+import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { AgentQuestionCard, type AgentQuestionState } from './AgentQuestionCard'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
@@ -261,6 +266,12 @@ export type TranscriptPanelProps = {
   currency?: DisplayCurrency
   currencyOverestimatePercent?: number
   showRunCompleteSummary?: boolean
+  /**
+   * Settings → General: collapse older Ensemble rounds into cards. When
+   * undefined or true (the default) completed rounds collapse into
+   * expandable round cards; explicit `false` restores the flat transcript.
+   */
+  collapseOlderRounds?: boolean
   /**
    * Body-portaled user-message rail. Keep this on the focused/main transcript
    * only so secondary panes do not draw rails outside their pane bounds.
@@ -885,6 +896,7 @@ export const TranscriptPanel = memo(
     currency,
     currencyOverestimatePercent,
     showRunCompleteSummary,
+    collapseOlderRounds,
     userMessageGutterEnabled,
     isGlobal,
     providerRates
@@ -1029,6 +1041,19 @@ export const TranscriptPanel = memo(
     // Per-message expansion state for long user-message bubbles. Keyed by
     // message.id so toggling one brief does not collapse others. Default for
     // every long message is collapsed — see UserMessageCollapse for thresholds.
+    // Per-round manual expand/collapse overrides for the ensemble
+    // round-card transcript. Keyed by ensemble roundId; value true =
+    // expanded. Absent → the default (latest round expanded, older
+    // collapsed) applies. Reset on chat change like the other transcript
+    // expansion state below.
+    const [manualRoundExpansion, setManualRoundExpansion] = useState<Map<string, boolean>>(new Map())
+    const setRoundExpanded = useCallback((roundId: string, expanded: boolean) => {
+      setManualRoundExpansion((prev) => {
+        const next = new Map(prev)
+        next.set(roundId, expanded)
+        return next
+      })
+    }, [])
     const [expandedUserMessages, setExpandedUserMessages] = useState<Set<string>>(new Set())
     const toggleUserMessageExpanded = useCallback((id: string) => {
       setExpandedUserMessages((prev) => {
@@ -1097,7 +1122,61 @@ export const TranscriptPanel = memo(
     // window-selection snapshot (select-on-scroll, not on every measure), and a
     // one-shot anchor correction. So ensembles keep windowing and converge.
     const virtualizeEnabled = virtualize ?? TRANSCRIPT_VIRTUALIZATION_ENABLED
-    const displayMessages = useMemo(() => groupAdjacentToolMessages(visibleMessages), [visibleMessages])
+    const groupedMessages = useMemo(
+      () => groupAdjacentToolMessages(visibleMessages),
+      [visibleMessages]
+    )
+    // Ensemble round cards: completed rounds collapse into expandable
+    // header rows (older collapsed by default). Returns `groupedMessages`
+    // unchanged for non-ensemble chats or when the setting is off, so the
+    // flat render path + referential stability are preserved there.
+    const displayMessages = useMemo(
+      () =>
+        buildEnsembleRoundCardRows({
+          chat: currentChat,
+          displayMessages: groupedMessages,
+          collapseOlderRounds: collapseOlderRounds !== false,
+          manualRoundExpansion
+        }),
+      [currentChat, groupedMessages, collapseOlderRounds, manualRoundExpansion]
+    )
+    // Map every (pre-collapse) message id → its round id, so navigation
+    // (jump-to-message, pinned, side-chat seed) can auto-expand the round
+    // a target lives in before scrolling — otherwise a jump into a
+    // collapsed round would silently no-op. Built off the full
+    // `groupedMessages` list (not the collapsed `displayMessages`).
+    const roundIdByMessageId = useMemo(() => {
+      const map = new Map<string, string>()
+      if (currentChat?.chatKind !== 'ensemble') return map
+      for (const message of groupedMessages) {
+        const roundId =
+          typeof message.metadata?.ensembleRoundId === 'string'
+            ? message.metadata.ensembleRoundId
+            : null
+        if (!roundId) continue
+        map.set(message.id, roundId)
+        const grouped = message.metadata?.groupedToolMessageIds
+        if (Array.isArray(grouped)) {
+          for (const gid of grouped) {
+            if (typeof gid === 'string') map.set(gid, roundId)
+          }
+        }
+      }
+      return map
+    }, [groupedMessages, currentChat?.chatKind])
+    const ensureRoundExpandedForMessage = useCallback(
+      (messageId: string) => {
+        const roundId = roundIdByMessageId.get(messageId)
+        if (!roundId) return
+        setManualRoundExpansion((prev) => {
+          if (prev.get(roundId) === true) return prev
+          const next = new Map(prev)
+          next.set(roundId, true)
+          return next
+        })
+      },
+      [roundIdByMessageId]
+    )
 
     // Phase 3 — type-out reveal (Variant B), default ON. The
     // live last-assistant bubble of a running chat reveals progressively via
@@ -1208,6 +1287,7 @@ export const TranscriptPanel = memo(
       previousChatIdRef.current = chatId
       setMessageContextMenu(null)
       setExpandedUserMessages(new Set())
+      setManualRoundExpansion(new Map())
       setActivityExpansionByRow(new Map())
       setExpandedSubThreadResults(new Set())
       rowElementCacheRef.current.clear()
@@ -1304,12 +1384,16 @@ export const TranscriptPanel = memo(
 
     const scrollToMessage = useCallback(
       (messageId: string, rowKey?: string): void => {
+        // If the target lives in a collapsed ensemble round, expand it
+        // first; the pending-focus retry loop below then finds the row
+        // once it re-renders into the window.
+        ensureRoundExpandedForMessage(messageId)
         if (focusMessageBlock(messageId, rowKey)) return
 
         setPendingFocusTarget({ messageId, rowKey, attempt: 0 })
         estimateScrollToMessage(messageId, rowKey)
       },
-      [estimateScrollToMessage, focusMessageBlock]
+      [ensureRoundExpandedForMessage, estimateScrollToMessage, focusMessageBlock]
     )
 
     const jumpToTranscriptStart = useCallback(() => {
@@ -1432,6 +1516,7 @@ export const TranscriptPanel = memo(
             const isToolActivityStack = msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0
             const isParticipantHealth = msg.metadata?.kind === 'ensembleParticipantHealth'
             const isProviderRunFailure = msg.metadata?.kind === 'providerRunFailure'
+            const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
             const collaboratorMeta = isCollaboratorComment ? humanCollaboratorMetadata(msg) : null
             const boundaryRun = displayRunBoundaryByMessageId.get(msg.id)
             const isSideChatSeedMessage = Boolean(
@@ -1535,7 +1620,8 @@ export const TranscriptPanel = memo(
                 onDetachToPane,
                 setActivityExpansionForRow,
                 setSubThreadResultExpanded,
-                toggleUserMessageExpanded
+                toggleUserMessageExpanded,
+                setRoundExpanded
               ]
             }
             const cachedRow = rowElementCacheRef.current.get(rowKey)
@@ -1562,7 +1648,13 @@ export const TranscriptPanel = memo(
                     onOpenSideChat={onOpenSideChatFromRun}
                   />
                 )}
-                {isDelegationCard || isReturnCard ? (
+                {isRoundHeader ? (
+                  <EnsembleRoundCardHeader
+                    key={msg.id}
+                    message={msg}
+                    onSetExpanded={setRoundExpanded}
+                  />
+                ) : isDelegationCard || isReturnCard ? (
                   <div
                     key={msg.id}
                     className={`message-group ${
@@ -2371,5 +2463,6 @@ export const TranscriptPanel = memo(
     previous.copy === next.copy &&
     previous.virtualize === next.virtualize &&
     previous.autoFollowRef === next.autoFollowRef &&
+    previous.collapseOlderRounds === next.collapseOlderRounds &&
     previous.userMessageGutterEnabled === next.userMessageGutterEnabled
 )
