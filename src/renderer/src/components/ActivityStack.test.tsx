@@ -323,6 +323,41 @@ describe('ActivityStack compactDensity routing', () => {
   })
 })
 
+describe('ActivityStack diff hover previews', () => {
+  it('marks successful write rows with patch previews for hover diff preview', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack
+        activities={[
+          makeWriteActivity({
+            parameters: {
+              file_path: '/repo/src/foo.ts',
+              patchPreview: ['@@ -1,2 +1,2 @@', '-old', '+new'].join('\n')
+            },
+            diffSummary: {
+              additions: 1,
+              deletions: 1,
+              confidence: 'exact',
+              source: 'patch_preview',
+              files: [{ path: '/repo/src/foo.ts', status: 'modified', additions: 1, deletions: 1 }]
+            }
+          })
+        ]}
+        provider="codex"
+      />
+    )
+
+    expect(html).toContain('data-diff-hover-preview="true"')
+  })
+
+  it('does not mark write rows without diff text for hover preview', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStack activities={[makeWriteActivity()]} provider="codex" />
+    )
+
+    expect(html).not.toContain('data-diff-hover-preview=')
+  })
+})
+
 describe('ActivityStack agent invocation presentation', () => {
   it('labels provider-native child-agent threads with unified invocation copy', () => {
     const html = renderToStaticMarkup(

@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode
+} from 'react'
 import {
   ChatRecord,
   ChildAgentThread,
@@ -51,6 +58,12 @@ import {
   childAgentInteractivityLabel,
   childAgentStateLabel
 } from '../lib/AgentInvocationPresentation'
+import {
+  DiffHoverPreviewOverlay,
+  diffHoverPreviewBoundaryForElement,
+  type DiffHoverPreviewState,
+  useDiffHoverPreviewDismiss
+} from './DiffHoverPreview'
 
 interface ActivityStackProps {
   activities: ToolActivity[]
@@ -121,6 +134,14 @@ const PATH_PARAM_KEYS = [
   'target',
   'target_file',
   'target_file_path'
+]
+const ACTIVITY_DIFF_PREVIEW_PARAM_KEYS = [
+  'patchPreview',
+  'patch_preview',
+  'patch',
+  'diff',
+  'unifiedDiff',
+  'unified_diff'
 ]
 // 1.0.4-AS2 — exported so the ensemble-collapse predicate test
 // can assert the shape of `buildTimelineItems`'s output without
@@ -426,6 +447,34 @@ function getFilePathFromActivity(activity: ToolActivity): string | undefined {
   }
 
   return undefined
+}
+
+function getActivityDiffPreviewText(activity: ToolActivity): string {
+  const parameters = activity.parameters || {}
+  for (const key of ACTIVITY_DIFF_PREVIEW_PARAM_KEYS) {
+    const value = parameters[key]
+    if (typeof value === 'string' && value.trim()) {
+      return value
+    }
+  }
+
+  const resultText = activity.resultSummary || activity.outputPreview || ''
+  return /^(?:diff --git|@@\s|---\s|\+\+\+\s)/m.test(resultText) ? resultText : ''
+}
+
+function getActivityDiffPreviewPath(
+  activity: ToolActivity,
+  activityFilePath?: string,
+  diffSummary?: ToolDiffSummary
+): string {
+  const summaryPath = diffSummary?.files?.find((file) => file.path?.trim())?.path
+  return (
+    activityFilePath ||
+    summaryPath ||
+    activity.displayName ||
+    activity.toolName ||
+    'Tool diff'
+  )
 }
 
 function getBaseName(path: string): string {
@@ -2106,30 +2155,8 @@ function ActivityRow({
   // `toggleExpanded`'s fallback branch.
   const [localExpanded, setLocalExpanded] = useState(false)
   const expanded = isExpanded ?? localExpanded
-  // Phase L3 slice 4 — stamp animation on status transition. When a
-  // Phase K-followup — `justCompleted` state + the running→done
-  // "stamp" animation are gone. Both were anchored to the now-removed
-  // traffic-light gutter dot. With the dot gone the icon's smooth
-  // color + opacity transition is the completion cue (see the
-  // `activity-icon-pulse` keyframe in main.css for the running
-  // state). If a future surface wants the celebration animation,
-  // hang it on `.activity-category-icon` instead.
-  const progressNote = getProgressNote(activity)
-  if (progressNote && !forceCompact) {
-    return (
-      <>
-        <ActivityProgressNote activity={activity} />
-        {childThread && (
-          <ChildAgentThreadCard
-            thread={childThread}
-            activities={childActivities || []}
-            workspacePath={workspacePath}
-            shimmerNow={shimmerNow}
-          />
-        )}
-      </>
-    )
-  }
+  const [activityDiffHoverPreview, setActivityDiffHoverPreview] =
+    useState<DiffHoverPreviewState | null>(null)
 
   const isUnknown = activity.toolName === 'unknown' || !activity.toolName
   const showDebugWarning = Boolean(isUnknown && (activity.rawUseEvent || activity.rawResultEvent))
@@ -2171,6 +2198,51 @@ function ActivityRow({
   // Claude `Write` content, Gemini MCP write tools, and suppresses `+0 -0`
   // for pending edits that have not reported back yet.
   const inlineStats = inlineStatsForActivity(activity)
+  const activityDiffPreviewText =
+    !isErroredToolStatus(activity.status) && isWriteAction ? getActivityDiffPreviewText(activity) : ''
+  const activityDiffPreviewPath = getActivityDiffPreviewPath(
+    activity,
+    activityFilePath,
+    diffSummary
+  )
+  const activityDiffPreviewStatus =
+    diffSummary?.files?.find((file) => file.status)?.status || 'edited'
+  const activityDiffPreviewAdditions = inlineStats.visible
+    ? inlineStats.additions
+    : diffSummary?.additions
+  const activityDiffPreviewDeletions = inlineStats.visible
+    ? inlineStats.deletions
+    : diffSummary?.deletions
+  const closeActivityDiffHoverPreview = useCallback(() => {
+    setActivityDiffHoverPreview(null)
+  }, [])
+  const openActivityDiffHoverPreview = useCallback(
+    (event: ReactMouseEvent<HTMLElement>) => {
+      if (!activityDiffPreviewText) return
+      setActivityDiffHoverPreview({
+        anchor: event.currentTarget.getBoundingClientRect(),
+        boundary: diffHoverPreviewBoundaryForElement(event.currentTarget),
+        summary: {
+          path: activityDiffPreviewPath,
+          status: activityDiffPreviewStatus,
+          additions: activityDiffPreviewAdditions,
+          deletions: activityDiffPreviewDeletions,
+          diffText: activityDiffPreviewText
+        }
+      })
+    },
+    [
+      activityDiffPreviewAdditions,
+      activityDiffPreviewDeletions,
+      activityDiffPreviewPath,
+      activityDiffPreviewStatus,
+      activityDiffPreviewText
+    ]
+  )
+  useDiffHoverPreviewDismiss(activityDiffHoverPreview, closeActivityDiffHoverPreview)
+  useEffect(() => {
+    setActivityDiffHoverPreview(null)
+  }, [activity.id, activity.status])
   const sanitizedDetail = buildSanitizedDetail(
     activity,
     activityFilePath,
@@ -2227,6 +2299,30 @@ function ActivityRow({
   const isShimmerStale = isActivityShimmerStale(activity, shimmerNow ?? 0)
   const showInlinePulse =
     (activity.status === 'running' || activity.status === 'pending') && !isShimmerStale
+  // Phase L3 slice 4 — stamp animation on status transition. When a
+  // Phase K-followup — `justCompleted` state + the running→done
+  // "stamp" animation are gone. Both were anchored to the now-removed
+  // traffic-light gutter dot. With the dot gone the icon's smooth
+  // color + opacity transition is the completion cue (see the
+  // `activity-icon-pulse` keyframe in main.css for the running
+  // state). If a future surface wants the celebration animation,
+  // hang it on `.activity-category-icon` instead.
+  const progressNote = getProgressNote(activity)
+  if (progressNote && !forceCompact) {
+    return (
+      <>
+        <ActivityProgressNote activity={activity} />
+        {childThread && (
+          <ChildAgentThreadCard
+            thread={childThread}
+            activities={childActivities || []}
+            workspacePath={workspacePath}
+            shimmerNow={shimmerNow}
+          />
+        )}
+      </>
+    )
+  }
 
   // Phase L5 slice 3 — toggle path forwards the click's mod-key
   // state so the parent's single-open coordinator can distinguish
@@ -2251,8 +2347,11 @@ function ActivityRow({
         data-status={activity.status}
         data-stale={isShimmerStale ? 'true' : undefined}
         data-provider={provider || 'unknown'}
+        data-diff-hover-preview={activityDiffPreviewText ? 'true' : undefined}
         role={canExpand ? 'button' : undefined}
         tabIndex={canExpand ? 0 : -1}
+        onMouseEnter={activityDiffPreviewText ? openActivityDiffHoverPreview : undefined}
+        onMouseLeave={activityDiffPreviewText ? closeActivityDiffHoverPreview : undefined}
         aria-expanded={canExpand ? expanded : undefined}
         onClick={canExpand ? (event) => toggleExpanded(event.metaKey || event.shiftKey) : undefined}
         onKeyDown={
@@ -2456,6 +2555,7 @@ function ActivityRow({
           shimmerNow={shimmerNow}
         />
       )}
+      <DiffHoverPreviewOverlay preview={activityDiffHoverPreview} />
     </>
   )
 }

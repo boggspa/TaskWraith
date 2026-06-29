@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import { createPortal } from 'react-dom'
 import type {
   ChatMessage,
   ChatRecord,
@@ -83,7 +82,13 @@ import {
   isHumanCollaboratorComment
 } from '../../../main/collaboration/HumanCollaboratorMessages'
 import { TranscriptUserMessageGutter } from './TranscriptUserMessageGutter'
-import { parseUnifiedDiff, type ParsedDiffLine } from '../lib/unifiedDiffParser'
+import {
+  DIFF_HOVER_PREVIEW_TOOLTIP_ID,
+  DiffHoverPreviewOverlay,
+  diffHoverPreviewBoundaryForElement,
+  type DiffHoverPreviewState,
+  useDiffHoverPreviewDismiss
+} from './DiffHoverPreview'
 
 export type TranscriptPanelProps = {
   scrollRef: React.RefObject<HTMLDivElement | null>
@@ -288,137 +293,6 @@ export type TranscriptPanelProps = {
    * `cost_usd` (Codex / Grok / Cursor). Absent → no estimate.
    */
   providerRates?: RendererProviderRates
-}
-
-interface FileChangeDiffPreviewState {
-  anchor: DOMRect
-  summary: DiffFileSummary
-}
-
-const FILE_CHANGE_DIFF_PREVIEW_LINE_LIMIT = 96
-const FILE_CHANGE_DIFF_PREVIEW_RAW_LINE_LIMIT = 240
-const FILE_CHANGE_DIFF_PREVIEW_CHAR_LIMIT = 40_000
-const FILE_CHANGE_DIFF_PREVIEW_TOOLTIP_ID = 'file-change-diff-preview-tooltip'
-const FILE_CHANGE_DIFF_PREVIEW_WIDTH = 640
-const FILE_CHANGE_DIFF_PREVIEW_HEIGHT = 360
-
-const prepareFileChangeDiffPreviewText = (diffText: string): { text: string; capped: boolean } => {
-  let lineCount = 0
-  let index = 0
-  const maxIndex = Math.min(diffText.length, FILE_CHANGE_DIFF_PREVIEW_CHAR_LIMIT)
-  while (index < maxIndex) {
-    if (diffText.charCodeAt(index) === 10) {
-      lineCount += 1
-      if (lineCount >= FILE_CHANGE_DIFF_PREVIEW_RAW_LINE_LIMIT) {
-        index += 1
-        break
-      }
-    }
-    index += 1
-  }
-  return {
-    text: diffText.slice(0, index),
-    capped: index < diffText.length
-  }
-}
-
-function fileChangePreviewLineClass(line: ParsedDiffLine): string {
-  if (line.kind === 'add') return 'add'
-  if (line.kind === 'del') return 'del'
-  if (line.kind === 'meta') return 'meta'
-  return 'context'
-}
-
-function FileChangeDiffPreviewLine({ line }: { line: ParsedDiffLine }) {
-  return (
-    <div className={`file-change-diff-preview-line ${fileChangePreviewLineClass(line)}`}>
-      <span className="file-change-diff-preview-gutter old">{line.oldLine ?? ''}</span>
-      <span className="file-change-diff-preview-gutter new">{line.newLine ?? ''}</span>
-      <span className="file-change-diff-preview-code">{line.text || ' '}</span>
-    </div>
-  )
-}
-
-function FileChangeDiffPreviewOverlay({
-  preview
-}: {
-  preview: FileChangeDiffPreviewState | null
-}) {
-  const preparedDiff = useMemo(
-    () => (preview?.summary.diffText ? prepareFileChangeDiffPreviewText(preview.summary.diffText) : null),
-    [preview?.summary.diffText]
-  )
-  const parsed = useMemo(
-    () =>
-      preparedDiff
-        ? parseUnifiedDiff(preparedDiff.text, {
-            maxLines: FILE_CHANGE_DIFF_PREVIEW_LINE_LIMIT
-          })
-        : null,
-    [preparedDiff]
-  )
-
-  if (!preview || !parsed || typeof document === 'undefined') return null
-
-  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024
-  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 768
-  const preferredTop = preview.anchor.top - FILE_CHANGE_DIFF_PREVIEW_HEIGHT - 10
-  const top =
-    preferredTop >= 8
-      ? preferredTop
-      : Math.min(preview.anchor.bottom + 10, viewportHeight - FILE_CHANGE_DIFF_PREVIEW_HEIGHT - 8)
-  const left = Math.max(
-    8,
-    Math.min(preview.anchor.left, viewportWidth - FILE_CHANGE_DIFF_PREVIEW_WIDTH - 8)
-  )
-  const statusText =
-    preview.summary.additions !== undefined || preview.summary.deletions !== undefined
-      ? `+${preview.summary.additions || 0} -${preview.summary.deletions || 0}`
-      : preview.summary.status
-
-  const overlay = (
-    <div
-      id={FILE_CHANGE_DIFF_PREVIEW_TOOLTIP_ID}
-      className="file-change-diff-preview"
-      style={{
-        left: `${left}px`,
-        top: `${Math.max(8, top)}px`
-      }}
-      role="tooltip"
-    >
-      <div className="file-change-diff-preview-header">
-        <span title={preview.summary.path}>{preview.summary.path}</span>
-        <strong>{statusText}</strong>
-      </div>
-      <div className="file-change-diff-preview-body">
-        {parsed.sections.length > 0 ? (
-          parsed.sections.map((section, sectionIndex) => (
-            <div key={sectionIndex} className="file-change-diff-preview-section">
-              {section.header && (
-                <div className="file-change-diff-preview-hunk">{section.header}</div>
-              )}
-              {section.lines.map((line, lineIndex) => (
-                <FileChangeDiffPreviewLine key={`${sectionIndex}-${lineIndex}`} line={line} />
-              ))}
-            </div>
-          ))
-        ) : (
-          <div className="file-change-diff-preview-empty">No diff hunks to preview.</div>
-        )}
-      </div>
-      {(parsed.truncated || preparedDiff?.capped) && (
-        <div className="file-change-diff-preview-footer">
-          Showing first {parsed.renderedLineCount.toLocaleString()} lines
-          {parsed.omittedLineCount > 0
-            ? ` · ${parsed.omittedLineCount.toLocaleString()} omitted`
-            : ''}
-          {preparedDiff?.capped ? ' · source diff capped' : ''}
-        </div>
-      )}
-    </div>
-  )
-
-  return createPortal(overlay, document.body)
 }
 
 /** Stable empty heights array so the disabled path allocates nothing. */
@@ -1060,7 +934,7 @@ export const TranscriptPanel = memo(
     const [messageContextMenu, setMessageContextMenu] =
       useState<TranscriptMessageContextMenuSelection | null>(null)
     const [fileChangeDiffPreview, setFileChangeDiffPreview] =
-      useState<FileChangeDiffPreviewState | null>(null)
+      useState<DiffHoverPreviewState | null>(null)
     // Row-level render cache: stream updates replace one message object, so
     // unchanged rows can reuse their previous element instead of rebuilding all
     // markdown/tool row JSX on every chat-level commit. Pruned to mounted rows.
@@ -1081,7 +955,14 @@ export const TranscriptPanel = memo(
         if (!summary.diffText) return
         setFileChangeDiffPreview({
           anchor: event.currentTarget.getBoundingClientRect(),
-          summary
+          boundary: diffHoverPreviewBoundaryForElement(event.currentTarget),
+          summary: {
+            path: summary.path,
+            status: summary.status,
+            additions: summary.additions,
+            deletions: summary.deletions,
+            diffText: summary.diffText
+          }
         })
       },
       []
@@ -1097,21 +978,7 @@ export const TranscriptPanel = memo(
       },
       [onOpenFileChangeInWorkbench, openFileChangeDiffPreview]
     )
-    useEffect(() => {
-      if (!fileChangeDiffPreview) return
-      const closePreview = () => setFileChangeDiffPreview(null)
-      const closePreviewOnEscape = (event: KeyboardEvent) => {
-        if (event.key === 'Escape') closePreview()
-      }
-      window.addEventListener('scroll', closePreview, true)
-      window.addEventListener('resize', closePreview)
-      window.addEventListener('keydown', closePreviewOnEscape)
-      return () => {
-        window.removeEventListener('scroll', closePreview, true)
-        window.removeEventListener('resize', closePreview)
-        window.removeEventListener('keydown', closePreviewOnEscape)
-      }
-    }, [fileChangeDiffPreview])
+    useDiffHoverPreviewDismiss(fileChangeDiffPreview, closeFileChangeDiffPreview)
     useEffect(() => {
       setFileChangeDiffPreview(null)
     }, [currentChat?.appChatId, currentRun?.runId, displayFileChangeSummaries])
@@ -2586,7 +2453,7 @@ export const TranscriptPanel = memo(
                             type="button"
                             aria-describedby={
                               hasDiffPreview && fileChangeDiffPreview?.summary.path === item.path
-                                ? FILE_CHANGE_DIFF_PREVIEW_TOOLTIP_ID
+                                ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
                                 : undefined
                             }
                             aria-label={fileChangeActionLabel}
@@ -2635,7 +2502,7 @@ export const TranscriptPanel = memo(
           onDeleteMessage={onDeleteMessage}
           onClose={closeMessageContextMenu}
         />
-        <FileChangeDiffPreviewOverlay preview={fileChangeDiffPreview} />
+        <DiffHoverPreviewOverlay preview={fileChangeDiffPreview} />
       </div>
     )
   },
