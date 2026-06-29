@@ -171,6 +171,9 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'ensemble_bossman_control',
   'scout_brief',
   'blackboard_post',
+  'workspace_board_snapshot',
+  'workspace_board_preview_plan',
+  'workspace_board_apply_plan',
   // Persistent thread goal lifecycle (no workspace mutation).
   'goal_read',
   'goal_update',

@@ -15,7 +15,9 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'list_directory',
       'find_files',
       'workspace_search',
-      'workspace_symbols'
+      'workspace_symbols',
+      'workspace_board_snapshot',
+      'workspace_board_preview_plan'
     ] as const) {
       expect(autoAllowedTools.has(tool)).toBe(true)
     }
@@ -35,6 +37,7 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'ensemble_bossman_control',
       'web_search',
       'web_fetch',
+      'workspace_board_apply_plan',
       ...MCP_APP_STATE_MUTATION_TOOLS
     ]) {
       expect(autoAllowedTools.has(tool)).toBe(false)
@@ -44,7 +47,14 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
 
 describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
   it('advertises the safe coordination + read tools to a read-only seat', () => {
-    for (const tool of ['ask_user_question', 'ensemble_yield', 'read_file', 'find_files'] as const) {
+    for (const tool of [
+      'ask_user_question',
+      'ensemble_yield',
+      'read_file',
+      'find_files',
+      'workspace_board_snapshot',
+      'workspace_board_preview_plan'
+    ] as const) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain(tool)
     }
   })
@@ -60,6 +70,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'run_task',
       'web_search',
       'web_fetch',
+      'workspace_board_apply_plan',
       ...MCP_APP_STATE_MUTATION_TOOLS
     ]) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).not.toContain(tool)
@@ -81,7 +92,9 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'ensemble_yield',
       'read_file',
       'list_directory',
-      'find_files'
+      'find_files',
+      'workspace_board_snapshot',
+      'workspace_board_preview_plan'
     ]) {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(true)
     }
@@ -103,6 +116,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'cancel_wakeup',
       'blackboard_post',
       'delegate_to_subthread',
+      'workspace_board_apply_plan',
       'web_search',
       'web_fetch',
       'totally_unknown_future_tool'

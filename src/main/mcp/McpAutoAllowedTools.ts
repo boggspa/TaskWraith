@@ -72,6 +72,8 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'find_files',
   'workspace_search',
   'workspace_symbols',
+  'workspace_board_snapshot',
+  'workspace_board_preview_plan',
   // TaskWraith Canvas read-only verbs. No pixels, no mutation: list/status are
   // metadata the user already sees; snapshot/inspect run FIXED inspection
   // scripts (not agent-supplied JS); network/console are read-only buffers.
@@ -91,7 +93,8 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'ensemble_bossman_control',
   'schedule_wakeup',
   'cancel_wakeup',
-  'blackboard_post'
+  'blackboard_post',
+  'workspace_board_apply_plan'
 ])
 
 /**

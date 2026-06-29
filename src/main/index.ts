@@ -675,6 +675,10 @@ import {
   type WorkspaceToolContext
 } from './mcp/WorkspaceToolExecutors'
 import {
+  createWorkspaceBoardToolExecutors,
+  isWorkspaceBoardMcpToolName
+} from './mcp/WorkspaceBoardToolExecutors'
+import {
   buildProviderSignals,
   createAuditRoleDispatcher,
   createAuditRuntime,
@@ -4087,6 +4091,16 @@ const workspaceToolExecutors = createWorkspaceToolExecutors({
   }
 })
 
+const workspaceBoardToolExecutors = createWorkspaceBoardToolExecutors({
+  getChat: (chatId) => AppStore.getChat(chatId) ?? undefined,
+  getWorkspaceBoards: (workspaceId) => AppStore.getWorkspaceBoards(workspaceId),
+  saveWorkspaceBoard: (board) => AppStore.saveWorkspaceBoard(board),
+  updateWorkspaceBoard: (id, partial) => AppStore.updateWorkspaceBoard(id, partial),
+  getWorkspaceBoardCards: (boardId) => AppStore.getWorkspaceBoardCards(boardId),
+  saveWorkspaceBoardCard: (card) => AppStore.saveWorkspaceBoardCard(card),
+  updateWorkspaceBoardCard: (id, partial) => AppStore.updateWorkspaceBoardCard(id, partial)
+})
+
 // Shared per-app audit runtime: one artifact collector + one runId→context
 // registry + the audit MCP tool executors. The orchestrator (Slice 5c-2b)
 // registers a role-run before dispatch so an `audit_*` tool call routes to the
@@ -4160,6 +4174,13 @@ function emitRunQueueChanged(): void {
     'run-queue-changed',
     AppStore.getRunQueueJobs({ includeTerminal: true })
   )
+}
+
+function emitWorkspaceBoardsChanged(): void {
+  safeSendToWebContents(mainWindow, 'workspace-boards-changed', {
+    boards: AppStore.getWorkspaceBoards(),
+    cards: AppStore.getWorkspaceBoardCards()
+  })
 }
 
 function persistRunSessionQueueState(session: ReturnType<typeof runManager.get>): void {
@@ -7553,6 +7574,27 @@ function previewForGeminiMcpTool(
         kind: 'tool',
         toolName,
         params: args
+      }
+    }
+  }
+
+  if (toolName === 'workspace_board_apply_plan') {
+    const plan = isRecord(args.plan) ? args.plan : args
+    const cards = Array.isArray(plan.cards) ? plan.cards.length : 0
+    const boardLabel = String(plan.name || plan.boardId || 'active workspace board')
+    return {
+      title: `Approve ${providerName} workspace board update`,
+      body: `${intentBody}${boardLabel}\n${cards} card proposal${cards === 1 ? '' : 's'}`,
+      service: 'mcpTools' as AgenticServiceId,
+      preview: {
+        kind: 'tool',
+        toolName,
+        params: {
+          boardId: plan.boardId,
+          name: plan.name,
+          cards
+        },
+        ...intentPreview
       }
     }
   }
@@ -16657,6 +16699,18 @@ async function executeGeminiMcpTool(
         )
         toolIsError = auditResult.isError
         text = mcpJson(auditResult.result)
+      }
+    } else if (isWorkspaceBoardMcpToolName(toolName)) {
+      const result = await workspaceBoardToolExecutors.executeWorkspaceBoardMcpTool(
+        toolName,
+        args,
+        context,
+        { provider: parentProvider, runId: context.appRunId }
+      )
+      toolIsError = result.isError
+      text = mcpJson(result.result)
+      if (!toolIsError && toolName === 'workspace_board_apply_plan') {
+        emitWorkspaceBoardsChanged()
       }
     } else if (isWorkspaceMcpToolName(toolName)) {
       if (WORKSPACE_WIDE_WRITE_LOCK_TOOLS.has(toolName)) {

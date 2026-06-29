@@ -18,6 +18,9 @@ describe('classifyTool', () => {
     expect(classifyTool('web_search')).toBe('web_read')
     expect(classifyTool('web_fetch')).toBe('web_read')
     expect(classifyTool('ask_user_question')).toBe('ui_elicitation')
+    expect(classifyTool('workspace_board_snapshot')).toBe('orchestration')
+    expect(classifyTool('workspace_board_preview_plan')).toBe('orchestration')
+    expect(classifyTool('workspace_board_apply_plan')).toBe('orchestration')
     expect(classifyTool('ensemble_yield')).toBe('orchestration')
     expect(classifyTool('provider_usage_status')).toBe('orchestration')
     // video_decode_frame = native daemon capture (like appwatch_latest_frame /
@@ -119,6 +122,9 @@ describe('workspace_write is exactly the read-only deny set', () => {
       'web_fetch',
       'git_status',
       'git_diff',
+      'workspace_board_snapshot',
+      'workspace_board_preview_plan',
+      'workspace_board_apply_plan',
       'test_result_summary',
       'read_subthread_result',
       'creative_timeline_validate',
@@ -138,6 +144,7 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('write_file', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('switch_auth_profile', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('browser_open', ro)).toBe(true)
+    expect(isReadOnlyBlockedTool('workspace_board_apply_plan', ro)).toBe(true)
     for (const tool of MCP_APP_STATE_MUTATION_TOOLS) {
       expect(isReadOnlyBlockedTool(tool, ro)).toBe(true)
     }
@@ -147,6 +154,8 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('read_file', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('find_files', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('web_search', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('workspace_board_snapshot', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('workspace_board_preview_plan', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ensemble_yield', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ask_user_question', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('write_file', { readOnly: false })).toBe(false)

@@ -239,6 +239,89 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'workspace_board_snapshot',
+      description:
+        'Return a bounded snapshot of workspace boards and cards for the active TaskWraith workspace. Current-workspace scoped; no transcript bodies.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          boardId: { type: 'string', description: 'Optional board id to read.' },
+          includeArchived: { type: 'boolean', description: 'Include archived boards/cards.' },
+          limit: { type: 'number', description: 'Maximum cards per board. Defaults to 100.' }
+        }
+      }
+    },
+    {
+      name: 'workspace_board_preview_plan',
+      description:
+        'Preview a declarative Workspace Board plan without mutating state. TaskWraith will stamp agent provenance from the active run context.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          boardId: { type: 'string', description: 'Optional existing board id.' },
+          name: { type: 'string', description: 'Board name when creating or renaming.' },
+          description: { type: 'string' },
+          sourceKind: { type: 'string', enum: ['agent', 'goal', 'plan', 'thread'] },
+          sourceId: { type: 'string' },
+          sourceTitle: { type: 'string' },
+          note: { type: 'string' },
+          cards: {
+            type: 'array',
+            maxItems: 50,
+            items: { type: 'object' }
+          },
+          plan: {
+            type: 'object',
+            description: 'Optional wrapper containing the same fields.'
+          }
+        }
+      }
+    },
+    {
+      name: 'workspace_board_apply_plan',
+      description:
+        'Apply a declarative Workspace Board plan by creating/updating a board and cards in the active workspace. Gated app-state mutation; no deletes or archives. TaskWraith stamps actor=agent and trust=agent-proposed.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          boardId: { type: 'string', description: 'Optional existing board id.' },
+          name: { type: 'string', description: 'Board name when creating or renaming.' },
+          description: { type: 'string' },
+          sourceKind: { type: 'string', enum: ['agent', 'goal', 'plan', 'thread'] },
+          sourceId: { type: 'string' },
+          sourceTitle: { type: 'string' },
+          note: { type: 'string' },
+          cards: {
+            type: 'array',
+            maxItems: 50,
+            items: { type: 'object' }
+          },
+          plan: {
+            type: 'object',
+            description: 'Optional wrapper containing the same fields.'
+          }
+        }
+      }
+    },
+    {
       name: 'git_stage',
       description: 'Stage selected files or all changes in the active workspace.',
       annotations: {
