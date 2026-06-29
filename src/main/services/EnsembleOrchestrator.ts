@@ -4581,6 +4581,7 @@ export class EnsembleOrchestrator {
         participant.provider === 'claude' ? Boolean(participant.fastModeEnabled) : undefined
       const kimiThinking =
         participant.provider === 'kimi' ? Boolean(participant.thinkingEnabled) : undefined
+      const ollamaRunControls = ensembleOllamaRunControls(participant)
 
       const payload: AgentRunPayload = {
         provider: participant.provider,
@@ -4625,7 +4626,8 @@ export class EnsembleOrchestrator {
         ...(codexServiceTier !== undefined ? { serviceTier: codexServiceTier } : {}),
         ...(claudeReasoning !== undefined ? { claudeReasoningEffort: claudeReasoning } : {}),
         ...(claudeFastMode !== undefined ? { claudeFastMode } : {}),
-        ...(kimiThinking !== undefined ? { kimiThinking } : {})
+        ...(kimiThinking !== undefined ? { kimiThinking } : {}),
+        ...ollamaRunControls
       }
       // 1.0.4 — wrap dispatch in try/catch so socket-level errors
       // (ECONNREFUSED on a dead MCP bridge, ETIMEDOUT on a hung
@@ -5352,6 +5354,7 @@ export class EnsembleOrchestrator {
         participant.provider === 'claude' ? Boolean(participant.fastModeEnabled) : undefined
       const kimiThinking =
         participant.provider === 'kimi' ? Boolean(participant.thinkingEnabled) : undefined
+      const ollamaRunControls = ensembleOllamaRunControls(participant)
       const payload: AgentRunPayload = {
         provider: participant.provider,
         scope: chat.scope === 'global' ? 'global' : 'workspace',
@@ -5395,7 +5398,8 @@ export class EnsembleOrchestrator {
         ...(codexServiceTier !== undefined ? { serviceTier: codexServiceTier } : {}),
         ...(claudeReasoning !== undefined ? { claudeReasoningEffort: claudeReasoning } : {}),
         ...(claudeFastMode !== undefined ? { claudeFastMode } : {}),
-        ...(kimiThinking !== undefined ? { kimiThinking } : {})
+        ...(kimiThinking !== undefined ? { kimiThinking } : {}),
+        ...ollamaRunControls
       }
       try {
         const dispatched = await this.deps.dispatch(payload, { sender: runtime.sender })
@@ -6446,6 +6450,16 @@ function ensembleReasoningMetadata(participant: EnsembleParticipant): Record<str
     return { ensembleThinkingEnabled: Boolean(participant.thinkingEnabled) }
   }
   return {}
+}
+
+function ensembleOllamaRunControls(participant: EnsembleParticipant): Partial<AgentRunPayload> {
+  if (participant.provider !== 'ollama') return {}
+  return {
+    ...(participant.ollamaToolControlTier
+      ? { ollamaToolControlTier: participant.ollamaToolControlTier }
+      : {}),
+    ...(participant.ollamaRunProfile ? { ollamaRunProfile: participant.ollamaRunProfile } : {})
+  }
 }
 
 function updateRoundParticipant(

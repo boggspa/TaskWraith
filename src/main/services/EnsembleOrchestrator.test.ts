@@ -4014,6 +4014,38 @@ Next action:
     expect(codexPayload.claudeFastMode).toBeUndefined()
   })
 
+  it('threads Ollama participant tier and run profile through dispatch', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'ollama',
+        provider: 'ollama',
+        enabled: true,
+        role: 'Local Worker',
+        instructions: 'Work locally.',
+        order: 1,
+        model: 'ornith:35b',
+        permissionPresetId: 'workspace_write',
+        ollamaToolControlTier: 'approved_shell',
+        ollamaRunProfile: 'verify_with_shell'
+      }
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Use local shell verification.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0]).toMatchObject({
+      provider: 'ollama',
+      model: 'ornith:35b',
+      ollamaToolControlTier: 'approved_shell',
+      ollamaRunProfile: 'verify_with_shell'
+    })
+  })
+
   it('threads participant-scoped tool grants through effective permissions', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
@@ -5936,7 +5968,9 @@ Next action:
           instructions: 'Scout.',
           order: 1,
           permissionPresetId: 'read_only',
-          model: 'qwen3.5:9b'
+          model: 'qwen3.5:9b',
+          ollamaToolControlTier: 'read_only',
+          ollamaRunProfile: 'local_scout'
         },
         {
           id: 'ollama-b',
@@ -5946,7 +5980,9 @@ Next action:
           instructions: 'Scout.',
           order: 2,
           permissionPresetId: 'read_only',
-          model: 'gemma4:12b'
+          model: 'gemma4:12b',
+          ollamaToolControlTier: 'approved_edits',
+          ollamaRunProfile: 'approved_patcher'
         }
       ]
 
@@ -5959,6 +5995,14 @@ Next action:
 
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2), { timeout: 1000 })
       expect(harness.dispatched.map((payload) => payload.provider)).toEqual(['ollama', 'ollama'])
+      expect(harness.dispatched.map((payload) => payload.ollamaToolControlTier)).toEqual([
+        'read_only',
+        'approved_edits'
+      ])
+      expect(harness.dispatched.map((payload) => payload.ollamaRunProfile)).toEqual([
+        'local_scout',
+        'approved_patcher'
+      ])
       expect(harness.chat.messages.at(-1)?.content).toContain('2 Ollama lane(s)')
     } finally {
       if (previous === undefined) {

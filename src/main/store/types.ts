@@ -479,6 +479,10 @@ export interface EnsembleParticipant {
   model?: string
   runtimeProfileId?: string
   geminiAuthProfileId?: string | null
+  /** Ollama-only per-participant tool tier; falls back to chat/global defaults when absent. */
+  ollamaToolControlTier?: OllamaToolControlTier
+  /** Ollama-only per-participant runtime profile; falls back to chat/global defaults when absent. */
+  ollamaRunProfile?: OllamaRunProfileId
   permissionPresetId?: PermissionPresetId
   permissionOverrides?: PermissionOverrides
   linkedProviderSessionId?: string | null
